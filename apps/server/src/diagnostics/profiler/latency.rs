@@ -42,9 +42,11 @@ const SEVERE_MS: f64 = 10_000.0;
 const JOIN_LOG_CAPACITY: usize = 4096;
 const TICK: Duration = Duration::from_secs(5);
 const HANG_AFTER: Duration = Duration::from_secs(10);
+const LONG_RUNNING_HANG_AFTER: Duration = Duration::from_secs(300);
 const SATURATION_METHODS: usize = 5;
-/// A detector tick this late means the machine slept (on Windows `Instant` counts suspended
-/// time) or the whole runtime froze; a request spanning it is not measured.
+/// On Windows, where `Instant` counts suspended time, a detector tick this late means the
+/// machine slept, and a request spanning it is not measured. Elsewhere `Instant` stops during
+/// suspend, so a late tick is a runtime stall, which is exactly what the hang check reports.
 const SUSPEND_GAP_MS: u64 = 30_000;
 
 /// Log-scale bucket `i` holds `[1.12^i, 1.12^(i+1))` ms; bucket 0 also holds everything up to
@@ -97,7 +99,48 @@ pub fn judge(ms: f64, p95: Option<f64>, samples: u64, interactive: bool) -> Tier
     }
 }
 
-/// Background methods get the 1 s relative floor instead of 250 ms.
+/// External work (network, provider CLIs, subprocesses, LLM calls, setup hooks) whose
+/// duration says little about the server. These methods still emit `rpc.timing`, but never
+/// raise `rpc.slow` or count toward `rpc.saturation`, and their hang budget is 300 s.
+pub fn is_long_running(method: &str) -> bool {
+    matches!(
+        method,
+        "vcs.clone"
+            | "sourceControl.cloneRepository"
+            | "sourceControl.publishRepository"
+            | "sourceControl.lookupRepository"
+            | "server.discoverSourceControl"
+            | "vcs.pull"
+            | "vcs.generateCommitMessage"
+            | "git.resolvePullRequest"
+            | "git.preparePullRequestThread"
+            | "gitManager.commit"
+            | "gitManager.getRemoteTags"
+            | "gitManager.listPullRequests"
+            | "pullRequests.checkout"
+            | "pullRequests.runAction"
+            | "pullRequests.list"
+            | "pullRequests.get"
+            | "pullRequests.getTimeline"
+            | "pullRequests.getCommits"
+            | "pullRequests.getChecks"
+            | "pullRequests.getFiles"
+            | "pullRequests.getContext"
+            | "pullRequests.getVocabulary"
+            | "pullRequests.getCreateDefaults"
+            | "updater.check"
+            | "updater.install"
+            | "server.updateProvider"
+            | "server.refreshProviders"
+            | "server.refreshProviderUsage"
+            | "worktree.createManaged"
+            | "worktree.createPanel"
+            | "agentSessions.import"
+    )
+}
+
+/// Background methods get the 1 s relative floor instead of 250 ms. Independent of
+/// `is_long_running`, which governs findings.
 pub fn is_background(method: &str) -> bool {
     [
         "git.",
@@ -307,7 +350,7 @@ impl LatencyBook {
                 "correlationId": correlation_id,
             }),
         );
-        if tier >= Tier::Warn && outcome != FIRST_ITEM {
+        if tier >= Tier::Warn && outcome != FIRST_ITEM && !is_long_running(method) {
             let key = (method.to_owned(), outcome);
             let mut slow = lock(&self.slow);
             let parked = slow.entry(key).or_default();
@@ -377,8 +420,12 @@ static FENCE_MS: AtomicU64 = AtomicU64::new(0);
 /// Whether a request started at `started_ms` spans a gap in observation: it started before the
 /// last fence, or the detector heartbeat is overdue because the machine has just woken up.
 fn spans_suspend(started_ms: u64, now_ms: u64, last_tick_ms: u64, fence_ms: u64) -> bool {
-    started_ms < fence_ms
-        || (last_tick_ms != 0 && now_ms.saturating_sub(last_tick_ms) > SUSPEND_GAP_MS)
+    started_ms < fence_ms || (last_tick_ms != 0 && slept(last_tick_ms, now_ms))
+}
+
+/// See `SUSPEND_GAP_MS`: only Windows can tell a sleep from a stall this way.
+fn slept(last_tick_ms: u64, now_ms: u64) -> bool {
+    cfg!(windows) && now_ms.saturating_sub(last_tick_ms) > SUSPEND_GAP_MS
 }
 
 /// A request in flight across a stop and start, or across a sleep, belongs to no recording:
@@ -466,20 +513,37 @@ fn severity(tier: Option<Tier>) -> Severity {
 struct InFlight {
     method: String,
     started: Instant,
+    hang_after: Duration,
     reported: bool,
+}
+
+impl InFlight {
+    fn new(method: &str, started: Instant) -> Self {
+        Self {
+            method: method.to_owned(),
+            started,
+            hang_after: if is_long_running(method) {
+                LONG_RUNNING_HANG_AFTER
+            } else {
+                HANG_AFTER
+            },
+            reported: false,
+        }
+    }
 }
 
 /// Unary requests running while the profiler is on, for the hang check.
 static IN_FLIGHT: LazyLock<Mutex<HashMap<u64, InFlight>>> = LazyLock::new(Default::default);
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
 
-/// The requests running longer than 10 s that were not reported yet, now marked reported.
+/// The requests past their hang budget (10 s, or 300 s for long-running methods) that were
+/// not reported yet, now marked reported.
 fn overdue(in_flight: &mut HashMap<u64, InFlight>, now: Instant) -> Vec<(String, Duration)> {
     in_flight
         .values_mut()
         .filter_map(|request| {
             let elapsed = now.saturating_duration_since(request.started);
-            (!request.reported && elapsed > HANG_AFTER).then(|| {
+            (!request.reported && elapsed > request.hang_after).then(|| {
                 request.reported = true;
                 (request.method.clone(), elapsed)
             })
@@ -529,11 +593,7 @@ impl RequestTimer {
         }
         let id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
         let started = Instant::now();
-        let request = InFlight {
-            method: method.to_owned(),
-            started,
-            reported: false,
-        };
+        let request = InFlight::new(method, started);
         lock(&IN_FLIGHT).insert(id, request);
         Some(Self {
             started,
@@ -620,7 +680,7 @@ impl Detector for LatencyDetector {
                     _ = ticks.tick() => {}
                 }
                 let now = ms_since_start(Instant::now()).max(1);
-                if now.saturating_sub(LAST_TICK_MS.load(Ordering::Relaxed)) > SUSPEND_GAP_MS {
+                if slept(LAST_TICK_MS.load(Ordering::Relaxed), now) {
                     // Whatever ran across the gap measured the sleep, not the server.
                     fence(now);
                 }
@@ -890,22 +950,8 @@ mod tests {
     fn a_hung_request_is_reported_once() {
         let now = Instant::now();
         let mut in_flight = HashMap::from([
-            (
-                1,
-                InFlight {
-                    method: "test.hung".into(),
-                    started: now - Duration::from_secs(11),
-                    reported: false,
-                },
-            ),
-            (
-                2,
-                InFlight {
-                    method: "test.busy".into(),
-                    started: now - Duration::from_secs(9),
-                    reported: false,
-                },
-            ),
+            (1, InFlight::new("test.hung", now - Duration::from_secs(11))),
+            (2, InFlight::new("test.busy", now - Duration::from_secs(9))),
         ]);
         let hung = overdue(&mut in_flight, now);
         assert_eq!(hung.len(), 1);
@@ -940,17 +986,59 @@ mod tests {
         // Started before the last fence: a recording start, or the detector seeing a resume.
         assert!(spans_suspend(100, 90_000, 89_000, 80_000));
         assert!(!spans_suspend(80_000, 90_000, 89_000, 80_000));
-        // The machine just woke and the detector has not ticked since.
-        assert!(spans_suspend(100, 4_000 + gap + 1, 4_000, 0));
+        // The machine just woke and the detector has not ticked since. Only Windows `Instant`
+        // counts suspended time; elsewhere a late heartbeat is a stall worth measuring.
+        assert_eq!(spans_suspend(100, 4_000 + gap + 1, 4_000, 0), cfg!(windows));
+    }
+
+    #[test]
+    fn tier_order_puts_the_log_only_tier_below_the_finding_tiers() {
+        // `observe` parks results with `tier >= Tier::Warn`.
+        assert!(Tier::None < Tier::RelativeLogOnly);
+        assert!(Tier::RelativeLogOnly < Tier::Warn);
+        assert!(Tier::Warn < Tier::Severe);
+    }
+
+    #[test]
+    fn long_running_methods_raise_no_slow_or_saturation_findings() {
+        let book = LatencyBook::default();
+        book.observe("vcs.clone", "success", 12_000.0, 0.0, None);
+        for method in [
+            "sourceControl.cloneRepository",
+            "vcs.pull",
+            "updater.check",
+            "pullRequests.list",
+            "gitManager.commit",
+        ] {
+            book.observe(method, "success", 1_500.0, 0.0, None);
+        }
+        let parked = std::mem::take(&mut *lock(&book.slow));
+        assert!(slow_findings(parked).is_empty());
+        assert!(
+            lock(&book.windows).contains_key(&("vcs.clone".to_owned(), "success")),
+            "still timed"
+        );
+        assert!(!is_long_running("server.getConfig"));
+    }
+
+    #[test]
+    fn a_long_running_request_has_a_300_second_hang_budget() {
+        let now = Instant::now();
+        let mut in_flight = HashMap::from([
+            (1, InFlight::new("vcs.clone", now - Duration::from_secs(11))),
+            (
+                2,
+                InFlight::new("updater.install", now - Duration::from_secs(301)),
+            ),
+        ]);
+        let hung = overdue(&mut in_flight, now);
+        assert_eq!(hung.len(), 1);
+        assert_eq!(hung[0].0, "updater.install");
     }
 
     #[test]
     fn a_fence_mutes_only_requests_that_started_before_it() {
-        let request = |secs| InFlight {
-            method: "test.fence".into(),
-            started: *START + Duration::from_secs(secs),
-            reported: false,
-        };
+        let request = |secs| InFlight::new("test.fence", *START + Duration::from_secs(secs));
         let mut in_flight = HashMap::from([(1, request(1)), (2, request(3))]);
         mute_before(&mut in_flight, 2_000);
         assert!(
