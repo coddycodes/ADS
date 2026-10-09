@@ -3,6 +3,7 @@ pub(crate) mod history;
 mod model;
 mod monitor;
 mod native;
+pub mod profiler;
 mod registry;
 mod resource_sampler;
 mod trace;

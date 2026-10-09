@@ -1,0 +1,1127 @@
+use std::{
+    fs::{self, File, OpenOptions},
+    io::{self, BufWriter, Write},
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc::{self, Receiver, RecvTimeoutError, SyncSender},
+    },
+    thread::JoinHandle,
+    time::{Duration, Instant, SystemTime},
+};
+
+use serde_json::{Map, Value};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+use super::event::ProfilerEvent;
+
+pub const CHANNEL_CAPACITY: usize = 2048;
+
+const FINDINGS_FILE: &str = "findings.ndjson";
+const CRASHES_DIR: &str = "crashes";
+const WRITE_BUFFER_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Debug)]
+pub struct StoreConfig {
+    pub dir: PathBuf,
+    pub max_file_bytes: u64,
+    pub max_total_bytes: u64,
+    pub max_age: Duration,
+    pub flush_every: Duration,
+}
+
+impl StoreConfig {
+    pub fn new(dir: PathBuf) -> Self {
+        Self {
+            dir,
+            max_file_bytes: 10 * 1024 * 1024,
+            max_total_bytes: 256 * 1024 * 1024,
+            max_age: Duration::from_secs(7 * 24 * 3600),
+            flush_every: Duration::from_secs(2),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StoreStats {
+    pub written: u64,
+    pub dropped: u64,
+    pub failing: bool,
+}
+
+#[derive(Default)]
+struct Counters {
+    written: AtomicU64,
+    dropped: AtomicU64,
+    failing: AtomicBool,
+}
+
+enum Message {
+    Event(ProfilerEvent),
+    /// One finding line for `findings.ndjson`. Appended through its own short-lived
+    /// handle; a failed append counts as a drop and sets `failing`.
+    Finding(Value),
+    Shutdown,
+}
+
+#[derive(Clone)]
+pub struct EventSender {
+    tx: SyncSender<Message>,
+    counters: Arc<Counters>,
+}
+
+impl EventSender {
+    /// Never blocks; a full channel drops the event and counts it.
+    pub fn send(&self, event: ProfilerEvent) {
+        self.enqueue(Message::Event(event));
+    }
+
+    /// Queues one finding for `findings.ndjson`. Never blocks; a full channel drops it.
+    pub fn send_finding(&self, finding: Value) {
+        self.enqueue(Message::Finding(finding));
+    }
+
+    fn enqueue(&self, message: Message) {
+        if self.tx.try_send(message).is_err() {
+            self.counters.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+pub struct ProfilerStore {
+    sender: EventSender,
+    thread: Option<JoinHandle<()>>,
+    pause: Option<SyncSender<()>>,
+}
+
+impl ProfilerStore {
+    pub fn start(config: StoreConfig) -> Self {
+        Self::spawn(config, CHANNEL_CAPACITY, false)
+    }
+
+    #[cfg(test)]
+    fn start_paused(config: StoreConfig, capacity: usize) -> Self {
+        Self::spawn(config, capacity, true)
+    }
+
+    #[cfg(test)]
+    fn resume(&self) {
+        if let Some(pause) = &self.pause {
+            let _ = pause.send(());
+        }
+    }
+
+    fn spawn(config: StoreConfig, capacity: usize, paused: bool) -> Self {
+        let (tx, rx) = mpsc::sync_channel(capacity);
+        let counters = Arc::new(Counters::default());
+        let (pause_tx, pause_rx) = mpsc::sync_channel::<()>(1);
+        let writer_counters = counters.clone();
+        let thread = std::thread::Builder::new()
+            .name("bibcode-profiler-writer".into())
+            .spawn(move || {
+                if paused {
+                    let _ = pause_rx.recv();
+                }
+                Writer::new(config, writer_counters).run(rx);
+            })
+            .ok();
+        if thread.is_none() {
+            // The closure (and its receiver) is gone, so every send counts as a drop.
+            counters.failing.store(true, Ordering::Relaxed);
+        }
+        Self {
+            sender: EventSender { tx, counters },
+            thread,
+            pause: paused.then_some(pause_tx),
+        }
+    }
+
+    pub fn sender(&self) -> EventSender {
+        self.sender.clone()
+    }
+
+    pub fn stats(&self) -> StoreStats {
+        let c = &self.sender.counters;
+        StoreStats {
+            written: c.written.load(Ordering::Relaxed),
+            dropped: c.dropped.load(Ordering::Relaxed),
+            failing: c.failing.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Writes everything already queued, flushes, and joins the writer thread.
+    pub fn shutdown(mut self) {
+        self.stop();
+    }
+
+    fn stop(&mut self) {
+        let Some(thread) = self.thread.take() else {
+            return;
+        };
+        if let Some(pause) = &self.pause {
+            let _ = pause.try_send(());
+        }
+        // Shutdown is queued behind pending events, so they are all written first.
+        let _ = self.sender.tx.send(Message::Shutdown);
+        let _ = thread.join();
+    }
+}
+
+impl Drop for ProfilerStore {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+struct Writer {
+    config: StoreConfig,
+    counters: Arc<Counters>,
+    /// The open handle for the live events file and its length in bytes.
+    out: Option<(BufWriter<File>, u64)>,
+    /// The live events file. It survives I/O failures so the handle is reopened on the same
+    /// path, and is cleared only by rotation, so a failing disk never multiplies files.
+    live_path: Option<PathBuf>,
+    /// Length of `live_path` as of the last successful flush; bytes beyond it are uncommitted.
+    committed: u64,
+    next_file: u64,
+    seq: u64,
+    sid: String,
+    /// Event lines accepted into `out`'s buffer and not yet flushed to the OS.
+    pending: u64,
+    /// Drops already confirmed in a flushed `telemetry.dropped` line.
+    reported_drops: u64,
+    /// Drops carried by `telemetry.dropped` lines that are buffered but not yet flushed.
+    in_flight: u64,
+}
+
+impl Writer {
+    fn new(config: StoreConfig, counters: Arc<Counters>) -> Self {
+        let next_file = existing_max_file_index(&config.dir).map_or(0, |n| n + 1);
+        // `sid` makes event references unique across restarts: `seq` restarts at 0
+        // for each writer session, so evidence is always `"<sid>:<seq>"`.
+        let sid = uuid::Uuid::new_v4().simple().to_string()[..8].to_owned();
+        Self {
+            config,
+            counters,
+            out: None,
+            live_path: None,
+            committed: 0,
+            next_file,
+            seq: 0,
+            sid,
+            pending: 0,
+            reported_drops: 0,
+            in_flight: 0,
+        }
+    }
+
+    fn run(mut self, rx: Receiver<Message>) {
+        let mut last_flush = Instant::now();
+        loop {
+            match rx.recv_timeout(self.config.flush_every) {
+                Ok(Message::Event(event)) => self.write(event),
+                Ok(Message::Finding(finding)) => self.append_finding(&finding),
+                Ok(Message::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+            if last_flush.elapsed() >= self.config.flush_every {
+                self.report_drops();
+                self.flush();
+                last_flush = Instant::now();
+            }
+        }
+        self.finish();
+    }
+
+    /// Final report and close. Closing can itself lose lines (a failed rotation or last
+    /// flush), so whatever it added is reported once more before the writer exits.
+    fn finish(&mut self) {
+        for _ in 0..2 {
+            self.report_drops();
+            self.close();
+        }
+    }
+
+    /// Writes the drops not yet in the file as one `telemetry.dropped` line. They count as
+    /// reported only once that line is flushed, so a line lost to an I/O error is sent again
+    /// and the file's counts add up to `stats().dropped` after an outage.
+    fn report_drops(&mut self) {
+        let dropped = self.counters.dropped.load(Ordering::Relaxed);
+        let count = dropped.saturating_sub(self.reported_drops + self.in_flight);
+        if count > 0 {
+            let mut line = Map::new();
+            line.insert("kind".into(), "telemetry.dropped".into());
+            line.insert("source".into(), "server".into());
+            line.insert("count".into(), count.into());
+            if self.write_line(line, false) {
+                self.in_flight += count;
+            }
+        }
+    }
+
+    fn write(&mut self, event: ProfilerEvent) {
+        let mut line = match event.payload {
+            Value::Object(fields) => fields,
+            Value::Null => Map::new(),
+            other => Map::from_iter([("payload".to_owned(), other)]),
+        };
+        // Envelope fields are inserted last so a payload can never overwrite them.
+        line.insert("kind".into(), event.kind.into());
+        line.insert("source".into(), event.source.into());
+        self.write_line(line, true);
+    }
+
+    /// Returns whether the line reached the buffer. Only `is_event` lines (records from
+    /// senders) count as drops when lost; the writer's own `telemetry.dropped` lines do not.
+    fn write_line(&mut self, mut line: Map<String, Value>, is_event: bool) -> bool {
+        line.insert("v".into(), 1.into());
+        line.insert("seq".into(), self.seq.into());
+        line.insert("sid".into(), self.sid.clone().into());
+        line.insert("ts".into(), now_rfc3339().into());
+        self.seq += 1;
+        let Ok(mut bytes) = serde_json::to_vec(&line) else {
+            return false;
+        };
+        bytes.push(b'\n');
+        if bytes.len() as u64 > self.config.max_file_bytes {
+            // One record bigger than a whole file would defeat rotation and retention.
+            // Its `seq` is skipped, and the drop is reported like any other.
+            if is_event {
+                self.counters.dropped.fetch_add(1, Ordering::Relaxed);
+            }
+            return false;
+        }
+        match self.append(&bytes) {
+            Ok(()) => {
+                self.pending += u64::from(is_event);
+                true
+            }
+            Err(_) => {
+                self.fail_events(u64::from(is_event));
+                false
+            }
+        }
+    }
+
+    fn append(&mut self, bytes: &[u8]) -> io::Result<()> {
+        let max = self.config.max_file_bytes;
+        // Normally one pass. A file is checked after any reopen, so one a failed flush left
+        // near the cap still rotates. If rotation's final flush fails, `close` keeps the file,
+        // the next pass reopens it (cut back to the last flush, empty buffer) and closes it
+        // cleanly. The third pass opens the new file, which is empty and so never rotates.
+        for _ in 0..3 {
+            if self.out.is_none() {
+                self.out = Some(self.open_live()?);
+            }
+            let full = self
+                .out
+                .as_ref()
+                .is_some_and(|(_, len)| *len > 0 && *len + bytes.len() as u64 > max);
+            if full {
+                self.close();
+            } else if let Some((out, len)) = self.out.as_mut() {
+                out.write_all(bytes)?;
+                *len += bytes.len() as u64;
+                return Ok(());
+            }
+        }
+        Err(io::Error::other("could not rotate the live events file"))
+    }
+
+    /// Opens the live events file. A new file (first start or after rotation) runs retention
+    /// first so its space is already free. After an I/O failure the same file is reopened in
+    /// append mode, with no directory scan and no new file, once the bytes beyond the last
+    /// successful flush are cut off: those lines were counted as dropped, and a torn tail
+    /// would corrupt the next record or double-count a persisted `telemetry.dropped`. If the
+    /// cut-off fails, the reopen fails too and is retried with the next record.
+    fn open_live(&mut self) -> io::Result<(BufWriter<File>, u64)> {
+        fs::create_dir_all(&self.config.dir)?;
+        let path = match &self.live_path {
+            Some(path) => {
+                let path = path.clone();
+                self.discard_uncommitted(&path)?;
+                path
+            }
+            None => {
+                self.enforce_retention();
+                let path = self
+                    .config
+                    .dir
+                    .join(format!("events-{:06}.ndjson", self.next_file));
+                self.next_file += 1;
+                self.live_path = Some(path.clone());
+                self.committed = 0;
+                path
+            }
+        };
+        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        let len = file.metadata().map_or(0, |m| m.len());
+        Ok((BufWriter::with_capacity(WRITE_BUFFER_BYTES, file), len))
+    }
+
+    /// Cuts the live file back to its last successfully flushed length. A file that was
+    /// deleted meanwhile is simply recreated empty.
+    fn discard_uncommitted(&mut self, path: &Path) -> io::Result<()> {
+        match OpenOptions::new().write(true).open(path) {
+            Ok(file) if file.metadata()?.len() > self.committed => file.set_len(self.committed),
+            Ok(_) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                self.committed = 0;
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn append_finding(&mut self, finding: &Value) {
+        let appended = serde_json::to_vec(finding)
+            .map_err(io::Error::from)
+            .and_then(|mut bytes| {
+                bytes.push(b'\n');
+                fs::create_dir_all(&self.config.dir)?;
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(self.config.dir.join(FINDINGS_FILE))?
+                    .write_all(&bytes)
+            });
+        if appended.is_err() {
+            self.count_lost(1);
+        } else {
+            // The directory accepted a write, so an earlier failure has recovered. An events
+            // failure sets the flag again on its next failed write.
+            self.counters.failing.store(false, Ordering::Relaxed);
+        }
+    }
+
+    fn flush(&mut self) {
+        let Some((out, len)) = self.out.as_mut() else {
+            return;
+        };
+        match out.flush() {
+            Ok(()) => {
+                self.committed = *len;
+                self.commit();
+            }
+            Err(_) => self.fail_events(0),
+        }
+    }
+
+    /// Flushes and syncs the live file, then retires it so the next record opens a new one.
+    /// Used on rotation and shutdown only. If the flush fails the file stays live: it is cut
+    /// back to its last good length and reused, not left torn behind a new file.
+    fn close(&mut self) {
+        let Some((mut out, len)) = self.out.take() else {
+            self.live_path = None;
+            return;
+        };
+        match out.flush() {
+            Ok(()) => {
+                let _ = out.get_ref().sync_data();
+                self.live_path = None;
+                self.commit();
+            }
+            Err(_) => {
+                self.out = Some((out, len));
+                self.fail_events(0);
+            }
+        }
+    }
+
+    fn commit(&mut self) {
+        if self.pending > 0 || self.in_flight > 0 {
+            self.counters
+                .written
+                .fetch_add(self.pending, Ordering::Relaxed);
+            self.pending = 0;
+            self.reported_drops += self.in_flight;
+            self.in_flight = 0;
+            self.counters.failing.store(false, Ordering::Relaxed);
+        }
+    }
+
+    /// An I/O error loses the buffered lines (and `extra` more). Event lines count as drops;
+    /// a lost `telemetry.dropped` line is simply sent again. The handle is abandoned without
+    /// a second flush, and the file is cut back to its last good length now (best effort) and
+    /// again when the next record reopens it, so no part of a lost line stays behind.
+    fn fail_events(&mut self, extra: u64) {
+        let lost = self.pending + extra;
+        self.pending = 0;
+        self.in_flight = 0;
+        if let Some((out, _)) = self.out.take() {
+            let _ = out.into_parts();
+        }
+        if let Some(path) = self.live_path.clone() {
+            let _ = self.discard_uncommitted(&path);
+        }
+        self.count_lost(lost);
+    }
+
+    fn count_lost(&mut self, lost: u64) {
+        self.counters.failing.store(true, Ordering::Relaxed);
+        self.counters.dropped.fetch_add(lost, Ordering::Relaxed);
+    }
+
+    /// Retention for the whole profiler directory, run before every new events file. Rotated
+    /// `events-*` files and crash dumps (with their `.json` sidecars, or a sidecar alone once
+    /// its dump is gone) are considered together, oldest modification time first:
+    /// 1. anything older than `max_age` is deleted;
+    /// 2. while the total (events + `crashes/` + `findings.ndjson`) plus room for the new live
+    ///    file exceeds `max_total_bytes`, the oldest remaining file is deleted.
+    ///
+    /// `findings.ndjson` counts toward the total but is not trimmed here; whoever appends
+    /// findings owns compacting that file.
+    fn enforce_retention(&self) {
+        let dir = &self.config.dir;
+        let crashes = dir.join(CRASHES_DIR);
+        let events = event_files(dir);
+        let mut total = events.iter().map(|f| f.len).sum::<u64>()
+            + dir_size(&crashes)
+            + file_len(&dir.join(FINDINGS_FILE));
+        let mut candidates = events;
+        candidates.extend(crash_dumps(&crashes));
+        candidates.sort_by(|a, b| (a.modified, &a.path).cmp(&(b.modified, &b.path)));
+        // The live file about to be opened may grow to `max_file_bytes`.
+        let budget = self
+            .config
+            .max_total_bytes
+            .saturating_sub(self.config.max_file_bytes);
+        let now = SystemTime::now();
+        for file in candidates {
+            let expired = now
+                .duration_since(file.modified)
+                .is_ok_and(|age| age > self.config.max_age);
+            if expired || total > budget {
+                total = total.saturating_sub(file.remove());
+            }
+        }
+    }
+}
+
+/// A file retention may delete: a rotated events file, or a crash dump with its sidecar.
+struct Retained {
+    modified: SystemTime,
+    path: PathBuf,
+    len: u64,
+    sidecar: Option<(PathBuf, u64)>,
+}
+
+impl Retained {
+    /// Deletes the file, then its sidecar, so a failed delete never leaves a dump without its
+    /// sidecar. Returns the bytes freed.
+    fn remove(&self) -> u64 {
+        if fs::remove_file(&self.path).is_err() {
+            return 0;
+        }
+        let sidecar = match &self.sidecar {
+            Some((path, len)) if fs::remove_file(path).is_ok() => *len,
+            _ => 0,
+        };
+        self.len + sidecar
+    }
+}
+
+fn now_rfc3339() -> String {
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned())
+}
+
+fn file_len(path: &Path) -> u64 {
+    fs::metadata(path).map_or(0, |m| m.len())
+}
+
+/// Sum of the regular files directly inside `dir`.
+fn dir_size(dir: &Path) -> u64 {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter_map(|e| e.metadata().ok())
+        .filter(|m| m.is_file())
+        .map(|m| m.len())
+        .sum()
+}
+
+fn event_file_index(name: &str) -> Option<u64> {
+    name.strip_prefix("events-")?
+        .strip_suffix(".ndjson")?
+        .parse()
+        .ok()
+}
+
+fn existing_max_file_index(dir: &Path) -> Option<u64> {
+    fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter_map(|e| event_file_index(&e.file_name().to_string_lossy()))
+        .max()
+}
+
+/// Every rotated `events-*.ndjson` file in `dir`.
+fn event_files(dir: &Path) -> Vec<Retained> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|e| event_file_index(&e.file_name().to_string_lossy()).is_some())
+        .filter_map(|e| {
+            let meta = e.metadata().ok().filter(fs::Metadata::is_file)?;
+            Some(Retained {
+                modified: meta.modified().ok()?,
+                path: e.path(),
+                len: meta.len(),
+                sidecar: None,
+            })
+        })
+        .collect()
+}
+
+/// Every `*.dmp` in `crashes` with its `.json` sidecar when one exists, plus any `*.json`
+/// whose dump is gone, which would otherwise count toward the total and never be deleted.
+fn crash_dumps(crashes: &Path) -> Vec<Retained> {
+    let Ok(entries) = fs::read_dir(crashes) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            let meta = e.metadata().ok().filter(fs::Metadata::is_file)?;
+            let modified = meta.modified().ok()?;
+            match path.extension()?.to_str()? {
+                "dmp" => {
+                    let sidecar = path.with_extension("json");
+                    let sidecar_len = fs::metadata(&sidecar)
+                        .ok()
+                        .filter(fs::Metadata::is_file)
+                        .map(|m| m.len());
+                    Some(Retained {
+                        modified,
+                        len: meta.len(),
+                        sidecar: sidecar_len.map(|len| (sidecar, len)),
+                        path,
+                    })
+                }
+                "json" if !path.with_extension("dmp").exists() => Some(Retained {
+                    modified,
+                    len: meta.len(),
+                    sidecar: None,
+                    path,
+                }),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn config(dir: &std::path::Path) -> StoreConfig {
+        StoreConfig {
+            max_file_bytes: 300,
+            flush_every: std::time::Duration::from_millis(10),
+            ..StoreConfig::new(dir.to_path_buf())
+        }
+    }
+
+    fn event(n: u64) -> ProfilerEvent {
+        ProfilerEvent {
+            kind: "test.event",
+            source: "server".into(),
+            payload: json!({ "n": n }),
+        }
+    }
+
+    #[test]
+    fn writes_ndjson_envelopes_and_rotates_by_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ProfilerStore::start(config(dir.path()));
+        for n in 0..20 {
+            store.sender().send(event(n));
+        }
+        store.shutdown();
+        let mut files: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|n| n.starts_with("events-"))
+            .collect();
+        files.sort();
+        assert!(files.len() > 1, "300-byte cap must rotate: {files:?}");
+        let first = std::fs::read_to_string(dir.path().join(&files[0])).unwrap();
+        let line: serde_json::Value = serde_json::from_str(first.lines().next().unwrap()).unwrap();
+        assert_eq!(line["v"], 1);
+        assert_eq!(line["kind"], "test.event");
+        assert_eq!(line["seq"], 0);
+        assert_eq!(
+            line["sid"].as_str().unwrap().len(),
+            8,
+            "every writer start has a session id"
+        );
+        assert!(line["ts"].as_str().unwrap().ends_with('Z'));
+    }
+
+    #[test]
+    fn full_channel_drops_and_reports_a_dropped_event() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ProfilerStore::start_paused(config(dir.path()), 4);
+        for n in 0..10 {
+            store.sender().send(event(n));
+        }
+        assert_eq!(store.stats().dropped, 6);
+        store.resume();
+        store.shutdown();
+        let all = read_all(dir.path());
+        assert!(
+            all.iter()
+                .any(|l| l["kind"] == "telemetry.dropped" && l["count"] == 6)
+        );
+    }
+
+    #[test]
+    fn unwritable_directory_marks_failing_without_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("profiler");
+        std::fs::write(&blocker, b"not a dir").unwrap();
+        let store = ProfilerStore::start(config(&blocker));
+        store.sender().send(event(1));
+        wait_until(|| store.stats().failing);
+        store.shutdown();
+    }
+
+    #[test]
+    fn retention_deletes_crash_dumps_when_events_alone_cannot_fit() {
+        let dir = tempfile::tempdir().unwrap();
+        let crashes = dir.path().join("crashes");
+        std::fs::create_dir_all(&crashes).unwrap();
+        std::fs::write(crashes.join("old.dmp"), vec![0u8; 800]).unwrap();
+        std::fs::write(crashes.join("old.json"), b"{}").unwrap();
+        let store = ProfilerStore::start(StoreConfig {
+            max_total_bytes: 900,
+            ..config(dir.path())
+        });
+        for n in 0..40 {
+            store.sender().send(event(n));
+        }
+        store.shutdown();
+        assert!(!crashes.join("old.dmp").exists());
+        assert!(!crashes.join("old.json").exists());
+    }
+
+    #[test]
+    fn retention_deletes_oldest_files_over_total_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ProfilerStore::start(StoreConfig {
+            max_total_bytes: 900,
+            ..config(dir.path())
+        });
+        for n in 0..200 {
+            store.sender().send(event(n));
+        }
+        store.shutdown();
+        let total: u64 = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().metadata().unwrap().len())
+            .sum();
+        assert!(
+            total <= 900 + 300,
+            "total {total} exceeds cap plus one live file"
+        );
+    }
+
+    #[test]
+    fn queued_findings_append_one_line_each_to_findings_ndjson() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ProfilerStore::start(config(dir.path()));
+        let sender = store.sender();
+        sender.send_finding(json!({ "id": "a" }));
+        sender.send_finding(json!({ "id": "b" }));
+        store.shutdown();
+        let text = std::fs::read_to_string(dir.path().join("findings.ndjson")).unwrap();
+        let ids: Vec<_> = text
+            .lines()
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap()["id"].clone())
+            .collect();
+        assert_eq!(ids, [json!("a"), json!("b")]);
+    }
+
+    #[test]
+    fn payload_cannot_overwrite_envelope_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ProfilerStore::start(config(dir.path()));
+        store.sender().send(ProfilerEvent {
+            kind: "test.event",
+            source: "server".into(),
+            payload: json!({ "v": 7, "seq": 99, "kind": "forged", "source": "forged", "n": 1 }),
+        });
+        store.shutdown();
+        let line = &read_all(dir.path())[0];
+        assert_eq!(
+            (line["v"].clone(), line["seq"].clone()),
+            (json!(1), json!(0))
+        );
+        assert_eq!(
+            (line["kind"].clone(), line["source"].clone()),
+            (json!("test.event"), json!("server"))
+        );
+        assert_eq!(line["n"], 1);
+    }
+
+    #[test]
+    fn failed_writes_count_as_drops_and_the_store_recovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("profiler");
+        std::fs::write(&blocker, b"not a dir").unwrap();
+        let store = ProfilerStore::start(config(&blocker));
+        store.sender().send(event(1));
+        wait_until(|| store.stats().failing);
+        assert_eq!(store.stats().dropped, 1);
+
+        std::fs::remove_file(&blocker).unwrap();
+        store.sender().send(event(2));
+        wait_until(|| !store.stats().failing);
+        let stats = store.stats();
+        assert_eq!((stats.written, stats.dropped), (1, 1));
+        store.shutdown();
+        assert!(read_all(&blocker).iter().any(|l| l["n"] == 2));
+        assert_eq!(
+            reported_drops(&blocker),
+            stats.dropped,
+            "drops caused by the outage reach the file once storage recovers"
+        );
+    }
+
+    #[test]
+    fn retention_deletes_rotated_files_older_than_max_age() {
+        let dir = tempfile::tempdir().unwrap();
+        let stale = dir.path().join("events-000000.ndjson");
+        std::fs::write(&stale, b"{}\n").unwrap();
+        let ten_days = std::time::Duration::from_secs(10 * 24 * 3600);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&stale)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - ten_days)
+            .unwrap();
+        let store = ProfilerStore::start(config(dir.path()));
+        store.sender().send(event(1));
+        store.shutdown();
+        assert!(!stale.exists());
+        assert!(
+            dir.path().join("events-000001.ndjson").exists(),
+            "numbering continues after restart"
+        );
+    }
+
+    #[test]
+    fn record_larger_than_a_file_is_dropped_and_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ProfilerStore::start(config(dir.path()));
+        store.sender().send(ProfilerEvent {
+            kind: "test.event",
+            source: "server".into(),
+            payload: json!({ "blob": "x".repeat(1000) }),
+        });
+        store.sender().send(event(1));
+        store.shutdown();
+        let all = read_all(dir.path());
+        assert!(all.iter().all(|l| l.get("blob").is_none()));
+        assert!(all.iter().any(|l| l["n"] == 1));
+        assert!(
+            all.iter()
+                .any(|l| l["kind"] == "telemetry.dropped" && l["count"] == 1)
+        );
+    }
+
+    #[test]
+    fn finding_write_failures_count_as_drops_and_recover() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("profiler");
+        std::fs::write(&blocker, b"not a dir").unwrap();
+        let store = ProfilerStore::start(config(&blocker));
+        store.sender().send_finding(json!({ "id": "lost" }));
+        wait_until(|| store.stats().failing);
+        assert_eq!(store.stats().dropped, 1);
+
+        std::fs::remove_file(&blocker).unwrap();
+        store.sender().send_finding(json!({ "id": "kept" }));
+        wait_until(|| !store.stats().failing);
+        store.shutdown();
+        let text = std::fs::read_to_string(blocker.join("findings.ndjson")).unwrap();
+        assert_eq!(text.lines().count(), 1);
+        assert!(text.contains("kept"));
+        assert_eq!(reported_drops(&blocker), 1, "the lost finding is reported");
+    }
+
+    #[test]
+    fn retention_deletes_expired_crash_dumps_even_under_the_size_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let crashes = dir.path().join("crashes");
+        std::fs::create_dir_all(&crashes).unwrap();
+        for name in ["old.dmp", "old.json", "new.dmp", "new.json"] {
+            std::fs::write(crashes.join(name), b"x").unwrap();
+        }
+        for name in ["old.dmp", "old.json"] {
+            age(&crashes.join(name), 10 * 24 * 3600);
+        }
+        let store = ProfilerStore::start(StoreConfig {
+            max_total_bytes: 1 << 20,
+            ..config(dir.path())
+        });
+        store.sender().send(event(1));
+        store.shutdown();
+        assert!(!crashes.join("old.dmp").exists());
+        assert!(!crashes.join("old.json").exists());
+        assert!(crashes.join("new.dmp").exists());
+        assert!(crashes.join("new.json").exists());
+    }
+
+    #[test]
+    fn retention_deletes_the_oldest_file_first_across_events_and_dumps() {
+        let dir = tempfile::tempdir().unwrap();
+        let crashes = dir.path().join("crashes");
+        std::fs::create_dir_all(&crashes).unwrap();
+        std::fs::write(crashes.join("a.dmp"), vec![0u8; 300]).unwrap();
+        std::fs::write(crashes.join("b.dmp"), vec![0u8; 150]).unwrap();
+        std::fs::write(dir.path().join("events-000000.ndjson"), vec![b'\n'; 200]).unwrap();
+        age(&crashes.join("a.dmp"), 3 * 3600);
+        age(&dir.path().join("events-000000.ndjson"), 2 * 3600);
+        age(&crashes.join("b.dmp"), 3600);
+        // Budget is 700 - 300 = 400 and the directory holds 650: only the oldest file must go.
+        let store = ProfilerStore::start(StoreConfig {
+            max_total_bytes: 700,
+            ..config(dir.path())
+        });
+        store.sender().send(event(1));
+        store.shutdown();
+        assert!(!crashes.join("a.dmp").exists(), "oldest file is a dump");
+        assert!(dir.path().join("events-000000.ndjson").exists());
+        assert!(crashes.join("b.dmp").exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    fn full_disk_handle() -> (BufWriter<File>, u64) {
+        let file = OpenOptions::new().write(true).open("/dev/full").unwrap();
+        (BufWriter::new(file), 0)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn repeated_flush_failures_keep_one_events_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let counters = Arc::new(Counters::default());
+        let mut writer = Writer::new(config(dir.path()), counters.clone());
+        for n in 0..5 {
+            writer.write(event(n)); // reopens the live file after the previous failure
+            writer.out = Some(full_disk_handle()); // the next flush hits ENOSPC
+            writer.write(event(n));
+            writer.flush();
+            assert!(writer.out.is_none(), "a failed flush abandons the handle");
+        }
+        assert!(counters.failing.load(Ordering::Relaxed));
+        assert!(counters.dropped.load(Ordering::Relaxed) >= 5);
+        let files = std::fs::read_dir(dir.path()).unwrap().count();
+        assert_eq!(
+            files, 1,
+            "failures must not create a new events file each time"
+        );
+        let text = std::fs::read_to_string(dir.path().join("events-000000.ndjson")).unwrap();
+        assert!(
+            text.lines()
+                .filter(|l| !l.is_empty())
+                .all(|l| serde_json::from_str::<serde_json::Value>(l).is_ok())
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn telemetry_report_lost_in_a_failed_flush_is_sent_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let counters = Arc::new(Counters::default());
+        let mut writer = Writer::new(config(dir.path()), counters.clone());
+        counters.dropped.store(3, Ordering::Relaxed);
+        writer.out = Some(full_disk_handle());
+        writer.report_drops();
+        writer.flush();
+        assert!(writer.out.is_none() && counters.failing.load(Ordering::Relaxed));
+        assert_eq!(
+            counters.dropped.load(Ordering::Relaxed),
+            3,
+            "a lost report is not a drop"
+        );
+
+        writer.report_drops();
+        writer.flush();
+        assert_eq!(reported_drops(dir.path()), 3);
+        assert!(!counters.failing.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn reopened_file_that_is_already_full_rotates_before_the_next_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut writer = Writer::new(config(dir.path()), Arc::new(Counters::default()));
+        writer.write(event(0));
+        writer.write(event(1));
+        writer.flush();
+        let live = dir.path().join("events-000000.ndjson");
+        let before = std::fs::metadata(&live).unwrap().len();
+        assert!(before > 200, "two events nearly fill the 300-byte cap");
+        writer.out = None; // as after a failed flush: the handle is gone, the file is not
+
+        writer.write(event(2));
+        writer.flush();
+        assert_eq!(std::fs::metadata(&live).unwrap().len(), before);
+        assert!(dir.path().join("events-000001.ndjson").exists());
+    }
+
+    #[test]
+    fn reopening_discards_bytes_a_failed_flush_left_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut writer = Writer::new(config(dir.path()), Arc::new(Counters::default()));
+        writer.write(event(0));
+        writer.flush();
+        let live = dir.path().join("events-000000.ndjson");
+        // A complete JSON object with no newline: the failed flush died on the last byte.
+        let mut file = OpenOptions::new().append(true).open(&live).unwrap();
+        file.write_all(br#"{"kind":"telemetry.dropped","count":9}"#)
+            .unwrap();
+        writer.out = None; // the handle was abandoned without cutting the file back
+
+        writer.write(event(1));
+        writer.flush();
+        let text = std::fs::read_to_string(&live).unwrap();
+        assert!(
+            !text.contains("telemetry.dropped"),
+            "uncommitted bytes were kept: {text}"
+        );
+        assert_eq!(text.lines().count(), 2);
+        assert!(text.ends_with('\n') && !text.contains("\n\n"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn final_report_includes_lines_lost_while_closing() {
+        let dir = tempfile::tempdir().unwrap();
+        let counters = Arc::new(Counters::default());
+        let mut writer = Writer::new(config(dir.path()), counters.clone());
+        writer.out = Some(full_disk_handle());
+        writer.write(event(0)); // buffered for /dev/full, so closing the file will fail
+        if let Some((_, len)) = writer.out.as_mut() {
+            *len = 290; // the report line below then rotates, which closes this file
+        }
+        counters.dropped.fetch_add(1, Ordering::Relaxed);
+
+        writer.finish();
+        assert_eq!(counters.dropped.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            reported_drops(dir.path()),
+            2,
+            "the line lost during rotation is reported too"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn failed_close_keeps_the_live_file_and_cuts_it_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let counters = Arc::new(Counters::default());
+        let mut writer = Writer::new(config(dir.path()), counters.clone());
+        writer.write(event(0));
+        writer.flush();
+        let live = dir.path().join("events-000000.ndjson");
+        let committed = std::fs::metadata(&live).unwrap().len();
+        // A flush that ran out of disk halfway left a whole report line behind.
+        let mut file = OpenOptions::new().append(true).open(&live).unwrap();
+        file.write_all(b"{\"kind\":\"telemetry.dropped\",\"count\":9}\n")
+            .unwrap();
+        writer.out = Some(full_disk_handle());
+        writer.write(event(1)); // buffered for /dev/full, so closing fails
+
+        writer.close();
+        assert_eq!(writer.live_path.as_deref(), Some(live.as_path()));
+        assert_eq!(std::fs::metadata(&live).unwrap().len(), committed);
+        assert_eq!(counters.dropped.load(Ordering::Relaxed), 1);
+
+        writer.write(event(2));
+        writer.flush();
+        let text = std::fs::read_to_string(&live).unwrap();
+        assert_eq!(text.lines().count(), 2, "{text}");
+        assert!(!text.contains("telemetry.dropped"));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn retention_deletes_crash_sidecars_whose_dump_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let crashes = dir.path().join("crashes");
+        std::fs::create_dir_all(&crashes).unwrap();
+        for name in ["orphan.json", "pair.dmp", "pair.json", "fresh-orphan.json"] {
+            std::fs::write(crashes.join(name), b"x").unwrap();
+        }
+        age(&crashes.join("orphan.json"), 10 * 24 * 3600);
+        let store = ProfilerStore::start(StoreConfig {
+            max_total_bytes: 1 << 20,
+            ..config(dir.path())
+        });
+        store.sender().send(event(1));
+        store.shutdown();
+        assert!(!crashes.join("orphan.json").exists());
+        assert!(crashes.join("pair.dmp").exists());
+        assert!(crashes.join("pair.json").exists());
+        assert!(crashes.join("fresh-orphan.json").exists());
+    }
+
+    /// Sum of the `count` of every `telemetry.dropped` line under `dir`.
+    fn reported_drops(dir: &std::path::Path) -> u64 {
+        read_all(dir)
+            .iter()
+            .filter(|l| l["kind"] == "telemetry.dropped")
+            .map(|l| l["count"].as_u64().unwrap())
+            .sum()
+    }
+
+    fn age(path: &std::path::Path, seconds: u64) {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(seconds))
+            .unwrap();
+    }
+
+    fn wait_until(condition: impl Fn() -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !condition() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "condition not reached"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    fn read_all(dir: &std::path::Path) -> Vec<serde_json::Value> {
+        let mut names: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        names.sort();
+        names
+            .iter()
+            .flat_map(|p| {
+                std::fs::read_to_string(p)
+                    .unwrap()
+                    .lines()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .filter_map(|l| serde_json::from_str(&l).ok())
+            .collect()
+    }
+}
