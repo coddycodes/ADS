@@ -27,6 +27,7 @@ use crate::{
         DesktopUiProcessObserver, DiagnosticsMonitor, NativeProcessSampler, NativeResourceSampler,
         ProcessAttributionRegistry, TraceDiagnosticsStore, bound_diagnostic_string,
         profiler::{
+            latency::LatencyDetector,
             profiler_dir,
             runtime::{Detector, ProfilerRuntime},
             sampler::SamplerDetector,
@@ -223,8 +224,10 @@ impl ProductionRuntime {
         // Starting replays and compacts the findings file, so it runs off the async workers.
         let profiler_state_dir = config.state_dir();
         let profiler_enabled = control.profiler_enabled_signal();
-        let profiler_detectors: Vec<Box<dyn Detector>> =
-            vec![Box::new(SamplerDetector::new(process_attribution.clone()))];
+        let profiler_detectors: Vec<Box<dyn Detector>> = vec![
+            Box::new(SamplerDetector::new(process_attribution.clone())),
+            Box::new(LatencyDetector),
+        ];
         let profiler = Arc::new(
             tokio::task::spawn_blocking(move || {
                 ProfilerRuntime::start(&profiler_state_dir, profiler_enabled, profiler_detectors)
