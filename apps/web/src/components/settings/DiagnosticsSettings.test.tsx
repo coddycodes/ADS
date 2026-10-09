@@ -257,7 +257,13 @@ vi.mock("./settingsLayout", () => ({
 }));
 
 vi.mock("./ProfilerSection", () => ({
-  ProfilerSection: () => <section data-section-title="Profiler" />,
+  ProfilerSection: (props: AnyProps) => (
+    <section
+      data-section-title="Profiler"
+      data-selected-environment={(props.selectedEnvironmentId as string | null) ?? ""}
+      data-reports-selection={typeof props.onSelectEnvironment === "function"}
+    />
+  ),
 }));
 
 vi.mock("../ui/scroll-area", () => ({
@@ -1030,6 +1036,21 @@ describe("DiagnosticsSettingsPanel profiler section", () => {
     const markup = render();
 
     expect(markup.match(/data-section-title="([^"]+)"/)?.[1]).toBe("Profiler");
+    expect(markup).toContain('data-selected-environment=""');
+  });
+
+  it("shows the environment the route holds and passes selections back", () => {
+    seedAll();
+    const onChange = vi.fn();
+    const markup = renderToStaticMarkup(
+      <DiagnosticsSettingsPanel
+        profilerEnvironmentId={EnvironmentId.make("luna")}
+        onProfilerEnvironmentChange={onChange}
+      />,
+    );
+
+    expect(markup).toContain('data-selected-environment="luna"');
+    expect(markup).toContain('data-reports-selection="true"');
   });
 });
 

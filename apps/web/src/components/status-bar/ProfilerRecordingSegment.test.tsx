@@ -123,14 +123,30 @@ describe("ProfilerRecordingSegment", () => {
     ]);
   });
 
-  it("opens Diagnostics settings when clicked", async () => {
-    h.environments = [environment("Local", { enableProfiler: true })];
+  it("opens Diagnostics with the first recording environment selected", async () => {
+    h.environments = [
+      environment("Local"),
+      environment("Luna", { enableProfiler: true }),
+      environment("Build box", { enableProfiler: true }),
+    ];
     const container = await render();
 
     await act(async () => {
       container.querySelector("button")!.click();
     });
 
-    expect(h.navigate).toHaveBeenCalledWith({ to: "/settings/diagnostics" });
+    expect(h.navigate).toHaveBeenCalledWith({
+      to: "/settings/diagnostics",
+      search: { environment: "env-Luna" },
+    });
+  });
+
+  it("marks recording with a neutral dot, not an error color", async () => {
+    h.environments = [environment("Local", { enableProfiler: true })];
+
+    const container = await render();
+
+    const dot = container.querySelector("button span")!;
+    expect(dot.className).not.toContain("destructive");
   });
 });

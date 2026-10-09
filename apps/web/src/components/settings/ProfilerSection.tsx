@@ -1,4 +1,5 @@
-import type { ProfilerFinding, ProfilerStatus } from "@bibcode/contracts";
+import { EnvironmentId, type ProfilerFinding, type ProfilerStatus } from "@bibcode/contracts";
+import type { EnvironmentConnectionPhase } from "@bibcode/client-runtime/connection";
 import type { UnifiedSettings } from "@bibcode/contracts/settings";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -12,8 +13,12 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { isDesktopHost } from "~/env";
 import { useDiagnosticLogsDownload } from "../../diagnostics/useDiagnosticLogsDownload";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
-import { usePrimaryEnvironment } from "../../state/environments";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import {
+  type EnvironmentPresentation,
+  useEnvironments,
+  usePrimaryEnvironment,
+} from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { primaryServerObservabilityAtom, serverEnvironment } from "../../state/server";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -21,6 +26,7 @@ import { useDocumentVisible } from "../pullRequests/useDocumentVisible";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { RetryButton } from "../ui/retry-button";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
@@ -31,6 +37,14 @@ const MAX_FINDINGS = 20;
 const PROFILER_FOLDER_NAME = "profiler";
 const LOGS_FOLDER_NAME = "logs";
 const NUMBER_FORMAT = new Intl.NumberFormat();
+
+// A selected environment in one of these phases is kept: it is connected, or on its way.
+const STILL_CONNECTING_PHASES: ReadonlySet<EnvironmentConnectionPhase> = new Set([
+  "connected",
+  "available",
+  "connecting",
+  "reconnecting",
+]);
 
 const selectEnableProfiler = (settings: UnifiedSettings) => settings.enableProfiler;
 
@@ -133,30 +147,37 @@ function FindingsList({
   );
 }
 
-function OpenFolderButton({
+/**
+ * An action that can be unavailable. Its reason is shown in a tooltip and read out, because
+ * a disabled button gets no pointer events: the focusable wrapper carries the tooltip.
+ */
+function ReasonedButton({
+  icon,
+  label,
   disabledReason,
-  isOpening,
-  onOpen,
+  busy = false,
+  onClick,
 }: {
+  readonly icon: ReactNode;
+  readonly label: string;
   readonly disabledReason: ReactNode | null;
-  readonly isOpening: boolean;
-  readonly onOpen: () => void;
+  readonly busy?: boolean;
+  readonly onClick: () => void;
 }) {
   const reasonId = useId();
   const button = (
     <Button
       size="xs"
       variant="outline"
-      disabled={disabledReason !== null || isOpening}
+      disabled={disabledReason !== null || busy}
       aria-describedby={disabledReason === null ? undefined : reasonId}
-      onClick={onOpen}
+      onClick={onClick}
     >
-      <FolderOpenIcon className="size-3.5" />
-      Open folder
+      {icon}
+      {label}
     </Button>
   );
   if (disabledReason === null) return button;
-  // A disabled button gets no pointer events, so the focusable wrapper carries the tooltip.
   return (
     <>
       <Tooltip>
@@ -174,11 +195,117 @@ function OpenFolderButton({
   );
 }
 
-export function ProfilerSection() {
-  const environment = usePrimaryEnvironment();
-  const environmentId = environment?.environmentId ?? null;
-  const enabled = usePrimarySettings(selectEnableProfiler);
-  const updateSettings = useUpdatePrimarySettings();
+export function ProfilerSection({
+  selectedEnvironmentId,
+  onSelectEnvironment,
+}: {
+  /** The chosen environment, kept by the caller (the route) so a link can set it. */
+  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly onSelectEnvironment: (environmentId: EnvironmentId | null) => void;
+}) {
+  const { environments, isReady } = useEnvironments();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const connected = environments.filter((candidate) => candidate.connection.phase === "connected");
+  const primaryConnected =
+    connected.find((candidate) => candidate.environmentId === primaryEnvironment?.environmentId) ??
+    null;
+  const environment =
+    connected.find((candidate) => candidate.environmentId === selectedEnvironmentId) ??
+    primaryConnected ??
+    connected[0] ??
+    primaryEnvironment ??
+    null;
+  // A choice whose environment has gone is dropped, so coming back online does not revive it.
+  // One that has not connected yet (a reload on a link) is kept, as is any choice while the
+  // catalog is loading, because the environment may simply not be known yet.
+  const selectionGone =
+    isReady &&
+    selectedEnvironmentId !== null &&
+    !environments.some(
+      (candidate) =>
+        candidate.environmentId === selectedEnvironmentId &&
+        STILL_CONNECTING_PHASES.has(candidate.connection.phase),
+    );
+  useEffect(() => {
+    if (selectionGone) onSelectEnvironment(null);
+  }, [selectionGone, onSelectEnvironment]);
+  // The export belongs to the primary environment and outlives a switch away from it.
+  const exportBundle = useDiagnosticLogsDownload();
+  if (environment === null) return null;
+  // The requested environment is on its way, so another one shows in the meantime; say so.
+  const waitingFor =
+    selectedEnvironmentId !== null && selectedEnvironmentId !== environment.environmentId
+      ? environments.find((candidate) => candidate.environmentId === selectedEnvironmentId)
+      : undefined;
+
+  return (
+    <SettingsSection title="Profiler">
+      {connected.length > 1 ||
+      waitingFor !== undefined ||
+      environment.environmentId !== primaryEnvironment?.environmentId ? (
+        <SettingsRow
+          title="Environment"
+          description="Choose which environment's profiler to view and control."
+          status={
+            waitingFor === undefined
+              ? null
+              : `${waitingFor.label} is not connected. Showing ${environment.label}.`
+          }
+          control={
+            connected.length > 1 ? (
+              <Select
+                value={environment.environmentId}
+                onValueChange={(value) => {
+                  if (value !== null) onSelectEnvironment(EnvironmentId.make(value));
+                }}
+              >
+                <SelectTrigger aria-label="Environment" className="w-full sm:w-48">
+                  <SelectValue>{environment.label}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {environments.map((candidate) => (
+                    <SelectItem
+                      hideIndicator
+                      disabled={candidate.connection.phase !== "connected"}
+                      key={candidate.environmentId}
+                      value={candidate.environmentId}
+                    >
+                      {candidate.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            ) : (
+              // The only environment that can be controlled, and not the one the rest of
+              // this page describes: name it instead of offering a choice.
+              <span className="text-xs font-medium text-foreground">{environment.label}</span>
+            )
+          }
+        />
+      ) : null}
+      <EnvironmentProfiler
+        key={environment.environmentId}
+        environment={environment}
+        primaryEnvironment={primaryEnvironment}
+        exportBundle={exportBundle}
+      />
+    </SettingsSection>
+  );
+}
+
+function EnvironmentProfiler({
+  environment,
+  primaryEnvironment,
+  exportBundle,
+}: {
+  readonly environment: EnvironmentPresentation;
+  readonly primaryEnvironment: EnvironmentPresentation | null;
+  readonly exportBundle: ReturnType<typeof useDiagnosticLogsDownload>;
+}) {
+  const environmentId = environment.environmentId;
+  const isPrimary = environmentId === primaryEnvironment?.environmentId;
+  const enabled = useEnvironmentSettings(environmentId, selectEnableProfiler);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const observability = useAtomValue(primaryServerObservabilityAtom);
   const documentVisible = useDocumentVisible();
   const {
@@ -187,15 +314,13 @@ export function ProfilerSection() {
     isPending,
     refresh,
     revalidate,
-  } = useEnvironmentQuery(
-    environmentId === null ? null : serverEnvironment.profilerStatus({ environmentId, input: {} }),
-  );
+  } = useEnvironmentQuery(serverEnvironment.profilerStatus({ environmentId, input: {} }));
   const {
     isOpening,
     error: openFolderError,
     open: openDirectory,
   } = useOpenDirectoryInEditor("Unable to open the profiler folder.");
-  const { isDownloading, download } = useDiagnosticLogsDownload();
+  const { isDownloading, download } = exportBundle;
   const [includeCrashDumps, setIncludeCrashDumps] = useState(false);
 
   // A refresh interrupts the read it replaces, so a slow connection would never finish one.
@@ -214,15 +339,27 @@ export function ProfilerSection() {
   const profilerDirectory = profilerDirectoryFromLogsDirectory(
     observability?.logsDirectoryPath ?? null,
   );
-  const environmentLabel = environment?.label.trim() || "the server";
-  const openFolderDisabledReason: ReactNode | null = !isDesktopHost ? (
+  const environmentLabel = environment.label.trim() || "the server";
+  const primaryLabel = primaryEnvironment?.label.trim() || "the main server";
+  const profilerCommand = <span className="font-mono">bibcode profiler</span>;
+  // The folder opens through this machine's editor and the bundle comes over the primary
+  // connection, so both belong to the primary environment alone.
+  const openFolderDisabledReason: ReactNode | null =
+    !isDesktopHost || !isPrimary ? (
+      <>
+        The profiler folder is on {environmentLabel}. Use{" "}
+        {isPrimary ? <>Export bundle or {profilerCommand}</> : profilerCommand} on that machine.
+      </>
+    ) : profilerDirectory === null ? (
+      "The profiler folder could not be located."
+    ) : status?.diskBytes === 0 ? (
+      "Nothing recorded yet."
+    ) : null;
+  const exportDisabledReason: ReactNode | null = isPrimary ? null : (
     <>
-      The profiler folder is on {environmentLabel}. Use Export bundle or{" "}
-      <span className="font-mono">bibcode profiler</span> on that machine.
+      Export bundle covers {primaryLabel} only. Use {profilerCommand} on {environmentLabel}.
     </>
-  ) : profilerDirectory === null ? (
-    "The profiler folder could not be located."
-  ) : null;
+  );
 
   const handleToggle = (checked: boolean) => {
     // The server applies the setting live, so the status is read again once it is saved.
@@ -241,7 +378,7 @@ export function ProfilerSection() {
         : "Starting...";
 
   return (
-    <SettingsSection title="Profiler">
+    <>
       <SettingsRow
         title="Record profiling data"
         description="Records crashes, memory and CPU trends, slow requests and worktree cleanup problems for this environment. Data stays on this machine. Uses about 1% CPU."
@@ -288,20 +425,20 @@ export function ProfilerSection() {
         }
         control={
           <>
-            <OpenFolderButton
+            <ReasonedButton
+              icon={<FolderOpenIcon className="size-3.5" />}
+              label="Open folder"
               disabledReason={openFolderDisabledReason}
-              isOpening={isOpening}
-              onOpen={handleOpenFolder}
+              busy={isOpening}
+              onClick={handleOpenFolder}
             />
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={isDownloading}
+            <ReasonedButton
+              icon={<DownloadIcon className="size-3.5" />}
+              label={isDownloading ? "Exporting..." : "Export bundle"}
+              disabledReason={exportDisabledReason}
+              busy={isDownloading}
               onClick={() => download({ includeCrashDumps })}
-            >
-              <DownloadIcon className="size-3.5" />
-              {isDownloading ? "Exporting..." : "Export bundle"}
-            </Button>
+            />
           </>
         }
       >
@@ -323,6 +460,6 @@ export function ProfilerSection() {
         </label>
       </SettingsRow>
       <FindingsList status={status} hasError={error !== null} />
-    </SettingsSection>
+    </>
   );
 }

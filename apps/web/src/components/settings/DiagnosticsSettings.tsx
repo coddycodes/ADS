@@ -12,7 +12,7 @@ import {
   squashAtomCommandFailure,
 } from "@bibcode/client-runtime/state/runtime";
 import { useCallback, useState, type ReactNode } from "react";
-import type { ServerProcessSignal } from "@bibcode/contracts";
+import type { EnvironmentId, ServerProcessSignal } from "@bibcode/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
@@ -333,7 +333,16 @@ function DiagnosticsRefreshButton({
   );
 }
 
-export function DiagnosticsSettingsPanel() {
+const NO_OP = () => undefined;
+
+export function DiagnosticsSettingsPanel({
+  profilerEnvironmentId = null,
+  onProfilerEnvironmentChange = NO_OP,
+}: {
+  /** The environment the Profiler section shows; the primary one when absent. */
+  readonly profilerEnvironmentId?: EnvironmentId | null;
+  readonly onProfilerEnvironmentChange?: (environmentId: EnvironmentId | null) => void;
+}) {
   const observability = useAtomValue(primaryServerObservabilityAtom);
   const primaryEnvironment = usePrimaryEnvironment();
   const environmentId = primaryEnvironment?.environmentId ?? null;
@@ -453,7 +462,10 @@ export function DiagnosticsSettingsPanel() {
     : false;
   return (
     <SettingsPageContainer className="pb-12">
-      <ProfilerSection />
+      <ProfilerSection
+        selectedEnvironmentId={profilerEnvironmentId}
+        onSelectEnvironment={onProfilerEnvironmentChange}
+      />
 
       <ResourceDiagnosticsSections
         processData={processData}
