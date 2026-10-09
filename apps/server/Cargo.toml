@@ -60,6 +60,7 @@ zip.workspace = true
 [dev-dependencies]
 bibcode-server = { workspace = true, features = ["hermetic-test-guard"] }
 tempfile.workspace = true
+time = { workspace = true, features = ["macros"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower.workspace = true
 

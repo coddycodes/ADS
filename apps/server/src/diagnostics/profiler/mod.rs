@@ -1,4 +1,5 @@
 pub mod event;
+pub mod findings;
 pub mod redact;
 pub mod store;
 
