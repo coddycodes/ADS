@@ -16,10 +16,17 @@ const RECORD_OVER_MS = 250;
 const STALL_OVER_MS = 50;
 const HEARTBEAT_MS = 500;
 /**
- * A heartbeat this overdue means the machine was suspended, not that the main thread was busy.
- * On Windows `performance.now()` keeps counting through a sleep, and nothing else says so.
+ * The wall clock ran this much further than the monotonic one, so the machine slept: the
+ * monotonic clock (`performance.now()`) stops during a suspend on every platform but Windows.
  */
-const SUSPENDED_AFTER_MS = 60_000;
+const SUSPEND_DIVERGENCE_MS = 5_000;
+/**
+ * On Windows the monotonic clock counts a sleep too, so a heartbeat this overdue is the only
+ * sign of one. It is used only with Long Animation Frames (WebView2), where the heartbeat counts
+ * no stalls and so hides no hang; elsewhere a late heartbeat is a stall, however long. The
+ * server's latency fence makes the same split (`SUSPEND_GAP_MS`).
+ */
+const OVERDUE_HEARTBEAT_MS = 60_000;
 const FLUSH_EVERY_MS = 10_000;
 /** The server's caps: a longer sample spans a sleep, and a longer window is rejected. */
 const MAX_SAMPLE_MS = 3_600_000;
@@ -45,6 +52,8 @@ export interface ClientCollectorDeps {
   readonly clientId: string;
   /** Defaults to `requestAnimationFrame`. */
   readonly raf?: (callback: () => void) => unknown;
+  /** Wall-clock time, compared with `now` to tell a suspend; defaults to `Date.now`. */
+  readonly wallNow?: () => number;
 }
 
 interface PendingRecord {
@@ -58,6 +67,8 @@ interface PendingRecord {
 }
 
 interface EnvironmentWindow {
+  /** Which enabling of the environment this is: a request from an earlier one is dropped. */
+  readonly recording: number;
   readonly records: PendingRecord[];
   /** Method → bucket → count. */
   readonly histograms: Map<string, Map<number, number>>;
@@ -99,6 +110,7 @@ function isRefusal(error: unknown): boolean {
  */
 export function createClientCollector(deps: ClientCollectorDeps): ClientCollector {
   const { now, send, clientId } = deps;
+  const wallNow = deps.wallNow ?? Date.now;
   const raf =
     deps.raf ??
     (typeof requestAnimationFrame === "function"
@@ -118,9 +130,10 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
   /** Environments with a batch on the wire: one at a time, so a slow server cannot pile up. */
   const uploading = new Set<string>();
   let counter = 0;
+  let recordings = 0;
   /**
-   * Bumped whenever observation was interrupted (a visibility change, a suspend, a stop): a
-   * sample that saw it changed spans the gap and is dropped.
+   * Bumped by a visibility change, and by a suspend the heartbeat saw: a sample that saw it
+   * change spans the gap and is dropped.
    */
   let epoch = 0;
   let windowStart = 0;
@@ -130,6 +143,8 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
   let running = false;
   let flushTimer: ReturnType<typeof setInterval> | undefined;
   let heartbeat: ReturnType<typeof setTimeout> | undefined;
+  let beatScheduledAt = 0;
+  let beatScheduledAtWall = 0;
   let expectedBeat = 0;
   let observers: PerformanceObserver[] = [];
 
@@ -139,15 +154,24 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
     stalls.maxMs = Math.max(stalls.maxMs, ms);
   };
 
+  /** Whether the machine slept since `at` (monotonic) and `wallAt`; see `SUSPEND_DIVERGENCE_MS`. */
+  const slept = (at: number, wallAt: number) =>
+    wallNow() - wallAt - (now() - at) > SUSPEND_DIVERGENCE_MS;
+  /** Whether a Windows sleep just ended and the heartbeat has not run since. */
+  const overdue = () =>
+    longFrames && heartbeat !== undefined && now() - expectedBeat >= OVERDUE_HEARTBEAT_MS;
+
   // The heartbeat runs in both modes: it is the stall signal without Long Animation Frames,
-  // and the suspend signal everywhere.
+  // and a suspend signal everywhere.
   const scheduleBeat = () => {
-    expectedBeat = now() + HEARTBEAT_MS;
+    beatScheduledAt = now();
+    beatScheduledAtWall = wallNow();
+    expectedBeat = beatScheduledAt + HEARTBEAT_MS;
     heartbeat = setTimeout(beat, HEARTBEAT_MS);
   };
   const beat = () => {
     const lateness = now() - expectedBeat;
-    if (lateness >= SUSPENDED_AFTER_MS) epoch += 1;
+    if (slept(beatScheduledAt, beatScheduledAtWall) || overdue()) epoch += 1;
     else if (!longFrames && lateness > STALL_OVER_MS) addStall(lateness);
     scheduleBeat();
   };
@@ -155,8 +179,6 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
     clearTimeout(heartbeat);
     heartbeat = undefined;
   };
-  /** Whether the machine just woke and the heartbeat has not run since. */
-  const suspended = () => heartbeat !== undefined && now() - expectedBeat >= SUSPENDED_AFTER_MS;
 
   const onVisibilityChange = () => {
     epoch += 1;
@@ -210,8 +232,6 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
   const stop = () => {
     if (!running) return;
     running = false;
-    // A request in flight across a stop and a restart is not measured.
-    epoch += 1;
     clearInterval(flushTimer);
     pauseBeat();
     if (typeof document !== "undefined") {
@@ -238,14 +258,14 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
       return;
     }
     const receivedAt = now();
+    const receivedAtWall = wallNow();
     const seen = epoch;
     // The second frame callback runs after the frame that painted the response.
     raf(() =>
       raf(() => {
         const renderMs = now() - receivedAt;
-        if (seen === epoch && !suspended() && renderMs <= MAX_SAMPLE_MS) {
-          pending.renderMs = renderMs;
-        }
+        const measured = seen === epoch && !slept(receivedAt, receivedAtWall) && !overdue();
+        if (measured && renderMs <= MAX_SAMPLE_MS) pending.renderMs = renderMs;
         pending.rendered = true;
       }),
     );
@@ -291,7 +311,11 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
     for (const [environmentId, window] of windows) {
       // A record still waiting for its frame goes out with a later batch.
       const waiting = window.records.filter((pending) => !pending.rendered);
-      windows.set(environmentId, { records: waiting, histograms: new Map() });
+      windows.set(environmentId, {
+        recording: window.recording,
+        records: waiting,
+        histograms: new Map(),
+      });
       // While the previous batch is on the wire, this window is dropped.
       if (uploading.has(environmentId)) continue;
       const records = window.records.filter((pending) => pending.rendered);
@@ -323,12 +347,14 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
 
   return {
     observeRequest(environmentId, method) {
-      if (!windows.has(environmentId) || method === WS_METHODS.serverReportProfilerClientBatch) {
+      const recording = windows.get(environmentId)?.recording;
+      if (recording === undefined || method === WS_METHODS.serverReportProfilerClientBatch) {
         return UNOBSERVED;
       }
       counter += 1;
       const correlationId = `${clientId}:${counter}`;
       const startedAtMs = now();
+      const startedAtWall = wallNow();
       const seen = isHidden() ? -1 : epoch;
       let completed = false;
       return {
@@ -338,7 +364,9 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
           completed = true;
           const rttMs = now() - startedAtMs;
           const window = windows.get(environmentId);
-          if (window === undefined || seen !== epoch || suspended()) return;
+          // Measured only within one recording of its environment, while visible and awake.
+          if (window?.recording !== recording || seen !== epoch) return;
+          if (slept(startedAtMs, startedAtWall) || overdue()) return;
           if (!(rttMs >= 0 && rttMs <= MAX_SAMPLE_MS)) return;
           record(window, method, rttMs);
           if (rttMs <= RECORD_OVER_MS) return;
@@ -358,15 +386,13 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
     },
     setEnabledEnvironments(ids) {
       for (const environmentId of windows.keys()) {
-        if (ids.has(environmentId)) continue;
-        windows.delete(environmentId);
-        // Its requests in flight must not count once it is enabled again. Other
-        // environments' requests in flight are dropped too; toggling is rare.
-        epoch += 1;
+        if (!ids.has(environmentId)) windows.delete(environmentId);
       }
       for (const environmentId of ids) {
         if (!refused.has(environmentId) && !windows.has(environmentId)) {
-          windows.set(environmentId, { records: [], histograms: new Map() });
+          // A new recording: its requests in flight from before stay unmeasured.
+          recordings += 1;
+          windows.set(environmentId, { recording: recordings, records: [], histograms: new Map() });
         }
       }
       if (windows.size > 0) start();

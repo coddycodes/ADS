@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import { DEFAULT_SERVER_SETTINGS } from "./settings.ts";
-import { PROFILER_CLIENT_BATCH_LIMITS, ProfilerClientBatch, ProfilerStatus } from "./profiler.ts";
+import {
+  PROFILER_CLIENT_BATCH_LIMITS,
+  ProfilerClientBatch,
+  ProfilerClientBatchInvalid,
+  ProfilerClientBatchTooLarge,
+  ProfilerStatus,
+} from "./profiler.ts";
+import { WsServerReportProfilerClientBatchRpc } from "./rpc.ts";
 
 const decodeStatus = Schema.decodeUnknownSync(ProfilerStatus);
 const decodeBatch = Schema.decodeUnknownSync(ProfilerClientBatch);
+const decodeBatchError = Schema.decodeUnknownSync(WsServerReportProfilerClientBatchRpc.errorSchema);
 
 describe("profiler contracts", () => {
   it("defaults the profiler off", () => {
@@ -57,6 +65,21 @@ describe("profiler contracts", () => {
     stalls: { count: 0, totalMs: 0, maxMs: 0 },
     interactions: { count: 0, maxMs: 0 },
     jsHeapBytes: null,
+  });
+
+  it("declares the server's batch rejections as typed errors of the batch RPC", () => {
+    expect(
+      decodeBatchError({
+        _tag: "ProfilerClientBatchTooLarge",
+        message: "The batch is over 64 KiB.",
+      }),
+    ).toBeInstanceOf(ProfilerClientBatchTooLarge);
+    expect(
+      decodeBatchError({
+        _tag: "ProfilerClientBatchInvalid",
+        message: "windowMs is out of range.",
+      }),
+    ).toBeInstanceOf(ProfilerClientBatchInvalid);
   });
 
   it("accepts a client batch at the limits and rejects one over either", () => {

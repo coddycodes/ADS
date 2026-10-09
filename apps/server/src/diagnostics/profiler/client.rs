@@ -39,6 +39,7 @@ const MAX_TIMESTAMP_MS: f64 = 1e12;
 const MAX_HEAP_BYTES: f64 = (1u64 << 40) as f64;
 const STALL_FINDING_MS: f64 = 1_000.0;
 const INTERACTION_FINDING_MS: f64 = 500.0;
+/// The source of client findings. Events name their client: `client:<clientId>`.
 const SOURCE: &str = "client";
 
 /// Handles one batch: `{ "accepted": true }` once it is recorded, `{ "accepted": false }`
@@ -52,8 +53,9 @@ pub fn ingest_client_batch(batch: Value, env_id: &str) -> Result<Value, Value> {
     }
     let book = global_latency();
     let analysis = analyze(&batch, env_id, |id| book.find_join(id));
+    let source = format!("{SOURCE}:{}", batch.client_id);
     for (kind, payload) in analysis.events {
-        emit_from(SOURCE.to_owned(), kind, payload);
+        emit_from(source.clone(), kind, payload);
     }
     for finding in analysis.findings {
         record_finding(finding);
@@ -742,5 +744,33 @@ mod tests {
             )]))
             .is_ok()
         );
+    }
+
+    #[test]
+    fn rejections_have_the_shape_of_the_contract_errors() {
+        let fixtures = [
+            include_str!(
+                "../../../../../packages/contracts/fixtures/rpc-wire/typed-failures/server__reportProfilerClientBatch-00.json"
+            ),
+            include_str!(
+                "../../../../../packages/contracts/fixtures/rpc-wire/typed-failures/server__reportProfilerClientBatch-01.json"
+            ),
+        ];
+        for (fixture, error) in fixtures.into_iter().zip([too_large("m"), invalid("m")]) {
+            let fixture: Value = serde_json::from_str(fixture).expect("fixture JSON");
+            let expected = &fixture["exit"]["cause"][0]["error"];
+            assert_eq!(expected["_tag"], error["_tag"]);
+            let keys = |value: &Value| {
+                let mut keys: Vec<String> = value
+                    .as_object()
+                    .expect("an error object")
+                    .keys()
+                    .cloned()
+                    .collect();
+                keys.sort();
+                keys
+            };
+            assert_eq!(keys(expected), keys(&error));
+        }
     }
 }

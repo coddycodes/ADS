@@ -194,6 +194,10 @@ describe("clientCollector", () => {
         throw { _tag: "EnvironmentAuthorizationError", message: "missing scope" };
       }
       if (environmentId === "flaky") throw new Error("socket closed");
+      if (environmentId === "rejected") {
+        // A refused batch is dropped; the next one is still sent.
+        throw { _tag: "ProfilerClientBatchTooLarge", message: "The batch is over 64 KiB." };
+      }
       return { accepted: true };
     });
     const c = createClientCollector({
@@ -202,9 +206,9 @@ describe("clientCollector", () => {
       supportedEntryTypes: [],
       clientId: "c1",
     });
-    c.setEnabledEnvironments(new Set(["denied", "flaky"]));
+    c.setEnabledEnvironments(new Set(["denied", "flaky", "rejected"]));
     const report = () => {
-      for (const environmentId of ["denied", "flaky"]) {
+      for (const environmentId of ["denied", "flaky", "rejected"]) {
         const done = c.observeRequest(environmentId, "m");
         t += 10;
         done.complete();
@@ -217,19 +221,23 @@ describe("clientCollector", () => {
     expect(send.mock.calls.map(([environmentId]) => environmentId)).toEqual([
       "denied",
       "flaky",
+      "rejected",
       "flaky",
+      "rejected",
     ]);
     expect(c.observeRequest("denied", "m").correlationId).toBeNull();
     c.dispose();
   });
-  it("drops samples that span a system suspend, whichever wakes first", async () => {
+  it("drops samples that span a Windows sleep, whichever wakes first", async () => {
     vi.useFakeTimers();
     let t = 0;
+    let wall = 1_000_000;
     const send = vi.fn(async (_environmentId: string, _batch: any) => ({ accepted: true }));
     const c = createClientCollector({
       now: () => t,
+      wallNow: () => wall,
       send,
-      // Long Animation Frames replace the heartbeat's stall role, not its suspend role.
+      // WebView2: Long Animation Frames replace the heartbeat's stall role, not its suspend role.
       supportedEntryTypes: ["long-animation-frame"],
       clientId: "c1",
       raf: nextFrame,
@@ -237,19 +245,83 @@ describe("clientCollector", () => {
     c.setEnabledEnvironments(new Set(["e"]));
     const repliesFirst = c.observeRequest("e", "m");
     const heartbeatFirst = c.observeRequest("e", "m");
-    // Two minutes asleep. On Windows `performance.now()` counts them, with no visibility change.
+    // Two minutes asleep. On Windows both clocks count them, and the document stays visible.
     t = 120_000;
+    wall += 120_000;
     repliesFirst.complete();
     vi.advanceTimersByTime(500);
     heartbeatFirst.complete();
     const afterWaking = c.observeRequest("e", "m");
     t = 120_300;
+    wall += 300;
     afterWaking.complete();
     await c.flush();
     const batch = send.mock.calls[0]![1];
     expect(batch.records.map((r: { rttMs: number }) => r.rttMs)).toEqual([300]);
     expect(batch.histograms).toEqual([{ method: "m", buckets: [[50, 1]] }]);
     expect(batch.stalls.count).toBe(0);
+    c.dispose();
+  });
+
+  it("drops samples across a sleep that stopped the monotonic clock, whichever wakes first", async () => {
+    vi.useFakeTimers();
+    let t = 0;
+    let wall = 1_000_000;
+    const send = vi.fn(async (_environmentId: string, _batch: any) => ({ accepted: true }));
+    const c = createClientCollector({
+      now: () => t,
+      wallNow: () => wall,
+      send,
+      supportedEntryTypes: [],
+      clientId: "c1",
+      raf: nextFrame,
+    });
+    c.setEnabledEnvironments(new Set(["e"]));
+    const repliesFirst = c.observeRequest("e", "m");
+    const heartbeatFirst = c.observeRequest("e", "m");
+    // Two minutes asleep on WebKitGTK or WKWebView: the monotonic clock barely moved.
+    t = 800;
+    wall += 120_800;
+    repliesFirst.complete();
+    vi.advanceTimersByTime(500);
+    heartbeatFirst.complete();
+    const afterWaking = c.observeRequest("e", "m");
+    t = 1_100;
+    wall += 300;
+    afterWaking.complete();
+    await c.flush();
+    const batch = send.mock.calls[0]![1];
+    expect(batch.records.map((r: { rttMs: number }) => r.rttMs)).toEqual([300]);
+    expect(batch.histograms).toEqual([{ method: "m", buckets: [[50, 1]] }]);
+    // The heartbeat arrived 300 ms late, but across a suspend: not a stall.
+    expect(batch.stalls.count).toBe(0);
+    c.dispose();
+  });
+
+  it("counts a 70 s hang as a stall when the wall clock agrees", async () => {
+    vi.useFakeTimers();
+    let t = 0;
+    let wall = 1_000_000;
+    const send = vi.fn(async (_environmentId: string, _batch: any) => ({ accepted: true }));
+    const c = createClientCollector({
+      now: () => t,
+      wallNow: () => wall,
+      send,
+      supportedEntryTypes: [],
+      clientId: "c1",
+      raf: nextFrame,
+    });
+    c.setEnabledEnvironments(new Set(["e"]));
+    const waited = c.observeRequest("e", "m");
+    t = 70_000;
+    wall += 70_000;
+    vi.advanceTimersByTime(500);
+    waited.complete();
+    await c.flush();
+    const batch = send.mock.calls[0]![1];
+    expect(batch.stalls).toEqual({ count: 1, totalMs: 69_500, maxMs: 69_500 });
+    // The user really waited through the hang, so the request still counts.
+    expect(batch.records.map((r: { rttMs: number }) => r.rttMs)).toEqual([70_000]);
     c.dispose();
   });
 
@@ -272,6 +344,30 @@ describe("clientCollector", () => {
     expect(send).toHaveBeenCalledTimes(1);
     c.dispose();
   });
+  it("keeps an environment's request in flight while another one reconnects", async () => {
+    let t = 0;
+    const send = vi.fn(async (_environmentId: string, _batch: any) => ({ accepted: true }));
+    const c = createClientCollector({
+      now: () => t,
+      send,
+      supportedEntryTypes: [],
+      clientId: "c1",
+      raf: nextFrame,
+    });
+    c.setEnabledEnvironments(new Set(["a", "b"]));
+    const inFlight = c.observeRequest("a", "m");
+    // B disconnects and comes back, which leaves and re-enters the enabled set.
+    c.setEnabledEnvironments(new Set(["a"]));
+    c.setEnabledEnvironments(new Set(["a", "b"]));
+    t = 300;
+    inFlight.complete();
+    await c.flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]![0]).toBe("a");
+    expect(send.mock.calls[0]![1].records.map((r: { rttMs: number }) => r.rttMs)).toEqual([300]);
+    c.dispose();
+  });
+
   it("drops a request that spans its environment being switched off and on", async () => {
     let t = 0;
     const send = vi.fn(async (_environmentId: string, _batch: any) => ({ accepted: true }));
