@@ -720,7 +720,6 @@ impl ProductionRuntime {
         self.managed_endpoint.shutdown().await;
         self.workspace.shutdown().await;
         self.status_broadcaster.shutdown().await;
-        self.profiler.shutdown().await;
         self.worktree_catalog_operations.shutdown().await;
         self._worktree_catalog.shutdown().await;
         self.worktree_runtime.shutdown().await;
@@ -749,6 +748,9 @@ impl ProductionRuntime {
             }
         }
         self.orchestration.shutdown().await;
+        // Last, so the events and panics of every other service's shutdown are recorded, and a
+        // crash anywhere in the shutdown still reads as an unclean exit on the next start.
+        self.profiler.end_session().await;
         *quiesced = true;
         match first_error {
             Some(error) => Err(error),

@@ -8,6 +8,7 @@ rust-version = "1.98.0"
 
 [workspace.dependencies]
 axum = { version = "0.8.9", features = ["form", "http1", "json", "tokio", "ws"] }
+backtrace = "0.3.76"
 base64 = "0.22.1"
 block2 = "0.6"
 cairo-rs = { version = "0.18", features = ["png"] }
@@ -28,6 +29,13 @@ libc = "0.2"
 mime_guess = "2.0.5"
 minisign-verify = "=0.2.5"
 notify = "8"
+object = { version = "0.37.3", default-features = false, features = [
+  "elf",
+  "macho",
+  "pe",
+  "read_core",
+  "std",
+] }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSImage", "NSBitmapImageRep", "NSGraphics"] }
 objc2-foundation = "0.3"

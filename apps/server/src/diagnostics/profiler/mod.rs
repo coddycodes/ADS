@@ -2,9 +2,12 @@ pub mod event;
 pub mod findings;
 pub mod latency;
 pub mod leak;
+pub mod os_records;
+pub mod panic_hook;
 pub mod redact;
 pub mod runtime;
 pub mod sampler;
+pub mod sentinel;
 pub mod store;
 
 use std::{

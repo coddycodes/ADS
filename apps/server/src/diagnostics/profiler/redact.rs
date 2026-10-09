@@ -1,6 +1,6 @@
 use crate::diagnostics::redact_sensitive_text;
 
-const MESSAGE_MAX_BYTES: usize = 2048;
+pub(super) const MESSAGE_MAX_BYTES: usize = 2048;
 
 /// Replaces the user's home directory with `~` and applies secret redaction.
 pub fn redact_path(value: &str) -> String {
