@@ -107,6 +107,7 @@ import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { EditorId } from "./editor.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import type { ClientSettings, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import type { ProfilerClientBatch, ProfilerClientBatchResult, ProfilerStatus } from "./profiler.ts";
 import type {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -1493,6 +1494,8 @@ export interface LocalApi {
     getProcessResourceHistory: (
       input: ServerProcessResourceHistoryInput,
     ) => Promise<ServerProcessResourceHistoryResult>;
+    getProfilerStatus: () => Promise<ProfilerStatus>;
+    reportProfilerClientBatch: (input: ProfilerClientBatch) => Promise<ProfilerClientBatchResult>;
     signalProcess: (input: ServerSignalProcessInput) => Promise<ServerSignalProcessResult>;
   };
 }

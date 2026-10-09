@@ -1796,6 +1796,7 @@ fn validate_settings_document(settings: &Value) -> Result<(), String> {
     validate_optional_bool(object, "enableAgentActivity")?;
     validate_optional_bool(object, "enableChatAgentActivity")?;
     validate_optional_bool(object, "enableTerminalAgentActivity")?;
+    validate_optional_bool(object, "enableProfiler")?;
     validate_optional_bool(object, "newWorktreesStartFromOrigin")?;
     validate_optional_string(object, "worktreeBaseDirectory")?;
     validate_optional_string(object, "addProjectBaseDirectory")?;
@@ -4622,6 +4623,13 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[test]
+    fn profiler_setting_must_be_a_boolean() {
+        assert!(validate_settings_document(&json!({"enableProfiler": true})).is_ok());
+        assert!(validate_settings_document(&json!({})).is_ok());
+        assert!(validate_settings_document(&json!({"enableProfiler": "true"})).is_err());
     }
 
     #[tokio::test]

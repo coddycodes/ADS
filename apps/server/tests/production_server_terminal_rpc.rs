@@ -1738,6 +1738,16 @@ async fn server_terminal_auxiliary_rpcs_surface_runtime_state_validation_and_int
         assert_eq!(history["windowMs"], 5_000);
         assert_eq!(history["bucketMs"], 1_000);
 
+        let profiler =
+            success_value(request(control, "10", "server.getProfilerStatus", json!({})).await);
+        assert_eq!(profiler["enabled"], false);
+        assert_eq!(profiler["capabilities"]["storage"], "ok");
+        assert_eq!(profiler["findings"], json!([]));
+        let reported = success_value(
+            request(control, "11", "server.reportProfilerClientBatch", json!({})).await,
+        );
+        assert_eq!(reported["accepted"], false);
+
         let refreshed = success_value(
             request(
                 control,
@@ -1919,6 +1929,8 @@ fn registrar_source_contains_every_owned_rpc_name() {
         "server.getConfig",
         "server.getProcessDiagnostics",
         "server.getProcessResourceHistory",
+        "server.getProfilerStatus",
+        "server.reportProfilerClientBatch",
         "server.getProviderUsage",
         "server.consumeCodexRateLimitReset",
         "server.getSettings",

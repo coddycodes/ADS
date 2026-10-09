@@ -430,6 +430,31 @@ fn register_diagnostics_rpcs(registry: &mut RpcRegistry, services: &ServerTermin
         },
     );
 
+    // Disabled-profiler stubs: a later change replaces both with the real profiler runtime.
+    registry.register_unary(
+        "server.getProfilerStatus",
+        |_request, _cancellation| async {
+            Ok(json!({
+                "enabled": false,
+                "recordingSince": null,
+                "diskBytes": 0,
+                "eventCount": 0,
+                "droppedEvents": 0,
+                "lastCrashAt": null,
+                "capabilities": {
+                    "nativeDumps": "unavailable",
+                    "osCrashRecords": "unavailable",
+                    "storage": "ok",
+                },
+                "findings": [],
+            }))
+        },
+    );
+    registry.register_unary(
+        "server.reportProfilerClientBatch",
+        |_request, _cancellation| async { Ok(json!({ "accepted": false })) },
+    );
+
     let sampler = services.resource_sampler.clone();
     registry.register_unary("server.signalProcess", move |request, _cancellation| {
         let sampler = sampler.clone();
