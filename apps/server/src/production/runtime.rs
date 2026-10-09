@@ -469,7 +469,8 @@ impl ProductionRuntime {
             process_tree_cleanup,
         )
         .with_workspace_admission(workspace_availability.clone(), repositories.clone())
-        .with_profiler(&profiler);
+        .with_profiler(&profiler)
+        .with_environment_id(&config.environment_id);
         let worktree_runtime = WorktreeRuntime::start(
             orchestration.clone(),
             provider_runtime.clone(),

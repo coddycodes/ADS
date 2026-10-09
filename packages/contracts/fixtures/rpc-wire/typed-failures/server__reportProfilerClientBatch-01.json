@@ -7,7 +7,7 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "UpdateMaintenanceActiveError",
+          "_tag": "ProfilerClientBatchInvalid",
           "message": "&|"
         }
       }

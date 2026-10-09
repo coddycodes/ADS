@@ -9,7 +9,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { RpcClientError } from "effect/unstable/rpc";
+import { RpcClient, RpcClientError } from "effect/unstable/rpc";
 
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
@@ -28,13 +28,22 @@ export interface EnvironmentRpcRequestObservation {
   readonly method: string;
 }
 
+export interface EnvironmentRpcRequestObservationHandle {
+  /** Runs once the request settles, however it ends. */
+  readonly complete: Effect.Effect<void>;
+  /** RPC headers to send with the request; empty for none. */
+  readonly headers: Readonly<Record<string, string>>;
+}
+
+const UNOBSERVED: EnvironmentRpcRequestObservationHandle = { complete: Effect.void, headers: {} };
+
 export class EnvironmentRpcRequestObserver extends Context.Reference<{
   readonly observe: (
     request: EnvironmentRpcRequestObservation,
-  ) => Effect.Effect<Effect.Effect<void>>;
+  ) => Effect.Effect<EnvironmentRpcRequestObservationHandle>;
 }>("@bibcode/client-runtime/rpc/EnvironmentRpcRequestObserver", {
   defaultValue: () => ({
-    observe: () => Effect.succeed(Effect.void),
+    observe: () => Effect.succeed(UNOBSERVED),
   }),
 }) {}
 
@@ -139,11 +148,16 @@ export const requestInSession = Effect.fn("EnvironmentRpc.requestInSession")(fun
   const method = session.client[tag] as (
     input: EnvironmentRpcInput<TTag>,
   ) => Effect.Effect<EnvironmentRpcSuccess<TTag>, EnvironmentRpcFailure<TTag>>;
-  const completeObservation = yield* observer.observe({
+  const observation = yield* observer.observe({
     environmentId,
     method: tag,
   });
-  return yield* method(input).pipe(Effect.ensuring(completeObservation));
+  const call = method(input);
+  return yield* (
+    Object.keys(observation.headers).length === 0
+      ? call
+      : RpcClient.withHeaders(call, observation.headers)
+  ).pipe(Effect.ensuring(observation.complete));
 });
 
 export const request = Effect.fn("EnvironmentRpc.request")(function* <

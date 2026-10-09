@@ -20,7 +20,8 @@ use crate::{
         ProcessAttributionRegistry, ProcessAttributionTotals, ProcessIdentity,
         ProcessResourceHistory, ProcessResourceTotals, ProcessRow, ProcessSignal,
         RuntimeProcessOwnership, SplitMetric, UiCoverage, UiCoverageStatus,
-        bound_diagnostic_string, process_tree_metadata, profiler::runtime::ProfilerRuntime,
+        bound_diagnostic_string, process_tree_metadata,
+        profiler::{client::ingest_client_batch, runtime::ProfilerRuntime},
     },
     persistence::Repositories,
     production::orchestration_effects::SetupScriptLaunch,
@@ -82,6 +83,8 @@ pub struct ServerTerminalServices {
     /// production runtime alone owns the profiler, so dropping it after a failed start tears
     /// the profiler down even while detached tasks still hold clones of these services.
     profiler: Option<Weak<ProfilerRuntime>>,
+    /// Tags client profiler reports; empty when the host sets none.
+    environment_id: Arc<str>,
 }
 
 impl ServerTerminalServices {
@@ -140,12 +143,19 @@ impl ServerTerminalServices {
             control,
             workspace_admission: None,
             profiler: None,
+            environment_id: Arc::from(""),
         }
     }
 
     #[must_use]
     pub(crate) fn with_profiler(mut self, profiler: &Arc<ProfilerRuntime>) -> Self {
         self.profiler = Some(Arc::downgrade(profiler));
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_environment_id(mut self, environment_id: &str) -> Self {
+        self.environment_id = Arc::from(environment_id);
         self
     }
 
@@ -476,10 +486,13 @@ fn register_diagnostics_rpcs(registry: &mut RpcRegistry, services: &ServerTermin
             }
         },
     );
-    // Disabled-profiler stub: a later change accepts client batches.
+    let environment_id = services.environment_id.clone();
     registry.register_unary(
         "server.reportProfilerClientBatch",
-        |_request, _cancellation| async { Ok(json!({ "accepted": false })) },
+        move |request, _cancellation| {
+            let environment_id = environment_id.clone();
+            async move { ingest_client_batch(request.payload, &environment_id) }
+        },
     );
 
     let sampler = services.resource_sampler.clone();

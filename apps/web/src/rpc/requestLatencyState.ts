@@ -24,7 +24,11 @@ interface PendingRpcAckRequest {
 }
 
 const pendingRpcAckRequests = new Map<string, PendingRpcAckRequest>();
-const untrackedRpcAckMethods = new Set<string>([WS_METHODS.previewAutomationConnect]);
+const untrackedRpcAckMethods = new Set<string>([
+  WS_METHODS.previewAutomationConnect,
+  // Background profiling uploads; the user never waits on them.
+  WS_METHODS.serverReportProfilerClientBatch,
+]);
 
 const slowRpcAckRequestsAtom = Atom.make<ReadonlyArray<SlowRpcAckRequest>>([]).pipe(
   Atom.keepAlive,

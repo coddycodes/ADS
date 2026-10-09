@@ -70,3 +70,19 @@ export type ProfilerClientBatch = typeof ProfilerClientBatch.Type;
 
 export const ProfilerClientBatchResult = Schema.Struct({ accepted: Schema.Boolean });
 export type ProfilerClientBatchResult = typeof ProfilerClientBatchResult.Type;
+
+/** The batch is over 64 KiB, 64 records or 64 histograms. Nothing was recorded. */
+export class ProfilerClientBatchTooLarge extends Schema.TaggedError<ProfilerClientBatchTooLarge>()(
+  "ProfilerClientBatchTooLarge",
+  {
+    message: Schema.String,
+  },
+) {}
+
+/** A field is missing, of the wrong type, too long or out of range. Nothing was recorded. */
+export class ProfilerClientBatchInvalid extends Schema.TaggedError<ProfilerClientBatchInvalid>()(
+  "ProfilerClientBatchInvalid",
+  {
+    message: Schema.String,
+  },
+) {}
