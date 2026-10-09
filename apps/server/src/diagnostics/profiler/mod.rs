@@ -1,7 +1,9 @@
 pub mod event;
 pub mod findings;
+pub mod leak;
 pub mod redact;
 pub mod runtime;
+pub mod sampler;
 pub mod store;
 
 use std::{

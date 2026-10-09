@@ -10,10 +10,14 @@ use std::{
     time::Duration,
 };
 
-use bibcode_server::diagnostics::profiler::{
-    self,
-    findings::{FindingInput, Severity},
-    runtime::{Detector, ProfilerRuntime},
+use bibcode_server::diagnostics::{
+    ProcessAttributionRegistry,
+    profiler::{
+        self,
+        findings::{FindingInput, Severity},
+        runtime::{Detector, ProfilerRuntime},
+        sampler::SamplerDetector,
+    },
 };
 use futures_util::FutureExt;
 use tokio::sync::watch;
@@ -75,6 +79,7 @@ async fn profiler_runtime_scenarios_share_the_process_global_handle_in_sequence(
     a_repeated_shutdown_waits_for_a_cancelled_one().await;
     an_unreadable_findings_file_reports_failing_storage().await;
     a_failed_startup_compaction_reports_failing_storage().await;
+    the_sampler_records_the_server_process().await;
 }
 
 async fn rapid_toggles_never_run_two_detector_sets() {
@@ -228,6 +233,52 @@ async fn a_failed_startup_compaction_reports_failing_storage() {
     }
     assert_eq!(runtime.status()["capabilities"]["storage"], "failing");
     runtime.shutdown().await;
+}
+
+/// The production sampler under the runtime: the tick taken as the toggle turns on reaches
+/// the events file as a `process.sample` event for this process.
+async fn the_sampler_records_the_server_process() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_tx, rx) = watch::channel(true);
+    let runtime = ProfilerRuntime::start(
+        dir.path(),
+        rx,
+        vec![Box::new(SamplerDetector::new(
+            ProcessAttributionRegistry::new(),
+        ))],
+    );
+    // The writer flushes every 2 s; teardown uninstalls the handle before the sampler stops,
+    // so the sample must be written before shutdown.
+    for _ in 0..200 {
+        if runtime.status()["eventCount"].as_u64() > Some(0) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    runtime.shutdown().await;
+
+    let dir = profiler::profiler_dir(dir.path());
+    let sample = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|entry| std::fs::read_to_string(entry.unwrap().path()).ok())
+        .flat_map(|text| text.lines().map(str::to_owned).collect::<Vec<_>>())
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(&line).ok())
+        .find(|line| line["kind"] == "process.sample")
+        .expect("a process.sample event was written");
+    assert_eq!(sample["intervalMs"], 5000);
+    assert!(sample["selfCpuMs"].is_number());
+    let server = sample["procs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|process| process["pid"] == std::process::id())
+        .expect("the server process is sampled");
+    assert_eq!(server["kind"], "server");
+    assert!(server["privateBytes"].as_u64() > Some(0));
+    assert!(server["rssBytes"].as_u64() > Some(0));
+    if cfg!(target_os = "linux") {
+        assert_eq!(server["metric"], "private");
+    }
 }
 
 /// Starts a runtime as production does, off the async workers, so a predecessor's teardown

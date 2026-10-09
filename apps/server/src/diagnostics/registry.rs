@@ -138,6 +138,17 @@ impl ProcessAttributionRegistry {
             .collect()
     }
 
+    /// Every registered process and its source. Unlike `bind_and_snapshot` it leaves the
+    /// observation state alone: that state belongs to the on-demand monitor, and a sampler
+    /// that sees only part of the process table would suppress claims the monitor reports.
+    pub(crate) fn registered_sources(&self) -> Vec<(ProcessIdentity, RegistrationSource)> {
+        lock_state(&self.inner)
+            .entries
+            .values()
+            .map(|entry| (entry.identity, entry.metadata.source))
+            .collect()
+    }
+
     #[must_use]
     pub fn bind_and_snapshot(
         &self,
