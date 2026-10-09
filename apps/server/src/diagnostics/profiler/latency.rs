@@ -134,7 +134,6 @@ pub fn is_long_running(method: &str) -> bool {
             | "server.refreshProviders"
             | "server.refreshProviderUsage"
             | "worktree.createManaged"
-            | "worktree.createPanel"
             | "agentSessions.import"
     )
 }
@@ -1019,6 +1018,10 @@ mod tests {
             "still timed"
         );
         assert!(!is_long_running("server.getConfig"));
+        assert!(
+            !is_long_running("worktree.createPanel"),
+            "local orchestration only: a stall there is a server problem"
+        );
     }
 
     #[test]
