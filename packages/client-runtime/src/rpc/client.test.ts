@@ -19,7 +19,8 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
-import { RpcClientError } from "effect/unstable/rpc";
+import * as Headers from "effect/unstable/http/Headers";
+import { RpcClient, RpcClientError } from "effect/unstable/rpc";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -107,9 +108,12 @@ describe("environment RPC", () => {
             observe: ({ environmentId, method }) =>
               Effect.sync(() => {
                 observations.push(`start:${environmentId}:${method}`);
-                return Effect.sync(() => {
-                  observations.push(`finish:${environmentId}:${method}`);
-                });
+                return {
+                  headers: {},
+                  complete: Effect.sync(() => {
+                    observations.push(`finish:${environmentId}:${method}`);
+                  }),
+                };
               }),
           }),
         ),
@@ -120,6 +124,38 @@ describe("environment RPC", () => {
         `start:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}`,
         `finish:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}`,
       ]);
+    }),
+  );
+
+  it.effect("sends the observer's headers with the request only when it returns some", () =>
+    Effect.gen(function* () {
+      const sent: Array<string | undefined> = [];
+      // The real client merges `CurrentHeaders` into the request frame it encodes.
+      const client = {
+        [WS_METHODS.cloudGetRelayClientStatus]: () =>
+          Effect.gen(function* () {
+            const headers = yield* RpcClient.CurrentHeaders;
+            sent.push(Option.getOrUndefined(Headers.get(headers, "x-bibcode-profiler-rid")));
+            return { status: "available", version: "2026.6.0" };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const requestWith = (headers: Record<string, string>) =>
+        request(WS_METHODS.cloudGetRelayClientStatus, {}).pipe(
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.provideService(
+            EnvironmentRpcRequestObserver,
+            EnvironmentRpcRequestObserver.of({
+              observe: () => Effect.succeed({ headers, complete: Effect.void }),
+            }),
+          ),
+        );
+
+      yield* requestWith({ "x-bibcode-profiler-rid": "c1:7" });
+      yield* requestWith({});
+
+      expect(sent).toEqual(["c1:7", undefined]);
     }),
   );
 

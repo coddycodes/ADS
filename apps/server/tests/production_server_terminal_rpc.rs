@@ -1844,10 +1844,44 @@ async fn server_terminal_auxiliary_rpcs_surface_runtime_state_validation_and_int
         assert_eq!(profiler["enabled"], false);
         assert_eq!(profiler["capabilities"]["storage"], "ok");
         assert_eq!(profiler["findings"], json!([]));
+        // A valid batch is ignored while the profiler is off.
         let reported = success_value(
-            request(control, "11", "server.reportProfilerClientBatch", json!({})).await,
+            request(
+                control,
+                "11",
+                "server.reportProfilerClientBatch",
+                client_batch(1),
+            )
+            .await,
         );
         assert_eq!(reported["accepted"], false);
+        // Over 64 records, and over 64 KiB: typed errors, and the connection stays open.
+        assert_error_tag(
+            request(
+                control,
+                "12",
+                "server.reportProfilerClientBatch",
+                client_batch(65),
+            )
+            .await,
+            "ProfilerClientBatchTooLarge",
+        );
+        let mut oversized = client_batch(1);
+        oversized["capabilities"] = json!(["x".repeat(70 * 1024)]);
+        assert_error_tag(
+            request(control, "13", "server.reportProfilerClientBatch", oversized).await,
+            "ProfilerClientBatchTooLarge",
+        );
+        let at_the_limit = success_value(
+            request(
+                control,
+                "14",
+                "server.reportProfilerClientBatch",
+                client_batch(64),
+            )
+            .await,
+        );
+        assert_eq!(at_the_limit["accepted"], false);
 
         let refreshed = success_value(
             request(
@@ -2051,6 +2085,28 @@ fn registrar_source_contains_every_owned_rpc_name() {
     ] {
         assert!(source.contains(method), "registrar is missing {method}");
     }
+}
+
+/// A `ProfilerClientBatch` as the web collector sends it, with `records` slow requests.
+fn client_batch(records: usize) -> Value {
+    json!({
+        "clientId": "c1",
+        "capabilities": ["heartbeat", "event"],
+        "windowMs": 10_000,
+        "records": (1..=records)
+            .map(|n| json!({
+                "correlationId": format!("c1:{n}"),
+                "method": "server.getConfig",
+                "rttMs": 1_500.5,
+                "renderMs": 12.25,
+                "startedAtMs": 2_000.0,
+            }))
+            .collect::<Vec<_>>(),
+        "histograms": [{ "method": "server.getConfig", "buckets": [[3, 7], [64, 1]] }],
+        "stalls": { "count": 1, "totalMs": 200, "maxMs": 200 },
+        "interactions": { "count": 0, "maxMs": 0 },
+        "jsHeapBytes": 52_428_800,
+    })
 }
 
 fn fixture_services() -> ServerTerminalServices {

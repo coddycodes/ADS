@@ -138,6 +138,7 @@ import {
   secondaryBearerExpiresAtEpochMs,
   secondaryBearerRefreshAtEpochMs,
 } from "./platform.ts";
+import { clientCollector, PROFILER_CORRELATION_HEADER } from "../profiler/clientCollector";
 
 const TARGET: DesktopSshEnvironmentTarget = {
   alias: "devbox",
@@ -832,7 +833,7 @@ describe("connectionPlatformLayer environment side effects", () => {
     stubBrowser();
     return Effect.gen(function* () {
       const observer = yield* EnvironmentRpcRequestObserver;
-      const acknowledge = yield* observer.observe({
+      const observation = yield* observer.observe({
         environmentId: EnvironmentId.make("environment-x"),
         method: "session.start",
       });
@@ -842,8 +843,34 @@ describe("connectionPlatformLayer environment side effects", () => {
           request: { method: "session.start", environmentId: "environment-x" },
         },
       ]);
-      yield* acknowledge;
+      // No environment has its profiler on, so no correlation header is sent.
+      expect(observation.headers).toEqual({});
+      yield* observation.complete;
       expect(pf.ackCalls).toHaveLength(1);
+    }).pipe(Effect.provide(connectionPlatformLayer));
+  });
+
+  it.effect("sends a profiler correlation header only to environments being profiled", () => {
+    stubBrowser();
+    return Effect.gen(function* () {
+      const observer = yield* EnvironmentRpcRequestObserver;
+      clientCollector.setEnabledEnvironments(new Set(["environment-profiled"]));
+      try {
+        const profiled = yield* observer.observe({
+          environmentId: EnvironmentId.make("environment-profiled"),
+          method: "server.getConfig",
+        });
+        const other = yield* observer.observe({
+          environmentId: EnvironmentId.make("environment-x"),
+          method: "server.getConfig",
+        });
+        expect(profiled.headers[PROFILER_CORRELATION_HEADER]).toMatch(/^[0-9a-f]{16}:\d+$/);
+        expect(other.headers).toEqual({});
+        yield* profiled.complete;
+        yield* other.complete;
+      } finally {
+        clientCollector.setEnabledEnvironments(new Set());
+      }
     }).pipe(Effect.provide(connectionPlatformLayer));
   });
 });
