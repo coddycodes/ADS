@@ -30,6 +30,7 @@ use crate::{
             latency::LatencyDetector,
             profiler_dir,
             runtime::{Detector, ProfilerRuntime},
+            sampler::SamplerDetector,
         },
     },
     git::GitRepository,
@@ -218,10 +219,15 @@ impl ProductionRuntime {
             .await,
         );
         let provider_update_checks = control.start_provider_update_checks();
+        // Built before the profiler, whose sampler reads it; it has no dependencies.
+        let process_attribution = ProcessAttributionRegistry::new();
         // Starting replays and compacts the findings file, so it runs off the async workers.
         let profiler_state_dir = config.state_dir();
         let profiler_enabled = control.profiler_enabled_signal();
-        let profiler_detectors: Vec<Box<dyn Detector>> = vec![Box::new(LatencyDetector)];
+        let profiler_detectors: Vec<Box<dyn Detector>> = vec![
+            Box::new(SamplerDetector::new(process_attribution.clone())),
+            Box::new(LatencyDetector),
+        ];
         let profiler = Arc::new(
             tokio::task::spawn_blocking(move || {
                 ProfilerRuntime::start(&profiler_state_dir, profiler_enabled, profiler_detectors)
@@ -281,7 +287,6 @@ impl ProductionRuntime {
             Arc::new(tokio::time::Instant::now),
         );
         let upload_sweeper = attachment_uploads.start_sweeper();
-        let process_attribution = ProcessAttributionRegistry::new();
         let managed_endpoint =
             ManagedEndpointRuntime::with_process_attribution(process_attribution.clone());
         let provider_settings = ProviderSettingsStore::new(&state_paths.state_dir);
