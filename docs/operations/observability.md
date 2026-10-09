@@ -146,19 +146,39 @@ values in option values or other diagnostic fields.
 
 The Diagnostics settings page can prepare a timestamped, redacted ZIP through
 `POST /api/diagnostics/logs.zip`. Desktop clients open a native save dialog;
-browser clients download the response. The archive contains exactly:
+browser clients download the response. The archive contains:
 
 - `server.log`, assembled oldest-first from the active native server log and up
   to three retained backups;
 - `server.trace.ndjson`, assembled the same way from the active trace file and
-  up to three retained backups; and
+  up to three retained backups;
 - `frontend.log`, containing the frontend warning/error snapshot supplied by
-  the requesting client.
+  the requesting client; and
+- `profiler/`, when the profiler directory (`<state dir>/profiler`) holds
+  files: the events and findings files and the `crashes/*.json` sidecars.
 
 Provider and terminal operational logs are not included. Each retained server
 or trace file is read up to 4 MiB and marked when truncated. The frontend
 request and retained frontend content are bounded to 512 KiB; when necessary,
 the client omits the oldest frontend records before upload.
+
+Profiler files are bundled newest first, up to 16 MiB uncompressed in total. A
+text file is read up to 10 MiB, redacted like the logs, and marked when
+truncated; a crash dump is copied byte for byte or left out whole. Anything left
+out for size or because it could not be read is listed in
+`profiler/OMITTED.txt`, and symbolic links are never followed, including a
+linked `profiler` or `crashes` directory. Files are added only while the archive
+built so far, with the logs, stays under the desktop save limit of 20 MiB; a
+file is counted as if it did not compress.
+
+Crash dumps (`profiler/crashes/*.dmp`) can hold fragments of process memory,
+including prompts or tokens, so they are left out unless the request body sets
+`"includeCrashDumps": true`. The Diagnostics page sends it only when
+**Include crash dumps** is checked in the Profiler section, and the plain
+**Download logs** action never does. A body where `includeCrashDumps` is not a
+boolean is rejected with `400`. The route needs `orchestration:read`; a request
+that includes dumps also needs `orchestration:operate`, because dumps are raw
+process memory and are not redacted.
 
 Before writing the ZIP, the server redacts authorization and proxy-authorization
 lines, bearer values, common token/API-key/password/secret assignments, and URL

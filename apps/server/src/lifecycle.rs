@@ -555,10 +555,13 @@ fn core_http_routes(
         }) as crate::production::http_routes::BoxFuture<_>
     });
     let diagnostic_runtime = runtime.clone();
-    let diagnostic_logs = Arc::new(move |frontend_log, _context| {
+    let diagnostic_logs = Arc::new(move |frontend_log, include_crash_dumps, _context| {
         let runtime = diagnostic_runtime.clone();
-        Box::pin(async move { runtime.diagnostic_logs(frontend_log).await })
-            as crate::production::http_routes::BoxFuture<_>
+        Box::pin(async move {
+            runtime
+                .diagnostic_logs(frontend_log, include_crash_dumps)
+                .await
+        }) as crate::production::http_routes::BoxFuture<_>
     });
     let transfer_download = runtime.transfer_download_handler();
     let transfer_upload = runtime.transfer_upload_handler();
@@ -633,7 +636,7 @@ fn fallback_http_routes(auth: AuthService) -> HttpRoutesState {
             ))
         }) as crate::production::http_routes::BoxFuture<_>
     });
-    let diagnostic_logs = Arc::new(move |_frontend_log, _context| {
+    let diagnostic_logs = Arc::new(move |_frontend_log, _include_crash_dumps, _context| {
         Box::pin(async move {
             Err(HttpRouteError::new(
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,

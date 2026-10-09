@@ -16,18 +16,11 @@ import type { ServerProcessSignal } from "@bibcode/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
-import { downloadDiagnosticLogs } from "../../diagnostics/downloadDiagnosticLogs";
-import { readFrontendLogSnapshot } from "../../diagnostics/frontendLogCapture";
+import { useDiagnosticLogsDownload } from "../../diagnostics/useDiagnosticLogsDownload";
 import { cn } from "../../lib/utils";
-import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { formatRelativeTime } from "../../timestampFormat";
 import { useEnvironmentQuery } from "../../state/query";
-import {
-  primaryServerAvailableEditorsAtom,
-  primaryServerObservabilityAtom,
-  serverEnvironment,
-} from "../../state/server";
-import { shellEnvironment } from "../../state/shell";
+import { primaryServerObservabilityAtom, serverEnvironment } from "../../state/server";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
@@ -41,7 +34,9 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { ProfilerSection } from "./ProfilerSection";
 import { ResourceDiagnosticsSections } from "./ResourceDiagnosticsSections";
+import { useOpenDirectoryInEditor } from "./useOpenDirectoryInEditor";
 import { RESOURCE_HISTORY_WINDOWS } from "./resourceDiagnosticsPresentation";
 
 const NUMBER_FORMAT = new Intl.NumberFormat();
@@ -340,14 +335,10 @@ function DiagnosticsRefreshButton({
 
 export function DiagnosticsSettingsPanel() {
   const observability = useAtomValue(primaryServerObservabilityAtom);
-  const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   const primaryEnvironment = usePrimaryEnvironment();
   const environmentId = primaryEnvironment?.environmentId ?? null;
   const supportsInterrupt = primaryEnvironment?.serverConfig?.environment.platform.os !== "windows";
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
-    reportFailure: false,
-  });
-  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
   const [resourceWindowMs, setResourceWindowMs] = useState(15 * 60_000);
@@ -385,44 +376,19 @@ export function DiagnosticsSettingsPanel() {
           },
         }),
   );
-  const [isOpeningLogsDirectory, setIsOpeningLogsDirectory] = useState(false);
-  const [openLogsDirectoryError, setOpenLogsDirectoryError] = useState<string | null>(null);
   const [signalingPid, setSignalingPid] = useState<number | null>(null);
-  const [downloadStatus, setDownloadStatus] = useState<"idle" | "downloading">("idle");
+  const {
+    isOpening: isOpeningLogsDirectory,
+    error: openLogsDirectoryError,
+    open: openDirectory,
+  } = useOpenDirectoryInEditor("Unable to open logs folder.");
+  const { isDownloading, download: downloadLogs } = useDiagnosticLogsDownload();
 
   const openLogsDirectory = useCallback(() => {
     const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
     if (!logsDirectoryPath) return;
-
-    const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
-    if (!editor) {
-      setOpenLogsDirectoryError("No available editors found.");
-      return;
-    }
-    if (environmentId === null) {
-      setOpenLogsDirectoryError("No environment is selected.");
-      return;
-    }
-
-    setIsOpeningLogsDirectory(true);
-    setOpenLogsDirectoryError(null);
-    void (async () => {
-      const result = await openInEditor({
-        environmentId,
-        input: {
-          cwd: logsDirectoryPath,
-          editor,
-        },
-      });
-      setIsOpeningLogsDirectory(false);
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        setOpenLogsDirectoryError(
-          error instanceof Error ? error.message : "Unable to open logs folder.",
-        );
-      }
-    })();
-  }, [availableEditors, environmentId, observability?.logsDirectoryPath, openInEditor]);
+    openDirectory(logsDirectoryPath);
+  }, [observability?.logsDirectoryPath, openDirectory]);
 
   const isInitialLoading = isPending && data === null;
   const signalProcess = useCallback(
@@ -485,40 +451,10 @@ export function DiagnosticsSettingsPanel() {
   const traceDiagnosticsPartialFailure = data
     ? Option.getOrElse(data.partialFailure, () => false)
     : false;
-  const downloadLogs = useCallback(() => {
-    if (downloadStatus === "downloading") return;
-    setDownloadStatus("downloading");
-    void (async () => {
-      try {
-        const result = await downloadDiagnosticLogs(readFrontendLogSnapshot());
-        if (result.status === "saved") {
-          toastManager.add({
-            type: "success",
-            title: "Diagnostic logs saved",
-            description: result.path,
-          });
-        } else if (result.status === "downloaded") {
-          toastManager.add({
-            type: "success",
-            title: "Diagnostic logs download started",
-            description: result.filename,
-          });
-        }
-      } catch (error) {
-        toastManager.add({
-          type: "error",
-          title: "Could not download diagnostic logs",
-          description:
-            error instanceof Error ? error.message : "Unable to prepare the diagnostic archive.",
-        });
-      } finally {
-        setDownloadStatus("idle");
-      }
-    })();
-  }, [downloadStatus]);
-
   return (
     <SettingsPageContainer className="pb-12">
+      <ProfilerSection />
+
       <ResourceDiagnosticsSections
         processData={processData}
         processError={processError}
@@ -832,18 +768,19 @@ export function DiagnosticsSettingsPanel() {
           description={
             <>
               Download a redacted ZIP containing <span className="font-mono">server.log</span>,{" "}
-              <span className="font-mono">server.trace.ndjson</span>, and{" "}
-              <span className="font-mono">frontend.log</span>.
+              <span className="font-mono">server.trace.ndjson</span>,{" "}
+              <span className="font-mono">frontend.log</span>, and any recorded{" "}
+              <span className="font-mono">profiler</span> data (without crash dumps).
             </>
           }
           control={
             <Button
               aria-label="Download diagnostic logs"
-              disabled={downloadStatus === "downloading"}
-              onClick={downloadLogs}
+              disabled={isDownloading}
+              onClick={() => downloadLogs()}
             >
               <DownloadIcon className="size-3.5" />
-              {downloadStatus === "downloading" ? "Preparing logs..." : "Download logs"}
+              {isDownloading ? "Preparing logs..." : "Download logs"}
             </Button>
           }
         />

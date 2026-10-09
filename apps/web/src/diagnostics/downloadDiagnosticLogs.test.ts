@@ -63,7 +63,7 @@ describe("downloadDiagnosticLogs", () => {
   it("posts the frontend snapshot and downloads the returned ZIP", async () => {
     const h = harness();
 
-    const filename = await downloadDiagnosticLogs("frontend warning\n", h.dependencies);
+    const filename = await downloadDiagnosticLogs("frontend warning\n", {}, h.dependencies);
 
     expect(h.requests).toEqual([
       {
@@ -92,13 +92,13 @@ describe("downloadDiagnosticLogs", () => {
 
   it("rejects non-success and non-ZIP responses before creating a download", async () => {
     const failed = harness(zipResponse({ status: 500 }));
-    await expect(downloadDiagnosticLogs("warning", failed.dependencies)).rejects.toThrow(
+    await expect(downloadDiagnosticLogs("warning", {}, failed.dependencies)).rejects.toThrow(
       "server returned 500",
     );
     expect(failed.createObjectURL).not.toHaveBeenCalled();
 
     const wrongType = harness(zipResponse({ contentType: "application/json" }));
-    await expect(downloadDiagnosticLogs("warning", wrongType.dependencies)).rejects.toThrow(
+    await expect(downloadDiagnosticLogs("warning", {}, wrongType.dependencies)).rejects.toThrow(
       "did not return a ZIP archive",
     );
     expect(wrongType.createObjectURL).not.toHaveBeenCalled();
@@ -109,7 +109,7 @@ describe("downloadDiagnosticLogs", () => {
       zipResponse({ contentDisposition: 'attachment; filename="../../private.zip"' }),
     );
 
-    const filename = await downloadDiagnosticLogs("warning", h.dependencies);
+    const filename = await downloadDiagnosticLogs("warning", {}, h.dependencies);
 
     expect(filename).toEqual({
       status: "downloaded",
@@ -122,7 +122,7 @@ describe("downloadDiagnosticLogs", () => {
     const saveArchive = vi.fn(async () => "C:\\Users\\test\\Downloads\\diagnostics.zip");
     const h = harness(zipResponse(), saveArchive);
 
-    const result = await downloadDiagnosticLogs("warning", h.dependencies);
+    const result = await downloadDiagnosticLogs("warning", {}, h.dependencies);
 
     expect(saveArchive).toHaveBeenCalledWith(
       "bibcode-diagnostics-20260715T123456Z.zip",
@@ -140,18 +140,46 @@ describe("downloadDiagnosticLogs", () => {
   it("reports a cancelled native save without triggering a WebView download", async () => {
     const h = harness(zipResponse(), async () => null);
 
-    await expect(downloadDiagnosticLogs("warning", h.dependencies)).resolves.toEqual({
+    await expect(downloadDiagnosticLogs("warning", {}, h.dependencies)).resolves.toEqual({
       status: "cancelled",
       filename: "bibcode-diagnostics-20260715T123456Z.zip",
     });
     expect(h.createObjectURL).not.toHaveBeenCalled();
   });
 
+  it("asks for crash dumps only when the caller opts in", async () => {
+    const optedIn = harness();
+    await downloadDiagnosticLogs("warning", { includeCrashDumps: true }, optedIn.dependencies);
+    expect(JSON.parse(optedIn.requests[0]?.body ?? "")).toEqual({
+      frontendLog: "warning",
+      includeCrashDumps: true,
+    });
+
+    const optedOut = harness();
+    await downloadDiagnosticLogs("warning", { includeCrashDumps: false }, optedOut.dependencies);
+    expect(optedOut.requests[0]?.body).toBe(JSON.stringify({ frontendLog: "warning" }));
+  });
+
+  it("keeps the request within the server limit when crash dumps are requested", async () => {
+    const h = harness();
+    const frontendLog = `oldest-only\n${"middle-line\n".repeat(60_000)}newest-record\n`;
+
+    await downloadDiagnosticLogs(frontendLog, { includeCrashDumps: true }, h.dependencies);
+
+    const body = h.requests[0]?.body ?? "";
+    expect(new TextEncoder().encode(body).byteLength).toBeLessThanOrEqual(
+      MAX_DIAGNOSTIC_REQUEST_BYTES,
+    );
+    const decoded = JSON.parse(body) as { frontendLog: string; includeCrashDumps?: boolean };
+    expect(decoded.includeCrashDumps).toBe(true);
+    expect(decoded.frontendLog).toContain("newest-record");
+  });
+
   it("keeps the JSON request within the server limit while retaining newest records", async () => {
     const h = harness();
     const frontendLog = `oldest-only\n${"middle-line\n".repeat(60_000)}newest-record\n`;
 
-    await downloadDiagnosticLogs(frontendLog, h.dependencies);
+    await downloadDiagnosticLogs(frontendLog, {}, h.dependencies);
 
     const body = h.requests[0]?.body ?? "";
     expect(new TextEncoder().encode(body).byteLength).toBeLessThanOrEqual(
