@@ -131,17 +131,19 @@ impl LeakDetector {
         let latest = points.last().map_or(0.0, |p| p.1);
         let growth = latest - baseline / MB;
         let r2 = r_squared(&points);
+        let rising = z > 2.33;
         // Two alternatives: 6 h of growth at the suspect rate that fits a line, or growth of
-        // at least 50% and 200 MB since the baseline, which needs only the 1 h window.
+        // at least 50% and 200 MB since the baseline that is still going on over the last
+        // hour, which needs only the 1 h window. Growth that has stopped is a new level.
         let fits_six_hours = points.len() >= LIKELY_WINDOW_MIN && slope >= threshold && r2 > 0.8;
-        let grew_large = growth >= 200.0 && growth >= 0.5 * baseline / MB;
+        let grew_large = growth >= 200.0 && growth >= 0.5 * baseline / MB && rising;
         if fits_six_hours || grew_large {
             return LeakVerdict::Likely {
                 slope_mb_per_h: slope,
                 r2,
             };
         }
-        if slope >= threshold && z > 2.33 {
+        if slope >= threshold && rising {
             LeakVerdict::Suspect {
                 slope_mb_per_h: slope,
             }
@@ -373,6 +375,24 @@ mod tests {
             matches!(first, Some((m, LeakVerdict::Likely { .. })) if m <= WARMUP_MIN + 60 + 1),
             "{first:?}"
         );
+    }
+
+    #[test]
+    fn growth_that_has_stopped_is_never_reported_again() {
+        let mut det = LeakDetector::default();
+        // A cache fill: 300 MB to 600 MB over minutes 15 to 45, then flat. The rolling
+        // minimum is flat from minute 54.
+        let ramp = |m: u64| match m {
+            0..15 => 300 * MB,
+            15..45 => 300 * MB + (m - 15) * 10 * MB,
+            _ => 600 * MB,
+        };
+        let verdicts: Vec<(u64, LeakVerdict)> = (0..800)
+            .filter_map(|m| det.push_minute(m, ramp(m)).map(|verdict| (m, verdict)))
+            .collect();
+        // The hour that ends at minute 75 still spans the ramp. Once the ramp has left the
+        // window, the new level is never reported, nor repeated every 6 h at 0 MB/h.
+        assert!(verdicts.iter().all(|(m, _)| *m < 54 + 60), "{verdicts:?}");
     }
 
     #[test]

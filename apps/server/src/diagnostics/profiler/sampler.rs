@@ -341,8 +341,9 @@ impl Sampler {
         elapsed.saturating_sub(rediscovery)
     }
 
-    /// Writes the open minute as it stands, when recording stops. Its partial medians do
-    /// not feed the rules, whose state ends with the sampler.
+    /// Writes the open minute as it stands, when recording stops. Its partial medians feed
+    /// the rules like any closed minute, but their verdicts are not recorded: the rules'
+    /// state ends with the sampler.
     fn flush(&mut self) {
         for (identity, series) in &mut self.series {
             self.closed.push(ProcessMinute {
