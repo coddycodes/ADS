@@ -1,9 +1,9 @@
 //! Findings: recurring problems the profiler has detected, deduplicated by fingerprint.
 //!
-//! `FindingsBook` is the in-memory index. It never touches the filesystem after `load`:
-//! every change is queued through the store's non-blocking writer, which appends it to
-//! `findings.ndjson`. `load` runs once at runtime start, before the writer exists, and
-//! compacts that file.
+//! `FindingsBook` is the in-memory index and the source of truth while the process runs.
+//! It never touches the filesystem after `load`: changes worth keeping are queued through
+//! the store's non-blocking writer, which appends them to `findings.ndjson`. `load` runs
+//! once at runtime start, before the writer exists, and compacts that file.
 
 use std::{
     collections::HashMap,
@@ -28,6 +28,8 @@ const MAX_FINDINGS: usize = 1000;
 /// Resolved findings last seen longer ago than this are dropped when the file is compacted.
 const RESOLVED_TTL_DAYS: i64 = 7;
 const CRASH_KIND_PREFIX: &str = "crash.";
+/// A repeat is persisted at least this often, however many repeats arrive in between.
+const PERSIST_INTERVAL: Duration = Duration::seconds(60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -101,6 +103,9 @@ pub fn fingerprint(kind: &str, fields: &[String]) -> String {
 #[derive(Default)]
 pub struct FindingsBook {
     by_id: HashMap<String, Finding>,
+    /// When each finding's line was last queued for the writer (`now` as given to `record`;
+    /// for a loaded finding, its `lastSeen`, as that is what the file holds).
+    persisted_at: HashMap<String, OffsetDateTime>,
 }
 
 impl FindingsBook {
@@ -137,13 +142,19 @@ impl FindingsBook {
             }
         }
         let cutoff = now - Duration::days(RESOLVED_TTL_DAYS);
-        by_id.retain(|_, finding| {
+        let mut persisted_at = HashMap::new();
+        by_id.retain(|id, finding| {
             let Ok(last_seen) = OffsetDateTime::parse(&finding.last_seen, &Rfc3339) else {
                 return false;
             };
+            persisted_at.insert(id.clone(), last_seen);
             finding.state == FindingState::Open || last_seen >= cutoff
         });
-        let mut book = Self { by_id };
+        persisted_at.retain(|id, _| by_id.contains_key(id));
+        let mut book = Self {
+            by_id,
+            persisted_at,
+        };
         book.truncate_to(MAX_FINDINGS);
         // A read error mid-file leaves a partial book that must not replace the whole file.
         if read_to_end && let Err(error) = book.rewrite(dir) {
@@ -152,10 +163,16 @@ impl FindingsBook {
         book
     }
 
-    /// Records one occurrence and queues the finding for the writer; never touches the
-    /// filesystem. A repeat of a known fingerprint increments `count`, advances `last_seen`,
-    /// reopens the finding, and refreshes title, summary and evidence from this occurrence.
-    /// Its severity only ever rises.
+    /// Records one occurrence; never touches the filesystem. A repeat of a known fingerprint
+    /// increments `count`, advances `last_seen`, reopens the finding, and refreshes title,
+    /// summary and evidence from this occurrence. Its severity only ever rises.
+    ///
+    /// The in-memory state is authoritative. Persisting every repeat would grow
+    /// `findings.ndjson` without bound while the process runs, so the finding line (and its
+    /// cross-reference event) is queued only when the finding is new, its severity rose, it
+    /// was reopened, its new `count` is a power of two, or `PERSIST_INTERVAL` has passed
+    /// since it was last queued. Trade-off: a crash can lose up to a minute of `count` and
+    /// `lastSeen` updates, and a restart reloads the last persisted values.
     pub fn record(
         &mut self,
         input: FindingInput,
@@ -165,12 +182,10 @@ impl FindingsBook {
         let fingerprint = fingerprint(input.kind, &input.fingerprint_fields);
         let id = format!("{}-{fingerprint}", input.kind);
         let seen = timestamp(now);
-        let event = ProfilerEvent {
-            kind: "finding",
-            source: input.source.clone(),
-            payload: json!({ "id": id, "fingerprint": fingerprint, "kindOf": input.kind }),
-        };
-        let finding = if let Some(known) = self.by_id.get_mut(&id) {
+        let kind = input.kind;
+        let (finding, persist) = if let Some(known) = self.by_id.get_mut(&id) {
+            let reopened = known.state == FindingState::Resolved;
+            let severity_rose = input.severity > known.severity;
             known.count += 1;
             known.severity = known.severity.max(input.severity);
             if seen > known.last_seen {
@@ -180,14 +195,21 @@ impl FindingsBook {
             known.title = input.title;
             known.summary = input.summary;
             known.evidence = input.evidence;
-            known.clone()
+            let interval_passed = self.persisted_at.get(&id).is_none_or(|at| {
+                let elapsed = now - *at;
+                // A negative gap is a clock step back; persist rather than wait it out.
+                elapsed >= PERSIST_INTERVAL || elapsed.is_negative()
+            });
+            let persist =
+                reopened || severity_rose || known.count.is_power_of_two() || interval_passed;
+            (known.clone(), persist)
         } else {
             // Bounded like the file: a new finding past the cap pushes out the stalest one.
             self.truncate_to(MAX_FINDINGS - 1);
             let finding = Finding {
                 id: id.clone(),
                 fingerprint,
-                kind: input.kind.to_owned(),
+                kind: kind.to_owned(),
                 severity: input.severity,
                 first_seen: seen.clone(),
                 last_seen: seen,
@@ -199,12 +221,19 @@ impl FindingsBook {
                 evidence: input.evidence,
             };
             self.by_id.insert(id, finding.clone());
-            finding
+            (finding, true)
         };
-        if let Ok(line) = serde_json::to_value(&finding) {
-            events.send_finding(line);
+        if persist {
+            self.persisted_at.insert(finding.id.clone(), now);
+            if let Ok(line) = serde_json::to_value(&finding) {
+                events.send_finding(line);
+            }
+            events.send(ProfilerEvent {
+                kind: "finding",
+                source: finding.source.clone(),
+                payload: json!({ "id": finding.id, "fingerprint": finding.fingerprint, "kindOf": kind }),
+            });
         }
-        events.send(event);
         finding
     }
 
@@ -246,6 +275,7 @@ impl FindingsBook {
             .collect();
         for id in stale {
             self.by_id.remove(&id);
+            self.persisted_at.remove(&id);
         }
     }
 
@@ -502,5 +532,146 @@ mod tests {
         assert_eq!(newest.len(), MAX_FINDINGS);
         let stalest = fingerprint("rpc.slow", &["0".to_owned()]);
         assert!(newest.iter().all(|f| f.fingerprint != stalest));
+    }
+
+    /// Records `input` at each time against a real store, shuts it down, and returns the
+    /// directory plus the persisted finding lines.
+    fn persisted_after(
+        input: impl Fn() -> FindingInput,
+        times: impl IntoIterator<Item = OffsetDateTime>,
+    ) -> (tempfile::TempDir, Vec<Value>) {
+        let (dir, store) = scratch_sender();
+        let mut book = FindingsBook::default();
+        for at in times {
+            book.record(input(), at, &store.sender());
+        }
+        store.shutdown();
+        let lines = persisted_lines(dir.path());
+        (dir, lines)
+    }
+
+    fn persisted_lines(dir: &std::path::Path) -> Vec<Value> {
+        std::fs::read_to_string(dir.join("findings.ndjson"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    fn counts(lines: &[Value]) -> Vec<u64> {
+        lines.iter().map(|l| l["count"].as_u64().unwrap()).collect()
+    }
+
+    #[test]
+    fn a_hot_repeat_persists_only_at_powers_of_two() {
+        let start = datetime!(2026-10-09 12:00 UTC);
+        let (dir, lines) = persisted_after(
+            || input("a"),
+            (0..1000).map(|n| start + Duration::milliseconds(n * 10)),
+        );
+        assert_eq!(counts(&lines), [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]);
+        // The cross-reference events follow the same throttle.
+        let events: usize = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("events-")
+            })
+            .map(|path| {
+                std::fs::read_to_string(path)
+                    .unwrap()
+                    .lines()
+                    .filter(|line| line.contains(r#""kind":"finding""#))
+                    .count()
+            })
+            .sum();
+        assert_eq!(events, 10);
+        // Reload sees the last persisted count, not the in-memory 1,000.
+        let reloaded = FindingsBook::load(dir.path()).newest(20);
+        assert_eq!((reloaded.len(), reloaded[0].count), (1, 512));
+    }
+
+    #[test]
+    fn a_repeat_a_minute_after_the_last_persisted_line_persists() {
+        let start = datetime!(2026-10-09 12:00 UTC);
+        let (dir, lines) = persisted_after(
+            || input("a"),
+            (0..1000)
+                .map(|n| start + Duration::milliseconds(n * 10))
+                .chain([start + Duration::seconds(10 + 61)]),
+        );
+        assert_eq!(counts(&lines).last(), Some(&1001));
+        assert_eq!(lines.len(), 11);
+        assert_eq!(lines[10]["lastSeen"], "2026-10-09T12:01:11Z");
+        assert_eq!(FindingsBook::load(dir.path()).newest(1)[0].count, 1001);
+    }
+
+    #[test]
+    fn the_time_rule_is_a_minute_since_the_last_persisted_line() {
+        let start = datetime!(2026-10-09 12:00 UTC);
+        let third = |after: i64| {
+            persisted_after(
+                || input("a"),
+                [start, start, start + Duration::seconds(after)],
+            )
+            .1
+        };
+        assert_eq!(counts(&third(59)), [1, 2], "count 3 at 59 s is held back");
+        assert_eq!(counts(&third(60)), [1, 2, 3], "count 3 at 60 s persists");
+    }
+
+    #[test]
+    fn a_rising_severity_persists_even_between_powers_of_two() {
+        let start = datetime!(2026-10-09 12:00 UTC);
+        let (dir, store) = scratch_sender();
+        let mut book = FindingsBook::default();
+        for severity in [Severity::Warn, Severity::Warn, Severity::Error] {
+            let mut next = input("a");
+            next.severity = severity;
+            book.record(next, start, &store.sender());
+        }
+        store.shutdown();
+        assert_eq!(counts(&persisted_lines(dir.path())), [1, 2, 3]);
+    }
+
+    #[test]
+    fn reopening_persists_and_a_loaded_finding_counts_as_persisted_at_last_seen() {
+        let dir = tempfile::tempdir().unwrap();
+        let fp = fingerprint("rpc.slow", &input("a").fingerprint_fields);
+        let stored = |state: &str| {
+            stored_line(1, "rpc.slow", "2026-10-09T11:00:00Z", state)
+                .replace("000000000001", &fp)
+                .replace(r#""count":1"#, r#""count":4"#)
+        };
+        let record_once = |state: &str, at: OffsetDateTime| {
+            std::fs::write(dir.path().join("findings.ndjson"), stored(state) + "\n").unwrap();
+            let mut book = FindingsBook::load_at(dir.path(), at);
+            let store = super::super::store::ProfilerStore::start(
+                super::super::store::StoreConfig::new(dir.path().to_path_buf()),
+            );
+            book.record(input("a"), at, &store.sender());
+            store.shutdown();
+            persisted_lines(dir.path())
+        };
+        let soon = datetime!(2026-10-09 11:00:30 UTC);
+        assert_eq!(
+            counts(&record_once("open", soon)),
+            [4],
+            "count 5 within a minute is held"
+        );
+        assert_eq!(
+            counts(&record_once("resolved", soon)),
+            [4, 5],
+            "reopening persists"
+        );
+        let later = datetime!(2026-10-09 11:01:00 UTC);
+        assert_eq!(
+            counts(&record_once("open", later)),
+            [4, 5],
+            "a minute after lastSeen persists"
+        );
     }
 }
