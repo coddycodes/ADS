@@ -12,12 +12,20 @@ fn main() {
             .block_on(bibcode_server::open_url::run_open_url(&url));
         std::process::exit(code);
     }
+    // `<desktop exe> profiler …`: the desktop install ships no separate `bibcode`, so the
+    // profiler CLI runs here, with no Tauri, no window and no single-instance check.
+    if let Some(code) =
+        bibcode_server::diagnostics::profiler::cli::desktop_dispatch(attach_parent_console)
+    {
+        std::process::exit(code);
+    }
     bibcode_desktop_lib::run();
 }
 
 /// A release build is a GUI-subsystem executable with no console of its own, so open-url's
-/// printed fallback and errors would go nowhere. Borrow the calling shell's console when
-/// there is one; a debug build already has its own, and then this fails harmlessly.
+/// printed fallback and errors and the profiler CLI's output would go nowhere. Borrow the
+/// calling shell's console when there is one; a debug build already has its own, and then
+/// this fails harmlessly.
 #[cfg(windows)]
 fn attach_parent_console() {
     use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};

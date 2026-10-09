@@ -1,5 +1,7 @@
+pub mod cli;
 pub mod event;
 pub mod findings;
+pub mod reader;
 pub mod redact;
 pub mod runtime;
 pub mod store;

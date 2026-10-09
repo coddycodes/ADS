@@ -20,7 +20,7 @@ pub const CHANNEL_CAPACITY: usize = 2048;
 
 pub(super) const FINDINGS_FILE: &str = "findings.ndjson";
 const FINDINGS_TMP_FILE: &str = "findings.ndjson.tmp";
-const CRASHES_DIR: &str = "crashes";
+pub(super) const CRASHES_DIR: &str = "crashes";
 const WRITE_BUFFER_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug)]
@@ -607,7 +607,7 @@ fn dir_size(dir: &Path) -> u64 {
         .sum()
 }
 
-fn event_file_index(name: &str) -> Option<u64> {
+pub(super) fn event_file_index(name: &str) -> Option<u64> {
     name.strip_prefix("events-")?
         .strip_suffix(".ndjson")?
         .parse()

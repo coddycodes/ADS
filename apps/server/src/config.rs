@@ -14,6 +14,7 @@ use thiserror::Error;
 use url::Url;
 
 use crate::data_root::{DataRootError, DataRootRequest, DataRootSource, ResolvedDataRoot};
+use crate::diagnostics::profiler::cli::ProfilerArgs;
 use crate::persistence::StorageInstanceId;
 use crate::remote_update::{RemoteUpdateInstallKind, RemoteUpdateSupport};
 use crate::static_assets::{StaticDirError, StaticDirSource, resolve_static_dir};
@@ -675,6 +676,10 @@ enum CliCommand {
     #[command(about = "Manage one-time pairing credentials for a data root.")]
     Pairing(PairingArgs),
     #[command(
+        about = "Read profiler findings, events and crash records from disk, with or without a running server."
+    )]
+    Profiler(ProfilerArgs),
+    #[command(
         about = "Install, remove, or inspect the per-user background service that keeps `bibcode serve` running."
     )]
     Service(ServiceArgs),
@@ -818,6 +823,11 @@ pub enum CliAction {
     OpenUrl {
         url: String,
     },
+    /// Reads `<state_dir>/profiler`; never starts a server.
+    Profiler {
+        args: ProfilerArgs,
+        state_dir: PathBuf,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -907,6 +917,8 @@ pub enum ConfigError {
     ServiceCommandIsNotServer,
     #[error("open-url cannot be converted into a server configuration")]
     OpenUrlCommandIsNotServer,
+    #[error("profiler commands cannot be converted into a server configuration")]
+    ProfilerCommandIsNotServer,
     #[error("failed to resolve the current executable for static web discovery")]
     CurrentExecutable(#[source] io::Error),
     #[error(transparent)]
@@ -946,6 +958,7 @@ impl Cli {
             CliAction::Pairing(_) => Err(ConfigError::PairingCommandIsNotServer),
             CliAction::Service(_) => Err(ConfigError::ServiceCommandIsNotServer),
             CliAction::OpenUrl { .. } => Err(ConfigError::OpenUrlCommandIsNotServer),
+            CliAction::Profiler { .. } => Err(ConfigError::ProfilerCommandIsNotServer),
         }
     }
 
@@ -1021,6 +1034,12 @@ impl Cli {
                         json,
                     },
                 }));
+            }
+            Some(CliCommand::Profiler(profiler)) => {
+                return Ok(CliAction::Profiler {
+                    args: profiler,
+                    state_dir: profiler_state_dir(args.base_dir, args.dev_url)?,
+                });
             }
             Some(CliCommand::Service(service)) => {
                 return Ok(CliAction::Service(match service.command {
@@ -1130,6 +1149,22 @@ impl Cli {
 
 fn bibcode_env_var(name: &str) -> Option<std::ffi::OsString> {
     std::env::var_os(name)
+}
+
+/// The state directory a server started with `base_dir` and `dev_url` uses, resolved as every
+/// command that reads a data root does. With neither, it is the desktop's: its in-process
+/// server takes `BIBCODE_HOME` or `~/.bibcode` and never a dev URL.
+pub(crate) fn profiler_state_dir(
+    base_dir: Option<PathBuf>,
+    dev_url: Option<Url>,
+) -> Result<PathBuf, ConfigError> {
+    let home_dir = dirs::home_dir().ok_or(DataRootError::HomeDirectoryUnavailable)?;
+    let request =
+        select_data_root_request(base_dir, bibcode_env_var("BIBCODE_HOME"), None, home_dir);
+    let root = crate::data_root::resolve_data_root(request)?;
+    let mut config = ServerConfig::new(&root.effective);
+    config.dev_url = dev_url;
+    Ok(config.state_dir())
 }
 
 fn select_data_root_request(
