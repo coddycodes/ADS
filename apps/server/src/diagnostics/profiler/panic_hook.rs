@@ -73,11 +73,19 @@ fn record(info: &std::panic::PanicHookInfo<'_>) {
 }
 
 /// Where std puts the value a panic was about, up to the end of the line.
-const VALUE_MARKERS: [&str; 4] = ["Err` value:", "Err value:", "left:", "right:"];
+const VALUE_MARKERS: [&str; 6] = [
+    "Err` value:",
+    "Err value:",
+    "Ok` value:",
+    "Ok value:",
+    "left:",
+    "right:",
+];
 
-/// The panic's first line, at most 2 KiB, without the data std embeds in it: a sliced
-/// string between backticks, an `Err` value, assertion operands. That data can be prompt or
-/// terminal text. Truncating first also bounds the work.
+/// The panic's first line, at most 2 KiB, without the data std and `expect` embed in it:
+/// strings between backticks or double quotes, `Err` and `Ok` values, assertion operands,
+/// and a `Debug` rendering after `: `. That data can be prompt or terminal text. Plain prose
+/// such as `failed: connection refused` stays. Truncating first also bounds the work.
 fn panic_message(raw: &str) -> String {
     let first = raw.lines().next().unwrap_or("");
     let mut end = first.len().min(MESSAGE_MAX_BYTES);
@@ -98,15 +106,16 @@ fn panic_message(raw: &str) -> String {
     let value_at = VALUE_MARKERS
         .iter()
         .filter_map(|marker| line.find(marker).map(|at| at + marker.len()))
+        .chain(debug_value_at(line))
         .min();
     let mut rest = value_at.map_or(line, |at| &line[..at]);
     let mut kept = String::with_capacity(line.len());
-    while let Some(open) = rest.find('`') {
+    while let Some(open) = rest.find(['`', '"']) {
         kept.push_str(&rest[..open]);
         kept.push_str(REDACTED);
-        rest = rest[open + 1..]
-            .find('`')
-            .map_or("", |close| &rest[open + 1 + close + 1..]);
+        let quoted = &rest[open + 1..];
+        rest =
+            closing_quote(quoted, rest.as_bytes()[open]).map_or("", |close| &quoted[close + 1..]);
     }
     kept.push_str(rest);
     if value_at.is_some() || url_cut {
@@ -116,6 +125,33 @@ fn panic_message(raw: &str) -> String {
         kept.push_str(REDACTED);
     }
     redact_path(&kept)
+}
+
+/// Just past the `:` of the first `: ` that a `Debug` rendering follows: a string, list or
+/// map, or a struct, tuple struct or variant (`Name {`, `Name(`). `expect` puts the error's
+/// `Debug` there.
+fn debug_value_at(line: &str) -> Option<usize> {
+    line.match_indices(": ").find_map(|(at, _)| {
+        let tail = &line[at + 2..];
+        let name = tail
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(tail.len());
+        let debug = tail.starts_with(['"', '[', '{'])
+            || (tail.starts_with(|c: char| c.is_ascii_uppercase())
+                && (tail[name..].starts_with(" {") || tail[name..].starts_with('(')));
+        debug.then_some(at + 1)
+    })
+}
+
+/// Where the quoted text starting `text` ends. Inside double quotes a backslash escapes the
+/// next character, as `Debug` writes it.
+fn closing_quote(text: &str, quote: u8) -> Option<usize> {
+    let mut escaped = false;
+    text.bytes().position(|byte| {
+        let close = byte == quote && !escaped;
+        escaped = quote == b'"' && byte == b'\\' && !escaped;
+        close
+    })
 }
 
 /// The executable that holds this code: its load address, its name as symbol files name it,
@@ -304,6 +340,45 @@ mod tests {
             panic_message("unterminated `my secret"),
             "unterminated [redacted]"
         );
+    }
+
+    /// `Debug` renderings after `: ` and quoted strings are values; plain prose stays.
+    #[test]
+    fn debug_values_and_quoted_strings_are_redacted() {
+        let secret = "my secret prompt";
+        let ok_value = recorded_message(|| {
+            std::hint::black_box(Ok::<_, ()>(secret)).unwrap_err();
+        });
+        let expect_string = recorded_message(|| {
+            std::hint::black_box(Err::<(), _>(secret.to_owned())).expect("send");
+        });
+        let expect_struct = recorded_message(|| {
+            String::from_utf8(std::hint::black_box(b"my secret prompt\xff".to_vec()))
+                .expect("decode");
+        });
+        let serde_display =
+            panic_message(&format!("invalid type: string \"{secret}\", expected u32"));
+        for message in [&ok_value, &expect_string, &expect_struct, &serde_display] {
+            assert!(!message.contains(secret), "{message}");
+            assert!(!message.contains("109, 121"), "{message}");
+            assert!(message.contains(REDACTED), "{message}");
+        }
+        assert_eq!(expect_string, "send: [redacted]");
+        assert_eq!(expect_struct, "decode: [redacted]");
+        assert_eq!(
+            serde_display,
+            "invalid type: string [redacted], expected u32"
+        );
+        // An escaped quote does not end the string early.
+        assert_eq!(
+            panic_message(r#"bad "a \"my secret\" b" here"#),
+            "bad [redacted] here"
+        );
+        assert_eq!(
+            panic_message("failed: connection refused"),
+            "failed: connection refused"
+        );
+        assert_eq!(panic_message("state: Ready"), "state: Ready");
     }
 
     /// The cap must not cut a URL between its credentials and the `@` that marks them.
