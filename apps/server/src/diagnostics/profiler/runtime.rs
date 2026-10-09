@@ -31,6 +31,9 @@ use super::{
 const MAINTENANCE_EVERY: Duration = Duration::from_secs(3600);
 const STATUS_FINDINGS: usize = 20;
 const LOCK_FILE: &str = ".lock";
+/// A runtime restarted in-process may find its predecessor still releasing the lock.
+const LOCK_ATTEMPTS: u32 = 10;
+const LOCK_RETRY_DELAY: Duration = Duration::from_millis(50);
 const CAPABILITIES_FILE: &str = "capabilities.json";
 
 /// A background check that runs only while the profiler is on.
@@ -64,8 +67,9 @@ struct Parts {
 
 impl ProfilerRuntime {
     /// Locks the directory, loads the findings and starts the store and the supervisor.
-    /// Blocks on file I/O, so async callers run it through `spawn_blocking`; it must run
-    /// inside a Tokio runtime.
+    /// Blocks on file I/O, and for up to half a second while a predecessor releases the
+    /// directory lock, so async callers run it through `spawn_blocking`; it must run inside a
+    /// Tokio runtime.
     pub fn start(
         state_dir: &Path,
         enabled: watch::Receiver<bool>,
@@ -192,6 +196,9 @@ impl ProfilerRuntime {
             // The store joins its writer thread, which must not block an async worker.
             let _ = tokio::task::spawn_blocking(move || {
                 store.shutdown();
+                // Windows frees a lock left to `CloseHandle` asynchronously; unlocking first
+                // lets a restarted runtime take it at once.
+                let _ = dir_lock.unlock();
                 drop(dir_lock);
             })
             .await;
@@ -208,7 +215,8 @@ impl Drop for ProfilerRuntime {
     }
 }
 
-/// Takes the exclusive directory lock. A lock held elsewhere is an error, like any I/O failure.
+/// Takes the exclusive directory lock, retrying briefly while it is held. A lock still held
+/// after that is an error, like any I/O failure.
 fn lock_dir(dir: &Path) -> io::Result<File> {
     std::fs::create_dir_all(dir)?;
     let file = OpenOptions::new()
@@ -216,13 +224,22 @@ fn lock_dir(dir: &Path) -> io::Result<File> {
         .truncate(false)
         .write(true)
         .open(dir.join(LOCK_FILE))?;
-    match file.try_lock() {
-        Ok(()) => Ok(file),
-        Err(TryLockError::WouldBlock) => Err(io::Error::new(
-            io::ErrorKind::WouldBlock,
-            "another BiBCode process is writing to this profiler directory",
-        )),
-        Err(TryLockError::Error(error)) => Err(error),
+    let mut attempts = 1;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(TryLockError::WouldBlock) if attempts < LOCK_ATTEMPTS => {
+                attempts += 1;
+                std::thread::sleep(LOCK_RETRY_DELAY);
+            }
+            Err(TryLockError::WouldBlock) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "another BiBCode process is writing to this profiler directory",
+                ));
+            }
+            Err(TryLockError::Error(error)) => return Err(error),
+        }
     }
 }
 

@@ -19,8 +19,22 @@ use futures_util::FutureExt;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-/// Counts live instances; each one takes `.1` to wind down once cancelled.
-struct CountingDetector(Arc<AtomicI64>, Duration);
+#[derive(Clone, Default)]
+struct Counts {
+    live: Arc<AtomicI64>,
+    /// The most instances ever live at once.
+    max: Arc<AtomicI64>,
+    starts: Arc<AtomicI64>,
+}
+
+impl Counts {
+    fn get(counter: &AtomicI64) -> i64 {
+        counter.load(Ordering::SeqCst)
+    }
+}
+
+/// Counts its instances; each one takes `.1` to wind down once cancelled.
+struct CountingDetector(Counts, Duration);
 
 impl Detector for CountingDetector {
     fn name(&self) -> &'static str {
@@ -28,12 +42,14 @@ impl Detector for CountingDetector {
     }
 
     fn start(&self, cancel: CancellationToken) -> tokio::task::JoinHandle<()> {
-        let (live, wind_down) = (self.0.clone(), self.1);
-        live.fetch_add(1, Ordering::SeqCst);
+        let (counts, wind_down) = (self.0.clone(), self.1);
+        counts.starts.fetch_add(1, Ordering::SeqCst);
+        let live = counts.live.fetch_add(1, Ordering::SeqCst) + 1;
+        counts.max.fetch_max(live, Ordering::SeqCst);
         tokio::spawn(async move {
             cancel.cancelled().await;
             tokio::time::sleep(wind_down).await;
-            live.fetch_sub(1, Ordering::SeqCst);
+            counts.live.fetch_sub(1, Ordering::SeqCst);
         })
     }
 }
@@ -63,23 +79,36 @@ async fn profiler_runtime_scenarios_share_the_process_global_handle_in_sequence(
 
 async fn rapid_toggles_never_run_two_detector_sets() {
     let dir = tempfile::tempdir().unwrap();
-    let live = Arc::new(AtomicI64::new(0));
+    let counts = Counts::default();
     let (tx, rx) = watch::channel(false);
+    // Each detector takes 50 ms to wind down, so a stop is still in flight when the next
+    // start is requested.
     let runtime = ProfilerRuntime::start(
         dir.path(),
         rx,
-        vec![Box::new(CountingDetector(live.clone(), Duration::ZERO))],
+        vec![Box::new(CountingDetector(
+            counts.clone(),
+            Duration::from_millis(50),
+        ))],
     );
     for on in [true, false, true, false, true] {
         tx.send(on).unwrap();
+        // Let the supervisor act on every flip instead of only the last one.
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(live.load(Ordering::SeqCst), 1);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        Counts::get(&counts.starts) >= 2,
+        "the flips were applied as a stop followed by a start"
+    );
+    assert_eq!(Counts::get(&counts.max), 1, "two detector sets ran at once");
+    assert_eq!(Counts::get(&counts.live), 1, "the last flip turned it on");
     assert_eq!(runtime.status()["enabled"], true);
     assert!(runtime.status()["recordingSince"].is_string());
     tx.send(false).unwrap();
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(live.load(Ordering::SeqCst), 0);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(Counts::get(&counts.live), 0);
+    assert_eq!(Counts::get(&counts.max), 1);
     assert_eq!(runtime.status()["enabled"], false);
     assert!(runtime.status()["recordingSince"].is_null());
     runtime.shutdown().await;
@@ -138,23 +167,24 @@ async fn a_second_runtime_on_the_same_directory_is_degraded() {
 /// A server start that fails after creating the runtime drops it without `shutdown`.
 async fn a_dropped_runtime_stops_its_detectors_before_releasing_the_directory() {
     let dir = tempfile::tempdir().unwrap();
-    let live = Arc::new(AtomicI64::new(0));
+    let counts = Counts::default();
     let (_tx, rx) = watch::channel(true);
     let runtime = ProfilerRuntime::start(
         dir.path(),
         rx.clone(),
         vec![Box::new(CountingDetector(
-            live.clone(),
+            counts.clone(),
             Duration::from_millis(100),
         ))],
     );
     tokio::time::sleep(Duration::from_millis(20)).await;
-    assert_eq!(live.load(Ordering::SeqCst), 1);
+    assert_eq!(Counts::get(&counts.live), 1);
     // Dropped on a thread outside the Tokio runtime, which must still run the teardown.
     std::thread::spawn(move || drop(runtime)).join().unwrap();
-    let next = start_when_unlocked(dir.path(), &rx).await;
+    // Teardown is still running: `start` waits for the lock instead of degrading.
+    let next = start_off_the_workers(dir.path(), rx).await;
     assert_eq!(
-        live.load(Ordering::SeqCst),
+        Counts::get(&counts.live),
         0,
         "the old detector set stopped before the directory was released"
     );
@@ -200,17 +230,16 @@ async fn a_failed_startup_compaction_reports_failing_storage() {
     runtime.shutdown().await;
 }
 
-/// Starts a runtime once the previous one has released the directory lock.
-async fn start_when_unlocked(dir: &std::path::Path, rx: &watch::Receiver<bool>) -> ProfilerRuntime {
-    for _ in 0..100 {
-        let runtime = ProfilerRuntime::start(dir, rx.clone(), vec![]);
-        if runtime.status()["capabilities"]["storage"] == "ok" {
-            return runtime;
-        }
-        runtime.shutdown().await;
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("the previous runtime never released the profiler directory");
+/// Starts a runtime as production does, off the async workers, so a predecessor's teardown
+/// can finish on the runtime while `start` waits for the directory lock.
+async fn start_off_the_workers(
+    dir: &std::path::Path,
+    rx: watch::Receiver<bool>,
+) -> ProfilerRuntime {
+    let dir = dir.to_path_buf();
+    tokio::task::spawn_blocking(move || ProfilerRuntime::start(&dir, rx, vec![]))
+        .await
+        .unwrap()
 }
 
 /// The new runtime holds the global handle, so global findings reach it.
