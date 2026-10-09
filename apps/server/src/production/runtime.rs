@@ -26,7 +26,11 @@ use crate::{
     diagnostics::{
         DesktopUiProcessObserver, DiagnosticsMonitor, NativeProcessSampler, NativeResourceSampler,
         ProcessAttributionRegistry, TraceDiagnosticsStore, bound_diagnostic_string,
-        profiler::{profiler_dir, runtime::ProfilerRuntime},
+        profiler::{
+            latency::LatencyDetector,
+            profiler_dir,
+            runtime::{Detector, ProfilerRuntime},
+        },
     },
     git::GitRepository,
     mcp::preview_automation::PreviewAutomationBroker,
@@ -215,12 +219,12 @@ impl ProductionRuntime {
         );
         let provider_update_checks = control.start_provider_update_checks();
         // Starting replays and compacts the findings file, so it runs off the async workers.
-        // Detectors are added by the changes that introduce them.
         let profiler_state_dir = config.state_dir();
         let profiler_enabled = control.profiler_enabled_signal();
+        let profiler_detectors: Vec<Box<dyn Detector>> = vec![Box::new(LatencyDetector)];
         let profiler = Arc::new(
             tokio::task::spawn_blocking(move || {
-                ProfilerRuntime::start(&profiler_state_dir, profiler_enabled, Vec::new())
+                ProfilerRuntime::start(&profiler_state_dir, profiler_enabled, profiler_detectors)
             })
             .await
             .map_err(|error| error.to_string())?,
