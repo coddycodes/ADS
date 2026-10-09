@@ -305,24 +305,28 @@ impl Writer {
     }
 
     fn append(&mut self, bytes: &[u8]) -> io::Result<()> {
-        if self.out.is_none() {
-            self.out = Some(self.open_live()?);
-        }
-        // Checked after any reopen, so a file a failed flush left near the cap still rotates.
         let max = self.config.max_file_bytes;
-        if self
-            .out
-            .as_ref()
-            .is_some_and(|(_, len)| *len > 0 && *len + bytes.len() as u64 > max)
-        {
-            self.close();
-            self.out = Some(self.open_live()?);
+        // Normally one pass. A file is checked after any reopen, so one a failed flush left
+        // near the cap still rotates. If rotation's final flush fails, `close` keeps the file,
+        // the next pass reopens it (cut back to the last flush, empty buffer) and closes it
+        // cleanly. The third pass opens the new file, which is empty and so never rotates.
+        for _ in 0..3 {
+            if self.out.is_none() {
+                self.out = Some(self.open_live()?);
+            }
+            let full = self
+                .out
+                .as_ref()
+                .is_some_and(|(_, len)| *len > 0 && *len + bytes.len() as u64 > max);
+            if full {
+                self.close();
+            } else if let Some((out, len)) = self.out.as_mut() {
+                out.write_all(bytes)?;
+                *len += bytes.len() as u64;
+                return Ok(());
+            }
         }
-        if let Some((out, len)) = self.out.as_mut() {
-            out.write_all(bytes)?;
-            *len += bytes.len() as u64;
-        }
-        Ok(())
+        Err(io::Error::other("could not rotate the live events file"))
     }
 
     /// Opens the live events file. A new file (first start or after rotation) runs retention
@@ -405,15 +409,17 @@ impl Writer {
     }
 
     /// Flushes and syncs the live file, then retires it so the next record opens a new one.
-    /// Used on rotation and shutdown only.
+    /// Used on rotation and shutdown only. If the flush fails the file stays live: it is cut
+    /// back to its last good length and reused, not left torn behind a new file.
     fn close(&mut self) {
-        self.live_path = None;
         let Some((mut out, len)) = self.out.take() else {
+            self.live_path = None;
             return;
         };
         match out.flush() {
             Ok(()) => {
                 let _ = out.get_ref().sync_data();
+                self.live_path = None;
                 self.commit();
             }
             Err(_) => {
@@ -437,13 +443,17 @@ impl Writer {
 
     /// An I/O error loses the buffered lines (and `extra` more). Event lines count as drops;
     /// a lost `telemetry.dropped` line is simply sent again. The handle is abandoned without
-    /// a second flush, and the next record reopens the same file.
+    /// a second flush, and the file is cut back to its last good length now (best effort) and
+    /// again when the next record reopens it, so no part of a lost line stays behind.
     fn fail_events(&mut self, extra: u64) {
         let lost = self.pending + extra;
         self.pending = 0;
         self.in_flight = 0;
         if let Some((out, _)) = self.out.take() {
             let _ = out.into_parts();
+        }
+        if let Some(path) = self.live_path.clone() {
+            let _ = self.discard_uncommitted(&path);
         }
         self.count_lost(lost);
     }
@@ -454,8 +464,8 @@ impl Writer {
     }
 
     /// Retention for the whole profiler directory, run before every new events file. Rotated
-    /// `events-*` files and crash dumps (with their `.json` sidecars) are considered together,
-    /// oldest modification time first:
+    /// `events-*` files and crash dumps (with their `.json` sidecars, or a sidecar alone once
+    /// its dump is gone) are considered together, oldest modification time first:
     /// 1. anything older than `max_age` is deleted;
     /// 2. while the total (events + `crashes/` + `findings.ndjson`) plus room for the new live
     ///    file exceeds `max_total_bytes`, the oldest remaining file is deleted.
@@ -570,27 +580,40 @@ fn event_files(dir: &Path) -> Vec<Retained> {
         .collect()
 }
 
-/// Every `*.dmp` in `crashes`, with its `.json` sidecar when one exists.
+/// Every `*.dmp` in `crashes` with its `.json` sidecar when one exists, plus any `*.json`
+/// whose dump is gone, which would otherwise count toward the total and never be deleted.
 fn crash_dumps(crashes: &Path) -> Vec<Retained> {
     let Ok(entries) = fs::read_dir(crashes) else {
         return Vec::new();
     };
     entries
         .flatten()
-        .filter(|e| e.path().extension().is_some_and(|ext| ext == "dmp"))
         .filter_map(|e| {
+            let path = e.path();
             let meta = e.metadata().ok().filter(fs::Metadata::is_file)?;
-            let sidecar = e.path().with_extension("json");
-            let sidecar_len = fs::metadata(&sidecar)
-                .ok()
-                .filter(fs::Metadata::is_file)
-                .map(|m| m.len());
-            Some(Retained {
-                modified: meta.modified().ok()?,
-                path: e.path(),
-                len: meta.len(),
-                sidecar: sidecar_len.map(|len| (sidecar, len)),
-            })
+            let modified = meta.modified().ok()?;
+            match path.extension()?.to_str()? {
+                "dmp" => {
+                    let sidecar = path.with_extension("json");
+                    let sidecar_len = fs::metadata(&sidecar)
+                        .ok()
+                        .filter(fs::Metadata::is_file)
+                        .map(|m| m.len());
+                    Some(Retained {
+                        modified,
+                        len: meta.len(),
+                        sidecar: sidecar_len.map(|len| (sidecar, len)),
+                        path,
+                    })
+                }
+                "json" if !path.with_extension("dmp").exists() => Some(Retained {
+                    modified,
+                    len: meta.len(),
+                    sidecar: None,
+                    path,
+                }),
+                _ => None,
+            }
         })
         .collect()
 }
@@ -968,7 +991,7 @@ mod tests {
         let mut file = OpenOptions::new().append(true).open(&live).unwrap();
         file.write_all(br#"{"kind":"telemetry.dropped","count":9}"#)
             .unwrap();
-        writer.fail_events(0);
+        writer.out = None; // the handle was abandoned without cutting the file back
 
         writer.write(event(1));
         writer.flush();
@@ -1001,6 +1024,57 @@ mod tests {
             2,
             "the line lost during rotation is reported too"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn failed_close_keeps_the_live_file_and_cuts_it_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let counters = Arc::new(Counters::default());
+        let mut writer = Writer::new(config(dir.path()), counters.clone());
+        writer.write(event(0));
+        writer.flush();
+        let live = dir.path().join("events-000000.ndjson");
+        let committed = std::fs::metadata(&live).unwrap().len();
+        // A flush that ran out of disk halfway left a whole report line behind.
+        let mut file = OpenOptions::new().append(true).open(&live).unwrap();
+        file.write_all(b"{\"kind\":\"telemetry.dropped\",\"count\":9}\n")
+            .unwrap();
+        writer.out = Some(full_disk_handle());
+        writer.write(event(1)); // buffered for /dev/full, so closing fails
+
+        writer.close();
+        assert_eq!(writer.live_path.as_deref(), Some(live.as_path()));
+        assert_eq!(std::fs::metadata(&live).unwrap().len(), committed);
+        assert_eq!(counters.dropped.load(Ordering::Relaxed), 1);
+
+        writer.write(event(2));
+        writer.flush();
+        let text = std::fs::read_to_string(&live).unwrap();
+        assert_eq!(text.lines().count(), 2, "{text}");
+        assert!(!text.contains("telemetry.dropped"));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn retention_deletes_crash_sidecars_whose_dump_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let crashes = dir.path().join("crashes");
+        std::fs::create_dir_all(&crashes).unwrap();
+        for name in ["orphan.json", "pair.dmp", "pair.json", "fresh-orphan.json"] {
+            std::fs::write(crashes.join(name), b"x").unwrap();
+        }
+        age(&crashes.join("orphan.json"), 10 * 24 * 3600);
+        let store = ProfilerStore::start(StoreConfig {
+            max_total_bytes: 1 << 20,
+            ..config(dir.path())
+        });
+        store.sender().send(event(1));
+        store.shutdown();
+        assert!(!crashes.join("orphan.json").exists());
+        assert!(crashes.join("pair.dmp").exists());
+        assert!(crashes.join("pair.json").exists());
+        assert!(crashes.join("fresh-orphan.json").exists());
     }
 
     /// Sum of the `count` of every `telemetry.dropped` line under `dir`.
