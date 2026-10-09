@@ -120,28 +120,51 @@ pub fn finding_for(previous: &SessionRecord, run: PreviousRun) -> Option<Finding
     let (kind, severity, fingerprint_fields, title, summary, extra) = match run {
         PreviousRun::Clean => return None,
         PreviousRun::Crash(record) => {
-            let module = record.module.as_deref().unwrap_or("an unknown module");
+            // OS records hold paths and symbols; nothing from them is kept unredacted.
+            let frames: Vec<String> = record.frames.iter().map(|f| redact_path(f)).collect();
+            // Every abort shares libc's and std's top frames, so our own executable's frames
+            // tell crashes apart; other modules' top frames stand in when it has none.
+            let own = os_records::file_name(&previous.exe);
+            let own_frames: Vec<&String> = frames
+                .iter()
+                .filter(|frame| {
+                    !own.is_empty()
+                        && os_records::frame_module(frame)
+                            .is_some_and(|module| module.eq_ignore_ascii_case(own))
+                })
+                .collect();
+            let (module, key_frames) = if own_frames.is_empty() {
+                (
+                    record.module.as_deref().map(redact_path),
+                    frames.iter().collect::<Vec<_>>(),
+                )
+            } else {
+                (Some(own.to_owned()), own_frames)
+            };
+            let shown_module = module.as_deref().unwrap_or("an unknown module");
             let mut fields = vec![
                 record.source.to_owned(),
                 record.signal_or_code.clone(),
-                module.to_owned(),
+                shown_module.to_owned(),
             ];
-            fields.extend(record.frames.iter().take(FINGERPRINT_FRAMES).cloned());
+            // The fault site too: faults at different places behind one caller stay apart.
+            fields.extend(frames.first().cloned());
+            fields.extend(key_frames.into_iter().take(FINGERPRINT_FRAMES).cloned());
             (
                 "crash.native",
                 Severity::Error,
                 fields,
                 format!("Previous run crashed with {}", record.signal_or_code),
                 format!(
-                    "{} in {module}, from the OS crash record ({})",
+                    "{} in {shown_module}, from the OS crash record ({})",
                     record.signal_or_code, record.source
                 ),
                 json!({
                     "source": record.source,
                     "signalOrCode": record.signal_or_code,
-                    "module": record.module,
-                    "frames": record.frames,
-                    "rawRef": record.raw_ref,
+                    "module": module,
+                    "frames": frames,
+                    "rawRef": redact_path(&record.raw_ref),
                 }),
             )
         }
@@ -309,6 +332,80 @@ mod tests {
         .unwrap();
         end_session(dir.path());
         assert_eq!(begin_session(dir.path()), Some(other));
+    }
+
+    fn abort_in(own_frame: &str) -> OsCrashRecord {
+        let mut frames: Vec<String> = (0..5)
+            .map(|n| format!("n/a (libc.so.6 + 0x{n}a17c)"))
+            .collect();
+        frames.push(format!("{own_frame} (bibcode + 0x1234)"));
+        OsCrashRecord {
+            source: "coredump",
+            signal_or_code: "SIGABRT".into(),
+            module: Some("libc.so.6".into()),
+            frames,
+            raw_ref: "coredumpctl info 42".into(),
+        }
+    }
+
+    /// Aborts all share libc's top frames; our own frames tell them apart.
+    #[test]
+    fn native_crashes_are_told_apart_by_our_own_frames() {
+        let prev = previous();
+        let first = finding_for(&prev, PreviousRun::Crash(abort_in("parse_a"))).unwrap();
+        let second = finding_for(&prev, PreviousRun::Crash(abort_in("parse_b"))).unwrap();
+        let fingerprint = |input: &FindingInput| {
+            super::super::findings::fingerprint(input.kind, &input.fingerprint_fields)
+        };
+        assert_ne!(fingerprint(&first), fingerprint(&second));
+        assert_eq!(first.evidence["module"], "bibcode");
+        assert!(first.summary.contains("bibcode"), "{}", first.summary);
+        // No frame in our module: the top frames and the record's module stand.
+        let mut foreign = abort_in("parse_a");
+        foreign.frames.pop();
+        let foreign = finding_for(&prev, PreviousRun::Crash(foreign)).unwrap();
+        assert_eq!(foreign.evidence["module"], "libc.so.6");
+    }
+
+    /// Faults at different places in a library reached from the same caller stay apart.
+    #[test]
+    fn the_fault_site_stays_in_the_fingerprint() {
+        let segv = |fault: &str| OsCrashRecord {
+            source: "ips",
+            signal_or_code: "SIGSEGV".into(),
+            module: Some("libx.dylib".into()),
+            frames: vec![fault.to_owned(), "main (bibcode + 0x1234)".into()],
+            raw_ref: "bibcode pid 42".into(),
+        };
+        let fingerprint = |record| {
+            let input = finding_for(&previous(), PreviousRun::Crash(record)).unwrap();
+            super::super::findings::fingerprint(input.kind, &input.fingerprint_fields)
+        };
+        assert_ne!(
+            fingerprint(segv("fault_a (libx.dylib + 0x10)")),
+            fingerprint(segv("fault_b (libx.dylib + 0x20)"))
+        );
+    }
+
+    #[test]
+    fn os_record_text_is_redacted() {
+        let home = dirs::home_dir().unwrap().to_string_lossy().into_owned();
+        let record = OsCrashRecord {
+            source: "ips",
+            signal_or_code: "SIGSEGV".into(),
+            module: Some(format!("{home}/lib/libx.dylib")),
+            frames: vec![format!("{home}/src/x.rs (libx.dylib + 0x10)")],
+            raw_ref: format!("{home}/Library/Logs/DiagnosticReports/x.ips"),
+        };
+        let input = finding_for(&previous(), PreviousRun::Crash(record)).unwrap();
+        let text = input.evidence.to_string() + &input.summary + &input.title;
+        assert!(!text.contains(&home), "{text}");
+        assert!(
+            input.evidence["frames"][0]
+                .as_str()
+                .unwrap()
+                .starts_with("~/src/x.rs")
+        );
     }
 
     #[test]

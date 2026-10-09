@@ -9,9 +9,14 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::{event::ProfilerEvent, global, redact::redact_path};
+use super::{
+    event::ProfilerEvent,
+    global,
+    redact::{MESSAGE_MAX_BYTES, redact_path},
+};
 
 const MAX_FRAMES: usize = 64;
+const REDACTED: &str = "[redacted]";
 /// How long a panicking thread waits for its record to reach the OS.
 const FLUSH_TIMEOUT: Duration = Duration::from_millis(250);
 
@@ -43,7 +48,7 @@ fn record(info: &std::panic::PanicHookInfo<'_>) {
         frames.extend(module_offset(frame));
         walked < MAX_FRAMES
     });
-    let message = redact_path(info.payload_as_str().unwrap_or("Box<dyn Any>"));
+    let message = panic_message(info.payload_as_str().unwrap_or("Box<dyn Any>"));
     let thread = std::thread::current()
         .name()
         .unwrap_or("unnamed")
@@ -65,6 +70,52 @@ fn record(info: &std::panic::PanicHookInfo<'_>) {
     // A panic that cannot unwind aborts right after the hook, before the writer's next timed
     // flush. Panics are rare, so the wait costs nothing in practice.
     handle.sender.flush_within(FLUSH_TIMEOUT);
+}
+
+/// Where std puts the value a panic was about, up to the end of the line.
+const VALUE_MARKERS: [&str; 4] = ["Err` value:", "Err value:", "left:", "right:"];
+
+/// The panic's first line, at most 2 KiB, without the data std embeds in it: a sliced
+/// string between backticks, an `Err` value, assertion operands. That data can be prompt or
+/// terminal text. Truncating first also bounds the work.
+fn panic_message(raw: &str) -> String {
+    let first = raw.lines().next().unwrap_or("");
+    let mut end = first.len().min(MESSAGE_MAX_BYTES);
+    while !first.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut line = &first[..end];
+    // A URL cut inside its authority may have lost the `@` that marks its credentials, so
+    // credential redaction would no longer see them: the partial URL goes whole.
+    let mut url_cut = false;
+    if end < first.len()
+        && let Some(scheme) = line.rfind("://")
+        && !line[scheme + 3..].contains(['/', ' ', '\t'])
+    {
+        line = &line[..line[..scheme].rfind(char::is_whitespace).unwrap_or(0)];
+        url_cut = true;
+    }
+    let value_at = VALUE_MARKERS
+        .iter()
+        .filter_map(|marker| line.find(marker).map(|at| at + marker.len()))
+        .min();
+    let mut rest = value_at.map_or(line, |at| &line[..at]);
+    let mut kept = String::with_capacity(line.len());
+    while let Some(open) = rest.find('`') {
+        kept.push_str(&rest[..open]);
+        kept.push_str(REDACTED);
+        rest = rest[open + 1..]
+            .find('`')
+            .map_or("", |close| &rest[open + 1 + close + 1..]);
+    }
+    kept.push_str(rest);
+    if value_at.is_some() || url_cut {
+        if !kept.is_empty() {
+            kept.push(' ');
+        }
+        kept.push_str(REDACTED);
+    }
+    redact_path(&kept)
 }
 
 /// The executable that holds this code: its load address, its name as symbol files name it,
@@ -196,6 +247,81 @@ fn module_offset(_frame: &backtrace::Frame) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The message std builds for a panic in `f`, as the hook receives it.
+    fn recorded_message(f: impl FnOnce() + std::panic::UnwindSafe) -> String {
+        let payload = std::panic::catch_unwind(f).unwrap_err();
+        let raw = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap();
+        panic_message(raw)
+    }
+
+    #[test]
+    fn slicing_panics_record_no_part_of_the_text() {
+        // Index 17 falls inside the two-byte `é`.
+        let text = String::from("my secret prompté");
+        let end = std::hint::black_box(17);
+        let message = recorded_message(|| {
+            let _ = &text[..end];
+        });
+        assert!(
+            !message.contains("secret") && !message.contains("prompt"),
+            "{message}"
+        );
+        // Older std quoted up to 256 bytes of the string between backticks.
+        assert_eq!(
+            panic_message(
+                "byte index 17 is not a char boundary; it is inside 'é' (bytes 16..18) of \
+                 `my secret prompté`"
+            ),
+            "byte index 17 is not a char boundary; it is inside 'é' (bytes 16..18) of [redacted]"
+        );
+    }
+
+    #[test]
+    fn assertions_and_unwraps_record_no_values() {
+        let (left, right) = (String::from("my secret"), String::from("my prompt"));
+        let message = recorded_message(|| assert_eq!(left, right));
+        assert!(
+            !message.contains("secret") && !message.contains("prompt"),
+            "{message}"
+        );
+        let message = recorded_message(|| {
+            std::hint::black_box(Err::<(), _>("my secret prompt")).unwrap();
+        });
+        assert!(!message.contains("secret"), "{message}");
+        assert!(message.ends_with("[redacted]"), "{message}");
+    }
+
+    #[test]
+    fn only_the_first_line_is_kept_and_capped() {
+        let message = panic_message(&format!("{}\nsecond line", "a".repeat(5000)));
+        assert_eq!(message, "a".repeat(2048));
+        assert_eq!(
+            panic_message("unterminated `my secret"),
+            "unterminated [redacted]"
+        );
+    }
+
+    /// The cap must not cut a URL between its credentials and the `@` that marks them.
+    #[test]
+    fn a_url_cut_by_the_cap_is_redacted_whole() {
+        let raw = format!(
+            "{} https://alice:supersecret@example.test/path",
+            "a".repeat(2025)
+        );
+        let message = panic_message(&raw);
+        assert!(
+            !message.contains("alice") && !message.contains("supersec"),
+            "{message}"
+        );
+        assert!(message.ends_with("[redacted]"), "{message}");
+        let short = panic_message("fetch https://alice:supersecret@example.test/path failed");
+        assert!(!short.contains("supersecret"), "{short}");
+    }
 
     #[test]
     fn debug_ids_use_breakpad_byte_order() {

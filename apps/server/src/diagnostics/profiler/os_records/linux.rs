@@ -67,7 +67,7 @@ pub fn parse_journal_message(entry: &Value) -> Option<OsCrashRecord> {
         .collect();
     let module = frames
         .first()
-        .and_then(|first| frame_module(first))
+        .and_then(|first| super::frame_module(first))
         .map(str::to_owned);
     let pid = field("COREDUMP_PID").unwrap_or_default();
     let timestamp = field("COREDUMP_TIMESTAMP").unwrap_or_default();
@@ -101,11 +101,6 @@ fn frame(line: &str) -> Option<&str> {
     let (_, rest) = numbered.split_once(char::is_whitespace)?;
     let (_, rest) = rest.trim_start().split_once(' ')?;
     Some(rest)
-}
-
-fn frame_module(frame: &str) -> Option<&str> {
-    let (_, location) = frame.rsplit_once(" (")?;
-    location.split(" + ").next()
 }
 
 /// The journal match for the boot a run recorded: `/proc/sys/kernel/random/boot_id` without

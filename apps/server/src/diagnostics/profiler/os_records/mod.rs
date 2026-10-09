@@ -91,8 +91,18 @@ fn started_at(previous: &SessionRecord) -> Option<OffsetDateTime> {
     OffsetDateTime::parse(&previous.started_at, &Rfc3339).ok()
 }
 
+/// The module a frame names, in every format above: `symbol (module + 0x…)` or
+/// `module + 0x…`.
+pub(super) fn frame_module(frame: &str) -> Option<&str> {
+    let location = frame
+        .strip_suffix(')')
+        .and_then(|frame| frame.rsplit_once(" ("))
+        .map_or(frame, |(_, location)| location);
+    location.split(" + ").next()
+}
+
 /// The file name of a path from any OS, as the previous run recorded its executable.
-fn file_name(path: &str) -> &str {
+pub(super) fn file_name(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
