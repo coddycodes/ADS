@@ -130,14 +130,16 @@ impl LeakDetector {
         let z = mann_kendall_z(&recent.iter().map(|p| p.1).collect::<Vec<_>>());
         let latest = points.last().map_or(0.0, |p| p.1);
         let growth = latest - baseline / MB;
-        if points.len() >= LIKELY_WINDOW_MIN {
-            let r2 = r_squared(&points);
-            if (slope >= 5.0 && r2 > 0.8) || (growth >= 200.0 && growth >= 0.5 * baseline / MB) {
-                return LeakVerdict::Likely {
-                    slope_mb_per_h: slope,
-                    r2,
-                };
-            }
+        let r2 = r_squared(&points);
+        // Two alternatives: 6 h of growth at the suspect rate that fits a line, or growth of
+        // at least 50% and 200 MB since the baseline, which needs only the 1 h window.
+        let fits_six_hours = points.len() >= LIKELY_WINDOW_MIN && slope >= threshold && r2 > 0.8;
+        let grew_large = growth >= 200.0 && growth >= 0.5 * baseline / MB;
+        if fits_six_hours || grew_large {
+            return LeakVerdict::Likely {
+                slope_mb_per_h: slope,
+                r2,
+            };
         }
         if slope >= threshold && z > 2.33 {
             LeakVerdict::Suspect {
@@ -250,7 +252,7 @@ pub fn r_squared(points: &[(f64, f64)]) -> f64 {
     (sxy * sxy) / (sxx * syy)
 }
 
-/// The median, or 0.0 for an empty slice. Reorders `values`.
+/// The median, or 0.0 for an empty slice. Sorts `values` ascending.
 pub(crate) fn median(values: &mut [f64]) -> f64 {
     if values.is_empty() {
         return 0.0;
@@ -348,6 +350,28 @@ mod tests {
             !(0..600)
                 .step_by(5)
                 .any(|s| cpu.push(if s % 60 < 30 { 0.95 } else { 0.1 }, s))
+        );
+    }
+
+    #[test]
+    fn slow_growth_on_a_large_process_never_becomes_likely() {
+        let mut det = LeakDetector::default();
+        // 6 MB/h on 4 GB: far below 2%/h, however well a line fits it.
+        let verdicts = feed(&mut det, 500, |m| 4096 * MB + m * MB / 10);
+        assert!(verdicts.is_empty());
+    }
+
+    #[test]
+    fn large_growth_is_likely_as_soon_as_the_hour_window_exists() {
+        let mut det = LeakDetector::default();
+        // 1 GB/h on a 500 MB base passes 50% and 200 MB of growth long before 6 h.
+        let first = (0..120).find_map(|m| {
+            det.push_minute(m, 500 * MB + m * 1024 * MB / 60)
+                .map(|verdict| (m, verdict))
+        });
+        assert!(
+            matches!(first, Some((m, LeakVerdict::Likely { .. })) if m <= WARMUP_MIN + 60 + 1),
+            "{first:?}"
         );
     }
 

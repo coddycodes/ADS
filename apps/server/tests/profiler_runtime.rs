@@ -80,6 +80,7 @@ async fn profiler_runtime_scenarios_share_the_process_global_handle_in_sequence(
     an_unreadable_findings_file_reports_failing_storage().await;
     a_failed_startup_compaction_reports_failing_storage().await;
     the_sampler_records_the_server_process().await;
+    turning_the_profiler_off_writes_the_open_minute().await;
 }
 
 async fn rapid_toggles_never_run_two_detector_sets() {
@@ -235,11 +236,34 @@ async fn a_failed_startup_compaction_reports_failing_storage() {
     runtime.shutdown().await;
 }
 
-/// The production sampler under the runtime: the tick taken as the toggle turns on reaches
-/// the events file as a `process.sample` event for this process.
+/// The production sampler under the runtime, with 250 ms ticks and a 500 ms minute: the
+/// first closed minute reaches the events file as a `process.sample` event for this process.
 async fn the_sampler_records_the_server_process() {
     let dir = tempfile::tempdir().unwrap();
     let (_tx, rx) = watch::channel(true);
+    let runtime = ProfilerRuntime::start(
+        dir.path(),
+        rx,
+        vec![Box::new(SamplerDetector::with_timing(
+            ProcessAttributionRegistry::new(),
+            Duration::from_millis(250),
+            Duration::from_millis(500),
+        ))],
+    );
+    let sample = first_process_sample(runtime, dir.path()).await;
+    // The widest interval of the minute: the throttle may have doubled it.
+    assert!(sample["intervalMs"].as_u64() >= Some(250));
+    assert!(sample["selfCpuMs"].is_number());
+    let server = server_process(&sample);
+    assert!(server["privateMaxBytes"].as_u64() >= server["privateBytes"].as_u64());
+    assert!(server["rssMaxBytes"].as_u64() >= server["rssBytes"].as_u64());
+    assert!(server["cpuMax"].as_f64() >= server["cpu"].as_f64());
+}
+
+/// A capture shorter than a minute: turning the profiler off writes the open minute.
+async fn turning_the_profiler_off_writes_the_open_minute() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tx, rx) = watch::channel(true);
     let runtime = ProfilerRuntime::start(
         dir.path(),
         rx,
@@ -247,8 +271,21 @@ async fn the_sampler_records_the_server_process() {
             ProcessAttributionRegistry::new(),
         ))],
     );
-    // The writer flushes every 2 s; teardown uninstalls the handle before the sampler stops,
-    // so the sample must be written before shutdown.
+    // Let the supervisor start the sampler; its first tick completes before it sees the stop.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    tx.send(false).unwrap();
+    let sample = first_process_sample(runtime, dir.path()).await;
+    assert_eq!(sample["intervalMs"], 5000);
+    server_process(&sample);
+}
+
+/// Waits for the first written event, shuts the runtime down, and returns the first
+/// `process.sample` line. The writer flushes every 2 s, and teardown uninstalls the handle
+/// before the sampler stops, so the sample must be written before shutdown.
+async fn first_process_sample(
+    runtime: ProfilerRuntime,
+    state_dir: &std::path::Path,
+) -> serde_json::Value {
     for _ in 0..200 {
         if runtime.status()["eventCount"].as_u64() > Some(0) {
             break;
@@ -256,17 +293,17 @@ async fn the_sampler_records_the_server_process() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     runtime.shutdown().await;
-
-    let dir = profiler::profiler_dir(dir.path());
-    let sample = std::fs::read_dir(&dir)
+    std::fs::read_dir(profiler::profiler_dir(state_dir))
         .unwrap()
         .filter_map(|entry| std::fs::read_to_string(entry.unwrap().path()).ok())
         .flat_map(|text| text.lines().map(str::to_owned).collect::<Vec<_>>())
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(&line).ok())
         .find(|line| line["kind"] == "process.sample")
-        .expect("a process.sample event was written");
-    assert_eq!(sample["intervalMs"], 5000);
-    assert!(sample["selfCpuMs"].is_number());
+        .expect("a process.sample event was written")
+}
+
+/// This process's entry, with the fields every entry carries.
+fn server_process(sample: &serde_json::Value) -> &serde_json::Value {
     let server = sample["procs"]
         .as_array()
         .unwrap()
@@ -279,6 +316,7 @@ async fn the_sampler_records_the_server_process() {
     if cfg!(target_os = "linux") {
         assert_eq!(server["metric"], "private");
     }
+    server
 }
 
 /// Starts a runtime as production does, off the async workers, so a predecessor's teardown
