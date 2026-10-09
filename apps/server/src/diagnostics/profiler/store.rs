@@ -18,7 +18,8 @@ use super::event::ProfilerEvent;
 
 pub const CHANNEL_CAPACITY: usize = 2048;
 
-const FINDINGS_FILE: &str = "findings.ndjson";
+pub(super) const FINDINGS_FILE: &str = "findings.ndjson";
+const FINDINGS_TMP_FILE: &str = "findings.ndjson.tmp";
 const CRASHES_DIR: &str = "crashes";
 const WRITE_BUFFER_BYTES: usize = 64 * 1024;
 
@@ -62,6 +63,11 @@ enum Message {
     /// One finding line for `findings.ndjson`. Appended through its own short-lived
     /// handle; a failed append counts as a drop and sets `failing`.
     Finding(Value),
+    /// Runs retention outside rotation, never touching the live file.
+    Maintain,
+    /// Atomically replaces `findings.ndjson` with exactly these lines. Handled in queue order,
+    /// so findings queued after it are appended to the new file.
+    ReplaceFindings(Vec<Value>),
     Shutdown,
 }
 
@@ -80,6 +86,16 @@ impl EventSender {
     /// Queues one finding for `findings.ndjson`. Never blocks; a full channel drops it.
     pub fn send_finding(&self, finding: Value) {
         self.enqueue(Message::Finding(finding));
+    }
+
+    /// Queues a retention pass on the writer thread. Never blocks.
+    pub fn maintain(&self) {
+        self.enqueue(Message::Maintain);
+    }
+
+    /// Queues a rewrite of `findings.ndjson` with exactly `lines`. Never blocks.
+    pub fn replace_findings(&self, lines: Vec<Value>) {
+        self.enqueue(Message::ReplaceFindings(lines));
     }
 
     fn enqueue(&self, message: Message) {
@@ -222,6 +238,8 @@ impl Writer {
             match rx.recv_timeout(self.config.flush_every) {
                 Ok(Message::Event(event)) => self.write(event),
                 Ok(Message::Finding(finding)) => self.append_finding(&finding),
+                Ok(Message::Maintain) => self.enforce_retention(),
+                Ok(Message::ReplaceFindings(lines)) => self.replace_findings(&lines),
                 Ok(Message::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
                 Err(RecvTimeoutError::Timeout) => {}
             }
@@ -395,6 +413,15 @@ impl Writer {
         }
     }
 
+    fn replace_findings(&mut self, lines: &[Value]) {
+        if replace_findings_file(&self.config.dir, lines).is_ok() {
+            self.counters.failing.store(false, Ordering::Relaxed);
+        } else {
+            // The old file stays in place, so nothing is lost; storage is still failing.
+            self.count_lost(0);
+        }
+    }
+
     fn flush(&mut self) {
         let Some((out, len)) = self.out.as_mut() else {
             return;
@@ -463,15 +490,17 @@ impl Writer {
         self.counters.dropped.fetch_add(lost, Ordering::Relaxed);
     }
 
-    /// Retention for the whole profiler directory, run before every new events file. Rotated
-    /// `events-*` files and crash dumps (with their `.json` sidecars, or a sidecar alone once
-    /// its dump is gone) are considered together, oldest modification time first:
+    /// Retention for the whole profiler directory, run before every new events file and on
+    /// `Message::Maintain`. Rotated `events-*` files and crash dumps (with their `.json`
+    /// sidecars, or a sidecar alone once its dump is gone) are considered together, oldest
+    /// modification time first:
     /// 1. anything older than `max_age` is deleted;
     /// 2. while the total (events + `crashes/` + `findings.ndjson`) plus room for the new live
     ///    file exceeds `max_total_bytes`, the oldest remaining file is deleted.
     ///
     /// `findings.ndjson` counts toward the total but is not trimmed here; whoever appends
-    /// findings owns compacting that file.
+    /// findings owns compacting that file. An open live file counts toward the total but is
+    /// never deleted.
     fn enforce_retention(&self) {
         let dir = &self.config.dir;
         let crashes = dir.join(CRASHES_DIR);
@@ -479,7 +508,10 @@ impl Writer {
         let mut total = events.iter().map(|f| f.len).sum::<u64>()
             + dir_size(&crashes)
             + file_len(&dir.join(FINDINGS_FILE));
-        let mut candidates = events;
+        let mut candidates: Vec<Retained> = events
+            .into_iter()
+            .filter(|file| self.live_path.as_ref() != Some(&file.path))
+            .collect();
         candidates.extend(crash_dumps(&crashes));
         candidates.sort_by(|a, b| (a.modified, &a.path).cmp(&(b.modified, &b.path)));
         // The live file about to be opened may grow to `max_file_bytes`.
@@ -522,7 +554,37 @@ impl Retained {
     }
 }
 
-fn now_rfc3339() -> String {
+/// Replaces `findings.ndjson` with `lines` through a synced temp file and a rename. On
+/// failure the old file stays in place and the temp file is removed.
+pub(super) fn replace_findings_file(dir: &Path, lines: &[Value]) -> io::Result<()> {
+    let tmp = dir.join(FINDINGS_TMP_FILE);
+    let renamed = write_lines(&tmp, lines).and_then(|()| fs::rename(&tmp, dir.join(FINDINGS_FILE)));
+    if renamed.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    renamed
+}
+
+fn write_lines(path: &Path, lines: &[Value]) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut out = BufWriter::new(File::create(path)?);
+    for line in lines {
+        serde_json::to_writer(&mut out, line)?;
+        out.write_all(b"\n")?;
+    }
+    out.into_inner()
+        .map_err(io::IntoInnerError::into_error)?
+        .sync_data()
+}
+
+/// Bytes the profiler uses on disk: the directory's own files plus crash dumps.
+pub(super) fn disk_bytes(dir: &Path) -> u64 {
+    dir_size(dir) + dir_size(&dir.join(CRASHES_DIR))
+}
+
+pub(super) fn now_rfc3339() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned())
@@ -1075,6 +1137,48 @@ mod tests {
         assert!(crashes.join("pair.dmp").exists());
         assert!(crashes.join("pair.json").exists());
         assert!(crashes.join("fresh-orphan.json").exists());
+    }
+
+    #[test]
+    fn maintain_runs_retention_but_never_deletes_the_live_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ProfilerStore::start(config(dir.path()));
+        store.sender().send(event(1));
+        let live = dir.path().join("events-000000.ndjson");
+        wait_until(|| file_len(&live) > 0);
+        let stale = dir.path().join("events-000050.ndjson");
+        std::fs::write(&stale, b"{}\n").unwrap();
+        age(&stale, 10 * 24 * 3600);
+        age(&live, 10 * 24 * 3600);
+
+        store.sender().maintain();
+        wait_until(|| !stale.exists());
+        store.sender().send(event(2));
+        store.shutdown();
+        assert!(
+            live.exists(),
+            "the open live file is never a retention candidate"
+        );
+        assert!(read_all(dir.path()).iter().any(|l| l["n"] == 2));
+    }
+
+    #[test]
+    fn replace_findings_rewrites_the_file_in_queue_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ProfilerStore::start(config(dir.path()));
+        let sender = store.sender();
+        sender.send_finding(json!({ "id": "a" }));
+        sender.send_finding(json!({ "id": "a" }));
+        sender.replace_findings(vec![json!({ "id": "a" }), json!({ "id": "b" })]);
+        sender.send_finding(json!({ "id": "c" }));
+        store.shutdown();
+        let text = std::fs::read_to_string(dir.path().join(FINDINGS_FILE)).unwrap();
+        let ids: Vec<_> = text
+            .lines()
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap()["id"].clone())
+            .collect();
+        assert_eq!(ids, [json!("a"), json!("b"), json!("c")]);
+        assert!(!dir.path().join(FINDINGS_TMP_FILE).exists());
     }
 
     /// Sum of the `count` of every `telemetry.dropped` line under `dir`.

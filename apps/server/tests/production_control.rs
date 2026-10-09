@@ -645,6 +645,53 @@ async fn settings_update_persists_atomically_redacts_secrets_and_emits_stream_ev
 }
 
 #[tokio::test]
+async fn enabling_the_profiler_persists_streams_and_flips_the_live_signal() {
+    let (directory, control) = fixture().await;
+    let mut profiler_enabled = control.profiler_enabled_signal();
+    assert!(
+        !*profiler_enabled.borrow_and_update(),
+        "the profiler defaults off"
+    );
+    let cancellation = CancellationToken::new();
+    let mut stream = control.subscribe("subscribeServerConfig", cancellation.clone());
+    assert_eq!(next_event(&mut stream).await["type"], "snapshot");
+
+    let updated = call(
+        &control,
+        "server.updateSettings",
+        json!({ "patch": { "enableProfiler": true } }),
+    )
+    .await;
+    assert_eq!(updated["enableProfiler"], true);
+
+    let event = next_event_of_type(&mut stream, "settingsUpdated").await;
+    assert_eq!(event["payload"]["settings"]["enableProfiler"], true);
+    timeout(Duration::from_secs(2), profiler_enabled.changed())
+        .await
+        .expect("profiler signal timeout")
+        .expect("profiler signal stays open");
+    assert!(*profiler_enabled.borrow_and_update());
+
+    let persisted: Value = serde_json::from_slice(
+        &tokio::fs::read(
+            test_config(directory.path())
+                .state_dir()
+                .join("settings.json"),
+        )
+        .await
+        .expect("persisted settings"),
+    )
+    .expect("valid settings JSON");
+    assert_eq!(persisted["enableProfiler"], true);
+    let reloaded = NativeServerControl::new(test_config(directory.path()), auth_descriptor()).await;
+    assert!(
+        *reloaded.profiler_enabled_signal().borrow(),
+        "the toggle survives a restart"
+    );
+    cancellation.cancel();
+}
+
+#[tokio::test]
 async fn keybinding_upsert_replace_and_remove_are_resolved_persisted_and_streamed() {
     let (directory, control) = fixture().await;
     let cancellation = CancellationToken::new();

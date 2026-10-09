@@ -813,6 +813,107 @@ async fn independent_agent_activity_settings_control_routed_rpc_gates_and_trace(
 }
 
 #[tokio::test]
+async fn production_profiler_status_follows_the_setting_live() {
+    let temp = TempDir::new().expect("temporary directory");
+    let config = test_config(&temp);
+    hermetic_providers::write_hermetic_settings(&config.state_dir(), json!({}));
+    let handle = ServerRuntime::start(config)
+        .await
+        .expect("production server starts");
+    let mut socket = Some(open_socket(handle.local_addr()).await);
+
+    let result = AssertUnwindSafe(async {
+        let socket = socket.as_mut().expect("socket");
+        // Request ids must be unique unsigned decimal strings.
+        let mut next_id = 1_u32..;
+        let mut id = move || next_id.next().expect("ids never run out").to_string();
+        let off =
+            success_value(request(socket, &id(), "server.getProfilerStatus", json!({})).await);
+        assert_eq!(off["enabled"], false);
+        assert_eq!(off["capabilities"]["storage"], "ok");
+
+        for enabled in [true, false] {
+            let updated = success_value(
+                request(
+                    socket,
+                    &id(),
+                    "server.updateSettings",
+                    json!({ "patch": { "enableProfiler": enabled } }),
+                )
+                .await,
+            );
+            assert_eq!(updated["enableProfiler"], enabled);
+            let mut status = Value::Null;
+            for _ in 0..100 {
+                status = success_value(
+                    request(socket, &id(), "server.getProfilerStatus", json!({})).await,
+                );
+                if status["enabled"] == enabled {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert_eq!(
+                status["enabled"], enabled,
+                "the toggle applies without a restart"
+            );
+            assert_eq!(status["recordingSince"].is_string(), enabled);
+            assert_eq!(status["capabilities"]["storage"], "ok");
+        }
+    })
+    .catch_unwind()
+    .await;
+
+    close_socket(&mut socket).await;
+    handle.shutdown();
+    handle.join().await.expect("server joins");
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[tokio::test]
+async fn a_failed_production_start_releases_the_profiler_directory() {
+    let temp = TempDir::new().expect("temporary directory");
+    let config = test_config(&temp);
+    hermetic_providers::write_hermetic_settings(&config.state_dir(), json!({}));
+    let key_pair = config.state_dir().join("environment-jwt.json");
+    std::fs::write(&key_pair, b"not a key pair").expect("corrupt key pair");
+    assert!(
+        ServerRuntime::start(config.clone()).await.is_err(),
+        "a corrupt key pair fails startup after the production runtime exists"
+    );
+    std::fs::remove_file(&key_pair).expect("remove corrupt key pair");
+
+    // The failed start's profiler tears down in the background; a retry then owns the directory.
+    let mut storage = Value::Null;
+    for _ in 0..20 {
+        let handle = ServerRuntime::start(config.clone())
+            .await
+            .expect("production server starts");
+        let mut socket = Some(open_socket(handle.local_addr()).await);
+        let status = success_value(
+            request(
+                socket.as_mut().expect("socket"),
+                "1",
+                "server.getProfilerStatus",
+                json!({}),
+            )
+            .await,
+        );
+        close_socket(&mut socket).await;
+        handle.shutdown();
+        handle.join().await.expect("server joins");
+        storage = status["capabilities"]["storage"].clone();
+        if storage == "ok" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(storage, "ok", "the failed start kept the profiler lock");
+}
+
+#[tokio::test]
 async fn registrar_serves_concrete_server_and_terminal_metadata_rpcs() {
     let temp = TempDir::new().expect("temporary directory");
     let services = fixture_services();

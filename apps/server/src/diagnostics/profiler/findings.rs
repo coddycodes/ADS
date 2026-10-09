@@ -3,12 +3,13 @@
 //! `FindingsBook` is the in-memory index and the source of truth while the process runs.
 //! It never touches the filesystem after `load`: changes worth keeping are queued through
 //! the store's non-blocking writer, which appends them to `findings.ndjson`. `load` runs
-//! once at runtime start, before the writer exists, and compacts that file.
+//! once at runtime start, before the writer exists, and compacts that file; afterwards the
+//! runtime compacts it through the writer with `compacted_lines`.
 
 use std::{
     collections::HashMap,
-    fs::{self, File},
-    io::{self, BufRead, BufReader, BufWriter, Write},
+    fs::File,
+    io::{self, BufRead, BufReader},
     path::Path,
 };
 
@@ -17,12 +18,11 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use time::{Duration, OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
 
-use super::{event::ProfilerEvent, store::EventSender};
+use super::{
+    event::ProfilerEvent,
+    store::{EventSender, FINDINGS_FILE, replace_findings_file},
+};
 
-// ponytail: mirrors the private `FINDINGS_FILE` in store.rs, which owns appending to it.
-// The reload test in this module fails if the two names ever diverge.
-const FINDINGS_FILE: &str = "findings.ndjson";
-const FINDINGS_TMP_FILE: &str = "findings.ndjson.tmp";
 /// Findings kept in memory and in the compacted file.
 const MAX_FINDINGS: usize = 1000;
 /// Resolved findings last seen longer ago than this are dropped when the file is compacted.
@@ -104,8 +104,11 @@ pub fn fingerprint(kind: &str, fields: &[String]) -> String {
 pub struct FindingsBook {
     by_id: HashMap<String, Finding>,
     /// When each finding's line was last queued for the writer (`now` as given to `record`;
-    /// for a loaded finding, its `lastSeen`, as that is what the file holds).
+    /// for a loaded or compacted finding, its `lastSeen`, as that is what the file holds).
     persisted_at: HashMap<String, OffsetDateTime>,
+    /// `load` could not read the whole file. The book then never replaces it, because the
+    /// file still holds findings the book never saw; the next start retries.
+    partial: bool,
 }
 
 impl FindingsBook {
@@ -116,12 +119,20 @@ impl FindingsBook {
     /// Replays `findings.ndjson` (the last line per id wins; unreadable lines are skipped),
     /// drops resolved findings older than 7 days, keeps the 1,000 most recent, and rewrites
     /// the file through a temp file and a rename. A failed rewrite leaves the old file in
-    /// place for the next start, and so does a read error. Call it before the store's writer starts, so nothing appends
-    /// while the file is replaced.
+    /// place for the next start, and so does a read error. Call it before the store's writer
+    /// starts, so nothing appends while the file is replaced.
     pub fn load_at(dir: &Path, now: OffsetDateTime) -> Self {
         let path = dir.join(FINDINGS_FILE);
-        let Ok(file) = File::open(&path) else {
-            return Self::default();
+        let file = match File::open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Self::default(),
+            Err(error) => {
+                tracing::warn!(%error, "profiler findings file could not be read");
+                return Self {
+                    partial: true,
+                    ..Self::default()
+                };
+            }
         };
         let mut by_id = HashMap::new();
         let mut reader = BufReader::new(file);
@@ -141,26 +152,59 @@ impl FindingsBook {
                 by_id.insert(finding.id.clone(), finding);
             }
         }
-        let cutoff = now - Duration::days(RESOLVED_TTL_DAYS);
-        let mut persisted_at = HashMap::new();
-        by_id.retain(|id, finding| {
-            let Ok(last_seen) = OffsetDateTime::parse(&finding.last_seen, &Rfc3339) else {
-                return false;
-            };
-            persisted_at.insert(id.clone(), last_seen);
-            finding.state == FindingState::Open || last_seen >= cutoff
-        });
-        persisted_at.retain(|id, _| by_id.contains_key(id));
+        // Everything loaded is what the file holds, so it counts as persisted at `lastSeen`.
+        let persisted_at = by_id
+            .iter()
+            .filter_map(|(id, finding)| Some((id.clone(), parse_last_seen(finding)?)))
+            .collect();
         let mut book = Self {
             by_id,
             persisted_at,
+            partial: !read_to_end,
         };
-        book.truncate_to(MAX_FINDINGS);
-        // A read error mid-file leaves a partial book that must not replace the whole file.
-        if read_to_end && let Err(error) = book.rewrite(dir) {
+        if let Some(lines) = book.compacted_lines(now)
+            && let Err(error) = replace_findings_file(dir, &lines)
+        {
             tracing::warn!(%error, "profiler findings file was not compacted");
         }
         book
+    }
+
+    /// Compacts the book as `load` does (resolved findings older than 7 days dropped, the
+    /// 1,000 most recent kept) and returns its lines for `findings.ndjson`, oldest first so
+    /// later appends keep the file in chronological order. The lines carry the current state,
+    /// so each kept finding then counts as persisted at its `lastSeen`. `None` after a
+    /// partial `load`: the book still compacts in memory but must not replace the file.
+    pub fn compacted_lines(&mut self, now: OffsetDateTime) -> Option<Vec<Value>> {
+        let cutoff = now - Duration::days(RESOLVED_TTL_DAYS);
+        self.by_id.retain(|_, finding| {
+            parse_last_seen(finding)
+                .is_some_and(|last_seen| finding.state == FindingState::Open || last_seen >= cutoff)
+        });
+        self.truncate_to(MAX_FINDINGS);
+        let by_id = &self.by_id;
+        self.persisted_at.retain(|id, _| by_id.contains_key(id));
+        if self.partial {
+            return None;
+        }
+        let mut oldest_first: Vec<&Finding> = self.by_id.values().collect();
+        oldest_first.sort_by(|a, b| (&a.last_seen, &a.id).cmp(&(&b.last_seen, &b.id)));
+        for finding in &oldest_first {
+            if let Some(last_seen) = parse_last_seen(finding) {
+                self.persisted_at.insert(finding.id.clone(), last_seen);
+            }
+        }
+        Some(
+            oldest_first
+                .into_iter()
+                .filter_map(|finding| serde_json::to_value(finding).ok())
+                .collect(),
+        )
+    }
+
+    /// Whether `load` could not read the whole file, so findings on disk are missing here.
+    pub fn is_partial(&self) -> bool {
+        self.partial
     }
 
     /// Records one occurrence; never touches the filesystem. A repeat of a known fingerprint
@@ -278,29 +322,10 @@ impl FindingsBook {
             self.persisted_at.remove(&id);
         }
     }
+}
 
-    /// Writes the book oldest first, so later appends keep the file in chronological order.
-    fn rewrite(&self, dir: &Path) -> io::Result<()> {
-        let tmp = dir.join(FINDINGS_TMP_FILE);
-        let written = self.write_tmp(&tmp);
-        let renamed = written.and_then(|()| fs::rename(&tmp, dir.join(FINDINGS_FILE)));
-        if renamed.is_err() {
-            let _ = fs::remove_file(&tmp);
-        }
-        renamed
-    }
-
-    fn write_tmp(&self, tmp: &Path) -> io::Result<()> {
-        let mut oldest_first: Vec<&Finding> = self.by_id.values().collect();
-        oldest_first.sort_by(|a, b| (&a.last_seen, &a.id).cmp(&(&b.last_seen, &b.id)));
-        let mut out = BufWriter::new(File::create(tmp)?);
-        for finding in oldest_first {
-            serde_json::to_writer(&mut out, finding)?;
-            out.write_all(b"\n")?;
-        }
-        let file = out.into_inner().map_err(io::IntoInnerError::into_error)?;
-        file.sync_data()
-    }
+fn parse_last_seen(finding: &Finding) -> Option<OffsetDateTime> {
+    OffsetDateTime::parse(&finding.last_seen, &Rfc3339).ok()
 }
 
 /// Whole seconds in UTC with a `Z` suffix, e.g. `2026-10-09T12:00:00Z`.
@@ -516,6 +541,81 @@ mod tests {
         assert_eq!(rewritten.lines().count(), 1000);
         assert!(rewritten.ends_with('\n'));
         assert!(!dir.path().join("findings.ndjson.tmp").exists());
+    }
+
+    #[test]
+    fn compacted_lines_keep_exactly_what_a_reload_keeps() {
+        let dir = tempfile::tempdir().unwrap();
+        let lines = [
+            stored_line(1, "rpc.slow", "2026-10-07T00:00:00Z", "resolved"),
+            stored_line(2, "rpc.slow", "2026-10-08T00:00:00Z", "open"),
+            stored_line(3, "rpc.slow", "2026-10-01T00:00:00Z", "open"),
+        ];
+        std::fs::write(dir.path().join("findings.ndjson"), lines.join("\n") + "\n").unwrap();
+        let mut book = FindingsBook::load_at(dir.path(), datetime!(2026-10-09 00:00 UTC));
+        assert_eq!(book.newest(20).len(), 3);
+
+        let later = datetime!(2026-10-16 00:00 UTC);
+        let ids: Vec<String> = book
+            .compacted_lines(later)
+            .unwrap()
+            .iter()
+            .map(|line| line["id"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            ids,
+            ["rpc.slow-000000000003", "rpc.slow-000000000002"],
+            "oldest first, the expired resolved finding dropped"
+        );
+        assert_eq!(
+            book.newest(20).len(),
+            2,
+            "memory matches the compacted file"
+        );
+        let mut reloaded: Vec<String> = FindingsBook::load_at(dir.path(), later)
+            .newest(20)
+            .into_iter()
+            .map(|finding| finding.id)
+            .collect();
+        reloaded.reverse();
+        assert_eq!(reloaded, ids);
+    }
+
+    #[test]
+    fn a_partial_load_never_replaces_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        // Opening a directory succeeds on Unix and reading it fails, as a mid-file read error.
+        let unreadable = dir.path().join("findings.ndjson");
+        std::fs::create_dir(&unreadable).unwrap();
+        let mut book = FindingsBook::load_at(dir.path(), datetime!(2026-10-09 00:00 UTC));
+        assert!(
+            book.compacted_lines(datetime!(2026-10-09 01:00 UTC))
+                .is_none()
+        );
+        assert!(unreadable.is_dir(), "the unread file is left in place");
+    }
+
+    #[test]
+    fn compaction_persists_held_back_state_and_restarts_the_throttle_from_it() {
+        let start = datetime!(2026-10-09 12:00 UTC);
+        let (dir, store) = scratch_sender();
+        let sender = store.sender();
+        let mut book = FindingsBook::default();
+        // Counts 1, 2 and 4 are queued (powers of two); 3 and 5 are held back.
+        for n in 0..5 {
+            book.record(input("a"), start + Duration::seconds(n), &sender);
+        }
+        // As the runtime's hourly maintenance does.
+        let lines = book.compacted_lines(start + Duration::seconds(10)).unwrap();
+        assert_eq!(counts(&lines), [5], "compaction writes the held-back state");
+        sender.replace_findings(lines);
+        assert_eq!(book.persisted_at.len(), book.by_id.len());
+        // The throttle restarts from the compacted lastSeen (4 s), not the last queued line
+        // (3 s): count 6 at 63 s is held, count 7 at 64 s is queued.
+        book.record(input("a"), start + Duration::seconds(63), &sender);
+        book.record(input("a"), start + Duration::seconds(64), &sender);
+        store.shutdown();
+        assert_eq!(counts(&persisted_lines(dir.path())), [5, 7]);
     }
 
     #[test]
