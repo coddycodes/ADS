@@ -38,14 +38,23 @@ pub fn event_matches(xml: &str, pid: u32, exe: &str, started: OffsetDateTime) ->
         && created.is_some_and(|created| created >= started)
 }
 
-/// The `wevtutil /q:` filter for Event 1000 records in the last `session_age_ms`, applied
-/// before `/c:` caps the count. Positional events carry no `Data` names, so the executable
-/// is matched after parsing, by `event_matches`.
-pub fn event_query(session_age_ms: u64) -> String {
-    format!(
-        "*[System[Provider[@Name='Application Error'] and (EventID=1000) and \
-         TimeCreated[timediff(@SystemTime) <= {session_age_ms}]]]"
-    )
+/// The `wevtutil /q:` filter for `exe`'s Event 1000 records in the last `session_age_ms`,
+/// applied before `/c:` caps the count, so other applications' crashes cannot crowd ours
+/// out. `Data='…'` without a `@Name` predicate matches any `Data` child, so it covers the
+/// named and the positional event forms; `event_matches` still checks `AppName` itself, as
+/// the name could match another field. XPath cannot escape a quote inside a literal, so a
+/// name holding one is matched only after parsing.
+pub fn event_query(exe: &str, session_age_ms: u64) -> String {
+    let system = format!(
+        "System[Provider[@Name='Application Error'] and (EventID=1000) and \
+         TimeCreated[timediff(@SystemTime) <= {session_age_ms}]]"
+    );
+    let name = super::file_name(exe);
+    if name.contains(['\'', '"']) {
+        format!("*[{system}]")
+    } else {
+        format!("*[{system} and EventData[Data='{name}']]")
+    }
 }
 
 /// `c0000005` → `0xc0000005`.
@@ -129,11 +138,11 @@ pub(super) async fn harvest(previous: &super::SessionRecord) -> Option<OsCrashRe
     let age_ms = (OffsetDateTime::now_utc() - started).whole_milliseconds() + 60_000;
     let query = format!(
         "/q:{}",
-        event_query(u64::try_from(age_ms).unwrap_or(60_000))
+        event_query(&previous.exe, u64::try_from(age_ms).unwrap_or(60_000))
     );
     let events = super::query(
         "wevtutil",
-        &["qe", "Application", &query, "/f:xml", "/c:100", "/rd:true"],
+        &["qe", "Application", &query, "/f:xml", "/c:50", "/rd:true"],
     )
     .await?;
     events
@@ -183,12 +192,21 @@ mod tests {
     }
 
     #[test]
-    fn the_query_filters_by_provider_event_and_session_window() {
-        // No `AppName` term: positional events have no names to filter on.
+    fn the_query_filters_by_app_name_in_any_data_element() {
+        let query = event_query("~/AppData/Local/BiBCode/bibcode.exe", 90_000);
         assert_eq!(
-            event_query(90_000),
+            query,
             "*[System[Provider[@Name='Application Error'] and (EventID=1000) and \
-             TimeCreated[timediff(@SystemTime) <= 90000]]]"
+             TimeCreated[timediff(@SystemTime) <= 90000]] and EventData[Data='bibcode.exe']]"
+        );
+        // Any `Data` child: the named and the positional forms both match.
+        assert!(!query.contains("Data[@Name"), "{query}");
+        // A quote cannot be escaped in the XPath literal: the name is then matched only
+        // after parsing.
+        let quoted = event_query("it's.exe", 1);
+        assert!(
+            !quoted.contains("EventData") && !quoted.contains("it's"),
+            "{quoted}"
         );
     }
 
