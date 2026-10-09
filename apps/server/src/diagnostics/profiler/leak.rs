@@ -8,6 +8,8 @@ const WARMUP_MIN: u64 = 15;
 const FLOOR_WINDOW_MIN: usize = 10;
 const SUSPECT_WINDOW_MIN: usize = 60;
 const LIKELY_WINDOW_MIN: usize = 360;
+/// The tail of the floor series that shows whether growth is still going on.
+const RECENT_WINDOW_MIN: usize = 15;
 const GAP_RESET_MIN: u64 = 5;
 const MB: f64 = 1024.0 * 1024.0;
 const STEP_MIN_BYTES: f64 = 64.0 * MB;
@@ -132,11 +134,14 @@ impl LeakDetector {
         let growth = latest - baseline / MB;
         let r2 = r_squared(&points);
         let rising = z > 2.33;
+        // Still rising in the last 15 minutes, not only somewhere in the last hour.
+        let rising_lately = theil_sen(&points[points.len() - RECENT_WINDOW_MIN..]) >= threshold;
         // Two alternatives: 6 h of growth at the suspect rate that fits a line, or growth of
-        // at least 50% and 200 MB since the baseline that is still going on over the last
-        // hour, which needs only the 1 h window. Growth that has stopped is a new level.
+        // at least 50% and 200 MB since the baseline that is still going on, which needs only
+        // the 1 h window. Growth that has stopped is a new level.
         let fits_six_hours = points.len() >= LIKELY_WINDOW_MIN && slope >= threshold && r2 > 0.8;
-        let grew_large = growth >= 200.0 && growth >= 0.5 * baseline / MB && rising;
+        let grew_large =
+            growth >= 200.0 && growth >= 0.5 * baseline / MB && rising && rising_lately;
         if fits_six_hours || grew_large {
             return LeakVerdict::Likely {
                 slope_mb_per_h: slope,
@@ -390,9 +395,15 @@ mod tests {
         let verdicts: Vec<(u64, LeakVerdict)> = (0..800)
             .filter_map(|m| det.push_minute(m, ramp(m)).map(|verdict| (m, verdict)))
             .collect();
-        // The hour that ends at minute 75 still spans the ramp. Once the ramp has left the
-        // window, the new level is never reported, nor repeated every 6 h at 0 MB/h.
-        assert!(verdicts.iter().all(|(m, _)| *m < 54 + 60), "{verdicts:?}");
+        // The hour that ends at minute 75 still spans the ramp, so one Suspect may fire there.
+        // It never becomes Likely, and the new level is never reported again.
+        assert!(
+            matches!(
+                verdicts.as_slice(),
+                [] | [(70..=80, LeakVerdict::Suspect { .. })]
+            ),
+            "{verdicts:?}"
+        );
     }
 
     #[test]
