@@ -23,6 +23,8 @@ const ports = vi.hoisted(() => ({
   updateSettings: vi.fn(),
 }));
 // External environment/query/command ports supply real atoms; hooks and UI remain real.
+vi.mock("../status-bar/ProfilerRecordingSegment", () => ({ ProfilerRecordingSegment: () => null }));
+
 vi.mock("../../state/sourceControl", () => ({
   sourceControlEnvironment: {
     discovery: (target: unknown) => {

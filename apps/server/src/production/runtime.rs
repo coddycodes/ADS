@@ -26,7 +26,7 @@ use crate::{
     diagnostics::{
         DesktopUiProcessObserver, DiagnosticsMonitor, NativeProcessSampler, NativeResourceSampler,
         ProcessAttributionRegistry, TraceDiagnosticsStore, bound_diagnostic_string,
-        profiler::runtime::ProfilerRuntime,
+        profiler::{profiler_dir, runtime::ProfilerRuntime},
     },
     git::GitRepository,
     mcp::preview_automation::PreviewAutomationBroker,
@@ -324,7 +324,8 @@ impl ProductionRuntime {
             },
             process_attribution.clone(),
         );
-        let diagnostic_bundle = DiagnosticBundleService::new(&state_paths.logs_dir);
+        let diagnostic_bundle = DiagnosticBundleService::new(&state_paths.logs_dir)
+            .with_profiler_dir(profiler_dir(&state_paths.state_dir));
         let operational_logs = OperationalLogs::start(
             &state_paths,
             &terminal_manager,
@@ -686,10 +687,11 @@ impl ProductionRuntime {
     pub async fn diagnostic_logs(
         &self,
         frontend_log: String,
+        include_crash_dumps: bool,
     ) -> Result<DiagnosticLogsHttpResponse, HttpRouteError> {
         let bundle = self
             .diagnostic_bundle
-            .build(frontend_log, OffsetDateTime::now_utc())
+            .build(frontend_log, include_crash_dumps, OffsetDateTime::now_utc())
             .await
             .map_err(internal_error)?;
         Ok(DiagnosticLogsHttpResponse {
@@ -2746,7 +2748,7 @@ mod tests {
         assert!(favicon.bytes.starts_with(b"<svg"));
 
         let diagnostics = runtime
-            .diagnostic_logs("frontend runtime test".to_string())
+            .diagnostic_logs("frontend runtime test".to_string(), false)
             .await
             .expect("diagnostic bundle should build");
         assert!(diagnostics.filename.ends_with(".zip"));

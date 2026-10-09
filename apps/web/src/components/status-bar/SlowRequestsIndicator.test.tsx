@@ -23,6 +23,8 @@ const environmentState = vi.hoisted(() => ({
   reads: 0,
 }));
 
+vi.mock("./ProfilerRecordingSegment", () => ({ ProfilerRecordingSegment: () => null }));
+
 vi.mock("../../state/environments", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/environments")>()),
   useEnvironments: () => {

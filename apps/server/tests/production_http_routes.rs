@@ -4,6 +4,7 @@ use axum::{
     Router,
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode, header},
+    response::IntoResponse,
 };
 use bibcode_server::production::http_routes::{
     AssetHttpResponse, DiagnosticLogsHttpResponse, HttpRouteError, HttpRoutesState, JsonOperation,
@@ -181,16 +182,65 @@ async fn json_routes_reject_oversized_and_malformed_bodies_before_service_dispat
 }
 
 #[tokio::test]
+async fn crash_dumps_in_the_diagnostic_bundle_need_the_operate_scope() {
+    let dispatched = Arc::new(Mutex::new(Vec::new()));
+    let mut state = state_with_json_recorder(Arc::new(Mutex::new(Vec::new())));
+    // A client that may read, but not operate.
+    state.authorize = Arc::new(|_headers, _method, _uri, scope, _cancellation| {
+        Box::pin(async move {
+            if scope == Some("orchestration:operate") {
+                Err(StatusCode::FORBIDDEN.into_response())
+            } else {
+                Ok(())
+            }
+        })
+    });
+    let handler_calls = Arc::clone(&dispatched);
+    state.diagnostic_logs = Arc::new(move |_frontend_log, include_crash_dumps, _context| {
+        let calls = Arc::clone(&handler_calls);
+        Box::pin(async move {
+            calls.lock().await.push(include_crash_dumps);
+            Ok(DiagnosticLogsHttpResponse {
+                filename: "bibcode-diagnostics-20260715T123456Z.zip".to_owned(),
+                bytes: b"PK-test-archive".to_vec(),
+            })
+        })
+    });
+    let app = add_routes(Router::new()).with_state(TestState(state));
+    let post = |body: &'static str| {
+        Request::post("/api/diagnostics/logs.zip")
+            .header(header::AUTHORIZATION, "Bearer test-token")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .unwrap()
+    };
+
+    let redacted = app
+        .clone()
+        .oneshot(post(r#"{"frontendLog":"x"}"#))
+        .await
+        .unwrap();
+    let with_dumps = app
+        .oneshot(post(r#"{"frontendLog":"x","includeCrashDumps":true}"#))
+        .await
+        .unwrap();
+
+    assert_eq!(redacted.status(), StatusCode::OK);
+    assert_eq!(with_dumps.status(), StatusCode::FORBIDDEN);
+    assert_eq!(dispatched.lock().await.as_slice(), [false]);
+}
+
+#[tokio::test]
 async fn diagnostic_logs_route_is_bounded_authorized_and_returns_zip_headers() {
     let authorization_calls = Arc::new(Mutex::new(Vec::new()));
     let dispatched_logs = Arc::new(Mutex::new(Vec::new()));
     let mut state = state_with_json_recorder(Arc::clone(&authorization_calls));
     let handler_calls = Arc::clone(&dispatched_logs);
-    state.diagnostic_logs = Arc::new(move |frontend_log, context| {
+    state.diagnostic_logs = Arc::new(move |frontend_log, include_crash_dumps, context| {
         let calls = Arc::clone(&handler_calls);
         Box::pin(async move {
             assert!(!context.cancellation.is_cancelled());
-            calls.lock().await.push(frontend_log);
+            calls.lock().await.push((frontend_log, include_crash_dumps));
             Ok(DiagnosticLogsHttpResponse {
                 filename: "bibcode-diagnostics-20260715T123456Z.zip".to_owned(),
                 bytes: b"PK-test-archive".to_vec(),
@@ -223,7 +273,10 @@ async fn diagnostic_logs_route_is_bounded_authorized_and_returns_zip_headers() {
         to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
         b"PK-test-archive"
     );
-    assert_eq!(dispatched_logs.lock().await.as_slice(), ["client warning"]);
+    assert_eq!(
+        dispatched_logs.lock().await.as_slice(),
+        [("client warning".to_owned(), false)]
+    );
     assert!(
         authorization_calls
             .lock()
@@ -231,6 +284,40 @@ async fn diagnostic_logs_route_is_bounded_authorized_and_returns_zip_headers() {
             .iter()
             .any(|(_, scope, _)| { scope.as_deref() == Some("orchestration:read") })
     );
+
+    let with_dumps = app
+        .clone()
+        .oneshot(
+            Request::post("/api/diagnostics/logs.zip")
+                .header(header::AUTHORIZATION, "Bearer test-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"frontendLog":"with dumps","includeCrashDumps":true}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(with_dumps.status(), StatusCode::OK);
+    assert_eq!(
+        dispatched_logs.lock().await.last(),
+        Some(&("with dumps".to_owned(), true))
+    );
+
+    let not_a_boolean = app
+        .clone()
+        .oneshot(
+            Request::post("/api/diagnostics/logs.zip")
+                .header(header::AUTHORIZATION, "Bearer test-token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"frontendLog":"x","includeCrashDumps":"yes"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(not_a_boolean.status(), StatusCode::BAD_REQUEST);
 
     let malformed = app
         .clone()
@@ -254,7 +341,7 @@ async fn diagnostic_logs_route_is_bounded_authorized_and_returns_zip_headers() {
         .await
         .unwrap();
     assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
-    assert_eq!(dispatched_logs.lock().await.len(), 1);
+    assert_eq!(dispatched_logs.lock().await.len(), 2);
 }
 
 #[tokio::test]
@@ -483,7 +570,7 @@ fn state_with_json_recorder(calls: Arc<Mutex<Vec<JsonRecorderCall>>>) -> HttpRou
                 })))
             })
         }),
-        Arc::new(|_frontend_log, _context| {
+        Arc::new(|_frontend_log, _include_crash_dumps, _context| {
             Box::pin(async {
                 Err(HttpRouteError::new(
                     StatusCode::SERVICE_UNAVAILABLE,

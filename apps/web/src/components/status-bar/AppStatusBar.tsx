@@ -21,6 +21,7 @@ import { serverEnvironment } from "../../state/server";
 import { useKnownTerminalSessions } from "../../state/terminalSessions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderUsageControl } from "./ProviderUsageControl";
+import { ProfilerRecordingSegment } from "./ProfilerRecordingSegment";
 import { ResourceUsageSegment } from "./ResourceUsageSegment";
 import { SlowRequestsIndicator } from "./SlowRequestsIndicator";
 import { type ResourceDiagnosticsQueryState } from "./statusBarPresentation";
@@ -289,6 +290,7 @@ export function AppStatusBarView({
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <SlowRequestsIndicator />
+        <ProfilerRecordingSegment />
         {showResourceUsage ? (
           <ResourceUsageSegment
             diagnostics={diagnostics}

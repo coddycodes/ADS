@@ -15,6 +15,8 @@ const harness = vi.hoisted(() => ({
   resourceRenderCount: 0,
 }));
 
+vi.mock("./ProfilerRecordingSegment", () => ({ ProfilerRecordingSegment: () => null }));
+
 vi.mock("~/localApi", () => ({
   ensureLocalApi: () => ({
     persistence: {
