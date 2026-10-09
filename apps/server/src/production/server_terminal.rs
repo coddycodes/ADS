@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, future::Future, path::PathBuf, pin::Pin, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    path::PathBuf,
+    pin::Pin,
+    sync::{Arc, Weak},
+};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -14,7 +20,7 @@ use crate::{
         ProcessAttributionRegistry, ProcessAttributionTotals, ProcessIdentity,
         ProcessResourceHistory, ProcessResourceTotals, ProcessRow, ProcessSignal,
         RuntimeProcessOwnership, SplitMetric, UiCoverage, UiCoverageStatus,
-        bound_diagnostic_string, process_tree_metadata,
+        bound_diagnostic_string, process_tree_metadata, profiler::runtime::ProfilerRuntime,
     },
     persistence::Repositories,
     production::orchestration_effects::SetupScriptLaunch,
@@ -72,6 +78,10 @@ pub struct ServerTerminalServices {
     relay: RelayClientService,
     control: Arc<dyn ProductionServerControl>,
     workspace_admission: Option<WorkspaceAdmissionController>,
+    /// `None` when the host runs no profiler; its status RPC then reports it off. Weak: the
+    /// production runtime alone owns the profiler, so dropping it after a failed start tears
+    /// the profiler down even while detached tasks still hold clones of these services.
+    profiler: Option<Weak<ProfilerRuntime>>,
 }
 
 impl ServerTerminalServices {
@@ -129,7 +139,14 @@ impl ServerTerminalServices {
             relay,
             control,
             workspace_admission: None,
+            profiler: None,
         }
+    }
+
+    #[must_use]
+    pub(crate) fn with_profiler(mut self, profiler: &Arc<ProfilerRuntime>) -> Self {
+        self.profiler = Some(Arc::downgrade(profiler));
+        self
     }
 
     #[must_use]
@@ -430,26 +447,36 @@ fn register_diagnostics_rpcs(registry: &mut RpcRegistry, services: &ServerTermin
         },
     );
 
-    // Disabled-profiler stubs: a later change replaces both with the real profiler runtime.
+    let profiler = services.profiler.clone();
     registry.register_unary(
         "server.getProfilerStatus",
-        |_request, _cancellation| async {
-            Ok(json!({
-                "enabled": false,
-                "recordingSince": null,
-                "diskBytes": 0,
-                "eventCount": 0,
-                "droppedEvents": 0,
-                "lastCrashAt": null,
-                "capabilities": {
-                    "nativeDumps": "unavailable",
-                    "osCrashRecords": "unavailable",
-                    "storage": "ok",
-                },
-                "findings": [],
-            }))
+        move |_request, _cancellation| {
+            let profiler = profiler.as_ref().and_then(Weak::upgrade);
+            async move {
+                let Some(profiler) = profiler else {
+                    return Ok(json!({
+                        "enabled": false,
+                        "recordingSince": null,
+                        "diskBytes": 0,
+                        "eventCount": 0,
+                        "droppedEvents": 0,
+                        "lastCrashAt": null,
+                        "capabilities": {
+                            "nativeDumps": "unavailable",
+                            "osCrashRecords": "unavailable",
+                            "storage": "ok",
+                        },
+                        "findings": [],
+                    }));
+                };
+                // Status reads the profiler directory, which must not block an async worker.
+                Ok(tokio::task::spawn_blocking(move || profiler.status())
+                    .await
+                    .expect("profiler status never panics"))
+            }
         },
     );
+    // Disabled-profiler stub: a later change accepts client batches.
     registry.register_unary(
         "server.reportProfilerClientBatch",
         |_request, _cancellation| async { Ok(json!({ "accepted": false })) },

@@ -26,6 +26,7 @@ use crate::{
     diagnostics::{
         DesktopUiProcessObserver, DiagnosticsMonitor, NativeProcessSampler, NativeResourceSampler,
         ProcessAttributionRegistry, TraceDiagnosticsStore, bound_diagnostic_string,
+        profiler::runtime::ProfilerRuntime,
     },
     git::GitRepository,
     mcp::preview_automation::PreviewAutomationBroker,
@@ -119,6 +120,7 @@ pub struct ProductionRuntime {
     status_broadcaster: crate::git::StatusBroadcaster,
     workspace: WorkspaceRpc,
     _resource_sampler: Arc<NativeResourceSampler>,
+    profiler: Arc<ProfilerRuntime>,
     update_quiesced: tokio::sync::Mutex<bool>,
 }
 
@@ -212,6 +214,17 @@ impl ProductionRuntime {
             .await,
         );
         let provider_update_checks = control.start_provider_update_checks();
+        // Starting replays and compacts the findings file, so it runs off the async workers.
+        // Detectors are added by the changes that introduce them.
+        let profiler_state_dir = config.state_dir();
+        let profiler_enabled = control.profiler_enabled_signal();
+        let profiler = Arc::new(
+            tokio::task::spawn_blocking(move || {
+                ProfilerRuntime::start(&profiler_state_dir, profiler_enabled, Vec::new())
+            })
+            .await
+            .map_err(|error| error.to_string())?,
+        );
         let chat_activity_controller = AgentActivityController::new(
             control
                 .agent_activity_enabled(AgentActivitySource::Chat)
@@ -445,7 +458,8 @@ impl ProductionRuntime {
             control.clone(),
             process_tree_cleanup,
         )
-        .with_workspace_admission(workspace_availability.clone(), repositories.clone());
+        .with_workspace_admission(workspace_availability.clone(), repositories.clone())
+        .with_profiler(&profiler);
         let worktree_runtime = WorktreeRuntime::start(
             orchestration.clone(),
             provider_runtime.clone(),
@@ -565,6 +579,7 @@ impl ProductionRuntime {
             status_broadcaster,
             workspace,
             _resource_sampler: resource_sampler,
+            profiler,
             update_quiesced: tokio::sync::Mutex::new(false),
         })
     }
@@ -694,6 +709,7 @@ impl ProductionRuntime {
         self.managed_endpoint.shutdown().await;
         self.workspace.shutdown().await;
         self.status_broadcaster.shutdown().await;
+        self.profiler.shutdown().await;
         self.worktree_catalog_operations.shutdown().await;
         self._worktree_catalog.shutdown().await;
         self.worktree_runtime.shutdown().await;
