@@ -1,0 +1,45 @@
+{"app_name":"bibcode","timestamp":"2026-10-09 10:05:00.00 +0000","app_version":"0.9.0","slice_uuid":"4c4c4422-5555-3144-a1b2-c3d4e5f60718","build_version":"0.9.0","platform":1,"bundleID":"com.bibcode.desktop","share_with_app_devs":0,"is_first_party":0,"bug_type":"309","os_version":"macOS 15.0 (24A335)","roots_installed":0,"name":"bibcode","incident_id":"8F1C2D3E-4A5B-4C6D-8E7F-901A2B3C4D5E"}
+{
+  "uptime" : 86400,
+  "procRole" : "Foreground",
+  "version" : 2,
+  "userID" : 501,
+  "deployVersion" : 210,
+  "modelCode" : "Mac15,3",
+  "captureTime" : "2026-10-09 10:05:00.1234 +0000",
+  "incident" : "8F1C2D3E-4A5B-4C6D-8E7F-901A2B3C4D5E",
+  "pid" : 4242,
+  "cpuType" : "ARM-64",
+  "procName" : "bibcode",
+  "procPath" : "\/Applications\/BiBCode.app\/Contents\/MacOS\/bibcode",
+  "procLaunch" : "2026-10-09 10:00:00.0000 +0000",
+  "osVersion" : {
+    "train" : "macOS 15.0",
+    "build" : "24A335",
+    "releaseType" : "User"
+  },
+  "exception" : {"codes":"0x0000000000000001, 0x0000000000000000","rawCodes":[1,0],"type":"EXC_BAD_ACCESS","signal":"SIGSEGV","subtype":"KERN_INVALID_ADDRESS at 0x0000000000000000"},
+  "termination" : {"flags":0,"code":11,"namespace":"SIGNAL","indicator":"Segmentation fault: 11","byProc":"exc handler","byPid":4242},
+  "faultingThread" : 0,
+  "threads" : [{"triggered":true,"id":1001,"queue":"com.apple.main-thread","frames":[{"imageOffset":1234567,"symbol":"bibcode_server::crash_here","symbolLocation":12,"imageIndex":0},{"imageOffset":2345,"imageIndex":1}]},{"id":1002,"frames":[{"imageOffset":4096,"imageIndex":1}]}],
+  "usedImages" : [
+  {
+    "source" : "P",
+    "arch" : "arm64",
+    "base" : 4294967296,
+    "size" : 104857600,
+    "uuid" : "4c4c4422-5555-3144-a1b2-c3d4e5f60718",
+    "path" : "\/Applications\/BiBCode.app\/Contents\/MacOS\/bibcode",
+    "name" : "bibcode"
+  },
+  {
+    "source" : "P",
+    "arch" : "arm64e",
+    "base" : 6442450944,
+    "size" : 245760,
+    "uuid" : "9a8b7c6d-5e4f-3a2b-1c0d-e9f8a7b6c5d4",
+    "path" : "\/usr\/lib\/system\/libsystem_kernel.dylib",
+    "name" : "libsystem_kernel.dylib"
+  }
+]
+}

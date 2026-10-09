@@ -5,7 +5,10 @@ use std::{
     fs::{File, OpenOptions, TryLockError},
     io,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, PoisonError, atomic::Ordering},
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -21,8 +24,11 @@ use tokio_util::sync::CancellationToken;
 use super::{
     ProfilerHandle,
     findings::FindingsBook,
-    install, profiler_dir,
+    install, os_records,
+    panic_hook::install_panic_hook,
+    profiler_dir,
     reader::{StatusLive, status_json},
+    sentinel::{self, SessionRecord},
     store::{self, ProfilerStore, StoreConfig, StoreStats},
     uninstall,
 };
@@ -34,6 +40,10 @@ const LOCK_FILE: &str = ".lock";
 /// A runtime restarted in-process may find its predecessor still releasing the lock.
 const LOCK_ATTEMPTS: u32 = 10;
 const LOCK_RETRY_DELAY: Duration = Duration::from_millis(50);
+/// Set by the first runtime that takes a directory in this process. A `running` record with
+/// this process's pid is then an earlier runtime that stopped without marking its session
+/// clean (an in-process restart after a failed start), not a crashed run.
+static SESSION_BEGUN: AtomicBool = AtomicBool::new(false);
 
 /// A background check that runs only while the profiler is on.
 pub trait Detector: Send + Sync {
@@ -50,6 +60,8 @@ pub struct ProfilerRuntime {
     stop: CancellationToken,
     /// Fires once teardown has released the directory; every `shutdown` call waits for it.
     done: CancellationToken,
+    /// Set by `end_session`; teardown reads it just before releasing the directory.
+    mark_clean: Arc<AtomicBool>,
 }
 
 /// What teardown stops, in order.
@@ -58,6 +70,9 @@ struct Parts {
     /// dropped on a thread outside it.
     runtime: tokio::runtime::Handle,
     supervisor: JoinHandle<()>,
+    /// Classifies the previous run; teardown waits for it (at most the 5 s harvest timeout)
+    /// so its finding reaches the store before the session is marked clean.
+    classification: Option<JoinHandle<()>>,
     store: ProfilerStore,
     /// Held for the runtime's lifetime: the store cuts files back when it reopens them, so a
     /// second process writing the same directory would destroy data.
@@ -92,6 +107,7 @@ impl ProfilerRuntime {
                     parts: Mutex::new(None),
                     stop,
                     done,
+                    mark_clean: Arc::default(),
                 };
             }
         };
@@ -112,7 +128,14 @@ impl ProfilerRuntime {
         // ponytail: one server per process in production. A second concurrent runtime (tests)
         // keeps its own handle, and the global `emit` reaches whichever runtime installed first.
         install(handle.clone());
+        // The sentinel and the panic hook work with the profiler off too.
+        let earlier_in_process = SESSION_BEGUN.swap(true, Ordering::Relaxed);
+        let previous = sentinel::begin_session(&dir)
+            .filter(|previous| !(earlier_in_process && previous.pid == std::process::id()));
+        install_panic_hook();
         let runtime = tokio::runtime::Handle::current();
+        let classification =
+            previous.map(|previous| runtime.spawn(classify_previous_run(handle.clone(), previous)));
         let supervisor = runtime.spawn(supervise(handle.clone(), enabled, detectors, stop.clone()));
         Self {
             dir,
@@ -120,11 +143,13 @@ impl ProfilerRuntime {
             parts: Mutex::new(Some(Parts {
                 runtime,
                 supervisor,
+                classification,
                 store,
                 lock,
             })),
             stop,
             done: CancellationToken::new(),
+            mark_clean: Arc::default(),
         }
     }
 
@@ -150,6 +175,15 @@ impl ProfilerRuntime {
         status_json(&self.dir, live)
     }
 
+    /// The orderly end of a run: `shutdown`, with the session marked clean as teardown's last
+    /// step before the directory is released, so whoever takes the directory next never reads
+    /// a stale `running` record. A degraded runtime does not own the directory and writes
+    /// nothing. A plain `shutdown` or a drop leaves the session `running`.
+    pub async fn end_session(&self) {
+        self.mark_clean.store(true, Ordering::Relaxed);
+        self.shutdown().await;
+    }
+
     /// Uninstalls the global handle, stops the detectors, flushes the store and releases the
     /// directory lock, then returns. Every call waits for the same teardown, including calls
     /// after an earlier caller stopped waiting (the update quiesce has a deadline).
@@ -169,6 +203,7 @@ impl ProfilerRuntime {
         let Some(Parts {
             runtime,
             supervisor,
+            classification,
             store,
             lock: dir_lock,
         }) = lock(&self.parts).take()
@@ -176,11 +211,18 @@ impl ProfilerRuntime {
             return;
         };
         let done = self.done.clone();
+        let (dir, mark_clean) = (self.dir.clone(), self.mark_clean.clone());
         runtime.spawn(async move {
             let _ = supervisor.await;
+            if let Some(classification) = classification {
+                let _ = classification.await;
+            }
             // The store joins its writer thread, which must not block an async worker.
             let _ = tokio::task::spawn_blocking(move || {
                 store.shutdown();
+                if mark_clean.load(Ordering::Relaxed) {
+                    sentinel::end_session(&dir);
+                }
                 // Windows frees a lock left to `CloseHandle` asynchronously; unlocking first
                 // lets a restarted runtime take it at once.
                 let _ = dir_lock.unlock();
@@ -225,6 +267,22 @@ fn lock_dir(dir: &Path) -> io::Result<File> {
             }
             Err(TryLockError::Error(error)) => return Err(error),
         }
+    }
+}
+
+/// Reads the OS crash records for a run that never marked its session clean and records the
+/// finding. The finding goes straight into the book, not through `record_finding`, so it is
+/// there once the user turns the profiler on.
+async fn classify_previous_run(handle: Arc<ProfilerHandle>, previous: SessionRecord) {
+    let record = os_records::harvest_previous_crash(&previous).await;
+    let run = sentinel::classify(
+        &previous,
+        sentinel::boot_id().as_deref(),
+        sentinel::oom_kill_count(),
+        record,
+    );
+    if let Some(input) = sentinel::finding_for(&previous, run) {
+        lock(&handle.findings).record(input, OffsetDateTime::now_utc(), &handle.sender);
     }
 }
 

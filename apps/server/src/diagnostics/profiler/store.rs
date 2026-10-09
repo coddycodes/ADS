@@ -68,6 +68,8 @@ enum Message {
     /// Atomically replaces `findings.ndjson` with exactly these lines. Handled in queue order,
     /// so findings queued after it are appended to the new file.
     ReplaceFindings(Vec<Value>),
+    /// Flushes the live file now, then answers.
+    Flush(SyncSender<()>),
     Shutdown,
 }
 
@@ -91,6 +93,14 @@ impl EventSender {
     /// Queues a retention pass on the writer thread. Never blocks.
     pub fn maintain(&self) {
         self.enqueue(Message::Maintain);
+    }
+
+    /// Hands everything queued so far to the OS before returning, or gives up after
+    /// `timeout` (a full channel, or a writer that is stuck or gone). It blocks, so only the
+    /// panic hook uses it: a panic may abort the process right after.
+    pub fn flush_within(&self, timeout: Duration) -> bool {
+        let (ack, flushed) = mpsc::sync_channel(1);
+        self.tx.try_send(Message::Flush(ack)).is_ok() && flushed.recv_timeout(timeout).is_ok()
     }
 
     /// Queues a rewrite of `findings.ndjson` with exactly `lines`. Never blocks.
@@ -240,6 +250,10 @@ impl Writer {
                 Ok(Message::Finding(finding)) => self.append_finding(&finding),
                 Ok(Message::Maintain) => self.enforce_retention(),
                 Ok(Message::ReplaceFindings(lines)) => self.replace_findings(&lines),
+                Ok(Message::Flush(flushed)) => {
+                    self.flush();
+                    let _ = flushed.send(());
+                }
                 Ok(Message::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
                 Err(RecvTimeoutError::Timeout) => {}
             }
@@ -565,7 +579,8 @@ pub(super) fn replace_findings_file(dir: &Path, lines: &[Value]) -> io::Result<(
     renamed
 }
 
-fn write_lines(path: &Path, lines: &[Value]) -> io::Result<()> {
+/// Writes `lines` as NDJSON and syncs the file.
+pub(super) fn write_lines(path: &Path, lines: &[Value]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -727,6 +742,25 @@ mod tests {
             "every writer start has a session id"
         );
         assert!(line["ts"].as_str().unwrap().ends_with('Z'));
+    }
+
+    /// A panic that aborts the process right after the hook must already be on disk.
+    #[test]
+    fn flush_within_writes_queued_events_before_returning() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ProfilerStore::start(StoreConfig::new(dir.path().to_path_buf()));
+        store.sender().send(event(7));
+        assert!(store.sender().flush_within(Duration::from_secs(5)));
+        let live = std::fs::read_to_string(dir.path().join("events-000000.ndjson")).unwrap();
+        assert!(live.contains("test.event"), "{live}");
+        store.shutdown();
+        // A stopped writer never answers: the caller gives up instead of hanging.
+        let (tx, _rx) = mpsc::sync_channel(1);
+        let orphan = EventSender {
+            tx,
+            counters: Arc::default(),
+        };
+        assert!(!orphan.flush_within(Duration::from_millis(10)));
     }
 
     #[test]
