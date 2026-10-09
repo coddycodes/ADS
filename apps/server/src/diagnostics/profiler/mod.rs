@@ -1,7 +1,10 @@
 pub mod event;
 pub mod findings;
+pub mod os_records;
+pub mod panic_hook;
 pub mod redact;
 pub mod runtime;
+pub mod sentinel;
 pub mod store;
 
 use std::{
