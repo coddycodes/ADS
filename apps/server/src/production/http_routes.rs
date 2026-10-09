@@ -45,8 +45,13 @@ pub type AssetHandler = Arc<
         + Send
         + Sync,
 >;
+/// Takes the frontend log snapshot and whether the bundle may include crash dumps.
 pub type DiagnosticLogsHandler = Arc<
-    dyn Fn(String, RouteContext) -> BoxFuture<Result<DiagnosticLogsHttpResponse, HttpRouteError>>
+    dyn Fn(
+            String,
+            bool,
+            RouteContext,
+        ) -> BoxFuture<Result<DiagnosticLogsHttpResponse, HttpRouteError>>
         + Send
         + Sync,
 >;
@@ -423,12 +428,32 @@ async fn diagnostic_logs(State(state): State<HttpRoutesState>, request: Request)
     let Some(frontend_log) = payload.get("frontendLog").and_then(Value::as_str) else {
         return bad_request("Request body must contain a frontendLog string.");
     };
+    // Crash dumps hold fragments of memory, so they come only from an explicit `true`.
+    let include_crash_dumps = match payload.get("includeCrashDumps") {
+        None => false,
+        Some(Value::Bool(include)) => *include,
+        Some(_) => return bad_request("includeCrashDumps must be a boolean."),
+    };
+    // Dumps are raw process memory, unlike the redacted logs `orchestration:read` covers,
+    // so asking for them takes the same scope as running commands.
+    if include_crash_dumps
+        && let Err(response) = (state.authorize)(
+            parts.headers.clone(),
+            parts.method.clone(),
+            parts.uri.clone(),
+            Some("orchestration:operate"),
+            cancellation.clone(),
+        )
+        .await
+    {
+        return response;
+    }
     let context = RouteContext {
         headers: parts.headers,
         uri: parts.uri,
         cancellation,
     };
-    match (state.diagnostic_logs)(frontend_log.to_owned(), context).await {
+    match (state.diagnostic_logs)(frontend_log.to_owned(), include_crash_dumps, context).await {
         Ok(response) => diagnostic_logs_response(response),
         Err(error) => error.into_response(),
     }

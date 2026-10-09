@@ -45,9 +45,18 @@ export type DiagnosticLogsDownloadResult =
   | { readonly status: "downloaded"; readonly filename: string }
   | { readonly status: "cancelled"; readonly filename: string };
 
-function requestBody(frontendLog: string): string {
+export interface DiagnosticLogsOptions {
+  /** Crash dumps can hold fragments of memory, so the server leaves them out unless asked. */
+  readonly includeCrashDumps?: boolean;
+}
+
+function requestBody(frontendLog: string, options: DiagnosticLogsOptions): string {
   const encoder = new TextEncoder();
-  const encode = (value: string) => JSON.stringify({ frontendLog: value });
+  const encode = (value: string) =>
+    JSON.stringify({
+      frontendLog: value,
+      ...(options.includeCrashDumps === true ? { includeCrashDumps: true } : {}),
+    });
   const original = encode(frontendLog);
   if (encoder.encode(original).byteLength <= MAX_DIAGNOSTIC_REQUEST_BYTES) return original;
 
@@ -130,12 +139,13 @@ const liveDependencies: DiagnosticDownloadDependencies = {
 
 export async function downloadDiagnosticLogs(
   frontendLog: string,
+  options: DiagnosticLogsOptions = {},
   dependencies: DiagnosticDownloadDependencies = liveDependencies,
 ): Promise<DiagnosticLogsDownloadResult> {
   const response = await dependencies.execute({
     url: dependencies.resolveUrl("/api/diagnostics/logs.zip"),
     contentType: "application/json",
-    body: requestBody(frontendLog),
+    body: requestBody(frontendLog, options),
   });
   if (response.status < 200 || response.status >= 300) {
     throw new Error(`Diagnostic logs server returned ${response.status}.`);

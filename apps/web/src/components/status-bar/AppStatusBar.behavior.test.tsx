@@ -44,6 +44,8 @@ const harness = vi.hoisted(() => ({
   disconnect: vi.fn(),
 }));
 
+vi.mock("./ProfilerRecordingSegment", () => ({ ProfilerRecordingSegment: () => null }));
+
 vi.mock("react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react")>()),
   useCallback: (callback: unknown) => callback,
