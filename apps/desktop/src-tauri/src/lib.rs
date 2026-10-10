@@ -91,6 +91,8 @@ macro_rules! bridge_command_names {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let shell_path_hydration = shell_environment::hydrate_process_path();
+    // After the PATH hydration, which must run before any thread exists, and before Tauri.
+    crash_monitor::start();
     let builder = tauri::Builder::<bridge::DesktopRuntime>::new()
         .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}))
         .manage(backend::BackendSupervisor::new())
@@ -319,6 +321,7 @@ mod backend;
 mod bridge;
 mod config;
 mod context_menu;
+mod crash_monitor;
 mod data_safety;
 #[cfg(any(feature = "desktop-e2e", test))]
 mod desktop_e2e_page_load;

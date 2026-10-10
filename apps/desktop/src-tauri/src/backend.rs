@@ -2144,6 +2144,7 @@ async fn start_managed_backend(
                 let _ = handle.join().await;
                 return Err(BackendStartFailure::other(error));
             }
+            crate::crash_monitor::follow_server(&handle);
 
             Ok((
                 config.clone(),

@@ -1,4 +1,5 @@
 pub mod client;
+pub mod crash;
 pub mod event;
 pub mod findings;
 pub mod latency;
