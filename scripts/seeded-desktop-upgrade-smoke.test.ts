@@ -32,6 +32,8 @@ import {
   waitForWindowsInstalledCandidate,
   copyBoundedEvidence,
   readWindowsCandidateProbe,
+  ownedChildTreeKillCommand,
+  reportSeededUpgradeSmokeFailure,
   terminateSeededUpgradeChild,
   SeededUpgradeCommandTimeoutError,
   buildLocalUpdaterManifest,
@@ -1103,6 +1105,7 @@ describe("seeded packaged desktop upgrade harness", () => {
     vi.useFakeTimers();
     const child = new NodeChildProcess.ChildProcess();
     const kill = vi.spyOn(child, "kill").mockReturnValue(true);
+    const unref = vi.spyOn(child, "unref").mockImplementation(() => undefined);
     const rejection = expect(terminateSeededUpgradeChild(child)).rejects.toThrow(
       /child cleanup did not close within 5000ms/,
     );
@@ -1110,9 +1113,37 @@ describe("seeded packaged desktop upgrade harness", () => {
       await vi.advanceTimersByTimeAsync(5_000);
       await rejection;
       expect(kill.mock.calls).toEqual([["SIGTERM"], ["SIGKILL"]]);
+      expect(unref).toHaveBeenCalledOnce();
     } finally {
       child.emit("close", null, "SIGKILL");
       vi.useRealTimers();
+    }
+  });
+
+  it("kills the Windows process tree when owned-child cleanup gives up", () => {
+    expect(ownedChildTreeKillCommand("win32", 4242)).toEqual({
+      args: ["/F", "/T", "/PID", "4242"],
+      command: "taskkill.exe",
+    });
+    expect(ownedChildTreeKillCommand("win32", undefined)).toBeUndefined();
+    expect(ownedChildTreeKillCommand("linux", 4242)).toBeUndefined();
+  });
+
+  it("exits nonzero when the smoke caller reports a failure", () => {
+    const exit = vi.fn();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      reportSeededUpgradeSmokeFailure(
+        new SeededDesktopUpgradeSmokeError("Owned child cleanup did not close within 5000ms."),
+        exit,
+      );
+      expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+      expect(error).toHaveBeenCalledWith("Owned child cleanup did not close within 5000ms.");
+      reportSeededUpgradeSmokeFailure("not an error", exit);
+      expect(exit).toHaveBeenLastCalledWith(1);
+      expect(error).toHaveBeenLastCalledWith("Seeded packaged-upgrade smoke failed.");
+    } finally {
+      error.mockRestore();
     }
   });
 

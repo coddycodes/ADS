@@ -459,7 +459,8 @@ runtime-version and retained-data checks remain required.
 A command deadline becomes an unavailable sample only after the exact child emits
 `close`; the next sample remains inside the original overall installation
 deadline. Cleanup that cannot prove `close` within its existing five-second
-budget fails the lane, including after forced termination. Spawn and other
+budget fails the lane, including after forced termination, and the smoke
+process exits nonzero instead of waiting out the job budget. Spawn and other
 cleanup errors remain fatal. An unavailable sample never satisfies the exact
 version/hash/no-installer predicate.
 

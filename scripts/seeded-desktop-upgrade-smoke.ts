@@ -1501,18 +1501,56 @@ const observeOwnedChildClose = (child: NodeChildProcess.ChildProcess): void => {
   child.once("close", () => closedOwnedChildren.add(child));
 };
 
+/**
+ * Windows `cmd /c` (the MSVC wrapper) survives `child.kill` together with
+ * grandchildren such as `findstr`. `taskkill /T` is the tree signal; the
+ * direct kill still runs so a missing `taskkill` cannot skip the deadline.
+ */
+export const ownedChildTreeKillCommand = (
+  platform: NodeJS.Platform,
+  pid: number | undefined,
+): { readonly args: readonly string[]; readonly command: string } | undefined => {
+  if (platform !== "win32" || pid === undefined) return undefined;
+  return { args: ["/F", "/T", "/PID", String(pid)], command: "taskkill.exe" };
+};
+
+const releaseOwnedChild = (child: NodeChildProcess.ChildProcess): void => {
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+  child.stdin?.destroy();
+  child.unref();
+};
+
+const killOwnedChildTree = (child: NodeChildProcess.ChildProcess): void => {
+  // oxlint-disable-next-line bibcode/no-global-process-runtime -- taskkill is the Windows host tree signal for this child.
+  const plan = ownedChildTreeKillCommand(process.platform, child.pid);
+  if (plan === undefined) return;
+  try {
+    const killer = NodeChildProcess.spawn(plan.command, [...plan.args], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    killer.unref();
+  } catch {
+    // The direct SIGKILL below still releases this process.
+  }
+};
+
 export const terminateSeededUpgradeChild = async (
   child: NodeChildProcess.ChildProcess,
 ): Promise<void> => {
   if (closedOwnedChildren.has(child)) return;
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
+      killOwnedChildTree(child);
       try {
         child.kill("SIGKILL");
       } catch (cause) {
+        releaseOwnedChild(child);
         reject(cause);
         return;
       }
+      releaseOwnedChild(child);
       reject(
         new SeededDesktopUpgradeSmokeError("Owned child cleanup did not close within 5000ms."),
       );
@@ -1527,10 +1565,21 @@ export const terminateSeededUpgradeChild = async (
         child.kill("SIGTERM");
       } catch (cause) {
         clearTimeout(timeout);
+        releaseOwnedChild(child);
         reject(cause);
       }
     }
   });
+};
+
+export const reportSeededUpgradeSmokeFailure = (
+  error: unknown,
+  exit: (code: number) => void = (code) => {
+    process.exit(code);
+  },
+): void => {
+  console.error(error instanceof Error ? error.message : "Seeded packaged-upgrade smoke failed.");
+  exit(1);
 };
 
 export const runBoundedCommand = async (input: {
@@ -2803,7 +2852,6 @@ async function main(): Promise<void> {
 
 if (import.meta.main) {
   main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : "Seeded packaged-upgrade smoke failed.");
-    process.exitCode = 1;
+    reportSeededUpgradeSmokeFailure(error);
   });
 }
