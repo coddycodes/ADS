@@ -103,6 +103,8 @@ export interface TauriSymbolsPlan {
   readonly archive: string;
   /** Cargo's binary, which `tauri bundle` packages. */
   readonly binary: string;
+  /** The desktop version, which also names this build's bundles. */
+  readonly version: string;
   readonly dumpCommand: SpawnPlan;
   /**
    * Writes a stripped copy to `output`, which then replaces `binary`. Cargo's `binary` is a hard
@@ -575,6 +577,7 @@ const planSymbols = Effect.fn("planTauriSymbols")(function* (
   return {
     archive,
     binary,
+    version,
     dumpCommand: {
       command: process.execPath,
       args: [
@@ -1403,25 +1406,19 @@ export const copyTauriBundleArtifacts = Effect.fn("copyTauriBundleArtifacts")(fu
 interface BinaryFingerprint {
   readonly inode: number | undefined;
   readonly links: number | undefined;
-  readonly size: FileSystem.Size;
   readonly sha256: string;
+  readonly bytes: Uint8Array;
 }
 
 const fingerprintBinary = Effect.fn("fingerprintTauriBinary")(function* (file: string) {
   const fs = yield* FileSystem.FileSystem;
   const info = yield* fs.stat(file);
-  const sha256 = yield* fs.stream(file).pipe(
-    Stream.runFold(
-      () => NodeCrypto.createHash("sha256"),
-      (hash, chunk) => hash.update(chunk),
-    ),
-    Effect.map((hash) => hash.digest("hex")),
-  );
+  const bytes = yield* fs.readFile(file);
   return {
     inode: Option.getOrUndefined(info.ino),
     links: Option.getOrUndefined(info.nlink),
-    size: info.size,
-    sha256,
+    sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+    bytes,
   } satisfies BinaryFingerprint;
 });
 
@@ -1469,8 +1466,9 @@ const readAppImageCopy = Effect.fn("readAppImageTauriBinary")(function* (
  * pack the target binary itself, so checking that file covers them (`undefined`).
  */
 const bundledCopies = Effect.fn("bundledTauriBinaryCopies")(function* (
-  plan: Pick<TauriBuildPlan, "platform" | "target" | "bundleDir">,
+  plan: Pick<TauriBuildPlan, "platform" | "arch" | "target" | "bundleDir">,
   binary: string,
+  version: string,
   env: NodeJS.ProcessEnv,
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -1484,12 +1482,16 @@ const bundledCopies = Effect.fn("bundledTauriBinaryCopies")(function* (
     );
   }
   if (plan.platform === "linux" && plan.target === "deb") {
-    // The package tree is the directory beside the .deb.
+    // Tauri names a .deb `<product>_<version>_<arch>.deb` and leaves its package tree beside it
+    // under the same name. Trees of earlier versions' .debs can remain there too.
+    const deb = `_${version}_${String(requireReleaseTarget(plan.platform, plan.arch).debArch)}.deb`;
     const copies: Array<BundledCopy> = [];
     for (const entry of (yield* fs.readDirectory(plan.bundleDir)).toSorted()) {
-      if ((yield* fs.stat(path.join(plan.bundleDir, entry))).type !== "Directory") continue;
-      const copy = path.join(plan.bundleDir, entry, "data", "usr", "bin", name);
-      if (yield* fs.exists(copy)) copies.push(yield* readBundledCopy(copy));
+      if (!entry.endsWith(deb)) continue;
+      const copy = path.join(plan.bundleDir, entry.slice(0, -".deb".length), "data", "usr", "bin");
+      if (yield* fs.exists(path.join(copy, name))) {
+        copies.push(yield* readBundledCopy(path.join(copy, name)));
+      }
     }
     return copies;
   }
@@ -1512,25 +1514,25 @@ const bundledCopies = Effect.fn("bundledTauriBinaryCopies")(function* (
  * every readable copy in a bundle must have its build ID and symbol table.
  */
 const verifyBundledBinary = Effect.fn("verifyBundledTauriBinary")(function* (
-  plan: Pick<TauriBuildPlan, "platform" | "target" | "bundleDir">,
+  plan: Pick<TauriBuildPlan, "platform" | "arch" | "target" | "bundleDir">,
   binary: string,
+  version: string,
   stripped: BinaryFingerprint,
   env: NodeJS.ProcessEnv,
 ) {
-  const fs = yield* FileSystem.FileSystem;
   const after = yield* fingerprintBinary(binary);
   const sameFile =
     (after.inode !== undefined && after.inode === stripped.inode) || after.links === 1;
-  if (!sameFile || after.size !== stripped.size || after.sha256 !== stripped.sha256) {
+  if (!sameFile || after.sha256 !== stripped.sha256) {
     return yield* Effect.fail(
       new TauriDesktopBuildConfigurationError(
-        `tauri bundle replaced ${binary}, as Cargo does when it re-links it, so the bundles may hold an unstripped binary.`,
+        `${binary} was changed or replaced during tauri bundle, so the bundles may not hold the stripped binary.`,
       ),
     );
   }
-  const copies = yield* bundledCopies(plan, binary, env);
+  const copies = yield* bundledCopies(plan, binary, version, env);
   if (copies === undefined) return;
-  const bytes = yield* fs.readFile(binary);
+  const bytes = stripped.bytes;
   const expected = binaryIdentity(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
   if (expected === undefined || copies.length === 0) {
     return yield* Effect.fail(
@@ -1569,9 +1571,11 @@ const runBuildAttempts = Effect.fn("runTauriBuildAttempts")(function* (
   command: SpawnPlan,
   env: NodeJS.ProcessEnv,
   write: (text: string) => void,
+  beforeAttempt: Effect.Effect<void, PlatformError.PlatformError> = Effect.void,
 ) {
   const failures: string[] = [];
   for (let attempt = 1; attempt <= TAURI_BUILD_ATTEMPTS; attempt += 1) {
+    yield* beforeAttempt;
     const outcome = yield* runSpawnPlan(command, env, `Tauri ${step} command`).pipe(Effect.result);
     if (outcome._tag === "Success") {
       return;
@@ -1630,9 +1634,17 @@ export const buildTauriDesktopArtifact = Effect.fn("buildTauriDesktopArtifact")(
       }
       stripped = yield* fingerprintBinary(plan.symbols.binary);
     }
-    yield* runBuildAttempts(plan, "bundle", plan.bundleCommand, buildEnv, write);
+    // The bundler patches its bundle-type marker into the binary in place and writes the
+    // original back only after a successful bundle, so a failed attempt leaves the binary
+    // patched. Every attempt starts from the stripped bytes, written over the same file.
+    const strippedBinary = plan.symbols?.binary;
+    const restoreStripped =
+      stripped && strippedBinary !== undefined
+        ? fs.writeFile(strippedBinary, stripped.bytes)
+        : Effect.void;
+    yield* runBuildAttempts(plan, "bundle", plan.bundleCommand, buildEnv, write, restoreStripped);
     if (plan.symbols && stripped) {
-      yield* verifyBundledBinary(plan, plan.symbols.binary, stripped, env);
+      yield* verifyBundledBinary(plan, plan.symbols.binary, plan.symbols.version, stripped, env);
       write(`[desktop-artifact] The ${plan.target} bundle holds the stripped binary.\n`);
     }
   }

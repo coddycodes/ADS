@@ -175,17 +175,20 @@ strips executables (`strip --strip-all` on Linux, plain `strip` on macOS;
 Windows ships the binary as linked and keeps the names in the PDB) and bundles
 it. It strips into a copy that replaces the binary: Cargo's binary is a hard
 link to its cached `deps/` artifact, and an in-place strip would leave the next
-build of unchanged sources without symbols to dump. After bundling it fails
-unless the binary is still the stripped file (same file, size and SHA-256; the
-bundler patches it in place and restores it), and unless every copy it can read
-in a bundle has the binary's build ID and symbol table: the macOS app, which the
-bundler re-signs (a DMG symbol build also requests `app`, because the bundler
-otherwise deletes the app it built), the deb's package tree, and the AppImage,
-which it extracts with `--appimage-extract`. Windows installers pack the binary
-itself. Cargo would re-link its unstripped artifact over the binary even when
-nothing needs rebuilding, so this check, not the Tauri CLI's current behavior,
-keeps an unstripped binary out of the bundles. The output directory also
-receives `bibcode-desktop-symbols-<version>-<os>-<arch>.zip`; see
+build of unchanged sources without symbols to dump. Every bundle attempt starts
+from the stripped bytes, written back over the same file, because the bundler
+patches its bundle-type marker into the binary in place and restores it only
+after a successful bundle. After bundling the wrapper fails unless the binary is
+still the stripped file (same file and SHA-256), and unless every copy it can
+read in a bundle has the binary's build ID and symbol table: the macOS app,
+which the bundler re-signs (a DMG symbol build also requests `app`, because the
+bundler otherwise deletes the app it built), the package tree of this version's
+`.deb`, and the AppImage, which it extracts with `--appimage-extract`. Windows
+installers pack the binary itself. Cargo would re-link its unstripped artifact
+over the binary even when nothing needs rebuilding, so this check, not the Tauri
+CLI's current behavior, keeps an unstripped binary out of the bundles. The
+output directory also receives
+`bibcode-desktop-symbols-<version>-<os>-<arch>.zip`; see
 [Symbol assets](../operations/release.md#symbol-assets). `--symbols` needs
 `dump_syms` on `PATH` and cannot be combined with `--skip-build`.
 
