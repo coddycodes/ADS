@@ -135,6 +135,9 @@ pub fn is_long_running(method: &str) -> bool {
             | "server.refreshProviders"
             | "server.refreshProviderUsage"
             | "worktree.createManaged"
+            // `git worktree remove --force` deletes the whole tree, `node_modules` and `target`
+            // included.
+            | "worktree.remove"
             | "agentSessions.import"
     )
 }
@@ -1045,6 +1048,7 @@ mod tests {
             "updater.check",
             "pullRequests.list",
             "gitManager.commit",
+            "worktree.remove",
         ] {
             book.observe(method, "success", 1_500.0, 0.0, None);
         }
@@ -1059,6 +1063,10 @@ mod tests {
             !is_long_running("worktree.createPanel"),
             "local orchestration only: a stall there is a server problem"
         );
+        // Bounded: probes with their own timeouts, and a merge preview capped at the 30 s
+        // git command timeout. A slow one is a slowness worth reporting.
+        assert!(!is_long_running("worktree.adopt"));
+        assert!(!is_long_running("gitManager.previewMerge"));
     }
 
     #[test]

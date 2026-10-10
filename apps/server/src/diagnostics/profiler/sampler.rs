@@ -36,6 +36,9 @@ const FAST_TICKS_TO_SPEED_UP: u32 = 10;
 const REDISCOVER_EVERY: Duration = Duration::from_secs(60);
 /// A build under a terminal can spawn hundreds of processes; the nearest ones are kept.
 const MAX_DESCENDANTS: usize = 128;
+const SERVER: &str = "server";
+const DESKTOP_HOST: &str = "desktop-host";
+const HELPER: &str = "helper";
 
 /// A process's latest sample, for a report about its death.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,11 +97,21 @@ pub struct SamplerDetector {
     registry: ProcessAttributionRegistry,
     interval: Duration,
     minute: Duration,
+    /// The kind of the process the sampler runs in: `server`, or `desktop-host` for a server
+    /// running inside the desktop host.
+    self_kind: &'static str,
 }
 
 impl SamplerDetector {
     pub fn new(registry: ProcessAttributionRegistry) -> Self {
         Self::with_timing(registry, BASE_INTERVAL, MINUTE)
+    }
+
+    /// Names this process `desktop-host`: the server runs inside the desktop app.
+    #[must_use]
+    pub fn in_desktop_host(mut self) -> Self {
+        self.self_kind = DESKTOP_HOST;
+        self
     }
 
     /// A shorter sampling interval and detector minute, so a test sees minutes close.
@@ -112,6 +125,7 @@ impl SamplerDetector {
             registry,
             interval,
             minute,
+            self_kind: SERVER,
         }
     }
 }
@@ -126,6 +140,7 @@ impl Detector for SamplerDetector {
             self.registry.clone(),
             self.interval,
             self.minute,
+            self.self_kind,
             cancel,
         ))
     }
@@ -135,14 +150,13 @@ async fn run(
     registry: ProcessAttributionRegistry,
     base: Duration,
     minute: Duration,
+    self_kind: &'static str,
     cancel: CancellationToken,
 ) {
     let _forget = ForgetSamples;
-    let sampler = Arc::new(Mutex::new(Sampler::new(
-        registry,
-        std::process::id(),
-        minute,
-    )));
+    let mut sampler = Sampler::new(registry, std::process::id(), minute);
+    sampler.self_kind = Arc::from(self_kind);
+    let sampler = Arc::new(Mutex::new(sampler));
     let mut interval = base;
     let mut fast_ticks = 0;
     loop {
@@ -205,6 +219,9 @@ struct Sampler {
     system: System,
     registry: ProcessAttributionRegistry,
     self_pid: Pid,
+    self_kind: Arc<str>,
+    /// This executable's file name, lower case: a descendant running it is our crash monitor.
+    own_exe: Option<String>,
     /// Each descendant's identity at rediscovery. Identities hold the kernel's raw start
     /// time, which a wall-clock step cannot move; sysinfo's start time adds the boot time
     /// each `System` reads for itself, so two `System`s disagree after a step.
@@ -233,6 +250,10 @@ impl Sampler {
             system: System::new(),
             registry,
             self_pid: Pid::from_u32(self_pid),
+            self_kind: Arc::from(SERVER),
+            own_exe: std::env::current_exe()
+                .ok()
+                .and_then(|exe| Some(exe.file_name()?.to_string_lossy().to_lowercase())),
             descendants: HashMap::new(),
             last_rediscovery: None,
             series: HashMap::new(),
@@ -320,11 +341,11 @@ impl Sampler {
                 continue;
             };
             let kind = if pid == self.self_pid {
-                "server"
+                self.self_kind.clone()
             } else if let Some(kind) = registered.get(&identity) {
-                kind
+                kind.clone()
             } else if self.descendants.get(&pid) == Some(&identity) {
-                exe_kind(&exe_name(process))
+                Arc::from(exe_kind(&exe_name(process), self.own_exe.as_deref()))
             } else {
                 // The pid has passed to another process since it was found.
                 continue;
@@ -362,7 +383,7 @@ impl Sampler {
             };
             let closed = ProcessMinute {
                 pid: identity.pid,
-                kind: series.kind,
+                kind: series.kind.clone(),
                 label: series.label.clone(),
                 minute: closed,
             };
@@ -412,7 +433,7 @@ impl Sampler {
         for (identity, series) in &mut self.series {
             self.closed.push(ProcessMinute {
                 pid: identity.pid,
-                kind: series.kind,
+                kind: series.kind.clone(),
                 label: series.label.clone(),
                 minute: series.close(),
             });
@@ -443,18 +464,22 @@ impl Sampler {
         self.widest_interval = Duration::ZERO;
     }
 
-    /// The kind of each registered identity. A registration outlives its process until the
-    /// owner drops it, so its pid may since name another process, or another registration.
-    fn registered_kinds(&self) -> HashMap<ProcessIdentity, &'static str> {
+    /// The kind of each registered identity: `provider:<driver>` for a provider. A
+    /// registration outlives its process until the owner drops it, so its pid may since name
+    /// another process, or another registration.
+    fn registered_kinds(&self) -> HashMap<ProcessIdentity, Arc<str>> {
         self.registry
-            .registered_sources()
+            .registered_kinds()
             .into_iter()
-            .map(|(identity, source)| {
-                let kind = match source {
-                    RegistrationSource::Provider => "provider",
-                    RegistrationSource::Terminal => "terminal",
-                    RegistrationSource::DesktopUi => "webview",
-                    RegistrationSource::Helper => "helper",
+            .map(|(identity, source, driver)| {
+                let kind: Arc<str> = match (source, driver) {
+                    (RegistrationSource::Provider, Some(driver)) => {
+                        Arc::from(format!("provider:{driver}"))
+                    }
+                    (RegistrationSource::Provider, None) => Arc::from("provider"),
+                    (RegistrationSource::Terminal, _) => Arc::from("terminal"),
+                    (RegistrationSource::DesktopUi, _) => Arc::from("webview"),
+                    (RegistrationSource::Helper, _) => Arc::from(HELPER),
                 };
                 (identity, kind)
             })
@@ -465,7 +490,7 @@ impl Sampler {
 /// One process's samples within the open minute, and the rules its medians feed.
 #[derive(Default)]
 struct Series {
-    kind: &'static str,
+    kind: Arc<str>,
     label: String,
     minute: u64,
     metric: &'static str,
@@ -542,7 +567,7 @@ impl Series {
 /// One process's closed minute, as the event writes it.
 struct ProcessMinute {
     pid: u32,
-    kind: &'static str,
+    kind: Arc<str>,
     label: String,
     minute: ClosedMinute,
 }
@@ -552,17 +577,24 @@ impl ProcessMinute {
         format!("{}:{}", self.kind, self.label)
     }
 
+    /// Leak and CPU findings, for BiBCode's own processes only: what runs under a terminal
+    /// (a build, a language server) is the user's, sampled but never reported.
     fn record_findings(&self) {
-        if let Some(finding) = self
-            .minute
-            .leak
-            .and_then(|verdict| leak_finding(self, verdict))
-        {
+        for finding in self.findings() {
             record_finding(finding);
         }
-        if self.minute.cpu_sustained {
-            record_finding(cpu_finding(self));
+    }
+
+    fn findings(&self) -> Vec<FindingInput> {
+        if !raises_findings(&self.kind) {
+            return Vec::new();
         }
+        let leak = self
+            .minute
+            .leak
+            .and_then(|verdict| leak_finding(self, verdict));
+        let cpu = self.minute.cpu_sustained.then(|| cpu_finding(self));
+        leak.into_iter().chain(cpu).collect()
     }
 
     fn to_json(&self, cpus: f64) -> Value {
@@ -571,7 +603,7 @@ impl ProcessMinute {
         let minute = &self.minute;
         json!({
             "pid": self.pid,
-            "kind": self.kind,
+            "kind": &*self.kind,
             "label": self.label,
             "metric": minute.metric,
             "cpu": cpu(minute.cpu),
@@ -612,14 +644,14 @@ fn leak_finding(process: &ProcessMinute, verdict: LeakVerdict) -> Option<Finding
         kind,
         severity,
         source: "server".into(),
-        fingerprint_fields: vec![process.kind.into(), process.label.clone()],
+        fingerprint_fields: vec![process.kind.to_string(), process.label.clone()],
         title: format!("{name} memory grew {slope:.0} MB/h"),
         summary: format!(
             "The private memory of {name} kept growing after warm-up instead of levelling off."
         ),
         evidence: json!({
             "pid": process.pid,
-            "processKind": process.kind,
+            "processKind": &*process.kind,
             "label": process.label,
             "slopeMbPerH": round1(slope),
             "r2": r2.map(round2),
@@ -635,12 +667,12 @@ fn cpu_finding(process: &ProcessMinute) -> FindingInput {
         kind: "cpu.sustained",
         severity: Severity::Warn,
         source: "server".into(),
-        fingerprint_fields: vec![process.kind.into(), process.label.clone()],
+        fingerprint_fields: vec![process.kind.to_string(), process.label.clone()],
         title: format!("{name} used over 80% of a core for 5 minutes"),
         summary: format!("{name} stayed above 80% of one CPU core for at least 5 minutes."),
         evidence: json!({
             "pid": process.pid,
-            "processKind": process.kind,
+            "processKind": &*process.kind,
             "label": process.label,
         }),
     }
@@ -700,13 +732,28 @@ fn process_label(process: &Process) -> String {
     redact_command(&format!("\"{}\"", exe_name(process)))
 }
 
-fn exe_kind(name: &str) -> &'static str {
+/// A descendant's kind from its executable's file name. One running our own executable is
+/// the crash monitor, re-executed with `--crash-monitor`.
+fn exe_kind(name: &str, own_exe: Option<&str>) -> &'static str {
     let name = name.to_ascii_lowercase();
+    if own_exe == Some(name.as_str()) {
+        return HELPER;
+    }
     match name.strip_suffix(".exe").unwrap_or(&name) {
         "webkitwebprocess" | "com.apple.webkit.webcontent" | "msedgewebview2" => "webview",
         "git" => "git",
         _ => "other",
     }
+}
+
+/// Whether a process of `kind` is BiBCode's own, whose leaks and CPU are findings: the server
+/// or desktop host, its webview, providers and helpers. Terminals, git and other descendants
+/// run the user's work.
+fn raises_findings(kind: &str) -> bool {
+    matches!(
+        kind,
+        SERVER | DESKTOP_HOST | "webview" | HELPER | "provider"
+    ) || kind.starts_with("provider:")
 }
 
 fn round1(value: f64) -> f64 {
@@ -848,11 +895,91 @@ mod tests {
 
     #[test]
     fn executables_map_to_process_kinds() {
-        assert_eq!(exe_kind("WebKitWebProcess"), "webview");
-        assert_eq!(exe_kind("msedgewebview2.exe"), "webview");
-        assert_eq!(exe_kind("com.apple.WebKit.WebContent"), "webview");
-        assert_eq!(exe_kind("git.exe"), "git");
-        assert_eq!(exe_kind("node"), "other");
+        assert_eq!(exe_kind("WebKitWebProcess", None), "webview");
+        assert_eq!(exe_kind("msedgewebview2.exe", None), "webview");
+        assert_eq!(exe_kind("com.apple.WebKit.WebContent", None), "webview");
+        assert_eq!(exe_kind("git.exe", None), "git");
+        assert_eq!(exe_kind("node", None), "other");
+        // Our own executable as a descendant is the crash monitor.
+        assert_eq!(exe_kind("bibcode", Some("bibcode")), "helper");
+        assert_eq!(exe_kind("BiBCode.exe", Some("bibcode.exe")), "helper");
+        assert_eq!(exe_kind("bibcode", Some("bibcode-desktop")), "other");
+    }
+
+    /// Only BiBCode's own processes raise leak and CPU findings; what runs under a terminal is
+    /// sampled, never reported.
+    #[test]
+    fn only_bibcode_processes_raise_findings() {
+        for kind in [
+            "server",
+            "desktop-host",
+            "webview",
+            "helper",
+            "provider",
+            "provider:codex",
+        ] {
+            assert!(raises_findings(kind), "{kind}");
+        }
+        for kind in ["other", "terminal", "git"] {
+            assert!(!raises_findings(kind), "{kind}");
+        }
+        let minute = |kind: &str| ProcessMinute {
+            pid: 1,
+            kind: Arc::from(kind),
+            label: "rustc".into(),
+            minute: ClosedMinute {
+                metric: "private",
+                cpu: 1.0,
+                cpu_max: 1.0,
+                rss: 0,
+                rss_max: 0,
+                private: 0,
+                private_max: 0,
+                leak: Some(LeakVerdict::Suspect {
+                    slope_mb_per_h: 30.0,
+                }),
+                cpu_sustained: true,
+            },
+        };
+        assert!(
+            minute("other").findings().is_empty(),
+            "a user build is not a finding"
+        );
+        let kinds: Vec<(&str, Value)> = minute("provider:codex")
+            .findings()
+            .into_iter()
+            .map(|finding| (finding.kind, finding.evidence["processKind"].clone()))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ("memory.leak-suspect", json!("provider:codex")),
+                ("cpu.sustained", json!("provider:codex")),
+            ]
+        );
+    }
+
+    #[test]
+    fn providers_are_named_by_their_driver() {
+        let registry = ProcessAttributionRegistry::new();
+        let metadata = |driver: Option<&str>| crate::diagnostics::ProcessRegistrationMetadata {
+            scope: crate::diagnostics::AttributionScope::External,
+            kind: crate::diagnostics::AttributionKind::Provider,
+            label: "Codex".into(),
+            source: RegistrationSource::Provider,
+            driver: driver.map(Into::into),
+        };
+        let identity = |pid| ProcessIdentity { pid, started_at: 1 };
+        let _codex = registry
+            .register_identity(identity(10), metadata(Some("codex")))
+            .unwrap();
+        let _unnamed = registry
+            .register_identity(identity(11), metadata(None))
+            .unwrap();
+        let sampler = Sampler::new(registry, std::process::id(), MINUTE);
+        let kinds = sampler.registered_kinds();
+        assert_eq!(&*kinds[&identity(10)], "provider:codex");
+        assert_eq!(&*kinds[&identity(11)], "provider");
     }
 
     #[cfg(target_os = "linux")]

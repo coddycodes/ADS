@@ -4,12 +4,11 @@ use axum::{
     Router,
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode, header},
-    response::IntoResponse,
 };
 use bibcode_server::production::http_routes::{
-    AssetHttpResponse, DiagnosticLogsHttpResponse, HttpRouteError, HttpRoutesState, JsonOperation,
-    JsonRouteResponse, MAX_DIAGNOSTIC_BODY_BYTES, MAX_JSON_BODY_BYTES, McpHttpResponse,
-    RouteContext, add_routes,
+    AssetHttpResponse, Authorized, DiagnosticLogsHttpResponse, HttpRouteError, HttpRoutesState,
+    JsonOperation, JsonRouteResponse, MAX_DIAGNOSTIC_BODY_BYTES, MAX_JSON_BODY_BYTES,
+    McpHttpResponse, RouteContext, add_routes,
 };
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, oneshot};
@@ -186,13 +185,11 @@ async fn crash_dumps_in_the_diagnostic_bundle_need_the_operate_scope() {
     let dispatched = Arc::new(Mutex::new(Vec::new()));
     let mut state = state_with_json_recorder(Arc::new(Mutex::new(Vec::new())));
     // A client that may read, but not operate.
-    state.authorize = Arc::new(|_headers, _method, _uri, scope, _cancellation| {
+    state.authorize = Arc::new(|_headers, _method, _uri, _scope, _cancellation| {
         Box::pin(async move {
-            if scope == Some("orchestration:operate") {
-                Err(StatusCode::FORBIDDEN.into_response())
-            } else {
-                Ok(())
-            }
+            Ok(Authorized {
+                scopes: vec!["orchestration:read".to_owned()],
+            })
         })
     });
     let handler_calls = Arc::clone(&dispatched);
@@ -285,6 +282,7 @@ async fn diagnostic_logs_route_is_bounded_authorized_and_returns_zip_headers() {
             .any(|(_, scope, _)| { scope.as_deref() == Some("orchestration:read") })
     );
 
+    let calls_before = authorization_calls.lock().await.len();
     let with_dumps = app
         .clone()
         .oneshot(
@@ -299,6 +297,13 @@ async fn diagnostic_logs_route_is_bounded_authorized_and_returns_zip_headers() {
         .await
         .unwrap();
     assert_eq!(with_dumps.status(), StatusCode::OK);
+    // One credential check per request: a DPoP proof is single-use, so a second check of the
+    // same headers would be refused as a replay.
+    assert_eq!(
+        authorization_calls.lock().await.len() - calls_before,
+        1,
+        "the request was authorized exactly once"
+    );
     assert_eq!(
         dispatched_logs.lock().await.last(),
         Some(&("with dumps".to_owned(), true))
@@ -545,7 +550,12 @@ fn state_with_json_recorder(calls: Arc<Mutex<Vec<JsonRecorderCall>>>) -> HttpRou
                     .lock()
                     .await
                     .push((None, scope.map(str::to_owned), None));
-                Ok(())
+                Ok(Authorized {
+                    scopes: vec![
+                        "orchestration:read".to_owned(),
+                        "orchestration:operate".to_owned(),
+                    ],
+                })
             })
         }),
         Arc::new(move |operation, payload, context: RouteContext| {

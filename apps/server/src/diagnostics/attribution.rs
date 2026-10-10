@@ -610,6 +610,7 @@ mod tests {
                     kind: AttributionKind::Provider,
                     label: "external/provider".to_owned(),
                     source: RegistrationSource::Provider,
+                    driver: None,
                 },
             )
             .expect("registration should fit");

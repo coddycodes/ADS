@@ -1,10 +1,10 @@
 //! `bibcode profiler mcp`: a stdio MCP server over the profiler directory, for AI agents. One
 //! JSON-RPC 2.0 message per line each way; stdout carries nothing else.
 //!
-//! It serves both protocol eras. A legacy client opens with `initialize` (2025-11-25); a modern
-//! one (2026-07-28) puts its version in each request's `_meta`, after an optional
-//! `server/discover`. Every tool only reads, and every result fits in 80 000 characters, inside
-//! an agent's tool-output budget.
+//! It serves both protocol eras. A legacy client opens with `initialize` (2025-11-25 or
+//! 2025-06-18); a modern one (2026-07-28) puts its version in each request's `_meta`, after an
+//! optional `server/discover`. Every tool only reads, and every result fits in 80 000
+//! characters, inside an agent's tool-output budget.
 
 use std::{
     io::{self, BufRead, Read, Write},
@@ -22,7 +22,8 @@ use super::{
 };
 
 const LEGACY_VERSION: &str = "2025-11-25";
-const VERSIONS: [&str; 2] = ["2026-07-28", LEGACY_VERSION];
+/// 2025-06-18 clients initialize as 2025-11-25 ones do, and see the same tools.
+const VERSIONS: [&str; 3] = ["2026-07-28", LEGACY_VERSION, "2025-06-18"];
 /// Where a modern request names its protocol version.
 const VERSION_POINTER: &str = "/_meta/io.modelcontextprotocol~1protocolVersion";
 const PARSE_ERROR: i64 = -32700;
@@ -853,13 +854,14 @@ mod tests {
                 request(5, "initialize", json!({ "protocolVersion": "2026-07-28" })),
                 request(6, "initialize", json!({ "protocolVersion": "1999-01-01" })),
                 request(7, "tools/list", json!({ "_meta": meta(&"9".repeat(1000)) })),
+                request(8, "initialize", json!({ "protocolVersion": "2025-06-18" })),
             ],
         );
 
         let discover = &responses[0]["result"];
         assert_eq!(
             discover["supportedVersions"],
-            json!(["2026-07-28", "2025-11-25"])
+            json!(["2026-07-28", "2025-11-25", "2025-06-18"])
         );
         assert_eq!(discover["capabilities"], json!({ "tools": {} }));
         assert_eq!(
@@ -888,10 +890,14 @@ mod tests {
         );
         assert_eq!(
             unsupported["data"],
-            json!({ "supported": ["2026-07-28", "2025-11-25"], "requested": "1900-01-01" })
+            json!({ "supported": ["2026-07-28", "2025-11-25", "2025-06-18"], "requested": "1900-01-01" })
         );
         assert_eq!(responses[4]["result"]["protocolVersion"], "2026-07-28");
         assert_eq!(responses[5]["result"]["protocolVersion"], "2025-11-25");
+        assert_eq!(
+            responses[7]["result"]["protocolVersion"], "2025-06-18",
+            "a 2025-06-18 client keeps its version"
+        );
     }
 
     #[test]

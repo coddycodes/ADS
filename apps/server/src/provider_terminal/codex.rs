@@ -2136,6 +2136,7 @@ impl CodexHelperLauncher for SystemCodexHelperLauncher {
                     kind: AttributionKind::Helper,
                     label: "Codex App Server helper".to_owned(),
                     source: RegistrationSource::Helper,
+                    driver: None,
                 },
             ) {
                 Ok(registration) => registration,

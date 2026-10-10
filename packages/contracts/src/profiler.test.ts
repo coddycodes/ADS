@@ -5,6 +5,7 @@ import {
   PROFILER_CLIENT_BATCH_LIMITS,
   ProfilerClientBatch,
   ProfilerClientBatchInvalid,
+  ProfilerClientBatchResult,
   ProfilerClientBatchTooLarge,
   ProfilerStatus,
 } from "./profiler.ts";
@@ -81,6 +82,16 @@ describe("profiler contracts", () => {
     stalls: { count: 0, totalMs: 0, maxMs: 0 },
     interactions: { count: 0, maxMs: 0 },
     jsHeapBytes: null,
+  });
+
+  it("says why a batch was not accepted, and reads an older server's answer", () => {
+    const decode = Schema.decodeUnknownSync(ProfilerClientBatchResult);
+    expect(decode({ accepted: false, reason: "too-frequent" })).toEqual({
+      accepted: false,
+      reason: "too-frequent",
+    });
+    expect(decode({ accepted: true })).toEqual({ accepted: true });
+    expect(() => decode({ accepted: false, reason: "other" })).toThrow();
   });
 
   it("declares the server's batch rejections as typed errors of the batch RPC", () => {

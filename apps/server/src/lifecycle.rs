@@ -610,7 +610,9 @@ fn authorize_handler(auth: AuthService) -> crate::production::http_routes::Autho
         Box::pin(async move {
             crate::auth::authorize_http_request(&auth, &headers, &method, &uri, scope)
                 .await
-                .map(|_| ())
+                .map(|principal| crate::production::http_routes::Authorized {
+                    scopes: principal.scopes,
+                })
                 .map_err(crate::auth::auth_error_response)
         }) as crate::production::http_routes::BoxFuture<_>
     })

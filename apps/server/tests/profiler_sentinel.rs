@@ -18,6 +18,10 @@ async fn sentinel_and_panic_scenarios_share_the_process_global_handle_in_sequenc
     a_dump_this_run_survived_is_one_finding_across_scans_and_restarts().await;
     a_panic_is_recorded_with_module_offsets_and_keeps_unwinding().await;
     only_the_directory_owner_marks_its_session_clean().await;
+    a_shutdown_that_never_finished_is_info_and_not_a_crash().await;
+    a_shutdown_that_crashed_is_a_native_crash().await;
+    shutdown_marks_the_session_stopping_until_it_ends().await;
+    a_dump_no_session_reported_becomes_one_finding_across_restarts().await;
 }
 
 /// Review Focus 5: the first start after a crash, with the toggle off.
@@ -32,6 +36,9 @@ async fn a_run_that_never_shut_down_is_classified_with_the_profiler_off() {
 
     let finding = wait_for_finding(&runtime, "crash.unclean-exit").await;
     assert_eq!(finding["state"], "open");
+    // The other process's dump is reported on its own: no session linked it to its run.
+    let unlinked = wait_for_finding(&runtime, "crash.native").await;
+    assert_eq!(unlinked["count"], 1);
     assert_eq!(runtime.status()["enabled"], false);
     tx.send(true).unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -54,12 +61,21 @@ async fn a_run_that_never_shut_down_is_classified_with_the_profiler_off() {
         "the finding was persisted"
     );
 
-    // An orderly shutdown leaves nothing to classify on the next start.
+    // An orderly shutdown leaves nothing to classify on the next start, and the other
+    // process's dump is linked already.
     let (_tx, rx) = watch::channel(false);
     let next = ProfilerRuntime::start(state.path(), rx, vec![]);
     tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(kinds(&next.status()), vec!["crash.unclean-exit".to_owned()]);
-    assert_eq!(next.status()["findings"][0]["count"], 1);
+    let mut seen = kinds(&next.status());
+    seen.sort();
+    assert_eq!(seen, ["crash.native", "crash.unclean-exit"]);
+    assert!(
+        next.status()["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|finding| finding["count"] == 1)
+    );
     next.shutdown().await;
 }
 
@@ -280,14 +296,106 @@ async fn only_the_directory_owner_marks_its_session_clean() {
     assert_eq!(read_session(state.path())["state"], "running");
 }
 
+/// A run that began shutting down and was killed before it finished (a bounded desktop quit)
+/// is an info finding, never a crash, and sets no last crash.
+async fn a_shutdown_that_never_finished_is_info_and_not_a_crash() {
+    let state = tempfile::tempdir().unwrap();
+    write_session(state.path(), "stopping", sentinel::boot_id());
+    let (_tx, rx) = watch::channel(false);
+    let runtime = ProfilerRuntime::start(state.path(), rx, vec![]);
+    let finding = wait_for_finding(&runtime, "shutdown.incomplete").await;
+    assert_eq!(finding["severity"], "info");
+    assert_eq!(finding["title"], "BiBCode did not finish shutting down");
+    let status = runtime.status();
+    assert_eq!(kinds(&status), ["shutdown.incomplete"]);
+    assert!(status["lastCrashAt"].is_null(), "{status}");
+    runtime.shutdown().await;
+}
+
+/// A dump still says the run crashed, whatever state it left.
+async fn a_shutdown_that_crashed_is_a_native_crash() {
+    let state = tempfile::tempdir().unwrap();
+    write_session(state.path(), "stopping", sentinel::boot_id());
+    write_sidecar(state.path(), "crashed-while-stopping", 4_000_000_000, 30);
+    let (_tx, rx) = watch::channel(false);
+    let runtime = ProfilerRuntime::start(state.path(), rx, vec![]);
+    let finding = wait_for_finding(&runtime, "crash.native").await;
+    assert_eq!(finding["severity"], "error");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(kinds(&runtime.status()), ["crash.native"]);
+    assert!(runtime.status()["lastCrashAt"].is_string());
+    runtime.shutdown().await;
+    assert_eq!(
+        persisted(state.path(), "crash.native")["evidence"]["crashIds"],
+        json!(["crashed-while-stopping"])
+    );
+}
+
+/// Shutdown marks the session `stopping` before the other services stop; only the end of
+/// teardown marks it clean. A runtime dropped without a shutdown (a failed start) stopped too.
+async fn shutdown_marks_the_session_stopping_until_it_ends() {
+    let state = tempfile::tempdir().unwrap();
+    let (_tx, rx) = watch::channel(false);
+    let runtime = ProfilerRuntime::start(state.path(), rx.clone(), vec![]);
+    runtime.begin_stopping();
+    assert_eq!(read_session(state.path())["state"], "stopping");
+    runtime.end_session().await;
+    assert_eq!(read_session(state.path())["state"], "clean");
+    // After its teardown began, a runtime no longer owns the directory.
+    runtime.begin_stopping();
+    assert_eq!(read_session(state.path())["state"], "clean");
+
+    let failed_start = ProfilerRuntime::start(state.path(), rx, vec![]);
+    assert_eq!(read_session(state.path())["state"], "running");
+    drop(failed_start);
+    assert_eq!(read_session(state.path())["state"], "stopping");
+    // Let its teardown release the directory before the next scenario.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+}
+
+/// A dump written while no profiler session ran (a desktop host that crashed during startup)
+/// becomes one finding at the next start, and is never raised again; the previous run's own
+/// dump is raised once, by its classification.
+async fn a_dump_no_session_reported_becomes_one_finding_across_restarts() {
+    let state = tempfile::tempdir().unwrap();
+    write_session(state.path(), "running", sentinel::boot_id());
+    write_sidecar(state.path(), "previous-run", 4_000_000_000, 30);
+    write_sidecar(state.path(), "startup-crash", 4_000_000_002, 600);
+    let (_tx, rx) = watch::channel(false);
+    let runtime = ProfilerRuntime::start(state.path(), rx.clone(), vec![]);
+    wait_for_finding(&runtime, "crash.native").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let natives = |status: &Value| -> u64 {
+        status["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|finding| finding["kind"] == "crash.native")
+            .map(|finding| finding["count"].as_u64().unwrap())
+            .sum()
+    };
+    // Same process kind, no fault site: one finding counting both dumps, once each.
+    assert_eq!(natives(&runtime.status()), 2);
+    runtime.end_session().await;
+
+    let next = ProfilerRuntime::start(state.path(), rx, vec![]);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(natives(&next.status()), 2, "a restart raises nothing again");
+    next.shutdown().await;
+}
+
 fn dir(state: &Path) -> PathBuf {
     profiler_dir(state)
 }
 
 fn write_running_session(state: &Path, boot_id: Option<String>) {
+    write_session(state, "running", boot_id);
+}
+
+fn write_session(state: &Path, session_state: &str, boot_id: Option<String>) {
     let started_at = time::OffsetDateTime::now_utc() - time::Duration::minutes(1);
     let record = json!({
-        "state": "running",
+        "state": session_state,
         "pid": 4_000_000_000_u32,
         "bootId": boot_id,
         "exe": "bibcode-sentinel-test",

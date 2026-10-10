@@ -2592,7 +2592,8 @@ the monotonic clock, each holding 100 log-scale buckets that grow by a factor of
   `getCommits`, `getChecks`, `getFiles`, `getContext`, `getVocabulary`, and
   `getCreateDefaults`; `updater.check` and `updater.install`;
   `server.updateProvider`, `server.refreshProviders`, and
-  `server.refreshProviderUsage`; `worktree.createManaged`; and
+  `server.refreshProviderUsage`; `worktree.createManaged` and `worktree.remove`
+  (which deletes the whole tree, dependencies and build output included); and
   `agentSessions.import`. They still emit `rpc.timing`, but never raise
   `rpc.slow` or count toward saturation.
 - **Hangs.** Each 5 s tick checks the unary requests still in flight. One past

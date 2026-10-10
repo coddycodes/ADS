@@ -69,7 +69,11 @@ export const ProfilerClientBatch = Schema.Struct({
 });
 export type ProfilerClientBatch = typeof ProfilerClientBatch.Type;
 
-export const ProfilerClientBatchResult = Schema.Struct({ accepted: Schema.Boolean });
+export const ProfilerClientBatchResult = Schema.Struct({
+  accepted: Schema.Boolean,
+  /** Why a batch was not accepted: `too-frequent` within 5 s of the client's previous one. */
+  reason: Schema.optionalKey(Schema.Literal("too-frequent")),
+});
 export type ProfilerClientBatchResult = typeof ProfilerClientBatchResult.Type;
 
 /** The batch is over 64 KiB, 64 records or 64 histograms. Nothing was recorded. */

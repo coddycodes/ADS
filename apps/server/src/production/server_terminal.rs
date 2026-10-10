@@ -479,10 +479,16 @@ fn register_diagnostics_rpcs(registry: &mut RpcRegistry, services: &ServerTermin
                         "findings": [],
                     }));
                 };
-                // Status reads the profiler directory, which must not block an async worker.
-                Ok(tokio::task::spawn_blocking(move || profiler.status())
+                // Status reads the profiler directory, which must not block an async worker. A
+                // panicking handler would fail the whole connection; this fails one request.
+                tokio::task::spawn_blocking(move || profiler.status())
                     .await
-                    .expect("profiler status never panics"))
+                    .map_err(|_| {
+                        json!({
+                            "_tag": "ProfilerStatusError",
+                            "message": "The profiler status could not be read.",
+                        })
+                    })
             }
         },
     );

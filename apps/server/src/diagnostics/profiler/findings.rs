@@ -30,6 +30,9 @@ const RESOLVED_TTL_DAYS: i64 = 7;
 const CRASH_KIND_PREFIX: &str = "crash.";
 /// A repeat is persisted at least this often, however many repeats arrive in between.
 const PERSIST_INTERVAL: Duration = Duration::seconds(60);
+/// The crash dumps a finding's `evidence.crashIds` keeps, newest first. A repeat's evidence
+/// names only its own dump, so the earlier ones are carried over, up to this many.
+const MAX_CRASH_IDS: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -281,7 +284,9 @@ impl FindingsBook {
             known.state = FindingState::Open;
             known.title = input.title;
             known.summary = input.summary;
-            known.evidence = input.evidence;
+            let mut evidence = input.evidence;
+            carry_crash_ids(&mut evidence, &known.evidence);
+            known.evidence = evidence;
             let interval_passed = self.persisted_at.get(&id).is_none_or(|at| {
                 let elapsed = now - *at;
                 // A negative gap is a clock step back; persist rather than wait it out.
@@ -362,12 +367,19 @@ impl FindingsBook {
         findings.into_iter().take(n).cloned().collect()
     }
 
-    /// The crash dumps findings cite as `evidence.crashId`. A repeat replaces its evidence, so
-    /// only each finding's latest dump is here.
+    /// The crash dumps findings cite: every id in `evidence.crashIds` (each finding's newest
+    /// 64), and `evidence.crashId`, which findings written before `crashIds` carry alone.
     pub fn crash_ids(&self) -> impl Iterator<Item = String> + '_ {
-        self.by_id
-            .values()
-            .filter_map(|finding| finding.evidence.get("crashId")?.as_str().map(str::to_owned))
+        self.by_id.values().flat_map(|finding| {
+            let evidence = &finding.evidence;
+            evidence
+                .get("crashIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .chain(evidence.get("crashId"))
+                .filter_map(|id| id.as_str().map(str::to_owned))
+        })
     }
 
     /// When a `crash.*` finding was last seen.
@@ -404,6 +416,41 @@ impl FindingsBook {
             self.persisted_at.remove(&id);
         }
     }
+}
+
+/// Appends the dumps `previous` counted to the `crashIds` of a repeat's `evidence`, newest
+/// first and each once, keeping `MAX_CRASH_IDS`. A repeat without a dump of its own (the same
+/// crash seen only in an OS record) keeps them too, so a later start never raises them again.
+fn carry_crash_ids(evidence: &mut Value, previous: &Value) {
+    let earlier: Vec<&Value> = previous
+        .get("crashIds")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .chain(previous.get("crashId"))
+        .filter(|id| id.is_string())
+        .collect();
+    if earlier.is_empty() {
+        return;
+    }
+    let Value::Object(fields) = evidence else {
+        return;
+    };
+    let Value::Array(ids) = fields
+        .entry("crashIds")
+        .or_insert_with(|| Value::Array(Vec::new()))
+    else {
+        return;
+    };
+    for id in earlier {
+        if ids.len() >= MAX_CRASH_IDS {
+            break;
+        }
+        if !ids.contains(id) {
+            ids.push(id.clone());
+        }
+    }
+    ids.truncate(MAX_CRASH_IDS);
 }
 
 fn parse_last_seen(finding: &Finding) -> Option<OffsetDateTime> {
@@ -863,6 +910,65 @@ mod tests {
         }
         store.shutdown();
         assert_eq!(counts(&persisted_lines(dir.path())), [1, 2, 3]);
+    }
+
+    fn dump_input(crash_id: &str) -> FindingInput {
+        FindingInput {
+            kind: "crash.native",
+            severity: Severity::Error,
+            source: "server".into(),
+            fingerprint_fields: vec!["server".into(), "minidump".into(), "SIGSEGV".into()],
+            title: "Native crash dumped: SIGSEGV".into(),
+            summary: "s".into(),
+            evidence: json!({ "crashId": crash_id, "crashIds": [crash_id] }),
+        }
+    }
+
+    /// Each repeat names only its own dump; the finding keeps every dump it counted (newest
+    /// 64), so a later start never raises one of them again.
+    #[test]
+    fn a_dump_finding_keeps_the_dumps_it_counted() {
+        let start = datetime!(2026-10-09 12:00 UTC);
+        let (_dir, store) = scratch_sender();
+        let mut book = FindingsBook::default();
+        // A finding written before `crashIds` existed names one dump.
+        let mut legacy = dump_input("legacy");
+        legacy.evidence = json!({ "crashId": "legacy" });
+        book.record_now(legacy, start, &store.sender());
+        for n in 0..70 {
+            book.record_now(dump_input(&format!("d{n}")), start, &store.sender());
+        }
+        let finding = &book.newest(1)[0];
+        assert_eq!(finding.count, 71);
+        let ids = finding.evidence["crashIds"].as_array().unwrap();
+        assert_eq!(ids.len(), 64);
+        assert_eq!(ids[0], "d69", "newest first");
+        assert_eq!(ids[63], "d6");
+        assert_eq!(finding.evidence["crashId"], "d69");
+        let linked: std::collections::HashSet<String> = book.crash_ids().collect();
+        assert!(linked.contains("d69") && linked.contains("d6"));
+        assert!(!linked.contains("d5"), "beyond the newest 64");
+
+        // A repeat of the same dump is not listed twice, and the legacy id is carried over.
+        let mut book = FindingsBook::default();
+        let mut legacy = dump_input("legacy");
+        legacy.evidence = json!({ "crashId": "legacy" });
+        book.record_now(legacy, start, &store.sender());
+        book.record_now(dump_input("a"), start, &store.sender());
+        book.record_now(dump_input("a"), start, &store.sender());
+        assert_eq!(
+            book.newest(1)[0].evidence["crashIds"],
+            json!(["a", "legacy"])
+        );
+        // The same crash again, seen only in an OS record: the dumps stay linked.
+        let mut record_only = dump_input("unused");
+        record_only.evidence = json!({ "source": "coredump" });
+        book.record_now(record_only, start, &store.sender());
+        assert_eq!(
+            book.newest(1)[0].evidence["crashIds"],
+            json!(["a", "legacy"])
+        );
+        assert!(book.crash_ids().any(|id| id == "a"));
     }
 
     #[test]
