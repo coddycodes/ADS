@@ -42,6 +42,7 @@ current behavior.
 - [Connection runtime](./architecture/connection-runtime.md)
 - [Runtime modes](./architecture/runtime-modes.md)
 - [Remote environments](./architecture/remote.md)
+- [Profiler](./architecture/overview.md#profiler)
 
 ## Cloud and environment authentication
 
@@ -60,12 +61,17 @@ current behavior.
 - [Encyclopedia](./reference/encyclopedia.md)
 - [Workspace layout](./reference/workspace-layout.md)
 - [Repository scripts](./reference/scripts.md)
+- [Repository skills](./skills/): the source of the agent skills
+  (`bibcode-profiler`, `bibcode-release`, `issue-delivery`) that the
+  `.agents/skills/` and `.claude/skills/` stubs point to
 
 ## Historical material
 
 - [`plans/`](./plans/README.md) contains dated design documents and plans.
 - [`superpowers/`](./superpowers/README.md) contains completed planning and
-  specification artifacts.
+  specification artifacts, such as the
+  [profiler design](./superpowers/specs/2026-10-09-profiler-design.md), with its
+  [research](./plans/2026-10-09-profiler-research.md) in `plans/`.
 - [`dependency-upgrades/`](./dependency-upgrades/README.md) contains dated
   dependency reports and the ledger used by repository tooling.
 - [`architecture/measurements/`](./architecture/measurements/README.md)

@@ -207,6 +207,26 @@ Delete the unused result values above. Do not leave an ambiguous status.
   `BIBCODE_GDK_BACKEND=x11`): scale, screenshot after the split drag, and any
   step where the preview did not follow its panel:
 
+## Profiler crash smoke evidence
+
+- Symbol build command and post-bundle check output:
+- Executable launched and test-owned `BIBCODE_HOME`:
+- Capabilities (`nativeDumps`, `osCrashRecords`, `storage`) and the cause of any
+  `unavailable` or `disabled` value:
+- Crash monitor process (pid, parent, socket directory and mode) and its exit
+  with the profiler and the app:
+- Crash trigger and observed process exit (signal or exit code, Windows Error
+  Reporting dialog):
+- Dump id, `.dmp` size in bytes, and sidecar `processKind`, `parentPid`,
+  `version`, `os`, and `arch`:
+- Finding after the restart (kind, severity, `crashId`, attached OS crash
+  record, absence of a duplicate crash finding):
+- Symbolication command, symbol source (local store or `--download`), crash
+  reason, first named frame, and duration:
+- Platform manual checks, each pass, fail, or unavailable with evidence (webview
+  crash, shutdown, signing and bundle checks, Windows console and MCP stdio):
+- Profiler settings and status-bar screenshots:
+
 ## External-worktree scenario
 
 - Disposable repository root:

@@ -2538,6 +2538,116 @@ retain their failure/count evidence but do not contribute to latency statistics
 or slow rankings. An older server's summary lacks a known measured denominator,
 so current clients display its summary timing as unavailable.
 
+## Profiler timing and client reports
+
+The [Profiler](./overview.md#profiler) adds two unary methods, whose schemas are
+in [`profiler.ts`](../../packages/contracts/src/profiler.ts):
+
+| RPC                                | Scope                   | Purpose                                                                                                                                                                                                                                                                                                                                  |
+| ---------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server.getProfilerStatus`         | `orchestration:read`    | `ProfilerStatus`: `enabled`, `recordingSince`, `diskBytes`, `eventCount`, `droppedEvents`, `lastCrashAt`, `capabilities` (`nativeDumps`, `osCrashRecords`, `storage`), and the 20 newest findings without evidence. It reads the profiler directory on a blocking thread.                                                                |
+| `server.reportProfilerClientBatch` | `orchestration:operate` | One client batch. It answers `{ accepted: true }` once recorded and `{ accepted: false }` while the profiler is off. A batch over 64 KiB or with more than 64 records or histograms fails with `ProfilerClientBatchTooLarge`, an invalid field with `ProfilerClientBatchInvalid`, before the toggle is checked and with nothing written. |
+
+### Server timing
+
+While the profiler is on, the unary `register` wrapper in `rpc/session.rs` times
+every handler from its start, and a stream is timed to its first item with the
+outcome `first-item`. With the profiler off the timer reads, inserts, and
+allocates nothing. Each `(method, outcome)` has a window of six 5-minute slots on
+the monotonic clock, each holding 100 log-scale buckets that grow by a factor of
+1.12. The five finished slots are the baseline; the current one is excluded.
+
+- **Absolute tiers raise findings.** A unary request that takes at least 1 s
+  raises an `rpc.slow` finding of severity warn, and one of at least 10 s an
+  error. The detector raises them on its 5 s tick, one per `(method, outcome)`,
+  so a finding lags its request by up to 5 s.
+- **The relative tier is log-only.** After 100 baseline samples, a request over
+  max(3 × p95, floor) is written as an `rpc.timing` event with
+  `tier: "relative"` and never becomes a finding. The floor is 250 ms, or 1 s
+  for background methods (`git.`, `vcs.`, `worktree.`, `pullRequests.`, and
+  `server.refresh` prefixes, and `projects.searchEntries`). It is promoted to
+  findings only once each method has a baseline from real sessions.
+- Every request over a tier writes an `rpc.timing` event with its method,
+  outcome, duration, tier, baseline p95, sample count, and correlation ID.
+- **Long-running methods** wait on external work: clone, pull, pull requests,
+  update checks and installs, provider refreshes, managed worktree creation, and
+  session import (`is_long_running` in
+  [`latency.rs`](../../apps/server/src/diagnostics/profiler/latency.rs)). They
+  still emit `rpc.timing`, but never raise `rpc.slow` or count toward
+  saturation.
+- **Hangs.** Each 5 s tick checks the unary requests still in flight. One past
+  its budget, 10 s or 300 s for a long-running method, raises one `rpc.hang`
+  finding (error) before it finishes. Streams are log-only and never hang-checked,
+  because an event stream may wait any time for its first item.
+- **Saturation.** When five or more distinct methods are slow in the same tick,
+  one `rpc.saturation` finding replaces their `rpc.slow` findings.
+- **Histograms.** Each finished slot is written as one `rpc.histogram` event per
+  `(method, outcome)`.
+- **Fences.** A request in flight across a profiler stop and start is not
+  measured. On Windows the monotonic clock counts suspended time, so a detector
+  tick more than 30 s late means the machine slept, and the requests spanning it
+  are discarded. Elsewhere the clock stops during a suspend, so a late tick is a
+  stall that the hang check reports.
+
+### Correlation join
+
+The wire request ID is not visible to the client's observer, and one trace spans
+several RPCs, so neither can match a client measurement to the server's. While
+the profiler is on for an environment, the client therefore sends a per-request
+correlation ID, `<clientId>:<counter>`, in the `x-bibcode-profiler-rid` RPC
+header. The server keeps the last 4,096 `(correlationId, method, serverMs,
+queuedMs)` entries, ignoring IDs over 64 bytes. A client record joins only an
+entry with its correlation ID and the same method; there is no time-based
+fallback. An unjoined record has `joinedBy: "none"` and `slowPart: "unknown"`.
+
+A joined record splits the client's wait into `serverMs`, `networkMs = rttMs −
+serverMs`, and `renderMs`, and the largest part names the slow part: `server`,
+`network`, or `render`. The session loop has no frame-receipt instant yet, so
+queue time is not measured: `queuedMs` is `null` in events and 0 in the join
+log, and server queueing counts as network. Only durations cross the wire,
+never timestamps.
+
+### Client collector
+
+[`clientCollector.ts`](../../apps/web/src/profiler/clientCollector.ts) observes
+every RPC through the environment request observer. It measures only while at
+least one connected environment's `enableProfiler` is on, and then records:
+
+- the round trip of each request, and its render time, from the response to the
+  second animation frame after it;
+- main-thread stalls, from Long Animation Frames where the engine supports them
+  (WebView2, Chromium), and elsewhere from a 500 ms heartbeat that counts more
+  than 50 ms of lateness as a stall and pauses while the page is hidden;
+- slow interactions from Event Timing, over 104 ms, where supported; and
+- the JavaScript heap where `performance.memory` exists (Chromium).
+
+Every 10 s it sends each profiled environment at most one batch, with one
+upload in flight per environment. A batch carries per-method histograms in the
+server's buckets, individual records for requests over 250 ms, stall and
+interaction totals, the heap size, and the capabilities it detected. Request
+data goes only to the environment that served the request; stalls,
+interactions, and heap go to every profiled environment. A sample that spans a
+visibility change or a sleep is dropped. A sleep shows as the wall clock
+running more than 5 s ahead of the monotonic clock; with Long Animation Frames,
+whose engines count sleep in the monotonic clock, a heartbeat over 60 s late
+counts too. An authorization refusal stops reporting to that environment for
+the session; every other failure is swallowed, so profiling never surfaces an
+error. The batch RPC is excluded from the slow-request acknowledgement
+indicator.
+
+The server drops records and histograms of methods it does not serve. Each
+record becomes a `client.request` event, and each batch a `client.batch` event,
+under the source `client:<clientId>`. Findings from a batch use the source
+`client`:
+
+- `rpc.slow` when a record's round trip plus render crosses an absolute tier,
+  unless its method is long-running, with the slow part in the fingerprint;
+- `client.stall` (warn) when stalls add up to more than 1 s in the batch; and
+- `client.interaction` (warn) when the slowest interaction took over 500 ms.
+
+[Remote environments](./remote.md#profiler-data) describes where reports go when
+a client is connected to several environments.
+
 ## Invariants
 
 - The server owns one durable FIFO per thread. Reloads, disconnects, and server

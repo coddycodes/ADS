@@ -2567,6 +2567,19 @@ sizes. Cover relevant:
   between light and dark while the app shows the home screen and again while it
   shows a thread: the window follows each switch without a reload; with
   **Light** or **Dark** selected, the app ignores the switch;
+- **Settings → Diagnostics → Profiler** in light and dark: the environment
+  selector with a remote environment connected; the switch off (**Off. Turn on
+  to start recording. Crash checks for the previous run still happen.**),
+  **Starting...**, and recording (**Recording since … · … MB · … events**, plus
+  **… dropped** when any were); **Open folder** enabled only for the primary
+  environment on desktop and **Export bundle** only for the primary
+  environment, each otherwise disabled with its stated reason; **Include crash
+  dumps** and its warning; and the findings list, empty (**No findings yet.**)
+  and after the [Profiler crash smoke](#profiler-crash-smoke), with each
+  finding's severity icon, title, count, and last seen. While an environment records,
+  the status bar shows the **Profiler** segment; its tooltip lists the
+  recording environments, clicking it opens Diagnostics on the first of them,
+  and it disappears once every profiler is off;
 - responsive menus, overlays, narrow panels, and focus states; and
 - loaded interaction without stale ownership, duplicate events, or runaway
   process growth.
@@ -2775,6 +2788,82 @@ commands receive `BIBCODE_OPEN_URL_AUTH` (from a Codex tool call,
 the value); whether Codex's `workspace-write` sandbox makes `"$BROWSER"` print
 the address instead of opening it; a session older than 8 hours falls back to
 printing.
+
+## Profiler crash smoke
+
+Run this on every native platform when a change touches the
+[Profiler](../architecture/overview.md#profiler), crash capture, symbols, or
+desktop packaging, and for release qualification. The CI `crash-smoke` job
+proves the monitor and symbolication with a small test binary; this procedure
+proves them in the packaged desktop app. The platform page names the build
+command, the executable, the crash trigger, and its manual checks.
+
+Run the focused profiler coverage first:
+
+```sh
+cargo test -p bibcode-server --lib profiler:: -j 2
+cargo test -p bibcode-server --test profiler_runtime --test profiler_sentinel --test profiler_exits --test profiler_worktree_audit --test profiler_cli --test crash_smoke -j 2
+cargo test -p bibcode-desktop -j 2
+vp test run packages/contracts/src/profiler.test.ts apps/web/src/profiler apps/web/src/components/settings/ProfilerSection.test.tsx apps/web/src/components/status-bar/ProfilerRecordingSegment.test.tsx
+```
+
+Root runs leave the component tests uncompiled, so also run them from `apps/web`
+with `vp test run --project unit` and their paths without the `apps/web/`
+prefix, as for the other
+[compiler-sensitive](./README.md#web-unit-tests-and-the-react-compiler) files.
+
+Use a fresh data root for every process in the procedure, by setting
+`BIBCODE_HOME` to an absolute test-owned directory, together with the
+platform's renderer isolation. The profiler directory is then
+`$BIBCODE_HOME/userdata/profiler`. Run `profiler` commands with the same
+executable and the same `BIBCODE_HOME`: `<executable> profiler status --json`.
+
+1. **Enable.** Launch the app, open **Settings → Diagnostics → Profiler**, keep
+   the local environment selected, and turn on **Record profiling data**. The
+   status line moves from **Starting...** to **Recording since …**.
+2. **Capabilities.** Within 10 s, `capabilities.json` exists. Record it and the
+   `capabilities` of `profiler status --json`. Expect
+   `nativeDumps: "available"`, `osCrashRecords` as the platform page states,
+   and `storage: "ok"`. Confirm that exactly one `--crash-monitor` process runs
+   with the app process as its parent. A `nativeDumps` of `unavailable` or
+   `disabled` means no monitor is armed, so the crash-test variable does
+   nothing and no dump is written: record it as unavailable evidence with its
+   cause. Where the platform page names another crash trigger, use it to cover
+   the OS crash record in step 5.
+3. **Crash.** Quit the app normally, then start it again with
+   `BIBCODE_PROFILER_CRASH_TEST=1` set for that launch only. The setting is
+   already on, so the monitor arms during startup and the process faults about
+   5 s later. Child processes inherit the variable: a BiBCode executable
+   started from the app, such as `bibcode` in an integrated terminal, with its
+   own profiler on would fault too. Never set it in a shell profile, and start
+   every later launch without it.
+4. **Dump.** `crashes/` holds one new `<id>.dmp` and its `<id>.json` sidecar,
+   both readable only by the current user. Record the dump size in bytes. The
+   sidecar's `processKind` is `desktop`, its `parentPid` is the crashed
+   process, and its `version`, `os`, and `arch` match the build;
+   `profiler crashes --json` lists it.
+5. **Restart.** Start the app without the variable. Diagnostics → Profiler lists
+   a `crash.native` finding (error) for the previous run, and
+   `profiler findings --kind 'crash.*' --json` shows `evidence.crashId` equal to
+   the sidecar `id`. The same run has no second crash finding, such as a
+   `crash.unclean-exit`. Where the platform kept an OS crash record, its frames
+   may be attached to the evidence.
+6. **Symbolicate.** Run
+   `profiler symbolicate <id> --symbols <store> --json` with the symbol store
+   that the platform page's `--symbols` build wrote. The crash reason is the
+   write to an invalid address (`SIGSEGV`, `EXC_BAD_ACCESS`, or an access
+   violation on Windows), and the stack names
+   `bibcode_server::diagnostics::profiler::crash::crash_test_fault`. For a
+   published release, run it with `--download` instead and record the download
+   time. A build that was never released answers "the release publishes no
+   symbols at <url>"; record that and use the local store.
+7. **Clean up.** Turn the profiler off and confirm the monitor process exits;
+   quit the app and confirm nothing from the run survives. Remove only the
+   test-owned data root.
+
+Record each value in the execution report's profiler section. A dump without a
+`crashId` finding, a duplicate crash finding, or a monitor that outlives the
+app fails the smoke.
 
 ## Non-native compatibility audit
 

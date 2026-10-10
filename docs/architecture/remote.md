@@ -1255,6 +1255,32 @@ itself. It announces the request, and exactly one client claims it.
   last touched a browser tab, and the browser-mode host serves only when no
   desktop host is connected.
 
+## Profiler data
+
+Each environment has its own [Profiler](./overview.md#profiler): its toggle is
+that server's `enableProfiler` setting, and its data stays in that server's data
+root. WSL, SSH, and remote environments run their own `bibcode` process, so each
+has its own crash monitor and follows its own setting. The Diagnostics Profiler
+section switches between connected environments; **Open folder** works only for
+the desktop's primary environment and **Export bundle** covers the primary
+environment only. For any other environment, run `bibcode profiler` on its host,
+for example over SSH, or `ssh <host> bibcode profiler mcp` for an AI harness.
+
+A client connected to several environments measures its requests and its own
+responsiveness, and reports them only to environments whose profiler is on:
+
+- request records and per-method histograms go to the environment that served
+  the request, which joins them to its own timing by correlation ID;
+- client-wide metrics (main-thread stalls, slow interactions, and the
+  JavaScript heap) go to every connected environment whose profiler is on; and
+- the correlation header is sent only to environments whose profiler is on.
+
+The batch RPC needs `orchestration:operate`, so a read-only credential's batch is
+refused, and the client stops reporting to that environment for the session. In
+Remote Server mode, the joined record's slow part (`server`, `network`, or
+`render`) tells which side made the client wait. See
+[Profiler timing and client reports](./rpc-and-orchestration.md#profiler-timing-and-client-reports).
+
 ## Security boundaries
 
 - Pairing credentials and access tokens are secrets; connection catalog labels

@@ -710,6 +710,76 @@ pairing offer --endpoint http://<address>:3773` and confirm the dialog refuses
 Record unavailable authenticated provider scenarios instead of substituting a
 different executable or exposing credentials.
 
+## Profiler crash smoke
+
+Run the shared [Profiler crash smoke](./cross-platform-validation.md#profiler-crash-smoke)
+against a symbol build, as the interactive account. Install the pinned
+`dump_syms` once (`cargo install dump_syms --locked --version 2.3.9`), then:
+
+```powershell
+node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64 --symbols
+```
+
+Windows ships the binary as linked, and its symbols come from the PDB: the store
+under `target\<triple>\release\symbols` names the module after the PDB. On a
+Windows ARM64 host, build with `--arch arm64` and expect
+`nativeDumps: "disabled"`: no hook is attached there, so
+`BIBCODE_PROFILER_CRASH_TEST` does nothing, and the crash steps are unavailable
+evidence.
+
+- **Executable.** Use the release `bibcode-desktop.exe` that the symbol build
+  produced under `target\<triple>\release\`, never an installed copy, with
+  `$env:BIBCODE_HOME` set to the test-owned root. The release build is a
+  GUI-subsystem program, so PowerShell waits for it only when its output is
+  piped: run `& $exe profiler status --json | Out-String`, then read
+  `$LASTEXITCODE`.
+- **Capabilities.** Expect `nativeDumps: "available"` on x64 and
+  `osCrashRecords: "available"`. While the profiler is on, the per-user
+  `%TEMP%` holds one `bibcode-<random>` directory with `monitor.sock`.
+- **Crash.** Set `$env:BIBCODE_PROFILER_CRASH_TEST = '1'`, start the app, and
+  remove the variable from the shell once it has started. The callback leaves
+  the crash to Windows Error Reporting after the dump, so the process ends with
+  an access violation (`0xC0000005`), an Application log Event 1000 is written,
+  and an interactive desktop may show the "stopped working" dialog. Record
+  whether it appeared. Dismiss it before the restart: until then the crashed
+  process may remain, and the single-instance plugin would hand the new launch
+  to it. After the restart, confirm the Event 1000 record with
+  `Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000 } -MaxEvents 5 | Format-List TimeCreated, Message`.
+
+Then perform these native checks and record each result, including unavailable
+ones:
+
+- **WebView2 failure report.** Crash a WebView2 process of the main window
+  where the harness allows it, for example by navigating it to `edge://crash`
+  from the packaged E2E WebDriver session. Diagnostics lists a `crash.webview`
+  finding named after the failure kind, such as `render-process-exited`, with
+  `exitCode` in its evidence and, within a minute, the `dump` file name.
+  Record where WebView2 wrote the minidump: directly in the folder that
+  `FailureReportFolderPath` names, or in its `reports` subfolder. Ending the
+  renderer from Task Manager is a deliberate termination and must add no
+  finding. Record the crash case as unavailable when no route exists.
+- **Provider exit code.** With the profiler on and a provider session running,
+  end the provider's root process with `Stop-Process -Id <pid> -Force`, and
+  record whether its Job still held other processes. Within seconds, a
+  `subprocess.crash` finding reports exit code 1: the exit code is read from
+  the root process handle without waiting for the whole Job to end. Record the
+  delay.
+- **Shutdown.** With the profiler on and a provider session and a terminal
+  open, quit the app normally. After the next start no new `crash.webview`
+  (a `ProcessFailed` raised during shutdown) or `subprocess.crash` finding
+  exists.
+- **Console attach.** Run `profiler status` from `cmd.exe` and from
+  PowerShell, with and without piping the output. The executable borrows the
+  calling console, so `cmd.exe` returns its prompt at once: record whether the
+  output prints over the next prompt and whether `%ERRORLEVEL%` or
+  `$LASTEXITCODE` holds the exit code, and whether `start /wait` changes that.
+- **MCP over piped stdio.** Run
+  `'{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | & $exe profiler mcp`.
+  Standard output must carry exactly one JSON-RPC line listing the five
+  `profiler_*` tools, and the process must exit with code 0 at the end of
+  input. Then register the same command in an MCP client and call
+  `profiler_status`.
+
 ## Process and Job cleanup
 
 Capture PID, parent PID, executable, creation time, and command line for scoped

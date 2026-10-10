@@ -178,7 +178,10 @@ link to its cached `deps/` artifact, and an in-place strip would leave the next
 build of unchanged sources without symbols to dump. Every bundle attempt starts
 from the stripped bytes, written back over the same file, because the bundler
 patches its bundle-type marker into the binary in place and restores it only
-after a successful bundle. After bundling the wrapper fails unless the binary is
+after a successful bundle. The write-back first checks that the path is still
+the stripped file (the same inode); a binary replaced in between fails the
+build as changed or replaced, so the wrapper never writes through a hard link
+into Cargo's `deps/`. After bundling the wrapper fails unless the binary is
 still the stripped file (same file and SHA-256), and unless every copy it can
 read in a bundle has the binary's build ID and symbol table: the macOS app,
 which the bundler re-signs (a DMG symbol build also requests `app`, because the
@@ -210,8 +213,16 @@ built-ins. It needs `dump_syms` (pinned to 2.3.9 in CI) with its default
 features, because the lookup of the PDB that a Windows binary names is part of
 the `http` feature.
 
+Release assembly, `scripts/assemble-release-assets.ts`, requires twelve symbol
+archives, `bibcode-{desktop,server}-symbols-<version>-<os>-<arch>.zip` for each
+of the six release targets, and still rejects any file outside its allowlist.
+`bibcode profiler symbolicate --download` fetches exactly these names, so a
+renamed archive breaks symbol downloads for that release; see
+[Symbol assets](../operations/release.md#symbol-assets).
+
 The desktop artifact contains the Tauri host, in-process Rust server, and built
-web assets. It does not stage Node.js, a TypeScript server, or helper sidecars.
+web assets. It does not stage Node.js, a TypeScript server, or helper sidecars;
+the profiler's crash monitor is the same executable relaunched.
 
 ## Standalone Server Artifacts
 
