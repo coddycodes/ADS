@@ -562,6 +562,26 @@ describe("ProfilerSection", () => {
     );
   });
 
+  it("tells the user to close the other BiBCode process that holds the profiler folder", async () => {
+    h.settingsByEnvironment[ENVIRONMENT_ID] = true;
+    queryOf(
+      status({
+        enabled: false,
+        recordingSince: null,
+        capabilities: { nativeDumps: "available", osCrashRecords: "available", storage: "locked" },
+      }),
+    );
+
+    const container = await render();
+
+    expect(container.textContent).toContain(
+      "Another BiBCode app or server is already recording to this profiler folder. Close it, then restart this one.",
+    );
+    expect(container.textContent).toContain("Not recording.");
+    expect(container.textContent).not.toContain("Starting...");
+    expect(container.textContent).not.toContain("Check free disk space");
+  });
+
   it("shows the status error with a way to retry instead of an empty list", async () => {
     queryOf(null, { error: "The connection dropped before the result arrived." });
 

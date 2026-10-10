@@ -34,19 +34,76 @@ pub(crate) fn watch(webview: &webkit2gtk::WebView) {
 }
 
 /// The main window finished loading a page, so its web process runs: remembers our web
-/// processes, off the UI thread.
+/// processes, off the UI thread, while the profiler is on.
 #[cfg(target_os = "linux")]
 pub(crate) fn page_loaded<R: tauri::Runtime>(_app: &tauri::AppHandle<R>, _label: &str) {
+    remember_web_processes(is_enabled());
+}
+
+/// From the in-process server's start on, scans for our web processes as its profiler turns
+/// on, since the page loaded before then. Elsewhere than Linux nothing is scanned ahead.
+pub(crate) fn follow_server(handle: &bibcode_server::ServerHandle) {
+    #[cfg(target_os = "linux")]
+    if let Some(setting) = handle.profiler_enabled_signal() {
+        tauri::async_runtime::spawn(follow_setting(setting));
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = handle;
+}
+
+/// Applies each committed value of the setting until its sender is gone.
+#[cfg(target_os = "linux")]
+async fn follow_setting(mut setting: tokio::sync::watch::Receiver<bool>) {
+    loop {
+        remember_web_processes(*setting.borrow_and_update());
+        if setting.changed().await.is_err() {
+            break;
+        }
+    }
+}
+
+/// Scans for our web processes while the profiler is on. While it is off nothing runs, and
+/// the list is cleared, so a later termination matches no pid from before.
+#[cfg(target_os = "linux")]
+fn remember_web_processes(enabled: bool) {
+    let generation = next_scan(enabled);
+    if !enabled {
+        return;
+    }
     let scan = std::thread::Builder::new()
         .name("bibcode-web-processes".into())
-        .spawn(|| {
-            let children = children_named("WebKitWebProcess");
-            *WEB_PROCESSES
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = children;
-        });
+        .spawn(move || store_scan(generation, children_named("WebKitWebProcess")));
     if let Err(error) = scan {
         tracing::debug!(%error, "web process scan did not start");
+    }
+}
+
+/// Counts scans and stops, so a scan that a later one superseded drops its result. Changed
+/// only under the `WEB_PROCESSES` lock.
+#[cfg(target_os = "linux")]
+static SCAN_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Starts a scan, or with `enabled` false stops scanning and forgets what was found. Returns
+/// the scan's generation.
+#[cfg(target_os = "linux")]
+fn next_scan(enabled: bool) -> u64 {
+    let mut remembered = WEB_PROCESSES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !enabled {
+        remembered.clear();
+    }
+    SCAN_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+}
+
+/// Remembers a scan's result, unless a later scan or a stop superseded it.
+#[cfg(target_os = "linux")]
+fn store_scan(generation: u64, children: Vec<(u32, String)>) {
+    let mut remembered = WEB_PROCESSES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if SCAN_GENERATION.load(std::sync::atomic::Ordering::Relaxed) == generation {
+        *remembered = children;
     }
 }
 
@@ -320,8 +377,133 @@ mod tests {
         assert!(!is_running_child(1), "init is nobody's child here");
     }
 
+    /// The tests that share `WEB_PROCESSES` run one at a time.
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn remembered() -> Vec<(u32, String)> {
+        WEB_PROCESSES.lock().unwrap().clone()
+    }
+
+    /// A child the scan recognises: a copy of `sleep` named as WebKit names its process, with
+    /// the directory that holds it.
+    fn stand_in_web_process() -> (std::process::Child, tempfile::TempDir) {
+        let sleep = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|dir| dir.join("sleep"))
+            .find(|path| path.is_file())
+            .expect("sleep on PATH");
+        let dir = tempfile::tempdir().unwrap();
+        let web_process = dir.path().join("WebKitWebProcess");
+        std::fs::copy(sleep, &web_process).unwrap();
+        // A fork on another test thread can still hold the copy open for writing for a moment,
+        // which fails the exec with ETXTBSY.
+        let mut attempts = 0;
+        loop {
+            match std::process::Command::new(&web_process).arg("30").spawn() {
+                Ok(child) => return (child, dir),
+                Err(_) if attempts < 50 => {
+                    attempts += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(error) => panic!("spawn the stand-in web process: {error}"),
+            }
+        }
+    }
+
+    fn wait_until_remembered(pid: Option<u32>) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let found = remembered();
+            let done = match pid {
+                Some(pid) => found.iter().any(|(remembered, _)| *remembered == pid),
+                None => found.is_empty(),
+            };
+            if done {
+                return;
+            }
+            assert!(std::time::Instant::now() < deadline, "{found:?}");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// Spec Decision 1: with the profiler off, nothing runs but the crash hook and the
+    /// sentinel, so a page load scans nothing, and forgets what an earlier scan found.
+    #[test]
+    fn page_loads_scan_for_web_processes_only_while_the_profiler_is_on() {
+        let _serial = serial();
+        let (mut child, _dir) = stand_in_web_process();
+
+        *WEB_PROCESSES.lock().unwrap() = vec![(1, "stale".to_owned())];
+        remember_web_processes(false);
+        assert!(remembered().is_empty(), "the list is cleared while off");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(remembered().is_empty(), "and nothing scanned");
+
+        remember_web_processes(true);
+        wait_until_remembered(Some(child.id()));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        WEB_PROCESSES.lock().unwrap().clear();
+    }
+
+    /// A scan still running when the profiler turns off, or when a newer scan starts, must not
+    /// write its result over what came after it.
+    #[test]
+    fn a_superseded_scan_is_dropped() {
+        let _serial = serial();
+        let process = |pid| vec![(pid, "WebKitWebProcess".to_owned())];
+        let stopped = next_scan(true);
+        next_scan(false);
+        store_scan(stopped, process(7));
+        assert!(remembered().is_empty(), "the stop came after it");
+
+        let older = next_scan(true);
+        let newer = next_scan(true);
+        store_scan(newer, process(8));
+        store_scan(older, process(7));
+        assert_eq!(remembered(), process(8), "the newer scan came after it");
+        WEB_PROCESSES.lock().unwrap().clear();
+    }
+
+    /// Turning the profiler on loads no page, so the setting itself starts a scan; turning it
+    /// off forgets what was found.
+    #[test]
+    fn turning_the_profiler_on_scans_without_a_page_load() {
+        let _serial = serial();
+        let (mut child, _dir) = stand_in_web_process();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (setting, follower) = tokio::sync::watch::channel(false);
+            let following = tokio::spawn(follow_setting(follower));
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            assert!(remembered().is_empty());
+            setting.send(true).unwrap();
+            let pid = child.id();
+            tokio::task::spawn_blocking(move || wait_until_remembered(Some(pid)))
+                .await
+                .unwrap();
+            setting.send(false).unwrap();
+            tokio::task::spawn_blocking(|| wait_until_remembered(None))
+                .await
+                .unwrap();
+            drop(setting);
+            following.await.unwrap();
+        });
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+
     #[test]
     fn an_ended_web_process_is_named_once() {
+        let _serial = serial();
         let exe = "/usr/lib/webkit2gtk-4.1/WebKitWebProcess".to_owned();
         let mut ended = std::process::Command::new("true")
             .spawn()

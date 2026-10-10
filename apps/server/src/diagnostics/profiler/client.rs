@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{
-    emit_from,
+    cite, emit_from,
     findings::{FindingInput, Severity},
     is_enabled,
     latency::{
@@ -20,6 +20,7 @@ use super::{
         judge,
     },
     record_finding,
+    store::EventId,
 };
 use crate::rpc::ACTIVE_RPC_METHODS;
 
@@ -54,11 +55,17 @@ pub fn ingest_client_batch(batch: Value, env_id: &str) -> Result<Value, Value> {
     let book = global_latency();
     let analysis = analyze(&batch, env_id, |id| book.find_join(id));
     let source = format!("{SOURCE}:{}", batch.client_id);
-    for (kind, payload) in analysis.events {
-        emit_from(source.clone(), kind, payload);
-    }
-    for finding in analysis.findings {
-        record_finding(finding);
+    let event_ids: Vec<Option<EventId>> = analysis
+        .events
+        .into_iter()
+        .map(|(kind, payload)| emit_from(source.clone(), kind, payload))
+        .collect();
+    for (finding, event) in analysis.findings {
+        let event_id = event_ids.get(event).copied().flatten();
+        record_finding(FindingInput {
+            evidence: cite(finding.evidence, event_id),
+            ..finding
+        });
     }
     Ok(json!({ "accepted": true }))
 }
@@ -234,7 +241,8 @@ impl ClientBatch {
 
 struct Analysis {
     events: Vec<(&'static str, Value)>,
-    findings: Vec<FindingInput>,
+    /// Each finding with the index in `events` of the event that explains it.
+    findings: Vec<(FindingInput, usize)>,
 }
 
 fn is_known(method: &str) -> bool {
@@ -267,7 +275,7 @@ fn analyze(
         let payload = request.payload(batch, record, env_id);
         let tier = judge(request.total_ms, None, 0, !is_background(&record.method));
         if tier >= Tier::Warn && !is_long_running(&record.method) {
-            findings.push(FindingInput {
+            let finding = FindingInput {
                 kind: "rpc.slow",
                 severity: if tier == Tier::Severe {
                     Severity::Error
@@ -279,7 +287,8 @@ fn analyze(
                 title: format!("{} took {:.1} s", record.method, request.total_ms / 1000.0),
                 summary: request.summary(record),
                 evidence: payload.clone(),
-            });
+            };
+            findings.push((finding, events.len()));
         }
         events.push(("client.request", payload));
     }
@@ -300,9 +309,27 @@ fn analyze(
         "count": batch.interactions.count,
         "maxMs": batch.interactions.max_ms,
     });
+    events.push((
+        "client.batch",
+        json!({
+            "envId": env_id,
+            "clientId": batch.client_id,
+            "capabilities": batch.capabilities,
+            "windowMs": batch.window_ms,
+            "records": batch.records.len(),
+            "droppedUnknownMethods": dropped,
+            "bucketGrowth": BUCKET_GROWTH,
+            "histograms": histograms,
+            "stalls": stalls,
+            "interactions": interactions,
+            "jsHeapBytes": batch.js_heap_bytes,
+        }),
+    ));
+    // Client-wide findings cite the batch event, which carries their figures.
+    let batch_event = events.len() - 1;
     let window_secs = batch.window_ms / 1000.0;
     if batch.stalls.total_ms > STALL_FINDING_MS {
-        findings.push(FindingInput {
+        let finding = FindingInput {
             kind: "client.stall",
             severity: Severity::Warn,
             source: SOURCE.to_owned(),
@@ -325,10 +352,11 @@ fn analyze(
                 "windowMs": batch.window_ms,
                 "stalls": stalls,
             }),
-        });
+        };
+        findings.push((finding, batch_event));
     }
     if batch.interactions.max_ms > INTERACTION_FINDING_MS {
-        findings.push(FindingInput {
+        let finding = FindingInput {
             kind: "client.interaction",
             severity: Severity::Warn,
             source: SOURCE.to_owned(),
@@ -350,24 +378,9 @@ fn analyze(
                 "windowMs": batch.window_ms,
                 "interactions": interactions,
             }),
-        });
+        };
+        findings.push((finding, batch_event));
     }
-    events.push((
-        "client.batch",
-        json!({
-            "envId": env_id,
-            "clientId": batch.client_id,
-            "capabilities": batch.capabilities,
-            "windowMs": batch.window_ms,
-            "records": batch.records.len(),
-            "droppedUnknownMethods": dropped,
-            "bucketGrowth": BUCKET_GROWTH,
-            "histograms": histograms,
-            "stalls": stalls,
-            "interactions": interactions,
-            "jsHeapBytes": batch.js_heap_bytes,
-        }),
-    ));
     Analysis { events, findings }
 }
 
@@ -539,8 +552,12 @@ mod tests {
         );
 
         assert_eq!(analysis.findings.len(), 1);
-        let finding = &analysis.findings[0];
+        let (finding, event) = &analysis.findings[0];
         assert_eq!(finding.kind, "rpc.slow");
+        assert_eq!(
+            analysis.events[*event].0, "client.request",
+            "the finding cites its request's event"
+        );
         assert_eq!(finding.source, "client");
         assert_eq!(finding.severity, Severity::Warn);
         assert!(finding.title.starts_with(SLOW), "{}", finding.title);
@@ -603,7 +620,7 @@ mod tests {
             analysis
                 .findings
                 .iter()
-                .all(|finding| finding.fingerprint_fields == [SLOW, "unknown"])
+                .all(|(finding, _)| finding.fingerprint_fields == [SLOW, "unknown"])
         );
     }
 
@@ -621,10 +638,10 @@ mod tests {
         assert_eq!(events(&analysis, "client.request").len(), 3, "all logged");
         assert_eq!(analysis.findings.len(), 1);
         assert_eq!(
-            analysis.findings[0].fingerprint_fields[0],
+            analysis.findings[0].0.fingerprint_fields[0],
             "server.getConfig"
         );
-        assert_eq!(analysis.findings[0].severity, Severity::Error);
+        assert_eq!(analysis.findings[0].0.severity, Severity::Error);
     }
 
     #[test]
@@ -638,10 +655,19 @@ mod tests {
         let mut janky = batch(Vec::new());
         janky["stalls"] = json!({ "count": 5, "totalMs": 1_200, "maxMs": 400 });
         janky["interactions"] = json!({ "count": 2, "maxMs": 620 });
-        let findings = analyze_with(&book, &janky).findings;
-        let kinds: Vec<&str> = findings.iter().map(|finding| finding.kind).collect();
+        let analysis = analyze_with(&book, &janky);
+        let kinds: Vec<&str> = analysis
+            .findings
+            .iter()
+            .map(|(finding, _)| finding.kind)
+            .collect();
         assert_eq!(kinds, ["client.stall", "client.interaction"]);
-        assert!(findings.iter().all(|finding| finding.source == "client"));
+        assert!(
+            analysis.findings.iter().all(|(finding, event)| {
+                finding.source == "client" && analysis.events[*event].0 == "client.batch"
+            }),
+            "client-wide findings cite the batch event"
+        );
     }
 
     #[test]

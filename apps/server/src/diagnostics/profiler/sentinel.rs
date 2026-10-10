@@ -1,14 +1,16 @@
 //! The clean-shutdown sentinel. `session.json` records that a run is in progress; an orderly
 //! shutdown marks it clean, so the next start can tell how a run that never did ended.
 
-use std::{fs, io, path::Path};
+use std::{collections::HashSet, fs, io, path::Path};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use super::{
     findings::{FindingInput, Severity},
     os_records::{self, OsCrashRecord},
+    reader::Reader,
     redact::redact_path,
     store,
 };
@@ -39,10 +41,164 @@ pub struct SessionRecord {
 #[derive(Debug)]
 pub enum PreviousRun {
     Clean,
+    /// The crash monitor dumped it. An OS record of the same crash adds its frames.
+    Dump(Dump, Option<OsCrashRecord>),
     Crash(OsCrashRecord),
     Oom,
-    UncleanExit { facility: &'static str },
+    UncleanExit {
+        facility: &'static str,
+    },
     SystemCrash,
+}
+
+/// A crash dump's sidecar, as far as linking it to a finding needs.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DumpSidecar {
+    pub id: String,
+    pub created_at: String,
+    pub parent_pid: u32,
+    pub process_kind: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    /// Absent from sidecars written before it was recorded.
+    #[serde(default)]
+    pub boot_id: Option<String>,
+}
+
+/// A crash dump and its crash reason, when the dump says.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Dump {
+    pub sidecar: DumpSidecar,
+    pub reason: Option<String>,
+}
+
+impl Dump {
+    /// Reads the crash reason from the dump's exception stream. The dump is mapped, not read
+    /// whole, and nothing is symbolicated: that is the CLI's job.
+    pub fn read(dir: &Path, sidecar: DumpSidecar) -> Self {
+        let path = dir
+            .join(store::CRASHES_DIR)
+            .join(format!("{}.dmp", sidecar.id));
+        Self {
+            reason: crash_reason(&path),
+            sidecar,
+        }
+    }
+
+    /// `[processKind, "minidump", crash reason or "dump"]`.
+    fn fingerprint_fields(&self) -> Vec<String> {
+        vec![
+            self.sidecar.process_kind.clone(),
+            "minidump".to_owned(),
+            self.reason.clone().unwrap_or_else(|| "dump".to_owned()),
+        ]
+    }
+
+    fn evidence(&self) -> Map<String, Value> {
+        let mut evidence = Map::from_iter([
+            ("source".to_owned(), "minidump".into()),
+            ("crashId".to_owned(), self.sidecar.id.clone().into()),
+            (
+                "processKind".to_owned(),
+                self.sidecar.process_kind.clone().into(),
+            ),
+            (
+                "createdAt".to_owned(),
+                self.sidecar.created_at.clone().into(),
+            ),
+        ]);
+        if let Some(reason) = &self.reason {
+            evidence.insert("crashReason".to_owned(), reason.clone().into());
+        }
+        evidence
+    }
+
+    /// The `crash.native` finding of a dump written while BiBCode kept running, such as one a
+    /// Windows invalid-parameter handler asked for.
+    pub fn running_finding(&self) -> FindingInput {
+        let reason = self.reason.as_deref().unwrap_or("a native fault");
+        let mut evidence = self.evidence();
+        if let Some(version) = &self.sidecar.version {
+            evidence.insert("version".to_owned(), version.clone().into());
+        }
+        FindingInput {
+            kind: "crash.native",
+            severity: Severity::Error,
+            source: "server".into(),
+            fingerprint_fields: self.fingerprint_fields(),
+            title: format!("Native crash dumped: {reason}"),
+            summary: format!(
+                "The crash monitor wrote minidump {} for the {} process ({reason}), which kept \
+                 running.",
+                self.sidecar.id, self.sidecar.process_kind
+            ),
+            evidence: Value::Object(evidence),
+        }
+    }
+}
+
+/// The crash reason a minidump's exception stream holds, such as `SIGSEGV / SEGV_MAPERR` or
+/// `EXCEPTION_ACCESS_VIOLATION_WRITE`.
+pub fn crash_reason(dump: &Path) -> Option<String> {
+    let dump = minidump::Minidump::read_path(dump).ok()?;
+    let system = dump.get_stream::<minidump::MinidumpSystemInfo>().ok()?;
+    let exception = dump.get_stream::<minidump::MinidumpException>().ok()?;
+    Some(
+        exception
+            .get_crash_reason(system.os, system.cpu)
+            .to_string(),
+    )
+}
+
+/// Every readable crash sidecar in the profiler directory `dir`, newest `createdAt` first;
+/// one whose time cannot be read comes last. File times are not used: copying or restoring
+/// the directory changes them.
+pub fn dump_sidecars(dir: &Path) -> Vec<DumpSidecar> {
+    let mut sidecars: Vec<DumpSidecar> = Reader::new(dir)
+        .crashes(usize::MAX)
+        .into_iter()
+        .filter_map(|sidecar| serde_json::from_value(sidecar).ok())
+        .collect();
+    sidecars.sort_by_cached_key(|sidecar| {
+        std::cmp::Reverse(OffsetDateTime::parse(&sidecar.created_at, &Rfc3339).ok())
+    });
+    sidecars
+}
+
+/// Whether a dump in `sidecar` is of the process `pid` that started at `started_at`: written
+/// for that pid, at or after the start, and on the same boot when both boots are known.
+pub fn dump_is_of(
+    sidecar: &DumpSidecar,
+    pid: u32,
+    started_at: OffsetDateTime,
+    boot: Option<&str>,
+) -> bool {
+    sidecar.parent_pid == pid
+        && OffsetDateTime::parse(&sidecar.created_at, &Rfc3339)
+            .is_ok_and(|created| created >= started_at)
+        && match (sidecar.boot_id.as_deref(), boot) {
+            (Some(dumped), Some(boot)) => same_boot(dumped, boot),
+            _ => true,
+        }
+}
+
+/// The previous run's crash dump: its newest dump, unless a finding cites that one already.
+/// A dump a finding cites is one the run survived and reported while it ran, and so was every
+/// older one, so the run ended some other way. `sidecars` is newest first.
+// ponytail: a dump the run survived in its last minute, before the scan found it, is not
+// reported when a fatal dump follows it.
+pub fn dump_of_run<'a>(
+    sidecars: &'a [DumpSidecar],
+    previous: &SessionRecord,
+    linked: &HashSet<String>,
+) -> Option<&'a DumpSidecar> {
+    let started_at = OffsetDateTime::parse(&previous.started_at, &Rfc3339).ok()?;
+    let boot = previous.boot_id.as_deref();
+    sidecars
+        .iter()
+        .find(|sidecar| dump_is_of(sidecar, previous.pid, started_at, boot))
+        .filter(|sidecar| !linked.contains(&sidecar.id))
 }
 
 /// Returns the previous record if it was left `running`, then records this run as running
@@ -73,16 +229,21 @@ pub fn end_session(dir: &Path) {
     }
 }
 
-/// An OS crash record is the most specific evidence; a different boot means the system went
-/// down with the run; a risen `oom_kill` count points at the OOM killer.
+/// The run's own crash dump is the most specific evidence, then an OS crash record; a
+/// different boot means the system went down with the run; a risen `oom_kill` count points at
+/// the OOM killer.
 pub fn classify(
     previous: &SessionRecord,
     current_boot: Option<&str>,
     oom_now: Option<u64>,
     record: Option<OsCrashRecord>,
+    dump: Option<Dump>,
 ) -> PreviousRun {
     if previous.state != RUNNING {
         return PreviousRun::Clean;
+    }
+    if let Some(dump) = dump {
+        return PreviousRun::Dump(dump, record);
     }
     if let Some(record) = record {
         return PreviousRun::Crash(record);
@@ -119,6 +280,38 @@ pub fn finding_for(previous: &SessionRecord, run: PreviousRun) -> Option<Finding
     });
     let (kind, severity, fingerprint_fields, title, summary, extra) = match run {
         PreviousRun::Clean => return None,
+        PreviousRun::Dump(dump, record) => {
+            let reason = dump.reason.as_deref().unwrap_or("a native fault");
+            let mut extra = dump.evidence();
+            // The OS record of the same crash, when there is one, adds its frames.
+            if let Some(record) = &record {
+                let frames: Vec<String> = record.frames.iter().map(|f| redact_path(f)).collect();
+                extra.extend([
+                    ("recordSource".to_owned(), record.source.into()),
+                    (
+                        "signalOrCode".to_owned(),
+                        record.signal_or_code.clone().into(),
+                    ),
+                    (
+                        "module".to_owned(),
+                        record.module.as_deref().map(redact_path).into(),
+                    ),
+                    ("frames".to_owned(), frames.into()),
+                    ("rawRef".to_owned(), redact_path(&record.raw_ref).into()),
+                ]);
+            }
+            (
+                "crash.native",
+                Severity::Error,
+                dump.fingerprint_fields(),
+                format!("Previous run crashed with {reason}"),
+                format!(
+                    "{reason} in the {} process; the crash monitor wrote minidump {}.",
+                    dump.sidecar.process_kind, dump.sidecar.id
+                ),
+                Value::Object(extra),
+            )
+        }
         PreviousRun::Crash(record) => {
             // OS records hold paths and symbols; nothing from them is kept unredacted.
             let frames: Vec<String> = record.frames.iter().map(|f| redact_path(f)).collect();
@@ -269,15 +462,15 @@ mod tests {
     fn classifies_previous_runs() {
         let prev = previous();
         assert!(matches!(
-            classify(&prev, Some("b2"), Some(3), None),
+            classify(&prev, Some("b2"), Some(3), None, None),
             PreviousRun::SystemCrash
         ));
         assert!(matches!(
-            classify(&prev, Some("b1"), Some(4), None),
+            classify(&prev, Some("b1"), Some(4), None, None),
             PreviousRun::Oom
         ));
         assert!(matches!(
-            classify(&prev, Some("b1"), Some(3), None),
+            classify(&prev, Some("b1"), Some(3), None, None),
             PreviousRun::UncleanExit { .. }
         ));
         let record = OsCrashRecord {
@@ -288,9 +481,135 @@ mod tests {
             raw_ref: "pid 42".into(),
         };
         assert!(matches!(
-            classify(&prev, Some("b1"), Some(3), Some(record)),
+            classify(&prev, Some("b1"), Some(3), Some(record), None),
             PreviousRun::Crash(_)
         ));
+    }
+
+    fn sidecar(id: &str, pid: u32, created_at: &str, boot: Option<&str>) -> DumpSidecar {
+        DumpSidecar {
+            id: id.into(),
+            created_at: created_at.into(),
+            parent_pid: pid,
+            process_kind: "server".into(),
+            version: Some("0.9.0".into()),
+            boot_id: boot.map(Into::into),
+        }
+    }
+
+    /// Only a dump of the previous run itself counts: its pid, after its start, on its boot.
+    #[test]
+    fn the_previous_runs_newest_unlinked_dump_is_its_crash() {
+        let prev = previous();
+        let sidecars = [
+            sidecar("other-pid", 43, "2026-10-09T10:05:00Z", Some("b1")),
+            sidecar("other-boot", 42, "2026-10-09T10:04:00Z", Some("b0")),
+            sidecar("newest", 42, "2026-10-09T10:02:00.5Z", None),
+            sidecar("older", 42, "2026-10-09T10:01:00Z", Some("b1")),
+            sidecar("before-start", 42, "2026-10-09T09:59:59.9Z", Some("b1")),
+        ];
+        let mut linked = HashSet::new();
+        let found = |linked: &HashSet<String>| {
+            dump_of_run(&sidecars, &prev, linked).map(|sidecar| sidecar.id.clone())
+        };
+        assert_eq!(found(&linked).as_deref(), Some("newest"));
+        // A finding cites the newest dump already: the run survived it, as it did every older
+        // one, so the run ended some other way. A repeat replaces a finding's `crashId`, so an
+        // older dump may look unlinked after a restart; it must not count again.
+        linked.insert("newest".to_owned());
+        assert_eq!(found(&linked), None, "the run survived its newest dump");
+    }
+
+    /// The run's own dump outranks everything else on the next start, and keeps the OS
+    /// record's frames.
+    #[test]
+    fn a_dump_of_the_previous_run_is_its_native_crash() {
+        let prev = previous();
+        let dump = |reason: Option<&str>| Dump {
+            sidecar: sidecar("6f1c", 42, "2026-10-09T10:02:00Z", Some("b1")),
+            reason: reason.map(Into::into),
+        };
+        let record = OsCrashRecord {
+            source: "coredump",
+            signal_or_code: "SIGSEGV".into(),
+            module: Some("bibcode".into()),
+            frames: vec!["main (bibcode + 0x10)".into()],
+            raw_ref: "coredumpctl info 42".into(),
+        };
+        // Another boot and a risen OOM count since: the dump still says what happened.
+        let run = classify(
+            &prev,
+            Some("b2"),
+            Some(4),
+            Some(record),
+            Some(dump(Some("SIGSEGV / SEGV_MAPERR"))),
+        );
+        let input = finding_for(&prev, run).unwrap();
+        assert_eq!(input.kind, "crash.native");
+        assert_eq!(input.severity, Severity::Error);
+        assert_eq!(
+            input.fingerprint_fields,
+            ["server", "minidump", "SIGSEGV / SEGV_MAPERR"]
+        );
+        assert_eq!(input.evidence["crashId"], "6f1c");
+        assert_eq!(input.evidence["source"], "minidump");
+        assert_eq!(input.evidence["recordSource"], "coredump");
+        assert_eq!(input.evidence["frames"][0], "main (bibcode + 0x10)");
+        assert_eq!(input.evidence["pid"], 42);
+        assert!(input.title.contains("SIGSEGV"), "{}", input.title);
+
+        let unread = finding_for(&prev, classify(&prev, None, None, None, Some(dump(None))));
+        assert_eq!(
+            unread.unwrap().fingerprint_fields,
+            ["server", "minidump", "dump"]
+        );
+        let running = dump(None).running_finding();
+        assert_eq!(running.kind, "crash.native");
+        assert_eq!(running.fingerprint_fields, ["server", "minidump", "dump"]);
+        assert_eq!(running.evidence["crashId"], "6f1c");
+    }
+
+    /// The newest-dump rule goes by when the monitor wrote each dump, not by file times, which
+    /// a copy or a restore of the directory can change.
+    #[test]
+    fn sidecars_are_ordered_by_creation_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let crashes = dir.path().join("crashes");
+        std::fs::create_dir_all(&crashes).unwrap();
+        // `later` was created after `earlier`, but its file is the older one.
+        for (id, created_at, age_secs) in [
+            ("earlier", "2026-10-09T10:00:00Z", 0),
+            ("later", "2026-10-09T10:05:00Z", 3600),
+            ("unreadable-time", "yesterday", 7200),
+        ] {
+            let path = crashes.join(format!("{id}.json"));
+            let sidecar = json!({
+                "id": id, "createdAt": created_at, "parentPid": 42, "processKind": "server",
+            });
+            std::fs::write(&path, sidecar.to_string()).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(
+                    std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs),
+                )
+                .unwrap();
+        }
+        let ids: Vec<String> = dump_sidecars(dir.path())
+            .into_iter()
+            .map(|sidecar| sidecar.id)
+            .collect();
+        assert_eq!(ids, ["later", "earlier", "unreadable-time"]);
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_minidump_has_no_crash_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.dmp");
+        std::fs::write(&path, "not a minidump").unwrap();
+        assert_eq!(crash_reason(&path), None);
+        assert_eq!(crash_reason(&dir.path().join("missing.dmp")), None);
     }
 
     #[test]
@@ -298,11 +617,11 @@ mod tests {
         let mut prev = previous();
         prev.boot_id = Some("1791540000".into());
         assert!(matches!(
-            classify(&prev, Some("1791540001"), None, None),
+            classify(&prev, Some("1791540001"), None, None, None),
             PreviousRun::UncleanExit { .. }
         ));
         assert!(matches!(
-            classify(&prev, Some("1791550000"), None, None),
+            classify(&prev, Some("1791550000"), None, None, None),
             PreviousRun::SystemCrash
         ));
     }

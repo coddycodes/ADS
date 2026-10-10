@@ -245,6 +245,27 @@ impl FindingsBook {
         now: OffsetDateTime,
         events: &EventSender,
     ) -> Finding {
+        self.record_with(input, now, events, false)
+    }
+
+    /// [`record`](Self::record), persisting this occurrence whatever the repeat throttle says.
+    /// For rare occurrences whose evidence must survive a crash, such as a crash dump's id.
+    pub fn record_now(
+        &mut self,
+        input: FindingInput,
+        now: OffsetDateTime,
+        events: &EventSender,
+    ) -> Finding {
+        self.record_with(input, now, events, true)
+    }
+
+    fn record_with(
+        &mut self,
+        input: FindingInput,
+        now: OffsetDateTime,
+        events: &EventSender,
+        force: bool,
+    ) -> Finding {
         let fingerprint = fingerprint(input.kind, &input.fingerprint_fields);
         let id = format!("{}-{fingerprint}", input.kind);
         let seen = timestamp(now);
@@ -266,8 +287,11 @@ impl FindingsBook {
                 // A negative gap is a clock step back; persist rather than wait it out.
                 elapsed >= PERSIST_INTERVAL || elapsed.is_negative()
             });
-            let persist =
-                reopened || severity_rose || known.count.is_power_of_two() || interval_passed;
+            let persist = force
+                || reopened
+                || severity_rose
+                || known.count.is_power_of_two()
+                || interval_passed;
             (known.clone(), persist)
         } else {
             // Bounded like the file: a new finding past the cap pushes out the stalest one.
@@ -336,6 +360,14 @@ impl FindingsBook {
         let mut findings: Vec<&Finding> = self.by_id.values().collect();
         findings.sort_by(|a, b| (&b.last_seen, &a.id).cmp(&(&a.last_seen, &b.id)));
         findings.into_iter().take(n).cloned().collect()
+    }
+
+    /// The crash dumps findings cite as `evidence.crashId`. A repeat replaces its evidence, so
+    /// only each finding's latest dump is here.
+    pub fn crash_ids(&self) -> impl Iterator<Item = String> + '_ {
+        self.by_id
+            .values()
+            .filter_map(|finding| finding.evidence.get("crashId")?.as_str().map(str::to_owned))
     }
 
     /// When a `crash.*` finding was last seen.
@@ -817,6 +849,20 @@ mod tests {
         };
         assert_eq!(counts(&third(59)), [1, 2], "count 3 at 59 s is held back");
         assert_eq!(counts(&third(60)), [1, 2, 3], "count 3 at 60 s persists");
+    }
+
+    /// A dump's finding is how the next start knows the run survived that dump, so every
+    /// occurrence reaches the file with its `crashId`, whatever the repeat throttle says.
+    #[test]
+    fn an_occurrence_recorded_now_persists_even_between_powers_of_two() {
+        let start = datetime!(2026-10-09 12:00 UTC);
+        let (dir, store) = scratch_sender();
+        let mut book = FindingsBook::default();
+        for n in 0..3 {
+            book.record_now(input("a"), start + Duration::seconds(n), &store.sender());
+        }
+        store.shutdown();
+        assert_eq!(counts(&persisted_lines(dir.path())), [1, 2, 3]);
     }
 
     #[test]

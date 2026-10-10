@@ -51,15 +51,53 @@ pub struct StoreStats {
     pub failing: bool,
 }
 
-#[derive(Default)]
 struct Counters {
     written: AtomicU64,
     dropped: AtomicU64,
     failing: AtomicBool,
+    /// Names one store session (one process run); the envelope's `sid` is its 8 hex digits.
+    sid: u32,
+    /// The next `eventId` number. Senders take theirs before queueing, so a caller knows its
+    /// event's id without waiting for the writer, which assigns `seq`.
+    next_event: AtomicU64,
+}
+
+impl Default for Counters {
+    fn default() -> Self {
+        Self {
+            written: AtomicU64::default(),
+            dropped: AtomicU64::default(),
+            failing: AtomicBool::default(),
+            sid: uuid::Uuid::new_v4().as_u128() as u32,
+            next_event: AtomicU64::default(),
+        }
+    }
+}
+
+/// A queued event's `eventId`. It is formatted only where a finding cites it, as
+/// `"<sid>-<n>"`, so a sender that ignores it pays for no string.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EventId {
+    sid: u32,
+    number: u64,
+}
+
+impl EventId {
+    #[cfg(test)]
+    pub(crate) fn new(sid: u32, number: u64) -> Self {
+        Self { sid, number }
+    }
+}
+
+impl std::fmt::Display for EventId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{:08x}-{}", self.sid, self.number)
+    }
 }
 
 enum Message {
-    Event(ProfilerEvent),
+    /// An event and the number of its `eventId`.
+    Event(u64, ProfilerEvent),
     /// One finding line for `findings.ndjson`. Appended through its own short-lived
     /// handle; a failed append counts as a drop and sets `failing`.
     Finding(Value),
@@ -80,9 +118,15 @@ pub struct EventSender {
 }
 
 impl EventSender {
-    /// Never blocks; a full channel drops the event and counts it.
-    pub fn send(&self, event: ProfilerEvent) {
-        self.enqueue(Message::Event(event));
+    /// Queues `event` and returns its `eventId`, which a finding can cite before the writer
+    /// has written it. Never blocks; a full channel drops the event, counts it and returns
+    /// `None`.
+    pub fn send(&self, event: ProfilerEvent) -> Option<EventId> {
+        let id = EventId {
+            sid: self.counters.sid,
+            number: self.counters.next_event.fetch_add(1, Ordering::Relaxed),
+        };
+        self.enqueue(Message::Event(id.number, event)).then_some(id)
     }
 
     /// Queues one finding for `findings.ndjson`. Never blocks; a full channel drops it.
@@ -108,10 +152,13 @@ impl EventSender {
         self.enqueue(Message::ReplaceFindings(lines));
     }
 
-    fn enqueue(&self, message: Message) {
-        if self.tx.try_send(message).is_err() {
+    /// Returns whether `message` was queued.
+    fn enqueue(&self, message: Message) -> bool {
+        let queued = self.tx.try_send(message).is_ok();
+        if !queued {
             self.counters.dropped.fetch_add(1, Ordering::Relaxed);
         }
+        queued
     }
 }
 
@@ -212,7 +259,6 @@ struct Writer {
     committed: u64,
     next_file: u64,
     seq: u64,
-    sid: String,
     /// Event lines accepted into `out`'s buffer and not yet flushed to the OS.
     pending: u64,
     /// Drops already confirmed in a flushed `telemetry.dropped` line.
@@ -224,9 +270,6 @@ struct Writer {
 impl Writer {
     fn new(config: StoreConfig, counters: Arc<Counters>) -> Self {
         let next_file = existing_max_file_index(&config.dir).map_or(0, |n| n + 1);
-        // `sid` makes event references unique across restarts: `seq` restarts at 0
-        // for each writer session, so evidence is always `"<sid>:<seq>"`.
-        let sid = uuid::Uuid::new_v4().simple().to_string()[..8].to_owned();
         Self {
             config,
             counters,
@@ -235,7 +278,6 @@ impl Writer {
             committed: 0,
             next_file,
             seq: 0,
-            sid,
             pending: 0,
             reported_drops: 0,
             in_flight: 0,
@@ -246,7 +288,7 @@ impl Writer {
         let mut last_flush = Instant::now();
         loop {
             match rx.recv_timeout(self.config.flush_every) {
-                Ok(Message::Event(event)) => self.write(event),
+                Ok(Message::Event(number, event)) => self.write(number, event),
                 Ok(Message::Finding(finding)) => self.append_finding(&finding),
                 Ok(Message::Maintain) => self.enforce_retention(),
                 Ok(Message::ReplaceFindings(lines)) => self.replace_findings(&lines),
@@ -286,13 +328,14 @@ impl Writer {
             line.insert("kind".into(), "telemetry.dropped".into());
             line.insert("source".into(), "server".into());
             line.insert("count".into(), count.into());
-            if self.write_line(line, false) {
+            let number = self.counters.next_event.fetch_add(1, Ordering::Relaxed);
+            if self.write_line(number, line, false) {
                 self.in_flight += count;
             }
         }
     }
 
-    fn write(&mut self, event: ProfilerEvent) {
+    fn write(&mut self, number: u64, event: ProfilerEvent) {
         let mut line = match event.payload {
             Value::Object(fields) => fields,
             Value::Null => Map::new(),
@@ -301,15 +344,22 @@ impl Writer {
         // Envelope fields are inserted last so a payload can never overwrite them.
         line.insert("kind".into(), event.kind.into());
         line.insert("source".into(), event.source.into());
-        self.write_line(line, true);
+        self.write_line(number, line, true);
     }
 
     /// Returns whether the line reached the buffer. Only `is_event` lines (records from
     /// senders) count as drops when lost; the writer's own `telemetry.dropped` lines do not.
-    fn write_line(&mut self, mut line: Map<String, Value>, is_event: bool) -> bool {
+    /// `sid` makes `"<sid>:<seq>"` unique across restarts, as `seq` restarts at 0 with each
+    /// writer session. `eventId` (`"<sid>-<number>"`) is unique too, and known to the sender.
+    fn write_line(&mut self, number: u64, mut line: Map<String, Value>, is_event: bool) -> bool {
         line.insert("v".into(), 1.into());
         line.insert("seq".into(), self.seq.into());
-        line.insert("sid".into(), self.sid.clone().into());
+        let id = EventId {
+            sid: self.counters.sid,
+            number,
+        };
+        line.insert("sid".into(), format!("{:08x}", id.sid).into());
+        line.insert("eventId".into(), id.to_string().into());
         line.insert("ts".into(), now_rfc3339().into());
         self.seq += 1;
         let Ok(mut bytes) = serde_json::to_vec(&line) else {
@@ -851,10 +901,13 @@ mod tests {
     fn payload_cannot_overwrite_envelope_fields() {
         let dir = tempfile::tempdir().unwrap();
         let store = ProfilerStore::start(config(dir.path()));
-        store.sender().send(ProfilerEvent {
+        let id = store.sender().send(ProfilerEvent {
             kind: "test.event",
             source: "server".into(),
-            payload: json!({ "v": 7, "seq": 99, "kind": "forged", "source": "forged", "n": 1 }),
+            payload: json!({
+                "v": 7, "seq": 99, "sid": "forged", "eventId": "forged",
+                "kind": "forged", "source": "forged", "n": 1
+            }),
         });
         store.shutdown();
         let line = &read_all(dir.path())[0];
@@ -862,11 +915,43 @@ mod tests {
             (line["v"].clone(), line["seq"].clone()),
             (json!(1), json!(0))
         );
+        assert_ne!(line["sid"], "forged");
+        assert_eq!(
+            line["eventId"].as_str(),
+            id.map(|id| id.to_string()).as_deref()
+        );
         assert_eq!(
             (line["kind"].clone(), line["source"].clone()),
             (json!("test.event"), json!("server"))
         );
         assert_eq!(line["n"], 1);
+    }
+
+    /// A finding cites its event by the id `send` returns, before the writer has assigned
+    /// the event's `seq`.
+    #[test]
+    fn send_returns_the_event_id_the_line_carries() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ProfilerStore::start_paused(config(dir.path()), 2);
+        let sender = store.sender();
+        let ids: Vec<Option<String>> = (0..3)
+            .map(|n| sender.send(event(n)).map(|id| id.to_string()))
+            .collect();
+        assert!(ids[0].is_some() && ids[1].is_some() && ids[0] != ids[1]);
+        assert_eq!(ids[2], None, "a dropped event has no id to cite");
+        store.resume();
+        store.shutdown();
+        let lines = read_all(dir.path());
+        let sid = lines[0]["sid"].as_str().unwrap();
+        for (n, id) in ids.iter().take(2).enumerate() {
+            let line = lines.iter().find(|line| line["n"] == n).unwrap();
+            assert_eq!(line["eventId"].as_str(), id.as_deref());
+            assert!(id.as_deref().unwrap().starts_with(&format!("{sid}-")));
+        }
+        assert!(
+            lines.iter().all(|line| line["eventId"].is_string()),
+            "the writer's own telemetry.dropped line has one too"
+        );
     }
 
     #[test]
@@ -1014,9 +1099,9 @@ mod tests {
         let counters = Arc::new(Counters::default());
         let mut writer = Writer::new(config(dir.path()), counters.clone());
         for n in 0..5 {
-            writer.write(event(n)); // reopens the live file after the previous failure
+            writer.write(0, event(n)); // reopens the live file after the previous failure
             writer.out = Some(full_disk_handle()); // the next flush hits ENOSPC
-            writer.write(event(n));
+            writer.write(0, event(n));
             writer.flush();
             assert!(writer.out.is_none(), "a failed flush abandons the handle");
         }
@@ -1062,15 +1147,15 @@ mod tests {
     fn reopened_file_that_is_already_full_rotates_before_the_next_record() {
         let dir = tempfile::tempdir().unwrap();
         let mut writer = Writer::new(config(dir.path()), Arc::new(Counters::default()));
-        writer.write(event(0));
-        writer.write(event(1));
+        writer.write(0, event(0));
+        writer.write(0, event(1));
         writer.flush();
         let live = dir.path().join("events-000000.ndjson");
         let before = std::fs::metadata(&live).unwrap().len();
         assert!(before > 200, "two events nearly fill the 300-byte cap");
         writer.out = None; // as after a failed flush: the handle is gone, the file is not
 
-        writer.write(event(2));
+        writer.write(0, event(2));
         writer.flush();
         assert_eq!(std::fs::metadata(&live).unwrap().len(), before);
         assert!(dir.path().join("events-000001.ndjson").exists());
@@ -1080,7 +1165,7 @@ mod tests {
     fn reopening_discards_bytes_a_failed_flush_left_behind() {
         let dir = tempfile::tempdir().unwrap();
         let mut writer = Writer::new(config(dir.path()), Arc::new(Counters::default()));
-        writer.write(event(0));
+        writer.write(0, event(0));
         writer.flush();
         let live = dir.path().join("events-000000.ndjson");
         // A complete JSON object with no newline: the failed flush died on the last byte.
@@ -1089,7 +1174,7 @@ mod tests {
             .unwrap();
         writer.out = None; // the handle was abandoned without cutting the file back
 
-        writer.write(event(1));
+        writer.write(0, event(1));
         writer.flush();
         let text = std::fs::read_to_string(&live).unwrap();
         assert!(
@@ -1107,7 +1192,7 @@ mod tests {
         let counters = Arc::new(Counters::default());
         let mut writer = Writer::new(config(dir.path()), counters.clone());
         writer.out = Some(full_disk_handle());
-        writer.write(event(0)); // buffered for /dev/full, so closing the file will fail
+        writer.write(0, event(0)); // buffered for /dev/full, so closing the file will fail
         if let Some((_, len)) = writer.out.as_mut() {
             *len = 290; // the report line below then rotates, which closes this file
         }
@@ -1128,7 +1213,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let counters = Arc::new(Counters::default());
         let mut writer = Writer::new(config(dir.path()), counters.clone());
-        writer.write(event(0));
+        writer.write(0, event(0));
         writer.flush();
         let live = dir.path().join("events-000000.ndjson");
         let committed = std::fs::metadata(&live).unwrap().len();
@@ -1137,14 +1222,14 @@ mod tests {
         file.write_all(b"{\"kind\":\"telemetry.dropped\",\"count\":9}\n")
             .unwrap();
         writer.out = Some(full_disk_handle());
-        writer.write(event(1)); // buffered for /dev/full, so closing fails
+        writer.write(0, event(1)); // buffered for /dev/full, so closing fails
 
         writer.close();
         assert_eq!(writer.live_path.as_deref(), Some(live.as_path()));
         assert_eq!(std::fs::metadata(&live).unwrap().len(), committed);
         assert_eq!(counters.dropped.load(Ordering::Relaxed), 1);
 
-        writer.write(event(2));
+        writer.write(0, event(2));
         writer.flush();
         let text = std::fs::read_to_string(&live).unwrap();
         assert_eq!(text.lines().count(), 2, "{text}");

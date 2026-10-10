@@ -9,7 +9,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bibcode_server::diagnostics::profiler::{crash::MonitorDetector, runtime::Detector};
+use bibcode_server::diagnostics::profiler::{
+    crash::{self, MonitorDetector},
+    runtime::{Detector, ProfilerRuntime},
+    sentinel,
+};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use tokio_util::sync::CancellationToken;
 
@@ -28,11 +32,12 @@ fn native_crash_produces_a_minidump_and_a_sidecar() {
     let out = std::env::var_os("CRASH_SMOKE_OUT").map(PathBuf::from);
     let root = out.as_deref().unwrap_or(temp.path());
     let dir = root.join("userdata").join("profiler");
+    // A persistent directory may hold an earlier run's dump, session and findings.
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    // A persistent directory may hold an earlier run's dump.
     let crashes = dir.join("crashes");
-    let _ = std::fs::remove_dir_all(&crashes);
 
+    let started_at = time::OffsetDateTime::now_utc();
     let mut smoke = Command::new(SMOKE).arg(&dir).spawn().unwrap();
     let parent = smoke.id();
     let status = smoke.wait().unwrap();
@@ -80,6 +85,7 @@ fn native_crash_produces_a_minidump_and_a_sidecar() {
     assert_eq!(meta["arch"], std::env::consts::ARCH);
     assert!(meta["createdAt"].is_string());
     assert!(meta["lastEvents"].is_array());
+    assert_eq!(meta["bootId"], serde_json::json!(sentinel::boot_id()));
 
     // The CLI walks the real dump; naming its frames needs symbols, the crash reason and the
     // crashing thread's stack do not.
@@ -104,6 +110,54 @@ fn native_crash_produces_a_minidump_and_a_sidecar() {
             .is_some_and(|frames| !frames.is_empty()),
         "{symbolicated}"
     );
+
+    // The next start of a profiler on this directory links the dump to the run that crashed:
+    // a `crash.native` finding that names the dump and its crash reason.
+    let reason = sentinel::crash_reason(&dumps[0].path()).expect("the dump's crash reason");
+    std::fs::write(
+        dir.join("session.json"),
+        serde_json::json!({
+            "state": "running",
+            "pid": parent,
+            "bootId": sentinel::boot_id(),
+            "exe": "crash-smoke",
+            "version": env!("CARGO_PKG_VERSION"),
+            "startedAt": started_at
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap(),
+            "oomKillBaseline": null,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+        let profiler = ProfilerRuntime::start(&root.join("userdata"), rx, vec![]);
+        // The classification also reads the OS record, which can take its 5 s timeout.
+        for _ in 0..200 {
+            if profiler.status()["findings"]
+                .as_array()
+                .is_some_and(|findings| findings.iter().any(|f| f["kind"] == "crash.native"))
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        profiler.end_session().await;
+    });
+    let native = std::fs::read_to_string(dir.join("findings.ndjson"))
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .rfind(|finding| finding["kind"] == "crash.native")
+        .expect("a crash.native finding for the dump");
+    assert_eq!(native["evidence"]["crashId"], stem.as_str());
+    assert_eq!(native["evidence"]["crashReason"], reason.as_str());
+    assert_eq!(native["evidence"]["pid"], parent);
 }
 
 /// The runbooks' release-build hook: with `BIBCODE_PROFILER_CRASH_TEST=1` an armed process
@@ -191,6 +245,8 @@ fn the_monitor_exits_when_its_parent_is_killed() {
     ignore = "minidump-writer unimplemented on Windows arm64"
 )]
 fn the_monitor_socket_is_private_and_never_reused() {
+    // The monitor serves the crash hook: without one attached it never starts.
+    crash::attach();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

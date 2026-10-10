@@ -20,7 +20,7 @@ use std::{
         Arc, Mutex, MutexGuard, OnceLock, PoisonError,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use crash_handler::{CrashContext, CrashEventResult, CrashHandler};
@@ -29,11 +29,7 @@ use serde_json::{Value, json};
 use tokio::{sync::watch, task::JoinHandle, time::MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
 
-use super::{os_records, profiler_dir, runtime::Detector, store};
-use crate::{
-    config::ServerConfig,
-    data_root::{DataRootRequest, DataRootSource, resolve_data_root},
-};
+use super::{os_records, persisted_enabled, profiler_dir, runtime::Detector, store};
 
 const MONITOR_FLAG: &str = "--crash-monitor";
 /// Set by the parent; the monitor names the crashed process with it in each sidecar.
@@ -56,6 +52,12 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// The monitor drops a connection idle this long; the pings keep a live parent's open.
 const STALE_TIMEOUT: Duration = Duration::from_secs(30);
 const PARENT_CHECK_EVERY: Duration = Duration::from_secs(2);
+/// How long the heartbeat leaves a monitor that may be writing a dump alone once it sees
+/// `CRASHING`. It sees the flag up to one heartbeat after the crash and gives up on a stuck
+/// monitor after one more ping timeout, so a hung dump is abandoned 20 to 30 s after the crash.
+const CRASH_GRACE: Duration = Duration::from_secs(15);
+/// How often the heartbeat looks at `CRASHING` again while it is set.
+const CRASH_RECHECK: Duration = Duration::from_secs(1);
 const MAX_DUMPS: usize = 20;
 /// The `send_message` kind that carries the parent's newest event lines.
 const LAST_EVENTS: u32 = 1;
@@ -76,6 +78,9 @@ const DUMPS_DISABLED: bool = cfg!(all(windows, target_arch = "aarch64"));
 
 /// Read by the crash callback, which must neither block nor allocate.
 static ARMED: AtomicBool = AtomicBool::new(false);
+/// Set by the crash callback while it waits for its dump. A monitor writing a dump answers no
+/// pings, and replacing it then would leave the dump without its sidecar.
+static CRASHING: AtomicBool = AtomicBool::new(false);
 /// The connection to the monitor. The callback only `try_lock`s it; everyone else holds the
 /// lock just long enough to clone or swap the `Arc`, never across I/O.
 static CLIENT: Mutex<Option<Arc<Client>>> = Mutex::new(None);
@@ -124,7 +129,9 @@ fn on_crash(context: &CrashContext) -> CrashEventResult {
     let Some(client) = CLIENT.try_lock().ok().and_then(|slot| slot.clone()) else {
         return CrashEventResult::Handled(false);
     };
+    CRASHING.store(true, Ordering::Release);
     let dumped = client.request_dump(context).is_ok();
+    CRASHING.store(false, Ordering::Release);
     // Never dropped here: if the detector let go of it meanwhile, this is the last reference,
     // and freeing it is not safe in a compromised context. The process ends anyway.
     std::mem::forget(client);
@@ -311,6 +318,8 @@ impl Handler {
             "arch": std::env::consts::ARCH,
             "processKind": self.process_kind,
             "parentPid": self.parent_pid,
+            // Matches the dump to the run that crashed, whose sentinel records its boot.
+            "bootId": super::sentinel::boot_id(),
             "lastEvents": event_values(&lock(&self.last_events)),
         })
     }
@@ -485,6 +494,13 @@ async fn keep_monitor(detector: MonitorDetector, cancel: CancellationToken) {
         record_capability(&detector.dir, "disabled").await;
         return;
     }
+    // Only the attached hook asks the monitor for a dump; without one a monitor captures
+    // nothing.
+    if !matches!(HANDLER.get(), Some(Some(_))) {
+        tracing::warn!("native crash dumps are unavailable: no crash hook is attached");
+        record_capability(&detector.dir, "unavailable").await;
+        return;
+    }
     if let Err(error) = secure_crashes_dir(&detector.dir).await {
         tracing::warn!(
             %error,
@@ -497,14 +513,28 @@ async fn keep_monitor(detector: MonitorDetector, cancel: CancellationToken) {
     let mut failing = false;
     let mut ticks = tokio::time::interval(PING_EVERY);
     ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let (mut crashing_since, mut holding) = (None, false);
     loop {
         tokio::select! {
             biased;
             () = cancel.cancelled() => break,
-            _ = ticks.tick() => {}
+            _ = ticks.tick(), if !holding => {}
+            () = tokio::time::sleep(CRASH_RECHECK), if holding => {}
         }
-        match keep_alive(&detector, &mut monitor, &cancel).await {
+        holding = dump_in_progress(
+            CRASHING.load(Ordering::Acquire),
+            &mut crashing_since,
+            Instant::now(),
+        );
+        if holding {
+            continue;
+        }
+        match keep_alive(&detector, &mut monitor, &cancel, crashing_since.is_some()).await {
             Round::Live => failing = false,
+            // Held off from now on, as if the flag had been seen before the ping.
+            Round::Dumping => {
+                holding = dump_in_progress(true, &mut crashing_since, Instant::now());
+            }
             Round::Failed(reason) => {
                 // Once per outage: where the monitor can never start, every round fails.
                 if !failing {
@@ -528,6 +558,25 @@ async fn keep_monitor(detector: MonitorDetector, cancel: CancellationToken) {
     drop(client);
 }
 
+/// Whether the heartbeat must leave its monitor alone because a crash is being dumped:
+/// `crashing` has been seen set, continuously, for less than `CRASH_GRACE`. `since` keeps
+/// when it was first seen.
+fn dump_in_progress(crashing: bool, since: &mut Option<Instant>, now: Instant) -> bool {
+    if !crashing {
+        *since = None;
+        return false;
+    }
+    now.saturating_duration_since(*since.get_or_insert(now)) < CRASH_GRACE
+}
+
+/// Whether a monitor that stopped answering may be replaced now: not while a crash that began
+/// after the caller last looked is being dumped, since replacing the monitor mid-dump leaves
+/// the dump without its sidecar. `crash_seen` says the caller already held off for the crash
+/// in progress, whose grace has run out.
+fn may_replace(crash_seen: bool) -> bool {
+    crash_seen || !CRASHING.load(Ordering::Acquire)
+}
+
 /// Makes `crashes/` readable by this user alone before any dump is written into it, since a
 /// dump holds raw process memory. The monitor also creates each file 0600 on Unix; on Windows
 /// the files inherit this directory's protected ACL.
@@ -548,6 +597,9 @@ async fn secure_crashes_dir(dir: &Path) -> io::Result<()> {
 enum Round {
     /// A monitor is connected, or the round was cancelled.
     Live,
+    /// The monitor stopped answering because a crash began during the ping: it is writing that
+    /// crash's dump, so it stays until the caller's grace for the crash runs out.
+    Dumping,
     /// No monitor is connected; the next round tries again.
     Failed(String),
     /// Dumps are impossible on this host, which ends the detector.
@@ -562,6 +614,7 @@ async fn keep_alive(
     detector: &MonitorDetector,
     slot: &mut Option<(Monitor, Arc<Client>)>,
     cancel: &CancellationToken,
+    crash_seen: bool,
 ) -> Round {
     if let Some(heartbeat) = slot.as_ref().map(|(_, heartbeat)| heartbeat.clone())
         && let Some(client) = current_client()
@@ -579,6 +632,7 @@ async fn keep_alive(
         match tokio::time::timeout(PING_TIMEOUT, until_cancelled(cancel, beat)).await {
             // Answered, or cancelled.
             Ok(Some(true) | None) => return Round::Live,
+            Ok(Some(false)) | Err(_) if !may_replace(crash_seen) => return Round::Dumping,
             Ok(Some(false)) | Err(_) => {
                 tracing::warn!("the crash monitor stopped answering; starting another");
             }
@@ -1038,21 +1092,10 @@ pub async fn follow(detector: impl Detector, mut setting: watch::Receiver<bool>)
 }
 
 /// The desktop host's local environment, read before Tauri starts: its profiler directory and
-/// committed `enableProfiler`. The host resolves `BIBCODE_HOME` or `~/.bibcode` as its backend
-/// does, and its in-process server never runs with a dev URL, so the state is in `userdata/`.
+/// committed `enableProfiler`, resolved as `bibcode-desktop profiler` resolves them.
 pub fn desktop_local_profiler() -> Option<(PathBuf, bool)> {
-    let home = dirs::home_dir()?;
-    let request = match std::env::var_os("BIBCODE_HOME") {
-        Some(root) => DataRootRequest::explicit(DataRootSource::Environment, root.into(), home),
-        None => DataRootRequest::default(home),
-    };
-    let state_dir = ServerConfig::new(resolve_data_root(request).ok()?.effective).state_dir();
-    let enabled = fs::read(state_dir.join("settings.json"))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .and_then(|settings| settings.get("enableProfiler")?.as_bool())
-        .unwrap_or(false);
-    Some((profiler_dir(&state_dir), enabled))
+    let state_dir = crate::config::profiler_state_dir(None, None).ok()?;
+    Some((profiler_dir(&state_dir), persisted_enabled(&state_dir)))
 }
 
 /// For the `crash-smoke` binary: runs a [`MonitorDetector`] for `dir` on a runtime that lives
@@ -1133,6 +1176,81 @@ mod tests {
         assert_eq!(parse_monitor_args(&args(&["/s", "/d"])), None);
         assert_eq!(parse_monitor_args(&args(&["/s", "/d", "12", "x"])), None);
         assert_eq!(parse_monitor_args(&args(&["/s", "/d", "pid"])), None);
+    }
+
+    /// The heartbeat holds off while a crash is dumped, but not forever: a monitor that hangs
+    /// in the dump is still replaced, which releases the crashing thread.
+    #[test]
+    fn a_dump_in_progress_holds_off_the_heartbeat_for_a_bounded_time() {
+        let start = Instant::now();
+        let at = |secs| start + Duration::from_secs(secs);
+        let mut since = None;
+        assert!(!dump_in_progress(false, &mut since, start));
+        assert!(dump_in_progress(true, &mut since, at(0)));
+        assert!(dump_in_progress(true, &mut since, at(14)));
+        assert!(
+            !dump_in_progress(true, &mut since, at(15)),
+            "a monitor stuck in a dump is replaced in the end"
+        );
+        assert!(!dump_in_progress(false, &mut since, at(21)));
+        assert_eq!(since, None, "the crash is over");
+        assert!(
+            dump_in_progress(true, &mut since, at(30)),
+            "a later crash has its own grace"
+        );
+    }
+
+    /// The host arms its monitor for the local environment: `BIBCODE_HOME`'s `userdata/`
+    /// state, and the `enableProfiler` saved there. Runs in a child process, so setting the
+    /// variable touches no other test.
+    #[test]
+    fn the_desktop_monitor_follows_bibcode_home_and_its_saved_setting() {
+        const CASE: &str = "desktop-local-profiler";
+        const TEST: &str = "diagnostics::profiler::crash::tests::the_desktop_monitor_follows_bibcode_home_and_its_saved_setting";
+        if crate::test_support::TestSandbox::is_isolated_case(CASE, TEST) {
+            let home = std::fs::canonicalize(std::env::var_os("BIBCODE_HOME").unwrap()).unwrap();
+            let state = home.join("userdata");
+            assert_eq!(
+                desktop_local_profiler(),
+                Some((state.join("profiler"), false)),
+                "no settings saved yet"
+            );
+            std::fs::create_dir_all(&state).unwrap();
+            std::fs::write(state.join("settings.json"), r#"{"enableProfiler":true}"#).unwrap();
+            assert_eq!(
+                desktop_local_profiler(),
+                Some((state.join("profiler"), true))
+            );
+            return;
+        }
+        let home = tempfile::tempdir().unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+            .env("BIBCODE_TEST_ISOLATED_CASE", CASE)
+            .env("BIBCODE_HOME", home.path())
+            .env_remove("VITE_DEV_SERVER_URL")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+
+    /// A crash that begins while the heartbeat pings stalls the ping, since the monitor is
+    /// writing its dump; that monitor stays. Once the grace for a crash already seen is over,
+    /// a monitor stuck in the dump is replaced.
+    #[test]
+    fn a_crash_that_begins_during_a_ping_keeps_its_monitor() {
+        // Lib tests attach no crash hook and so run no monitor that reads the flag.
+        assert!(may_replace(false), "no crash: a deaf monitor is replaced");
+        CRASHING.store(true, Ordering::Release);
+        let during_ping = may_replace(false);
+        let grace_over = may_replace(true);
+        CRASHING.store(false, Ordering::Release);
+        assert!(!during_ping, "the monitor is writing the dump");
+        assert!(grace_over, "the grace for this crash is over");
     }
 
     #[test]
@@ -1243,6 +1361,7 @@ mod tests {
         assert_eq!(sidecar["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(sidecar["os"], std::env::consts::OS);
         assert_eq!(sidecar["arch"], std::env::consts::ARCH);
+        assert_eq!(sidecar["bootId"], json!(super::super::sentinel::boot_id()));
         assert!(sidecar["createdAt"].is_string());
         let events = sidecar["lastEvents"].as_array().unwrap();
         assert_eq!(events.len(), 50, "capped at 50 lines");

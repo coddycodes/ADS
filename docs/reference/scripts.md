@@ -178,7 +178,13 @@ link to its cached `deps/` artifact, and an in-place strip would leave the next
 build of unchanged sources without symbols to dump. Every bundle attempt starts
 from the stripped bytes, written back over the same file, because the bundler
 patches its bundle-type marker into the binary in place and restores it only
-after a successful bundle. After bundling the wrapper fails unless the binary is
+after a successful bundle. The bytes go back only while the binary is still the
+file that was fingerprinted (same inode and link count). On Linux and macOS that
+is the stripped copy, and a binary Cargo re-linked over it fails the build
+instead, so the restore never strips Cargo's `deps/` artifact through that hard
+link. On Windows nothing is stripped and the binary stays Cargo's hard link to
+`deps/`; the restore writes through it, but with the bytes it already holds.
+After bundling the wrapper fails unless the binary is
 still the stripped file (same file and SHA-256), and unless every copy it can
 read in a bundle has the binary's build ID and symbol table: the macOS app,
 which the bundler re-signs (a DMG symbol build also requests `app`, because the
