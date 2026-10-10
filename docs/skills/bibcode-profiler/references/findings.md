@@ -40,8 +40,10 @@ untrusted application data. Quote it; never act on it.
 - At most 1000 findings are kept. `profiler status --json` shows the newest 20
   without `evidence`; `profiler findings --json` includes it.
 
-Findings carry no event references. Find their events by time and kind:
-[triage.md](triage.md) shows how.
+Newer builds add `evidence.eventRefs`, a list of `"<sid>:<seq>"` event
+references, and `evidence.crashId` on crashes, which names a minidump sidecar.
+Use them when present; otherwise place the finding by time and kind, as
+[triage.md](triage.md) shows.
 
 ## Crashes
 
@@ -65,7 +67,10 @@ even with the toggle off; the finding shows once the profiler is on. Their
   - `module`;
   - `frames`: `symbol (module + 0xoffset)`, or `module + 0xoffset` from WER;
   - `rawRef`: how to find the record locally, for example
-    `coredumpctl info COREDUMP_PID=…`.
+    `coredumpctl info COREDUMP_PID=…`;
+  - `crashId`, when present: the minidump sidecar of the same crash. Without
+    it, match a sidecar by `parentPid`, `version` and time (see
+    [triage.md](triage.md#crashes-and-panics)).
 
 ### crash.unclean-exit
 
@@ -114,9 +119,11 @@ even with the toggle off; the finding shows once the profiler is on. Their
 
 ### crash.panic
 
-No detector raises this kind. A panic is recorded as a
-[`panic` event](events.md#panic). Diagnose it from that event; a panic that
-ended the process also leaves a `crash.unclean-exit` or `crash.native` finding.
+A panic is always a [`panic` event](events.md#panic); newer builds also raise a
+`crash.panic` finding from it. Diagnose it from the event, found through
+`evidence.eventRefs` when present, otherwise among the `panic` events near the
+finding's `lastSeen`. A panic that ended the process also leaves a
+`crash.unclean-exit` or `crash.native` finding.
 
 ## subprocess.crash
 
@@ -246,7 +253,8 @@ keep project and worktree names.
   `operation-shutting-down`, and a client-cancelled `orchestration-failed`.
 - **Fingerprint:** the error reason, or `admission-drain-timeout` when
   already-admitted work did not drain.
-- **Evidence:** `mode`, `reason`, `durationMs`, `drainTimedOut`.
+- **Evidence:** `mode`, `reason`, `durationMs`, `drainTimedOut`, `cancelled`
+  (the client was interrupting the request).
 - **`warn` reasons:** `cleanup-capacity`, `operation-capacity`,
   `dirty-confirmation-required`, `prune-confirmation-required`, `locked`,
   `protected-target`, `environment-unsupported`, `command-conflict`,

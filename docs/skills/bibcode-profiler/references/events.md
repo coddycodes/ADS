@@ -186,12 +186,15 @@ One per read-only worktree scan: right after the profiler turns on, then every
 - `findings`: findings this scan raised;
 - `compared`: `false` when the filesystem and Git comparison overran its 30 s
   budget, so orphan and registration checks were skipped;
+- `processesRead`: `false` when reading those working directories failed or
+  overran its 5 s deadline, so that scan checked no `worktree.held-open`;
 - `durationMs`.
 
 ### panic
 
 Every Rust panic in a process with a profiler runtime, even while the toggle is
-off. A panic does not raise a finding: this event is the record.
+off. A panic is always a `panic` event; newer builds also raise a
+[`crash.panic`](findings.md#crashpanic) finding from it.
 
 - `thread`: the thread name, or `unnamed`;
 - `message`: the first line, at most 2 KiB. Quoted values, `Ok`/`Err` values,
@@ -199,7 +202,9 @@ off. A panic does not raise a finding: this event is the record.
 - `location`: `path:line` with the home directory as `~`, or `null`. A
   workspace crate's location is repo-relative (`apps/server/src/…`);
 - `frames`: up to 64 `{ module, debugId, offset }`. `debugId` is set for the
-  main executable's frames only.
+  main executable's frames only;
+- `version`, `os`, `arch`: when present (newer builds), the build and platform
+  that panicked, which select the symbols to use.
 
 Symbolicate it with `profiler symbolicate <sid>:<seq>`.
 
