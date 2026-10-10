@@ -48,7 +48,7 @@ owner. Never commit secrets, credentials, private user data, or unbounded logs.
 ## Operating rule
 
 Before repeating a costly agent-owned validation run, use the private checkpoint
-and checker described in [issue-delivery](../../.agents/skills/issue-delivery/SKILL.md).
+and checker described in [issue-delivery](../skills/issue-delivery/SKILL.md).
 Run its behavioral checks with `node --test scripts/check-agent-delivery.node-test.mjs`.
 These checks validate the delivery decision, not application or native acceptance.
 
