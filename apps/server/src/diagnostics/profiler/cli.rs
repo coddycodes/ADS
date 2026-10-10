@@ -311,9 +311,13 @@ fn event_line(event: &Value) -> String {
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     if !payload.is_empty() {
-        // Compact JSON escapes control characters, so it is safe to print as it is.
+        // serde_json escapes only U+0000 to U+001F; DEL and the C1 controls (CSI, OSC) are
+        // written as they are, so the JSON text needs `plain` like every other field.
         line.push(' ');
-        line.push_str(&clip(Value::Object(payload).to_string(), PAYLOAD_WIDTH));
+        line.push_str(&clip(
+            plain(&Value::Object(payload).to_string()),
+            PAYLOAD_WIDTH,
+        ));
     }
     line
 }
@@ -579,6 +583,128 @@ mod tests {
         assert!(run(&["status"], &dir).contains("Profiler setting: off"));
         assert!(run(&["crashes"], &dir).starts_with("No crash records."));
         assert_eq!(run(&["crashes", "--json"], &dir), "[]\n");
+    }
+
+    /// serde_json escapes only U+0000 to U+001F, so DEL and the C1 controls (CSI is U+009B, OSC
+    /// is U+009D) reach the files raw. Human output must still carry none of them.
+    #[test]
+    fn human_output_replaces_every_control_character_the_files_carry() {
+        // The ones a terminal acts on, and then every control character there is.
+        const NAMED: &str = "a\u{1b}b\u{7f}c\u{9b}d\u{9d}e";
+        let everything: String = ('\u{0}'..='\u{9f}').filter(|c| c.is_control()).collect();
+        assert!(everything.contains('\u{7f}') && everything.contains('\u{9d}'));
+        let state = tempfile::tempdir().unwrap();
+        let dir = state.path().join("profiler");
+        fs::create_dir_all(dir.join("crashes")).unwrap();
+        let ndjson = |records: &[Value]| -> String {
+            records.iter().map(|record| format!("{record}\n")).collect()
+        };
+        let event = |seq: u64, kind: &str, source: &str, payload: Value| {
+            let mut event = json!({
+                "v": 1, "seq": seq, "sid": "s", "ts": "2026-10-09T10:00:00Z",
+                "kind": kind, "source": source,
+            });
+            event
+                .as_object_mut()
+                .unwrap()
+                .extend(payload.as_object().unwrap().clone());
+            event
+        };
+        fs::write(
+            dir.join("events-000000.ndjson"),
+            ndjson(&[
+                event(
+                    0,
+                    "rpc.slow",
+                    "server",
+                    json!({"method": NAMED, "ms": 1200}),
+                ),
+                event(
+                    1,
+                    &everything,
+                    &everything,
+                    json!({(everything.clone()): everything.clone()}),
+                ),
+            ]),
+        )
+        .unwrap();
+        let finding = |kind: &str, title: &str, summary: &str| {
+            json!({
+                "id": format!("{kind}-aaaaaaaaaaaa"), "fingerprint": "aaaaaaaaaaaa", "kind": kind,
+                "severity": "warn", "firstSeen": "2026-10-09T10:00:00Z",
+                "lastSeen": "2026-10-09T10:00:00Z", "count": 3, "source": "server",
+                "title": title, "summary": summary, "state": "open", "evidence": {},
+            })
+        };
+        fs::write(
+            dir.join("findings.ndjson"),
+            ndjson(&[
+                finding("rpc.slow", &format!("Slow {NAMED}"), NAMED),
+                finding(&everything, &everything, &everything),
+            ]),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("crashes/evil.json"),
+            json!({"id": everything, "os": NAMED, (everything.clone()): "v"}).to_string(),
+        )
+        .unwrap();
+
+        let reader = Reader::new(&dir);
+        let mut followed = Vec::new();
+        for event in reader.events(None, None, 10) {
+            write_followed(&mut followed, &event, false, event_line).unwrap();
+        }
+        for finding in reader.findings(None, None, 10) {
+            write_followed(&mut followed, &finding, false, finding_line).unwrap();
+        }
+        let outputs = [
+            run(&["events"], &dir),
+            run(&["findings"], &dir),
+            run(&["status"], &dir),
+            run(&["crashes"], &dir),
+            String::from_utf8(followed).unwrap(),
+        ];
+
+        for output in &outputs {
+            for raw in ['\u{1b}', '\u{7f}', '\u{9b}', '\u{9d}'] {
+                assert!(
+                    !output.contains(raw),
+                    "{raw:?} reached the terminal: {output:?}"
+                );
+            }
+            assert!(
+                output.chars().all(|c| c == '\n' || !c.is_control()),
+                "a control character reached the terminal: {output:?}"
+            );
+        }
+        let [events, findings, status, crashes, _] = &outputs;
+        // serde_json already wrote ESC as the six characters `\u001b`, which do nothing; DEL, CSI
+        // and OSC are what `plain` replaced.
+        assert!(
+            events.contains(
+                "2026-10-09T10:00:00Z server rpc.slow {\"method\":\"a\\u001bb?c?d?e\",\"ms\":1200}\n"
+            ),
+            "{events}"
+        );
+        assert!(
+            findings.contains(" rpc.slow x3 Slow a?b?c?d?e\n"),
+            "{findings}"
+        );
+        assert!(status.contains("  2026-10-09T10:00:00Z warn open rpc.slow x3 Slow a?b?c?d?e\n"));
+        assert!(crashes.contains(" os=a?b?c?d?e"), "{crashes}");
+        // Machine output keeps the data as it is.
+        let events: Value = serde_json::from_str(&run(&["events", "--json"], &dir)).unwrap();
+        assert_eq!(events[0]["method"], NAMED);
+        assert_eq!(events[1]["kind"], everything.as_str());
+        let findings: Value = serde_json::from_str(&run(&["findings", "--json"], &dir)).unwrap();
+        assert!(
+            findings
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["summary"] == NAMED)
+        );
     }
 
     #[test]
