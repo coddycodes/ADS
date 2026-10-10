@@ -15,7 +15,7 @@ use std::{
 use serde_json::Value;
 use time::OffsetDateTime;
 use tokio::{
-    sync::watch,
+    sync::{mpsc, watch},
     task::JoinHandle,
     time::{Instant, MissedTickBehavior},
 };
@@ -25,7 +25,7 @@ use super::{
     ProfilerHandle,
     findings::FindingsBook,
     install, os_records,
-    panic_hook::install_panic_hook,
+    panic_hook::{PANIC_QUEUE, PanicRecord, install_panic_hook, panic_finding},
     profiler_dir,
     reader::{StatusLive, status_json},
     sentinel::{self, SessionRecord},
@@ -36,6 +36,9 @@ use super::{
 /// How often retention and findings compaction run while the profiler is on. Otherwise they
 /// run only when an events file rotates or the runtime starts.
 const MAINTENANCE_EVERY: Duration = Duration::from_secs(3600);
+/// How often `crashes/` is checked for a dump of this process that it survived, while the
+/// profiler is on (the crash monitor runs only then). Also checked as the profiler turns on.
+const DUMP_SCAN_EVERY: Duration = Duration::from_secs(60);
 const LOCK_FILE: &str = ".lock";
 /// A runtime restarted in-process may find its predecessor still releasing the lock.
 const LOCK_ATTEMPTS: u32 = 10;
@@ -54,8 +57,11 @@ pub trait Detector: Send + Sync {
 
 pub struct ProfilerRuntime {
     dir: PathBuf,
-    /// `None` when another writer holds the directory: the runtime is degraded and records nothing.
+    /// `None` when the directory could not be locked: the runtime is degraded and records
+    /// nothing.
     handle: Option<Arc<ProfilerHandle>>,
+    /// Degraded because another process holds the directory lock, not because of an I/O error.
+    locked: bool,
     parts: Mutex<Option<Parts>>,
     stop: CancellationToken,
     /// Fires once teardown has released the directory; every `shutdown` call waits for it.
@@ -73,6 +79,8 @@ struct Parts {
     /// Classifies the previous run; teardown waits for it (at most the 5 s harvest timeout)
     /// so its finding reaches the store before the session is marked clean.
     classification: Option<JoinHandle<()>>,
+    /// Raises the hook's panics as findings; teardown waits for the ones already handed over.
+    panics: JoinHandle<()>,
     store: ProfilerStore,
     /// Held for the runtime's lifetime: the store cuts files back when it reopens them, so a
     /// second process writing the same directory would destroy data.
@@ -104,6 +112,7 @@ impl ProfilerRuntime {
                 return Self {
                     dir,
                     handle: None,
+                    locked: error.kind() == io::ErrorKind::WouldBlock,
                     parts: Mutex::new(None),
                     stop,
                     done,
@@ -119,11 +128,15 @@ impl ProfilerRuntime {
         if let Some(lines) = findings.compacted_lines(OffsetDateTime::now_utc()) {
             store.sender().replace_findings(lines);
         }
+        let (panics, panic_records) = mpsc::channel(PANIC_QUEUE);
+        let linked_dumps = Mutex::new(findings.crash_ids().collect());
         let handle = Arc::new(ProfilerHandle {
             enabled: Default::default(),
             sender: store.sender(),
             findings: Mutex::new(findings),
             recording_since: Mutex::new(None),
+            panics,
+            linked_dumps,
         });
         // ponytail: one server per process in production. A second concurrent runtime (tests)
         // keeps its own handle, and the global `emit` reaches whichever runtime installed first.
@@ -134,16 +147,31 @@ impl ProfilerRuntime {
             .filter(|previous| !(earlier_in_process && previous.pid == std::process::id()));
         install_panic_hook();
         let runtime = tokio::runtime::Handle::current();
-        let classification =
-            previous.map(|previous| runtime.spawn(classify_previous_run(handle.clone(), previous)));
-        let supervisor = runtime.spawn(supervise(handle.clone(), enabled, detectors, stop.clone()));
+        let classification = previous.map(|previous| {
+            runtime.spawn(classify_previous_run(handle.clone(), previous, dir.clone()))
+        });
+        let panics = runtime.spawn(raise_panics(handle.clone(), panic_records, stop.clone()));
+        // This run's dumps: written for this process since it started.
+        let dumps = DumpScan {
+            dir: dir.clone(),
+            since: OffsetDateTime::now_utc(),
+        };
+        let supervisor = runtime.spawn(supervise(
+            handle.clone(),
+            enabled,
+            detectors,
+            dumps,
+            stop.clone(),
+        ));
         Self {
             dir,
             handle: Some(handle),
+            locked: false,
             parts: Mutex::new(Some(Parts {
                 runtime,
                 supervisor,
                 classification,
+                panics,
                 store,
                 lock,
             })),
@@ -162,6 +190,7 @@ impl ProfilerRuntime {
         let mut live = StatusLive {
             // Degraded, or failing writes.
             storage_failing: self.handle.is_none() || stats.failing,
+            storage_locked: self.locked,
             event_count: stats.written,
             dropped_events: stats.dropped,
             ..StatusLive::default()
@@ -204,6 +233,7 @@ impl ProfilerRuntime {
             runtime,
             supervisor,
             classification,
+            panics,
             store,
             lock: dir_lock,
         }) = lock(&self.parts).take()
@@ -217,6 +247,7 @@ impl ProfilerRuntime {
             if let Some(classification) = classification {
                 let _ = classification.await;
             }
+            let _ = panics.await;
             // The store joins its writer thread, which must not block an async worker.
             let _ = tokio::task::spawn_blocking(move || {
                 store.shutdown();
@@ -270,19 +301,61 @@ fn lock_dir(dir: &Path) -> io::Result<File> {
     }
 }
 
-/// Reads the OS crash records for a run that never marked its session clean and records the
-/// finding. The finding goes straight into the book, not through `record_finding`, so it is
-/// there once the user turns the profiler on.
-async fn classify_previous_run(handle: Arc<ProfilerHandle>, previous: SessionRecord) {
+/// Reads the crash dump and the OS crash records for a run that never marked its session
+/// clean and records the finding. The finding goes straight into the book, not through
+/// `record_finding`, so it is listed whether or not the profiler is on.
+async fn classify_previous_run(handle: Arc<ProfilerHandle>, previous: SessionRecord, dir: PathBuf) {
     let record = os_records::harvest_previous_crash(&previous).await;
+    let dump = {
+        let (handle, previous) = (handle.clone(), previous.clone());
+        tokio::task::spawn_blocking(move || {
+            let sidecars = sentinel::dump_sidecars(&dir);
+            let mut linked = lock(&handle.linked_dumps);
+            let sidecar = sentinel::dump_of_run(&sidecars, &previous, &linked)?.clone();
+            linked.insert(sidecar.id.clone());
+            drop(linked);
+            Some(sentinel::Dump::read(&dir, sidecar))
+        })
+        .await
+        .ok()
+        .flatten()
+    };
     let run = sentinel::classify(
         &previous,
         sentinel::boot_id().as_deref(),
         sentinel::oom_kill_count(),
         record,
+        dump,
     );
     if let Some(input) = sentinel::finding_for(&previous, run) {
         lock(&handle.findings).record(input, OffsetDateTime::now_utc(), &handle.sender);
+    }
+}
+
+/// Raises a `crash.panic` finding for each panic the hook hands over, straight into the book
+/// like the previous run's finding, so panics count with the profiler off too. Once stopped,
+/// it raises the ones already handed over, then ends.
+async fn raise_panics(
+    handle: Arc<ProfilerHandle>,
+    mut records: mpsc::Receiver<PanicRecord>,
+    stop: CancellationToken,
+) {
+    let raise = |record| {
+        lock(&handle.findings).record(
+            panic_finding(record),
+            OffsetDateTime::now_utc(),
+            &handle.sender,
+        );
+    };
+    loop {
+        tokio::select! {
+            biased;
+            Some(record) = records.recv() => raise(record),
+            () = stop.cancelled() => break,
+        }
+    }
+    while let Ok(record) = records.try_recv() {
+        raise(record);
     }
 }
 
@@ -292,16 +365,22 @@ async fn supervise(
     handle: Arc<ProfilerHandle>,
     mut setting: watch::Receiver<bool>,
     detectors: Vec<Box<dyn Detector>>,
+    dumps: DumpScan,
     stop: CancellationToken,
 ) {
     let mut maintenance =
         tokio::time::interval_at(Instant::now() + MAINTENANCE_EVERY, MAINTENANCE_EVERY);
     maintenance.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut dump_scan = tokio::time::interval(DUMP_SCAN_EVERY);
+    dump_scan.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut running: Option<Running> = None;
     loop {
         let want = *setting.borrow_and_update();
         running = match (want, running) {
-            (true, None) => Some(Running::start(&handle, &detectors, &stop)),
+            (true, None) => {
+                dump_scan.reset_immediately();
+                Some(Running::start(&handle, &detectors, &stop))
+            }
             (false, Some(set)) => {
                 set.stop(&handle).await;
                 None
@@ -319,10 +398,45 @@ async fn supervise(
                 }
             }
             _ = maintenance.tick(), if running.is_some() => maintain(&handle),
+            _ = dump_scan.tick(), if running.is_some() => dumps.link_new(&handle).await,
         }
     }
     if let Some(set) = running {
         set.stop(&handle).await;
+    }
+}
+
+/// Finds the dumps of this run that BiBCode survived (a Windows invalid-parameter handler, or
+/// a crash the OS did not escalate) and raises a `crash.native` finding for each new one.
+struct DumpScan {
+    dir: PathBuf,
+    /// When this run started; older dumps belong to earlier runs.
+    since: OffsetDateTime,
+}
+
+impl DumpScan {
+    async fn link_new(&self, handle: &Arc<ProfilerHandle>) {
+        let (handle, dir, since) = (handle.clone(), self.dir.clone(), self.since);
+        let boot = sentinel::boot_id();
+        let _ = tokio::task::spawn_blocking(move || {
+            // Oldest first, so the findings record the dumps in the order they happened.
+            for sidecar in sentinel::dump_sidecars(&dir).into_iter().rev() {
+                if !sentinel::dump_is_of(&sidecar, std::process::id(), since, boot.as_deref())
+                    || !lock(&handle.linked_dumps).insert(sidecar.id.clone())
+                {
+                    continue;
+                }
+                let finding = sentinel::Dump::read(&dir, sidecar).running_finding();
+                // Persisted at once: the next start knows the run survived this dump only
+                // from the finding that cites it.
+                lock(&handle.findings).record_now(
+                    finding,
+                    OffsetDateTime::now_utc(),
+                    &handle.sender,
+                );
+            }
+        })
+        .await;
     }
 }
 

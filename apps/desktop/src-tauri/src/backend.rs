@@ -2148,6 +2148,7 @@ async fn start_managed_backend(
                 return Err(BackendStartFailure::other(error));
             }
             crate::crash_monitor::follow_server(&handle);
+            crate::webview_exit::follow_server(&handle);
 
             Ok((
                 config.clone(),

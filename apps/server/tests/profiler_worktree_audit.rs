@@ -272,15 +272,39 @@ async fn the_audit_and_removal_outcomes_reach_the_profiler() {
             .any(|&(mode, ok, _, _, cancelled)| mode == "delete-git-worktree" && !ok && cancelled),
         "{removals:?}"
     );
+    // Each failure finding cites the `worktree.removal` event of its occurrence.
+    let removal_ids: Vec<&Value> = events
+        .iter()
+        .filter(|event| event["kind"] == "worktree.removal")
+        .map(|event| &event["eventId"])
+        .collect();
+    let cited: Vec<&Value> = events
+        .iter()
+        .filter(|line| line["kind"] == "worktree.removal-failed" && line.get("evidence").is_some())
+        .map(|finding| &finding["evidence"]["eventIds"][0])
+        .collect();
+    assert!(!cited.is_empty());
+    assert!(
+        cited
+            .iter()
+            .all(|id| id.is_string() && removal_ids.contains(id)),
+        "{cited:?} not among {removal_ids:?}"
+    );
     let scans: Vec<_> = events
         .iter()
         .filter(|event| event["kind"] == "worktree.audit")
         .collect();
     assert!(!scans.is_empty());
+    // Windows reads no working directories, so its scans report that as null.
+    let processes_read = if cfg!(windows) {
+        Value::Null
+    } else {
+        json!(true)
+    };
     assert!(
         scans
             .iter()
-            .all(|scan| scan["compared"] == true && scan["processesRead"] == true),
+            .all(|scan| scan["compared"] == true && scan["processesRead"] == processes_read),
         "{scans:?}"
     );
     fixture.shutdown().await;

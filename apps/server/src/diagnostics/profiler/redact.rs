@@ -7,15 +7,24 @@ use crate::{
 
 pub(super) const MESSAGE_MAX_BYTES: usize = 2048;
 
+/// The home directory's spellings, resolved once: resolving touches the filesystem.
+static HOMES: OnceLock<Vec<String>> = OnceLock::new();
+
 /// Replaces the user's home directory with `~` and applies secret redaction. The home
 /// directory is replaced as `$HOME` spells it and as the filesystem resolves it, so a
 /// symlinked home (`/home/u` to `/data/u`) cannot leak the user name through resolved paths.
+/// The first call resolves it.
 pub fn redact_path(value: &str) -> String {
-    static HOMES: OnceLock<Vec<String>> = OnceLock::new();
     let homes = HOMES.get_or_init(|| {
         dirs::home_dir().map_or_else(Vec::new, |home| spellings(&home, host_path_platform()))
     });
     redact_message(&replace_homes(value, homes))
+}
+
+/// Whether the home directory's spellings were resolved already.
+#[cfg(test)]
+pub(super) fn homes_resolved() -> bool {
+    HOMES.get().is_some()
 }
 
 /// `home` as given and as resolved, each also as a worktree identity key (on Windows,

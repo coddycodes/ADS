@@ -47,6 +47,22 @@ describe("profiler contracts", () => {
     expect(status.findings[0]?.kind).toBe("rpc.slow");
   });
 
+  it("tells a directory another process records to apart from failing writes", () => {
+    const withStorage = (storage: string) => ({
+      enabled: false,
+      recordingSince: null,
+      diskBytes: 0,
+      eventCount: 0,
+      droppedEvents: 0,
+      lastCrashAt: null,
+      capabilities: { nativeDumps: "unavailable", osCrashRecords: "available", storage },
+      findings: [],
+    });
+    expect(decodeStatus(withStorage("locked")).capabilities.storage).toBe("locked");
+    expect(decodeStatus(withStorage("failing")).capabilities.storage).toBe("failing");
+    expect(() => decodeStatus(withStorage("busy"))).toThrow();
+  });
+
   const batchWith = (records: number, histograms: number) => ({
     clientId: "c",
     capabilities: [],

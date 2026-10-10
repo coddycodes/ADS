@@ -63,10 +63,10 @@
       "verificationDate": "2026-09-04",
       "status": "partial",
       "ledgerClosure": {
-        "rows": 221,
+        "rows": 231,
         "statuses": {
           "green": 112,
-          "current": 63,
+          "current": 73,
           "blocked": 42,
           "removed": 4
         }
@@ -310,7 +310,7 @@
   "inventorySummary": {
     "javascriptDirect": 81,
     "javascriptLedger": 83,
-    "rustRegistry": 112,
+    "rustRegistry": 122,
     "rustPath": 3,
     "rustGit": 1,
     "actions": 9,
@@ -1631,6 +1631,18 @@
       "status": "current"
     },
     {
+      "key": "rust:workspace:backtrace",
+      "name": "backtrace",
+      "current": "0.3.76",
+      "target": "0.3.76",
+      "channel": "stable",
+      "source": "https://crates.io/crates/backtrace",
+      "cohort": "rust-current",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "current",
+      "notes": "The profiler's panic hook walks the panicking thread's stack with it and records raw return addresses as module offsets; nothing is symbolicated in the process."
+    },
+    {
       "key": "rust:workspace:base64",
       "name": "base64",
       "current": "0.22.1",
@@ -1652,6 +1664,18 @@
       "cohort": "embedded-browser-preview",
       "platforms": ["macos"],
       "status": "current"
+    },
+    {
+      "key": "rust:workspace:breakpad-symbols",
+      "name": "breakpad-symbols",
+      "current": "=0.27.0",
+      "target": "0.27.0",
+      "channel": "stable",
+      "source": "https://crates.io/crates/breakpad-symbols",
+      "cohort": "rust-current",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "current",
+      "notes": "Exact pin, matched to minidump-processor 0.27.0: reads Breakpad .sym files for profiler symbolication; the http feature stays off, so the profiler's own HTTPS-only download fetches symbols."
     },
     {
       "key": "rust:workspace:cairo-rs",
@@ -1757,6 +1781,18 @@
       "status": "green"
     },
     {
+      "key": "rust:workspace:crash-handler",
+      "name": "crash-handler",
+      "current": ">=0.8.1, <0.9",
+      "target": "0.8.1",
+      "channel": "stable",
+      "source": "https://crates.io/crates/crash-handler",
+      "cohort": "rust-current",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "current",
+      "notes": "Profiler native crash capture: the in-process hook, attached once in each binary's main and never detached, hands a fault to the crash-monitor child. The range is the profiler design's: 0.8.1 or later within 0.8."
+    },
+    {
       "key": "rust:workspace:dirs",
       "name": "dirs",
       "current": "6.0.0",
@@ -1812,6 +1848,18 @@
       "status": "green"
     },
     {
+      "key": "rust:workspace:http-body-util",
+      "name": "http-body-util",
+      "current": "0.1.5",
+      "target": "0.1.5",
+      "channel": "stable",
+      "source": "https://crates.io/crates/http-body-util",
+      "cohort": "embedded-browser-preview",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "current",
+      "notes": "Body combinators for the internal browser preview gateway, which streams request and response bodies between the webview and the previewed server without buffering them."
+    },
+    {
       "key": "rust:workspace:httpdate",
       "name": "httpdate",
       "current": "1.0.3",
@@ -1821,6 +1869,30 @@
       "cohort": "rust-current",
       "platforms": ["linux", "macos", "windows"],
       "status": "current"
+    },
+    {
+      "key": "rust:workspace:hyper",
+      "name": "hyper",
+      "current": "1.11.1",
+      "target": "1.11.1",
+      "channel": "stable",
+      "source": "https://crates.io/crates/hyper",
+      "cohort": "embedded-browser-preview",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "current",
+      "notes": "The internal browser preview gateway's HTTP/1.1 listener and its reverse proxy to the previewed server, WebSocket upgrades included. Features: client, http1, server."
+    },
+    {
+      "key": "rust:workspace:hyper-util",
+      "name": "hyper-util",
+      "current": "0.1.20",
+      "target": "0.1.20",
+      "channel": "stable",
+      "source": "https://crates.io/crates/hyper-util",
+      "cohort": "embedded-browser-preview",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "current",
+      "notes": "Tokio I/O and timer adapters that run the preview gateway's hyper connections on the server's runtime. Feature: tokio."
     },
     {
       "key": "rust:workspace:if-addrs",
@@ -1869,6 +1941,42 @@
       "status": "current"
     },
     {
+      "key": "rust:workspace:minidump",
+      "name": "minidump",
+      "current": "=0.27.0",
+      "target": "0.27.0",
+      "channel": "stable",
+      "source": "https://crates.io/crates/minidump",
+      "cohort": "rust-current",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "current",
+      "notes": "Exact pin, matched to minidump-processor 0.27.0: parses the profiler's own crash dumps, for symbolication and for the crash reason in a crash.native finding."
+    },
+    {
+      "key": "rust:workspace:minidump-processor",
+      "name": "minidump-processor",
+      "current": "=0.27.0",
+      "target": "0.27.0",
+      "channel": "stable",
+      "source": "https://crates.io/crates/minidump-processor",
+      "cohort": "rust-current",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "current",
+      "notes": "Exact pin; default features off, which leaves out the x86 disassembler. Walks the crashing thread's stack for `bibcode profiler symbolicate` and the stdio MCP server."
+    },
+    {
+      "key": "rust:workspace:minidumper",
+      "name": "minidumper",
+      "current": "0.11",
+      "target": "0.11.0",
+      "channel": "stable",
+      "source": "https://crates.io/crates/minidumper",
+      "cohort": "rust-current",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "current",
+      "notes": "IPC between the crash hook and the same binary relaunched as --crash-monitor, which writes the minidump from outside the crashed process and its sidecar beside it."
+    },
+    {
       "key": "rust:workspace:minisign-verify",
       "name": "minisign-verify",
       "current": "=0.2.5",
@@ -1890,6 +1998,18 @@
       "cohort": "event-driven-vcs-observation",
       "platforms": ["linux", "macos", "windows"],
       "status": "current"
+    },
+    {
+      "key": "rust:workspace:object",
+      "name": "object",
+      "current": "0.37.3",
+      "target": "0.37.3",
+      "channel": "stable",
+      "source": "https://crates.io/crates/object",
+      "cohort": "rust-current",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "current",
+      "notes": "Reads the running executable's GNU build-id, Mach-O UUID or PDB identity once at startup, so panic frames carry the Breakpad debug IDs that symbol files are named by. Default features off; only elf, macho, pe, read_core and std."
     },
     {
       "key": "rust:workspace:open",

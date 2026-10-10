@@ -1422,6 +1422,33 @@ const fingerprintBinary = Effect.fn("fingerprintTauriBinary")(function* (file: s
   } satisfies BinaryFingerprint;
 });
 
+/**
+ * Writes the fingerprinted bytes back over the binary before a bundle attempt, but only into the
+ * file that was fingerprinted: the same inode with the same link count. On Linux and macOS that
+ * is the stripped copy, linked once, and a file Cargo re-linked over it (its unstripped deps/
+ * artifact, which the next build reuses) fails the build instead, so Cargo's cache is never
+ * stripped through that link. On Windows nothing is stripped and the binary is still Cargo's hard
+ * link to deps/; the write goes through that link, but with the bytes it already holds.
+ */
+const restoreStrippedBinary = (
+  fs: FileSystem.FileSystem,
+  binary: string,
+  stripped: BinaryFingerprint,
+) =>
+  Effect.gen(function* () {
+    const info = yield* fs.stat(binary);
+    const inode = Option.getOrUndefined(info.ino);
+    const links = Option.getOrUndefined(info.nlink);
+    if (inode === undefined || inode !== stripped.inode || links !== stripped.links) {
+      return yield* Effect.fail(
+        new TauriDesktopBuildConfigurationError(
+          `${binary} was changed or replaced during tauri bundle, so it cannot be restored to the stripped binary.`,
+        ),
+      );
+    }
+    yield* fs.writeFile(binary, stripped.bytes);
+  }).pipe(Effect.withSpan("restoreStrippedTauriBinary"));
+
 interface BundledCopy {
   readonly copy: string;
   readonly identity: BinaryIdentity | undefined;
@@ -1571,7 +1598,10 @@ const runBuildAttempts = Effect.fn("runTauriBuildAttempts")(function* (
   command: SpawnPlan,
   env: NodeJS.ProcessEnv,
   write: (text: string) => void,
-  beforeAttempt: Effect.Effect<void, PlatformError.PlatformError> = Effect.void,
+  beforeAttempt: Effect.Effect<
+    void,
+    PlatformError.PlatformError | TauriDesktopBuildConfigurationError
+  > = Effect.void,
 ) {
   const failures: string[] = [];
   for (let attempt = 1; attempt <= TAURI_BUILD_ATTEMPTS; attempt += 1) {
@@ -1640,7 +1670,7 @@ export const buildTauriDesktopArtifact = Effect.fn("buildTauriDesktopArtifact")(
     const strippedBinary = plan.symbols?.binary;
     const restoreStripped =
       stripped && strippedBinary !== undefined
-        ? fs.writeFile(strippedBinary, stripped.bytes)
+        ? restoreStrippedBinary(fs, strippedBinary, stripped)
         : Effect.void;
     yield* runBuildAttempts(plan, "bundle", plan.bundleCommand, buildEnv, write, restoreStripped);
     if (plan.symbols && stripped) {

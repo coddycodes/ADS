@@ -43,10 +43,15 @@ Every event line carries these fields beside its payload:
 - `ts`: RFC 3339 UTC write time.
 - `sid`: 8 hex characters naming one writer session (one process run).
 - `seq`: counter within that session; it restarts at 0 with each session.
+- `eventId`: `"<sid>-<n>"`, unique, given when the event is queued. Findings
+  cite the events that explain them by it, in `evidence.eventIds`. Older builds
+  write none. `n` counts in queueing order, so order events by `seq`.
 - `kind`: the event kind below.
 - `source`: `server`, or `client:<clientId>` for client reports.
 
-Cite an event as `"<sid>:<seq>"`; `seq` alone repeats across restarts.
+Cite an event by its `eventId`, or as `"<sid>:<seq>"` when it has none; `seq`
+alone repeats across restarts. `profiler symbolicate` names a panic event as
+`<sid>:<seq>`, read from that event's envelope.
 `profiler events` lists matches in file order, oldest first, keeping the newest
 `--limit`.
 
@@ -152,7 +157,8 @@ figures go to every connected environment whose profiler is on.
 
 ### subprocess.exit
 
-Written with every [`subprocess.crash`](findings.md#subprocesscrash) finding.
+Written with every [`subprocess.crash`](findings.md#subprocesscrash) finding,
+which cites it.
 
 - `processKind`: `provider`, `terminal` or `command`;
 - `label`: the provider driver, `shell`, or the command's executable;
@@ -184,17 +190,20 @@ One per read-only worktree scan: right after the profiler turns on, then every
 - `registrations`: Git worktree registrations compared;
 - `processes`: working directories of BiBCode-owned processes checked;
 - `findings`: findings this scan raised;
-- `compared`: `false` when the filesystem and Git comparison overran its 30 s
-  budget, so orphan and registration checks were skipped;
+- `compared`: `false` when the projects or the filesystem could not be read, or
+  the filesystem and Git comparison overran its 30 s budget, so orphan and
+  registration checks were skipped;
 - `processesRead`: `false` when reading those working directories failed or
-  overran its 5 s deadline, so that scan checked no `worktree.held-open`;
+  overran its 5 s deadline, so that scan checked no `worktree.held-open`. `null`
+  on Windows, which reads no working directories and never checks it (older
+  builds wrote `true` there);
 - `durationMs`.
 
 ### panic
 
 Every Rust panic in a process with a profiler runtime, even while the toggle is
-off. A panic is always a `panic` event; newer builds also raise a
-[`crash.panic`](findings.md#crashpanic) finding from it.
+off. Newer builds also raise a [`crash.panic`](findings.md#crashpanic) finding
+from each one, which cites the event by its `eventId`.
 
 - `thread`: the thread name, or `unnamed`;
 - `message`: the first line, at most 2 KiB. Quoted values, `Ok`/`Err` values,
@@ -206,7 +215,7 @@ off. A panic is always a `panic` event; newer builds also raise a
 - `version`, `os`, `arch`: when present (newer builds), the build and platform
   that panicked, which select the symbols to use.
 
-Symbolicate it with `profiler symbolicate <sid>:<seq>`.
+Symbolicate it with `profiler symbolicate <sid>:<seq>`, from its envelope.
 
 ### finding
 
@@ -235,7 +244,13 @@ monitor writes one beside each minidump:
 - `createdAt`, `version`, `os`, `arch`;
 - `processKind`: `server`, `desktop` or `crash-smoke`;
 - `parentPid`: the pid of the process that crashed;
+- `bootId`: the boot it crashed on (newer builds);
 - `lastEvents`: up to 50 events written before the crash.
+
+Each dump becomes a [`crash.native`](findings.md#crashnative) finding whose
+`evidence.crashId` is its `id`: on the next start for a dump of the run that
+crashed, or within a minute while the profiler is on for a dump the process
+survived.
 
 ## Regenerating this list
 

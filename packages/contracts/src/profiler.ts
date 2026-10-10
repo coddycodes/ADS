@@ -32,7 +32,8 @@ export const ProfilerStatus = Schema.Struct({
   capabilities: Schema.Struct({
     nativeDumps: CapabilityState,
     osCrashRecords: CapabilityState,
-    storage: Schema.Literals(["ok", "failing"]),
+    /** `locked`: another process records to this profiler folder, so this one records nothing. */
+    storage: Schema.Literals(["ok", "failing", "locked"]),
   }),
   findings: Schema.Array(ProfilerFinding),
 });

@@ -18,7 +18,7 @@ use std::{
 use serde_json::{Map, Value, json};
 
 use super::{
-    amend_finding, emit,
+    amend_finding, cite, emit,
     findings::{FindingInput, Occurrence, Severity},
     record_finding,
     redact::redact_message,
@@ -340,7 +340,7 @@ pub fn report_exit(watch: Watch, process: &Exited<'_>, status: &ExitStatus, requ
     {
         evidence.extend(sample_evidence(&sample));
     }
-    emit_event(
+    let event_id = emit_event(
         "subprocess.exit",
         json!({
             "processKind": kind,
@@ -358,7 +358,7 @@ pub fn report_exit(watch: Watch, process: &Exited<'_>, status: &ExitStatus, requ
         fingerprint_fields: vec![kind.to_owned(), label, outcome],
         title,
         summary,
-        evidence: Value::Object(evidence),
+        evidence: cite(Value::Object(evidence), event_id),
     });
     #[cfg(target_os = "linux")]
     if let (Some(occurrence), ExitClass::Signal { signal, .. }) = (occurrence, class)
@@ -407,8 +407,9 @@ pub fn report_webview_terminated(reason: &str, process: Option<WebProcess<'_>>) 
     let Some(occurrence) = occurrence else {
         return;
     };
+    // WebKitGTK kills a process over its memory limit with SIGKILL, which dumps no core.
     #[cfg(target_os = "linux")]
-    if let Some(process) = process {
+    if let Some(process) = process.filter(|_| reason == "Crashed") {
         let started_at = time::OffsetDateTime::now_utc() - REPORT_WINDOW;
         attach_coredump(occurrence, process.pid, process.exe, started_at);
     }
@@ -538,12 +539,15 @@ fn record(input: FindingInput) -> Option<Occurrence> {
     record_finding(input)
 }
 
-fn emit_event(kind: &'static str, payload: Value) {
+fn emit_event(kind: &'static str, payload: Value) -> Option<super::store::EventId> {
     #[cfg(test)]
-    if captured(|_| ()).is_some() {
-        return;
+    if let Some(id) = captured(|captured| {
+        captured.events.push((kind, payload.clone()));
+        super::store::EventId::new(0, captured.events.len() as u64 - 1)
+    }) {
+        return Some(id);
     }
-    emit(kind, payload);
+    emit(kind, payload)
 }
 
 /// The sampler's latest sample of `pid`, if it sampled the process.
@@ -595,6 +599,9 @@ fn counts(watch: Watch, class: ExitClass) -> bool {
     match (watch, class) {
         (_, ExitClass::Requested | ExitClass::Clean) => false,
         (_, ExitClass::Signal { signal, .. }) if deliberate(signal) => false,
+        // 128 + SIGHUP, SIGINT or SIGTERM: the process caught that signal and exited with the
+        // shell's code for it, as a provider CLI does after a targeted kill.
+        (_, ExitClass::NonZero(129 | 130 | 143)) => false,
         (Watch::Failures, _) => true,
         (Watch::Signals, ExitClass::Signal { .. }) => true,
         (Watch::CrashSignals, ExitClass::Signal { signal, .. }) => !typed_in_a_terminal(signal),
@@ -860,6 +867,8 @@ pub(crate) struct CapturedFinding {
 #[derive(Default)]
 struct Captured {
     findings: Vec<CapturedFinding>,
+    /// The events emitted, with their kinds; event `n` has the id `00000000-<n>`.
+    events: Vec<(&'static str, Value)>,
     /// The pid and executable of each core dump harvest started.
     #[cfg(target_os = "linux")]
     harvests: Vec<(u32, String)>,
@@ -896,6 +905,11 @@ impl CapturedExits {
 
     pub(crate) fn take_findings(&self) -> Vec<CapturedFinding> {
         captured(|captured| std::mem::take(&mut captured.findings)).unwrap_or_default()
+    }
+
+    /// The events emitted so far; event `n` had the id `00000000-<n>`.
+    pub(crate) fn take_events(&self) -> Vec<(&'static str, Value)> {
+        captured(|captured| std::mem::take(&mut captured.events)).unwrap_or_default()
     }
 
     #[cfg(target_os = "linux")]
@@ -1053,6 +1067,15 @@ mod tests {
             }
         }
         assert!(counts(Watch::Failures, ExitClass::NonZero(1)));
+        // 128 + SIGHUP, SIGINT or SIGTERM: a process that caught the signal and exited with
+        // the shell's code for it, as node does after a targeted kill.
+        for deliberate in [129, 130, 143] {
+            assert!(
+                !counts(Watch::Failures, ExitClass::NonZero(deliberate)),
+                "{deliberate}"
+            );
+        }
+        assert!(counts(Watch::Failures, ExitClass::NonZero(137)));
         assert!(!counts(Watch::Signals, ExitClass::NonZero(1)));
         assert!(!counts(Watch::CrashSignals, ExitClass::NonZero(130)));
         for typed in [libc::SIGQUIT, libc::SIGKILL] {
@@ -1176,7 +1199,7 @@ mod tests {
             label: "claudeAgent",
             ..git(4_000_000_300)
         };
-        report_exit(Watch::Failures, &claude, &exited(143), false);
+        report_exit(Watch::Failures, &claude, &exited(1), false);
         assert_eq!(captured.take().len(), 1, "before the termination signal");
 
         note_terminating();
@@ -1230,6 +1253,18 @@ mod tests {
         assert!(findings[0].evidence.get("lastRssBytes").is_none());
     }
 
+    /// The finding cites the `subprocess.exit` event that reports the same death.
+    #[test]
+    fn a_crash_finding_cites_its_exit_event() {
+        let captured = CapturedExits::start();
+        report_exit(Watch::Signals, &git(4_000_000_320), &crashed(), false);
+        let findings = captured.take_findings();
+        let events = captured.take_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, "subprocess.exit");
+        assert_eq!(findings[0].evidence["eventIds"], json!(["00000000-0"]));
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn core_dumps_are_harvested_for_the_crashed_process() {
@@ -1242,7 +1277,14 @@ mod tests {
                 exe,
             }),
         );
-        report_webview_terminated("ExceededMemoryLimit", None);
+        // Killed for its memory use: a SIGKILL leaves no core dump to harvest.
+        report_webview_terminated(
+            "ExceededMemoryLimit",
+            Some(WebProcess {
+                pid: 4_000_000_403,
+                exe,
+            }),
+        );
         report_exit(Watch::Signals, &git(4_000_000_401), &crashed(), false);
         report_exit(
             Watch::Signals,

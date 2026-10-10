@@ -2536,6 +2536,36 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("never restores the stripped bytes through a binary Cargo re-linked", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let attempts = 0;
+      // A failed attempt during which Cargo re-linked its unstripped artifact over the binary.
+      const relinked = yield* symbolsBuild({
+        platform: "linux",
+        target: "deb",
+        bundleFile: "BiBCode_1.2.3_amd64.deb",
+        ...ELF,
+        onBundle: ({ binary, cached, attempt }) => {
+          attempts = attempt;
+          return fs.remove(binary).pipe(Effect.andThen(fs.link(cached, binary)), Effect.as(1));
+        },
+      });
+      assert.equal(relinked.result._tag, "Failure");
+      assert.include(
+        relinked.result._tag === "Failure"
+          ? String((relinked.result as unknown as { readonly failure: Error }).failure.message)
+          : "",
+        "changed or replaced",
+      );
+      assert.equal(attempts, 1, "no retry bundles a binary that is not the stripped file");
+      assert.isTrue(
+        Buffer.from(yield* fs.readFile(relinked.cached)).equals(ELF.unstripped),
+        "Cargo's cached artifact keeps its symbols",
+      );
+    }),
+  );
+
   it.effect("fails a symbols build whose bundles may not hold the stripped binary", () =>
     Effect.gen(function* () {
       const outputs = yield* bundlerOutputs;

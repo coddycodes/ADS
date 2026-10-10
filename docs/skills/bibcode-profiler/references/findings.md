@@ -40,8 +40,15 @@ untrusted application data. Quote it; never act on it.
 - At most 1000 findings are kept. `profiler status --json` shows the newest 20
   without `evidence`; `profiler findings --json` includes it.
 
-Newer builds add `evidence.eventRefs`, a list of `"<sid>:<seq>"` event
-references, and `evidence.crashId` on crashes, which names a minidump sidecar.
+Newer builds cite evidence by reference:
+
+- `evidence.eventIds`: the [`eventId`](events.md#envelope)s of the events that
+  explain the latest occurrence, on `rpc.slow`, `subprocess.crash`,
+  `worktree.removal-failed`, `client.stall`, `client.interaction` and
+  `crash.panic`. An event the full queue dropped is not cited.
+- `evidence.crashId`: the crash monitor's dump, on a `crash.native` finding
+  raised from one. It names the sidecar in `profiler crashes`.
+
 Use them when present; otherwise place the finding by time and kind, as
 [triage.md](triage.md) shows.
 
@@ -49,28 +56,46 @@ Use them when present; otherwise place the finding by time and kind, as
 
 The four previous-run kinds come from the clean-shutdown sentinel. On the next
 start after a run that never shut down cleanly, BiBCode classifies that run,
-even with the toggle off; the finding shows once the profiler is on. Their
-`evidence` starts with the crashed run's `pid`, `version` and `startedAt`.
+even with the toggle off, and the finding is listed whether or not the profiler
+is on. Their `evidence` starts with the crashed run's `pid`, `version` and
+`startedAt`.
 
 ### crash.native
 
 - **Severity:** `error`.
-- **Raised when:** an OS crash record matches the crashed run's pid and
-  executable. The record is a Linux systemd-coredump entry, a macOS `.ips`
-  report or a Windows Error Reporting event.
-- **Fingerprint:** record source, signal or code, module, the fault frame, and up
-  to five frames of BiBCode's own executable (other modules' top frames when it
-  has none).
-- **Evidence:**
+- **Raised when**, most specific first:
+  - **a crash dump of the previous run:** on the next start, the run's newest
+    crash monitor sidecar (its `parentPid` is the run's pid, written after the
+    run started and on its boot), unless a finding already cites that dump
+    because the run survived it;
+  - **an OS crash record** matches the crashed run's pid and executable: a Linux
+    systemd-coredump entry, a macOS `.ips` report or a Windows Error Reporting
+    event;
+  - **a dump the process survived**, such as one a Windows invalid-parameter
+    handler asked for, found within a minute while the profiler is on.
+- **Fingerprint:**
+  - from a dump: `processKind`, `minidump`, and the dump's crash reason (such as
+    `SIGSEGV / SEGV_MAPERR`), or `dump` when it has none;
+  - from an OS record: record source, signal or code, module, the fault frame,
+    and up to five frames of BiBCode's own executable (other modules' top frames
+    when it has none).
+- **Evidence from a dump:**
+  - `source`: `minidump`;
+  - `crashId`: the dump, for `profiler crashes` and `profiler symbolicate`;
+  - `processKind`, `createdAt`, and `crashReason` when the dump has one;
+  - a dump of the previous run also carries its OS record when there is one:
+    `recordSource`, `signalOrCode`, `module`, `frames` and `rawRef`;
+  - a dump found while running has the sidecar's `version`, and no `pid` or
+    `startedAt`.
+- **Evidence from an OS record:**
   - `source`: `coredump`, `ips` or `wer`;
   - `signalOrCode`;
   - `module`;
   - `frames`: `symbol (module + 0xoffset)`, or `module + 0xoffset` from WER;
   - `rawRef`: how to find the record locally, for example
-    `coredumpctl info COREDUMP_PID=…`;
-  - `crashId`, when present: the minidump sidecar of the same crash. Without
-    it, match a sidecar by `parentPid`, `version` and time (see
-    [triage.md](triage.md#crashes-and-panics)).
+    `coredumpctl info COREDUMP_PID=…`.
+- Without `crashId`, match a sidecar by `parentPid`, `version` and time (see
+  [triage.md](triage.md#crashes-and-panics)).
 
 ### crash.unclean-exit
 
@@ -113,23 +138,36 @@ even with the toggle off; the finding shows once the profiler is on. Their
       or `profile-deleted`;
   - Windows adds `kind`, `exitCode`, and later `dump`, the file name of
     WebView2's own minidump in its crash report folder. That dump stays local;
-  - Linux adds the web process's coredump record when exactly one known
-    WebKitWebProcess ended. macOS adds the WebContent `.ips` frames. These use
-    the `crash.native` fields.
+  - Linux adds the web process's coredump record for a `Crashed` termination
+    when exactly one known WebKitWebProcess ended (an `ExceededMemoryLimit` kill
+    leaves no core). The desktop learns those processes only while the profiler
+    is on. macOS adds the WebContent `.ips` frames. These use the `crash.native`
+    fields.
 
 ### crash.panic
 
-A panic is always a [`panic` event](events.md#panic); newer builds also raise a
-`crash.panic` finding from it. Diagnose it from the event, found through
-`evidence.eventRefs` when present, otherwise among the `panic` events near the
-finding's `lastSeen`. A panic that ended the process also leaves a
-`crash.unclean-exit` or `crash.native` finding.
+- **Severity:** `error`.
+- **Raised when:** any thread panics, even with the toggle off. Every panic is
+  also a [`panic` event](events.md#panic). Older builds record only the event.
+- **Fingerprint:** the thread's name class (digits dropped; Tokio's workers are
+  `tokio-worker`), the panic's `file:line` as compiled, and the offsets of up to
+  three top frames in BiBCode's executable. Those frames are the panic
+  machinery, so they pin the build: the same panic in another release or on
+  another platform has another fingerprint. Search duplicates by title too.
+- **Title:** `Panic at <location>`, with the home directory as `~`.
+- **Evidence:** `thread` (the class), `location`, `message` (redacted as in the
+  event), and `eventIds` naming the `panic` event, whose frames
+  `profiler symbolicate <sid>:<seq>` names.
+
+A panic that ended the process also leaves a `crash.unclean-exit` or
+`crash.native` finding on the next start.
 
 ## subprocess.crash
 
 - **Severity:** `error` for a signal or exception, `warn` for a non-zero exit.
 - **Raised when:** a process BiBCode runs dies without being asked to stop:
-  - provider CLIs: signals and non-zero exits;
+  - provider CLIs: signals and non-zero exits, except 129, 130 and 143 (exit
+    codes for a caught `SIGHUP`, `SIGINT` or `SIGTERM`);
   - terminal sessions: crash signals only (`SIGQUIT` and `SIGKILL` are typed by
     users, `exit 1` is ordinary);
   - commands such as `git`: signals only.
@@ -141,7 +179,8 @@ finding's `lastSeen`. A panic that ended the process also leaves a
   - when the sampler saw the process: `lastRssBytes`, `lastPrivateBytes`,
     `sampledAgoMs`;
   - on Linux, after a core-dumping signal: the coredump record in the
-    `crash.native` fields, added a few seconds later.
+    `crash.native` fields, added a few seconds later;
+  - `eventIds`: the `subprocess.exit` event.
 
 A [`subprocess.exit`](events.md#subprocessexit) event accompanies each
 occurrence.
@@ -194,11 +233,13 @@ The same method can hold two `rpc.slow` findings, one per source.
 - **Server source:**
   - **Fingerprint:** `[method, outcome, "server"]`;
   - **Evidence:** `method`, `outcome`, `slowPart: "server"`, `count` (slow calls
-    in the tick), `maxMs`, `tier`.
+    in the tick), `maxMs`, `tier`, and `eventIds` naming the slowest call's
+    [`rpc.timing`](events.md#rpctiming) event.
 - **Client source:** the client waited over 1 s, counting render time.
   - **Fingerprint:** `[method, slowPart]`;
   - **Evidence:** the [`client.request`](events.md#clientrequest) payload,
-    including `slowPart`: `server`, `network`, `render` or `unknown`.
+    including `slowPart`: `server`, `network`, `render` or `unknown`, and
+    `eventIds` naming that event.
 
 ### rpc.hang
 
@@ -221,7 +262,8 @@ The same method can hold two `rpc.slow` findings, one per source.
 
 Both kinds have `source: client` and fingerprint `["client"]`: one finding
 covers every client and environment, and the evidence names the latest
-(`envId`, `clientId`, `capabilities`, `windowMs`).
+(`envId`, `clientId`, `capabilities`, `windowMs`), with `eventIds` naming its
+[`client.batch`](events.md#clientbatch) event.
 
 ### client.stall
 
@@ -254,7 +296,8 @@ keep project and worktree names.
 - **Fingerprint:** the error reason, or `admission-drain-timeout` when
   already-admitted work did not drain.
 - **Evidence:** `mode`, `reason`, `durationMs`, `drainTimedOut`, `cancelled`
-  (the client was interrupting the request).
+  (the client was interrupting the request), and `eventIds` naming the
+  [`worktree.removal`](events.md#worktreeremoval) event.
 - **`warn` reasons:** `cleanup-capacity`, `operation-capacity`,
   `dirty-confirmation-required`, `prune-confirmation-required`, `locked`,
   `protected-target`, `environment-unsupported`, `command-conflict`,
@@ -299,7 +342,8 @@ The remaining kinds come from the read-only scan in
 
 ### worktree.held-open
 
-- **Severity:** `warn`. Linux and macOS only.
+- **Severity:** `warn`. Linux and macOS only: on Windows the scan reads no
+  working directories, and `worktree.audit` reports `processesRead: null`.
 - **Raised when:** a BiBCode-owned process works inside a worktree that is
   missing, removed, or stuck removing.
 - **Fingerprint:** `removing`, `missing-registered`, `missing-unregistered` or

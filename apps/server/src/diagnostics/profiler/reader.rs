@@ -21,6 +21,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use super::{
     findings::{Finding, FindingsBook},
+    persisted_enabled,
     store::{self, CRASHES_DIR, FINDINGS_FILE, event_file_index},
 };
 
@@ -31,7 +32,6 @@ pub const MAX_FOLLOW: Duration = Duration::from_secs(600);
 const FOLLOW_POLL: Duration = Duration::from_millis(500);
 const STATUS_FINDINGS: usize = 20;
 const CAPABILITIES_FILE: &str = "capabilities.json";
-const SETTINGS_FILE: &str = "settings.json";
 const DROPPED_KIND: &str = "telemetry.dropped";
 /// A crash sidecar is a small summary; anything bigger is not read.
 const MAX_SIDECAR_BYTES: u64 = 1024 * 1024;
@@ -53,6 +53,8 @@ pub(super) struct StatusLive {
     pub dropped_events: u64,
     /// Failing writes, a degraded runtime, or findings on disk that could not be loaded.
     pub storage_failing: bool,
+    /// Another process holds the directory, so this runtime records nothing. Outranks failing.
+    pub storage_locked: bool,
     pub last_crash_at: Option<String>,
     /// Newest first.
     pub findings: Vec<Finding>,
@@ -78,13 +80,25 @@ pub(super) fn status_json(dir: &Path, live: StatusLive) -> Value {
         "eventCount": live.event_count,
         "droppedEvents": live.dropped_events,
         "lastCrashAt": live.last_crash_at,
-        "capabilities": capabilities(dir, live.storage_failing),
+        "capabilities": capabilities(dir, storage_state(&live)),
         "findings": live.findings.iter().map(Finding::to_wire).collect::<Vec<_>>(),
     })
 }
 
+/// `locked` when another process records to the directory, then `failing` or `ok`. A reader
+/// takes no lock, so it never reports `locked`: a live server holding it is the normal case.
+fn storage_state(live: &StatusLive) -> &'static str {
+    if live.storage_locked {
+        "locked"
+    } else if live.storage_failing {
+        "failing"
+    } else {
+        "ok"
+    }
+}
+
 /// Native capture states come from `capabilities.json` when it holds contract values.
-fn capabilities(dir: &Path, storage_failing: bool) -> Value {
+fn capabilities(dir: &Path, storage: &str) -> Value {
     let recorded: Value = fs::read(dir.join(CAPABILITIES_FILE))
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
@@ -96,10 +110,11 @@ fn capabilities(dir: &Path, storage_failing: bool) -> Value {
     json!({
         "nativeDumps": state("nativeDumps"),
         "osCrashRecords": state("osCrashRecords"),
-        "storage": if storage_failing { "failing" } else { "ok" },
+        "storage": storage,
     })
 }
 
+#[derive(Clone)]
 pub struct Reader {
     dir: PathBuf,
 }
@@ -115,6 +130,21 @@ impl Reader {
     /// event counts are what the event files hold (best effort).
     pub fn status(&self) -> Value {
         let (event_count, dropped_events) = self.count_events();
+        self.status_with_counts(event_count, dropped_events)
+    }
+
+    /// [`status`](Self::status) without `eventCount` and `droppedEvents`: counting them reads
+    /// every event file, up to 256 MB, which a caller that asks often must not pay each time.
+    pub fn status_without_counts(&self) -> Value {
+        let mut status = self.status_with_counts(0, 0);
+        if let Some(fields) = status.as_object_mut() {
+            fields.remove("eventCount");
+            fields.remove("droppedEvents");
+        }
+        status
+    }
+
+    fn status_with_counts(&self, event_count: u64, dropped_events: u64) -> Value {
         let book = FindingsBook::read_only(&self.dir);
         status_json(
             &self.dir,
@@ -181,6 +211,31 @@ impl Reader {
         newest.into()
     }
 
+    /// The event `<sid>:<seq>`, wherever the retained files hold it: no listing limit applies.
+    pub fn event(&self, sid: &str, seq: u64) -> Option<Value> {
+        let wanted = Some((sid.to_owned(), seq));
+        for (_, path) in self.event_files() {
+            let Ok(file) = File::open(&path) else {
+                continue;
+            };
+            let mut found = None;
+            for_each_line(BufReader::new(file), |line| {
+                // The substring test keeps the other lines from being parsed.
+                if found.is_none()
+                    && std::str::from_utf8(line).is_ok_and(|text| text.contains(sid))
+                    && let Some(event) = parse_object(line)
+                    && stamp(&event) == wanted
+                {
+                    found = Some(event);
+                }
+            });
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+
     /// The newest `limit` crash sidecars (`crashes/*.json`), newest first. Their shape belongs
     /// to the crash writer, so each is returned as found, with `id` (the file stem) added when
     /// it has none.
@@ -200,6 +255,34 @@ impl Reader {
             .filter_map(|(_, path)| read_sidecar(&path))
             .take(limit.min(max_limit()))
             .collect()
+    }
+
+    /// The crash record `id`, as [`crashes`](Self::crashes) names it, and the path of its dump
+    /// unless that is gone. `None` when `id` is not a plain file stem or names no regular file;
+    /// like the listing, this never follows a link.
+    pub fn crash(&self, id: &str) -> Option<(Value, Option<PathBuf>)> {
+        let plain = !id.is_empty()
+            && id.len() <= 128
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
+        if !plain {
+            return None;
+        }
+        let regular = |path: &Path| fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file());
+        let crashes = self.dir.join(CRASHES_DIR);
+        let sidecar = crashes.join(format!("{id}.json"));
+        if !regular(&sidecar) {
+            return None;
+        }
+        let dump = crashes.join(format!("{id}.dmp"));
+        Some((read_sidecar(&sidecar)?, regular(&dump).then_some(dump)))
+    }
+
+    /// Where downloaded release symbols are kept: beside the profiler directory, so retention
+    /// and the diagnostics bundle never count or carry them.
+    pub fn symbol_cache(&self) -> PathBuf {
+        self.dir.with_file_name("profiler-symbols")
     }
 
     /// Calls `emit` with every matching event written from now on, for `duration` (at most
@@ -279,12 +362,7 @@ impl Reader {
 
     /// The persisted `enableProfiler` setting, which sits beside the profiler directory.
     fn enabled(&self) -> bool {
-        self.dir
-            .parent()
-            .and_then(|state| fs::read(state.join(SETTINGS_FILE)).ok())
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            .and_then(|settings| settings.get("enableProfiler")?.as_bool())
-            .unwrap_or(false)
+        self.dir.parent().is_some_and(persisted_enabled)
     }
 
     /// `(events, dropped)` from the lines the event files hold: the sum of `telemetry.dropped`
@@ -675,6 +753,39 @@ mod tests {
         assert!(reader.events(None, None, 0).is_empty());
     }
 
+    /// One event by its session and sequence, even behind more newer matches than a listing
+    /// returns.
+    #[test]
+    fn event_finds_one_record_by_session_and_sequence_anywhere() {
+        let state = tempfile::tempdir().unwrap();
+        let dir = profiler_dir(state.path());
+        let at = "2026-10-09T10:00:00Z";
+        write_lines(
+            &dir.join("events-000000.ndjson"),
+            &[
+                event_line("aaaa", 6, "panic", at),
+                event_line("aaaa", 7, "panic", at),
+            ],
+        );
+        let newer: Vec<String> = (0..=u64::from(MAX_LIMIT))
+            .map(|seq| event_line("bbbb", seq, "panic", at))
+            .collect();
+        write_lines(&dir.join("events-000001.ndjson"), &newer);
+        let reader = Reader::new(&dir);
+
+        assert_eq!(reader.event("aaaa", 7).unwrap()["seq"], 7);
+        assert_eq!(reader.event("bbbb", 3).unwrap()["sid"], "bbbb");
+        assert!(reader.event("aaaa", 8).is_none());
+        assert!(reader.event("cccc", 7).is_none());
+        // A listing keeps only the newest `MAX_LIMIT`, so it cannot reach the first file.
+        assert!(
+            reader
+                .events(None, Some("panic"), usize::MAX)
+                .iter()
+                .all(|event| event["sid"] == "bbbb")
+        );
+    }
+
     #[test]
     fn a_missing_directory_reads_as_empty_and_is_not_created() {
         let state = tempfile::tempdir().unwrap();
@@ -774,6 +885,32 @@ mod tests {
 
         fs::write(state.path().join("settings.json"), "not json").unwrap();
         assert_eq!(Reader::new(&dir).status()["enabled"], false);
+    }
+
+    #[test]
+    fn a_crash_record_is_found_by_its_plain_id_with_its_dump_when_there_is_one() {
+        let state = tempfile::tempdir().unwrap();
+        let crashes = profiler_dir(state.path()).join("crashes");
+        fs::create_dir_all(&crashes).unwrap();
+        for id in ["with-dump", "no-dump", "linked"] {
+            fs::write(crashes.join(format!("{id}.json")), r#"{"os":"linux"}"#).unwrap();
+        }
+        fs::write(crashes.join("with-dump.dmp"), "MDMP").unwrap();
+        let reader = Reader::new(state.path().join("profiler"));
+
+        let (crash, dump) = reader.crash("with-dump").unwrap();
+        assert_eq!(crash["id"], "with-dump");
+        assert_eq!(dump, Some(crashes.join("with-dump.dmp")));
+        assert_eq!(reader.crash("no-dump").unwrap().1, None);
+        for id in ["", "../crashes/with-dump", "with-dump.dmp", "missing"] {
+            assert!(reader.crash(id).is_none(), "{id}");
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(crashes.join("with-dump.dmp"), crashes.join("linked.dmp"))
+                .unwrap();
+            assert_eq!(reader.crash("linked").unwrap().1, None, "a linked dump");
+        }
     }
 
     #[test]

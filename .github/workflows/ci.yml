@@ -354,12 +354,14 @@ jobs:
             Windows) symbols=(--binary target/release/crash-smoke.exe --module-name crash-smoke.exe --pdb target/release/crash_smoke.pdb) ;;
           esac
           node scripts/dump-symbols.ts "${symbols[@]}" --out "$out/symbols"
-          dumps=("$out"/crashes/*.dmp)
+          # The smoke test uses CRASH_SMOKE_OUT as a data root, as `bibcode profiler` reads one.
+          dumps=("$out"/userdata/profiler/crashes/*.dmp)
           if (( ${#dumps[@]} != 1 )); then
-            printf 'Expected one minidump in %s/crashes, found %s.\n' "$out" "${#dumps[@]}" >&2
+            printf 'Expected one minidump in %s/userdata/profiler/crashes, found %s.\n' "$out" "${#dumps[@]}" >&2
             exit 1
           fi
-          # Task 15 can swap minidump-stackwalk for `bibcode profiler symbolicate`.
+          # The test already ran `bibcode profiler symbolicate` on this dump; minidump-stackwalk
+          # also reports each frame's trust, which proves the CFI unwind below.
           minidump-stackwalk --json "${dumps[0]}" "$out/symbols" > "$out/stackwalk.json"
           grep -q crash_here_in_named_function "$out/stackwalk.json"
           # The caller must be found through the STACK CFI records, not only named.
