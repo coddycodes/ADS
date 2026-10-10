@@ -63,6 +63,7 @@ pub use config::{
 pub use data_root::{
     DataRootError, DataRootRequest, DataRootSource, ResolvedDataRoot, resolve_data_root,
 };
+pub use diagnostics::profiler::cli::{ProfilerArgs, run_profiler_cli};
 pub use http::{
     DESKTOP_SHUTDOWN_PATH, DESKTOP_SHUTDOWN_TOKEN_HEADER, ENVIRONMENT_DESCRIPTOR_PATH,
     ROUTE_INVENTORY, RouteMethod, RouteSpec,
@@ -123,6 +124,16 @@ pub async fn run_cli() -> Result<(), RunError> {
             0 => Ok(()),
             code => std::process::exit(code),
         },
+        // Blocking file I/O, and `--follow` sleeps between polls.
+        CliAction::Profiler { args, state_dir } => {
+            match tokio::task::spawn_blocking(move || run_profiler_cli(args, state_dir))
+                .await
+                .unwrap_or(1)
+            {
+                0 => Ok(()),
+                code => std::process::exit(code),
+            }
+        }
     }
 }
 

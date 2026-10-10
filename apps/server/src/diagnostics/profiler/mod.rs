@@ -1,3 +1,4 @@
+pub mod cli;
 pub mod client;
 pub mod crash;
 pub mod event;
@@ -7,6 +8,7 @@ pub mod latency;
 pub mod leak;
 pub mod os_records;
 pub mod panic_hook;
+pub mod reader;
 pub mod redact;
 pub mod runtime;
 pub mod sampler;

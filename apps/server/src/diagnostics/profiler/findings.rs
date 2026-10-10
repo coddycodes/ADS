@@ -130,6 +130,26 @@ impl FindingsBook {
     /// place for the next start, and so does a read error. Call it before the store's writer
     /// starts, so nothing appends while the file is replaced.
     pub fn load_at(dir: &Path, now: OffsetDateTime) -> Self {
+        let mut book = Self::read(dir);
+        if let Some(lines) = book.compacted_lines(now)
+            && let Err(error) = replace_findings_file(dir, &lines)
+        {
+            tracing::warn!(%error, "profiler findings file was not compacted");
+        }
+        book
+    }
+
+    /// What `load` holds in memory, for a reader that must not write: the file is replayed and
+    /// compacted in the book only, never rewritten, and a missing file is an empty book.
+    pub fn read_only(dir: &Path) -> Self {
+        let mut book = Self::read(dir);
+        let _ = book.compacted_lines(OffsetDateTime::now_utc());
+        book
+    }
+
+    /// Replays `findings.ndjson` without changing it: the last line per id wins, and
+    /// unreadable lines are skipped.
+    fn read(dir: &Path) -> Self {
         let path = dir.join(FINDINGS_FILE);
         let file = match File::open(&path) {
             Ok(file) => file,
@@ -165,17 +185,11 @@ impl FindingsBook {
             .iter()
             .filter_map(|(id, finding)| Some((id.clone(), parse_last_seen(finding)?)))
             .collect();
-        let mut book = Self {
+        Self {
             by_id,
             persisted_at,
             partial: !read_to_end,
-        };
-        if let Some(lines) = book.compacted_lines(now)
-            && let Err(error) = replace_findings_file(dir, &lines)
-        {
-            tracing::warn!(%error, "profiler findings file was not compacted");
         }
-        book
     }
 
     /// Compacts the book as `load` does (resolved findings older than 7 days dropped, the

@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use time::OffsetDateTime;
 use tokio::{
     sync::watch,
@@ -23,10 +23,11 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     ProfilerHandle,
-    findings::{Finding, FindingsBook},
+    findings::FindingsBook,
     install, os_records,
     panic_hook::install_panic_hook,
     profiler_dir,
+    reader::{StatusLive, status_json},
     sentinel::{self, SessionRecord},
     store::{self, ProfilerStore, StoreConfig, StoreStats},
     uninstall,
@@ -35,12 +36,10 @@ use super::{
 /// How often retention and findings compaction run while the profiler is on. Otherwise they
 /// run only when an events file rotates or the runtime starts.
 const MAINTENANCE_EVERY: Duration = Duration::from_secs(3600);
-const STATUS_FINDINGS: usize = 20;
 const LOCK_FILE: &str = ".lock";
 /// A runtime restarted in-process may find its predecessor still releasing the lock.
 const LOCK_ATTEMPTS: u32 = 10;
 const LOCK_RETRY_DELAY: Duration = Duration::from_millis(50);
-const CAPABILITIES_FILE: &str = "capabilities.json";
 /// Set by the first runtime that takes a directory in this process. A `running` record with
 /// this process's pid is then an earlier runtime that stopped without marking its session
 /// clean (an in-process restart after a failed start), not a crashed run.
@@ -160,34 +159,20 @@ impl ProfilerRuntime {
         let stats = lock(&self.parts)
             .as_ref()
             .map_or_else(StoreStats::default, |parts| parts.store.stats());
-        // Degraded, failing writes, or findings on disk that could not be loaded.
-        let mut storage_failing = self.handle.is_none() || stats.failing;
-        let (enabled, recording_since, last_crash_at, findings) = match &self.handle {
-            Some(handle) => {
-                let book = lock(&handle.findings);
-                storage_failing |= book.is_partial();
-                (
-                    handle.enabled.load(Ordering::Relaxed),
-                    lock(&handle.recording_since).clone(),
-                    book.last_crash_at(),
-                    book.newest(STATUS_FINDINGS)
-                        .iter()
-                        .map(Finding::to_wire)
-                        .collect(),
-                )
-            }
-            None => (false, None, None, Vec::new()),
+        let mut live = StatusLive {
+            // Degraded, or failing writes.
+            storage_failing: self.handle.is_none() || stats.failing,
+            event_count: stats.written,
+            dropped_events: stats.dropped,
+            ..StatusLive::default()
         };
-        json!({
-            "enabled": enabled,
-            "recordingSince": recording_since,
-            "diskBytes": store::disk_bytes(&self.dir),
-            "eventCount": stats.written,
-            "droppedEvents": stats.dropped,
-            "lastCrashAt": last_crash_at,
-            "capabilities": capabilities(&self.dir, storage_failing),
-            "findings": findings,
-        })
+        if let Some(handle) = &self.handle {
+            live.enabled = handle.enabled.load(Ordering::Relaxed);
+            live.recording_since = lock(&handle.recording_since).clone();
+            live = live.with_findings(&lock(&handle.findings));
+        }
+        // After the findings lock is released: this reads the directory.
+        status_json(&self.dir, live)
     }
 
     /// The orderly end of a run: `shutdown`, with the session marked clean as teardown's last
@@ -386,23 +371,6 @@ fn maintain(handle: &ProfilerHandle) {
     }
     drop(book);
     handle.sender.maintain();
-}
-
-/// Native capture states come from `capabilities.json` when it holds contract values.
-fn capabilities(dir: &Path, storage_failing: bool) -> Value {
-    let recorded: Value = std::fs::read(dir.join(CAPABILITIES_FILE))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or(Value::Null);
-    let state = |key: &str| match recorded.get(key).and_then(Value::as_str) {
-        Some(value @ ("available" | "unavailable" | "disabled")) => value.to_owned(),
-        _ => "unavailable".to_owned(),
-    };
-    json!({
-        "nativeDumps": state("nativeDumps"),
-        "osCrashRecords": state("osCrashRecords"),
-        "storage": if storage_failing { "failing" } else { "ok" },
-    })
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
