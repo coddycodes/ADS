@@ -42,6 +42,7 @@ const s = vi.hoisted(() => ({
   hostedStatic: false,
   buttonClicks: [] as Array<() => void>,
   showRemoteDeviceControls: true,
+  collectorRuns: 0,
 }));
 
 // ── React hook instrumentation ───────────────────────────────────────
@@ -169,6 +170,15 @@ vi.mock("../uiStateStore", () => ({
         s.setProjectExpandedCalls.push({ key, expanded });
       },
     }),
+  },
+}));
+
+vi.mock("../profiler/startClientCollector", () => ({
+  startClientCollector: () => {
+    s.collectorRuns += 1;
+    return () => {
+      s.collectorRuns -= 1;
+    };
   },
 }));
 
@@ -306,6 +316,7 @@ interface RafWindow {
 let reloadCalls = 0;
 
 beforeEach(() => {
+  s.collectorRuns = 0;
   s.routeContext = { authGateState: { status: "authenticated" } };
   s.pathname = "/";
   s.navigateCalls.length = 0;
@@ -491,6 +502,7 @@ describe("RootRouteView", () => {
 
     const cleanups = runEffects();
     expect(s.syncThemeCalls).toBe(1);
+    expect(s.collectorRuns).toBe(0);
     for (const cleanup of cleanups) cleanup();
   });
 
@@ -512,7 +524,10 @@ describe("RootRouteView", () => {
     expect(markup).not.toContain('data-mock="slow-requests-status-bar"');
     expect(markup).toContain('data-mock="relay-install"');
     expect(markup).toContain('data-mock="provider-update"');
-    runEffects();
+    const cleanups = runEffects();
+    expect(s.collectorRuns).toBe(1);
+    for (const cleanup of cleanups) cleanup();
+    expect(s.collectorRuns).toBe(0);
   });
 
   it("mounts the relay installer in the browser but not the authenticated desktop shell", () => {

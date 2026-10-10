@@ -1,9 +1,14 @@
+pub mod client;
 pub mod event;
 pub mod findings;
+pub mod latency;
 pub mod leak;
+pub mod os_records;
+pub mod panic_hook;
 pub mod redact;
 pub mod runtime;
 pub mod sampler;
+pub mod sentinel;
 pub mod store;
 pub mod worktree_audit;
 
@@ -64,8 +69,13 @@ fn enabled_handle() -> Option<Arc<ProfilerHandle>> {
     global().filter(|handle| handle.enabled.load(Ordering::Relaxed))
 }
 
+/// Every RPC checks this, so it borrows the handle rather than cloning the `Arc`.
 pub fn is_enabled() -> bool {
-    enabled_handle().is_some()
+    HANDLE
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+        .is_some_and(|handle| handle.enabled.load(Ordering::Relaxed))
 }
 
 /// Queues one server event. Does nothing while the profiler is off; never blocks.

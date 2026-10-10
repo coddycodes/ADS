@@ -27,6 +27,7 @@ use crate::{
         DesktopUiProcessObserver, DiagnosticsMonitor, NativeProcessSampler, NativeResourceSampler,
         ProcessAttributionRegistry, TraceDiagnosticsStore, bound_diagnostic_string,
         profiler::{
+            latency::LatencyDetector,
             profiler_dir,
             runtime::{Detector, ProfilerRuntime},
             sampler::SamplerDetector,
@@ -228,6 +229,7 @@ impl ProductionRuntime {
         let worktree_audit_sources = Arc::new(OnceLock::new());
         let profiler_detectors: Vec<Box<dyn Detector>> = vec![
             Box::new(SamplerDetector::new(process_attribution.clone())),
+            Box::new(LatencyDetector),
             Box::new(WorktreeAuditDetector::new(
                 worktree_audit_sources.clone(),
                 process_attribution.clone(),
@@ -478,7 +480,8 @@ impl ProductionRuntime {
             process_tree_cleanup,
         )
         .with_workspace_admission(workspace_availability.clone(), repositories.clone())
-        .with_profiler(&profiler);
+        .with_profiler(&profiler)
+        .with_environment_id(&config.environment_id);
         let worktree_runtime = WorktreeRuntime::start(
             orchestration.clone(),
             provider_runtime.clone(),
@@ -729,7 +732,6 @@ impl ProductionRuntime {
         self.managed_endpoint.shutdown().await;
         self.workspace.shutdown().await;
         self.status_broadcaster.shutdown().await;
-        self.profiler.shutdown().await;
         self.worktree_catalog_operations.shutdown().await;
         self._worktree_catalog.shutdown().await;
         self.worktree_runtime.shutdown().await;
@@ -758,6 +760,9 @@ impl ProductionRuntime {
             }
         }
         self.orchestration.shutdown().await;
+        // Last, so the events and panics of every other service's shutdown are recorded, and a
+        // crash anywhere in the shutdown still reads as an unclean exit on the next start.
+        self.profiler.end_session().await;
         *quiesced = true;
         match first_error {
             Some(error) => Err(error),

@@ -13,8 +13,9 @@ use std::{
 use bibcode_server::diagnostics::{
     ProcessAttributionRegistry,
     profiler::{
-        self,
+        self, client,
         findings::{FindingInput, Severity},
+        latency,
         runtime::{Detector, ProfilerRuntime},
         sampler::SamplerDetector,
     },
@@ -81,6 +82,7 @@ async fn profiler_runtime_scenarios_share_the_process_global_handle_in_sequence(
     a_failed_startup_compaction_reports_failing_storage().await;
     the_sampler_records_the_server_process().await;
     turning_the_profiler_off_writes_the_open_minute().await;
+    a_client_batch_is_joined_to_the_server_timing().await;
 }
 
 async fn rapid_toggles_never_run_two_detector_sets() {
@@ -300,6 +302,97 @@ async fn first_process_sample(
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(&line).ok())
         .find(|line| line["kind"] == "process.sample")
         .expect("a process.sample event was written")
+}
+
+/// While the profiler is on, a client record is joined to the server's timing by its
+/// correlation ID, its events name the client, and a batch over the limits changes nothing.
+async fn a_client_batch_is_joined_to_the_server_timing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_tx, rx) = watch::channel(true);
+    let runtime = ProfilerRuntime::start(dir.path(), rx, vec![]);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let events_before = runtime.status()["eventCount"].as_u64().unwrap();
+    latency::global_latency().observe("server.getConfig", "success", 900.0, 0.0, Some("c1:7"));
+    let record = serde_json::json!({
+        "correlationId": "c1:7",
+        "method": "server.getConfig",
+        "rttMs": 1_500.0,
+        "renderMs": 50.0,
+        "startedAtMs": 10.0,
+    });
+    let batch = |records: Vec<serde_json::Value>| {
+        serde_json::json!({
+            "clientId": "c1",
+            "capabilities": ["heartbeat"],
+            "windowMs": 10_000,
+            "records": records,
+            "histograms": [],
+            "stalls": { "count": 0, "totalMs": 0, "maxMs": 0 },
+            "interactions": { "count": 0, "maxMs": 0 },
+            "jsHeapBytes": null,
+        })
+    };
+
+    let accepted = client::ingest_client_batch(batch(vec![record.clone()]), "env-1");
+    assert_eq!(accepted, Ok(serde_json::json!({ "accepted": true })));
+    let findings = runtime.status()["findings"].clone();
+    let slow = findings
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| finding["kind"] == "rpc.slow" && finding["source"] == "client")
+        .expect("a client rpc.slow finding");
+    assert!(
+        slow["summary"]
+            .as_str()
+            .unwrap()
+            .contains("server 900 ms · network 600 ms · render 50 ms"),
+        "{slow}"
+    );
+
+    let rejected = client::ingest_client_batch(batch(vec![record; 65]), "env-1");
+    assert_eq!(rejected.unwrap_err()["_tag"], "ProfilerClientBatchTooLarge");
+    assert_eq!(
+        runtime.status()["findings"],
+        findings,
+        "nothing was recorded"
+    );
+
+    // The request event, the batch event and the finding's cross-reference.
+    for _ in 0..200 {
+        if runtime.status()["eventCount"].as_u64() >= Some(events_before + 3) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    runtime.shutdown().await;
+    let lines: Vec<serde_json::Value> = std::fs::read_dir(profiler::profiler_dir(dir.path()))
+        .unwrap()
+        .filter_map(|entry| std::fs::read_to_string(entry.unwrap().path()).ok())
+        .flat_map(|text| text.lines().map(str::to_owned).collect::<Vec<_>>())
+        .filter_map(|line| serde_json::from_str(&line).ok())
+        .collect();
+    let client_events: Vec<&serde_json::Value> = lines
+        .iter()
+        .filter(|line| line["source"] == "client:c1")
+        .collect();
+    assert_eq!(
+        client_events.len(),
+        2,
+        "one request and one batch event, none from the rejected batch"
+    );
+    assert!(
+        client_events
+            .iter()
+            .any(|line| line["kind"] == "client.request"
+                && line["serverMs"] == 900.0
+                && line["joinedBy"] == "correlationId")
+    );
+    assert!(
+        client_events
+            .iter()
+            .any(|line| line["kind"] == "client.batch")
+    );
 }
 
 /// This process's entry, with the fields every entry carries.

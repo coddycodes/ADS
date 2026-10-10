@@ -35,6 +35,8 @@ import {
 } from "../logicalProject";
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
+import { startClientCollector } from "../profiler/startClientCollector";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { shellEnvironment } from "../state/shell";
@@ -147,6 +149,7 @@ function RootRouteView() {
         {presentation.showRemoteDeviceControls ? <SshPasswordPromptDialog /> : null}
         <DesktopDeepLinkRouter />
         <HostedStaticEnvironmentBootstrap />
+        <ProfilerClientCollector />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}
@@ -169,6 +172,12 @@ function DocumentTitleSync() {
     document.title = title;
   }, [title]);
 
+  return null;
+}
+
+/** Measures client responsiveness for every environment whose profiler is on. */
+function ProfilerClientCollector() {
+  useEffect(() => startClientCollector(appAtomRegistry), []);
   return null;
 }
 
