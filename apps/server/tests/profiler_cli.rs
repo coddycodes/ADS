@@ -1,6 +1,11 @@
 //! `bibcode profiler` reads the profiler directory with no server running.
 
-use std::{fs, path::Path, process::Command};
+use std::{
+    fs,
+    io::Write,
+    path::Path,
+    process::{Command, Stdio},
+};
 
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -138,7 +143,7 @@ fn output_carries_nothing_that_drives_or_misleads_a_terminal() {
 }
 
 #[test]
-fn misuse_fails_with_a_hint_and_unshipped_commands_stay_hidden() {
+fn misuse_fails_with_a_hint_and_help_lists_every_command() {
     let root = seeded_root();
 
     for (args, hint) in [
@@ -151,7 +156,8 @@ fn misuse_fails_with_a_hint_and_unshipped_commands_stay_hidden() {
             &["events", "--follow", "--duration", "11m"][..],
             "at most 10m",
         ),
-        (&["mcp"][..], "not available yet"),
+        (&["symbolicate", "aaaa1111:x"][..], "<sid>:<seq>"),
+        (&["symbolicate", "no-such-crash"][..], "no crash record"),
     ] {
         let output = bibcode(root.path(), args);
         assert!(!output.status.success(), "{args:?}");
@@ -162,5 +168,127 @@ fn misuse_fails_with_a_hint_and_unshipped_commands_stay_hidden() {
     let help = bibcode(root.path(), &["--help"]);
     assert!(help.status.success());
     let help = String::from_utf8_lossy(&help.stdout);
-    assert!(help.contains("findings") && !help.contains("symbolicate") && !help.contains("mcp"));
+    assert!(help.contains("findings") && help.contains("symbolicate") && help.contains("mcp"));
+}
+
+/// The `.sym` of a module `bibcode` whose `my_fn` covers 0x1000 to 0x1020, all line 42.
+const SYM: &str =
+    "MODULE linux x86_64 ABC123 bibcode\nFILE 0 src/lib.rs\nFUNC 1000 20 0 my_fn\n1000 20 42 0\n";
+
+/// A data root whose events hold one panic in `my_fn`, and a symbol store beside it.
+fn panic_root() -> TempDir {
+    let root = seeded_root();
+    let panic = json!({
+        "v": 1, "seq": 3, "sid": "aaaa1111", "ts": "2020-01-01T10:00:02Z", "kind": "panic",
+        "source": "server", "thread": "main", "message": "boom", "location": "src/lib.rs:42",
+        "frames": [
+            { "module": "bibcode", "debugId": "ABC123", "offset": 0x1010 },
+            { "module": "libc.so.6", "debugId": null, "offset": 0x29d90 },
+        ],
+    });
+    fs::write(
+        root.path().join("userdata/profiler/events-000001.ndjson"),
+        format!("{panic}\n"),
+    )
+    .expect("panic event");
+    let store = root.path().join("symbols/bibcode/ABC123");
+    fs::create_dir_all(&store).expect("symbol store");
+    fs::write(store.join("bibcode.sym"), SYM).expect("sym file");
+    root
+}
+
+#[test]
+fn symbolicate_names_a_panic_from_a_symbol_store() {
+    let root = panic_root();
+    let store = root.path().join("symbols");
+    let store = store.to_str().expect("UTF-8 path");
+
+    let named = json_stdout(&bibcode(
+        root.path(),
+        &["symbolicate", "aaaa1111:3", "--symbols", store, "--json"],
+    ));
+    assert_eq!(
+        named["frames"][0],
+        json!({
+            "module": "bibcode", "offset": 0x1010, "function": "my_fn",
+            "file": "src/lib.rs", "line": 42,
+        })
+    );
+    assert!(named["frames"][1]["function"].is_null());
+
+    let human = bibcode(
+        root.path(),
+        &["symbolicate", "aaaa1111:3", "--symbols", store],
+    );
+    assert!(human.status.success());
+    let human = String::from_utf8(human.stdout).expect("UTF-8");
+    assert_eq!(
+        human,
+        "Panic on thread main: boom at src/lib.rs:42\n  0 bibcode!my_fn [src/lib.rs:42]\n  1 libc.so.6+0x29d90\n"
+    );
+    // Without symbols nothing is named, nothing is downloaded and nothing is written.
+    let unnamed = bibcode(root.path(), &["symbolicate", "aaaa1111:3"]);
+    assert!(unnamed.status.success());
+    assert!(String::from_utf8_lossy(&unnamed.stdout).contains("No symbols named these frames"));
+    assert!(!root.path().join("userdata/profiler-symbols").exists());
+}
+
+/// What an MCP client sees: one JSON-RPC response per request line on stdout, nothing else,
+/// and a clean exit when its input closes.
+#[test]
+fn mcp_answers_over_stdio_until_its_input_closes() {
+    let root = panic_root();
+    let mut server = Command::new(env!("CARGO_BIN_EXE_bibcode"))
+        .args(["profiler", "mcp", "--base-dir"])
+        .arg(root.path())
+        .env_remove("VITE_DEV_SERVER_URL")
+        .env_remove("BIBCODE_HOME")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start bibcode profiler mcp");
+    let requests = [
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": { "name": "test", "version": "1" } } }),
+        json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+        json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }),
+        json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "profiler_findings", "arguments": { "limit": 1 } } }),
+        json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": { "name": "profiler_symbolicate", "arguments": { "panicSeq": "aaaa1111:3", "symbolsDir": root.path().join("symbols") } } }),
+    ];
+    {
+        let mut input = server.stdin.take().expect("stdin");
+        for request in &requests {
+            writeln!(input, "{request}").expect("write a request");
+        }
+    }
+
+    let output = server.wait_with_output().expect("bibcode profiler mcp");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let responses: Vec<Value> = String::from_utf8(output.stdout)
+        .expect("UTF-8")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("each stdout line is one JSON-RPC message"))
+        .collect();
+    let ids: Vec<&Value> = responses.iter().map(|response| &response["id"]).collect();
+    assert_eq!(ids, [&json!(1), &json!(2), &json!(3), &json!(4)]);
+    assert_eq!(
+        responses[0]["result"]["serverInfo"]["name"],
+        "bibcode-profiler"
+    );
+    assert_eq!(
+        responses[1]["result"]["tools"].as_array().map(Vec::len),
+        Some(5)
+    );
+    let findings = &responses[2]["result"]["structuredContent"]["findings"];
+    assert_eq!(findings.as_array().map(Vec::len), Some(1));
+    assert_eq!(findings[0]["kind"], "rpc.slow");
+    assert_eq!(
+        responses[3]["result"]["structuredContent"]["frames"][0]["function"],
+        "my_fn"
+    );
 }

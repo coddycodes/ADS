@@ -6,6 +6,7 @@ pub mod exits;
 pub mod findings;
 pub mod latency;
 pub mod leak;
+pub mod mcp;
 pub mod os_records;
 pub mod panic_hook;
 pub mod reader;
@@ -14,6 +15,7 @@ pub mod runtime;
 pub mod sampler;
 pub mod sentinel;
 pub mod store;
+pub mod symbolicate;
 pub mod worktree_audit;
 
 use std::{

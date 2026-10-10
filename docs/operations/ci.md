@@ -71,7 +71,10 @@ five job groups:
   [Symbol assets](./release.md#symbol-assets) and runs
   `cargo test -p bibcode-server --test crash_smoke --release` with
   `CRASH_SMOKE_OUT` set to `${{ runner.temp }}/crash-smoke`, so the minidump that
-  the `crash-smoke` binary leaves under the crash monitor survives the test.
+  the `crash-smoke` binary leaves under the crash monitor survives the test. The
+  test treats that directory as a data root (the dump lands in
+  `userdata/profiler/crashes/`), and `bibcode profiler symbolicate <id> --json`
+  must read the dump's crash reason and crashing-thread frames.
   `scripts/dump-symbols.ts` then dumps that binary (with its dSYM on macOS and
   its PDB on Windows), and `minidump-stackwalk --json` must name
   `crash_here_in_named_function`. `dump_syms` 2.3.9 and `minidump-stackwalk`

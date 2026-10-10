@@ -1654,6 +1654,18 @@
       "status": "current"
     },
     {
+      "key": "rust:workspace:breakpad-symbols",
+      "name": "breakpad-symbols",
+      "current": "=0.27.0",
+      "target": "0.27.0",
+      "channel": "stable",
+      "source": "https://crates.io/crates/breakpad-symbols",
+      "cohort": "rust-current",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "current",
+      "notes": "Exact pin, matched to minidump-processor 0.27.0: reads Breakpad .sym files for profiler symbolication; the http feature stays off, so the profiler's own HTTPS-only download fetches symbols."
+    },
+    {
       "key": "rust:workspace:cairo-rs",
       "name": "cairo-rs",
       "current": "0.18",
@@ -1867,6 +1879,30 @@
       "cohort": "rust-current",
       "platforms": ["linux", "macos", "windows"],
       "status": "current"
+    },
+    {
+      "key": "rust:workspace:minidump",
+      "name": "minidump",
+      "current": "=0.27.0",
+      "target": "0.27.0",
+      "channel": "stable",
+      "source": "https://crates.io/crates/minidump",
+      "cohort": "rust-current",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "current",
+      "notes": "Exact pin, matched to minidump-processor 0.27.0: parses the profiler's own crash dumps for symbolication."
+    },
+    {
+      "key": "rust:workspace:minidump-processor",
+      "name": "minidump-processor",
+      "current": "=0.27.0",
+      "target": "0.27.0",
+      "channel": "stable",
+      "source": "https://crates.io/crates/minidump-processor",
+      "cohort": "rust-current",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "current",
+      "notes": "Exact pin; default features off, which leaves out the x86 disassembler. Walks the crashing thread's stack for `bibcode profiler symbolicate` and the stdio MCP server."
     },
     {
       "key": "rust:workspace:minisign-verify",
