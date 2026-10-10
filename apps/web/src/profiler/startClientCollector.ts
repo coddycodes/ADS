@@ -6,8 +6,9 @@ import type { AtomRegistry } from "effect/unstable/reactivity";
 import { environmentPresentations } from "../state/presentation";
 import { serverEnvironment } from "../state/server";
 import { clientCollector, setClientBatchSender } from "./clientCollector";
+import { profilerRecording } from "./profilerSupport";
 
-/** The connected environments whose `enableProfiler` setting is on. */
+/** The connected environments that have the profiler and have it on. */
 function profiledEnvironments(
   presentations: ReadonlyMap<string, EnvironmentPresentation>,
 ): ReadonlySet<string> {
@@ -15,7 +16,7 @@ function profiledEnvironments(
   for (const [environmentId, presentation] of presentations) {
     if (
       presentation.connection.phase === "connected" &&
-      presentation.serverConfig?.settings.enableProfiler === true
+      profilerRecording(presentation.serverConfig)
     ) {
       ids.add(environmentId);
     }

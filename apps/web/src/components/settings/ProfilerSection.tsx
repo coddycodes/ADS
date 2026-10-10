@@ -2,6 +2,7 @@ import { EnvironmentId, type ProfilerFinding, type ProfilerStatus } from "@bibco
 import type { EnvironmentConnectionPhase } from "@bibcode/client-runtime/connection";
 import type { UnifiedSettings } from "@bibcode/contracts/settings";
 import { useAtomValue } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
 import {
   CircleAlertIcon,
   DownloadIcon,
@@ -14,6 +15,13 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { isDesktopHost } from "~/env";
 import { useDiagnosticLogsDownload } from "../../diagnostics/useDiagnosticLogsDownload";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import {
+  isProfilerUnsupported,
+  PROFILER_UNSUPPORTED_MESSAGE,
+  profilerRefused,
+  rememberProfilerRefused,
+  serverHasProfiler,
+} from "../../profiler/profilerSupport";
 import {
   type EnvironmentPresentation,
   useEnvironments,
@@ -47,6 +55,9 @@ const STILL_CONNECTING_PHASES: ReadonlySet<EnvironmentConnectionPhase> = new Set
 ]);
 
 const selectEnableProfiler = (settings: UnifiedSettings) => settings.enableProfiler;
+const TOGGLE_TITLE = "Record profiling data";
+const TOGGLE_DESCRIPTION =
+  "Records crashes, memory and CPU trends, slow requests and worktree cleanup problems for this environment. Data stays on this machine. Recording adds a small CPU cost.";
 
 /**
  * The profiler writes to `<state dir>/profiler`, next to the `<state dir>/logs` folder the
@@ -308,13 +319,31 @@ function EnvironmentProfiler({
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const observability = useAtomValue(primaryServerObservabilityAtom);
   const documentVisible = useDocumentVisible();
+  const toggleReasonId = useId();
+  const exportReasonId = useId();
+  // An older server fails the whole connection on a profiler method it does not know, so only
+  // a server that advertises the profiler, and never refused it on this page, is asked.
+  const hasProfiler =
+    serverHasProfiler(environment.serverConfig) && !profilerRefused(environmentId);
   const {
     data: status,
+    emission,
     error,
     isPending,
     refresh,
     revalidate,
-  } = useEnvironmentQuery(serverEnvironment.profilerStatus({ environmentId, input: {} }));
+  } = useEnvironmentQuery(
+    hasProfiler ? serverEnvironment.profilerStatus({ environmentId, input: {} }) : null,
+  );
+  // Asked anyway and refused that way: it is never asked again, nor offered a retry, even
+  // after the query is gone and the section opens again.
+  const refused =
+    emission._tag === "Failure" && isProfilerUnsupported(Cause.squash(emission.cause));
+  useEffect(() => {
+    if (refused) rememberProfilerRefused(environmentId);
+  }, [refused, environmentId]);
+  const unsupported = (environment.serverConfig !== null && !hasProfiler) || refused;
+  const polling = enabled && hasProfiler && !refused;
   const {
     isOpening,
     error: openFolderError,
@@ -329,12 +358,13 @@ function EnvironmentProfiler({
     statusReadInFlight.current = isPending;
   }, [isPending]);
   useEffect(() => {
-    if (!enabled || !documentVisible) return;
+    if (!polling || !documentVisible) return;
     const timer = window.setInterval(() => {
-      if (!statusReadInFlight.current) revalidate();
+      // The collector may have seen this environment refuse the profiler since the last render.
+      if (!statusReadInFlight.current && !profilerRefused(environmentId)) revalidate();
     }, STATUS_REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [enabled, documentVisible, revalidate]);
+  }, [polling, documentVisible, revalidate, environmentId]);
 
   const profilerDirectory = profilerDirectoryFromLogsDirectory(
     observability?.logsDirectoryPath ?? null,
@@ -369,6 +399,30 @@ function EnvironmentProfiler({
     if (profilerDirectory !== null) openDirectory(profilerDirectory);
   };
 
+  if (unsupported) {
+    // Nothing else of the profiler applies to this server, so only the reason is shown.
+    return (
+      <SettingsRow
+        title={TOGGLE_TITLE}
+        description={TOGGLE_DESCRIPTION}
+        status={
+          <div id={toggleReasonId} className="flex items-start gap-1.5">
+            <InfoIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+            <span>{PROFILER_UNSUPPORTED_MESSAGE}</span>
+          </div>
+        }
+        control={
+          <Switch
+            checked={false}
+            disabled
+            aria-label={TOGGLE_TITLE}
+            aria-describedby={toggleReasonId}
+          />
+        }
+      />
+    );
+  }
+
   const storage = status?.capabilities.storage;
   const statusLine = !enabled
     ? "Off. Turn on to start recording. Crash checks for the previous run still happen."
@@ -390,8 +444,8 @@ function EnvironmentProfiler({
   return (
     <>
       <SettingsRow
-        title="Record profiling data"
-        description="Records crashes, memory and CPU trends, slow requests and worktree cleanup problems for this environment. Data stays on this machine. Uses about 1% CPU."
+        title={TOGGLE_TITLE}
+        description={TOGGLE_DESCRIPTION}
         status={
           <div className="space-y-1">
             <div>{statusLine}</div>
@@ -413,11 +467,7 @@ function EnvironmentProfiler({
           </div>
         }
         control={
-          <Switch
-            checked={enabled}
-            onCheckedChange={handleToggle}
-            aria-label="Record profiling data"
-          />
+          <Switch checked={enabled} onCheckedChange={handleToggle} aria-label={TOGGLE_TITLE} />
         }
       />
       <SettingsRow
@@ -454,6 +504,8 @@ function EnvironmentProfiler({
           <Checkbox
             checked={includeCrashDumps}
             onCheckedChange={(checked) => setIncludeCrashDumps(checked === true)}
+            disabled={exportDisabledReason !== null}
+            aria-describedby={exportDisabledReason === null ? undefined : exportReasonId}
             className="mt-0.5"
           />
           <span className="min-w-0 space-y-0.5">
@@ -464,6 +516,11 @@ function EnvironmentProfiler({
               Crash dumps can contain fragments of memory, including prompts or tokens. Only share
               them with people you trust.
             </span>
+            {exportDisabledReason === null ? null : (
+              <span id={exportReasonId} className="block text-xs text-muted-foreground">
+                {exportDisabledReason}
+              </span>
+            )}
           </span>
         </label>
       </SettingsRow>

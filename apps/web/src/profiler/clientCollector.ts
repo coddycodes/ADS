@@ -5,6 +5,7 @@ import {
 } from "@bibcode/contracts";
 
 import { randomHex } from "../lib/utils";
+import { isProfilerUnsupported, profilerRefused, rememberProfilerRefused } from "./profilerSupport";
 
 /** The server joins a request to its own timing by this header (`CORRELATION_HEADER`). */
 export const PROFILER_CORRELATION_HEADER = "x-bibcode-profiler-rid";
@@ -32,7 +33,10 @@ const FLUSH_EVERY_MS = 10_000;
 const MAX_SAMPLE_MS = 3_600_000;
 const MAX_WINDOW_MS = 600_000;
 const INTERACTION_THRESHOLD_MS = 104;
-/** Answers that mean this environment will never accept reports in this session. */
+/**
+ * Answers that mean this environment will never accept reports in this session, besides an
+ * older server not knowing the method at all.
+ */
 const REFUSALS = new Set(["EnvironmentAuthorizationError", "EnvironmentOperationForbiddenError"]);
 
 export interface ClientCollector {
@@ -98,6 +102,7 @@ function jsHeapBytes(): number | null {
 }
 
 function isRefusal(error: unknown): boolean {
+  if (isProfilerUnsupported(error)) return true;
   const tag = (error as { _tag?: unknown } | null)?._tag;
   return typeof tag === "string" && REFUSALS.has(tag);
 }
@@ -276,6 +281,7 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
     try {
       await send(environmentId, batch);
     } catch (error) {
+      if (isProfilerUnsupported(error)) rememberProfilerRefused(environmentId);
       if (isRefusal(error)) {
         refused.add(environmentId);
         windows.delete(environmentId);
@@ -309,15 +315,25 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
     const heap = jsHeapBytes();
     const reports: Promise<void>[] = [];
     for (const [environmentId, window] of windows) {
+      // While the previous batch is on the wire, the window's records wait for the next one
+      // (still at most 64, the cap `complete` keeps) and the rest of the window is dropped.
+      const onTheWire = uploading.has(environmentId);
       // A record still waiting for its frame goes out with a later batch.
-      const waiting = window.records.filter((pending) => !pending.rendered);
+      const waiting = onTheWire
+        ? window.records
+        : window.records.filter((pending) => !pending.rendered);
       windows.set(environmentId, {
         recording: window.recording,
         records: waiting,
         histograms: new Map(),
       });
-      // While the previous batch is on the wire, this window is dropped.
-      if (uploading.has(environmentId)) continue;
+      if (onTheWire) continue;
+      // The Diagnostics page may have seen the environment refuse the profiler first.
+      if (profilerRefused(environmentId)) {
+        refused.add(environmentId);
+        windows.delete(environmentId);
+        continue;
+      }
       const records = window.records.filter((pending) => pending.rendered);
       if (quiet && records.length === 0 && window.histograms.size === 0) continue;
       reports.push(
@@ -342,6 +358,7 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
         }),
       );
     }
+    if (windows.size === 0) stop();
     await Promise.all(reports);
   };
 

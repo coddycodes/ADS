@@ -69,6 +69,7 @@ fn connect_environment_descriptor(config: &ServerConfig) -> serde_json::Value {
             "pullRequestCreateOptions": true,
             "vcsCloneReattach": true,
             "attachmentStaging": true,
+            "profiler": true,
         },
     })
 }
@@ -1139,6 +1140,7 @@ mod tests {
         assert_eq!(descriptor["capabilities"]["pullRequestCreateOptions"], true);
         assert_eq!(descriptor["capabilities"]["vcsCloneReattach"], true);
         assert_eq!(descriptor["capabilities"]["attachmentStaging"], true);
+        assert_eq!(descriptor["capabilities"]["profiler"], true);
         assert_eq!(
             descriptor["remoteUpdateSupport"],
             serde_json::json!({

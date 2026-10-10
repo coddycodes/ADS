@@ -2,6 +2,7 @@
 
 import type { ProfilerFinding, ProfilerStatus } from "@bibcode/contracts";
 import { EnvironmentId } from "@bibcode/contracts";
+import * as Cause from "effect/Cause";
 import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -12,7 +13,15 @@ interface FakeEnvironment {
   readonly environmentId: string;
   readonly label: string;
   readonly connection: { readonly phase: string };
+  readonly serverConfig: {
+    readonly environment: { readonly capabilities: { readonly profiler: boolean } };
+  } | null;
 }
+
+/** A server config as far as the section reads it: whether the server has the profiler. */
+const configWithProfiler = (profiler: boolean) => ({
+  environment: { capabilities: { profiler } },
+});
 
 const h = vi.hoisted(() => ({
   desktop: true,
@@ -29,11 +38,13 @@ const h = vi.hoisted(() => ({
   preferredEditor: "vscode" as string | null,
   statusQuery: null as unknown as {
     data: unknown;
+    emission: unknown;
     error: string | null;
     isPending: boolean;
     refresh: () => void;
     revalidate: () => void;
   },
+  queried: [] as string[],
   openInEditorCalls: [] as unknown[],
   openInEditorResult: { _tag: "Success" } as { _tag: string; error?: unknown },
   downloadCalls: [] as Array<{ frontendLog: string; options: unknown }>,
@@ -78,10 +89,20 @@ vi.mock("../../state/environments", () => ({
 }));
 
 vi.mock("../../state/query", () => ({
-  useEnvironmentQuery: (atom: { __q?: string; args?: { environmentId: string } } | null) =>
-    atom === null
-      ? { data: null, error: null, isPending: false, refresh: vi.fn(), revalidate: vi.fn() }
-      : ((atom.args && h.statusByEnvironment[atom.args.environmentId]) ?? h.statusQuery),
+  useEnvironmentQuery: (atom: { __q?: string; args?: { environmentId: string } } | null) => {
+    if (atom === null) {
+      return {
+        data: null,
+        emission: { _tag: "Initial" },
+        error: null,
+        isPending: false,
+        refresh: vi.fn(),
+        revalidate: vi.fn(),
+      };
+    }
+    if (atom.args) h.queried.push(atom.args.environmentId);
+    return (atom.args && h.statusByEnvironment[atom.args.environmentId]) ?? h.statusQuery;
+  },
 }));
 
 vi.mock("../../state/server", () => ({
@@ -186,6 +207,8 @@ vi.mock("../ui/switch", () => ({
       role="switch"
       aria-label={props["aria-label"] as string}
       aria-checked={Boolean(props.checked)}
+      aria-describedby={props["aria-describedby"] as string | undefined}
+      disabled={Boolean(props.disabled)}
       onClick={() => (props.onCheckedChange as (checked: boolean) => void)(!props.checked)}
     />
   ),
@@ -196,6 +219,8 @@ vi.mock("../ui/checkbox", () => ({
     <input
       type="checkbox"
       checked={Boolean(props.checked)}
+      disabled={Boolean(props.disabled)}
+      aria-describedby={props["aria-describedby"] as string | undefined}
       onChange={(event) =>
         (props.onCheckedChange as (checked: boolean) => void)(event.currentTarget.checked)
       }
@@ -216,6 +241,7 @@ vi.mock("../ui/button", () => ({
   ),
 }));
 
+import { rememberProfilerRefused } from "../../profiler/profilerSupport";
 import { ProfilerSection } from "./ProfilerSection";
 
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
@@ -256,6 +282,7 @@ function status(overrides: Partial<ProfilerStatus> = {}): ProfilerStatus {
 function queryOf(data: ProfilerStatus | null, overrides: Partial<typeof h.statusQuery> = {}) {
   h.statusQuery = {
     data,
+    emission: { _tag: data === null ? "Initial" : "Success" },
     error: null,
     isPending: false,
     refresh: vi.fn(),
@@ -301,8 +328,13 @@ async function rerender(container: HTMLDivElement) {
   });
 }
 
-function fakeEnvironment(label: string, phase = "connected"): FakeEnvironment {
-  return { environmentId: `environment-${label}`, label, connection: { phase } };
+function fakeEnvironment(label: string, phase = "connected", profiler = true): FakeEnvironment {
+  return {
+    environmentId: `environment-${label}`,
+    label,
+    connection: { phase },
+    serverConfig: configWithProfiler(profiler),
+  };
 }
 
 /** The primary "Work Server" plus a second environment, "Luna", on its own settings and status. */
@@ -345,7 +377,9 @@ beforeEach(() => {
     environmentId: ENVIRONMENT_ID,
     label: "Work Server",
     connection: { phase: "connected" },
+    serverConfig: configWithProfiler(true),
   };
+  h.queried.length = 0;
   h.environments = [h.environment];
   h.observability = { logsDirectoryPath: "/state/logs" };
   h.preferredEditor = "vscode";
@@ -375,7 +409,7 @@ describe("ProfilerSection", () => {
     expect(toggle.getAttribute("aria-label")).toBe("Record profiling data");
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     expect(container.textContent).toContain(
-      "Records crashes, memory and CPU trends, slow requests and worktree cleanup problems for this environment. Data stays on this machine. Uses about 1% CPU.",
+      "Records crashes, memory and CPU trends, slow requests and worktree cleanup problems for this environment. Data stays on this machine. Recording adds a small CPU cost.",
     );
     expect(container.textContent).toContain(
       "Off. Turn on to start recording. Crash checks for the previous run still happen.",
@@ -595,6 +629,74 @@ describe("ProfilerSection", () => {
     expect(h.statusQuery.refresh).toHaveBeenCalledTimes(1);
   });
 
+  it("never asks an older server for its status and says why it cannot record", async () => {
+    vi.useFakeTimers();
+    // An older server stores and echoes back the `enableProfiler: true` a newer client sent.
+    h.settingsByEnvironment[ENVIRONMENT_ID] = true;
+    h.environment = { ...h.environment!, serverConfig: configWithProfiler(false) };
+    h.environments = [h.environment];
+
+    const container = await render();
+    await act(async () => {
+      vi.advanceTimersByTime(30_000);
+    });
+
+    expect(h.queried).toEqual([]);
+    expect(h.statusQuery.revalidate).not.toHaveBeenCalled();
+    const toggle = container.querySelector('[role="switch"]') as HTMLButtonElement;
+    expect(toggle.disabled).toBe(true);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    const reason = document.getElementById(toggle.getAttribute("aria-describedby")!);
+    expect(reason?.textContent).toBe(
+      "This server's BiBCode version has no profiler. Update the server to record.",
+    );
+    // Nothing else of the profiler applies to it.
+    expect(container.textContent).not.toContain("Recorded data");
+    expect(container.textContent).not.toContain("Findings");
+    expect(container.textContent).not.toContain("Export bundle");
+  });
+
+  it("stops asking a server that answers with an unknown-request defect", async () => {
+    vi.useFakeTimers();
+    // Its own environment: the refusal lasts for the page, so it must not leak into others.
+    h.environment = fakeEnvironment("Refusing");
+    h.environments = [h.environment];
+    h.settingsByEnvironment[h.environment.environmentId] = true;
+    queryOf(null, {
+      emission: {
+        _tag: "Failure",
+        cause: Cause.die("Unknown request tag: server.getProfilerStatus"),
+      },
+      error: "The environment request failed.",
+    });
+
+    const container = await render();
+    await act(async () => {
+      vi.advanceTimersByTime(30_000);
+    });
+
+    expect(h.statusQuery.revalidate).not.toHaveBeenCalled();
+    expect(container.textContent).toContain(
+      "This server's BiBCode version has no profiler. Update the server to record.",
+    );
+    expect(container.textContent).not.toContain("The environment request failed.");
+    expect(container.textContent).not.toContain("Retry");
+    expect((container.querySelector('[role="switch"]') as HTMLButtonElement).disabled).toBe(true);
+
+    // The failed query is evicted and the section opens again: still never asked.
+    for (const entry of mounted.splice(0)) {
+      await act(async () => entry.root.unmount());
+      entry.container.remove();
+    }
+    h.queried.length = 0;
+    queryOf(status());
+    const reopened = await render();
+    expect(h.queried).toEqual([]);
+    expect(reopened.textContent).toContain(
+      "This server's BiBCode version has no profiler. Update the server to record.",
+    );
+  });
+
   it("disables Open folder with a reason until something is recorded", async () => {
     queryOf(status({ diskBytes: 0 }));
 
@@ -643,6 +745,7 @@ describe("ProfilerSection", () => {
           eventCount: 42,
           findings: [finding({ title: "Luna finding" })],
         }),
+        emission: { _tag: "Success" },
         error: null,
         isPending: false,
         refresh: vi.fn(),
@@ -699,6 +802,12 @@ describe("ProfilerSection", () => {
       ]);
       await click(buttonByText(container, "Export bundle"));
       expect(h.downloadCalls).toHaveLength(0);
+      // Its option goes with it, for the same reason.
+      const checkbox = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      expect(checkbox.disabled).toBe(true);
+      expect(document.getElementById(checkbox.getAttribute("aria-describedby")!)?.textContent).toBe(
+        "Export bundle covers Work Server only. Use bibcode profiler on Luna.",
+      );
     });
 
     it("keeps an export busy after switching away from the primary and back", async () => {
@@ -819,6 +928,22 @@ describe("ProfilerSection", () => {
       });
 
       expect(h.statusQuery.revalidate).toHaveBeenCalledTimes(3);
+    });
+
+    it("stops polling once the collector saw the environment refuse the profiler", async () => {
+      vi.useFakeTimers();
+      h.environment = fakeEnvironment("RefusedByBatch");
+      h.environments = [h.environment];
+      h.settingsByEnvironment[h.environment.environmentId] = true;
+      queryOf(status());
+
+      await render();
+      rememberProfilerRefused(h.environment.environmentId);
+      await act(async () => {
+        vi.advanceTimersByTime(30_000);
+      });
+
+      expect(h.statusQuery.revalidate).not.toHaveBeenCalled();
     });
 
     it("leaves a status read that is still in flight alone", async () => {

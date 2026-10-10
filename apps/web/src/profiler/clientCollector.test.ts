@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { bucketOf, createClientCollector } from "./clientCollector";
+import { rememberProfilerRefused } from "./profilerSupport";
 
 function setVisibility(state: "visible" | "hidden"): void {
   Object.defineProperty(document, "visibilityState", { configurable: true, value: state });
@@ -228,6 +229,50 @@ describe("clientCollector", () => {
     expect(c.observeRequest("denied", "m").correlationId).toBeNull();
     c.dispose();
   });
+  it("stops reporting to an older server that does not know the batch method", async () => {
+    let t = 0;
+    // An older server's connection-level answer; squashed, the die is its defect string.
+    const send = vi.fn(async (_environmentId: string, _batch: unknown) => {
+      throw "Unknown request tag: server.reportProfilerClientBatch";
+    });
+    const c = createClientCollector({
+      now: () => t,
+      send,
+      supportedEntryTypes: [],
+      clientId: "c1",
+    });
+    c.setEnabledEnvironments(new Set(["old"]));
+    const done = c.observeRequest("old", "m");
+    t += 10;
+    done.complete();
+    await expect(c.flush()).resolves.toBeUndefined();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(c.observeRequest("old", "m").correlationId).toBeNull();
+    // Coming back into the enabled set does not revive it.
+    c.setEnabledEnvironments(new Set());
+    c.setEnabledEnvironments(new Set(["old"]));
+    expect(c.observeRequest("old", "m").correlationId).toBeNull();
+    c.dispose();
+  });
+  it("sends nothing to an environment the Diagnostics page saw refuse the profiler", async () => {
+    let t = 0;
+    const send = vi.fn(async (_environmentId: string, _batch: unknown) => ({ accepted: true }));
+    const c = createClientCollector({
+      now: () => t,
+      send,
+      supportedEntryTypes: [],
+      clientId: "c1",
+    });
+    c.setEnabledEnvironments(new Set(["refused-by-status"]));
+    rememberProfilerRefused("refused-by-status");
+    const done = c.observeRequest("refused-by-status", "m");
+    t += 10;
+    done.complete();
+    await c.flush();
+    expect(send).not.toHaveBeenCalled();
+    expect(c.observeRequest("refused-by-status", "m").correlationId).toBeNull();
+    c.dispose();
+  });
   it("drops samples that span a Windows sleep, whichever wakes first", async () => {
     vi.useFakeTimers();
     let t = 0;
@@ -342,6 +387,44 @@ describe("clientCollector", () => {
       void c.flush();
     }
     expect(send).toHaveBeenCalledTimes(1);
+    c.dispose();
+  });
+  it("carries slow records over a batch still on the wire", async () => {
+    let t = 0;
+    let release!: () => void;
+    const onTheWire = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const send = vi.fn((_environmentId: string, _batch: any) =>
+      send.mock.calls.length === 1 ? onTheWire : Promise.resolve(),
+    );
+    const c = createClientCollector({
+      now: () => t,
+      send,
+      supportedEntryTypes: [],
+      clientId: "c1",
+      raf: nextFrame,
+    });
+    c.setEnabledEnvironments(new Set(["e"]));
+    const slow = (rttMs: number) => {
+      const done = c.observeRequest("e", "m");
+      t += rttMs;
+      done.complete();
+    };
+    slow(300);
+    const first = c.flush();
+    slow(400);
+    // The first batch is still on the wire: this window waits.
+    await c.flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    release();
+    await first;
+    slow(500);
+    await c.flush();
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1]![1].records.map((r: { rttMs: number }) => r.rttMs)).toEqual([
+      400, 500,
+    ]);
     c.dispose();
   });
   it("keeps an environment's request in flight while another one reconnects", async () => {

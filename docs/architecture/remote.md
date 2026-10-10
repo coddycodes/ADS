@@ -1266,6 +1266,13 @@ the desktop's primary environment and **Export bundle** covers the primary
 environment only. For any other environment, run `bibcode profiler` on its host,
 for example over SSH, or `ssh <host> bibcode profiler mcp` for an AI harness.
 
+A server older than the profiler does not advertise `capabilities.profiler`. The
+client then sends it no profiler RPC, ignores the `enableProfiler: true` it may
+echo back, and shows the switch disabled with "This server's BiBCode version has
+no profiler. Update the server to record." Such a server answers an unknown
+method by failing every request on the connection, so this gate keeps a newer
+client usable against it.
+
 A client connected to several environments measures its requests and its own
 responsiveness, and reports them only to environments whose profiler is on:
 

@@ -1570,11 +1570,16 @@ status line refreshes every 5 s while the profiler is on and the page
 is visible: recording since, disk use, events, and dropped events. **Open
 folder** works only for the primary environment on desktop; **Export bundle**
 covers only the primary environment and adds crash dumps only with **Include
-crash dumps** (see [Observability](../operations/observability.md)). Both
-explain why when disabled. The 20 newest findings follow, each with its severity,
-title, count, and last seen. While any connected
-environment's profiler is on, the status bar shows a **Profiler** segment that
-lists those environments and opens Diagnostics on the first.
+crash dumps** (see [Observability](../operations/observability.md)). Both, and
+the checkbox, explain why when disabled. The 20 newest findings follow, each with
+its severity, title, count, and last seen. A server that does not advertise
+`capabilities.profiler` (one older than the profiler) is never asked for its
+status: the section shows only the disabled switch and "This server's BiBCode
+version has no profiler. Update the server to record." (see
+[Profiler timing and client reports](./rpc-and-orchestration.md#profiler-timing-and-client-reports)).
+While any connected environment's profiler is on, and its server advertises the
+profiler, the status bar shows a **Profiler** segment that lists those
+environments and opens Diagnostics on the first.
 
 ### Privacy
 

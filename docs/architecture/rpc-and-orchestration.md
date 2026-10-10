@@ -2541,7 +2541,17 @@ so current clients display its summary timing as unavailable.
 ## Profiler timing and client reports
 
 The [Profiler](./overview.md#profiler) adds two unary methods, whose schemas are
-in [`profiler.ts`](../../packages/contracts/src/profiler.ts):
+in [`profiler.ts`](../../packages/contracts/src/profiler.ts). A server advertises
+them with the environment descriptor's `capabilities.profiler`, which decodes as
+`false` for an older server. Clients send neither method, poll no status, and
+start no collector for an environment without it, because an older server
+answers an unknown method with a connection-level defect: it fails every request
+in flight on that connection and silences its config stream while the socket
+stays open. An older server also stores and echoes back an `enableProfiler: true`
+it never acts on, so clients ignore that setting without the capability. A
+client that still receives `Unknown request tag: server.getProfilerStatus` or
+`server.reportProfilerClientBatch` treats it as a permanent refusal for that
+environment.
 
 | RPC                                | Scope                   | Purpose                                                                                                                                                                                                                                                                                                                                                |
 | ---------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -2621,7 +2631,8 @@ never timestamps.
 
 [`clientCollector.ts`](../../apps/web/src/profiler/clientCollector.ts) observes
 every RPC through the environment request observer. It measures only while at
-least one connected environment's `enableProfiler` is on, and then records:
+least one connected environment has `capabilities.profiler` and its
+`enableProfiler` on, and then records:
 
 - the round trip of each request, and its render time, from the response to the
   second animation frame after it;
@@ -2640,9 +2651,9 @@ interactions, and heap go to every profiled environment. A sample that spans a
 visibility change or a sleep is dropped. A sleep shows as the wall clock
 running more than 5 s ahead of the monotonic clock; with Long Animation Frames,
 whose engines count sleep in the monotonic clock, a heartbeat over 60 s late
-counts too. An authorization refusal stops reporting to that environment for
-the session; every other failure is swallowed, so profiling never surfaces an
-error. The batch RPC is excluded from the slow-request acknowledgement
+counts too. An authorization refusal, or an older server's unknown-method
+defect, stops reporting to that environment for the session; every other failure
+is swallowed, so profiling never surfaces an error. The batch RPC is excluded from the slow-request acknowledgement
 indicator.
 
 The server drops records and histograms of methods it does not serve. Each
