@@ -4,12 +4,14 @@
 
 use std::{
     io::{BufRead, BufReader},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
 
+use bibcode_server::diagnostics::profiler::{crash::MonitorDetector, runtime::Detector};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use tokio_util::sync::CancellationToken;
 
 const SMOKE: &str = env!("CARGO_BIN_EXE_crash-smoke");
 
@@ -123,6 +125,19 @@ fn the_monitor_exits_when_its_parent_is_killed() {
         1,
         "the armed process runs one monitor"
     );
+    // Its socket is in a fresh directory of its own, which only this user can enter.
+    let socket_dir = monitor_socket(parent)
+        .parent()
+        .expect("the socket has a directory")
+        .to_path_buf();
+    let name = socket_dir
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert!(name.starts_with("bibcode-"), "{}", socket_dir.display());
+    #[cfg(unix)]
+    assert_eq!(mode(&socket_dir), 0o700);
 
     smoke.kill().unwrap();
     smoke.wait().unwrap();
@@ -134,6 +149,104 @@ fn the_monitor_exits_when_its_parent_is_killed() {
         );
         std::thread::sleep(Duration::from_millis(100));
     }
+    assert!(
+        !socket_dir.exists(),
+        "the monitor removes its socket directory"
+    );
+}
+
+/// The monitor's socket lives in a fresh directory that only this user can enter (0700, the
+/// socket 0600): no other local user can connect to the monitor or plant the path first. A
+/// directory that already exists is refused rather than used, and stopping removes the socket
+/// with its directory. One test, because the detector arms this process's global hook.
+#[test]
+#[cfg_attr(
+    all(windows, target_arch = "aarch64"),
+    ignore = "minidump-writer unimplemented on Windows arm64"
+)]
+fn the_monitor_socket_is_private_and_never_reused() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let sockets = tempfile::tempdir().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let fresh = sockets.path().join("fresh");
+        let (cancel, task) = start_monitor(dir.path(), &fresh);
+        wait_for_native_dumps(dir.path(), "available").await;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileTypeExt;
+            assert_eq!(mode(&fresh), 0o700);
+            let socket = fresh.join("monitor.sock");
+            assert!(
+                std::fs::symlink_metadata(&socket)
+                    .unwrap()
+                    .file_type()
+                    .is_socket()
+            );
+            assert_eq!(mode(&socket), 0o600);
+        }
+        cancel.cancel();
+        task.await.unwrap();
+        assert!(
+            !fresh.exists(),
+            "stopping removes the socket and its directory"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let taken = sockets.path().join("taken");
+        std::fs::create_dir(&taken).unwrap();
+        let (cancel, task) = start_monitor(dir.path(), &taken);
+        wait_for_native_dumps(dir.path(), "unavailable").await;
+        assert!(
+            monitors_using(&taken).is_empty(),
+            "no monitor was started on a path that already existed"
+        );
+        cancel.cancel();
+        task.await.unwrap();
+        assert!(
+            taken.exists(),
+            "a directory it did not create is left alone"
+        );
+    });
+}
+
+fn start_monitor(
+    dir: &Path,
+    socket_dir: &Path,
+) -> (CancellationToken, tokio::task::JoinHandle<()>) {
+    let cancel = CancellationToken::new();
+    let detector = MonitorDetector::new(dir.to_path_buf(), "crash-smoke")
+        .with_executable(SMOKE.into())
+        .with_socket_dir(socket_dir.to_path_buf());
+    let task = detector.start(cancel.clone());
+    (cancel, task)
+}
+
+async fn wait_for_native_dumps(dir: &Path, expected: &str) {
+    for _ in 0..100 {
+        let recorded = std::fs::read(dir.join("capabilities.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+        if recorded.is_some_and(|capabilities| capabilities["nativeDumps"] == expected) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("nativeDumps never became {expected}");
+}
+
+#[cfg(unix)]
+fn mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::symlink_metadata(path)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777
 }
 
 /// The 10 s ping replaces a monitor that died, and one that stopped answering (after the 5 s
@@ -235,6 +348,44 @@ fn replacement(parent: u32, old: Pid, within: Duration) -> Pid {
         assert!(Instant::now() < deadline, "no replacement monitor");
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+/// The socket path in the argv of `parent`'s monitor.
+fn monitor_socket(parent: u32) -> PathBuf {
+    let parent = parent.to_string();
+    monitor_commands()
+        .into_iter()
+        .find(|cmd| cmd.last().is_some_and(|arg| *arg == *parent))
+        .and_then(|cmd| {
+            let flag = cmd.iter().position(|arg| arg == "--crash-monitor")?;
+            cmd.get(flag + 1).map(PathBuf::from)
+        })
+        .expect("a monitor with its socket in its argv")
+}
+
+/// Live monitors whose argv names a path inside `dir`.
+fn monitors_using(dir: &Path) -> Vec<Vec<std::ffi::OsString>> {
+    monitor_commands()
+        .into_iter()
+        .filter(|cmd| cmd.iter().any(|arg| Path::new(arg).starts_with(dir)))
+        .collect()
+}
+
+fn monitor_commands() -> Vec<Vec<std::ffi::OsString>> {
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing()
+            .without_tasks()
+            .with_cmd(UpdateKind::Always),
+    );
+    system
+        .processes()
+        .values()
+        .map(|process| process.cmd().to_vec())
+        .filter(|cmd| cmd.iter().any(|arg| arg == "--crash-monitor"))
+        .collect()
 }
 
 /// Live `--crash-monitor` processes whose argv names `parent` as the process they watch. Once

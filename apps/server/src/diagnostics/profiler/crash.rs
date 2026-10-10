@@ -43,6 +43,10 @@ const PROCESS_KIND_ENV: &str = "BIBCODE_CRASH_MONITOR_PROCESS_KIND";
 const CRASH_TEST_ENV: &str = "BIBCODE_PROFILER_CRASH_TEST";
 const CRASH_TEST_DELAY: Duration = Duration::from_secs(5);
 const CAPABILITIES_FILE: &str = "capabilities.json";
+/// The monitor's socket, inside a directory of its own.
+const SOCKET_FILE: &str = "monitor.sock";
+/// The longest socket path: macOS allows 104 bytes with the NUL, Linux and Windows 108.
+const SOCKET_PATH_MAX: usize = if cfg!(target_os = "macos") { 103 } else { 107 };
 #[cfg(target_os = "linux")]
 const YAMA_SCOPE: &str = "/proc/sys/kernel/yama/ptrace_scope";
 const PING_EVERY: Duration = Duration::from_secs(10);
@@ -165,12 +169,21 @@ fn run_monitor(args: MonitorArgs) -> i32 {
     // The parent stays covered while it shuts down gracefully; the monitor leaves once the
     // parent is gone instead. Its own process group already keeps a terminal's Ctrl-C away.
     #[cfg(unix)]
-    // SAFETY: only signal dispositions change, before any other thread exists.
+    // SAFETY: only signal dispositions and the file-creation mask change, before any other
+    // thread exists. The bind creates the socket as 0777 & !mask, so 0o177 makes it 0600;
+    // everything the monitor creates afterwards stays private too.
     unsafe {
         libc::signal(libc::SIGINT, libc::SIG_IGN);
         libc::signal(libc::SIGTERM, libc::SIG_IGN);
+        libc::umask(0o177);
     }
-    let Ok(mut server) = minidumper::Server::with_name(SocketName::Path(&args.socket)) else {
+    let server = minidumper::Server::with_name(SocketName::Path(&args.socket));
+    #[cfg(unix)]
+    // SAFETY: as above.
+    unsafe {
+        libc::umask(0o077);
+    }
+    let Ok(mut server) = server else {
         return 1;
     };
     if !watch_parent(args.parent_pid) {
@@ -180,10 +193,20 @@ fn run_monitor(args: MonitorArgs) -> i32 {
     // In minidumper 0.11 only `SHUTDOWN` or a handler's `Exit` end the loop: the stale timeout
     // drops idle connections, and a disconnect continues. It has to keep serving, because the
     // parent reconnects after a dump (a Linux `Client` serves one, upstream issue #99).
-    match server.run(Box::new(handler), &SHUTDOWN, Some(STALE_TIMEOUT)) {
+    let code = match server.run(Box::new(handler), &SHUTDOWN, Some(STALE_TIMEOUT)) {
         Ok(()) => 0,
         Err(_) => 1,
+    };
+    // Dropping the server removes the socket; a parent that died cannot remove the rest.
+    drop(server);
+    if let Some(dir) = args.socket.parent()
+        && dir
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with("bibcode-"))
+    {
+        let _ = fs::remove_dir(dir);
     }
+    code
 }
 
 /// Sets `SHUTDOWN` once the parent is gone. Returns false if the parent cannot be watched,
@@ -389,6 +412,8 @@ pub struct MonitorDetector {
     process_kind: &'static str,
     /// The binary to re-execute; this process's own unless a test sets it.
     executable: Option<PathBuf>,
+    /// The directory for the monitor's socket; a fresh random one unless a test sets it.
+    socket_dir: Option<PathBuf>,
 }
 
 impl MonitorDetector {
@@ -397,6 +422,7 @@ impl MonitorDetector {
             dir,
             process_kind,
             executable: None,
+            socket_dir: None,
         }
     }
 
@@ -405,6 +431,15 @@ impl MonitorDetector {
     #[must_use]
     pub fn with_executable(mut self, executable: PathBuf) -> Self {
         self.executable = Some(executable);
+        self
+    }
+
+    /// Puts the monitor's socket in `dir`, which must not exist yet, instead of in a fresh
+    /// random directory. For tests.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_socket_dir(mut self, dir: PathBuf) -> Self {
+        self.socket_dir = Some(dir);
         self
     }
 }
@@ -416,16 +451,31 @@ impl Detector for MonitorDetector {
 
     fn start(&self, cancel: CancellationToken) -> JoinHandle<()> {
         let detector = self.clone();
+        let (done, finished) = tokio::sync::oneshot::channel::<()>();
         // On a thread and a runtime of its own: a fault on an application worker that waits
-        // on a hung monitor must not stall the heartbeat that replaces that monitor.
-        tokio::task::spawn_blocking(move || {
-            match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(runtime) => runtime.block_on(keep_monitor(detector, cancel)),
-                Err(error) => tracing::warn!(%error, "could not start the crash monitor"),
-            }
+        // on a hung monitor must not stall the heartbeat that replaces that monitor. A plain
+        // thread, because a runtime waits for its blocking tasks when it is dropped.
+        let spawned = std::thread::Builder::new()
+            .name("bibcode-crash-monitor".into())
+            .spawn(move || {
+                match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(runtime) => {
+                        runtime.block_on(keep_monitor(detector, cancel));
+                        runtime.shutdown_background();
+                    }
+                    Err(error) => tracing::warn!(%error, "could not start the crash monitor"),
+                }
+                let _ = done.send(());
+            });
+        if let Err(error) = spawned {
+            tracing::warn!(%error, "could not start the crash monitor");
+        }
+        // Done once the thread is, or at once when it never started (its sender is gone).
+        tokio::spawn(async move {
+            let _ = finished.await;
         })
     }
 }
@@ -705,6 +755,8 @@ struct Monitor {
     child: tokio::process::Child,
     pid: u32,
     socket: PathBuf,
+    /// The private directory holding `socket`, created for this monitor.
+    socket_dir: PathBuf,
 }
 
 impl Monitor {
@@ -716,9 +768,11 @@ impl Monitor {
             None if cfg!(target_os = "linux") => PathBuf::from("/proc/self/exe"),
             None => std::env::current_exe()?,
         };
-        // Short: macOS caps a socket path at 104 bytes, and its temporary directory is long.
-        let id = uuid::Uuid::new_v4().simple().to_string();
-        let socket = std::env::temp_dir().join(format!("bibcode-crash-{}.sock", &id[..12]));
+        let socket_dir = match &detector.socket_dir {
+            Some(dir) => dir.clone(),
+            None => fresh_socket_dir()?,
+        };
+        let socket = create_socket_dir(&socket_dir)?;
         let mut command = tokio::process::Command::new(executable);
         command
             .args(monitor_args(&socket, &detector.dir, std::process::id()))
@@ -735,23 +789,134 @@ impl Monitor {
             windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP
                 | windows_sys::Win32::System::Threading::CREATE_NO_WINDOW,
         );
-        let child = command.spawn()?;
+        let child = command.spawn().inspect_err(|_| {
+            let _ = fs::remove_dir(&socket_dir);
+        })?;
         let pid = child
             .id()
             .ok_or_else(|| io::Error::other("the crash monitor exited at once"))?;
-        Ok(Self { child, pid, socket })
+        Ok(Self {
+            child,
+            pid,
+            socket,
+            socket_dir,
+        })
     }
 
-    /// Kills and reaps the child, and removes the socket a killed monitor leaves behind:
-    /// first, because a parent crashing on this monitor ends as soon as the monitor does.
+    /// Kills and reaps the child, and removes the socket a killed monitor leaves behind, with
+    /// its directory. They go first, because a parent crashing on this monitor ends as soon as
+    /// the monitor does; anything left then (a socket Windows would not let go of) goes after.
     async fn stop(mut self) {
-        let unlinked = tokio::fs::remove_file(&self.socket).await.is_ok();
+        let removed = self.remove_socket().await;
         let _ = self.child.start_kill();
         let _ = self.child.wait().await;
-        if !unlinked {
-            let _ = tokio::fs::remove_file(&self.socket).await;
+        if !removed {
+            self.remove_socket().await;
         }
     }
+
+    async fn remove_socket(&self) -> bool {
+        let _ = tokio::fs::remove_file(&self.socket).await;
+        tokio::fs::remove_dir(&self.socket_dir).await.is_ok()
+    }
+}
+
+/// A new random directory for the monitor's socket: in `$XDG_RUNTIME_DIR` on Linux, else in
+/// the temporary directory, whichever comes first that suits [`pick_socket_dir`].
+fn fresh_socket_dir() -> io::Result<PathBuf> {
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    #[cfg(unix)]
+    // SAFETY: `getuid` takes nothing and cannot fail.
+    let name = format!("bibcode-{}-{}", unsafe { libc::getuid() }, &id[..12]);
+    #[cfg(not(unix))]
+    let name = format!("bibcode-{}", &id[..12]);
+    #[cfg(target_os = "linux")]
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+    #[cfg(not(target_os = "linux"))]
+    let runtime: Option<PathBuf> = None;
+    let bases: Vec<PathBuf> = runtime.into_iter().chain([std::env::temp_dir()]).collect();
+    pick_socket_dir(&bases, &name)
+}
+
+/// `name` under the first of `bases` where the socket path fits and no other user can rename
+/// or replace what this user creates, which a private subdirectory alone does not prevent.
+fn pick_socket_dir(bases: &[PathBuf], name: &str) -> io::Result<PathBuf> {
+    bases
+        .iter()
+        .map(|base| base.join(name))
+        .find(|dir| {
+            dir.is_absolute()
+                && dir.join(SOCKET_FILE).as_os_str().len() <= SOCKET_PATH_MAX
+                && dir.parent().is_some_and(entries_are_safe)
+        })
+        .ok_or_else(|| io::Error::other("no private place for the crash monitor's socket"))
+}
+
+/// Whether nobody else can rename what this user creates in `base`: it is this user's and
+/// only this user may write to it, or it is sticky (as `/tmp` is) and this user's or root's.
+/// Windows keeps the per-user temporary directory's ACL.
+fn entries_are_safe(base: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: `getuid` takes nothing and cannot fail.
+        let uid = unsafe { libc::getuid() };
+        fs::metadata(base).is_ok_and(|meta| {
+            let sticky = meta.mode() & 0o1000 != 0;
+            let shared = meta.mode() & 0o022 != 0;
+            meta.is_dir()
+                && match meta.uid() {
+                    owner if owner == uid => sticky || !shared,
+                    0 => sticky,
+                    _ => false,
+                }
+        })
+    }
+    #[cfg(not(unix))]
+    fs::metadata(base).is_ok_and(|meta| meta.is_dir())
+}
+
+/// Creates `dir`, which must not exist yet, as a directory only this user can enter, and
+/// returns the socket path inside it. A path someone else could have prepared is never used:
+/// no other local user can then connect to the monitor, or plant its socket first.
+fn create_socket_dir(dir: &Path) -> io::Result<PathBuf> {
+    let mut builder = fs::DirBuilder::new();
+    // Not recursive: an existing path, a symlink included, fails here.
+    builder.recursive(false);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(dir)?;
+    let socket = dir.join(SOCKET_FILE);
+    let refused = if !private_dir(dir) {
+        Some("the crash monitor's socket directory is not private")
+    } else if socket.as_os_str().len() > SOCKET_PATH_MAX {
+        Some("the crash monitor's socket path is too long")
+    } else if fs::symlink_metadata(&socket).is_ok() {
+        Some("the crash monitor's socket path already exists")
+    } else {
+        None
+    };
+    if let Some(reason) = refused {
+        let _ = fs::remove_dir(dir);
+        return Err(io::Error::other(reason));
+    }
+    Ok(socket)
+}
+
+/// A real directory owned by this user with mode 0700. Windows keeps the per-user temporary
+/// directory's ACL.
+fn private_dir(dir: &Path) -> bool {
+    fs::symlink_metadata(dir).is_ok_and(|meta| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            // SAFETY: `getuid` takes nothing and cannot fail.
+            let uid = unsafe { libc::getuid() };
+            meta.is_dir() && meta.uid() == uid && meta.mode() & 0o777 == 0o700
+        }
+        #[cfg(not(unix))]
+        meta.is_dir()
+    })
 }
 
 /// Records what this host can capture, for the profiler status. OS crash records are
@@ -894,6 +1059,14 @@ pub fn desktop_local_profiler() -> Option<(PathBuf, bool)> {
 /// as long as the process, and returns once the hook is armed.
 #[doc(hidden)]
 pub fn arm_for_test(dir: &Path) {
+    // The smoke ends in a crash that Windows Error Reporting also handles; its dialog would
+    // hang an unattended run.
+    #[cfg(windows)]
+    // SAFETY: `SetErrorMode` takes and returns plain flags.
+    unsafe {
+        use windows_sys::Win32::System::Diagnostics::Debug::{SEM_NOGPFAULTERRORBOX, SetErrorMode};
+        SetErrorMode(SEM_NOGPFAULTERRORBOX);
+    }
     let runtime = Box::leak(Box::new(
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
@@ -1112,6 +1285,70 @@ mod tests {
             contents: None,
         }));
         assert_eq!(mode(&path.with_extension("json")), 0o600);
+    }
+
+    /// The socket's directory must be new: an existing path, or a symlink planted where it
+    /// would go, is refused and left alone.
+    #[test]
+    fn the_socket_directory_is_new_and_private() {
+        let base = tempfile::tempdir().unwrap();
+        let dir = base.path().join("bibcode-test");
+        let socket = create_socket_dir(&dir).unwrap();
+        assert_eq!(socket, dir.join("monitor.sock"));
+        assert!(!socket.exists());
+        assert!(private_dir(&dir));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
+        assert!(create_socket_dir(&dir).is_err(), "an existing directory");
+
+        #[cfg(unix)]
+        {
+            let elsewhere = base.path().join("elsewhere");
+            std::fs::create_dir(&elsewhere).unwrap();
+            let planted = base.path().join("planted");
+            std::os::unix::fs::symlink(&elsewhere, &planted).unwrap();
+            assert!(create_socket_dir(&planted).is_err(), "a planted symlink");
+            assert!(std::fs::symlink_metadata(&planted).unwrap().is_symlink());
+            assert!(std::fs::read_dir(&elsewhere).unwrap().next().is_none());
+        }
+    }
+
+    /// The socket goes under the first base where its path fits and nobody else can rename
+    /// what this user creates: private to this user, or sticky as `/tmp` is.
+    #[cfg(unix)]
+    #[test]
+    fn the_socket_base_must_fit_and_be_safe_from_other_users() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let with_mode = |name: &str, mode: u32| {
+            let dir = root.path().join(name);
+            std::fs::create_dir(&dir).unwrap();
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode)).unwrap();
+            dir
+        };
+        let shared = with_mode("shared", 0o777);
+        let sticky = with_mode("sticky", 0o1777);
+        let private = with_mode("private", 0o700);
+        let long = root.path().join("l".repeat(120));
+        std::fs::create_dir(&long).unwrap();
+
+        let name = "bibcode-1-0123456789ab";
+        assert_eq!(
+            pick_socket_dir(&[shared.clone(), private.clone()], name).unwrap(),
+            private.join(name),
+            "others could rename it out of a shared base"
+        );
+        assert_eq!(
+            pick_socket_dir(&[long, sticky.clone()], name).unwrap(),
+            sticky.join(name),
+            "a base too long for a socket path is skipped"
+        );
+        assert!(pick_socket_dir(&[shared], name).is_err());
     }
 
     #[test]
