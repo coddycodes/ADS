@@ -9,7 +9,7 @@ import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 import * as Schema from "effect/Schema";
 
-import { TAURI_UPDATE_TARGETS } from "./lib/release-targets.ts";
+import { RELEASE_TARGETS, TAURI_UPDATE_TARGETS, symbolArchiveName } from "./lib/release-targets.ts";
 
 const UpdaterDescriptorSchema = Schema.Struct({
   target: Schema.Literals(TAURI_UPDATE_TARGETS),
@@ -60,6 +60,13 @@ export function expectedServerAssetNames(version: string): ReadonlyArray<string>
     `bibcode-server-${version}-1.aarch64.rpm`,
     `bibcode-server-${version}-1.x86_64.rpm`,
   ];
+}
+
+/** The desktop and server Breakpad symbol archives, one of each per release target. */
+export function expectedSymbolAssetNames(version: string): ReadonlyArray<string> {
+  return (["desktop", "server"] as const).flatMap((family) =>
+    RELEASE_TARGETS.map((target) => symbolArchiveName(family, version, target)),
+  );
 }
 
 export function serverSigningPlan(
@@ -157,6 +164,12 @@ export async function assembleReleaseAssets(
       throw new ReleaseAssetAssemblyError(`Missing server release asset ${asset}.`);
     }
   }
+  const symbolAssets = expectedSymbolAssetNames(input.version);
+  for (const asset of symbolAssets) {
+    if (!initialEntries.includes(asset)) {
+      throw new ReleaseAssetAssemblyError(`Missing symbol release asset ${asset}.`);
+    }
+  }
   const desktopAssets = expectedDesktopAssets(initialEntries, input.version);
   const descriptorNames = new Set(TAURI_UPDATE_TARGETS.map((target) => `updater-${target}.json`));
   const updaterArtifacts = new Set<string>();
@@ -186,7 +199,7 @@ export async function assembleReleaseAssets(
     }
   }
 
-  const allowed = new Set([...serverAssets, ...desktopAssets]);
+  const allowed = new Set([...serverAssets, ...symbolAssets, ...desktopAssets]);
   for (const updaterArtifact of updaterArtifacts) allowed.add(updaterArtifact);
   if (input.updater) allowed.add("latest.json");
   for (const descriptor of descriptorNames) {

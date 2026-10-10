@@ -32,4 +32,19 @@ describe("run Tauri build", () => {
       },
     );
   });
+
+  it("bundles an already built app with the same toolchain and environment", () => {
+    const runMsvc = vi.fn(() => 0);
+
+    runTauriBuild({
+      platform: "linux",
+      env: {},
+      args: ["bundle", "--bundles", "appimage"],
+      runMsvc,
+    });
+    expect(runMsvc).toHaveBeenCalledWith(
+      ["pnpm", "exec", "tauri", "bundle", "--bundles", "appimage"],
+      { env: { NO_STRIP: "1" } },
+    );
+  });
 });

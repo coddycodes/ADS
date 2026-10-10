@@ -508,6 +508,17 @@ describe("run-msvc", () => {
     ).toBe(null);
     expect(isTauriBuildCommand(["pnpm", "exec", "tauri", "build"])).toBe(true);
     expect(isTauriBuildCommand(["tauri", "info", "build"])).toBe(false);
+    // NSIS packaging runs in `tauri bundle` after a `--no-bundle` build.
+    expect(isTauriBuildCommand(["pnpm", "exec", "tauri", "bundle", "--bundles", "nsis"])).toBe(
+      true,
+    );
+    expect(
+      windowsPackagingPreflight(
+        ["pnpm", "exec", "tauri", "bundle"],
+        { USERNAME: "SYSTEM" },
+        "win32",
+      ),
+    ).toContain("SYSTEM profile");
 
     const spawnSync = vi.fn(() => ({ status: 0 }));
     expect(

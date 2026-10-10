@@ -723,6 +723,11 @@ impl WorktreeCatalogService {
         self.inner.git_repository.clone()
     }
 
+    /// Resolves once the catalog has begun shutting down.
+    pub(crate) async fn shutting_down(&self) {
+        self.inner.shutdown.cancelled().await;
+    }
+
     #[must_use]
     pub(crate) fn availability_registry(&self) -> WorkspaceAvailabilityRegistry {
         self.inner.availability_registry.clone()

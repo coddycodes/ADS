@@ -130,14 +130,15 @@ add or invoke a second local Vitest installation.
 - `vp run dist:desktop:win:arm64`: Windows ARM64 NSIS installer.
 - `vp run dist:desktop:win:x64`: Windows x64 NSIS installer.
 
-On Windows the shared `scripts/run-msvc.mjs` launcher refuses `tauri build`
-before any compilation when the process runs under the SYSTEM profile
-(`USERNAME` is a machine or service account, or `LOCALAPPDATA`, `APPDATA`, or
-`USERPROFILE` resolves under `C:WindowsSystem32configsystemprofile`). It
-exits with code 3 and names the detected variables; run the build as the
-logged-in interactive user instead. `apps/desktop/src-tauri/tauri.windows.conf.json`
-additionally sets `bundle.useLocalToolsDir`, so Tauri caches the NSIS toolset in
-`target/.tauri` rather than a per-account cache directory.
+On Windows the shared `scripts/run-msvc.mjs` launcher refuses `tauri build` and
+`tauri bundle` before any compilation or packaging when the process runs under
+the SYSTEM profile (`USERNAME` is a machine or service account, or
+`LOCALAPPDATA`, `APPDATA`, or `USERPROFILE` resolves under
+`C:WindowsSystem32configsystemprofile`). It exits with code 3 and names the
+detected variables; run the build as the logged-in interactive user instead.
+`apps/desktop/src-tauri/tauri.windows.conf.json` additionally sets
+`bundle.useLocalToolsDir`, so Tauri caches the NSIS toolset in `target/.tauri`
+rather than a per-account cache directory.
 
 `node scripts/remove-test-firewall-rules.ts --executable <path> [--dry-run]`
 removes the Windows Defender Firewall rules that Windows generates for one exact
@@ -147,17 +148,67 @@ locations (Program Files, per-user Programs, the Windows directory) and never
 removes the app-managed `BiBCode Remote Access` rule. Run it from an elevated
 PowerShell; on other platforms it exits 0 without doing anything.
 
-The wrapper, `scripts/build-desktop-artifact.ts`, rejects cross-platform builds by
-default, invokes the canonical `@bibcode/desktop` Tauri package, and copies bundle output
-under `release/desktop/<platform>-<arch>` unless an output directory is supplied.
-It runs the Tauri build with at most three attempts. Every failed attempt is
-reported with its exit code, and before retrying a macOS DMG build the wrapper
-reads `hdiutil info -plist` and detaches only the intermediate `rw.*.dmg` image
-inside that build's bundle `dmg` directory, reporting each detach or its
-failure; other mounted images are never touched. The final error names the
-first failure, not only the last. macOS DMG builds pass `--verbose` to the
-Tauri CLI because the bundler logs the generated `bundle_dmg.sh` output
-(`create-dmg`, `hdiutil`, AppleScript) only at debug level.
+The wrapper, `scripts/build-desktop-artifact.ts`, rejects cross-platform builds
+by default, invokes the canonical `@bibcode/desktop` Tauri package, and copies
+bundle output under `release/desktop/<platform>-<arch>` unless an output
+directory is supplied. It compiles with `tauri build --no-bundle` and then
+packages that binary with `tauri bundle` (the desktop package's `build` and
+`bundle` scripts); the Tauri CLI's bundle step does not run Cargo. Each step
+runs with at most three attempts. Every failed attempt is reported with its exit
+code, and before retrying a macOS DMG build the wrapper reads
+`hdiutil info -plist` and detaches only the intermediate `rw.*.dmg` image inside
+that build's bundle `dmg` directory, reporting each detach or its failure; other
+mounted images are never touched. The final error names the first failure, not
+only the last. macOS DMG bundles pass `--verbose` to the Tauri CLI because the
+bundler logs the generated `bundle_dmg.sh` output (`create-dmg`, `hdiutil`,
+AppleScript) only at debug level.
+
+`--symbols`, which release CI passes, adds Breakpad symbols between the two
+steps. The build then uses the symbol profile:
+`CARGO_PROFILE_RELEASE_STRIP=none`,
+`CARGO_PROFILE_RELEASE_DEBUG=line-tables-only`, plus
+`CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed` on macOS (for a dSYM) and
+`RUSTFLAGS=-C link-arg=-Wl,--build-id=sha1` on Linux. `scripts/dump-symbols.ts`
+dumps the unstripped binary, with its dSYM or PDB, into
+`target/<triple>/release/symbols`. The wrapper then strips the binary as rustc
+strips executables (`strip --strip-all` on Linux, plain `strip` on macOS;
+Windows ships the binary as linked and keeps the names in the PDB) and bundles
+it. It strips into a copy that replaces the binary: Cargo's binary is a hard
+link to its cached `deps/` artifact, and an in-place strip would leave the next
+build of unchanged sources without symbols to dump. Every bundle attempt starts
+from the stripped bytes, written back over the same file, because the bundler
+patches its bundle-type marker into the binary in place and restores it only
+after a successful bundle. After bundling the wrapper fails unless the binary is
+still the stripped file (same file and SHA-256), and unless every copy it can
+read in a bundle has the binary's build ID and symbol table: the macOS app,
+which the bundler re-signs (a DMG symbol build also requests `app`, because the
+bundler otherwise deletes the app it built), the package tree of this version's
+`.deb`, and the AppImage, which it extracts with `--appimage-extract`. Windows
+installers pack the binary itself. Cargo would re-link its unstripped artifact
+over the binary even when nothing needs rebuilding, so this check, not the Tauri
+CLI's current behavior, keeps an unstripped binary out of the bundles. The
+output directory also receives
+`bibcode-desktop-symbols-<version>-<os>-<arch>.zip`; see
+[Symbol assets](../operations/release.md#symbol-assets). `--symbols` needs
+`dump_syms` on `PATH` and cannot be combined with `--skip-build`.
+
+`scripts/dump-symbols.ts` runs `dump_syms --inlines --check-cfi --store <store>`
+on one release binary:
+
+```sh
+node scripts/dump-symbols.ts --binary <path> --module-name <shipped-name> --out <store> \
+  [--pdb <path>] [--dsym <path>] [--zip <archive>]
+```
+
+The binary is staged under its shipped file name first, because `dump_syms`
+names the module after its input. The script fails unless the `.sym` has `STACK`
+records (unwind data) and functions with source lines. A stripped binary or a
+missing dSYM yields no `FUNC` records, and a Windows binary without its PDB
+yields only `<unknown in ...>` placeholders without lines. `--zip` writes an
+archive holding just that `.sym` at its store path. The script uses only Node
+built-ins. It needs `dump_syms` (pinned to 2.3.9 in CI) with its default
+features, because the lookup of the PDB that a Windows binary names is part of
+the `http` feature.
 
 The desktop artifact contains the Tauri host, in-process Rust server, and built
 web assets. It does not stage Node.js, a TypeScript server, or helper sidecars.

@@ -16,6 +16,7 @@ pub mod sampler;
 pub mod sentinel;
 pub mod store;
 pub mod symbolicate;
+pub mod worktree_audit;
 
 use std::{
     path::{Path, PathBuf},

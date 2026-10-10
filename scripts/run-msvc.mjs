@@ -133,9 +133,10 @@ export const WINDOWS_PACKAGING_PREFLIGHT_EXIT_CODE = 3;
 
 const SYSTEM_PROFILE_SEGMENT = /[\\/]config[\\/]systemprofile(?:[\\/]|$)/i;
 
+/** `tauri build`, or `tauri bundle`, which packages an app that `tauri build --no-bundle` compiled. */
 export function isTauriBuildCommand(args) {
   const tauriIndex = args.indexOf("tauri");
-  return tauriIndex >= 0 && args[tauriIndex + 1] === "build";
+  return tauriIndex >= 0 && ["build", "bundle"].includes(args[tauriIndex + 1]);
 }
 
 /**
