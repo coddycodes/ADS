@@ -1,6 +1,6 @@
 //! The crash smoke, also run by CI on every OS: a real native fault in the `crash-smoke`
-//! binary must leave exactly one minidump with its sidecar, and the monitor child must never
-//! outlive the process it watches.
+//! binary must leave exactly one minidump with its sidecar that `bibcode profiler symbolicate`
+//! reads, and the monitor child must never outlive the process it watches.
 
 use std::{
     io::{BufRead, BufReader},
@@ -22,16 +22,18 @@ const SMOKE: &str = env!("CARGO_BIN_EXE_crash-smoke");
 )]
 fn native_crash_produces_a_minidump_and_a_sidecar() {
     // CI sets CRASH_SMOKE_OUT to a persistent directory so the dump survives the
-    // test and can be symbolicated (and uploaded as an artifact) afterwards.
+    // test and can be symbolicated (and uploaded as an artifact) afterwards. It is a data
+    // root: the dump goes to its profiler directory, where `bibcode profiler` finds it.
     let temp = tempfile::tempdir().unwrap();
     let out = std::env::var_os("CRASH_SMOKE_OUT").map(PathBuf::from);
-    let dir = out.as_deref().unwrap_or(temp.path());
-    std::fs::create_dir_all(dir).unwrap();
+    let root = out.as_deref().unwrap_or(temp.path());
+    let dir = root.join("userdata").join("profiler");
+    std::fs::create_dir_all(&dir).unwrap();
     // A persistent directory may hold an earlier run's dump.
     let crashes = dir.join("crashes");
     let _ = std::fs::remove_dir_all(&crashes);
 
-    let mut smoke = Command::new(SMOKE).arg(dir).spawn().unwrap();
+    let mut smoke = Command::new(SMOKE).arg(&dir).spawn().unwrap();
     let parent = smoke.id();
     let status = smoke.wait().unwrap();
     assert!(!status.success());
@@ -78,6 +80,30 @@ fn native_crash_produces_a_minidump_and_a_sidecar() {
     assert_eq!(meta["arch"], std::env::consts::ARCH);
     assert!(meta["createdAt"].is_string());
     assert!(meta["lastEvents"].is_array());
+
+    // The CLI walks the real dump; naming its frames needs symbols, the crash reason and the
+    // crashing thread's stack do not.
+    let symbolicated = Command::new(env!("CARGO_BIN_EXE_bibcode"))
+        .args(["profiler", "symbolicate", &stem, "--json", "--base-dir"])
+        .arg(root)
+        // A developer shell must not move the state directory to `dev/`.
+        .env_remove("VITE_DEV_SERVER_URL")
+        .env_remove("BIBCODE_HOME")
+        .output()
+        .unwrap();
+    assert!(
+        symbolicated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&symbolicated.stderr)
+    );
+    let symbolicated: serde_json::Value = serde_json::from_slice(&symbolicated.stdout).unwrap();
+    assert!(symbolicated["crashReason"].is_string(), "{symbolicated}");
+    assert!(
+        symbolicated["crashingThread"]["frames"]
+            .as_array()
+            .is_some_and(|frames| !frames.is_empty()),
+        "{symbolicated}"
+    );
 }
 
 /// The runbooks' release-build hook: with `BIBCODE_PROFILER_CRASH_TEST=1` an armed process

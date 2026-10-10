@@ -46,8 +46,18 @@ pub enum SymbolicateError {
     Download(String),
     #[error("refused the symbol archive: {0}")]
     Archive(String),
-    #[error(transparent)]
-    Io(#[from] io::Error),
+    #[error("{}: {source}", .path.display())]
+    Io { path: PathBuf, source: io::Error },
+    #[error("could not start symbolication: {0}")]
+    Runtime(io::Error),
+}
+
+/// An I/O error at `path`, which its message names.
+fn at(path: &Path) -> impl FnOnce(io::Error) -> SymbolicateError + '_ {
+    move |source| SymbolicateError::Io {
+        path: path.to_owned(),
+        source,
+    }
 }
 
 /// What to symbolicate: a crash record by id, or a `panic` event by `<sid>:<seq>`.
@@ -173,15 +183,26 @@ impl Release {
 }
 
 /// The release that built `record`, a crash sidecar or a panic event: both name the build's
-/// `version`, `os` and `arch`. `family` is the binary's, when it is a release binary.
-fn release_of(record: &Value, family: Option<SymbolFamily>) -> Option<Release> {
+/// `version`, `os` and `arch`. `family` is the binary's, when it is a release binary. Without
+/// one, why there is nothing to download, and what to do instead.
+fn release_of(record: &Value, family: Option<SymbolFamily>) -> Result<Release, String> {
+    let family = family.ok_or(
+        "these frames come from no BiBCode release binary; pass its symbol store with --symbols DIR",
+    )?;
     let field = |key: &str| record.get(key).and_then(Value::as_str).map(str::to_owned);
-    Some(Release {
-        family: family?,
-        version: field("version")?,
-        platform: field("os")?,
-        arch: field("arch")?,
-    })
+    match (field("version"), field("os"), field("arch")) {
+        (Some(version), Some(platform), Some(arch)) => Ok(Release {
+            family,
+            version,
+            platform,
+            arch,
+        }),
+        _ => Err(
+            "this record predates version recording, so its release is unknown; pass its \
+                  build's symbol store with --symbols DIR"
+                .into(),
+        ),
+    }
 }
 
 /// The binary a panic's frames come from: the module of the frames that carry a debug ID.
@@ -194,23 +215,24 @@ fn panic_family(event: &Value) -> Option<SymbolFamily> {
 }
 
 fn with_release_symbols(
-    release: Option<Release>,
+    release: Result<Release, String>,
     symbols: &[PathBuf],
     cache: &Path,
     download: bool,
     run: impl Fn(&[PathBuf]) -> Result<Value, SymbolicateError>,
 ) -> Result<Value, SymbolicateError> {
     let mut stores = symbols.to_vec();
-    stores.extend(release.as_ref().and_then(|release| release.cached(cache)));
+    stores.extend(
+        release
+            .as_ref()
+            .ok()
+            .and_then(|release| release.cached(cache)),
+    );
     let symbolicated = run(&stores)?;
     if !download || names_any_frame(&symbolicated) {
         return Ok(symbolicated);
     }
-    let release = release.ok_or_else(|| {
-        SymbolicateError::Download(
-            "no BiBCode release build is known for these frames; use a local symbol store".into(),
-        )
-    })?;
+    let release = release.map_err(SymbolicateError::Download)?;
     stores.push(fetch_release_symbols(
         release.family,
         &release.version,
@@ -235,7 +257,8 @@ fn names_any_frame(symbolicated: &Value) -> bool {
 pub fn symbolicate_dump(dump: &Path, symbols: &[PathBuf]) -> Result<Value, SymbolicateError> {
     let dump = minidump::Minidump::read_path(dump)?;
     let provider = Symbolizer::new(SimpleSymbolSupplier::new(symbols.to_vec()));
-    let state = block_on(minidump_processor::process_minidump(&dump, &provider))??;
+    let state = block_on(minidump_processor::process_minidump(&dump, &provider))
+        .map_err(SymbolicateError::Runtime)??;
     let crashing = state
         .requesting_thread
         .and_then(|index| state.threads.get(index));
@@ -409,17 +432,17 @@ pub fn fetch_release_symbols(
     if store.is_dir() {
         return Ok(store);
     }
-    fs::create_dir_all(cache)?;
+    fs::create_dir_all(cache).map_err(at(cache))?;
     // Unpacked under a name of its own, then renamed into place: a failed or concurrent fetch
     // never leaves a partial store where a finished one is expected.
     let unique = uuid::Uuid::new_v4();
     let archive = cache.join(format!(".{stem}-{unique}.zip"));
     let unpacked = cache.join(format!(".{stem}-{unique}"));
     let fetched = block_on(download(&url, &archive, MAX_DOWNLOAD_BYTES))
-        .map_err(SymbolicateError::from)
+        .map_err(SymbolicateError::Runtime)
         .and_then(|downloaded| downloaded)
         .and_then(|()| unpack(&archive, &unpacked, MAX_UNPACKED_BYTES))
-        .and_then(|()| fs::rename(&unpacked, &store).map_err(SymbolicateError::from));
+        .and_then(|()| fs::rename(&unpacked, &store).map_err(at(&store)));
     let _ = fs::remove_file(&archive);
     if let Err(error) = fetched {
         let _ = fs::remove_dir_all(&unpacked);
@@ -456,14 +479,14 @@ async fn download(url: &str, to: &Path, max_bytes: u64) -> Result<(), Symbolicat
     {
         return Err(too_large());
     }
-    let mut file = File::create_new(to)?;
+    let mut file = File::create_new(to).map_err(at(to))?;
     let mut received = 0;
     while let Some(chunk) = response.chunk().await.map_err(failed)? {
         received += chunk.len() as u64;
         if received > max_bytes {
             return Err(too_large());
         }
-        file.write_all(&chunk)?;
+        file.write_all(&chunk).map_err(at(to))?;
     }
     Ok(())
 }
@@ -472,9 +495,9 @@ async fn download(url: &str, to: &Path, max_bytes: u64) -> Result<(), Symbolicat
 /// that is a link or names a path outside `into`, or when it unpacks to more than `max_bytes`.
 fn unpack(archive: &Path, into: &Path, max_bytes: u64) -> Result<(), SymbolicateError> {
     let refused = |reason: String| SymbolicateError::Archive(reason);
-    let mut zip =
-        zip::ZipArchive::new(File::open(archive)?).map_err(|error| refused(error.to_string()))?;
-    fs::create_dir(into)?;
+    let mut zip = zip::ZipArchive::new(File::open(archive).map_err(at(archive))?)
+        .map_err(|error| refused(error.to_string()))?;
+    fs::create_dir(into).map_err(at(into))?;
     let mut unpacked = 0;
     for index in 0..zip.len() {
         let mut entry = zip
@@ -488,11 +511,12 @@ fn unpack(archive: &Path, into: &Path, max_bytes: u64) -> Result<(), Symbolicate
         }
         let path = into.join(relative);
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent).map_err(at(parent))?;
         }
-        let mut file = File::create_new(&path)?;
+        let mut file = File::create_new(&path).map_err(at(&path))?;
         // The sizes in the archive's headers are the archive's word; count what is written.
-        unpacked += io::copy(&mut (&mut entry).take(max_bytes - unpacked + 1), &mut file)?;
+        unpacked += io::copy(&mut (&mut entry).take(max_bytes - unpacked + 1), &mut file)
+            .map_err(at(&path))?;
         if unpacked > max_bytes {
             return Err(refused(format!(
                 "it unpacks to more than {} MiB",
@@ -876,6 +900,52 @@ mod tests {
         assert!(matches!(missing, Err(SymbolicateError::NotFound(_))));
         let missing = symbolicate(&reader, &Target::Crash("nope".into()), &[], false);
         assert!(matches!(missing, Err(SymbolicateError::NotFound(_))));
+    }
+
+    /// A panic recorded before panic events named their build has no release to download:
+    /// the error says so and points at local symbols.
+    #[test]
+    fn a_panic_without_its_build_points_at_local_symbols() {
+        let state = tempfile::tempdir().unwrap();
+        let dir = profiler_dir(state.path());
+        let event = json!({
+            "v": 1, "seq": 7, "sid": "aaaa1111", "ts": "2026-10-09T10:00:00Z", "kind": "panic",
+            "source": "server", "frames": [frame("bibcode", Some("ABC123"), 0x1010)],
+        });
+        fs::write(dir.join("events-000000.ndjson"), format!("{event}\n")).unwrap();
+
+        let error = symbolicate(
+            &Reader::new(&dir),
+            &Target::parse("aaaa1111:7").unwrap(),
+            &[],
+            true,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("predates version recording"), "{error}");
+        assert!(error.contains("--symbols DIR"), "{error}");
+        assert!(!state.path().join("profiler-symbols").exists());
+    }
+
+    /// A file system failure names the path it happened at.
+    #[test]
+    fn an_io_error_names_its_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("not-a-directory");
+        fs::write(&blocker, "").unwrap();
+
+        let error = fetch_release_symbols(
+            SymbolFamily::Server,
+            "0.1.0",
+            "linux",
+            "x86_64",
+            &blocker.join("cache"),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, SymbolicateError::Io { .. }), "{error}");
+        assert!(error.to_string().contains("not-a-directory"), "{error}");
     }
 
     #[test]
