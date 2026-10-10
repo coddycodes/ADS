@@ -2046,6 +2046,9 @@ async fn wait_for_termination_signal() {
     if terminate.recv().await.is_none() {
         std::future::pending().await
     }
+    // A logout signals the whole session; the processes that die with BiBCode are not
+    // crashes.
+    bibcode_server::diagnostics::profiler::exits::note_terminating();
 }
 
 fn emit_backend_ready<R: Runtime>(

@@ -2,7 +2,7 @@
 
 use std::{
     path::{Path, PathBuf},
-    time::{Duration, SystemTime},
+    time::SystemTime,
 };
 
 use serde_json::Value;
@@ -94,8 +94,15 @@ fn record(body: &Value) -> Option<OsCrashRecord> {
 /// WebKit names the crash reports of a web view's content process after this process.
 pub const WEB_CONTENT_PROCESS: &str = "com.apple.WebKit.WebContent";
 
-/// The newest web content crash report in `dir` written within `window` of `at`.
-pub fn web_content_report(dir: &Path, at: SystemTime, window: Duration) -> Option<OsCrashRecord> {
+/// The newest web content crash report in `dir` written between `earliest` and `latest`,
+/// for process `pid` when it is known. Other applications' web views crash under the same
+/// name.
+pub fn web_content_report(
+    dir: &Path,
+    pid: Option<u32>,
+    earliest: SystemTime,
+    latest: SystemTime,
+) -> Option<OsCrashRecord> {
     let mut reports: Vec<(SystemTime, PathBuf)> = std::fs::read_dir(dir)
         .ok()?
         .flatten()
@@ -105,11 +112,17 @@ pub fn web_content_report(dir: &Path, at: SystemTime, window: Duration) -> Optio
             (metadata.len() <= MAX_REPORT_BYTES).then_some(())?;
             Some((metadata.modified().ok()?, entry.path()))
         })
-        .filter(|(written, _)| super::within(*written, at, window))
+        .filter(|(written, _)| (earliest..=latest).contains(written))
         .collect();
     reports.sort();
     reports.into_iter().rev().find_map(|(_, path)| {
-        let mut record = parse_ips(&std::fs::read_to_string(&path).ok()?)?;
+        let body = ips_body(&std::fs::read_to_string(&path).ok()?)?;
+        if let Some(pid) = pid
+            && body.get("pid").and_then(Value::as_u64) != Some(u64::from(pid))
+        {
+            return None;
+        }
+        let mut record = record(&body)?;
         record.raw_ref = super::super::redact::redact_path(&path.to_string_lossy());
         Some(record)
     })
@@ -214,29 +227,48 @@ mod tests {
         write(
             "com.apple.WebKit.WebContent-2026-10-09-100500.ips",
             &ours,
-            std::time::Duration::from_secs(4),
+            std::time::Duration::from_secs(1),
         );
         write(
-            "com.apple.WebKit.WebContent-2026-10-09-080000.ips",
+            "com.apple.WebKit.WebContent-2026-10-09-100430.ips",
             IPS,
-            std::time::Duration::from_secs(7200),
+            std::time::Duration::from_secs(30),
         );
         write(
             "Safari-2026-10-09-100501.ips",
             IPS,
             std::time::Duration::ZERO,
         );
-        let window = std::time::Duration::from_secs(60);
+        let window = |from: std::time::SystemTime| {
+            (
+                from - std::time::Duration::from_secs(5),
+                from + std::time::Duration::from_secs(60),
+            )
+        };
+        let (earliest, latest) = window(at);
 
-        let record = web_content_report(dir.path(), at, window).expect("report");
+        let record = web_content_report(dir.path(), None, earliest, latest).expect("report");
         assert_eq!(record.frames[0], "WebCore::crash_here (bibcode + 0x12d687)");
+        // The fixture's process is pid 4242.
+        assert!(web_content_report(dir.path(), Some(4242), earliest, latest).is_some());
         assert_eq!(
-            web_content_report(dir.path(), at + std::time::Duration::from_secs(600), window),
+            web_content_report(dir.path(), Some(4243), earliest, latest),
             None,
-            "reports from long before the termination belong to other crashes"
+            "another web view's crash"
+        );
+        // Before the report of this termination is written, an earlier crash's must not do.
+        std::fs::remove_file(
+            dir.path()
+                .join("com.apple.WebKit.WebContent-2026-10-09-100500.ips"),
+        )
+        .unwrap();
+        assert_eq!(
+            web_content_report(dir.path(), None, earliest, latest),
+            None,
+            "written 30 s before the termination"
         );
         assert_eq!(
-            web_content_report(&dir.path().join("missing"), at, window),
+            web_content_report(&dir.path().join("missing"), None, earliest, latest),
             None
         );
     }

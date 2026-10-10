@@ -5,10 +5,13 @@
 //! costs one read lock.
 
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     path::{Path, PathBuf},
     process::ExitStatus,
-    sync::{Mutex, PoisonError},
+    sync::{
+        LazyLock, Mutex, PoisonError,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant, SystemTime},
 };
 
@@ -17,14 +20,21 @@ use serde_json::{Map, Value, json};
 use super::{
     amend_finding, emit,
     findings::{FindingInput, Occurrence, Severity},
-    os_records, record_finding,
+    record_finding,
     redact::redact_message,
+    sampler::LastSample,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use super::{os_records::OsCrashRecord, redact::redact_path};
+use super::{
+    os_records::{self, OsCrashRecord},
+    redact::redact_path,
+};
 
-/// How far from a death an OS report may be written and still be taken as its report.
+/// How long after a death an OS report may still be written and taken as its report.
 const REPORT_WINDOW: Duration = Duration::from_secs(60);
+/// How long before a death an OS report may have been written: clocks and file times are
+/// coarse, and the death is noticed a moment after it happened.
+const REPORT_LEAD: Duration = Duration::from_secs(5);
 /// How long a stop asked for counts: the process must exit within it.
 const STOP_REQUEST_MEMORY: Duration = Duration::from_secs(60);
 const STOP_REQUESTS_KEPT: usize = 64;
@@ -32,6 +42,19 @@ const STOP_REQUESTS_KEPT: usize = 64;
 /// Processes someone is stopping on purpose: BiBCode itself, or the user from the process
 /// list.
 static STOP_REQUESTS: Mutex<StopRequests> = Mutex::new(StopRequests::new());
+
+/// Set once BiBCode received a termination signal: what dies from then on dies with it.
+static TERMINATING: AtomicBool = AtomicBool::new(false);
+
+/// A delayed lookup (a core dump harvest, a crash report poll or a minidump listing), started
+/// with its finding's claim.
+type Lookup = Box<dyn FnOnce(LookupClaim) + Send>;
+
+/// The findings with a delayed lookup running, each with the newest one waiting to run after
+/// it: a crash loop runs one at a time, and its latest occurrence still gets its record.
+type Lookups = HashMap<String, Option<Lookup>>;
+
+static LOOKUPS: LazyLock<Mutex<Lookups>> = LazyLock::new(Default::default);
 
 /// How a process was asked to stop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,15 +106,58 @@ impl StopRequests {
 /// Runs `apply` on the stop requests a test captures on this thread, or on the process's.
 fn with_stop_requests<T>(apply: impl Fn(&mut StopRequests) -> T) -> T {
     #[cfg(test)]
-    if let Some(result) = CAPTURED.with(|captured| {
-        captured
-            .borrow_mut()
-            .as_mut()
-            .map(|captured| apply(&mut captured.stops))
-    }) {
+    if let Some(result) = captured(|captured| apply(&mut captured.stops)) {
         return result;
     }
     apply(&mut STOP_REQUESTS.lock().unwrap_or_else(PoisonError::into_inner))
+}
+
+/// Runs `apply` on the lookups a test captures on this thread, or on the process's.
+fn with_lookups<T>(mut apply: impl FnMut(&mut Lookups) -> T) -> T {
+    #[cfg(test)]
+    if let Some(result) = captured(|captured| apply(&mut captured.lookups)) {
+        return result;
+    }
+    apply(&mut LOOKUPS.lock().unwrap_or_else(PoisonError::into_inner))
+}
+
+/// A finding's running delayed lookup. Dropped when the lookup ends, which starts the one
+/// waiting.
+struct LookupClaim(String);
+
+impl Drop for LookupClaim {
+    fn drop(&mut self) {
+        let next = with_lookups(|lookups| {
+            let next = lookups.get_mut(&self.0).and_then(Option::take);
+            if next.is_none() {
+                lookups.remove(&self.0);
+            }
+            next
+        });
+        if let Some(next) = next {
+            next(Self(std::mem::take(&mut self.0)));
+        }
+    }
+}
+
+/// Starts `lookup` for the finding `id`. While one of its lookups runs, `lookup` waits to run
+/// next instead, in place of any lookup already waiting: that one's older occurrence can no
+/// longer take a record.
+fn run_lookup(id: String, lookup: impl FnOnce(LookupClaim) + Send + 'static) {
+    let mut waiting = Some(Box::new(lookup) as Lookup);
+    let queued = with_lookups(|lookups| match lookups.get_mut(&id) {
+        Some(next) => {
+            *next = waiting.take();
+            true
+        }
+        None => {
+            lookups.insert(id.clone(), None);
+            false
+        }
+    });
+    if !queued && let Some(lookup) = waiting {
+        lookup(LookupClaim(id));
+    }
 }
 
 /// How a process's exit came about.
@@ -107,15 +173,18 @@ pub enum ExitClass {
     },
 }
 
-/// Which unrequested exits count as crashes where a process is watched.
+/// Which unrequested exits count as crashes where a process is watched. A deliberate signal
+/// (SIGTERM, SIGHUP, SIGINT, Windows' Ctrl-C) never does: BiBCode sends none of them itself
+/// except an interrupt it notes, so one comes from a logout, a service stop or someone's
+/// `kill`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Watch {
     /// Signal and non-zero exits: the process should not end on its own.
     Failures,
     /// Signal exits only: non-zero is normal for git.
     Signals,
-    /// Signals people do not send from a terminal. In one, Ctrl-C, Ctrl-\, `kill` and a
-    /// closed terminal end processes on purpose, and `exit 1` is ordinary.
+    /// Signals people do not send from a terminal. In one, Ctrl-\ and `kill -9` end
+    /// processes on purpose too, and `exit 1` is ordinary.
     CrashSignals,
 }
 
@@ -129,6 +198,13 @@ pub struct Exited<'a> {
     pub exe: &'a str,
     pub pid: u32,
     pub uptime: Duration,
+}
+
+/// The web content process that ended, when the desktop knows it.
+pub struct WebProcess<'a> {
+    pub pid: u32,
+    /// Its executable; on Linux its core dump is matched by the file name.
+    pub exe: &'a str,
 }
 
 /// How `status` came about. `requested` is true when BiBCode or the user asked the process
@@ -148,9 +224,10 @@ pub fn classify_exit(status: &ExitStatus, requested: bool) -> ExitClass {
         };
     }
     match status.code() {
-        // An NTSTATUS error (0xC…): the process died of an exception.
+        // An NTSTATUS error (0xC…): the process died of an exception. `exit(-1)` and the
+        // other small negative codes at the top of the range are ordinary exits.
         #[cfg(windows)]
-        Some(code) if code as u32 >= 0xC000_0000 => ExitClass::Signal {
+        Some(code) if (0xC000_0000..0xFFFF_FF00).contains(&(code as u32)) => ExitClass::Signal {
             signal: code,
             likely_oom: false,
         },
@@ -166,7 +243,7 @@ pub fn watching() -> bool {
     // capturing exits on its own thread watches them.
     #[cfg(test)]
     {
-        CAPTURED.with(|captured| captured.borrow().is_some())
+        captured(|_| ()).is_some()
     }
     #[cfg(not(test))]
     {
@@ -174,10 +251,29 @@ pub fn watching() -> bool {
     }
 }
 
+/// Records that BiBCode received a termination signal. Processes that die from then on die
+/// with it, so none of their deaths is reported.
+pub fn note_terminating() {
+    #[cfg(test)]
+    if captured(|captured| captured.terminating = true).is_some() {
+        return;
+    }
+    TERMINATING.store(true, Ordering::Relaxed);
+}
+
+fn terminating() -> bool {
+    #[cfg(test)]
+    if let Some(terminating) = captured(|captured| captured.terminating) {
+        return terminating;
+    }
+    TERMINATING.load(Ordering::Relaxed)
+}
+
 /// Reports a watched process's exit when `watch` counts it as a crash: a `subprocess.exit`
-/// event and a `subprocess.crash` finding. Does nothing while the profiler is off.
+/// event and a `subprocess.crash` finding. Does nothing while the profiler is off, or once
+/// BiBCode is terminating.
 pub fn report_exit(watch: Watch, process: &Exited<'_>, status: &ExitStatus, requested: bool) {
-    if !watching() {
+    if terminating() || !watching() {
         return;
     }
     let class = classify_exit(status, requested);
@@ -231,13 +327,20 @@ pub fn report_exit(watch: Watch, process: &Exited<'_>, status: &ExitStatus, requ
         ),
         ExitClass::Requested | ExitClass::Clean => return,
     };
-    let fields = vec![kind.to_owned(), label.clone(), outcome.clone()];
-    #[cfg(test)]
-    if captured(&fields) {
-        return;
-    }
     let uptime_ms = u64::try_from(process.uptime.as_millis()).unwrap_or(u64::MAX);
-    emit(
+    let mut evidence = Map::from_iter([
+        ("pid".to_owned(), process.pid.into()),
+        ("outcome".to_owned(), outcome.clone().into()),
+        ("likelyOom".to_owned(), likely_oom.into()),
+        ("uptimeMs".to_owned(), uptime_ms.into()),
+    ]);
+    // A sample from before the process started is of an earlier process with its pid.
+    if let Some(sample) = last_sample(process.pid)
+        && started.is_none_or(|started| sample.at >= started)
+    {
+        evidence.extend(sample_evidence(&sample));
+    }
+    emit_event(
         "subprocess.exit",
         json!({
             "processKind": kind,
@@ -248,25 +351,21 @@ pub fn report_exit(watch: Watch, process: &Exited<'_>, status: &ExitStatus, requ
             "uptimeMs": uptime_ms,
         }),
     );
-    let occurrence = record_finding(FindingInput {
+    let occurrence = record(FindingInput {
         kind: "subprocess.crash",
         severity,
         source: "server".into(),
-        fingerprint_fields: fields,
+        fingerprint_fields: vec![kind.to_owned(), label, outcome],
         title,
         summary,
-        evidence: json!({
-            "pid": process.pid,
-            "outcome": outcome,
-            "likelyOom": likely_oom,
-            "uptimeMs": uptime_ms,
-        }),
+        evidence: Value::Object(evidence),
     });
     #[cfg(target_os = "linux")]
     if let (Some(occurrence), ExitClass::Signal { signal, .. }) = (occurrence, class)
         && dumps_core(signal)
     {
-        attach_coredump(occurrence, process);
+        let started_at = time::OffsetDateTime::now_utc() - process.uptime;
+        attach_coredump(occurrence, process.pid, process.exe, started_at);
     }
     #[cfg(not(target_os = "linux"))]
     let _ = occurrence;
@@ -291,60 +390,181 @@ pub fn withdraw_stop_request(pid: u32) {
     with_stop_requests(|requests| requests.withdraw(pid));
 }
 
-/// The app window's web content process ended: a `crash.webview` finding. On macOS, the
-/// crash report written for it is looked for during the next minute and its frames added.
-pub fn report_webview_terminated(reason: &str) {
-    let occurrence = record_webview(reason, Map::new());
-    #[cfg(target_os = "macos")]
-    if let Some(occurrence) = occurrence {
-        attach_web_content_report(occurrence);
+/// The app window's web content process ended: a `crash.webview` finding. With the process
+/// the desktop last saw, its OS record is looked up: on Linux the core dump, on macOS the
+/// crash report written during the next minute.
+pub fn report_webview_terminated(reason: &str, process: Option<WebProcess<'_>>) {
+    let reason = redact_message(reason);
+    let occurrence = record_webview(
+        &reason,
+        "The app window's web content process ended",
+        &format!(
+            "The process that renders the app window ended ({reason}); the window may stay \
+             blank until it reloads."
+        ),
+        Map::new(),
+    );
+    let Some(occurrence) = occurrence else {
+        return;
+    };
+    #[cfg(target_os = "linux")]
+    if let Some(process) = process {
+        let started_at = time::OffsetDateTime::now_utc() - REPORT_WINDOW;
+        attach_coredump(occurrence, process.pid, process.exe, started_at);
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = occurrence;
+    #[cfg(target_os = "macos")]
+    attach_web_content_report(occurrence, process.map(|process| process.pid));
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let _ = (occurrence, process);
 }
 
-/// WebView2's `ProcessFailed`: a `crash.webview` finding with the exit code and the name of
-/// the minidump WebView2 wrote to `report_dir`, if any.
-pub fn report_webview_failed(reason: &str, exit_code: i32, report_dir: Option<PathBuf>) {
+/// WebView2's `ProcessFailed`: a `crash.webview` finding that names the failure's `kind`
+/// (`render-process-unresponsive`, `gpu-process-exited`, …), with the exit code and the name
+/// of the minidump WebView2 wrote to `report_dir`, if any.
+pub fn report_webview_failed(
+    kind: &str,
+    reason: &str,
+    exit_code: i32,
+    report_dir: Option<PathBuf>,
+) {
+    let (kind, reason) = (redact_message(kind), redact_message(reason));
+    let (title, what) = webview_failure(&kind);
     let occurrence = record_webview(
-        reason,
-        Map::from_iter([("exitCode".to_owned(), exit_code.into())]),
+        &format!("{kind}: {reason}"),
+        title,
+        &format!("{what} ({reason})."),
+        Map::from_iter([
+            ("kind".to_owned(), kind.clone().into()),
+            ("exitCode".to_owned(), exit_code.into()),
+        ]),
     );
     let (Some(occurrence), Some(dir)) = (occurrence, report_dir) else {
         return;
     };
     let at = SystemTime::now();
-    // Not on the UI thread that reports the failure: the folder may sit on a slow disk.
-    let lookup = std::thread::Builder::new()
-        .name("bibcode-webview-dump".into())
-        .spawn(move || {
-            if let Some(dump) = newest_dump(&dir, at) {
-                amend_finding(
-                    &occurrence,
-                    Map::from_iter([("dump".to_owned(), dump.into())]),
-                );
-            }
-        });
-    if let Err(error) = lookup {
-        tracing::debug!(%error, "webview minidump lookup did not start");
+    run_lookup(occurrence.id.clone(), move |claim| {
+        // Not on the UI thread that reports the failure: the folder may sit on a slow disk.
+        let lookup = std::thread::Builder::new()
+            .name("bibcode-webview-dump".into())
+            .spawn(move || {
+                let _claim = claim;
+                if let Some(dump) = newest_dump(&dir, at) {
+                    amend_finding(
+                        &occurrence,
+                        Map::from_iter([("dump".to_owned(), dump.into())]),
+                    );
+                }
+            });
+        if let Err(error) = lookup {
+            tracing::debug!(%error, "webview minidump lookup did not start");
+        }
+    });
+}
+
+/// The title and the account of a WebView2 failure of `kind`.
+fn webview_failure(kind: &str) -> (&'static str, &'static str) {
+    match kind {
+        "render-process-unresponsive" => (
+            "The app window stopped responding",
+            "The process that renders the app window stopped responding",
+        ),
+        "render-process-exited" => (
+            "The app window's web content process ended",
+            "The process that renders the app window ended; the window may stay blank until \
+             it reloads",
+        ),
+        "browser-process-exited" => (
+            "The app window's browser process ended",
+            "WebView2's browser process, which hosts the app window's web content, ended",
+        ),
+        "frame-render-process-exited" => (
+            "A frame in the app window lost its renderer",
+            "The process that renders a frame inside the app window ended",
+        ),
+        "gpu-process-exited" => (
+            "The app window's GPU process ended",
+            "WebView2's GPU process ended; the window redraws once it restarts",
+        ),
+        "utility-process-exited" => (
+            "A utility process of the app window ended",
+            "A WebView2 utility process of the app window ended",
+        ),
+        _ => (
+            "A process of the app window ended",
+            "A WebView2 process of the app window ended",
+        ),
     }
 }
 
-fn record_webview(reason: &str, mut evidence: Map<String, Value>) -> Option<Occurrence> {
-    let reason = redact_message(reason);
-    evidence.insert("reason".to_owned(), reason.clone().into());
-    record_finding(FindingInput {
+/// Records a `crash.webview` finding, unless BiBCode is terminating and its webview with it.
+fn record_webview(
+    reason: &str,
+    title: &str,
+    summary: &str,
+    mut evidence: Map<String, Value>,
+) -> Option<Occurrence> {
+    if terminating() {
+        return None;
+    }
+    evidence.insert("reason".to_owned(), reason.into());
+    record(FindingInput {
         kind: "crash.webview",
         severity: Severity::Error,
         source: "server".into(),
-        fingerprint_fields: vec![reason.clone()],
-        title: "The app window's web content process ended".to_owned(),
-        summary: format!(
-            "The process that renders the app window ended ({reason}); the window may stay \
-             blank until it reloads."
-        ),
+        fingerprint_fields: vec![reason.to_owned()],
+        title: title.to_owned(),
+        summary: summary.to_owned(),
         evidence: Value::Object(evidence),
     })
+}
+
+fn record(input: FindingInput) -> Option<Occurrence> {
+    #[cfg(test)]
+    if let Some(occurrence) = captured(|captured| {
+        let id = format!(
+            "{}-{}",
+            input.kind,
+            super::findings::fingerprint(input.kind, &input.fingerprint_fields)
+        );
+        captured.findings.push(CapturedFinding {
+            fields: input.fingerprint_fields.clone(),
+            title: input.title.clone(),
+            evidence: input.evidence.clone(),
+        });
+        Occurrence { id, count: 1 }
+    }) {
+        return Some(occurrence);
+    }
+    record_finding(input)
+}
+
+fn emit_event(kind: &'static str, payload: Value) {
+    #[cfg(test)]
+    if captured(|_| ()).is_some() {
+        return;
+    }
+    emit(kind, payload);
+}
+
+/// The sampler's latest sample of `pid`, if it sampled the process.
+fn last_sample(pid: u32) -> Option<LastSample> {
+    #[cfg(test)]
+    if let Some(sample) = captured(|captured| captured.samples.get(&pid).copied()) {
+        return sample;
+    }
+    super::sampler::last_sample(pid)
+}
+
+fn sample_evidence(sample: &LastSample) -> Map<String, Value> {
+    let ago_ms = u64::try_from(sample.at.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let mut evidence = Map::from_iter([
+        ("lastRssBytes".to_owned(), sample.rss_bytes.into()),
+        ("sampledAgoMs".to_owned(), ago_ms.into()),
+    ]);
+    if let Some(private_bytes) = sample.private_bytes {
+        evidence.insert("lastPrivateBytes".to_owned(), private_bytes.into());
+    }
+    evidence
 }
 
 /// Whether the exit is a fault: a crash signal, or a Windows exception other than Ctrl-C's.
@@ -367,37 +587,44 @@ fn faulted(class: ExitClass) -> bool {
     }
     #[cfg(not(unix))]
     {
-        !sent_by_people(signal)
+        !deliberate(signal)
     }
 }
 
 fn counts(watch: Watch, class: ExitClass) -> bool {
     match (watch, class) {
         (_, ExitClass::Requested | ExitClass::Clean) => false,
+        (_, ExitClass::Signal { signal, .. }) if deliberate(signal) => false,
         (Watch::Failures, _) => true,
         (Watch::Signals, ExitClass::Signal { .. }) => true,
-        (Watch::CrashSignals, ExitClass::Signal { signal, .. }) => !sent_by_people(signal),
+        (Watch::CrashSignals, ExitClass::Signal { signal, .. }) => !typed_in_a_terminal(signal),
         (Watch::Signals | Watch::CrashSignals, ExitClass::NonZero(_)) => false,
     }
 }
 
-/// Signals people end processes with: Ctrl-C, Ctrl-\, `kill`, and the hangup of a closed
-/// terminal; on Windows, Ctrl-C's `STATUS_CONTROL_C_EXIT`.
-fn sent_by_people(signal: i32) -> bool {
+/// Signals that end a process on purpose: a polite stop, a hangup or an interrupt; on
+/// Windows, Ctrl-C's `STATUS_CONTROL_C_EXIT`.
+fn deliberate(signal: i32) -> bool {
     #[cfg(unix)]
     {
-        [
-            libc::SIGHUP,
-            libc::SIGINT,
-            libc::SIGQUIT,
-            libc::SIGKILL,
-            libc::SIGTERM,
-        ]
-        .contains(&signal)
+        [libc::SIGHUP, libc::SIGINT, libc::SIGTERM].contains(&signal)
     }
     #[cfg(not(unix))]
     {
         signal as u32 == 0xC000_013A
+    }
+}
+
+/// Signals a terminal's user sends besides the deliberate ones: Ctrl-\ and `kill -9`.
+fn typed_in_a_terminal(signal: i32) -> bool {
+    #[cfg(unix)]
+    {
+        [libc::SIGQUIT, libc::SIGKILL].contains(&signal)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = signal;
+        false
     }
 }
 
@@ -489,40 +716,68 @@ const COREDUMP_POLL: Duration = Duration::from_secs(1);
 #[cfg(target_os = "linux")]
 const COREDUMP_WAIT: Duration = Duration::from_secs(5);
 
-/// Adds the systemd-coredump record of a subprocess that dumped core, matched by its pid, its
-/// executable and its lifetime. Best effort, off the caller's path, given up after 5 s.
+/// Adds the systemd-coredump record of a process that dumped core, matched by its pid, its
+/// executable and its records since `started_at`. Best effort, off the caller's path, given
+/// up after 5 s; one per finding at a time.
 #[cfg(target_os = "linux")]
-fn attach_coredump(occurrence: Occurrence, process: &Exited<'_>) {
-    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+fn attach_coredump(occurrence: Occurrence, pid: u32, exe: &str, started_at: time::OffsetDateTime) {
+    #[cfg(test)]
+    if captured(|captured| captured.harvests.push((pid, exe.to_owned()))).is_some() {
         return;
-    };
-    let started_at = time::OffsetDateTime::now_utc() - process.uptime;
-    let (pid, exe) = (process.pid, process.exe.to_owned());
-    runtime.spawn(async move {
-        let run = super::sentinel::SessionRecord {
-            state: String::new(),
-            pid,
-            boot_id: super::sentinel::boot_id(),
-            exe,
-            version: String::new(),
-            started_at: started_at
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_default(),
-            oom_kill_baseline: None,
-        };
-        let record = tokio::time::timeout(COREDUMP_WAIT, async {
-            loop {
-                tokio::time::sleep(COREDUMP_POLL).await;
-                if let Some(record) = os_records::harvest_previous_crash(&run).await {
-                    return record;
+    }
+    let exe = exe.to_owned();
+    run_lookup(occurrence.id.clone(), move |claim| {
+        spawn_lookup(async move {
+            let _claim = claim;
+            let run = super::sentinel::SessionRecord {
+                state: String::new(),
+                pid,
+                boot_id: super::sentinel::boot_id(),
+                exe,
+                version: String::new(),
+                started_at: started_at
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default(),
+                oom_kill_baseline: None,
+            };
+            let record = tokio::time::timeout(COREDUMP_WAIT, async {
+                loop {
+                    tokio::time::sleep(COREDUMP_POLL).await;
+                    if let Some(record) = os_records::harvest_previous_crash(&run).await {
+                        return record;
+                    }
                 }
+            })
+            .await;
+            if let Ok(record) = record {
+                amend_finding(&occurrence, os_record_evidence(&record));
             }
-        })
-        .await;
-        if let Ok(record) = record {
-            amend_finding(&occurrence, os_record_evidence(&record));
-        }
+        });
     });
+}
+
+/// Runs a lookup on the current Tokio runtime, or on a thread of its own when the caller has
+/// none, as a desktop UI thread does.
+#[cfg(target_os = "linux")]
+fn spawn_lookup(lookup: impl std::future::Future<Output = ()> + Send + 'static) {
+    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        runtime.spawn(lookup);
+        return;
+    }
+    let thread = std::thread::Builder::new()
+        .name("bibcode-crash-record".into())
+        .spawn(move || {
+            match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime.block_on(lookup),
+                Err(error) => tracing::debug!(%error, "crash record lookup has no runtime"),
+            }
+        });
+    if let Err(error) = thread {
+        tracing::debug!(%error, "crash record lookup did not start");
+    }
 }
 
 /// ReportCrash writes a web content process's report some seconds after it died.
@@ -530,37 +785,46 @@ fn attach_coredump(occurrence: Occurrence, process: &Exited<'_>) {
 const REPORT_POLL: Duration = Duration::from_secs(5);
 
 /// Looks for the web content process's crash report during the next minute and adds its
-/// crashed thread's frames.
+/// crashed thread's frames: the report of `pid` when the desktop knew it.
 #[cfg(target_os = "macos")]
-fn attach_web_content_report(occurrence: Occurrence) {
+fn attach_web_content_report(occurrence: Occurrence, pid: Option<u32>) {
     let Some(dir) = dirs::home_dir().map(|home| home.join("Library/Logs/DiagnosticReports")) else {
         return;
     };
-    let at = SystemTime::now();
-    let lookup = std::thread::Builder::new()
-        .name("bibcode-webview-report".into())
-        .spawn(move || {
-            let deadline = Instant::now() + REPORT_WINDOW;
-            loop {
-                if let Some(record) = os_records::macos::web_content_report(&dir, at, REPORT_WINDOW)
-                {
-                    amend_finding(&occurrence, os_record_evidence(&record));
-                    return;
+    let now = SystemTime::now();
+    let earliest = now - REPORT_LEAD;
+    let latest = now + REPORT_WINDOW;
+    // A lookup that waited behind another still ends a minute after this termination.
+    let deadline = Instant::now() + REPORT_WINDOW;
+    run_lookup(occurrence.id.clone(), move |claim| {
+        let lookup = std::thread::Builder::new()
+            .name("bibcode-webview-report".into())
+            .spawn(move || {
+                let _claim = claim;
+                loop {
+                    if let Some(record) =
+                        os_records::macos::web_content_report(&dir, pid, earliest, latest)
+                    {
+                        amend_finding(&occurrence, os_record_evidence(&record));
+                        return;
+                    }
+                    if Instant::now() >= deadline {
+                        return;
+                    }
+                    std::thread::sleep(REPORT_POLL);
                 }
-                if Instant::now() >= deadline {
-                    return;
-                }
-                std::thread::sleep(REPORT_POLL);
-            }
-        });
-    if let Err(error) = lookup {
-        tracing::debug!(%error, "web content crash report lookup did not start");
-    }
+            });
+        if let Err(error) = lookup {
+            tracing::debug!(%error, "web content crash report lookup did not start");
+        }
+    });
 }
 
 /// The newest minidump in WebView2's failure report folder, or in Crashpad's `reports` folder
-/// inside it, written within a minute of `at`. Older dumps there belong to other failures.
+/// inside it, written from a few seconds before `at` to a minute after. Older dumps there
+/// belong to other failures.
 fn newest_dump(dir: &Path, at: SystemTime) -> Option<String> {
+    let (earliest, latest) = (at - REPORT_LEAD, at + REPORT_WINDOW);
     [dir.to_path_buf(), dir.join("reports")]
         .iter()
         .filter_map(|dir| std::fs::read_dir(dir).ok())
@@ -572,31 +836,40 @@ fn newest_dump(dir: &Path, at: SystemTime) -> Option<String> {
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("dmp"))
         })
         .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.file_name())))
-        .filter(|(written, _)| os_records::within(*written, at, REPORT_WINDOW))
+        .filter(|(written, _)| (earliest..=latest).contains(written))
         .max_by_key(|(written, _)| *written)
         .map(|(_, name)| name.to_string_lossy().into_owned())
 }
 
+/// Runs `local` on what a test captures on this thread; `None` when it captures nothing.
 #[cfg(test)]
-fn captured(fields: &[String]) -> bool {
-    CAPTURED.with(|captured| match captured.borrow_mut().as_mut() {
-        Some(captured) => {
-            captured.exits.push(fields.to_vec());
-            true
-        }
-        None => false,
-    })
+fn captured<T>(local: impl FnOnce(&mut Captured) -> T) -> Option<T> {
+    CAPTURED.with(|captured| captured.borrow_mut().as_mut().map(local))
+}
+
+/// A finding a test captured.
+#[cfg(test)]
+#[derive(Clone, Debug)]
+pub(crate) struct CapturedFinding {
+    pub(crate) fields: Vec<String>,
+    pub(crate) title: String,
+    pub(crate) evidence: Value,
 }
 
 /// What a test captures on its thread. Lib tests cannot turn the process-global profiler on
-/// without affecting one another, and their fake pids repeat across tests, so the stops they
-/// note stay on their thread too.
+/// without affecting one another, and their fake pids and fingerprints repeat across tests,
+/// so the state reports consult stays on their thread too.
 #[cfg(test)]
 #[derive(Default)]
 struct Captured {
-    /// The fingerprint fields of the exits reported.
-    exits: Vec<Vec<String>>,
+    findings: Vec<CapturedFinding>,
+    /// The pid and executable of each core dump harvest started.
+    #[cfg(target_os = "linux")]
+    harvests: Vec<(u32, String)>,
     stops: StopRequests,
+    lookups: Lookups,
+    samples: std::collections::HashMap<u32, LastSample>,
+    terminating: bool,
 }
 
 #[cfg(test)]
@@ -604,8 +877,8 @@ thread_local! {
     static CAPTURED: std::cell::RefCell<Option<Captured>> = const { std::cell::RefCell::new(None) };
 }
 
-/// Captures the exits reported on this thread instead of recording them, and keeps the
-/// stops noted on it, until dropped.
+/// Captures the findings reported on this thread instead of recording them, with the state
+/// reports consult, until dropped.
 #[cfg(test)]
 pub(crate) struct CapturedExits;
 
@@ -618,13 +891,24 @@ impl CapturedExits {
 
     /// The fingerprint fields reported so far: kind, label and signal or exit code.
     pub(crate) fn take(&self) -> Vec<Vec<String>> {
-        CAPTURED.with(|captured| {
-            captured
-                .borrow_mut()
-                .as_mut()
-                .map(|captured| std::mem::take(&mut captured.exits))
-                .unwrap_or_default()
-        })
+        self.take_findings()
+            .into_iter()
+            .map(|finding| finding.fields)
+            .collect()
+    }
+
+    pub(crate) fn take_findings(&self) -> Vec<CapturedFinding> {
+        captured(|captured| std::mem::take(&mut captured.findings)).unwrap_or_default()
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn take_harvests(&self) -> Vec<(u32, String)> {
+        captured(|captured| std::mem::take(&mut captured.harvests)).unwrap_or_default()
+    }
+
+    /// Stands in for the sampler's latest sample of `pid`.
+    pub(crate) fn sample(&self, pid: u32, sample: LastSample) {
+        captured(|captured| captured.samples.insert(pid, sample));
     }
 }
 
@@ -657,6 +941,30 @@ mod tests {
     #[cfg(windows)]
     fn status(raw: u32) -> ExitStatus {
         std::os::windows::process::ExitStatusExt::from_raw(raw)
+    }
+
+    /// A fault: SIGSEGV, or an access violation.
+    fn crashed() -> ExitStatus {
+        #[cfg(unix)]
+        {
+            status(libc::SIGSEGV)
+        }
+        #[cfg(windows)]
+        {
+            status(0xC000_0005)
+        }
+    }
+
+    /// `exit(code)`.
+    fn exited(code: u8) -> ExitStatus {
+        #[cfg(unix)]
+        {
+            status(i32::from(code) << 8)
+        }
+        #[cfg(windows)]
+        {
+            status(u32::from(code))
+        }
     }
 
     #[cfg(unix)]
@@ -719,6 +1027,15 @@ mod tests {
             classify_exit(&ExitStatus::from_raw(0xBFFF_FFFF), false),
             ExitClass::NonZero(_)
         ));
+        // `exit(-1)` and `exit(-2)`.
+        assert_eq!(
+            classify_exit(&ExitStatus::from_raw(0xFFFF_FFFF), false),
+            ExitClass::NonZero(-1)
+        );
+        assert_eq!(
+            classify_exit(&ExitStatus::from_raw(0xFFFF_FFFE), false),
+            ExitClass::NonZero(-2)
+        );
     }
 
     #[cfg(unix)]
@@ -733,32 +1050,32 @@ mod tests {
             assert!(!counts(watch, ExitClass::Clean));
             assert!(counts(watch, signal(libc::SIGSEGV)));
             assert!(counts(watch, signal(libc::SIGUSR1)));
+            // A logout, a service stop, a `kill` or an interrupt: never a crash.
+            for deliberate in [libc::SIGTERM, libc::SIGHUP, libc::SIGINT] {
+                assert!(!counts(watch, signal(deliberate)), "{watch:?} {deliberate}");
+            }
         }
         assert!(counts(Watch::Failures, ExitClass::NonZero(1)));
         assert!(!counts(Watch::Signals, ExitClass::NonZero(1)));
         assert!(!counts(Watch::CrashSignals, ExitClass::NonZero(130)));
-        for sent in [
-            libc::SIGHUP,
-            libc::SIGINT,
-            libc::SIGQUIT,
-            libc::SIGKILL,
-            libc::SIGTERM,
-        ] {
-            assert!(counts(Watch::Signals, signal(sent)));
-            assert!(!counts(Watch::CrashSignals, signal(sent)), "{sent}");
+        for typed in [libc::SIGQUIT, libc::SIGKILL] {
+            assert!(counts(Watch::Failures, signal(typed)));
+            assert!(counts(Watch::Signals, signal(typed)));
+            assert!(!counts(Watch::CrashSignals, signal(typed)), "{typed}");
         }
     }
 
     #[cfg(windows)]
     #[test]
-    fn ctrl_c_is_not_a_terminal_crash() {
+    fn ctrl_c_is_never_a_crash() {
         let code = |code: u32| ExitClass::Signal {
             signal: code as i32,
             likely_oom: false,
         };
-        assert!(counts(Watch::CrashSignals, code(0xC000_0005)));
-        assert!(counts(Watch::Signals, code(0xC000_013A)));
-        assert!(!counts(Watch::CrashSignals, code(0xC000_013A)));
+        for watch in [Watch::Failures, Watch::Signals, Watch::CrashSignals] {
+            assert!(counts(watch, code(0xC000_0005)));
+            assert!(!counts(watch, code(0xC000_013A)));
+        }
         assert!(faulted(code(0xC000_0005)));
         assert!(!faulted(code(0xC000_013A)));
     }
@@ -784,6 +1101,12 @@ mod tests {
         report_exit(Watch::Signals, &git(4_000_000_003), &status(1 << 8), false);
         report_exit(Watch::Failures, &git(4_000_000_004), &status(3 << 8), false);
         report_exit(Watch::Signals, &git(4_000_000_005), &status(0), false);
+        report_exit(
+            Watch::Failures,
+            &git(4_000_000_006),
+            &status(libc::SIGTERM),
+            false,
+        );
         assert_eq!(
             captured.take(),
             [["command", "git", "SIGSEGV"], ["command", "git", "exit 3"]]
@@ -807,18 +1130,14 @@ mod tests {
     #[test]
     fn an_exit_after_a_requested_stop_is_not_reported() {
         let captured = CapturedExits::start();
-        #[cfg(unix)]
-        let crashed = status(11);
-        #[cfg(windows)]
-        let crashed = status(0xC000_0005);
         note_stop_requested(4_000_000_100);
-        report_exit(Watch::Signals, &git(4_000_000_100), &crashed, false);
+        report_exit(Watch::Signals, &git(4_000_000_100), &crashed(), false);
         assert!(captured.take().is_empty());
-        report_exit(Watch::Signals, &git(4_000_000_101), &crashed, false);
+        report_exit(Watch::Signals, &git(4_000_000_101), &crashed(), false);
         assert_eq!(captured.take().len(), 1, "another process's stop");
         // A stop that failed leaves the process's own death reportable.
         withdraw_stop_request(4_000_000_100);
-        report_exit(Watch::Signals, &git(4_000_000_100), &crashed, false);
+        report_exit(Watch::Signals, &git(4_000_000_100), &crashed(), false);
         assert_eq!(captured.take().len(), 1);
 
         // A stop asked before the process started was for an earlier one with its pid.
@@ -828,7 +1147,7 @@ mod tests {
             uptime: Duration::from_millis(5),
             ..git(4_000_000_102)
         };
-        report_exit(Watch::Signals, &replacement, &crashed, false);
+        report_exit(Watch::Signals, &replacement, &crashed(), false);
         assert_eq!(captured.take().len(), 1, "the pid's new process crashed");
     }
 
@@ -842,7 +1161,6 @@ mod tests {
             ..git(4_000_000_200)
         };
         note_interrupt_requested(4_000_000_200);
-        report_exit(Watch::Failures, &codex, &status(libc::SIGINT), false);
         report_exit(Watch::Failures, &codex, &status(130 << 8), false);
         assert!(
             captured.take().is_empty(),
@@ -850,6 +1168,171 @@ mod tests {
         );
         report_exit(Watch::Failures, &codex, &status(libc::SIGSEGV), false);
         assert_eq!(captured.take(), [["provider", "codex", "SIGSEGV"]]);
+    }
+
+    /// A node CLI exits 143 or 1 when the SIGTERM that stops BiBCode reaches it too.
+    #[test]
+    fn nothing_is_reported_once_bibcode_is_terminating() {
+        let captured = CapturedExits::start();
+        let claude = Exited {
+            kind: "provider",
+            label: "claudeAgent",
+            ..git(4_000_000_300)
+        };
+        report_exit(Watch::Failures, &claude, &exited(143), false);
+        assert_eq!(captured.take().len(), 1, "before the termination signal");
+
+        note_terminating();
+        report_exit(Watch::Failures, &claude, &exited(143), false);
+        report_exit(Watch::Failures, &claude, &exited(1), false);
+        report_exit(Watch::Signals, &git(4_000_000_301), &crashed(), false);
+        report_webview_terminated("Crashed", None);
+        assert!(captured.take().is_empty());
+    }
+
+    #[test]
+    fn the_last_memory_sample_is_evidence() {
+        let captured = CapturedExits::start();
+        captured.sample(
+            4_000_000_310,
+            LastSample {
+                private_bytes: Some(512 << 20),
+                rss_bytes: 600 << 20,
+                at: Instant::now(),
+            },
+        );
+        report_exit(Watch::Signals, &git(4_000_000_310), &crashed(), false);
+        report_exit(Watch::Signals, &git(4_000_000_311), &crashed(), false);
+        let findings = captured.take_findings();
+        let sampled = &findings[0].evidence;
+        assert_eq!(sampled["lastPrivateBytes"], 512_u64 << 20);
+        assert_eq!(sampled["lastRssBytes"], 600_u64 << 20);
+        assert!(
+            sampled["sampledAgoMs"]
+                .as_u64()
+                .is_some_and(|ago| ago < 10_000)
+        );
+        assert_eq!(sampled["pid"], 4_000_000_310_u32);
+        assert!(findings[1].evidence.get("lastRssBytes").is_none());
+
+        // The pid's sample is a second old, and this process started 10 ms ago.
+        captured.sample(
+            4_000_000_312,
+            LastSample {
+                private_bytes: None,
+                rss_bytes: 1,
+                at: Instant::now() - Duration::from_secs(1),
+            },
+        );
+        let young = Exited {
+            uptime: Duration::from_millis(10),
+            ..git(4_000_000_312)
+        };
+        report_exit(Watch::Signals, &young, &crashed(), false);
+        let findings = captured.take_findings();
+        assert!(findings[0].evidence.get("lastRssBytes").is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn core_dumps_are_harvested_for_the_crashed_process() {
+        let captured = CapturedExits::start();
+        let exe = "/usr/lib/webkit2gtk-4.1/WebKitWebProcess";
+        report_webview_terminated(
+            "Crashed",
+            Some(WebProcess {
+                pid: 4_000_000_400,
+                exe,
+            }),
+        );
+        report_webview_terminated("ExceededMemoryLimit", None);
+        report_exit(Watch::Signals, &git(4_000_000_401), &crashed(), false);
+        report_exit(
+            Watch::Signals,
+            &git(4_000_000_402),
+            &status(libc::SIGUSR1),
+            false,
+        );
+        assert_eq!(
+            captured.take_harvests(),
+            [
+                (4_000_000_400, exe.to_owned()),
+                (4_000_000_401, "/usr/bin/git".to_owned())
+            ],
+            "only processes that dumped core"
+        );
+        assert_eq!(
+            captured.take(),
+            [
+                vec!["Crashed"],
+                vec!["ExceededMemoryLimit"],
+                vec!["command", "git", "SIGSEGV"],
+                vec!["command", "git", "SIGUSR1"]
+            ]
+        );
+    }
+
+    #[test]
+    fn a_finding_runs_one_delayed_lookup_at_a_time_then_its_newest() {
+        let _captured = CapturedExits::start();
+        let started = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let lookup = |name: &'static str| {
+            let started = std::sync::Arc::clone(&started);
+            move |claim: LookupClaim| started.lock().unwrap().push((name, claim))
+        };
+        let names = || {
+            started
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(name, _)| *name)
+                .collect::<Vec<_>>()
+        };
+        run_lookup("crash-a".into(), lookup("first"));
+        run_lookup("crash-a".into(), lookup("second"));
+        run_lookup("crash-a".into(), lookup("third"));
+        run_lookup("crash-b".into(), lookup("other"));
+        assert_eq!(names(), ["first", "other"], "one at a time per finding");
+
+        let first = started.lock().unwrap().remove(0);
+        drop(first);
+        assert_eq!(
+            names(),
+            ["other", "third"],
+            "the newest waiting one runs next"
+        );
+
+        let third = started.lock().unwrap().pop();
+        drop(third);
+        run_lookup("crash-a".into(), lookup("fourth"));
+        assert_eq!(names(), ["other", "fourth"], "none running, so it starts");
+    }
+
+    #[test]
+    fn webview2_failures_are_named_after_their_kind() {
+        let captured = CapturedExits::start();
+        report_webview_failed("render-process-unresponsive", "unresponsive", 0, None);
+        report_webview_failed("gpu-process-exited", "crashed", -1_073_741_819, None);
+        report_webview_failed("render-process-exited", "crashed", -1_073_741_819, None);
+        let findings = captured.take_findings();
+        let titles: Vec<&str> = findings
+            .iter()
+            .map(|finding| finding.title.as_str())
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "The app window stopped responding",
+                "The app window's GPU process ended",
+                "The app window's web content process ended"
+            ]
+        );
+        assert_eq!(
+            findings[0].fields,
+            ["render-process-unresponsive: unresponsive"]
+        );
+        assert_eq!(findings[1].evidence["kind"], "gpu-process-exited");
+        assert_eq!(findings[1].evidence["exitCode"], -1_073_741_819);
     }
 
     #[test]
@@ -867,8 +1350,9 @@ mod tests {
                 .set_modified(at - age)
                 .unwrap();
         };
-        write(reports.join("older.dmp"), Duration::from_secs(20));
-        write(reports.join("newest.dmp"), Duration::from_secs(2));
+        write(reports.join("older.dmp"), Duration::from_secs(3));
+        write(reports.join("newest.dmp"), Duration::from_secs(1));
+        write(reports.join("before.dmp"), Duration::from_secs(20));
         write(dir.path().join("stale.dmp"), Duration::from_secs(3600));
         write(reports.join("notes.txt"), Duration::ZERO);
         assert_eq!(newest_dump(dir.path(), at).as_deref(), Some("newest.dmp"));
@@ -878,7 +1362,7 @@ mod tests {
         assert_eq!(
             newest_dump(dir.path(), at),
             None,
-            "old dumps are not this one"
+            "dumps from before the failure are other failures'"
         );
     }
 }

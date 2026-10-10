@@ -4,7 +4,7 @@ pub mod linux;
 pub mod macos;
 pub mod windows;
 
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
@@ -99,13 +99,6 @@ pub(super) fn frame_module(frame: &str) -> Option<&str> {
         .and_then(|frame| frame.rsplit_once(" ("))
         .map_or(frame, |(_, location)| location);
     location.split(" + ").next()
-}
-
-/// Whether `time` lies within `window` of `at`, before or after it.
-pub(super) fn within(time: SystemTime, at: SystemTime, window: Duration) -> bool {
-    time.duration_since(at)
-        .unwrap_or_else(|earlier| earlier.duration())
-        <= window
 }
 
 /// The file name of a path from any OS, as the previous run recorded its executable.

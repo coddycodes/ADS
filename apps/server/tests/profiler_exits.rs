@@ -82,7 +82,7 @@ async fn unrequested_deaths_are_recorded_while_the_profiler_is_on() {
     .expect("a provider that exits 3 by itself");
     assert_eq!(failed["severity"], "warn");
 
-    exits::report_webview_terminated("Crashed");
+    exits::report_webview_terminated("Crashed", None);
     let webview = finding(&runtime, &id("crash.webview", &["Crashed"])).expect("crash.webview");
     assert_eq!(webview["severity"], "error");
     assert!(runtime.status()["lastCrashAt"].is_string());
@@ -91,7 +91,8 @@ async fn unrequested_deaths_are_recorded_while_the_profiler_is_on() {
     std::fs::create_dir(failure_reports.path().join("reports")).unwrap();
     std::fs::write(failure_reports.path().join("reports/f00d.dmp"), b"MDMP").unwrap();
     exits::report_webview_failed(
-        "render-process-exited: crashed",
+        "render-process-exited",
+        "crashed",
         -1_073_741_819,
         Some(failure_reports.path().to_path_buf()),
     );
@@ -110,7 +111,22 @@ async fn unrequested_deaths_are_recorded_while_the_profiler_is_on() {
     eventually(|| runtime.status()["enabled"] == false).await;
     let gh = Exited { label: "gh", ..git };
     exits::report_exit(Watch::Signals, &gh, &crashed(), false);
-    exits::report_webview_terminated("ExceededMemoryLimit");
+    exits::report_webview_terminated("ExceededMemoryLimit", None);
+
+    // Once BiBCode received a termination signal, what dies dies with it, though the profiler
+    // is on. Process-global and final, so it comes last.
+    toggle.send(true).unwrap();
+    eventually(|| runtime.status()["enabled"] == true).await;
+    exits::note_terminating();
+    let node = Exited {
+        kind: "provider",
+        label: "claudeAgent",
+        ..git
+    };
+    exits::report_exit(Watch::Failures, &node, &exit_code(143), false);
+    exits::report_webview_terminated("Crashed after termination", None);
+    let terminated_id = id("subprocess.crash", &["provider", "claudeAgent", "exit 143"]);
+    assert!(finding(&runtime, &terminated_id).is_none());
     runtime.shutdown().await;
 
     let events = events(state.path());
@@ -125,6 +141,12 @@ async fn unrequested_deaths_are_recorded_while_the_profiler_is_on() {
                 && event["label"] == "git"
                 && event["pid"] == 4_000_000_001_u32
                 && event["outcome"] == CRASH),
+        "{exit_events:?}"
+    );
+    assert!(
+        !exit_events
+            .iter()
+            .any(|event| event["label"] == "gh" || event["label"] == "claudeAgent"),
         "{exit_events:?}"
     );
     let crash = persisted(state.path(), &crash_id).unwrap();
@@ -145,6 +167,14 @@ async fn unrequested_deaths_are_recorded_while_the_profiler_is_on() {
         .is_none()
     );
     assert!(persisted(state.path(), &id("crash.webview", &["ExceededMemoryLimit"])).is_none());
+    assert!(persisted(state.path(), &terminated_id).is_none());
+    assert!(
+        persisted(
+            state.path(),
+            &id("crash.webview", &["Crashed after termination"])
+        )
+        .is_none()
+    );
 }
 
 #[cfg(unix)]

@@ -224,16 +224,24 @@ pub(crate) fn build_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result
         .cloned()
         .expect("tauri.conf.json defines the main window");
     let handle = app.clone();
-    let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
-        .on_new_window(move |url, _features| {
+    let builder = tauri::WebviewWindowBuilder::from_config(app, &config)?.on_new_window(
+        move |url, _features| {
             if main_window_new_window_action(&url) == MainNewWindowAction::OpenExternal
                 && let Err(error) = handle.opener().open_url(url.as_str(), None::<&str>)
             {
                 tracing::warn!("failed to open link externally: {error}");
             }
             tauri::webview::NewWindowResponse::Deny
-        })
-        .build()?;
+        },
+    );
+    // A loaded page runs in a web content process the profiler remembers for crash reports.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let builder = builder.on_page_load(|window, payload| {
+        if payload.event() == tauri::webview::PageLoadEvent::Finished {
+            crate::webview_exit::page_loaded(window.app_handle(), window.label());
+        }
+    });
+    let window = builder.build()?;
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     watch_web_content_process(&window);
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
