@@ -756,14 +756,11 @@ fn attach_coredump(occurrence: Occurrence, pid: u32, exe: &str, started_at: time
     });
 }
 
-/// Runs a lookup on the current Tokio runtime, or on a thread of its own when the caller has
-/// none, as a desktop UI thread does.
+/// Runs a lookup on a thread and runtime of its own. Callers include the desktop's UI thread,
+/// which has no runtime, and a lookup that waited is started by the one before it as that one
+/// ends, when the runtime it ran on may be ending too.
 #[cfg(target_os = "linux")]
 fn spawn_lookup(lookup: impl std::future::Future<Output = ()> + Send + 'static) {
-    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-        runtime.spawn(lookup);
-        return;
-    }
     let thread = std::thread::Builder::new()
         .name("bibcode-crash-record".into())
         .spawn(move || {
@@ -1306,6 +1303,30 @@ mod tests {
         drop(third);
         run_lookup("crash-a".into(), lookup("fourth"));
         assert_eq!(names(), ["other", "fourth"], "none running, so it starts");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_waiting_harvest_runs_once_the_one_before_it_ends() {
+        // Not captured: the claims are dropped on the lookups' own threads.
+        let id = "subprocess.crash-harvest-hand-off-test".to_owned();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let (ran, runs) = std::sync::mpsc::channel();
+        run_lookup(id.clone(), move |claim| {
+            spawn_lookup(async move {
+                let _claim = claim;
+                let _ = released.recv();
+            });
+        });
+        let second = ran.clone();
+        run_lookup(id, move |claim| {
+            spawn_lookup(async move {
+                let _claim = claim;
+                let _ = second.send("second");
+            });
+        });
+        release.send(()).unwrap();
+        assert_eq!(runs.recv_timeout(Duration::from_secs(5)), Ok("second"));
     }
 
     #[test]
