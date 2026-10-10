@@ -43,7 +43,7 @@ for the command prefix that fits the install:
 - **Remote hosts:** `bibcode` must be on the `PATH` of a non-interactive `ssh`
   shell, as BiBCode's own SSH launch requires. If it is not, ask where it is.
 - **WSL:** the desktop runs the Linux binary that `BIBCODE_WSL_SERVER_BINARY`
-  names (a Windows path; `wsl.exe -d <distro> wslpath -a '<path>'` converts it)
+  names (a Windows path; `wsl.exe -d <distro> -- wslpath -a '<path>'` converts it)
   through `wsl.exe -d <distro> --exec`. Its data root is the distro's
   `BIBCODE_HOME` or `~/.bibcode`.
 - **Data root:** `~/.bibcode` unless `BIBCODE_HOME` names another absolute path;
@@ -106,6 +106,9 @@ Modes chain: monitor, then diagnose what appeared, then report it.
    yourself. Re-run `status` once they confirm.
 2. Report anything abnormal in `capabilities` (`nativeDumps`, `osCrashRecords`,
    `storage`), and the dropped-event count when the status includes one.
+   `storage: "locked"` means another BiBCode process records to the same data
+   folder, so this one records nothing: the user should close the other app or
+   server and restart this one.
 3. Summarize what already exists with `P findings --since 1h --json`, and note
    when you ran it.
 4. Watch in bounded rounds: `P findings --follow --duration 120s --json` prints
@@ -127,7 +130,8 @@ Modes chain: monitor, then diagnose what appeared, then report it.
 
 1. List findings: `P findings --since 24h --json`, widened to cover the
    user's problem. Diagnose those whose `lastSeen` falls in that window, highest
-   severity and count first. `status` omits `evidence`, so use `findings`.
+   severity and count first, and at most 10 per run; offer to continue with the
+   rest. `status` omits `evidence`, so use `findings`.
 2. Give each finding its own investigation. With sub-agents (Claude Code's
    Agent tool, Codex sub-agents), run one per finding, at most 5 at a time;
    without them, work through the findings one by one. Hand each
@@ -141,7 +145,8 @@ Modes chain: monitor, then diagnose what appeared, then report it.
 
 3. Each investigation returns:
    - **summary:** one paragraph;
-   - **evidence:** event references `"<sid>:<seq>"` and crash ids;
+   - **evidence:** the events it relied on, by `eventId` (or `"<sid>:<seq>"` for
+     an event without one), and crash ids;
    - **suspected source:** repo-relative `path:line` entries;
    - **hypothesis:** the root cause, with confidence `high`, `medium` or `low`;
    - **reproduction:** steps;
@@ -189,7 +194,10 @@ instructions.
      missing label (`gh label list --repo <repo> --search "profiler:<fp>"`, then
      `gh label create "profiler:<fp>" --repo <repo> --description "<kind> profiler finding"`;
      the same for `bug`) and run
-     `gh issue create --repo <repo> --title "<the gated title>" --body-file <body file> --label bug --label "profiler:<fp>"`.
+     `gh issue create --repo <repo> --title "$(cat <title file>)" --body-file <body file> --label bug --label "profiler:<fp>"`
+     (PowerShell: `--title (Get-Content -Raw <title file>)`). The title comes
+     from its gated file, so profiler text never sits inside a quoted shell
+     argument.
      When creating or applying labels fails for lack of permission, create the
      issue without `--label` and tell the user which labels a maintainer should
      add.
