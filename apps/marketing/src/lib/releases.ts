@@ -22,7 +22,9 @@ const isInternalReleaseAsset = (name: string): boolean =>
   name.endsWith(".sbom.json") ||
   name === "bibcode-server-SHA256SUMS" ||
   name === "latest.json" ||
-  name.startsWith("updater-");
+  name.startsWith("updater-") ||
+  // Breakpad symbols, which share the server archives' `-<os>-<arch>.zip` suffix.
+  /^bibcode-(?:desktop|server)-symbols-/.test(name);
 
 export function findReleaseAsset(
   assets: ReadonlyArray<ReleaseAsset>,

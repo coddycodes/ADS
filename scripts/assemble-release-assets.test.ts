@@ -10,6 +10,7 @@ import {
   ReleaseAssetAssemblyError,
   assembleReleaseAssets,
   expectedServerAssetNames,
+  expectedSymbolAssetNames,
   serverSigningPlan,
 } from "./assemble-release-assets.ts";
 
@@ -36,7 +37,11 @@ function writeCompleteFixture(root: string, version: string, updater: boolean): 
     `BiBCode_${version}_arm64-setup.exe`,
     `BiBCode_${version}_x64-setup.exe`,
   ];
-  for (const name of [...desktop, ...expectedServerAssetNames(version)]) {
+  for (const name of [
+    ...desktop,
+    ...expectedServerAssetNames(version),
+    ...expectedSymbolAssetNames(version),
+  ]) {
     NodeFS.writeFileSync(NodePath.join(root, name), name);
   }
   if (updater) {
@@ -84,6 +89,23 @@ describe("release asset assembly", () => {
     ]);
   });
 
+  it("requires a desktop and a server symbol archive for every release target", () => {
+    const names = expectedSymbolAssetNames("0.4.3");
+    expect(names).toHaveLength(12);
+    for (const family of ["desktop", "server"]) {
+      for (const key of [
+        "darwin-aarch64",
+        "darwin-x86_64",
+        "linux-aarch64",
+        "linux-x86_64",
+        "windows-aarch64",
+        "windows-x86_64",
+      ]) {
+        expect(names).toContain(`bibcode-${family}-symbols-0.4.3-${key}.zip`);
+      }
+    }
+  });
+
   it("writes sorted checksums and removes only internal updater descriptors", async () => {
     const root = temporaryRoot();
     writeCompleteFixture(root, "0.4.3", true);
@@ -103,6 +125,8 @@ describe("release asset assembly", () => {
     const expectedHash = NodeCrypto.createHash("sha256").update(firstName).digest("hex");
     expect(checksumLines[0]).toBe(`${expectedHash}  ${firstName}`);
     expect(result.signed).toBe(false);
+    expect(result.publishedAssets).toContain("bibcode-desktop-symbols-0.4.3-linux-x86_64.zip");
+    expect(result.publishedAssets).toContain("bibcode-server-symbols-0.4.3-windows-aarch64.zip");
     expect(NodeFS.existsSync(NodePath.join(root, "latest.json"))).toBe(true);
     expect(NodeFS.readdirSync(root).some((name) => name.startsWith("updater-"))).toBe(false);
   });
@@ -126,6 +150,23 @@ describe("release asset assembly", () => {
     await expect(
       assembleReleaseAssets({ assetsDir: root, version: "0.4.3", updater: false }),
     ).rejects.toThrow("Unexpected release asset stale.sig");
+
+    NodeFS.rmSync(NodePath.join(root, "stale.sig"));
+    NodeFS.writeFileSync(
+      NodePath.join(root, "bibcode-desktop-symbols-0.4.3-linux-riscv64.zip"),
+      "unknown target",
+    );
+    await expect(
+      assembleReleaseAssets({ assetsDir: root, version: "0.4.3", updater: false }),
+    ).rejects.toThrow("Unexpected release asset bibcode-desktop-symbols-0.4.3-linux-riscv64.zip");
+
+    NodeFS.rmSync(NodePath.join(root, "bibcode-desktop-symbols-0.4.3-linux-riscv64.zip"));
+    NodeFS.rmSync(NodePath.join(root, "bibcode-server-symbols-0.4.3-darwin-x86_64.zip"));
+    await expect(
+      assembleReleaseAssets({ assetsDir: root, version: "0.4.3", updater: false }),
+    ).rejects.toThrow(
+      "Missing symbol release asset bibcode-server-symbols-0.4.3-darwin-x86_64.zip",
+    );
 
     expect(() => serverSigningPlan({ privateKey: "/tmp/private", publicKey: undefined })).toThrow(
       "both private and public keys",

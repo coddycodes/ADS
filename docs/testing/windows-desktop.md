@@ -65,11 +65,12 @@ Computer Use capture:
   `C:\Windows\System32\config\systemprofile\AppData\Local`, where x86
   filesystem redirection on ARM64 makes the x86 NSIS bootstrapper fail with
   `Unable to start child process, error 0x2` after the Rust release build has
-  already completed. `scripts/run-msvc.mjs` refuses `tauri build` under the
-  SYSTEM profile before compiling and names the offending environment
-  variables; record that exit code 3 as a harness misconfiguration, switch to
-  `--current-user`, and rerun. Confirm the account with `whoami` and
-  `$env:LOCALAPPDATA` before the first expensive command.
+  already completed. `scripts/run-msvc.mjs` refuses `tauri build` and
+  `tauri bundle` under the SYSTEM profile before compiling or packaging and
+  names the offending environment variables; record that exit code 3 as a
+  harness misconfiguration, switch to `--current-user`, and rerun. Confirm the
+  account with `whoami` and `$env:LOCALAPPDATA` before the first expensive
+  command.
 
 - Install workspace dependencies with that same account, from the checkout
   root, so pnpm's hard-linked store stays readable to the account that runs the

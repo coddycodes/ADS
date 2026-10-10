@@ -1790,6 +1790,21 @@ impl GitRepository {
             normalize_path_lexically(&anchor.join(common_dir_path))
         };
 
+        let (records, nul_delimited) = self.worktree_records(anchor, cancellation).await?;
+        Ok(GitWorktreeInventory {
+            common_dir,
+            records,
+            nul_delimited,
+        })
+    }
+
+    /// The registered worktrees from one `git worktree list --porcelain`, and whether Git
+    /// NUL-delimited its output.
+    pub(crate) async fn worktree_records(
+        &self,
+        anchor: &Path,
+        cancellation: &CancellationToken,
+    ) -> Result<(Vec<GitWorktreeRecord>, bool), GitCommandError> {
         let (output, nul_delimited) = self.worktree_porcelain_output(anchor, cancellation).await?;
         ensure_authoritative_inventory_output(
             "GitVcsDriver.worktreeInventory.list",
@@ -1803,11 +1818,14 @@ impl GitRepository {
                 &format!("Git worktree inventory is malformed: {error}"),
             )
         })?;
-        Ok(GitWorktreeInventory {
-            common_dir,
-            records,
-            nul_delimited,
-        })
+        Ok((records, nul_delimited))
+    }
+
+    /// The directory the managed worktrees of the repository at `cwd` are created in, or
+    /// `None` while the configured base directory is unavailable.
+    pub(crate) async fn managed_worktree_parent(&self, cwd: &Path) -> Option<PathBuf> {
+        let policy = self.worktree_path_policy(cwd).await.ok()?;
+        policy.path_for(cwd, "_").parent().map(Path::to_path_buf)
     }
 
     pub async fn inspect_worktree_removal(
