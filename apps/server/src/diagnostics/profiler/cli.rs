@@ -1,5 +1,7 @@
 //! `bibcode profiler`: findings, events and crash records from the profiler directory, read
-//! through [`Reader`]. It never starts a server and works while one is stopped or running.
+//! through [`Reader`], their stacks symbolicated, and an MCP server over them for AI agents. It
+//! never starts a server and works while one is stopped or running. Only `symbolicate
+//! --download` writes, and only outside the profiler directory.
 
 use std::{
     ffi::OsStr,
@@ -15,8 +17,10 @@ use thiserror::Error;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use super::{
+    mcp::run_stdio_mcp,
     profiler_dir,
     reader::{MAX_FOLLOW, MAX_LIMIT, Reader},
+    symbolicate::{SymbolicateError, Target, symbolicate},
 };
 
 /// Envelope fields of an event line; the rest is its payload.
@@ -63,17 +67,22 @@ pub enum ProfilerSubcommand {
         #[arg(long)]
         json: bool,
     },
-    /// Hidden until symbolication ships.
-    #[command(hide = true)]
+    /// Name the functions and source lines in a crash's stack or a panic's frames.
     Symbolicate {
-        target: String,
+        /// A crash id, as `crashes` lists it, or a panic event as <sid>:<seq>.
+        #[arg(value_parser = Target::parse)]
+        target: Target,
+        /// A Breakpad symbol store (<module>/<debug id>/<module>.sym) to read first; repeatable.
+        #[arg(long = "symbols", value_name = "DIR")]
+        symbols: Vec<PathBuf>,
+        /// When no local symbols match, download this release's symbols from GitHub.
         #[arg(long)]
-        symbols: Option<PathBuf>,
+        download: bool,
+        /// Print one JSON document.
         #[arg(long)]
         json: bool,
     },
-    /// Hidden until the MCP server ships.
-    #[command(hide = true)]
+    /// Serve these records to an AI agent: a read-only MCP server on stdin and stdout.
     Mcp,
 }
 
@@ -104,8 +113,8 @@ fn limit_parser() -> impl clap::builder::TypedValueParser<Value = u16> {
 enum CliError {
     #[error(transparent)]
     Io(#[from] io::Error),
-    #[error("`profiler {0}` is not available yet")]
-    NotAvailable(&'static str),
+    #[error(transparent)]
+    Symbolicate(#[from] SymbolicateError),
 }
 
 /// Runs a `profiler` command against `<state_dir>/profiler` and returns the exit code.
@@ -203,10 +212,20 @@ fn execute(
             let crashes = reader.crashes(usize::from(limit));
             write_list(out, crashes, json, "No crash records.", crash_line)?;
         }
-        ProfilerSubcommand::Symbolicate { .. } => {
-            return Err(CliError::NotAvailable("symbolicate"));
+        ProfilerSubcommand::Symbolicate {
+            target,
+            symbols,
+            download,
+            json,
+        } => {
+            let symbolicated = symbolicate(reader, &target, &symbols, download)?;
+            if json {
+                write_json(out, &symbolicated)?;
+            } else {
+                write_symbolicated(out, &symbolicated)?;
+            }
         }
-        ProfilerSubcommand::Mcp => return Err(CliError::NotAvailable("mcp")),
+        ProfilerSubcommand::Mcp => run_stdio_mcp(reader.clone(), io::stdin().lock(), &mut *out)?,
     }
     out.flush()?;
     Ok(())
@@ -246,7 +265,7 @@ fn write_followed(
 }
 
 /// `value` as compact JSON and a newline: what `--json` prints.
-fn write_json(out: &mut impl Write, value: &Value) -> io::Result<()> {
+pub(super) fn write_json(out: &mut impl Write, value: &Value) -> io::Result<()> {
     value.serialize(&mut serde_json::Serializer::with_formatter(
         &mut *out,
         EscapeControls,
@@ -275,6 +294,46 @@ impl Formatter for EscapeControls {
         }
         writer.write_all(&fragment.as_bytes()[written..])
     }
+}
+
+/// One line per frame, innermost first: `module!function [file:line]` where symbols named it,
+/// `module+offset` where none did.
+fn write_symbolicated(out: &mut impl Write, symbolicated: &Value) -> io::Result<()> {
+    if let Some(reason) = symbolicated["crashReason"].as_str() {
+        writeln!(out, "Crash: {}", plain(reason))?;
+    }
+    if symbolicated["message"].is_string() {
+        writeln!(
+            out,
+            "Panic on thread {}: {} at {}",
+            text(symbolicated, "thread", "?"),
+            text(symbolicated, "message", ""),
+            text(symbolicated, "location", "?"),
+        )?;
+    }
+    let frames = symbolicated
+        .pointer("/crashingThread/frames")
+        .or_else(|| symbolicated.get("frames"))
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    for (index, frame) in frames.iter().enumerate() {
+        let mut line = format!("{index:>3} {}", text(frame, "module", "?"));
+        match frame["function"].as_str() {
+            Some(function) => line.push_str(&format!("!{}", plain(function))),
+            None => line.push_str(&format!("+{:#x}", frame["offset"].as_u64().unwrap_or(0))),
+        }
+        if let (Some(file), Some(number)) = (frame["file"].as_str(), frame["line"].as_u64()) {
+            line.push_str(&format!(" [{}:{number}]", plain(file)));
+        }
+        writeln!(out, "{line}")?;
+    }
+    if !frames.iter().any(|frame| frame["function"].is_string()) {
+        writeln!(
+            out,
+            "No symbols named these frames: pass --symbols with a symbol store, or --download for the release's symbols."
+        )?;
+    }
+    Ok(())
 }
 
 fn write_status(out: &mut impl Write, status: &Value) -> io::Result<()> {
@@ -453,7 +512,7 @@ fn parse_span(input: &str) -> Option<Duration> {
     Some(Duration::from_secs(u64::from(count) * seconds_per_unit))
 }
 
-fn parse_since(input: &str) -> Result<OffsetDateTime, String> {
+pub(super) fn parse_since(input: &str) -> Result<OffsetDateTime, String> {
     parse_since_at(input, OffsetDateTime::now_utc())
 }
 
@@ -635,22 +694,84 @@ mod tests {
     }
 
     #[test]
-    fn symbolicate_and_mcp_parse_but_are_hidden_and_unavailable() {
+    fn help_lists_symbolicate_and_mcp_and_their_arguments_parse() {
         use clap::CommandFactory;
         let help = DesktopCli::command().render_help().to_string();
         assert!(
-            !help.contains("symbolicate") && !help.contains("mcp"),
+            help.contains("symbolicate") && help.contains("mcp"),
             "{help}"
         );
-        for args in [&["symbolicate", "abc"][..], &["mcp"][..]] {
-            let error = execute(
-                parse(args).unwrap(),
-                &Reader::new("/nonexistent"),
-                &mut Vec::new(),
-            )
-            .unwrap_err();
-            assert!(error.to_string().contains("not available yet"));
-        }
+        let ProfilerSubcommand::Symbolicate {
+            target,
+            symbols,
+            download,
+            json,
+        } = parse(&[
+            "symbolicate",
+            "aaaa1111:7",
+            "--symbols",
+            "/a",
+            "--symbols",
+            "/b",
+            "--json",
+        ])
+        .unwrap()
+        else {
+            panic!("symbolicate");
+        };
+        assert_eq!(
+            target,
+            Target::Panic {
+                sid: "aaaa1111".into(),
+                seq: 7
+            }
+        );
+        assert_eq!(symbols, [PathBuf::from("/a"), PathBuf::from("/b")]);
+        assert!(json && !download, "--download is off unless asked");
+        assert!(parse(&["symbolicate", "aaaa1111:x"]).is_err());
+        assert!(matches!(parse(&["mcp"]), Ok(ProfilerSubcommand::Mcp)));
+        let error = execute(
+            parse(&["symbolicate", "no-such-crash"]).unwrap(),
+            &Reader::new("/nonexistent/profiler"),
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("no crash record no-such-crash"),
+            "{error}"
+        );
+    }
+
+    /// Function and file names come from symbol files and module names from event files:
+    /// human output passes them through `plain` like every other field.
+    #[test]
+    fn symbolicated_frames_print_one_plain_line_each() {
+        let symbolicated = json!({
+            "thread": "main", "message": "boom\u{1b}[2J", "location": "src/lib.rs:42",
+            "frames": [
+                { "module": "bibcode", "offset": 0x1010, "function": "my_fn\u{9b}", "file": "src/lib.rs", "line": 42 },
+                { "module": "libc.so.6\u{202e}", "offset": 0x29d90, "function": null, "file": null, "line": null },
+            ],
+        });
+        let mut out = Vec::new();
+
+        write_symbolicated(&mut out, &symbolicated).unwrap();
+
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "Panic on thread main: boom?[2J at src/lib.rs:42\n  0 bibcode!my_fn? [src/lib.rs:42]\n  1 libc.so.6?+0x29d90\n"
+        );
+        let mut out = Vec::new();
+        write_symbolicated(&mut out, &json!({ "crashReason": "SIGSEGV / SEGV_MAPERR", "crashingThread": { "frames": [{ "module": "crash-smoke", "offset": 16 }] } })).unwrap();
+        let printed = String::from_utf8(out).unwrap();
+        assert!(
+            printed.starts_with("Crash: SIGSEGV / SEGV_MAPERR\n  0 crash-smoke+0x10\n"),
+            "{printed}"
+        );
+        assert!(
+            printed.contains("No symbols named these frames"),
+            "{printed}"
+        );
     }
 
     #[test]

@@ -65,6 +65,11 @@ fn record(info: &std::panic::PanicHookInfo<'_>) {
             "message": message,
             "location": location,
             "frames": frames,
+            // The build that made the frames, named as crash sidecars name it: symbolication
+            // fetches that release's symbols, whatever build reads the event later.
+            "version": env!("CARGO_PKG_VERSION"),
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
         }),
     });
     // A panic that cannot unwind aborts right after the hook, before the writer's next timed

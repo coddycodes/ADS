@@ -92,6 +92,10 @@ async fn a_panic_is_recorded_with_module_offsets_and_keeps_unwinding() {
             .unwrap()
             .contains("profiler_sentinel.rs")
     );
+    // The build that made the frames, whose release symbols name them.
+    assert_eq!(panic["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(panic["os"], std::env::consts::OS);
+    assert_eq!(panic["arch"], std::env::consts::ARCH);
     let frames = panic["frames"].as_array().unwrap();
     assert!(!frames.is_empty());
     for frame in frames {
