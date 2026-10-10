@@ -2543,10 +2543,10 @@ so current clients display its summary timing as unavailable.
 The [Profiler](./overview.md#profiler) adds two unary methods, whose schemas are
 in [`profiler.ts`](../../packages/contracts/src/profiler.ts):
 
-| RPC                                | Scope                   | Purpose                                                                                                                                                                                                                                                                                                                                  |
-| ---------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server.getProfilerStatus`         | `orchestration:read`    | `ProfilerStatus`: `enabled`, `recordingSince`, `diskBytes`, `eventCount`, `droppedEvents`, `lastCrashAt`, `capabilities` (`nativeDumps`, `osCrashRecords`, `storage`), and the 20 newest findings without evidence. It reads the profiler directory on a blocking thread.                                                                |
-| `server.reportProfilerClientBatch` | `orchestration:operate` | One client batch. It answers `{ accepted: true }` once recorded and `{ accepted: false }` while the profiler is off. A batch over 64 KiB or with more than 64 records or histograms fails with `ProfilerClientBatchTooLarge`, an invalid field with `ProfilerClientBatchInvalid`, before the toggle is checked and with nothing written. |
+| RPC                                | Scope                   | Purpose                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `server.getProfilerStatus`         | `orchestration:read`    | `ProfilerStatus`: `enabled`, `recordingSince`, `diskBytes`, `eventCount`, `droppedEvents`, `lastCrashAt`, `capabilities` (`nativeDumps`, `osCrashRecords`, and `storage`: `ok`, `failing`, or `locked` when another process records to the folder), and the 20 newest findings without evidence. It reads the profiler directory on a blocking thread. |
+| `server.reportProfilerClientBatch` | `orchestration:operate` | One client batch. It answers `{ accepted: true }` once recorded and `{ accepted: false }` while the profiler is off. A batch over 64 KiB or with more than 64 records or histograms fails with `ProfilerClientBatchTooLarge`, an invalid field with `ProfilerClientBatchInvalid`, before the toggle is checked and with nothing written.               |
 
 ### Server timing
 
@@ -2569,12 +2569,22 @@ the monotonic clock, each holding 100 log-scale buckets that grow by a factor of
   findings only once each method has a baseline from real sessions.
 - Every request over a tier writes an `rpc.timing` event with its method,
   outcome, duration, tier, baseline p95, sample count, and correlation ID.
-- **Long-running methods** wait on external work: clone, pull, pull requests,
-  update checks and installs, provider refreshes, managed worktree creation, and
-  session import (`is_long_running` in
-  [`latency.rs`](../../apps/server/src/diagnostics/profiler/latency.rs)). They
-  still emit `rpc.timing`, but never raise `rpc.slow` or count toward
-  saturation.
+- **Long-running methods** wait on networks, hosting services, provider CLIs,
+  model calls, or setup hooks. The list is `is_long_running` in
+  [`latency.rs`](../../apps/server/src/diagnostics/profiler/latency.rs): repository
+  clone, publish, lookup, and discovery (`vcs.clone`,
+  `sourceControl.cloneRepository`, `publishRepository`, and `lookupRepository`,
+  and `server.discoverSourceControl`); `vcs.pull` and `vcs.generateCommitMessage`;
+  `gitManager.commit`, `gitManager.getRemoteTags`, and
+  `gitManager.listPullRequests`; `git.resolvePullRequest` and
+  `git.preparePullRequestThread`; the pull request reads and actions
+  `pullRequests.checkout`, `runAction`, `list`, `get`, `getTimeline`,
+  `getCommits`, `getChecks`, `getFiles`, `getContext`, `getVocabulary`, and
+  `getCreateDefaults`; `updater.check` and `updater.install`;
+  `server.updateProvider`, `server.refreshProviders`, and
+  `server.refreshProviderUsage`; `worktree.createManaged`; and
+  `agentSessions.import`. They still emit `rpc.timing`, but never raise
+  `rpc.slow` or count toward saturation.
 - **Hangs.** Each 5 s tick checks the unary requests still in flight. One past
   its budget, 10 s or 300 s for a long-running method, raises one `rpc.hang`
   finding (error) before it finishes. Streams are log-only and never hang-checked,

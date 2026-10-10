@@ -753,15 +753,18 @@ ones:
   where the harness allows it, for example by navigating it to `edge://crash`
   from the packaged E2E WebDriver session. Diagnostics lists a `crash.webview`
   finding named after the failure kind, such as `render-process-exited`, with
-  `exitCode` in its evidence and, within a minute, the `dump` file name.
-  Record where WebView2 wrote the minidump: directly in the folder that
+  `exitCode` in its evidence. The profiler looks for WebView2's minidump once,
+  right after the failure, and adds its `dump` file name when it is already
+  there: record whether it was. Record where WebView2 wrote the minidump:
+  directly in the folder that
   `FailureReportFolderPath` names, or in its `reports` subfolder. Ending the
   renderer from Task Manager is a deliberate termination and must add no
   finding. Record the crash case as unavailable when no route exists.
 - **Provider exit code.** With the profiler on and a provider session running,
   end the provider's root process with `Stop-Process -Id <pid> -Force`, and
   record whether its Job still held other processes. Within seconds, a
-  `subprocess.crash` finding reports exit code 1: the exit code is read from
+  `subprocess.crash` finding reports "exited with code -1" (`Stop-Process`
+  ends the process with `0xFFFFFFFF`): the exit code is read from
   the root process handle without waiting for the whole Job to end. Record the
   delay.
 - **Shutdown.** With the profiler on and a provider session and a terminal

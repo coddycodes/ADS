@@ -775,11 +775,14 @@ ones:
 - **Webview crash.** With the profiler on and a thread open, send
   `kill -SEGV` to the desktop process's `WebKitWebProcess` child
   (`ps --ppid <desktop pid> -o pid=,args=`). Diagnostics lists a
-  `crash.webview` finding with reason `Crashed`. Within a minute, with
-  systemd-coredump, `profiler findings --kind crash.webview --json` shows the
-  core dump's `source`, `signalOrCode`, and `frames` in its evidence. Record
-  whether the window recovered on its own, after a reload, or only after a
-  restart.
+  `crash.webview` finding with reason `Crashed`. The profiler looks up the core
+  dump record for about 5 s; with systemd-coredump,
+  `profiler findings --kind crash.webview --json` then shows its `source`,
+  `signalOrCode`, and `frames` in the evidence. Record whether it did, since a
+  large core can take longer to record. Repeat once with the profiler turned on
+  only after the window loaded: the host also scans for its web processes when
+  the profiler turns on, so the record must still be found. Record whether the
+  window recovered on its own, after a reload, or only after a restart.
 - **Shutdown.** With the profiler on and a provider session and a terminal
   open, quit through the app menu, then start again and stop the app with
   `kill -TERM <desktop pid>`. Neither stop may add a `crash.webview` or

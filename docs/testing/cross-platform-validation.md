@@ -2571,7 +2571,10 @@ sizes. Cover relevant:
   selector with a remote environment connected; the switch off (**Off. Turn on
   to start recording. Crash checks for the previous run still happen.**),
   **Starting...**, and recording (**Recording since … · … MB · … events**, plus
-  **… dropped** when any were); **Open folder** enabled only for the primary
+  **… dropped** when any were); **Not recording.** with "Another BiBCode app or
+  server is already recording to this profiler folder. Close it, then restart
+  this one." when a headless `bibcode --base-dir <root> serve` on the same
+  disposable data root started first and holds the folder; **Open folder** enabled only for the primary
   environment on desktop and **Export bundle** only for the primary
   environment, each otherwise disabled with its stated reason; **Include crash
   dumps** and its warning; and the findings list, empty (**No findings yet.**)
@@ -2840,7 +2843,8 @@ executable and the same `BIBCODE_HOME`: `<executable> profiler status --json`.
 4. **Dump.** `crashes/` holds one new `<id>.dmp` and its `<id>.json` sidecar,
    both readable only by the current user. Record the dump size in bytes. The
    sidecar's `processKind` is `desktop`, its `parentPid` is the crashed
-   process, and its `version`, `os`, and `arch` match the build;
+   process, its `bootId` is the current boot, and its `version`, `os`, and
+   `arch` match the build;
    `profiler crashes --json` lists it.
 5. **Restart.** Start the app without the variable. Diagnostics → Profiler lists
    a `crash.native` finding (error) for the previous run, and

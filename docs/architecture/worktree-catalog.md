@@ -411,8 +411,8 @@ worktrees show it; the redacted path appears in the summary and evidence.
 | `worktree.held-open`             | Warn     | A process BiBCode owns works inside a missing worktree, inside one stuck in removal, or in a deleted directory under a managed worktree directory. |
 
 `worktree.held-open` reads working directories on Linux and macOS only. On
-Windows the process step reads nothing, and the audit event does not report the
-processes as read.
+Windows the process step reads nothing, so the audit event's `processesRead` is
+`null` there.
 
 ## Protocol, capability, and operations
 
