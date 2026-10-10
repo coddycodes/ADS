@@ -20,6 +20,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { getDefaultBuildArch, type BuildArch } from "./lib/build-target-arch.ts";
 import {
   requireReleaseTarget,
+  symbolArchiveName,
   type ReleaseArch,
   type ReleasePlatform,
   type TauriUpdaterTarget,
@@ -81,6 +82,7 @@ export interface TauriBuildCliInput {
   readonly verbose?: boolean;
   readonly allowCrossPlatform?: boolean;
   readonly updater?: boolean;
+  readonly symbols?: boolean;
 }
 
 export interface TauriBuildHost {
@@ -92,6 +94,20 @@ export interface SpawnPlan {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
+}
+
+/** Release symbols: dumped from the unstripped binary, which is then stripped before bundling. */
+export interface TauriSymbolsPlan {
+  readonly archive: string;
+  readonly dumpCommand: SpawnPlan;
+  /**
+   * Writes a stripped copy to `output`, which then replaces `binary`. Cargo's `binary` is a hard
+   * link to its cached `deps/` artifact, which stripping in place would strip too, so the next
+   * build of unchanged sources would hand dump_syms a binary without symbols.
+   */
+  readonly strip:
+    | { readonly command: SpawnPlan; readonly output: string; readonly binary: string }
+    | undefined;
 }
 
 export interface TauriBuildPlan {
@@ -107,7 +123,11 @@ export interface TauriBuildPlan {
   readonly updaterBundleDir?: string;
   readonly skipBuild: boolean;
   readonly verbose: boolean;
+  /** `tauri build --no-bundle`: compiles the app. */
   readonly buildCommand: SpawnPlan;
+  /** `tauri bundle`: packages the binary the build left in `target/<triple>/release`. */
+  readonly bundleCommand: SpawnPlan;
+  readonly symbols: TauriSymbolsPlan | undefined;
 }
 
 interface MutableTauriBuildCliInput {
@@ -119,6 +139,7 @@ interface MutableTauriBuildCliInput {
   verbose?: boolean;
   allowCrossPlatform?: boolean;
   updater?: boolean;
+  symbols?: boolean;
 }
 
 export interface TauriUpdaterArtifactDescriptor {
@@ -293,6 +314,27 @@ function envBoolean(
   throw new TauriDesktopBuildConfigurationError(`${key} must be true/false or 1/0.`);
 }
 
+/**
+ * The release profile dump_syms needs: unstripped and with line tables, plus a dSYM on macOS and
+ * an explicit GNU build-id (the debug ID of Linux symbols and minidumps) on Linux. Only symbol
+ * builds use it; the shipped profile still strips.
+ */
+export function symbolBuildEnvironment(
+  platform: TauriBuildPlatform,
+  env: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const buildId = "-C link-arg=-Wl,--build-id=sha1";
+  return {
+    ...env,
+    CARGO_PROFILE_RELEASE_STRIP: "none",
+    CARGO_PROFILE_RELEASE_DEBUG: "line-tables-only",
+    ...(platform === "mac" ? { CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: "packed" } : {}),
+    ...(platform === "linux"
+      ? { RUSTFLAGS: env.RUSTFLAGS ? `${env.RUSTFLAGS} ${buildId}` : buildId }
+      : {}),
+  };
+}
+
 export function detectHostTauriBuildPlatform(
   hostPlatform: NodeJS.Platform,
 ): TauriBuildPlatform | undefined {
@@ -412,6 +454,17 @@ export const resolveTauriBuildPlan = Effect.fn("resolveTauriBuildPlan")(function
     input.updater ??
     (yield* tryBuildConfiguration(() => envBoolean(env, "BIBCODE_TAURI_DESKTOP_UPDATER"))) ??
     false;
+  const skipBuild =
+    input.skipBuild ??
+    (yield* tryBuildConfiguration(() => envBoolean(env, "BIBCODE_TAURI_DESKTOP_SKIP_BUILD"))) ??
+    false;
+  if (input.symbols === true && skipBuild) {
+    return yield* Effect.fail(
+      new TauriDesktopBuildConfigurationError(
+        "--symbols dumps the binary a build produces; it cannot be combined with --skip-build.",
+      ),
+    );
+  }
   if (!allowCrossPlatform && host.platform !== TAURI_PLATFORM_CONFIG[platform].hostPlatform) {
     return yield* Effect.fail(new TauriDesktopBuildHostMismatchError(platform, host.platform));
   }
@@ -439,6 +492,30 @@ export const resolveTauriBuildPlan = Effect.fn("resolveTauriBuildPlan")(function
     updater && platform === "mac" && target === "dmg"
       ? path.join(repoRoot, "target", rustTarget, "release", "bundle", "macos")
       : undefined;
+  const tauriCommand = (step: "build" | "bundle"): SpawnPlan => ({
+    command: "vp",
+    args: [
+      "run",
+      "--filter",
+      "@bibcode/desktop",
+      step,
+      ...(step === "build" ? ["--no-bundle"] : []),
+      ...(updater
+        ? ["--config", path.join(repoRoot, "apps/desktop/src-tauri/tauri.release.conf.json")]
+        : []),
+      ...(step === "bundle"
+        ? ["--bundles", updater && platform === "mac" && target === "dmg" ? "app,dmg" : target]
+        : []),
+      "--target",
+      rustTarget,
+      // tauri-bundler logs the generated bundle_dmg.sh (create-dmg, hdiutil,
+      // AppleScript) output only at debug level, so a DMG build without
+      // --verbose reports a failed attempt as an opaque "failed to run
+      // bundle_dmg.sh". Verbose logging keeps the first failure diagnosable.
+      ...(step === "bundle" && platform === "mac" && target === "dmg" ? ["--verbose"] : []),
+    ],
+    cwd: repoRoot,
+  });
 
   return {
     platform,
@@ -451,37 +528,79 @@ export const resolveTauriBuildPlan = Effect.fn("resolveTauriBuildPlan")(function
     updater,
     updaterManifestTarget,
     updaterBundleDir,
-    skipBuild:
-      input.skipBuild ??
-      (yield* tryBuildConfiguration(() => envBoolean(env, "BIBCODE_TAURI_DESKTOP_SKIP_BUILD"))) ??
-      false,
+    skipBuild,
     verbose:
       input.verbose ??
       (yield* tryBuildConfiguration(() => envBoolean(env, "BIBCODE_TAURI_DESKTOP_VERBOSE"))) ??
       false,
-    buildCommand: {
-      command: "vp",
+    buildCommand: tauriCommand("build"),
+    bundleCommand: tauriCommand("bundle"),
+    symbols:
+      input.symbols === true ? yield* planSymbols(platform, arch, rustTarget, repoRoot) : undefined,
+  };
+});
+
+const decodeDesktopPackageVersion = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ version: Schema.String })),
+);
+
+const planSymbols = Effect.fn("planTauriSymbols")(function* (
+  platform: TauriBuildPlatform,
+  arch: TauriBuildArch,
+  rustTarget: string,
+  repoRoot: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // apps/desktop/package.json is the desktop version source; release CI aligns it first.
+  const { version } = yield* fs
+    .readFileString(path.join(repoRoot, "apps", "desktop", "package.json"))
+    .pipe(Effect.flatMap(decodeDesktopPackageVersion));
+  const release = path.join(repoRoot, "target", rustTarget, "release");
+  // Tauri ships the binary under Cargo's name (no mainBinaryName override).
+  const binary = path.join(release, platform === "win" ? "bibcode-desktop.exe" : "bibcode-desktop");
+  const archive = path.join(
+    release,
+    symbolArchiveName("desktop", version, requireReleaseTarget(platform, arch)),
+  );
+  const debugFile =
+    platform === "mac"
+      ? ["--dsym", `${binary}.dSYM`]
+      : platform === "win"
+        ? ["--pdb", path.join(release, "bibcode_desktop.pdb")]
+        : [];
+  return {
+    archive,
+    dumpCommand: {
+      command: process.execPath,
       args: [
-        "run",
-        "--filter",
-        "@bibcode/desktop",
-        "build",
-        ...(updater
-          ? ["--config", path.join(repoRoot, "apps/desktop/src-tauri/tauri.release.conf.json")]
-          : []),
-        "--bundles",
-        updater && platform === "mac" && target === "dmg" ? "app,dmg" : target,
-        "--target",
-        rustTarget,
-        // tauri-bundler logs the generated bundle_dmg.sh (create-dmg, hdiutil,
-        // AppleScript) output only at debug level, so a DMG build without
-        // --verbose reports a failed attempt as an opaque "failed to run
-        // bundle_dmg.sh". Verbose logging keeps the first failure diagnosable.
-        ...(platform === "mac" && target === "dmg" ? ["--verbose"] : []),
+        path.join(repoRoot, "scripts", "dump-symbols.ts"),
+        "--binary",
+        binary,
+        "--module-name",
+        path.basename(binary),
+        "--out",
+        path.join(release, "symbols"),
+        ...debugFile,
+        "--zip",
+        archive,
       ],
       cwd: repoRoot,
     },
-  };
+    // The shipped profile strips symbols; Windows keeps them in the PDB, which is not shipped.
+    strip:
+      platform === "win"
+        ? undefined
+        : {
+            command: {
+              command: "strip",
+              args: [platform === "mac" ? "-x" : "--strip-all", "-o", `${binary}.stripped`, binary],
+              cwd: repoRoot,
+            },
+            output: `${binary}.stripped`,
+            binary,
+          },
+  } satisfies TauriSymbolsPlan;
 });
 
 export const TAURI_BUILD_ATTEMPTS = 3;
@@ -631,6 +750,7 @@ export function parseTauriArtifactCliArgs(argv: ReadonlyArray<string>): TauriBui
       verbose: { type: "boolean" },
       "allow-cross-platform": { type: "boolean" },
       updater: { type: "boolean" },
+      symbols: { type: "boolean" },
     },
     allowPositionals: false,
   });
@@ -646,12 +766,14 @@ export function parseTauriArtifactCliArgs(argv: ReadonlyArray<string>): TauriBui
     input.allowCrossPlatform = values["allow-cross-platform"];
   }
   if (typeof values.updater === "boolean") input.updater = values.updater;
+  if (typeof values.symbols === "boolean") input.symbols = values.symbols;
   return input;
 }
 
 const runSpawnPlan = Effect.fn("runTauriSpawnPlan")(function* (
   plan: SpawnPlan,
   env: NodeJS.ProcessEnv,
+  label = "Tauri build command",
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const spawnCommand = yield* resolveSpawnCommand(plan.command, plan.args, { env });
@@ -667,7 +789,7 @@ const runSpawnPlan = Effect.fn("runTauriSpawnPlan")(function* (
   const exitCode = yield* child.exitCode;
   if (exitCode !== 0) {
     return yield* Effect.fail(
-      new TauriDesktopBuildConfigurationError(`Tauri build command exited with code ${exitCode}.`),
+      new TauriDesktopBuildConfigurationError(`${label} exited with code ${exitCode}.`),
     );
   }
 });
@@ -779,6 +901,8 @@ export const copyTauriBundleArtifacts = Effect.fn("copyTauriBundleArtifacts")(fu
   plan: Pick<TauriBuildPlan, "bundleDir" | "outputDir"> & {
     readonly updaterBundleDir?: string | undefined;
     readonly updaterManifestTarget?: TauriUpdaterManifestTarget | undefined;
+    /** Files published beside the bundles under their own names, such as the symbol archive. */
+    readonly extraArtifacts?: ReadonlyArray<string> | undefined;
   },
   options: TauriArtifactPublicationOptions = {},
 ) {
@@ -942,7 +1066,14 @@ export const copyTauriBundleArtifacts = Effect.fn("copyTauriBundleArtifacts")(fu
       ];
     }
   }
-  const allStagedArtifacts = [...stagedArtifacts, ...additionalUpdaterArtifacts];
+  const allStagedArtifacts = [
+    ...stagedArtifacts,
+    ...additionalUpdaterArtifacts,
+    ...(plan.extraArtifacts ?? []).map((source) => ({
+      source: path.resolve(source),
+      target: path.basename(source),
+    })),
+  ];
   const duplicateTarget = allStagedArtifacts.find(
     (artifact, index) =>
       allStagedArtifacts.findIndex((candidate) => candidate.target === artifact.target) !== index,
@@ -1254,25 +1385,27 @@ export const copyTauriBundleArtifacts = Effect.fn("copyTauriBundleArtifacts")(fu
 });
 
 /**
- * Runs the Tauri build with bounded attempts. Every failed attempt is reported
- * with its exit code, this build's leaked intermediate DMG mounts are detached
- * and reported before the next attempt, and the final error preserves the
- * first failure instead of only the last one.
+ * Runs a Tauri build or bundle step with bounded attempts. Every failed attempt
+ * is reported with its exit code, this build's leaked intermediate DMG mounts
+ * are detached and reported before the next attempt, and the final error
+ * preserves the first failure instead of only the last one.
  */
 const runBuildAttempts = Effect.fn("runTauriBuildAttempts")(function* (
-  plan: Pick<TauriBuildPlan, "buildCommand" | "platform" | "target" | "bundleDir">,
+  plan: Pick<TauriBuildPlan, "platform" | "target" | "bundleDir">,
+  step: "build" | "bundle",
+  command: SpawnPlan,
   env: NodeJS.ProcessEnv,
   write: (text: string) => void,
 ) {
   const failures: string[] = [];
   for (let attempt = 1; attempt <= TAURI_BUILD_ATTEMPTS; attempt += 1) {
-    const outcome = yield* runSpawnPlan(plan.buildCommand, env).pipe(Effect.result);
+    const outcome = yield* runSpawnPlan(command, env, `Tauri ${step} command`).pipe(Effect.result);
     if (outcome._tag === "Success") {
       return;
     }
     failures.push(outcome.failure.message);
     write(
-      `[desktop-artifact] Build attempt ${String(attempt)} of ${String(TAURI_BUILD_ATTEMPTS)} failed: ${outcome.failure.message}\n`,
+      `[desktop-artifact] ${step === "build" ? "Build" : "Bundle"} attempt ${String(attempt)} of ${String(TAURI_BUILD_ATTEMPTS)} failed: ${outcome.failure.message}\n`,
     );
     const cleanup = yield* detachRunOwnedDmgMounts(plan, env);
     for (const image of cleanup.detached) {
@@ -1288,7 +1421,7 @@ const runBuildAttempts = Effect.fn("runTauriBuildAttempts")(function* (
   }
   return yield* Effect.fail(
     new TauriDesktopBuildConfigurationError(
-      `Tauri build failed after ${String(TAURI_BUILD_ATTEMPTS)} attempts. First failure: ${failures[0] ?? "unknown"}. Last failure: ${failures.at(-1) ?? "unknown"}.`,
+      `Tauri ${step} failed after ${String(TAURI_BUILD_ATTEMPTS)} attempts. First failure: ${failures[0] ?? "unknown"}. Last failure: ${failures.at(-1) ?? "unknown"}.`,
     ),
   );
 });
@@ -1303,15 +1436,30 @@ export const buildTauriDesktopArtifact = Effect.fn("buildTauriDesktopArtifact")(
   } = {},
 ) {
   const write = options.write ?? ((text: string) => process.stdout.write(text));
+  const fs = yield* FileSystem.FileSystem;
   const plan = yield* resolveTauriBuildPlan(input, env, options.host, options.repoRoot);
   if (!plan.skipBuild) {
     write(
       `[desktop-artifact] Building ${plan.platform}/${plan.target} (${plan.arch}, ${plan.rustTarget})...\n`,
     );
-    yield* runBuildAttempts(plan, env, write);
+    // Bundling gets the same profile, so Cargo would find the build fresh if Tauri ran it.
+    const buildEnv = plan.symbols ? symbolBuildEnvironment(plan.platform, env) : env;
+    yield* runBuildAttempts(plan, "build", plan.buildCommand, buildEnv, write);
+    if (plan.symbols) {
+      write(`[desktop-artifact] Dumping symbols into ${plan.symbols.archive}...\n`);
+      yield* runSpawnPlan(plan.symbols.dumpCommand, env, "dump-symbols.ts");
+      if (plan.symbols.strip) {
+        yield* runSpawnPlan(plan.symbols.strip.command, env, "strip");
+        yield* fs.rename(plan.symbols.strip.output, plan.symbols.strip.binary);
+      }
+    }
+    yield* runBuildAttempts(plan, "bundle", plan.bundleCommand, buildEnv, write);
   }
 
-  const artifacts = yield* copyTauriBundleArtifacts(plan);
+  const artifacts = yield* copyTauriBundleArtifacts({
+    ...plan,
+    extraArtifacts: plan.symbols ? [plan.symbols.archive] : [],
+  });
   write(`[desktop-artifact] Artifacts copied to ${plan.outputDir}\n`);
   if (plan.verbose) {
     for (const artifact of artifacts) {

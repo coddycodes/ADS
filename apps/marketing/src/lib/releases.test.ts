@@ -23,6 +23,26 @@ describe("release asset lookup", () => {
     expect(findReleaseAsset(assets, "_arm64.deb")?.browser_download_url).toBe("server-deb-arm");
   });
 
+  it("never offers a Breakpad symbol archive as a Windows server download", () => {
+    // Release assets upload in name order, so both symbol archives precede the server ZIP.
+    const assets: ReleaseAsset[] = [
+      {
+        name: "bibcode-desktop-symbols-0.4.3-windows-x86_64.zip",
+        browser_download_url: "desktop-symbols",
+      },
+      {
+        name: "bibcode-server-symbols-0.4.3-windows-x86_64.zip",
+        browser_download_url: "server-symbols",
+      },
+      { name: "bibcode-server-v0.4.3-windows-x86_64.zip", browser_download_url: "server-win-x64" },
+    ];
+
+    expect(findReleaseAsset(assets, "-windows-x86_64.zip")?.browser_download_url).toBe(
+      "server-win-x64",
+    );
+    expect(findReleaseAsset(assets.slice(0, 2), "-windows-x86_64.zip")).toBeUndefined();
+  });
+
   it("returns no match for internal metadata and signatures", () => {
     const assets: ReleaseAsset[] = [
       { name: "payload.minisig", browser_download_url: "minisig" },

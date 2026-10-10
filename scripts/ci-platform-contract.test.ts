@@ -828,3 +828,114 @@ describe("seeded packaged desktop upgrade contract", () => {
     expect(commands).toContain('--current-tag "v2147483647.0.0"');
   });
 });
+
+describe("release symbols and crash smoke contract", () => {
+  const symbolProfile = [
+    "CARGO_PROFILE_RELEASE_STRIP=none",
+    "CARGO_PROFILE_RELEASE_DEBUG=line-tables-only",
+  ];
+
+  function stepNamed(job: WorkflowJob, name: string): WorkflowStep {
+    const step = job.steps?.find((candidate) => candidate.name === name);
+    if (step === undefined) throw new Error(`Missing workflow step ${name}`);
+    return step;
+  }
+
+  function stepIndex(job: WorkflowJob, name: string): number {
+    return (job.steps ?? []).findIndex((step) => step.name === name);
+  }
+
+  it("installs dump_syms and minidump-stackwalk at pinned versions only", () => {
+    for (const path of [CI_WORKFLOW_PATH, RELEASE_WORKFLOW_PATH]) {
+      const { raw } = readWorkflow(path);
+      const installs = raw.match(/cargo install (?:dump_syms|minidump-stackwalk)[^\n]*/g) ?? [];
+      expect(installs.length).toBeGreaterThan(0);
+      for (const install of installs) {
+        expect(install).toMatch(
+          /^cargo install (?:dump_syms --locked --version 2\.3\.9|minidump-stackwalk --locked --version 0\.27\.0)$/,
+        );
+      }
+    }
+  });
+
+  it("crashes, dumps, and symbolicates the smoke binary on every OS", () => {
+    const { workflow } = readWorkflow(CI_WORKFLOW_PATH);
+    const job = requireJob(workflow, "crash-smoke");
+    const crash = stepNamed(job, "Crash the smoke binary");
+    const symbolicate = stepNamed(job, "Symbolicate the dump");
+    const upload = stepNamed(job, "Upload crash smoke evidence");
+
+    expect(job.strategy?.["fail-fast"]).toBe(false);
+    expect((job.strategy?.matrix as { os?: unknown } | undefined)?.os).toEqual([
+      "ubuntu-latest",
+      "windows-latest",
+      "macos-latest",
+    ]);
+    expect(stepIndex(job, "Install pinned symbol tools")).toBeLessThan(
+      stepIndex(job, "Crash the smoke binary"),
+    );
+    // Every multi-command step runs in bash, which stops at the first failure on every OS.
+    for (const step of job.steps ?? []) {
+      if ((step.run ?? "").trim().includes("\n")) expect(step.shell, step.name).toBe("bash");
+    }
+    expect(crash.env?.CRASH_SMOKE_OUT).toBe("${{ runner.temp }}/crash-smoke");
+    for (const setting of symbolProfile) expect(crash.run).toContain(setting);
+    expect(crash.run).toContain('RUSTFLAGS="-C link-arg=-Wl,--build-id=sha1"');
+    expect(crash.run).toContain("CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed");
+    expect(crash.run).toContain(
+      "node scripts/run-msvc.mjs cargo test -p bibcode-server --test crash_smoke --release",
+    );
+    expect(symbolicate.env?.CRASH_SMOKE_OUT).toBe(crash.env?.CRASH_SMOKE_OUT);
+    expect(symbolicate.run).toContain("node scripts/dump-symbols.ts");
+    expect(symbolicate.run).toContain("--dsym target/release/crash-smoke.dSYM");
+    expect(symbolicate.run).toContain("--pdb target/release/crash_smoke.pdb");
+    expect(symbolicate.run).toContain("minidump-stackwalk --json");
+    expect(symbolicate.run).toContain("grep -q crash_here_in_named_function");
+    expect(upload.if).toBe("failure()");
+    expect(upload.with?.path).toBe("${{ runner.temp }}/crash-smoke");
+  });
+
+  it("dumps desktop symbols during the artifact build and publishes their archive", () => {
+    const { workflow } = readWorkflow(RELEASE_WORKFLOW_PATH);
+    const build = requireJob(workflow, "build_desktop");
+
+    expect(stepIndex(build, "Install dump_syms")).toBeLessThan(
+      stepIndex(build, "Build desktop artifact"),
+    );
+    expect(stepNamed(build, "Build desktop artifact").run).toContain("--symbols");
+    expect(stepNamed(build, "Collect release assets").run).toContain(
+      '"release/bibcode-desktop-symbols-*.zip"',
+    );
+  });
+
+  it("builds the server with symbols, then dumps and strips it on the host before packaging", () => {
+    const { workflow } = readWorkflow(RELEASE_WORKFLOW_PATH);
+    const server = requireJob(workflow, "build_server");
+    const linux = stepNamed(server, "Build Linux server on the compatibility baseline");
+    const native = stepNamed(server, "Build macOS or Windows server");
+    const dump = stepNamed(server, "Dump and strip server symbols");
+
+    for (const setting of symbolProfile) expect(linux.run).toContain(`--env ${setting}`);
+    expect(linux.run).toContain('--env "RUSTFLAGS=-C link-arg=-Wl,--build-id=sha1"');
+    expect(native.env).toEqual({
+      CARGO_PROFILE_RELEASE_STRIP: "none",
+      CARGO_PROFILE_RELEASE_DEBUG: "line-tables-only",
+      CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: "packed",
+    });
+    expect(stepIndex(server, "Dump and strip server symbols")).toBeGreaterThan(
+      stepIndex(server, "Build macOS or Windows server"),
+    );
+    expect(stepIndex(server, "Dump and strip server symbols")).toBeLessThan(
+      stepIndex(server, "Build standalone server artifacts"),
+    );
+    expect(dump.run).toContain(
+      '--zip "server-release/bibcode-server-symbols-${{ needs.preflight.outputs.version }}-${{ matrix.serverOs }}-${{ matrix.serverArch }}.zip"',
+    );
+    expect(dump.run).toContain('strip --strip-all -o "$stripped" "$release_dir/bibcode"');
+    expect(dump.run).toContain('strip -x -o "$stripped" "$release_dir/bibcode"');
+    expect(dump.run).toContain('mv "$stripped" "$release_dir/bibcode"');
+    expect(stepNamed(server, "Upload server artifacts").with?.path).toContain(
+      "server-release/*.zip",
+    );
+  });
+});

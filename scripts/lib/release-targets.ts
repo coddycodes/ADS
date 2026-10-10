@@ -100,6 +100,18 @@ export const RELEASE_TARGETS = [
   },
 ] as const satisfies ReadonlyArray<ReleaseTarget>;
 
+/**
+ * The release asset with the Breakpad symbols of one target's desktop or server binary. It uses
+ * the public OS/architecture keys of the server archives.
+ */
+export function symbolArchiveName(
+  family: "desktop" | "server",
+  version: string,
+  target: ReleaseTarget,
+): string {
+  return `bibcode-${family}-symbols-${version}-${target.serverOs}-${target.serverArch}.zip`;
+}
+
 export function findReleaseTarget(
   platform: ReleasePlatform,
   arch: ReleaseArch,

@@ -25,6 +25,7 @@ import {
   resolveTauriBuildPlan,
   resolveTauriRustTarget,
   runBuildTauriDesktopArtifactMain,
+  symbolBuildEnvironment,
   TAURI_BUILD_ATTEMPTS,
   TauriDesktopBuildConfigurationError,
   TauriDesktopBuildDirectoryMissingError,
@@ -119,6 +120,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         plan.bundleDir,
         path.join(repoRoot, "target", "x86_64-pc-windows-msvc", "release", "bundle", "nsis"),
       );
+      // Compiling and bundling are separate Tauri runs, so release builds can dump symbols and
+      // strip the binary in between.
       assert.deepStrictEqual(plan.buildCommand, {
         command: "vp",
         cwd: repoRoot,
@@ -127,12 +130,26 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "--filter",
           "@bibcode/desktop",
           "build",
+          "--no-bundle",
+          "--target",
+          "x86_64-pc-windows-msvc",
+        ],
+      });
+      assert.deepStrictEqual(plan.bundleCommand, {
+        command: "vp",
+        cwd: repoRoot,
+        args: [
+          "run",
+          "--filter",
+          "@bibcode/desktop",
+          "bundle",
           "--bundles",
           "nsis",
           "--target",
           "x86_64-pc-windows-msvc",
         ],
       });
+      assert.isUndefined(plan.symbols);
     }),
   );
 
@@ -152,11 +169,23 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         plan.updaterBundleDir,
         path.join(repoRoot, "target", "aarch64-apple-darwin", "release", "bundle", "macos"),
       );
+      // The overlay is compiled into the app and also enables the updater bundles.
       assert.deepEqual(plan.buildCommand.args, [
         "run",
         "--filter",
         "@bibcode/desktop",
         "build",
+        "--no-bundle",
+        "--config",
+        path.join(repoRoot, "apps/desktop/src-tauri/tauri.release.conf.json"),
+        "--target",
+        "aarch64-apple-darwin",
+      ]);
+      assert.deepEqual(plan.bundleCommand.args, [
+        "run",
+        "--filter",
+        "@bibcode/desktop",
+        "bundle",
         "--config",
         path.join(repoRoot, "apps/desktop/src-tauri/tauri.release.conf.json"),
         "--bundles",
@@ -204,11 +233,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       );
 
       assert.isUndefined(plan.updaterBundleDir);
-      assert.deepEqual(plan.buildCommand.args, [
+      assert.deepEqual(plan.bundleCommand.args, [
         "run",
         "--filter",
         "@bibcode/desktop",
-        "build",
+        "bundle",
         "--bundles",
         "dmg",
         "--target",
@@ -275,6 +304,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "--verbose",
         "--allow-cross-platform",
         "--updater",
+        "--symbols",
       ]),
       {
         platform: "win",
@@ -285,6 +315,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         verbose: true,
         allowCrossPlatform: true,
         updater: true,
+        symbols: true,
       },
     );
     assert.deepStrictEqual(parseTauriArtifactCliArgs([]), {});
@@ -1872,7 +1903,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         { write: (text) => writes.push(text), host: { platform: "win32", arch: "x64" }, repoRoot },
       ).pipe(Effect.provide(spawnerLayer));
 
-      assert.equal(spawnPlans.length, 1);
+      assert.equal(spawnPlans.length, 2);
       const spawned = spawnPlans[0] as {
         readonly options: { readonly stdout?: unknown; readonly stderr?: unknown };
       };
@@ -1958,14 +1989,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         { platform: "darwin", arch: "arm64" },
         repoRoot,
       );
-      assert.include(dmg.buildCommand.args, "--verbose");
+      assert.include(dmg.bundleCommand.args, "--verbose");
       const app = yield* resolveTauriBuildPlan(
         { platform: "mac", arch: "arm64", target: "app" },
         {},
         { platform: "darwin", arch: "arm64" },
         repoRoot,
       );
-      assert.notInclude(app.buildCommand.args, "--verbose");
+      assert.notInclude(app.bundleCommand.args, "--verbose");
     }),
   );
 
@@ -2030,7 +2061,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         );
 
         const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
-        let buildAttempts = 0;
+        let builds = 0;
+        let bundleAttempts = 0;
         const spawnerLayer = Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make((command) => {
@@ -2053,8 +2085,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             if (command.command === "hdiutil") {
               return Effect.succeed(processHandle(0));
             }
-            buildAttempts += 1;
-            return Effect.succeed(processHandle(buildAttempts === 1 ? 1 : 0));
+            if (command.args.includes("build")) {
+              builds += 1;
+              return Effect.succeed(processHandle(0));
+            }
+            bundleAttempts += 1;
+            return Effect.succeed(processHandle(bundleAttempts === 1 ? 1 : 0));
           }),
         );
         const writes: string[] = [];
@@ -2069,7 +2105,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           },
         ).pipe(Effect.provide(spawnerLayer));
 
-        assert.equal(buildAttempts, 2);
+        // A failed DMG attempt is retried as a bundle; the app is not compiled again.
+        assert.equal(builds, 1);
+        assert.equal(bundleAttempts, 2);
         const detaches = spawned.filter(
           (entry) => entry.command === "hdiutil" && entry.args[0] === "detach",
         );
@@ -2079,7 +2117,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         );
         assert.include(
           writes.join(""),
-          "Build attempt 1 of 3 failed: Tauri build command exited with code 1",
+          "Bundle attempt 1 of 3 failed: Tauri bundle command exited with code 1",
         );
         assert.include(
           writes.join(""),
@@ -2102,6 +2140,205 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.equal(report.failures.length, 1);
         assert.include(report.failures[0]?.detail, "hdiutil info exited with code 3");
       }),
+  );
+
+  it.effect("plans the symbol dump and the platform strip between compiling and bundling", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-build-symbols-" });
+      yield* fs.makeDirectory(path.join(repoRoot, "apps", "desktop"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(repoRoot, "apps", "desktop", "package.json"),
+        '{ "version": "1.2.3" }',
+      );
+      const planFor = (platform: "linux" | "mac" | "win", hostPlatform: NodeJS.Platform) =>
+        resolveTauriBuildPlan(
+          { platform, arch: "x64", symbols: true },
+          {},
+          { platform: hostPlatform, arch: "x64" },
+          repoRoot,
+        );
+      const dumpScript = path.join(repoRoot, "scripts", "dump-symbols.ts");
+
+      const linux = yield* planFor("linux", "linux");
+      const linuxRelease = path.join(repoRoot, "target", "x86_64-unknown-linux-gnu", "release");
+      const linuxArchive = path.join(
+        linuxRelease,
+        "bibcode-desktop-symbols-1.2.3-linux-x86_64.zip",
+      );
+      assert.equal(linux.symbols?.archive, linuxArchive);
+      assert.deepStrictEqual(linux.symbols?.dumpCommand, {
+        command: process.execPath,
+        cwd: repoRoot,
+        args: [
+          dumpScript,
+          "--binary",
+          path.join(linuxRelease, "bibcode-desktop"),
+          "--module-name",
+          "bibcode-desktop",
+          "--out",
+          path.join(linuxRelease, "symbols"),
+          "--zip",
+          linuxArchive,
+        ],
+      });
+      // A stripped copy replaces the binary, which Cargo hard-links to its cached artifact.
+      assert.deepStrictEqual(linux.symbols?.strip, {
+        command: {
+          command: "strip",
+          cwd: repoRoot,
+          args: [
+            "--strip-all",
+            "-o",
+            path.join(linuxRelease, "bibcode-desktop.stripped"),
+            path.join(linuxRelease, "bibcode-desktop"),
+          ],
+        },
+        output: path.join(linuxRelease, "bibcode-desktop.stripped"),
+        binary: path.join(linuxRelease, "bibcode-desktop"),
+      });
+
+      const mac = yield* planFor("mac", "darwin");
+      const macRelease = path.join(repoRoot, "target", "x86_64-apple-darwin", "release");
+      assert.equal(
+        mac.symbols?.archive,
+        path.join(macRelease, "bibcode-desktop-symbols-1.2.3-darwin-x86_64.zip"),
+      );
+      assert.includeMembers(
+        [...(mac.symbols?.dumpCommand.args ?? [])],
+        ["--dsym", path.join(macRelease, "bibcode-desktop.dSYM")],
+      );
+      assert.deepStrictEqual(mac.symbols?.strip?.command.args, [
+        "-x",
+        "-o",
+        path.join(macRelease, "bibcode-desktop.stripped"),
+        path.join(macRelease, "bibcode-desktop"),
+      ]);
+
+      // Windows keeps the names in the PDB and ships the binary as linked.
+      const win = yield* planFor("win", "win32");
+      const winRelease = path.join(repoRoot, "target", "x86_64-pc-windows-msvc", "release");
+      assert.includeMembers(
+        [...(win.symbols?.dumpCommand.args ?? [])],
+        [
+          path.join(winRelease, "bibcode-desktop.exe"),
+          "bibcode-desktop.exe",
+          "--pdb",
+          path.join(winRelease, "bibcode_desktop.pdb"),
+        ],
+      );
+      assert.isUndefined(win.symbols?.strip);
+
+      const error = yield* resolveTauriBuildPlan(
+        { platform: "linux", arch: "x64", symbols: true, skipBuild: true },
+        {},
+        { platform: "linux", arch: "x64" },
+        repoRoot,
+      ).pipe(Effect.flip);
+      assert.instanceOf(error, TauriDesktopBuildConfigurationError);
+      assert.include(error.message, "--symbols");
+    }),
+  );
+
+  it("compiles release symbols unstripped, with line tables, a dSYM and a GNU build-id", () => {
+    assert.deepStrictEqual(
+      symbolBuildEnvironment("linux", { RUSTFLAGS: "-C target-cpu=x86-64-v2" }),
+      {
+        CARGO_PROFILE_RELEASE_STRIP: "none",
+        CARGO_PROFILE_RELEASE_DEBUG: "line-tables-only",
+        RUSTFLAGS: "-C target-cpu=x86-64-v2 -C link-arg=-Wl,--build-id=sha1",
+      },
+    );
+    assert.deepStrictEqual(symbolBuildEnvironment("mac", { KEPT: "1" }), {
+      KEPT: "1",
+      CARGO_PROFILE_RELEASE_STRIP: "none",
+      CARGO_PROFILE_RELEASE_DEBUG: "line-tables-only",
+      CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: "packed",
+    });
+    assert.deepStrictEqual(symbolBuildEnvironment("win", {}), {
+      CARGO_PROFILE_RELEASE_STRIP: "none",
+      CARGO_PROFILE_RELEASE_DEBUG: "line-tables-only",
+    });
+  });
+
+  it.effect("dumps symbols and strips before bundling, then publishes the symbol archive", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-build-symbols-run-" });
+      yield* fs.makeDirectory(path.join(repoRoot, "apps", "desktop"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(repoRoot, "apps", "desktop", "package.json"),
+        '{ "version": "1.2.3" }',
+      );
+      const input = { platform: "linux", arch: "x64", outputDir: "out", symbols: true } as const;
+      const host = { platform: "linux", arch: "x64" } as const;
+      const plan = yield* resolveTauriBuildPlan(input, {}, host, repoRoot);
+      yield* fs.makeDirectory(plan.bundleDir, { recursive: true });
+      yield* fs.writeFileString(path.join(plan.bundleDir, "BiBCode_1.2.3_amd64.AppImage"), "app");
+      const archive = plan.symbols?.archive ?? "";
+      // Cargo publishes the binary as a hard link to its cached artifact in deps/.
+      const release = path.join(repoRoot, "target", "x86_64-unknown-linux-gnu", "release");
+      const binary = path.join(release, "bibcode-desktop");
+      const cached = path.join(release, "deps", "bibcode_desktop-0123");
+      yield* fs.makeDirectory(path.dirname(cached), { recursive: true });
+      yield* fs.writeFileString(cached, "unstripped");
+      yield* fs.link(cached, binary);
+      const spawned: Array<{ step: string; env: Record<string, string | undefined> }> = [];
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          if (command._tag !== "StandardCommand") {
+            throw new Error("The artifact wrapper never pipes commands.");
+          }
+          const step =
+            command.command === "strip"
+              ? "strip"
+              : command.args[0]?.endsWith("dump-symbols.ts")
+                ? "dump"
+                : (command.args.find((arg) => arg === "build" || arg === "bundle") ?? "unknown");
+          spawned.push({ step, env: { ...command.options.env } });
+          if (step === "dump") {
+            return fs
+              .writeFileString(archive, "zip")
+              .pipe(Effect.as(processHandle(0)), Effect.orDie);
+          }
+          if (step === "strip") {
+            const output = command.args[command.args.indexOf("-o") + 1] ?? "";
+            return fs
+              .writeFileString(output, "stripped")
+              .pipe(Effect.as(processHandle(0)), Effect.orDie);
+          }
+          return Effect.succeed(processHandle(0));
+        }),
+      );
+
+      const artifacts = yield* buildTauriDesktopArtifact(
+        input,
+        { PATH: "/usr/bin" },
+        { write: () => undefined, host, repoRoot },
+      ).pipe(Effect.provide(spawnerLayer));
+
+      assert.deepStrictEqual(
+        spawned.map((entry) => entry.step),
+        ["build", "dump", "strip", "bundle"],
+      );
+      const [build, , , bundle] = spawned;
+      assert.equal(build?.env.CARGO_PROFILE_RELEASE_STRIP, "none");
+      assert.equal(build?.env.CARGO_PROFILE_RELEASE_DEBUG, "line-tables-only");
+      assert.equal(build?.env.RUSTFLAGS, "-C link-arg=-Wl,--build-id=sha1");
+      assert.equal(build?.env.PATH, "/usr/bin");
+      // Bundling sees the same profile, so a Cargo freshness check could not relink the binary.
+      assert.deepStrictEqual(bundle?.env, build?.env);
+      // The bundle gets the stripped binary, and the next build still finds an unstripped one.
+      assert.equal(yield* fs.readFileString(binary), "stripped");
+      assert.equal(yield* fs.readFileString(cached), "unstripped");
+      assert.deepStrictEqual(artifacts, [
+        path.join(repoRoot, "out", "BiBCode_1.2.3_amd64.AppImage"),
+        path.join(repoRoot, "out", "bibcode-desktop-symbols-1.2.3-linux-x86_64.zip"),
+      ]);
+    }),
   );
 
   it("launches only when used as the CLI entrypoint", () => {

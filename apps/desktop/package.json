@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node ../../scripts/run-msvc.mjs pnpm exec tauri dev -- -p bibcode-desktop",
     "build": "node ../../scripts/run-tauri-build.mjs",
+    "bundle": "node ../../scripts/run-tauri-build.mjs bundle",
     "typecheck": "node ../../scripts/run-msvc.mjs cargo check -p bibcode-desktop && tsc --noEmit -p e2e/tsconfig.json",
     "test": "node ../../scripts/run-msvc.mjs cargo test -p bibcode-desktop -j 2",
     "test:ui": "wdio run ./e2e/wdio.conf.ts",
