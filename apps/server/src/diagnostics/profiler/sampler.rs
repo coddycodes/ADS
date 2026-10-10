@@ -650,7 +650,7 @@ fn cpu_finding(process: &ProcessMinute) -> FindingInput {
 /// scan, the nearest kept when there are too many. The scan uses its own `System`, dropped at once: sysinfo keeps a
 /// file open for every process it knows, and the long-lived one should know only the
 /// tracked few.
-fn descendants_of(root: Pid) -> Vec<(Pid, Pid)> {
+pub(super) fn descendants_of(root: Pid) -> Vec<(Pid, Pid)> {
     let mut system = System::new();
     system.refresh_processes_specifics(
         ProcessesToUpdate::All,
