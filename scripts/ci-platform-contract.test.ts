@@ -891,6 +891,12 @@ describe("release symbols and crash smoke contract", () => {
     expect(symbolicate.run).toContain("--pdb target/release/crash_smoke.pdb");
     expect(symbolicate.run).toContain("minidump-stackwalk --json");
     expect(symbolicate.run).toContain("grep -q crash_here_in_named_function");
+    // No dump fails with its count, Linux proves a sha1 build-id, and the caller is unwound by CFI.
+    expect(symbolicate.run).toContain("shopt -s nullglob");
+    expect(symbolicate.run).toContain("Expected one minidump in");
+    expect(symbolicate.run).toContain("Build ID: [0-9a-f]{40}$");
+    expect(symbolicate.run).toContain('caller?.function !== "crash_smoke::main"');
+    expect(symbolicate.run).toContain('caller?.trust !== "cfi"');
     expect(upload.if).toBe("failure()");
     expect(upload.with?.path).toBe("${{ runner.temp }}/crash-smoke");
   });
@@ -932,10 +938,19 @@ describe("release symbols and crash smoke contract", () => {
       '--zip "server-release/bibcode-server-symbols-${{ needs.preflight.outputs.version }}-${{ matrix.serverOs }}-${{ matrix.serverArch }}.zip"',
     );
     expect(dump.run).toContain('strip --strip-all -o "$stripped" "$release_dir/bibcode"');
-    expect(dump.run).toContain('strip -x -o "$stripped" "$release_dir/bibcode"');
+    // Plain strip: rustc's level for macOS executables (`-x` is for dynamic libraries).
+    expect(dump.run).toContain('mac) strip -o "$stripped" "$release_dir/bibcode"');
+    expect(dump.run).not.toContain("strip -x");
     expect(dump.run).toContain('mv "$stripped" "$release_dir/bibcode"');
+    expect(dump.run).toContain('codesign --verify --verbose=2 "$release_dir/bibcode"');
     expect(stepNamed(server, "Upload server artifacts").with?.path).toContain(
       "server-release/*.zip",
     );
+  });
+
+  it("gives the release job time to move the symbol archives", () => {
+    const { workflow } = readWorkflow(RELEASE_WORKFLOW_PATH);
+
+    expect(requireJob(workflow, "release")["timeout-minutes"]).toBeGreaterThanOrEqual(25);
   });
 });

@@ -134,17 +134,24 @@ builds, so `dump_syms` reads the symbols before they are removed:
 
 The desktop jobs run `scripts/build-desktop-artifact.ts --symbols`:
 `tauri build --no-bundle`, then `scripts/dump-symbols.ts`, then the strip, then
-`tauri bundle`, which packages the stripped binary without running Cargo. The
+`tauri bundle`. The Tauri CLI's bundle step does not run Cargo, and must not:
+Cargo re-links its unstripped `deps/` artifact over the stripped binary even
+when nothing needs rebuilding. The wrapper therefore fails the job unless the
+binary is still the stripped file after bundling, and unless the copy in each
+bundle that has a readable one (the macOS app, the AppImage's file system) has
+its build ID and symbol table; Windows installers pack the binary itself. The
 server jobs build `bibcode` with the same profile (the Linux build inside its
 Ubuntu 20.04 container), then dump and strip it on the runner before staging.
-Linux strips with `strip --strip-all` and macOS with `strip -x`, into a copy
-that replaces the binary, so Cargo's hard-linked `deps/` artifact keeps its
-symbols for the next build. Windows ships its binaries as linked and keeps the
-names in the PDB, which is not published. Both matrices install `dump_syms`
-2.3.9 with `cargo install --locked`; Rust Cache keeps `~/.cargo/bin`, so a
-restored runner skips that compile. `scripts/dump-symbols.ts` fails the job when
-a `.sym` lacks functions with source lines or `STACK` records (unwind data). The
-CI `crash-smoke` job exercises the same profile and dump on Linux, macOS, and
+Both strip as rustc does for executables, with `strip --strip-all` on Linux and
+plain `strip` on macOS, into a copy that replaces the binary, so Cargo's
+hard-linked `deps/` artifact keeps its symbols for the next build. Apple silicon
+runs only signed code, so the server job runs `codesign --verify` on the
+stripped arm64 binary. Windows ships its binaries as linked and keeps the names
+in the PDB, which is not published. Both matrices install `dump_syms` 2.3.9 with
+`cargo install --locked`; Rust Cache keeps `~/.cargo/bin`, so a restored runner
+skips that compile. `scripts/dump-symbols.ts` fails the job when a `.sym` lacks
+functions with source lines or `STACK` records (unwind data). The CI
+`crash-smoke` job exercises the same profile and dump on Linux, macOS, and
 Windows; see [CI quality gates](./ci.md).
 
 ## Version Source
@@ -662,8 +669,9 @@ gh workflow run release.yml --ref main -f channel=stable -f version="$version" -
 ```
 
 Both runs perform preflight and the native build matrices. The current job
-budgets are 60 minutes for preflight, 90 for each desktop build, and 120 for
-each server build; these are timeouts, not expected completion durations.
+budgets are 60 minutes for preflight, 90 for each desktop build, 120 for each
+server build, and 25 for the release job, which moves about 470 MB of symbol
+archives; these are timeouts, not expected completion durations.
 Use Actions job timings to plan the tag and approval runs separately.
 
 After publication, check latest through the REST endpoint. `isLatest` is not a

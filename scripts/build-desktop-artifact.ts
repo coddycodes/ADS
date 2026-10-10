@@ -9,6 +9,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -17,6 +18,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeUtil from "node:util";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import { binaryIdentity, type BinaryIdentity } from "./lib/binary-identity.ts";
 import { getDefaultBuildArch, type BuildArch } from "./lib/build-target-arch.ts";
 import {
   requireReleaseTarget,
@@ -99,15 +101,15 @@ export interface SpawnPlan {
 /** Release symbols: dumped from the unstripped binary, which is then stripped before bundling. */
 export interface TauriSymbolsPlan {
   readonly archive: string;
+  /** Cargo's binary, which `tauri bundle` packages. */
+  readonly binary: string;
   readonly dumpCommand: SpawnPlan;
   /**
    * Writes a stripped copy to `output`, which then replaces `binary`. Cargo's `binary` is a hard
    * link to its cached `deps/` artifact, which stripping in place would strip too, so the next
    * build of unchanged sources would hand dump_syms a binary without symbols.
    */
-  readonly strip:
-    | { readonly command: SpawnPlan; readonly output: string; readonly binary: string }
-    | undefined;
+  readonly strip: { readonly command: SpawnPlan; readonly output: string } | undefined;
 }
 
 export interface TauriBuildPlan {
@@ -492,6 +494,9 @@ export const resolveTauriBuildPlan = Effect.fn("resolveTauriBuildPlan")(function
     updater && platform === "mac" && target === "dmg"
       ? path.join(repoRoot, "target", rustTarget, "release", "bundle", "macos")
       : undefined;
+  // The DMG bundler deletes the app it builds unless `app` is requested too. Updater builds
+  // publish that app's archive, and symbol builds check the binary inside it.
+  const keepApp = platform === "mac" && target === "dmg" && (updater || input.symbols === true);
   const tauriCommand = (step: "build" | "bundle"): SpawnPlan => ({
     command: "vp",
     args: [
@@ -503,9 +508,7 @@ export const resolveTauriBuildPlan = Effect.fn("resolveTauriBuildPlan")(function
       ...(updater
         ? ["--config", path.join(repoRoot, "apps/desktop/src-tauri/tauri.release.conf.json")]
         : []),
-      ...(step === "bundle"
-        ? ["--bundles", updater && platform === "mac" && target === "dmg" ? "app,dmg" : target]
-        : []),
+      ...(step === "bundle" ? ["--bundles", keepApp ? "app,dmg" : target] : []),
       "--target",
       rustTarget,
       // tauri-bundler logs the generated bundle_dmg.sh (create-dmg, hdiutil,
@@ -571,6 +574,7 @@ const planSymbols = Effect.fn("planTauriSymbols")(function* (
         : [];
   return {
     archive,
+    binary,
     dumpCommand: {
       command: process.execPath,
       args: [
@@ -587,18 +591,24 @@ const planSymbols = Effect.fn("planTauriSymbols")(function* (
       ],
       cwd: repoRoot,
     },
-    // The shipped profile strips symbols; Windows keeps them in the PDB, which is not shipped.
+    // The shipped profile strips symbols as rustc does for executables: everything on Linux,
+    // plain `strip` on macOS (`-x` is the level for dynamic libraries). Windows keeps the names
+    // in the PDB, which is not shipped.
     strip:
       platform === "win"
         ? undefined
         : {
             command: {
               command: "strip",
-              args: [platform === "mac" ? "-x" : "--strip-all", "-o", `${binary}.stripped`, binary],
+              args: [
+                ...(platform === "linux" ? ["--strip-all"] : []),
+                "-o",
+                `${binary}.stripped`,
+                binary,
+              ],
               cwd: repoRoot,
             },
             output: `${binary}.stripped`,
-            binary,
           },
   } satisfies TauriSymbolsPlan;
 });
@@ -674,10 +684,16 @@ const captureStdout = Effect.fn("captureSpawnStdout")(function* (
   command: string,
   args: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv,
+  cwd?: string,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const child = yield* spawner.spawn(
-    ChildProcess.make(command, args, { env, stdout: "pipe", stderr: "inherit" }),
+    ChildProcess.make(command, args, {
+      env,
+      stdout: "pipe",
+      stderr: "inherit",
+      ...(cwd === undefined ? {} : { cwd }),
+    }),
   );
   const stdout = yield* child.stdout.pipe(Stream.decodeText(), Stream.mkString);
   const exitCode = yield* child.exitCode;
@@ -1384,6 +1400,163 @@ export const copyTauriBundleArtifacts = Effect.fn("copyTauriBundleArtifacts")(fu
   );
 });
 
+interface BinaryFingerprint {
+  readonly inode: number | undefined;
+  readonly links: number | undefined;
+  readonly size: FileSystem.Size;
+  readonly sha256: string;
+}
+
+const fingerprintBinary = Effect.fn("fingerprintTauriBinary")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const info = yield* fs.stat(file);
+  const sha256 = yield* fs.stream(file).pipe(
+    Stream.runFold(
+      () => NodeCrypto.createHash("sha256"),
+      (hash, chunk) => hash.update(chunk),
+    ),
+    Effect.map((hash) => hash.digest("hex")),
+  );
+  return {
+    inode: Option.getOrUndefined(info.ino),
+    links: Option.getOrUndefined(info.nlink),
+    size: info.size,
+    sha256,
+  } satisfies BinaryFingerprint;
+});
+
+interface BundledCopy {
+  readonly copy: string;
+  readonly identity: BinaryIdentity | undefined;
+}
+
+const readBundledCopy = Effect.fn("readBundledTauriBinary")(function* (copy: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const bytes = yield* fs.readFile(copy);
+  return {
+    copy,
+    identity: binaryIdentity(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)),
+  } satisfies BundledCopy;
+});
+
+/** Extracts the AppImage's file system, as the packaged-UI smoke does, to read the binary in it. */
+const readAppImageCopy = Effect.fn("readAppImageTauriBinary")(function* (
+  image: string,
+  name: string,
+  env: NodeJS.ProcessEnv,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const directory = yield* fs.makeTempDirectory({ prefix: "bibcode-appimage-" });
+  return yield* Effect.gen(function* () {
+    const extraction = yield* captureStdout(image, ["--appimage-extract"], env, directory);
+    if (extraction.exitCode !== 0) {
+      return yield* Effect.fail(
+        new TauriDesktopBuildConfigurationError(
+          `${image} --appimage-extract exited with code ${String(extraction.exitCode)}.`,
+        ),
+      );
+    }
+    const copy = yield* readBundledCopy(path.join(directory, "squashfs-root", "usr", "bin", name));
+    return { ...copy, copy: `${image}:/usr/bin/${name}` } satisfies BundledCopy;
+  }).pipe(Effect.ensuring(Effect.ignore(fs.remove(directory, { recursive: true }))));
+});
+
+/**
+ * The copies of the binary inside the bundles, where one can be read: the macOS app (which the
+ * DMG wraps), re-signed by the bundler; the deb's package tree, with Tauri's bundle-type marker
+ * patched in; and the AppImage's file system, also with linuxdeploy's RPATH. Windows installers
+ * pack the target binary itself, so checking that file covers them (`undefined`).
+ */
+const bundledCopies = Effect.fn("bundledTauriBinaryCopies")(function* (
+  plan: Pick<TauriBuildPlan, "platform" | "target" | "bundleDir">,
+  binary: string,
+  env: NodeJS.ProcessEnv,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const name = path.basename(binary);
+  if (plan.platform === "mac") {
+    const macos = path.join(path.dirname(binary), "bundle", "macos");
+    const apps = (yield* fs.readDirectory(macos)).filter((entry) => entry.endsWith(".app"));
+    return yield* Effect.forEach(apps, (app) =>
+      readBundledCopy(path.join(macos, app, "Contents", "MacOS", name)),
+    );
+  }
+  if (plan.platform === "linux" && plan.target === "deb") {
+    // The package tree is the directory beside the .deb.
+    const copies: Array<BundledCopy> = [];
+    for (const entry of (yield* fs.readDirectory(plan.bundleDir)).toSorted()) {
+      if ((yield* fs.stat(path.join(plan.bundleDir, entry))).type !== "Directory") continue;
+      const copy = path.join(plan.bundleDir, entry, "data", "usr", "bin", name);
+      if (yield* fs.exists(copy)) copies.push(yield* readBundledCopy(copy));
+    }
+    return copies;
+  }
+  if (plan.platform === "linux" && plan.target === "appimage") {
+    const images = (yield* fs.readDirectory(plan.bundleDir))
+      .filter((entry) => entry.endsWith(".AppImage"))
+      .toSorted();
+    return yield* Effect.forEach(images, (image) =>
+      readAppImageCopy(path.join(plan.bundleDir, image), name, env),
+    );
+  }
+  return undefined;
+});
+
+/**
+ * Checks that the bundles hold the stripped binary. `tauri bundle` (CLI 2.11.4) never runs Cargo,
+ * and must not: Cargo re-links its unstripped `deps/` artifact over the binary even when nothing
+ * needs rebuilding, which would ship a binary with symbols, so nothing here assumes it. The binary
+ * must still be the file the strip left (the bundler patches it in place, then restores it), and
+ * every readable copy in a bundle must have its build ID and symbol table.
+ */
+const verifyBundledBinary = Effect.fn("verifyBundledTauriBinary")(function* (
+  plan: Pick<TauriBuildPlan, "platform" | "target" | "bundleDir">,
+  binary: string,
+  stripped: BinaryFingerprint,
+  env: NodeJS.ProcessEnv,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const after = yield* fingerprintBinary(binary);
+  const sameFile =
+    (after.inode !== undefined && after.inode === stripped.inode) || after.links === 1;
+  if (!sameFile || after.size !== stripped.size || after.sha256 !== stripped.sha256) {
+    return yield* Effect.fail(
+      new TauriDesktopBuildConfigurationError(
+        `tauri bundle replaced ${binary}, as Cargo does when it re-links it, so the bundles may hold an unstripped binary.`,
+      ),
+    );
+  }
+  const copies = yield* bundledCopies(plan, binary, env);
+  if (copies === undefined) return;
+  const bytes = yield* fs.readFile(binary);
+  const expected = binaryIdentity(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+  if (expected === undefined || copies.length === 0) {
+    return yield* Effect.fail(
+      new TauriDesktopBuildConfigurationError(
+        expected === undefined
+          ? `${binary} has no build ID to check the ${plan.target} bundle against.`
+          : `Found no copy of ${binary} in the ${plan.target} bundle to check.`,
+      ),
+    );
+  }
+  const describe = (identity: BinaryIdentity | undefined) =>
+    identity === undefined
+      ? "no build ID"
+      : `build ID ${identity.id} with ${String(identity.symbols)} symbols`;
+  const mismatch = copies.find(
+    ({ identity }) => identity?.id !== expected.id || identity.symbols !== expected.symbols,
+  );
+  if (mismatch !== undefined) {
+    return yield* Effect.fail(
+      new TauriDesktopBuildConfigurationError(
+        `${mismatch.copy} does not match the stripped ${binary}: ${describe(mismatch.identity)} instead of ${describe(expected)}.`,
+      ),
+    );
+  }
+});
+
 /**
  * Runs a Tauri build or bundle step with bounded attempts. Every failed attempt
  * is reported with its exit code, this build's leaked intermediate DMG mounts
@@ -1442,18 +1615,26 @@ export const buildTauriDesktopArtifact = Effect.fn("buildTauriDesktopArtifact")(
     write(
       `[desktop-artifact] Building ${plan.platform}/${plan.target} (${plan.arch}, ${plan.rustTarget})...\n`,
     );
-    // Bundling gets the same profile, so Cargo would find the build fresh if Tauri ran it.
+    // Bundling runs with the same environment, but it must not run Cargo at all: Cargo re-links
+    // its unstripped deps/ artifact over the stripped binary even when nothing needs rebuilding.
+    // `tauri bundle` (CLI 2.11.4) never does, and verifyBundledBinary checks that afterwards.
     const buildEnv = plan.symbols ? symbolBuildEnvironment(plan.platform, env) : env;
     yield* runBuildAttempts(plan, "build", plan.buildCommand, buildEnv, write);
+    let stripped: BinaryFingerprint | undefined;
     if (plan.symbols) {
       write(`[desktop-artifact] Dumping symbols into ${plan.symbols.archive}...\n`);
       yield* runSpawnPlan(plan.symbols.dumpCommand, env, "dump-symbols.ts");
       if (plan.symbols.strip) {
         yield* runSpawnPlan(plan.symbols.strip.command, env, "strip");
-        yield* fs.rename(plan.symbols.strip.output, plan.symbols.strip.binary);
+        yield* fs.rename(plan.symbols.strip.output, plan.symbols.binary);
       }
+      stripped = yield* fingerprintBinary(plan.symbols.binary);
     }
     yield* runBuildAttempts(plan, "bundle", plan.bundleCommand, buildEnv, write);
+    if (plan.symbols && stripped) {
+      yield* verifyBundledBinary(plan, plan.symbols.binary, stripped, env);
+      write(`[desktop-artifact] The ${plan.target} bundle holds the stripped binary.\n`);
+    }
   }
 
   const artifacts = yield* copyTauriBundleArtifacts({

@@ -148,20 +148,20 @@ locations (Program Files, per-user Programs, the Windows directory) and never
 removes the app-managed `BiBCode Remote Access` rule. Run it from an elevated
 PowerShell; on other platforms it exits 0 without doing anything.
 
-The wrapper, `scripts/build-desktop-artifact.ts`, rejects cross-platform builds by
-default, invokes the canonical `@bibcode/desktop` Tauri package, and copies bundle output
-under `release/desktop/<platform>-<arch>` unless an output directory is supplied.
-It compiles with `tauri build --no-bundle` and then packages that binary with
-`tauri bundle` (the desktop package's `build` and `bundle` scripts), which does
-not run Cargo. Each step runs with at most three attempts. Every
-failed attempt is reported with its exit code, and before retrying a macOS DMG
-build the wrapper reads `hdiutil info -plist` and detaches only the
-intermediate `rw.*.dmg` image inside that build's bundle `dmg` directory,
-reporting each detach or its failure; other mounted images are never touched.
-The final error names the first failure, not only the last. macOS DMG bundles
-pass `--verbose` to the Tauri CLI because the bundler logs the generated
-`bundle_dmg.sh` output (`create-dmg`, `hdiutil`, AppleScript) only at debug
-level.
+The wrapper, `scripts/build-desktop-artifact.ts`, rejects cross-platform builds
+by default, invokes the canonical `@bibcode/desktop` Tauri package, and copies
+bundle output under `release/desktop/<platform>-<arch>` unless an output
+directory is supplied. It compiles with `tauri build --no-bundle` and then
+packages that binary with `tauri bundle` (the desktop package's `build` and
+`bundle` scripts); the Tauri CLI's bundle step does not run Cargo. Each step
+runs with at most three attempts. Every failed attempt is reported with its exit
+code, and before retrying a macOS DMG build the wrapper reads
+`hdiutil info -plist` and detaches only the intermediate `rw.*.dmg` image inside
+that build's bundle `dmg` directory, reporting each detach or its failure; other
+mounted images are never touched. The final error names the first failure, not
+only the last. macOS DMG bundles pass `--verbose` to the Tauri CLI because the
+bundler logs the generated `bundle_dmg.sh` output (`create-dmg`, `hdiutil`,
+AppleScript) only at debug level.
 
 `--symbols`, which release CI passes, adds Breakpad symbols between the two
 steps. The build then uses the symbol profile:
@@ -170,13 +170,22 @@ steps. The build then uses the symbol profile:
 `CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed` on macOS (for a dSYM) and
 `RUSTFLAGS=-C link-arg=-Wl,--build-id=sha1` on Linux. `scripts/dump-symbols.ts`
 dumps the unstripped binary, with its dSYM or PDB, into
-`target/<triple>/release/symbols`. The wrapper then strips the binary
-(`strip --strip-all` on Linux, `strip -x` on macOS; Windows ships the binary as
-linked and keeps the names in the PDB) and bundles it. It strips into a copy
-that replaces the binary: Cargo's binary is a hard link to its cached `deps/`
-artifact, and an in-place strip would leave the next build of unchanged sources
-without symbols to dump. The output directory also receives
-`bibcode-desktop-symbols-<version>-<os>-<arch>.zip`; see
+`target/<triple>/release/symbols`. The wrapper then strips the binary as rustc
+strips executables (`strip --strip-all` on Linux, plain `strip` on macOS;
+Windows ships the binary as linked and keeps the names in the PDB) and bundles
+it. It strips into a copy that replaces the binary: Cargo's binary is a hard
+link to its cached `deps/` artifact, and an in-place strip would leave the next
+build of unchanged sources without symbols to dump. After bundling it fails
+unless the binary is still the stripped file (same file, size and SHA-256; the
+bundler patches it in place and restores it), and unless every copy it can read
+in a bundle has the binary's build ID and symbol table: the macOS app, which the
+bundler re-signs (a DMG symbol build also requests `app`, because the bundler
+otherwise deletes the app it built), the deb's package tree, and the AppImage,
+which it extracts with `--appimage-extract`. Windows installers pack the binary
+itself. Cargo would re-link its unstripped artifact over the binary even when
+nothing needs rebuilding, so this check, not the Tauri CLI's current behavior,
+keeps an unstripped binary out of the bundles. The output directory also
+receives `bibcode-desktop-symbols-<version>-<os>-<arch>.zip`; see
 [Symbol assets](../operations/release.md#symbol-assets). `--symbols` needs
 `dump_syms` on `PATH` and cannot be combined with `--skip-build`.
 

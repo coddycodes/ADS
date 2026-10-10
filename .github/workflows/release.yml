@@ -657,15 +657,21 @@ jobs:
             win) args+=(--binary "$release_dir/bibcode.exe" --module-name bibcode.exe --pdb "$release_dir/bibcode.pdb") ;;
           esac
           "${args[@]}"
-          # The shipped profile strips symbols; Windows keeps them in the PDB, which is not shipped.
-          # A stripped copy replaces the binary, because Cargo's binary is a hard link to its cached
-          # deps/ artifact, which an in-place strip would strip as well.
+          # The shipped profile strips symbols as rustc does for executables (plain strip on macOS;
+          # -x is the level for dynamic libraries). Windows keeps them in the PDB, which is not
+          # shipped. A stripped copy replaces the binary, because Cargo's binary is a hard link to
+          # its cached deps/ artifact, which an in-place strip would strip as well.
           stripped="$release_dir/bibcode.stripped"
           case "${{ matrix.platform }}" in
             linux) strip --strip-all -o "$stripped" "$release_dir/bibcode" ;;
-            mac) strip -x -o "$stripped" "$release_dir/bibcode" ;;
+            mac) strip -o "$stripped" "$release_dir/bibcode" ;;
           esac
           if [[ -e "$stripped" ]]; then mv "$stripped" "$release_dir/bibcode"; fi
+          # Apple silicon runs only signed code. The linker ad-hoc signs arm64 executables, and
+          # the stripped binary must keep a valid signature; Intel executables are not signed.
+          if [[ "${{ matrix.platform }}" == "mac" && "${{ matrix.arch }}" == "arm64" ]]; then
+            codesign --verify --verbose=2 "$release_dir/bibcode"
+          fi
 
       - name: Build standalone server artifacts
         shell: bash
@@ -737,7 +743,8 @@ jobs:
     needs: [preflight, build_desktop, build_server]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build_desktop.result == 'success' && needs.build_server.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # The twelve symbol archives add about 470 MB to download, assemble, and upload.
+    timeout-minutes: 25
     # Fork adaptation: publish with the workflow's own GITHUB_TOKEN instead of
     # upstream's release GitHub App (RELEASE_APP_ID/RELEASE_APP_PRIVATE_KEY).
     permissions:

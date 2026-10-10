@@ -337,19 +337,45 @@ jobs:
           CRASH_SMOKE_OUT: ${{ runner.temp }}/crash-smoke
         run: |
           set -euo pipefail
+          shopt -s nullglob
           # Bash globs treat the backslashes of a Windows runner.temp as escapes.
           out="${CRASH_SMOKE_OUT//\\//}"
           case "$RUNNER_OS" in
-            Linux) symbols=(--binary target/release/crash-smoke --module-name crash-smoke) ;;
+            Linux)
+              # The 20-byte (sha1) GNU build-id that the release RUSTFLAGS ask the linker for.
+              notes="$(readelf -n target/release/crash-smoke)"
+              if ! grep -Eq 'Build ID: [0-9a-f]{40}$' <<< "$notes"; then
+                echo "crash-smoke has no 20-byte GNU build-id." >&2
+                exit 1
+              fi
+              symbols=(--binary target/release/crash-smoke --module-name crash-smoke)
+              ;;
             macOS) symbols=(--binary target/release/crash-smoke --module-name crash-smoke --dsym target/release/crash-smoke.dSYM) ;;
             Windows) symbols=(--binary target/release/crash-smoke.exe --module-name crash-smoke.exe --pdb target/release/crash_smoke.pdb) ;;
           esac
           node scripts/dump-symbols.ts "${symbols[@]}" --out "$out/symbols"
           dumps=("$out"/crashes/*.dmp)
-          test "${#dumps[@]}" -eq 1
+          if (( ${#dumps[@]} != 1 )); then
+            printf 'Expected one minidump in %s/crashes, found %s.\n' "$out" "${#dumps[@]}" >&2
+            exit 1
+          fi
           # Task 15 can swap minidump-stackwalk for `bibcode profiler symbolicate`.
           minidump-stackwalk --json "${dumps[0]}" "$out/symbols" > "$out/stackwalk.json"
           grep -q crash_here_in_named_function "$out/stackwalk.json"
+          # The caller must be found through the STACK CFI records, not only named.
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const walk = JSON.parse(readFileSync(process.argv[1], "utf8"));
+            const [crash, caller] = walk.crashing_thread.frames;
+            if (
+              crash?.function !== "crash_smoke::crash_here_in_named_function" ||
+              caller?.function !== "crash_smoke::main" ||
+              caller?.trust !== "cfi"
+            ) {
+              console.error("Unexpected crashing frames:", JSON.stringify([crash, caller], null, 2));
+              process.exit(1);
+            }
+          ' "$out/stackwalk.json"
 
       - name: Upload crash smoke evidence
         if: failure()

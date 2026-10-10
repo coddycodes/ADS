@@ -14,6 +14,8 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { vi } from "vite-plus/test";
 
+import { syntheticElf, syntheticMachO } from "./lib/binary-fixtures.ts";
+
 import {
   copyTauriBundleArtifacts,
   buildTauriDesktopArtifact,
@@ -2183,6 +2185,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           linuxArchive,
         ],
       });
+      assert.equal(linux.symbols?.binary, path.join(linuxRelease, "bibcode-desktop"));
       // A stripped copy replaces the binary, which Cargo hard-links to its cached artifact.
       assert.deepStrictEqual(linux.symbols?.strip, {
         command: {
@@ -2196,7 +2199,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           ],
         },
         output: path.join(linuxRelease, "bibcode-desktop.stripped"),
-        binary: path.join(linuxRelease, "bibcode-desktop"),
       });
 
       const mac = yield* planFor("mac", "darwin");
@@ -2209,8 +2211,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         [...(mac.symbols?.dumpCommand.args ?? [])],
         ["--dsym", path.join(macRelease, "bibcode-desktop.dSYM")],
       );
+      // The DMG bundler deletes the app it builds unless `app` is requested too, and the check
+      // after bundling reads the binary in it.
+      assert.include(mac.bundleCommand.args, "app,dmg");
+      // Plain strip, rustc's level for executables (`-x` is for dynamic libraries).
       assert.deepStrictEqual(mac.symbols?.strip?.command.args, [
-        "-x",
         "-o",
         path.join(macRelease, "bibcode-desktop.stripped"),
         path.join(macRelease, "bibcode-desktop"),
@@ -2262,82 +2267,255 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     });
   });
 
+  const BUILD_ID = "5852920ede2c069ed4ba17fe44570dad84b63c1d";
+  const MACHO_UUID = "0e9252582cde9e06d4ba17fe44570dad";
+  const ELF = {
+    unstripped: syntheticElf({ buildId: BUILD_ID, symbols: 5 }),
+    stripped: syntheticElf({ buildId: BUILD_ID, symbols: 0 }),
+  };
+
+  /**
+   * A `--symbols` build in a scratch repository. Cargo's binary is a hard link to its unstripped
+   * deps/ artifact; the fake dump writes the archive, strip writes `stripped` to its `-o`
+   * output, `onBundle` models the bundler, and an AppImage extracts `extracted`.
+   */
+  const symbolsBuild = Effect.fn("symbolsBuild")(function* (options: {
+    readonly platform: "linux" | "mac" | "win";
+    readonly target: string;
+    readonly bundleFile: string;
+    readonly unstripped: Buffer;
+    readonly stripped: Buffer;
+    readonly extracted?: Buffer;
+    readonly onBundle?: (paths: {
+      readonly bundleDir: string;
+      readonly binary: string;
+      readonly cached: string;
+    }) => Effect.Effect<void, PlatformError.PlatformError>;
+  }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-build-symbols-run-" });
+    yield* fs.makeDirectory(path.join(repoRoot, "apps", "desktop"), { recursive: true });
+    yield* fs.writeFileString(
+      path.join(repoRoot, "apps", "desktop", "package.json"),
+      '{ "version": "1.2.3" }',
+    );
+    const host = {
+      platform: ({ linux: "linux", mac: "darwin", win: "win32" } as const)[options.platform],
+      arch: "x64",
+    } as const;
+    const input = {
+      platform: options.platform,
+      target: options.target,
+      arch: "x64",
+      outputDir: "out",
+      symbols: true,
+    } as const;
+    const plan = yield* resolveTauriBuildPlan(input, {}, host, repoRoot);
+    // Every fixture path below derives from the plan's binary, inside the scratch repository.
+    if (plan.symbols === undefined) return yield* Effect.die("a --symbols plan has symbols");
+    const { archive, binary } = plan.symbols;
+    yield* fs.makeDirectory(plan.bundleDir, { recursive: true });
+    yield* fs.writeFileString(path.join(plan.bundleDir, options.bundleFile), "bundle");
+    const cached = path.join(path.dirname(binary), "deps", "bibcode_desktop-0123");
+    yield* fs.makeDirectory(path.dirname(cached), { recursive: true });
+    yield* fs.writeFile(cached, options.unstripped);
+    yield* fs.link(cached, binary);
+    const spawned: Array<{ step: string; env: Record<string, string | undefined> }> = [];
+    const spawnerLayer = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        if (command._tag !== "StandardCommand") {
+          throw new Error("The artifact wrapper never pipes commands.");
+        }
+        const step =
+          command.command === "strip"
+            ? "strip"
+            : command.args[0]?.endsWith("dump-symbols.ts")
+              ? "dump"
+              : command.args.includes("--appimage-extract")
+                ? "extract"
+                : (command.args.find((arg) => arg === "build" || arg === "bundle") ?? "unknown");
+        spawned.push({ step, env: { ...command.options.env } });
+        const done = Effect.as(processHandle(0));
+        if (step === "dump") {
+          return fs.writeFileString(archive, "zip").pipe(done, Effect.orDie);
+        }
+        if (step === "strip") {
+          const output = command.args[command.args.indexOf("-o") + 1];
+          if (!command.args.includes("-o") || output === undefined) {
+            return Effect.die("strip writes a copy with -o");
+          }
+          return fs.writeFile(output, options.stripped).pipe(done, Effect.orDie);
+        }
+        if (step === "extract") {
+          if (command.options.cwd === undefined) return Effect.die("extraction has a cwd");
+          const root = path.join(command.options.cwd, "squashfs-root", "usr", "bin");
+          return fs
+            .makeDirectory(root, { recursive: true })
+            .pipe(
+              Effect.andThen(
+                fs.writeFile(
+                  path.join(root, "bibcode-desktop"),
+                  options.extracted ?? options.stripped,
+                ),
+              ),
+              done,
+              Effect.orDie,
+            );
+        }
+        if (step === "bundle" && options.onBundle) {
+          return options
+            .onBundle({ bundleDir: plan.bundleDir, binary, cached })
+            .pipe(done, Effect.orDie);
+        }
+        return Effect.succeed(processHandle(0));
+      }),
+    );
+    const result = yield* buildTauriDesktopArtifact(
+      input,
+      { PATH: "/usr/bin" },
+      { write: () => undefined, host, repoRoot },
+    ).pipe(Effect.provide(spawnerLayer), Effect.result);
+    return { result, spawned, binary, cached, repoRoot };
+  });
+
   it.effect("dumps symbols and strips before bundling, then publishes the symbol archive", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "bibcode-build-symbols-run-" });
-      yield* fs.makeDirectory(path.join(repoRoot, "apps", "desktop"), { recursive: true });
-      yield* fs.writeFileString(
-        path.join(repoRoot, "apps", "desktop", "package.json"),
-        '{ "version": "1.2.3" }',
-      );
-      const input = { platform: "linux", arch: "x64", outputDir: "out", symbols: true } as const;
-      const host = { platform: "linux", arch: "x64" } as const;
-      const plan = yield* resolveTauriBuildPlan(input, {}, host, repoRoot);
-      yield* fs.makeDirectory(plan.bundleDir, { recursive: true });
-      yield* fs.writeFileString(path.join(plan.bundleDir, "BiBCode_1.2.3_amd64.AppImage"), "app");
-      const archive = plan.symbols?.archive ?? "";
-      // Cargo publishes the binary as a hard link to its cached artifact in deps/.
-      const release = path.join(repoRoot, "target", "x86_64-unknown-linux-gnu", "release");
-      const binary = path.join(release, "bibcode-desktop");
-      const cached = path.join(release, "deps", "bibcode_desktop-0123");
-      yield* fs.makeDirectory(path.dirname(cached), { recursive: true });
-      yield* fs.writeFileString(cached, "unstripped");
-      yield* fs.link(cached, binary);
-      const spawned: Array<{ step: string; env: Record<string, string | undefined> }> = [];
-      const spawnerLayer = Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make((command) => {
-          if (command._tag !== "StandardCommand") {
-            throw new Error("The artifact wrapper never pipes commands.");
-          }
-          const step =
-            command.command === "strip"
-              ? "strip"
-              : command.args[0]?.endsWith("dump-symbols.ts")
-                ? "dump"
-                : (command.args.find((arg) => arg === "build" || arg === "bundle") ?? "unknown");
-          spawned.push({ step, env: { ...command.options.env } });
-          if (step === "dump") {
-            return fs
-              .writeFileString(archive, "zip")
-              .pipe(Effect.as(processHandle(0)), Effect.orDie);
-          }
-          if (step === "strip") {
-            const output = command.args[command.args.indexOf("-o") + 1] ?? "";
-            return fs
-              .writeFileString(output, "stripped")
-              .pipe(Effect.as(processHandle(0)), Effect.orDie);
-          }
-          return Effect.succeed(processHandle(0));
-        }),
-      );
+      const run = yield* symbolsBuild({
+        platform: "linux",
+        target: "appimage",
+        bundleFile: "BiBCode_1.2.3_amd64.AppImage",
+        ...ELF,
+      });
 
-      const artifacts = yield* buildTauriDesktopArtifact(
-        input,
-        { PATH: "/usr/bin" },
-        { write: () => undefined, host, repoRoot },
-      ).pipe(Effect.provide(spawnerLayer));
-
+      assert.equal(run.result._tag, "Success");
+      // After bundling, the AppImage is extracted to check the binary inside it.
       assert.deepStrictEqual(
-        spawned.map((entry) => entry.step),
-        ["build", "dump", "strip", "bundle"],
+        run.spawned.map((entry) => entry.step),
+        ["build", "dump", "strip", "bundle", "extract"],
       );
-      const [build, , , bundle] = spawned;
+      const [build, , , bundle] = run.spawned;
       assert.equal(build?.env.CARGO_PROFILE_RELEASE_STRIP, "none");
       assert.equal(build?.env.CARGO_PROFILE_RELEASE_DEBUG, "line-tables-only");
       assert.equal(build?.env.RUSTFLAGS, "-C link-arg=-Wl,--build-id=sha1");
       assert.equal(build?.env.PATH, "/usr/bin");
-      // Bundling sees the same profile, so a Cargo freshness check could not relink the binary.
+      // Bundling sees the same environment. Whether it ran Cargo is checked afterwards, not
+      // assumed: Cargo re-links its unstripped artifact over the binary even when fresh.
       assert.deepStrictEqual(bundle?.env, build?.env);
       // The bundle gets the stripped binary, and the next build still finds an unstripped one.
-      assert.equal(yield* fs.readFileString(binary), "stripped");
-      assert.equal(yield* fs.readFileString(cached), "unstripped");
-      assert.deepStrictEqual(artifacts, [
-        path.join(repoRoot, "out", "BiBCode_1.2.3_amd64.AppImage"),
-        path.join(repoRoot, "out", "bibcode-desktop-symbols-1.2.3-linux-x86_64.zip"),
+      assert.deepStrictEqual(
+        Buffer.from(yield* fs.readFile(run.binary)).equals(ELF.stripped),
+        true,
+      );
+      assert.deepStrictEqual(
+        Buffer.from(yield* fs.readFile(run.cached)).equals(ELF.unstripped),
+        true,
+      );
+      assert.deepStrictEqual(run.result._tag === "Success" ? run.result.success : [], [
+        path.join(run.repoRoot, "out", "BiBCode_1.2.3_amd64.AppImage"),
+        path.join(run.repoRoot, "out", "bibcode-desktop-symbols-1.2.3-linux-x86_64.zip"),
       ]);
+    }),
+  );
+
+  it.effect("accepts bundles whose copy of the binary is the stripped one", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // The deb's package tree keeps a copy; Tauri patches its bundle-type marker.
+      const deb = yield* symbolsBuild({
+        platform: "linux",
+        target: "deb",
+        bundleFile: "BiBCode_1.2.3_amd64.deb",
+        ...ELF,
+        onBundle: ({ bundleDir }) => {
+          const bin = path.join(bundleDir, "BiBCode_1.2.3_amd64", "data", "usr", "bin");
+          return fs
+            .makeDirectory(bin, { recursive: true })
+            .pipe(Effect.andThen(fs.writeFile(path.join(bin, "bibcode-desktop"), ELF.stripped)));
+        },
+      });
+      assert.equal(deb.result._tag, "Success");
+
+      // The macOS app holds a re-signed copy, compared by LC_UUID and symbol count.
+      const machO = {
+        unstripped: syntheticMachO({ uuid: MACHO_UUID, symbols: 900 }),
+        stripped: syntheticMachO({ uuid: MACHO_UUID, symbols: 3 }),
+      };
+      const mac = yield* symbolsBuild({
+        platform: "mac",
+        target: "dmg",
+        bundleFile: "BiBCode_1.2.3_x64.dmg",
+        ...machO,
+        onBundle: ({ binary }) => {
+          const bin = path.join(path.dirname(binary), "bundle", "macos", "BiBCode.app", "Contents");
+          return fs
+            .makeDirectory(path.join(bin, "MacOS"), { recursive: true })
+            .pipe(
+              Effect.andThen(
+                fs.writeFile(path.join(bin, "MacOS", "bibcode-desktop"), machO.stripped),
+              ),
+            );
+        },
+      });
+      assert.equal(mac.result._tag, "Success");
+
+      // A Windows installer embeds the target binary itself, which nothing strips.
+      const win = yield* symbolsBuild({
+        platform: "win",
+        target: "nsis",
+        bundleFile: "BiBCode_1.2.3_x64-setup.exe",
+        unstripped: Buffer.from("MZ pe image"),
+        stripped: Buffer.from("MZ pe image"),
+      });
+      assert.equal(win.result._tag, "Success");
+      assert.notInclude(
+        win.spawned.map((entry) => entry.step),
+        "strip",
+      );
+    }),
+  );
+
+  it.effect("fails a symbols build whose bundles may not hold the stripped binary", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const failure = (run: { readonly result: { readonly _tag: string } }) =>
+        run.result._tag === "Failure"
+          ? String((run.result as unknown as { readonly failure: Error }).failure.message)
+          : "";
+
+      // Cargo running inside `tauri bundle` re-links its unstripped artifact over the binary.
+      const relinked = yield* symbolsBuild({
+        platform: "linux",
+        target: "deb",
+        bundleFile: "BiBCode_1.2.3_amd64.deb",
+        ...ELF,
+        onBundle: ({ binary, cached }) =>
+          fs.remove(binary).pipe(Effect.andThen(fs.link(cached, binary))),
+      });
+      assert.include(failure(relinked), "tauri bundle replaced");
+
+      // A bundle that carries another binary than the stripped one.
+      const unstrippedCopy = yield* symbolsBuild({
+        platform: "linux",
+        target: "appimage",
+        bundleFile: "BiBCode_1.2.3_amd64.AppImage",
+        ...ELF,
+        extracted: ELF.unstripped,
+      });
+      assert.include(failure(unstrippedCopy), "does not match");
+
+      // A bundle layout without a readable copy cannot be checked.
+      const noCopy = yield* symbolsBuild({
+        platform: "linux",
+        target: "deb",
+        bundleFile: "BiBCode_1.2.3_amd64.deb",
+        ...ELF,
+      });
+      assert.include(failure(noCopy), "Found no copy");
     }),
   );
 
