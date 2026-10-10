@@ -277,7 +277,12 @@ async fn the_audit_and_removal_outcomes_reach_the_profiler() {
         .filter(|event| event["kind"] == "worktree.audit")
         .collect();
     assert!(!scans.is_empty());
-    assert!(scans.iter().all(|scan| scan["compared"] == true));
+    assert!(
+        scans
+            .iter()
+            .all(|scan| scan["compared"] == true && scan["processesRead"] == true),
+        "{scans:?}"
+    );
     fixture.shutdown().await;
 }
 

@@ -39,6 +39,9 @@ const BIND_RETRY: Duration = Duration::from_secs(1);
 const SCAN_BUDGET: Duration = Duration::from_secs(30);
 /// A project whose `git worktree list` takes longer leaves its managed directory uncompared.
 const GIT_DEADLINE: Duration = Duration::from_secs(8);
+/// Reading the working directories of BiBCode's processes taking longer (on macOS it touches
+/// each directory, which a hung network mount can stall) leaves them unread for the scan.
+const PROCESS_DEADLINE: Duration = Duration::from_secs(5);
 /// Entries read from each managed worktree directory.
 const MAX_DIR_ENTRIES: usize = 500;
 /// The catalog projection's own limit of adopted worktrees per project.
@@ -78,12 +81,26 @@ pub fn record_removal_outcome(
             "cancelled": cancelled,
         }),
     );
-    let Some((severity, cause)) =
-        reason.and_then(|reason| removal_failure(reason, timed_out_drain, cancelled))
-    else {
-        return;
-    };
-    record_finding(finding(
+    if let Some(reason) = reason
+        && let Some(finding) =
+            removal_finding(mode, reason, duration_ms, timed_out_drain, cancelled)
+    {
+        record_finding(finding);
+    }
+}
+
+/// The `worktree.removal-failed` finding of a failed removal, if it deserves one. Its
+/// evidence keeps `cancelled`, so a failure while the client was interrupting stays
+/// recognisable.
+fn removal_finding(
+    mode: &str,
+    reason: &str,
+    duration_ms: u64,
+    drain_timed_out: bool,
+    cancelled: bool,
+) -> Option<FindingInput> {
+    let (severity, cause) = removal_failure(reason, drain_timed_out, cancelled)?;
+    Some(finding(
         "worktree.removal-failed",
         severity,
         cause,
@@ -93,9 +110,10 @@ pub fn record_removal_outcome(
             "mode": mode,
             "reason": reason,
             "durationMs": duration_ms,
-            "drainTimedOut": timed_out_drain,
+            "drainTimedOut": drain_timed_out,
+            "cancelled": cancelled,
         }),
-    ));
+    ))
 }
 
 /// How a failed removal is reported: `None` when its event tells the whole story (the
@@ -246,12 +264,27 @@ impl Drop for ScanGuard {
 struct ScanLimits {
     budget: Duration,
     git: Duration,
+    processes: Duration,
 }
 
 const LIMITS: ScanLimits = ScanLimits {
     budget: SCAN_BUDGET,
     git: GIT_DEADLINE,
+    processes: PROCESS_DEADLINE,
 };
+
+/// Reads the working directory of each process BiBCode owns, given the registered pids:
+/// `process_cwds`, or a stand-in in tests.
+type ProcessReader = fn(Vec<u32>, &CancellationToken) -> Vec<(PathBuf, u32)>;
+
+/// Which parts of a scan's facts were read in full. The rest of the scan is still audited.
+#[derive(Clone, Copy, Debug)]
+struct Coverage {
+    /// The working directories of BiBCode's processes.
+    processes: bool,
+    /// The comparison with the filesystem and Git.
+    compared: bool,
+}
 
 async fn scan(
     sources: &AuditSources,
@@ -260,7 +293,7 @@ async fn scan(
     limits: ScanLimits,
 ) {
     let started = Instant::now();
-    let (facts, compared) = gather(sources, processes, permit, limits).await;
+    let (facts, coverage) = gather(sources, processes, permit, limits, process_cwds).await;
     let findings = audit(&facts);
     emit(
         "worktree.audit",
@@ -270,7 +303,8 @@ async fn scan(
             "registrations": facts.git_registrations.len(),
             "processes": facts.held_open.len(),
             "findings": findings.len(),
-            "compared": compared,
+            "compared": coverage.compared,
+            "processesRead": coverage.processes,
             "durationMs": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         }),
     );
@@ -279,15 +313,16 @@ async fn scan(
     }
 }
 
-/// Reads one scan's facts, and whether the comparison with the filesystem and Git completed.
-/// Read-only: it never refreshes the catalog. The registry and the processes come first and
-/// are always audited; the comparison is abandoned when it overruns the budget.
+/// Reads one scan's facts, and which parts were read in full. Read-only: it never refreshes
+/// the catalog. The registry and the processes come first and are always audited; the
+/// process step and the comparison each give up at their own deadline.
 async fn gather(
     sources: &AuditSources,
     processes: &ProcessAttributionRegistry,
     permit: ScanGuard,
     limits: ScanLimits,
-) -> (AuditFacts, bool) {
+    read_processes: ProcessReader,
+) -> (AuditFacts, Coverage) {
     // Dropping the scan cancels its Git commands and stops its filesystem work between
     // operations. Each blocking step holds the permit: a dropped scan cannot abort one, so no
     // second scan starts until it ends.
@@ -300,11 +335,24 @@ async fn gather(
         .into_iter()
         .map(|(identity, _)| identity.pid)
         .collect();
-    let held_open = blocking(&permit, &cancel, move |cancel| {
-        process_cwds(registered, cancel)
-    })
-    .await
-    .unwrap_or_default();
+    let process_cancel = cancel.child_token();
+    let process_step = blocking(&permit, &process_cancel, move |cancel| {
+        read_processes(registered, cancel)
+    });
+    let held_open = match tokio::time::timeout(limits.processes, process_step).await {
+        // `None`: the step failed, which is logged.
+        Ok(read) => read,
+        Err(_) => {
+            process_cancel.cancel();
+            tracing::warn!(
+                deadline_secs = limits.processes.as_secs(),
+                "worktree audit could not read process working directories in time"
+            );
+            None
+        }
+    };
+    let processes_read = held_open.is_some();
+    let held_open = held_open.unwrap_or_default();
     let comparison =
         match tokio::time::timeout(limits.budget, compare(sources, &permit, &cancel, limits)).await
         {
@@ -353,7 +401,11 @@ async fn gather(
             availability: guard.map_or(AdoptedWorktreeAvailability::Present, |(state, _)| state),
         });
     }
-    (facts, compared)
+    let coverage = Coverage {
+        processes: processes_read,
+        compared,
+    };
+    (facts, coverage)
 }
 
 /// What the comparison read, with every path in its physical spelling.
@@ -1203,16 +1255,19 @@ mod tests {
         let limits = ScanLimits {
             budget: Duration::from_secs(10),
             git: Duration::from_millis(100),
+            processes: PROCESS_DEADLINE,
         };
         let started = Instant::now();
-        let (facts, _) = gather(
+        let (facts, coverage) = gather(
             &sources,
             &ProcessAttributionRegistry::new(),
             ScanGuard::acquire(&Arc::default()).unwrap(),
             limits,
+            process_cwds,
         )
         .await;
         assert!(started.elapsed() < limits.budget, "the Git deadline held");
+        assert!(coverage.processes, "{coverage:?}");
         let found = kinds(&facts);
         assert!(found.contains(&("worktree.missing", vec!["missing-registered".to_owned()])));
         assert!(found.contains(&("worktree.stuck-removal", vec!["removing".to_owned()])));
@@ -1225,18 +1280,75 @@ mod tests {
         let limits = ScanLimits {
             budget: Duration::from_millis(100),
             git: Duration::from_secs(60),
+            processes: PROCESS_DEADLINE,
         };
-        let (facts, compared) = gather(
+        let (facts, coverage) = gather(
             &sources,
             &ProcessAttributionRegistry::new(),
             ScanGuard::acquire(&Arc::default()).unwrap(),
             limits,
+            process_cwds,
         )
         .await;
-        assert!(!compared);
+        assert!(!coverage.compared);
         let found = kinds(&facts);
         assert!(found.contains(&("worktree.missing", vec!["missing-registered".to_owned()])));
         assert!(found.contains(&("worktree.stuck-removal", vec!["removing".to_owned()])));
+    }
+
+    #[tokio::test]
+    async fn a_process_step_past_its_deadline_is_unread_and_the_registry_still_counts() {
+        let root = tempfile::tempdir().unwrap();
+        let (sources, _removal) = stalled_repository(root.path()).await;
+        // A working directory on a hung network mount: the read returns only once the scan
+        // has given up on it.
+        fn stalled(_: Vec<u32>, cancel: &CancellationToken) -> Vec<(PathBuf, u32)> {
+            while !cancel.is_cancelled() {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            vec![(PathBuf::from("/never/reported"), 1)]
+        }
+        let limits = ScanLimits {
+            budget: Duration::from_secs(10),
+            git: Duration::from_millis(100),
+            processes: Duration::from_millis(50),
+        };
+        let (facts, coverage) = tokio::time::timeout(
+            Duration::from_secs(10),
+            gather(
+                &sources,
+                &ProcessAttributionRegistry::new(),
+                ScanGuard::acquire(&Arc::default()).unwrap(),
+                limits,
+                stalled,
+            ),
+        )
+        .await
+        .expect("the process deadline held");
+        assert!(!coverage.processes, "{coverage:?}");
+        assert!(facts.held_open.is_empty());
+        let found = kinds(&facts);
+        assert!(found.contains(&("worktree.missing", vec!["missing-registered".to_owned()])));
+        assert!(found.contains(&("worktree.stuck-removal", vec!["removing".to_owned()])));
+    }
+
+    #[test]
+    fn a_removal_failure_keeps_whether_the_client_was_interrupting() {
+        let finding = removal_finding("delete-git-worktree", "git-failed", 12, false, true)
+            .expect("a git failure is a finding");
+        assert_eq!(finding.severity, Severity::Error);
+        assert_eq!(finding.evidence["cancelled"], true);
+        assert_eq!(finding.fingerprint_fields, ["git-failed"]);
+        assert!(
+            removal_finding(
+                "delete-git-worktree",
+                "orchestration-failed",
+                12,
+                false,
+                true
+            )
+            .is_none()
+        );
     }
 
     #[tokio::test]
