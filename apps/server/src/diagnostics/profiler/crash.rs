@@ -311,6 +311,8 @@ impl Handler {
             "arch": std::env::consts::ARCH,
             "processKind": self.process_kind,
             "parentPid": self.parent_pid,
+            // Matches the dump to the run that crashed, whose sentinel records its boot.
+            "bootId": super::sentinel::boot_id(),
             "lastEvents": event_values(&lock(&self.last_events)),
         })
     }
@@ -1243,6 +1245,7 @@ mod tests {
         assert_eq!(sidecar["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(sidecar["os"], std::env::consts::OS);
         assert_eq!(sidecar["arch"], std::env::consts::ARCH);
+        assert_eq!(sidecar["bootId"], json!(super::super::sentinel::boot_id()));
         assert!(sidecar["createdAt"].is_string());
         let events = sidecar["lastEvents"].as_array().unwrap();
         assert_eq!(events.len(), 50, "capped at 50 lines");

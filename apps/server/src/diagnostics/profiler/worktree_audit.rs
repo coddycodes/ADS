@@ -17,7 +17,7 @@ use tokio::{task::JoinHandle, time::MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    emit,
+    cite, emit,
     findings::{FindingInput, Severity},
     is_enabled, record_finding,
     redact::redact_path,
@@ -69,7 +69,7 @@ pub fn record_removal_outcome(
     let reason = outcome.err();
     let capacity = matches!(reason, Some("cleanup-capacity" | "operation-capacity"));
     let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
-    emit(
+    let event_id = emit(
         "worktree.removal",
         json!({
             "mode": mode,
@@ -85,7 +85,10 @@ pub fn record_removal_outcome(
         && let Some(finding) =
             removal_finding(mode, reason, duration_ms, timed_out_drain, cancelled)
     {
-        record_finding(finding);
+        record_finding(FindingInput {
+            evidence: cite(finding.evidence, event_id),
+            ..finding
+        });
     }
 }
 

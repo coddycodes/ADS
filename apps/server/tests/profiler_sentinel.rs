@@ -14,6 +14,8 @@ use tokio::sync::watch;
 async fn sentinel_and_panic_scenarios_share_the_process_global_handle_in_sequence() {
     a_run_that_never_shut_down_is_classified_with_the_profiler_off().await;
     a_run_on_another_boot_ended_with_the_system().await;
+    a_dump_of_the_previous_run_is_its_native_crash().await;
+    a_dump_this_run_survived_is_one_finding_across_scans_and_restarts().await;
     a_panic_is_recorded_with_module_offsets_and_keeps_unwinding().await;
     only_the_directory_owner_marks_its_session_clean().await;
 }
@@ -23,6 +25,8 @@ async fn a_run_that_never_shut_down_is_classified_with_the_profiler_off() {
     let state = tempfile::tempdir().unwrap();
     // The current boot and a pid no OS record matches: no OS record, no OOM baseline.
     write_running_session(state.path(), sentinel::boot_id());
+    // Another process's dump, written during the run: not this run's crash.
+    write_sidecar(state.path(), "other-process", 4_000_000_001, 30);
     let (tx, rx) = watch::channel(false);
     let runtime = ProfilerRuntime::start(state.path(), rx, vec![]);
 
@@ -56,6 +60,67 @@ async fn a_run_that_never_shut_down_is_classified_with_the_profiler_off() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(kinds(&next.status()), vec!["crash.unclean-exit".to_owned()]);
     assert_eq!(next.status()["findings"][0]["count"], 1);
+    next.shutdown().await;
+}
+
+/// The crash monitor's dump of the previous run, found on the next start, is a `crash.native`
+/// finding that names the dump.
+async fn a_dump_of_the_previous_run_is_its_native_crash() {
+    let state = tempfile::tempdir().unwrap();
+    write_running_session(state.path(), sentinel::boot_id());
+    write_sidecar(state.path(), "previous-run-dump", 4_000_000_000, 30);
+    let (_tx, rx) = watch::channel(false);
+    let runtime = ProfilerRuntime::start(state.path(), rx, vec![]);
+    let finding = wait_for_finding(&runtime, "crash.native").await;
+    assert_eq!(finding["severity"], "error");
+    assert_eq!(kinds(&runtime.status()), vec!["crash.native".to_owned()]);
+    runtime.shutdown().await;
+    let native = persisted(state.path(), "crash.native");
+    assert_eq!(native["evidence"]["crashId"], "previous-run-dump");
+    assert_eq!(native["evidence"]["source"], "minidump");
+    assert_eq!(native["evidence"]["pid"], 4_000_000_000_u32);
+}
+
+/// A dump this process survived is found while it runs, once: rescans and restarts find the
+/// same dump linked already.
+async fn a_dump_this_run_survived_is_one_finding_across_scans_and_restarts() {
+    let state = tempfile::tempdir().unwrap();
+    let (tx, rx) = watch::channel(false);
+    let runtime = ProfilerRuntime::start(state.path(), rx, vec![]);
+    write_sidecar(state.path(), "survived", std::process::id(), 0);
+    // Turning the profiler on scans at once.
+    tx.send(true).unwrap();
+    let finding = wait_for_finding(&runtime, "crash.native").await;
+    assert_eq!(finding["count"], 1);
+    for on in [false, true] {
+        tx.send(on).unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let natives = |status: &Value| -> Vec<Value> {
+        status["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|finding| finding["kind"] == "crash.native")
+            .cloned()
+            .collect()
+    };
+    let rescanned = natives(&runtime.status());
+    assert_eq!(rescanned.len(), 1);
+    assert_eq!(rescanned[0]["count"], 1, "a rescan links nothing again");
+    runtime.end_session().await;
+    assert_eq!(
+        persisted(state.path(), "crash.native")["evidence"]["crashId"],
+        "survived"
+    );
+
+    let (_tx, rx) = watch::channel(true);
+    let next = ProfilerRuntime::start(state.path(), rx, vec![]);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let restarted = natives(&next.status());
+    assert_eq!(restarted.len(), 1);
+    assert_eq!(restarted[0]["count"], 1, "a restart links nothing again");
     next.shutdown().await;
 }
 
@@ -113,7 +178,65 @@ async fn a_panic_is_recorded_with_module_offsets_and_keeps_unwinding() {
         }),
         "frames in this binary carry its debug ID: {frames:?}"
     );
+
+    // Every panic also raises a `crash.panic` finding, off the panicking thread. The same
+    // panic again is a repeat of that finding, not a new one.
+    let panic_here = || std::panic::catch_unwind(|| panic!("again"));
+    assert!(panic_here().is_err());
+    let finding = wait_for_finding(&runtime, "crash.panic").await;
+    assert_eq!(finding["severity"], "error");
+    assert!(
+        finding["title"]
+            .as_str()
+            .unwrap()
+            .starts_with("Panic at apps/server/tests/profiler_sentinel.rs:"),
+        "{finding}"
+    );
+    assert!(panic_here().is_err());
+    for _ in 0..200 {
+        if runtime.status()["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["kind"] == "crash.panic" && finding["count"] == 2)
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let status = runtime.status();
+    let panics: Vec<&Value> = status["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["kind"] == "crash.panic")
+        .collect();
+    assert_eq!(panics.len(), 2, "one per site: the first panic and `again`");
+    assert!(
+        panics.iter().any(|finding| finding["count"] == 2),
+        "the repeat counted: {panics:?}"
+    );
     runtime.shutdown().await;
+    // The finding cites the panic event it was raised from.
+    let panic_ids: Vec<Value> = events(state.path())
+        .into_iter()
+        .filter(|line| line["kind"] == "panic")
+        .map(|line| line["eventId"].clone())
+        .collect();
+    let findings = std::fs::read_to_string(dir(state.path()).join("findings.ndjson")).unwrap();
+    let cited: Vec<Value> = findings
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|finding| finding["kind"] == "crash.panic")
+        .map(|finding| finding["evidence"]["eventIds"][0].clone())
+        .collect();
+    assert!(!cited.is_empty());
+    assert!(
+        cited
+            .iter()
+            .all(|id| id.is_string() && panic_ids.contains(id)),
+        "{cited:?} not among {panic_ids:?}"
+    );
 }
 
 /// Only an orderly end marks the session clean, and it does so before the directory is
@@ -176,6 +299,37 @@ fn write_running_session(state: &Path, boot_id: Option<String>) {
     });
     std::fs::create_dir_all(dir(state)).unwrap();
     std::fs::write(dir(state).join("session.json"), record.to_string()).unwrap();
+}
+
+/// A crash monitor sidecar for a dump of `pid`, written `ago_secs` seconds ago.
+fn write_sidecar(state: &Path, id: &str, pid: u32, ago_secs: i64) {
+    let created_at = time::OffsetDateTime::now_utc() - time::Duration::seconds(ago_secs);
+    let sidecar = json!({
+        "id": id,
+        "createdAt": created_at
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap(),
+        "version": "0.0.0",
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "processKind": "server",
+        "parentPid": pid,
+        "bootId": sentinel::boot_id(),
+        "lastEvents": [],
+    });
+    let crashes = dir(state).join("crashes");
+    std::fs::create_dir_all(&crashes).unwrap();
+    std::fs::write(crashes.join(format!("{id}.json")), sidecar.to_string()).unwrap();
+}
+
+/// The last line `findings.ndjson` holds for the finding of `kind`.
+fn persisted(state: &Path, kind: &str) -> Value {
+    std::fs::read_to_string(dir(state).join("findings.ndjson"))
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .rfind(|finding| finding["kind"] == kind)
+        .unwrap_or_else(|| panic!("no persisted {kind} finding"))
 }
 
 fn read_session(state: &Path) -> Value {

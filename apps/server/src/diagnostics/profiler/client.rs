@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{
-    emit_from,
+    cite, emit_from,
     findings::{FindingInput, Severity},
     is_enabled,
     latency::{
@@ -54,11 +54,17 @@ pub fn ingest_client_batch(batch: Value, env_id: &str) -> Result<Value, Value> {
     let book = global_latency();
     let analysis = analyze(&batch, env_id, |id| book.find_join(id));
     let source = format!("{SOURCE}:{}", batch.client_id);
-    for (kind, payload) in analysis.events {
-        emit_from(source.clone(), kind, payload);
-    }
-    for finding in analysis.findings {
-        record_finding(finding);
+    let event_ids: Vec<Option<String>> = analysis
+        .events
+        .into_iter()
+        .map(|(kind, payload)| emit_from(source.clone(), kind, payload))
+        .collect();
+    for (finding, event) in analysis.findings.into_iter().zip(analysis.cites) {
+        let event_id = event_ids.get(event).cloned().flatten();
+        record_finding(FindingInput {
+            evidence: cite(finding.evidence, event_id),
+            ..finding
+        });
     }
     Ok(json!({ "accepted": true }))
 }
@@ -235,6 +241,8 @@ impl ClientBatch {
 struct Analysis {
     events: Vec<(&'static str, Value)>,
     findings: Vec<FindingInput>,
+    /// For each finding, the index in `events` of the event that explains it.
+    cites: Vec<usize>,
 }
 
 fn is_known(method: &str) -> bool {
@@ -251,6 +259,7 @@ fn analyze(
 ) -> Analysis {
     let mut events = Vec::new();
     let mut findings = Vec::new();
+    let mut cites = Vec::new();
     let mut dropped = 0usize;
     for record in &batch.records {
         if !is_known(&record.method) {
@@ -280,6 +289,7 @@ fn analyze(
                 summary: request.summary(record),
                 evidence: payload.clone(),
             });
+            cites.push(events.len());
         }
         events.push(("client.request", payload));
     }
@@ -300,6 +310,24 @@ fn analyze(
         "count": batch.interactions.count,
         "maxMs": batch.interactions.max_ms,
     });
+    events.push((
+        "client.batch",
+        json!({
+            "envId": env_id,
+            "clientId": batch.client_id,
+            "capabilities": batch.capabilities,
+            "windowMs": batch.window_ms,
+            "records": batch.records.len(),
+            "droppedUnknownMethods": dropped,
+            "bucketGrowth": BUCKET_GROWTH,
+            "histograms": histograms,
+            "stalls": stalls,
+            "interactions": interactions,
+            "jsHeapBytes": batch.js_heap_bytes,
+        }),
+    ));
+    // Client-wide findings cite the batch event, which carries their figures.
+    let batch_event = events.len() - 1;
     let window_secs = batch.window_ms / 1000.0;
     if batch.stalls.total_ms > STALL_FINDING_MS {
         findings.push(FindingInput {
@@ -326,6 +354,7 @@ fn analyze(
                 "stalls": stalls,
             }),
         });
+        cites.push(batch_event);
     }
     if batch.interactions.max_ms > INTERACTION_FINDING_MS {
         findings.push(FindingInput {
@@ -351,24 +380,13 @@ fn analyze(
                 "interactions": interactions,
             }),
         });
+        cites.push(batch_event);
     }
-    events.push((
-        "client.batch",
-        json!({
-            "envId": env_id,
-            "clientId": batch.client_id,
-            "capabilities": batch.capabilities,
-            "windowMs": batch.window_ms,
-            "records": batch.records.len(),
-            "droppedUnknownMethods": dropped,
-            "bucketGrowth": BUCKET_GROWTH,
-            "histograms": histograms,
-            "stalls": stalls,
-            "interactions": interactions,
-            "jsHeapBytes": batch.js_heap_bytes,
-        }),
-    ));
-    Analysis { events, findings }
+    Analysis {
+        events,
+        findings,
+        cites,
+    }
 }
 
 /// Where one request's time went, as the client saw it until the response was painted.
@@ -541,6 +559,10 @@ mod tests {
         assert_eq!(analysis.findings.len(), 1);
         let finding = &analysis.findings[0];
         assert_eq!(finding.kind, "rpc.slow");
+        assert_eq!(
+            analysis.events[analysis.cites[0]].0, "client.request",
+            "the finding cites its request's event"
+        );
         assert_eq!(finding.source, "client");
         assert_eq!(finding.severity, Severity::Warn);
         assert!(finding.title.starts_with(SLOW), "{}", finding.title);

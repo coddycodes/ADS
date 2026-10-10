@@ -38,6 +38,10 @@ pub struct ProfilerHandle {
     pub(crate) sender: store::EventSender,
     pub(crate) findings: Mutex<findings::FindingsBook>,
     pub(crate) recording_since: Mutex<Option<String>>,
+    /// Where the panic hook hands panics over, to be raised as findings off its thread.
+    panics: tokio::sync::mpsc::Sender<panic_hook::PanicRecord>,
+    /// The crash dumps a finding cites already, by id.
+    linked_dumps: Mutex<std::collections::HashSet<String>>,
 }
 
 /// Replaceable rather than a `OnceLock`: the desktop host restarts the server in-process,
@@ -84,25 +88,27 @@ pub fn is_enabled() -> bool {
         .is_some_and(|handle| handle.enabled.load(Ordering::Relaxed))
 }
 
-/// Queues one server event. Does nothing while the profiler is off; never blocks.
-pub fn emit(kind: &'static str, payload: Value) {
-    if let Some(handle) = enabled_handle() {
-        handle.sender.send(event::ProfilerEvent {
-            kind,
-            source: "server".into(),
-            payload,
-        });
-    }
+/// Queues one server event and returns its `eventId`, which a finding the event explains
+/// cites in `evidence.eventIds`. Does nothing while the profiler is off; never blocks.
+pub fn emit(kind: &'static str, payload: Value) -> Option<String> {
+    emit_from("server".into(), kind, payload)
 }
 
-pub fn emit_from(source: String, kind: &'static str, payload: Value) {
-    if let Some(handle) = enabled_handle() {
-        handle.sender.send(event::ProfilerEvent {
-            kind,
-            source,
-            payload,
-        });
+/// [`emit`] for an event from `source`, such as `client:<clientId>`.
+pub fn emit_from(source: String, kind: &'static str, payload: Value) -> Option<String> {
+    enabled_handle()?.sender.send(event::ProfilerEvent {
+        kind,
+        source,
+        payload,
+    })
+}
+
+/// `evidence` with `eventIds` naming the event that explains it, when that event was queued.
+pub(crate) fn cite(mut evidence: Value, event_id: Option<String>) -> Value {
+    if let (Value::Object(fields), Some(id)) = (&mut evidence, event_id) {
+        fields.insert("eventIds".into(), Value::from(vec![id]));
     }
+    evidence
 }
 
 /// Records one finding occurrence and returns it. Does nothing while the profiler is off.

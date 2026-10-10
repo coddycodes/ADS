@@ -19,7 +19,7 @@ use tokio::{task::JoinHandle, time::MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    emit,
+    cite, emit,
     findings::{FindingInput, Severity},
     record_finding,
     runtime::Detector,
@@ -289,11 +289,26 @@ impl JoinLog {
 }
 
 /// The worst absolute-tier result of one `(method, outcome)` since the last tick.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct Slow {
     count: u64,
     max_ms: f64,
     tier: Tier,
+    /// The `rpc.timing` event of the slowest call, which the finding cites.
+    slowest_event: Option<String>,
+}
+
+impl Slow {
+    /// `event_id` is the call's `rpc.timing` event, `None` when the full queue dropped it. A
+    /// dropped slowest call stays uncited: no faster call stands in for it.
+    fn add(&mut self, ms: f64, tier: Tier, event_id: Option<String>) {
+        if self.count == 0 || ms > self.max_ms {
+            self.slowest_event = event_id;
+        }
+        self.count += 1;
+        self.max_ms = self.max_ms.max(ms);
+        self.tier = self.tier.max(tier);
+    }
 }
 
 type MethodKey = (String, &'static str);
@@ -336,7 +351,7 @@ impl LatencyBook {
         if tier == Tier::None {
             return;
         }
-        emit(
+        let event_id = emit(
             "rpc.timing",
             json!({
                 "method": method,
@@ -352,10 +367,7 @@ impl LatencyBook {
         if tier >= Tier::Warn && outcome != FIRST_ITEM && !is_long_running(method) {
             let key = (method.to_owned(), outcome);
             let mut slow = lock(&self.slow);
-            let parked = slow.entry(key).or_default();
-            parked.count += 1;
-            parked.max_ms = parked.max_ms.max(ms);
-            parked.tier = parked.tier.max(tier);
+            slow.entry(key).or_default().add(ms, tier, event_id);
         }
     }
 
@@ -487,14 +499,17 @@ fn slow_findings(slow: HashMap<MethodKey, Slow>) -> Vec<FindingInput> {
                      slowest took {secs:.1} s.",
                     count = parked.count,
                 ),
-                evidence: json!({
-                    "method": method,
-                    "outcome": outcome,
-                    "slowPart": "server",
-                    "count": parked.count,
-                    "maxMs": parked.max_ms,
-                    "tier": parked.tier.name(),
-                }),
+                evidence: cite(
+                    json!({
+                        "method": method,
+                        "outcome": outcome,
+                        "slowPart": "server",
+                        "count": parked.count,
+                        "maxMs": parked.max_ms,
+                        "tier": parked.tier.name(),
+                    }),
+                    parked.slowest_event,
+                ),
                 fingerprint_fields: vec![method, outcome.to_owned(), "server".into()],
             }
         })
@@ -902,6 +917,7 @@ mod tests {
                         count: 1,
                         max_ms: *max_ms,
                         tier: *tier,
+                        slowest_event: None,
                     },
                 )
             })
@@ -927,6 +943,26 @@ mod tests {
         assert_eq!(severe.severity, Severity::Error);
         assert_eq!(severe.title, "b took 10.5 s");
         assert_eq!(severe.fingerprint_fields, ["b", "success", "server"]);
+    }
+
+    /// The finding cites the `rpc.timing` event of the call its `maxMs` describes.
+    #[test]
+    fn a_slow_finding_cites_the_slowest_calls_timing_event() {
+        let mut slow = Slow::default();
+        slow.add(1_200.0, Tier::Warn, Some("s-1".into()));
+        slow.add(3_000.0, Tier::Warn, Some("s-2".into()));
+        slow.add(1_100.0, Tier::Warn, Some("s-3".into()));
+        assert_eq!((slow.count, slow.max_ms), (3, 3_000.0));
+        let findings = slow_findings(HashMap::from([(("a".to_owned(), "success"), slow)]));
+        assert_eq!(findings[0].evidence["eventIds"], json!(["s-2"]));
+
+        // An event the full queue dropped has no id to cite, and a faster call's event does
+        // not stand in for it.
+        let mut dropped = Slow::default();
+        dropped.add(3_000.0, Tier::Warn, None);
+        dropped.add(1_200.0, Tier::Warn, Some("s-4".into()));
+        let findings = slow_findings(HashMap::from([(("a".to_owned(), "success"), dropped)]));
+        assert!(findings[0].evidence.get("eventIds").is_none());
     }
 
     #[test]

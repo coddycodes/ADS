@@ -18,7 +18,7 @@ use std::{
 use serde_json::{Map, Value, json};
 
 use super::{
-    amend_finding, emit,
+    amend_finding, cite, emit,
     findings::{FindingInput, Occurrence, Severity},
     record_finding,
     redact::redact_message,
@@ -340,7 +340,7 @@ pub fn report_exit(watch: Watch, process: &Exited<'_>, status: &ExitStatus, requ
     {
         evidence.extend(sample_evidence(&sample));
     }
-    emit_event(
+    let event_id = emit_event(
         "subprocess.exit",
         json!({
             "processKind": kind,
@@ -358,7 +358,7 @@ pub fn report_exit(watch: Watch, process: &Exited<'_>, status: &ExitStatus, requ
         fingerprint_fields: vec![kind.to_owned(), label, outcome],
         title,
         summary,
-        evidence: Value::Object(evidence),
+        evidence: cite(Value::Object(evidence), event_id),
     });
     #[cfg(target_os = "linux")]
     if let (Some(occurrence), ExitClass::Signal { signal, .. }) = (occurrence, class)
@@ -538,12 +538,15 @@ fn record(input: FindingInput) -> Option<Occurrence> {
     record_finding(input)
 }
 
-fn emit_event(kind: &'static str, payload: Value) {
+fn emit_event(kind: &'static str, payload: Value) -> Option<String> {
     #[cfg(test)]
-    if captured(|_| ()).is_some() {
-        return;
+    if let Some(id) = captured(|captured| {
+        captured.events.push((kind, payload.clone()));
+        format!("captured-{}", captured.events.len() - 1)
+    }) {
+        return Some(id);
     }
-    emit(kind, payload);
+    emit(kind, payload)
 }
 
 /// The sampler's latest sample of `pid`, if it sampled the process.
@@ -860,6 +863,8 @@ pub(crate) struct CapturedFinding {
 #[derive(Default)]
 struct Captured {
     findings: Vec<CapturedFinding>,
+    /// The events emitted, with their kinds; event `n` has the id `captured-<n>`.
+    events: Vec<(&'static str, Value)>,
     /// The pid and executable of each core dump harvest started.
     #[cfg(target_os = "linux")]
     harvests: Vec<(u32, String)>,
@@ -896,6 +901,11 @@ impl CapturedExits {
 
     pub(crate) fn take_findings(&self) -> Vec<CapturedFinding> {
         captured(|captured| std::mem::take(&mut captured.findings)).unwrap_or_default()
+    }
+
+    /// The events emitted so far; event `n` had the id `captured-<n>`.
+    pub(crate) fn take_events(&self) -> Vec<(&'static str, Value)> {
+        captured(|captured| std::mem::take(&mut captured.events)).unwrap_or_default()
     }
 
     #[cfg(target_os = "linux")]
@@ -1228,6 +1238,18 @@ mod tests {
         report_exit(Watch::Signals, &young, &crashed(), false);
         let findings = captured.take_findings();
         assert!(findings[0].evidence.get("lastRssBytes").is_none());
+    }
+
+    /// The finding cites the `subprocess.exit` event that reports the same death.
+    #[test]
+    fn a_crash_finding_cites_its_exit_event() {
+        let captured = CapturedExits::start();
+        report_exit(Watch::Signals, &git(4_000_000_320), &crashed(), false);
+        let findings = captured.take_findings();
+        let events = captured.take_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, "subprocess.exit");
+        assert_eq!(findings[0].evidence["eventIds"], json!(["captured-0"]));
     }
 
     #[cfg(target_os = "linux")]

@@ -1,6 +1,10 @@
 //! Records every panic as a `panic` event, even while the profiler is off: a panic is rare
 //! and cheap to record. Each frame is a `(module, debugId, offset)` triple, Breakpad's own
 //! addressing, so the `.sym` files that symbolicate minidumps symbolicate panics too.
+//!
+//! Each panic also becomes a `crash.panic` finding, but never inside the hook: a thread can
+//! panic while it holds the findings lock. The hook only `try_send`s a [`PanicRecord`] to the
+//! runtime, whose task records the finding.
 
 use std::{
     sync::{Once, OnceLock},
@@ -10,7 +14,9 @@ use std::{
 use serde_json::{Value, json};
 
 use super::{
+    cite,
     event::ProfilerEvent,
+    findings::{FindingInput, Severity},
     global,
     redact::{MESSAGE_MAX_BYTES, redact_path},
 };
@@ -19,6 +25,27 @@ const MAX_FRAMES: usize = 64;
 const REDACTED: &str = "[redacted]";
 /// How long a panicking thread waits for its record to reach the OS.
 const FLUSH_TIMEOUT: Duration = Duration::from_millis(250);
+/// How many records may wait for the runtime's task; more panics than that are events only.
+pub(super) const PANIC_QUEUE: usize = 32;
+/// Frames of this executable in a `crash.panic` fingerprint.
+const FINGERPRINT_FRAMES: usize = 3;
+
+/// What the hook hands the runtime to raise a `crash.panic` finding from.
+#[derive(Debug)]
+pub(super) struct PanicRecord {
+    /// The thread's name class: digits dropped, so a pool's threads are one class.
+    thread: String,
+    /// `file:line` as compiled in: the same for every user of a build, so a fingerprint
+    /// field. A dependency's path is the builder's, never this user's.
+    site: Option<String>,
+    /// `site` with this user's home directory as `~`, for the title.
+    location: Option<String>,
+    message: String,
+    /// Offsets of the top frames in this executable.
+    offsets: Vec<u64>,
+    /// The `panic` event's `eventId`.
+    event_id: Option<String>,
+}
 
 /// Installs the hook once per process. It records the panic, then runs the hook it replaced.
 /// It never aborts, so `catch_unwind` and `JoinError::is_panic` recovery keep working. The
@@ -38,6 +65,9 @@ pub fn install_panic_hook() {
 /// Sends straight to the store, not through `emit`, which drops events while the profiler is
 /// off. Before a runtime starts, or while it is degraded, there is nowhere to record it.
 fn record(info: &std::panic::PanicHookInfo<'_>) {
+    if !records_this_thread() {
+        return;
+    }
     let Some(handle) = global() else {
         return;
     };
@@ -49,19 +79,18 @@ fn record(info: &std::panic::PanicHookInfo<'_>) {
         walked < MAX_FRAMES
     });
     let message = panic_message(info.payload_as_str().unwrap_or("Box<dyn Any>"));
-    let thread = std::thread::current()
-        .name()
-        .unwrap_or("unnamed")
-        .to_owned();
-    // A dependency's location is a path under the builder's home directory.
-    let location = info
+    let thread = std::thread::current().name().map(str::to_owned);
+    let site = info
         .location()
-        .map(|location| redact_path(&format!("{}:{}", location.file(), location.line())));
-    handle.sender.send(ProfilerEvent {
+        .map(|location| format!("{}:{}", location.file(), location.line()));
+    // A dependency's location is a path under the builder's home directory.
+    let location = site.as_deref().map(redact_path);
+    let offsets = own_offsets(&frames);
+    let event_id = handle.sender.send(ProfilerEvent {
         kind: "panic",
         source: "server".into(),
         payload: json!({
-            "thread": thread,
+            "thread": thread.as_deref().unwrap_or("unnamed"),
             "message": message,
             "location": location,
             "frames": frames,
@@ -72,9 +101,109 @@ fn record(info: &std::panic::PanicHookInfo<'_>) {
             "arch": std::env::consts::ARCH,
         }),
     });
+    // Never blocks: a full queue drops the record, and the event above still tells.
+    let _ = handle.panics.try_send(PanicRecord {
+        thread: thread_class(thread.as_deref()),
+        site,
+        location,
+        message,
+        offsets,
+        event_id,
+    });
     // A panic that cannot unwind aborts right after the hook, before the writer's next timed
     // flush. Panics are rare, so the wait costs nothing in practice.
     handle.sender.flush_within(FLUSH_TIMEOUT);
+}
+
+/// Offsets of the top frames in this executable.
+// ponytail: the top frames are the hook's and std's panic machinery, the same for every panic
+// of a build, so they pin the build and the site tells panics apart. Skipping them needs
+// symbols, which shipped builds do not have.
+fn own_offsets(frames: &[Value]) -> Vec<u64> {
+    let Some(main) = main_module() else {
+        return Vec::new();
+    };
+    frames
+        .iter()
+        .filter(|frame| frame["module"] == main.name.as_str())
+        .filter_map(|frame| frame["offset"].as_u64())
+        .take(FINGERPRINT_FRAMES)
+        .collect()
+}
+
+/// A thread's name without digits, so a pool's threads are one class; Tokio's workers are
+/// `tokio-worker`.
+fn thread_class(name: Option<&str>) -> String {
+    match name {
+        None => "unnamed".to_owned(),
+        Some("tokio-runtime-worker") => "tokio-worker".to_owned(),
+        Some(name) => name.chars().filter(|c| !c.is_ascii_digit()).collect(),
+    }
+}
+
+/// The `crash.panic` finding for `record`.
+pub(super) fn panic_finding(record: PanicRecord) -> FindingInput {
+    let mut fingerprint_fields = vec![
+        record.thread.clone(),
+        record.site.unwrap_or_else(|| "unknown".to_owned()),
+    ];
+    fingerprint_fields.extend(record.offsets.iter().map(|offset| format!("{offset:#x}")));
+    let location = record.location.as_deref().unwrap_or("an unknown location");
+    FindingInput {
+        kind: "crash.panic",
+        severity: Severity::Error,
+        source: "server".into(),
+        fingerprint_fields,
+        title: format!("Panic at {location}"),
+        summary: format!(
+            "A thread of class {} panicked at {location}: {}",
+            record.thread, record.message
+        ),
+        evidence: cite(
+            json!({
+                "thread": record.thread,
+                "location": record.location,
+                "message": record.message,
+            }),
+            record.event_id,
+        ),
+    }
+}
+
+// Lib tests share this process-wide hook, and many panic on purpose. Only a test thread that
+// asked for it records its panics, so they never reach another test's store.
+#[cfg(test)]
+thread_local! {
+    static RECORDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn records_this_thread() -> bool {
+    RECORDING.with(std::cell::Cell::get)
+}
+
+#[cfg(not(test))]
+fn records_this_thread() -> bool {
+    true
+}
+
+/// Records the panics of the current test thread until dropped.
+#[cfg(test)]
+pub(crate) struct RecordPanics;
+
+#[cfg(test)]
+impl RecordPanics {
+    pub(crate) fn start() -> Self {
+        RECORDING.with(|recording| recording.set(true));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for RecordPanics {
+    fn drop(&mut self) {
+        RECORDING.with(|recording| recording.set(false));
+    }
 }
 
 /// Where std puts the value a panic was about, up to the end of the line.
@@ -401,6 +530,56 @@ mod tests {
         assert!(message.ends_with("[redacted]"), "{message}");
         let short = panic_message("fetch https://alice:supersecret@example.test/path failed");
         assert!(!short.contains("supersecret"), "{short}");
+    }
+
+    fn panic_record(thread: &str, site: &str, offsets: &[u64]) -> PanicRecord {
+        PanicRecord {
+            thread: thread_class(Some(thread)),
+            site: Some(site.to_owned()),
+            location: Some(site.to_owned()),
+            message: "boom".to_owned(),
+            offsets: offsets.to_vec(),
+            event_id: Some("a1b2c3d4-7".to_owned()),
+        }
+    }
+
+    #[test]
+    fn a_panic_finding_is_keyed_by_thread_class_site_and_own_frames() {
+        let fingerprint = |input: &FindingInput| {
+            super::super::findings::fingerprint(input.kind, &input.fingerprint_fields)
+        };
+        let first = panic_finding(panic_record("tokio-runtime-worker", "src/a.rs:7", &[1, 2]));
+        assert_eq!(first.kind, "crash.panic");
+        assert_eq!(first.severity, Severity::Error);
+        assert_eq!(first.title, "Panic at src/a.rs:7");
+        assert_eq!(
+            first.fingerprint_fields,
+            ["tokio-worker", "src/a.rs:7", "0x1", "0x2"]
+        );
+        assert_eq!(first.evidence["eventIds"], json!(["a1b2c3d4-7"]));
+        // Another worker of the same pool is the same panic.
+        let same = panic_finding(panic_record("pool-worker-12", "src/a.rs:7", &[1, 2]));
+        let also = panic_finding(panic_record("pool-worker-3", "src/a.rs:7", &[1, 2]));
+        assert_eq!(fingerprint(&same), fingerprint(&also));
+        assert_ne!(
+            fingerprint(&first),
+            fingerprint(&panic_finding(panic_record(
+                "tokio-runtime-worker",
+                "src/a.rs:8",
+                &[1, 2]
+            )))
+        );
+        assert_eq!(thread_class(None), "unnamed");
+    }
+
+    /// Lib tests panic on purpose all the time; only a thread that opted in records.
+    #[test]
+    fn only_test_threads_that_opt_in_record_panics() {
+        assert!(!records_this_thread());
+        let recording = RecordPanics::start();
+        assert!(records_this_thread());
+        drop(recording);
+        assert!(!records_this_thread());
     }
 
     #[test]

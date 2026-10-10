@@ -453,7 +453,7 @@ async fn a_client_batch_is_joined_to_the_server_timing() {
             "windowMs": 10_000,
             "records": records,
             "histograms": [],
-            "stalls": { "count": 0, "totalMs": 0, "maxMs": 0 },
+            "stalls": { "count": 3, "totalMs": 1_500, "maxMs": 800 },
             "interactions": { "count": 0, "maxMs": 0 },
             "jsHeapBytes": null,
         })
@@ -518,6 +518,30 @@ async fn a_client_batch_is_joined_to_the_server_timing() {
         client_events
             .iter()
             .any(|line| line["kind"] == "client.batch")
+    );
+    // Each finding cites the event that explains it.
+    let event_id = |kind: &str| {
+        client_events
+            .iter()
+            .find(|line| line["kind"] == kind)
+            .map(|line| line["eventId"].clone())
+            .unwrap()
+    };
+    let cited = |kind: &str| {
+        lines
+            .iter()
+            .rfind(|line| line["kind"] == kind && line["source"] == "client")
+            .map(|finding| finding["evidence"]["eventIds"].clone())
+            .unwrap_or_else(|| panic!("no persisted {kind} finding"))
+    };
+    assert!(event_id("client.request").is_string());
+    assert_eq!(
+        cited("rpc.slow"),
+        serde_json::json!([event_id("client.request")])
+    );
+    assert_eq!(
+        cited("client.stall"),
+        serde_json::json!([event_id("client.batch")])
     );
 }
 
