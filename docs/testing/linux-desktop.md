@@ -733,6 +733,62 @@ not widen the window to hide a layout failure. Compiled CSS and component
 regressions establish the containment policy; fresh native originals establish
 pixel quality.
 
+## Profiler crash smoke
+
+Run the shared [Profiler crash smoke](./cross-platform-validation.md#profiler-crash-smoke)
+against a symbol build of the AppImage. Install the pinned `dump_syms` once
+(`cargo install dump_syms --locked --version 2.3.9`), then build on the
+documented Ubuntu 22.04 baseline:
+
+```sh
+node scripts/build-desktop-artifact.ts --platform linux --target AppImage --arch x64 --symbols
+```
+
+Use `--arch arm64` on an ARM64 host. The wrapper's post-bundle check must pass:
+it extracts the AppImage with `--appimage-extract` and fails unless the bundled
+binary has the stripped binary's build ID and symbol table. Record its output.
+The symbol store is `target/<triple>/release/symbols`, and the archive
+`bibcode-desktop-symbols-<version>-linux-<x86_64|aarch64>.zip` lands beside the
+AppImage under `release/desktop/`.
+
+- **Executable.** Run the AppImage with `BIBCODE_HOME` set, and pass the
+  profiler commands to it: `BIBCODE_HOME=<root> <AppImage> profiler status --json`.
+  Without FUSE, put `--appimage-extract-and-run` before the arguments. The
+  desktop process is the parent of the `--crash-monitor` process; use only a
+  host where this is the only running BiBCode AppImage.
+- **Capabilities.** `nativeDumps` is `available` unless
+  `/proc/sys/kernel/yama/ptrace_scope` is 3, or 2 without `CAP_SYS_PTRACE`.
+  `osCrashRecords` is `available` when `/proc/sys/kernel/core_pattern` pipes to
+  systemd-coredump. Record both files. While the profiler is on,
+  `ls -la "$XDG_RUNTIME_DIR"/bibcode-$(id -u)-*` (or the same under `/tmp`
+  without `XDG_RUNTIME_DIR`) shows one directory with mode `drwx------` holding
+  a `srw-------` `monitor.sock`; it is gone once the profiler is off.
+- **Crash.** Use `BIBCODE_PROFILER_CRASH_TEST=1 BIBCODE_HOME=<root> <AppImage>`,
+  or `kill -SEGV <desktop pid>` while the app runs: on Linux the hook also
+  handles a signal sent by another process, then re-raises it. After the
+  restart, `coredumpctl list` shows the crash, and its frames may join the
+  finding's evidence.
+
+Then perform these native checks and record each result, including unavailable
+ones:
+
+- **Webview crash.** With the profiler on and a thread open, send
+  `kill -SEGV` to the desktop process's `WebKitWebProcess` child
+  (`ps --ppid <desktop pid> -o pid=,args=`). Diagnostics lists a
+  `crash.webview` finding with reason `Crashed`. The profiler looks up the core
+  dump record for about 5 s; with systemd-coredump,
+  `profiler findings --kind crash.webview --json` then shows its `source`,
+  `signalOrCode`, and `frames` in the evidence. Record whether it did, since a
+  large core can take longer to record. Repeat once with the profiler turned on
+  only after the window loaded: the host also scans for its web processes when
+  the profiler turns on, so the record must still be found. Record whether the
+  window recovered on its own, after a reload, or only after a restart.
+- **Shutdown.** With the profiler on and a provider session and a terminal
+  open, quit through the app menu, then start again and stop the app with
+  `kill -TERM <desktop pid>`. Neither stop may add a `crash.webview` or
+  `subprocess.crash` finding: compare `profiler findings --json` before and
+  after each stop.
+
 ## Process-group cleanup
 
 Capture PID, PPID, process group, start time, executable, and command line for

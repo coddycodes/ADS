@@ -461,6 +461,69 @@ Capture original-resolution screenshots and focused crops. Exclude an installed
 application splash or any frame from a different PID/bundle from acceptance
 evidence.
 
+## Profiler crash smoke
+
+Run the shared [Profiler crash smoke](./cross-platform-validation.md#profiler-crash-smoke)
+against a symbol build. Install the pinned `dump_syms` once
+(`cargo install dump_syms --locked --version 2.3.9`), then build for the host
+architecture:
+
+```sh
+node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 --symbols   # Apple silicon
+node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch x64 --symbols     # Intel
+```
+
+The symbol build also bundles the `.app`, because the wrapper's post-bundle
+check reads it: the check must pass, confirming that the `.app` binary, which
+the bundler re-signs, has the stripped binary's build ID and symbol table.
+Record its output, then run the `codesign --verify --deep --strict` step from
+[Application and DMG build inspection](#application-and-dmg-build-inspection)
+on that `.app`. The symbol store is `target/<triple>/release/symbols`.
+
+- **Executable.** Read `$executable` from the bundle's `Info.plist` as in
+  [Application and DMG build inspection](#application-and-dmg-build-inspection),
+  start `BIBCODE_HOME=<root> "/absolute/path/BiBCode.app/Contents/MacOS/$executable"`,
+  and pass the profiler commands to that same path.
+- **Capabilities.** Expect `nativeDumps: "available"` and
+  `osCrashRecords: "available"` (the DiagnosticReports folder). While the
+  profiler is on, `ls -la "$TMPDIR"/bibcode-$(id -u)-*` shows one `drwx------`
+  directory holding a `srw-------` `monitor.sock`.
+- **Crash.** Use `BIBCODE_PROFILER_CRASH_TEST=1`. On macOS the hook catches
+  hardware faults through Mach exception ports and `SIGABRT` through a signal
+  handler, so a `kill -SEGV` from another process tests only the OS crash
+  report. After the restart, `~/Library/Logs/DiagnosticReports/` holds the
+  `.ips` report of the crash.
+
+Then perform these native checks and record each result, including unavailable
+ones:
+
+- **Webview crash and reload.** With the profiler on and a thread open, send
+  `kill -SEGV` to the main window's `com.apple.WebKit.WebContent` process.
+  Quit other WebKit apps first, and record how the process was identified
+  (`pgrep -fl com.apple.WebKit.WebContent` before and after the app starts).
+  The window must reload by itself with no blank window and no panic, preview
+  tabs reload too, and Diagnostics lists one `crash.webview` finding
+  (reason `web-content-terminated`). Within a minute
+  `profiler findings --kind crash.webview --json` shows the WebContent `.ips`
+  report's `source`, `signalOrCode`, and `frames`; record that report's file
+  name. A `kill -9` also exercises the reload, but writes no report.
+- **Shutdown.** With the profiler on and a provider session and a terminal
+  open, quit with **⌘Q**. After the next start no new `crash.webview` or
+  `subprocess.crash` finding exists.
+- **Stripped arm64 signature.** On Apple silicon, build the standalone server
+  as the release job does and verify the stripped copy's ad-hoc signature:
+
+  ```sh
+  CARGO_PROFILE_RELEASE_STRIP=none CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
+    CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed \
+    cargo build --release -p bibcode-server --bin bibcode
+  strip -o target/release/bibcode.stripped target/release/bibcode
+  codesign --verify --verbose=2 target/release/bibcode.stripped
+  ```
+
+  The release server job runs the same `codesign --verify`, so a failure here
+  predicts a failed release; record it.
+
 ## Process-group cleanup
 
 Capture PID, PPID, process group, start time, executable, and command line for

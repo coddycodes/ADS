@@ -122,6 +122,16 @@ and the profiler's symbolication read that layout from the extracted archive.
 other unlisted file. The archives are not covered by `bibcode-server-SHA256SUMS`
 or the optional server signatures.
 
+The archive names are a client contract. `bibcode profiler symbolicate
+--download`, and the profiler MCP tool `profiler_symbolicate` with
+`download: true`, fetch
+`https://github.com/mubeda/BibCode/releases/download/v<version>/<archive>` for
+the version, OS, and architecture recorded in the crash sidecar or panic event,
+and unpack it into `<state dir>/profiler-symbols/`. The repository is the
+updater's, which a test pins. A release that lacks the archive answers "the
+release publishes no symbols", so renaming an archive or dropping it from a
+release breaks symbolication of that release's crashes.
+
 The shipped binaries stay stripped. `[profile.release]` keeps `strip = "symbols"`,
 and the release jobs override the profile through the environment of their own
 builds, so `dump_syms` reads the symbols before they are removed:

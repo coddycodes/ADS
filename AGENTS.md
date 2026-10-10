@@ -218,7 +218,9 @@ evolvable as the codebase grows.
 
 Node.js and TypeScript are development dependencies for the frontend and
 repository tooling only. Do not add a production Node runtime, Electron host,
-TypeScript server, or native helper sidecar.
+TypeScript server, or native helper sidecar. Exception: while the Profiler is
+on, the same BiBCode executable is relaunched as `--crash-monitor` to write
+minidumps (see `docs/superpowers/specs/2026-10-09-profiler-design.md`).
 
 ## Reference Repos
 

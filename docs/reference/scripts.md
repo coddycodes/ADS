@@ -216,8 +216,16 @@ built-ins. It needs `dump_syms` (pinned to 2.3.9 in CI) with its default
 features, because the lookup of the PDB that a Windows binary names is part of
 the `http` feature.
 
+Release assembly, `scripts/assemble-release-assets.ts`, requires twelve symbol
+archives, `bibcode-{desktop,server}-symbols-<version>-<os>-<arch>.zip` for each
+of the six release targets, and still rejects any file outside its allowlist.
+`bibcode profiler symbolicate --download` fetches exactly these names, so a
+renamed archive breaks symbol downloads for that release; see
+[Symbol assets](../operations/release.md#symbol-assets).
+
 The desktop artifact contains the Tauri host, in-process Rust server, and built
-web assets. It does not stage Node.js, a TypeScript server, or helper sidecars.
+web assets. It does not stage Node.js, a TypeScript server, or helper sidecars;
+the profiler's crash monitor is the same executable relaunched.
 
 ## Standalone Server Artifacts
 
