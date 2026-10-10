@@ -1,7 +1,7 @@
 # CI Quality Gates
 
 `.github/workflows/ci.yml` runs on pull requests and pushes to `main`. It has
-four job groups:
+five job groups:
 
 - **Check** runs `vp check`, workspace typechecking (`vpr typecheck`),
   `cargo fmt --all --check`, Clippy with warnings denied, and the complete
@@ -66,6 +66,19 @@ four job groups:
   spaces, dollar signs, backticks, and typographic quotes. Every Git/home
   configuration input is fixture-owned. Other platforms skip that native case;
   their string assertions remain compatibility evidence.
+- **Crash smoke** runs on `ubuntu-latest`, `windows-latest`, and
+  `macos-latest`. It builds with the release symbol profile from
+  [Symbol assets](./release.md#symbol-assets) and runs
+  `cargo test -p bibcode-server --test crash_smoke --release` with
+  `CRASH_SMOKE_OUT` set to `${{ runner.temp }}/crash-smoke`, so the minidump that
+  the `crash-smoke` binary leaves under the crash monitor survives the test.
+  `scripts/dump-symbols.ts` then dumps that binary (with its dSYM on macOS and
+  its PDB on Windows), and `minidump-stackwalk --json` must name
+  `crash_here_in_named_function`. `dump_syms` 2.3.9 and `minidump-stackwalk`
+  0.27.0 are installed with `cargo install --locked`, and Rust Cache keeps them
+  in `~/.cargo/bin`. A failed run uploads the dump, its sidecar, the symbol
+  store, and the stack walk as the `crash-smoke-<os>` artifact. The Windows
+  ARM64 dump path stays disabled, so the job has no ARM64 rows.
 
 The Check and Test jobs install the Linux libraries required by Tauri. The
 native matrix installs them only on Linux and otherwise uses each platform's
@@ -112,7 +125,8 @@ its immutable SHA.
 - `.github/workflows/release.yml` runs the stable/nightly release pipeline. See
   the [Release Checklist](./release.md). Its separate server matrix builds six
   archives, four Linux packages, and native distribution evidence before release
-  assembly can create a draft.
+  assembly can create a draft. Both matrices also publish Breakpad
+  [symbol archives](./release.md#symbol-assets).
 - `.github/workflows/deploy-relay.yml` deploys the BiBCode Connect relay from
   `main` only when the required Cloudflare repository configuration exists.
 - `.github/workflows/issue-labels.yml`, `pr-size.yml`, and `pr-vouch.yml` enforce

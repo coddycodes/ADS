@@ -412,6 +412,11 @@ jobs:
         if: matrix.platform == 'mac'
         run: swift scripts/check-macos-app-icon.swift --self-test
 
+      # build-desktop-artifact.ts --symbols runs dump_syms on the unstripped binary. Rust Cache
+      # keeps ~/.cargo/bin, so a restored runner skips the compile.
+      - name: Install dump_syms
+        run: node scripts/run-msvc.mjs cargo install dump_syms --locked --version 2.3.9
+
       - name: Build desktop artifact
         shell: bash
         run: |
@@ -420,6 +425,7 @@ jobs:
             --target "${{ matrix.target }}" \
             --arch "${{ matrix.arch }}" \
             --output-dir release \
+            --symbols \
             --verbose)
           if [[ "${{ needs.preflight.outputs.is_update_candidate }}" == "true" ]]; then
             args+=(--updater)
@@ -476,7 +482,8 @@ jobs:
           for pattern in \
             "release/*.dmg" \
             "release/*.AppImage" \
-            "release/*.exe"; do
+            "release/*.exe" \
+            "release/bibcode-desktop-symbols-*.zip"; do
             for file in $pattern; do
               cp "$file" release-publish/
             done
@@ -598,6 +605,9 @@ jobs:
             --env HOST_GID="$(id -g)" \
             --env HOST_UID="$(id -u)" \
             --env RUST_TARGET="${{ matrix.serverArch }}-unknown-linux-gnu" \
+            --env CARGO_PROFILE_RELEASE_STRIP=none \
+            --env CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
+            --env "RUSTFLAGS=-C link-arg=-Wl,--build-id=sha1" \
             ubuntu:20.04 \
             bash -lc '
               set -euo pipefail
@@ -613,6 +623,12 @@ jobs:
       - name: Build macOS or Windows server
         if: matrix.platform != 'linux'
         shell: bash
+        # Unstripped, with line tables, for dump_syms; the next steps strip the binary. Packed
+        # split debug info makes a dSYM on macOS and is already the MSVC default.
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: none
+          CARGO_PROFILE_RELEASE_DEBUG: line-tables-only
+          CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: packed
         run: |
           set -euo pipefail
           cargo_args=(cargo build -p bibcode-server --bin bibcode --release --target "${{ matrix.serverArch }}-${{ matrix.platform == 'mac' && 'apple-darwin' || 'pc-windows-msvc' }}")
@@ -620,6 +636,41 @@ jobs:
             node scripts/run-msvc.mjs "${cargo_args[@]}"
           else
             "${cargo_args[@]}"
+          fi
+
+      # Rust Cache keeps ~/.cargo/bin, so a restored runner skips the compile.
+      - name: Install dump_syms
+        run: node scripts/run-msvc.mjs cargo install dump_syms --locked --version 2.3.9
+
+      # The archive lands in server-release/, so the server-release/*.zip upload carries it.
+      - name: Dump and strip server symbols
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_dir="target/${{ matrix.serverArch }}-${{ matrix.platform == 'mac' && 'apple-darwin' || matrix.platform == 'win' && 'pc-windows-msvc' || 'unknown-linux-gnu' }}/release"
+          args=(node scripts/dump-symbols.ts \
+            --out server-symbols \
+            --zip "server-release/bibcode-server-symbols-${{ needs.preflight.outputs.version }}-${{ matrix.serverOs }}-${{ matrix.serverArch }}.zip")
+          case "${{ matrix.platform }}" in
+            linux) args+=(--binary "$release_dir/bibcode" --module-name bibcode) ;;
+            mac) args+=(--binary "$release_dir/bibcode" --module-name bibcode --dsym "$release_dir/bibcode.dSYM") ;;
+            win) args+=(--binary "$release_dir/bibcode.exe" --module-name bibcode.exe --pdb "$release_dir/bibcode.pdb") ;;
+          esac
+          "${args[@]}"
+          # The shipped profile strips symbols as rustc does for executables (plain strip on macOS;
+          # -x is the level for dynamic libraries). Windows keeps them in the PDB, which is not
+          # shipped. A stripped copy replaces the binary, because Cargo's binary is a hard link to
+          # its cached deps/ artifact, which an in-place strip would strip as well.
+          stripped="$release_dir/bibcode.stripped"
+          case "${{ matrix.platform }}" in
+            linux) strip --strip-all -o "$stripped" "$release_dir/bibcode" ;;
+            mac) strip -o "$stripped" "$release_dir/bibcode" ;;
+          esac
+          if [[ -e "$stripped" ]]; then mv "$stripped" "$release_dir/bibcode"; fi
+          # Apple silicon runs only signed code. The linker ad-hoc signs arm64 executables, and
+          # the stripped binary must keep a valid signature; Intel executables are not signed.
+          if [[ "${{ matrix.platform }}" == "mac" && "${{ matrix.arch }}" == "arm64" ]]; then
+            codesign --verify --verbose=2 "$release_dir/bibcode"
           fi
 
       - name: Build standalone server artifacts
@@ -692,7 +743,8 @@ jobs:
     needs: [preflight, build_desktop, build_server]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build_desktop.result == 'success' && needs.build_server.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # The twelve symbol archives add about 470 MB to download, assemble, and upload.
+    timeout-minutes: 25
     # Fork adaptation: publish with the workflow's own GITHUB_TOKEN instead of
     # upstream's release GitHub App (RELEASE_APP_ID/RELEASE_APP_PRIVATE_KEY).
     permissions:
