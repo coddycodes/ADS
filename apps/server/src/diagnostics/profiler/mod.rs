@@ -106,12 +106,12 @@ pub fn is_enabled() -> bool {
 
 /// Queues one server event and returns its `eventId`, which a finding the event explains
 /// cites in `evidence.eventIds`. Does nothing while the profiler is off; never blocks.
-pub fn emit(kind: &'static str, payload: Value) -> Option<String> {
+pub fn emit(kind: &'static str, payload: Value) -> Option<store::EventId> {
     emit_from("server".into(), kind, payload)
 }
 
 /// [`emit`] for an event from `source`, such as `client:<clientId>`.
-pub fn emit_from(source: String, kind: &'static str, payload: Value) -> Option<String> {
+pub fn emit_from(source: String, kind: &'static str, payload: Value) -> Option<store::EventId> {
     enabled_handle()?.sender.send(event::ProfilerEvent {
         kind,
         source,
@@ -120,9 +120,9 @@ pub fn emit_from(source: String, kind: &'static str, payload: Value) -> Option<S
 }
 
 /// `evidence` with `eventIds` naming the event that explains it, when that event was queued.
-pub(crate) fn cite(mut evidence: Value, event_id: Option<String>) -> Value {
+pub(crate) fn cite(mut evidence: Value, event_id: Option<store::EventId>) -> Value {
     if let (Value::Object(fields), Some(id)) = (&mut evidence, event_id) {
-        fields.insert("eventIds".into(), Value::from(vec![id]));
+        fields.insert("eventIds".into(), Value::from(vec![id.to_string()]));
     }
     evidence
 }

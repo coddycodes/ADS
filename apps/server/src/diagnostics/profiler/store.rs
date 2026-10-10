@@ -55,8 +55,8 @@ struct Counters {
     written: AtomicU64,
     dropped: AtomicU64,
     failing: AtomicBool,
-    /// Names one store session (one process run): 8 hex characters, the envelope's `sid`.
-    sid: String,
+    /// Names one store session (one process run); the envelope's `sid` is its 8 hex digits.
+    sid: u32,
     /// The next `eventId` number. Senders take theirs before queueing, so a caller knows its
     /// event's id without waiting for the writer, which assigns `seq`.
     next_event: AtomicU64,
@@ -68,15 +68,30 @@ impl Default for Counters {
             written: AtomicU64::default(),
             dropped: AtomicU64::default(),
             failing: AtomicBool::default(),
-            sid: uuid::Uuid::new_v4().simple().to_string()[..8].to_owned(),
+            sid: uuid::Uuid::new_v4().as_u128() as u32,
             next_event: AtomicU64::default(),
         }
     }
 }
 
-impl Counters {
-    fn event_id(&self, number: u64) -> String {
-        format!("{}-{number}", self.sid)
+/// A queued event's `eventId`. It is formatted only where a finding cites it, as
+/// `"<sid>-<n>"`, so a sender that ignores it pays for no string.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EventId {
+    sid: u32,
+    number: u64,
+}
+
+impl EventId {
+    #[cfg(test)]
+    pub(crate) fn new(sid: u32, number: u64) -> Self {
+        Self { sid, number }
+    }
+}
+
+impl std::fmt::Display for EventId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{:08x}-{}", self.sid, self.number)
     }
 }
 
@@ -103,13 +118,15 @@ pub struct EventSender {
 }
 
 impl EventSender {
-    /// Queues `event` and returns its `eventId`, `"<sid>-<n>"`, which a finding can cite before
-    /// the writer has written it. Never blocks; a full channel drops the event, counts it and
-    /// returns `None`.
-    pub fn send(&self, event: ProfilerEvent) -> Option<String> {
-        let number = self.counters.next_event.fetch_add(1, Ordering::Relaxed);
-        self.enqueue(Message::Event(number, event))
-            .then(|| self.counters.event_id(number))
+    /// Queues `event` and returns its `eventId`, which a finding can cite before the writer
+    /// has written it. Never blocks; a full channel drops the event, counts it and returns
+    /// `None`.
+    pub fn send(&self, event: ProfilerEvent) -> Option<EventId> {
+        let id = EventId {
+            sid: self.counters.sid,
+            number: self.counters.next_event.fetch_add(1, Ordering::Relaxed),
+        };
+        self.enqueue(Message::Event(id.number, event)).then_some(id)
     }
 
     /// Queues one finding for `findings.ndjson`. Never blocks; a full channel drops it.
@@ -337,8 +354,12 @@ impl Writer {
     fn write_line(&mut self, number: u64, mut line: Map<String, Value>, is_event: bool) -> bool {
         line.insert("v".into(), 1.into());
         line.insert("seq".into(), self.seq.into());
-        line.insert("sid".into(), self.counters.sid.clone().into());
-        line.insert("eventId".into(), self.counters.event_id(number).into());
+        let id = EventId {
+            sid: self.counters.sid,
+            number,
+        };
+        line.insert("sid".into(), format!("{:08x}", id.sid).into());
+        line.insert("eventId".into(), id.to_string().into());
         line.insert("ts".into(), now_rfc3339().into());
         self.seq += 1;
         let Ok(mut bytes) = serde_json::to_vec(&line) else {
@@ -895,7 +916,10 @@ mod tests {
             (json!(1), json!(0))
         );
         assert_ne!(line["sid"], "forged");
-        assert_eq!(line["eventId"].as_str(), id.as_deref());
+        assert_eq!(
+            line["eventId"].as_str(),
+            id.map(|id| id.to_string()).as_deref()
+        );
         assert_eq!(
             (line["kind"].clone(), line["source"].clone()),
             (json!("test.event"), json!("server"))
@@ -910,7 +934,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = ProfilerStore::start_paused(config(dir.path()), 2);
         let sender = store.sender();
-        let ids: Vec<Option<String>> = (0..3).map(|n| sender.send(event(n))).collect();
+        let ids: Vec<Option<String>> = (0..3)
+            .map(|n| sender.send(event(n)).map(|id| id.to_string()))
+            .collect();
         assert!(ids[0].is_some() && ids[1].is_some() && ids[0] != ids[1]);
         assert_eq!(ids[2], None, "a dropped event has no id to cite");
         store.resume();

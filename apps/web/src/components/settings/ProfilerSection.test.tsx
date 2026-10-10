@@ -575,7 +575,7 @@ describe("ProfilerSection", () => {
     const container = await render();
 
     expect(container.textContent).toContain(
-      "Another BiBCode process is already recording to this profiler folder. Close the other BiBCode app or server that uses this data folder, then restart this one.",
+      "Another BiBCode app or server is already recording to this profiler folder. Close it, then restart this one.",
     );
     expect(container.textContent).toContain("Not recording.");
     expect(container.textContent).not.toContain("Starting...");

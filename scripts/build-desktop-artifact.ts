@@ -1423,10 +1423,12 @@ const fingerprintBinary = Effect.fn("fingerprintTauriBinary")(function* (file: s
 });
 
 /**
- * Writes the stripped bytes back over the binary before a bundle attempt, but only into the file
- * that was fingerprinted: the same inode with the same link count. A file Cargo re-linked over it
- * is its unstripped deps/ artifact, which the next build reuses, so writing through that hard
- * link would strip Cargo's cache; the build fails instead.
+ * Writes the fingerprinted bytes back over the binary before a bundle attempt, but only into the
+ * file that was fingerprinted: the same inode with the same link count. On Linux and macOS that
+ * is the stripped copy, linked once, and a file Cargo re-linked over it (its unstripped deps/
+ * artifact, which the next build reuses) fails the build instead, so Cargo's cache is never
+ * stripped through that link. On Windows nothing is stripped and the binary is still Cargo's hard
+ * link to deps/; the write goes through that link, but with the bytes it already holds.
  */
 const restoreStrippedBinary = (
   fs: FileSystem.FileSystem,

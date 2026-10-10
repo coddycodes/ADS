@@ -23,6 +23,7 @@ use super::{
     findings::{FindingInput, Severity},
     record_finding,
     runtime::Detector,
+    store::EventId,
 };
 
 pub const BUCKET_GROWTH: f64 = 1.12;
@@ -289,19 +290,19 @@ impl JoinLog {
 }
 
 /// The worst absolute-tier result of one `(method, outcome)` since the last tick.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 struct Slow {
     count: u64,
     max_ms: f64,
     tier: Tier,
     /// The `rpc.timing` event of the slowest call, which the finding cites.
-    slowest_event: Option<String>,
+    slowest_event: Option<EventId>,
 }
 
 impl Slow {
     /// `event_id` is the call's `rpc.timing` event, `None` when the full queue dropped it. A
     /// dropped slowest call stays uncited: no faster call stands in for it.
-    fn add(&mut self, ms: f64, tier: Tier, event_id: Option<String>) {
+    fn add(&mut self, ms: f64, tier: Tier, event_id: Option<EventId>) {
         if self.count == 0 || ms > self.max_ms {
             self.slowest_event = event_id;
         }
@@ -949,18 +950,18 @@ mod tests {
     #[test]
     fn a_slow_finding_cites_the_slowest_calls_timing_event() {
         let mut slow = Slow::default();
-        slow.add(1_200.0, Tier::Warn, Some("s-1".into()));
-        slow.add(3_000.0, Tier::Warn, Some("s-2".into()));
-        slow.add(1_100.0, Tier::Warn, Some("s-3".into()));
+        slow.add(1_200.0, Tier::Warn, Some(EventId::new(0xa1, 1)));
+        slow.add(3_000.0, Tier::Warn, Some(EventId::new(0xa1, 2)));
+        slow.add(1_100.0, Tier::Warn, Some(EventId::new(0xa1, 3)));
         assert_eq!((slow.count, slow.max_ms), (3, 3_000.0));
         let findings = slow_findings(HashMap::from([(("a".to_owned(), "success"), slow)]));
-        assert_eq!(findings[0].evidence["eventIds"], json!(["s-2"]));
+        assert_eq!(findings[0].evidence["eventIds"], json!(["000000a1-2"]));
 
         // An event the full queue dropped has no id to cite, and a faster call's event does
         // not stand in for it.
         let mut dropped = Slow::default();
         dropped.add(3_000.0, Tier::Warn, None);
-        dropped.add(1_200.0, Tier::Warn, Some("s-4".into()));
+        dropped.add(1_200.0, Tier::Warn, Some(EventId::new(0xa1, 4)));
         let findings = slow_findings(HashMap::from([(("a".to_owned(), "success"), dropped)]));
         assert!(findings[0].evidence.get("eventIds").is_none());
     }

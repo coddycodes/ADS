@@ -44,7 +44,7 @@ pub(super) struct PanicRecord {
     /// Offsets of the top frames in this executable.
     offsets: Vec<u64>,
     /// The `panic` event's `eventId`.
-    event_id: Option<String>,
+    event_id: Option<super::store::EventId>,
 }
 
 /// Installs the hook once per process. It records the panic, then runs the hook it replaced.
@@ -67,7 +67,7 @@ pub fn install_panic_hook() {
 /// Sends straight to the store, not through `emit`, which drops events while the profiler is
 /// off. Before a runtime starts, or while it is degraded, there is nowhere to record it.
 fn record(info: &std::panic::PanicHookInfo<'_>) {
-    if !records_this_thread() {
+    if !records_panics() {
         return;
     }
     let Some(handle) = global() else {
@@ -172,40 +172,11 @@ pub(super) fn panic_finding(record: PanicRecord) -> FindingInput {
     }
 }
 
-// Lib tests share this process-wide hook, and many panic on purpose. Only a test thread that
-// asked for it records its panics, so they never reach another test's store.
-#[cfg(test)]
-thread_local! {
-    static RECORDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-#[cfg(test)]
-fn records_this_thread() -> bool {
-    RECORDING.with(std::cell::Cell::get)
-}
-
-#[cfg(not(test))]
-fn records_this_thread() -> bool {
-    true
-}
-
-/// Records the panics of the current test thread until dropped.
-#[cfg(test)]
-pub(crate) struct RecordPanics;
-
-#[cfg(test)]
-impl RecordPanics {
-    pub(crate) fn start() -> Self {
-        RECORDING.with(|recording| recording.set(true));
-        Self
-    }
-}
-
-#[cfg(test)]
-impl Drop for RecordPanics {
-    fn drop(&mut self) {
-        RECORDING.with(|recording| recording.set(false));
-    }
+/// Lib tests share this process-wide hook, and many panic on purpose, so none of their
+/// panics is recorded: it would land in whichever test's store is installed. Integration
+/// tests, built without `cfg(test)`, record every panic.
+fn records_panics() -> bool {
+    !cfg!(test)
 }
 
 /// Where std puts the value a panic was about, up to the end of the line.
@@ -541,7 +512,7 @@ mod tests {
             location: Some(site.to_owned()),
             message: "boom".to_owned(),
             offsets: offsets.to_vec(),
-            event_id: Some("a1b2c3d4-7".to_owned()),
+            event_id: Some(super::super::store::EventId::new(0xa1b2_c3d4, 7)),
         }
     }
 
@@ -597,16 +568,6 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&output.stdout)
         );
-    }
-
-    /// Lib tests panic on purpose all the time; only a thread that opted in records.
-    #[test]
-    fn only_test_threads_that_opt_in_record_panics() {
-        assert!(!records_this_thread());
-        let recording = RecordPanics::start();
-        assert!(records_this_thread());
-        drop(recording);
-        assert!(!records_this_thread());
     }
 
     #[test]

@@ -151,13 +151,19 @@ pub fn crash_reason(dump: &Path) -> Option<String> {
     )
 }
 
-/// Every readable crash sidecar in the profiler directory `dir`, newest first.
+/// Every readable crash sidecar in the profiler directory `dir`, newest `createdAt` first;
+/// one whose time cannot be read comes last. File times are not used: copying or restoring
+/// the directory changes them.
 pub fn dump_sidecars(dir: &Path) -> Vec<DumpSidecar> {
-    Reader::new(dir)
+    let mut sidecars: Vec<DumpSidecar> = Reader::new(dir)
         .crashes(usize::MAX)
         .into_iter()
         .filter_map(|sidecar| serde_json::from_value(sidecar).ok())
-        .collect()
+        .collect();
+    sidecars.sort_by_cached_key(|sidecar| {
+        std::cmp::Reverse(OffsetDateTime::parse(&sidecar.created_at, &Rfc3339).ok())
+    });
+    sidecars
 }
 
 /// Whether a dump in `sidecar` is of the process `pid` that started at `started_at`: written
@@ -561,6 +567,40 @@ mod tests {
         assert_eq!(running.kind, "crash.native");
         assert_eq!(running.fingerprint_fields, ["server", "minidump", "dump"]);
         assert_eq!(running.evidence["crashId"], "6f1c");
+    }
+
+    /// The newest-dump rule goes by when the monitor wrote each dump, not by file times, which
+    /// a copy or a restore of the directory can change.
+    #[test]
+    fn sidecars_are_ordered_by_creation_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let crashes = dir.path().join("crashes");
+        std::fs::create_dir_all(&crashes).unwrap();
+        // `later` was created after `earlier`, but its file is the older one.
+        for (id, created_at, age_secs) in [
+            ("earlier", "2026-10-09T10:00:00Z", 0),
+            ("later", "2026-10-09T10:05:00Z", 3600),
+            ("unreadable-time", "yesterday", 7200),
+        ] {
+            let path = crashes.join(format!("{id}.json"));
+            let sidecar = json!({
+                "id": id, "createdAt": created_at, "parentPid": 42, "processKind": "server",
+            });
+            std::fs::write(&path, sidecar.to_string()).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(
+                    std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs),
+                )
+                .unwrap();
+        }
+        let ids: Vec<String> = dump_sidecars(dir.path())
+            .into_iter()
+            .map(|sidecar| sidecar.id)
+            .collect();
+        assert_eq!(ids, ["later", "earlier", "unreadable-time"]);
     }
 
     #[test]

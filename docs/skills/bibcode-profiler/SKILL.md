@@ -106,9 +106,9 @@ Modes chain: monitor, then diagnose what appeared, then report it.
    yourself. Re-run `status` once they confirm.
 2. Report anything abnormal in `capabilities` (`nativeDumps`, `osCrashRecords`,
    `storage`), and the dropped-event count when the status includes one.
-   `storage: "locked"` means another BiBCode process records to the same data
-   folder, so this one records nothing: the user should close the other app or
-   server and restart this one.
+   `storage: "locked"` means another BiBCode app or server records to the same
+   profiler folder, so this one records nothing: the user should close the other
+   one and restart this one.
 3. Summarize what already exists with `P findings --since 1h --json`, and note
    when you ran it.
 4. Watch in bounded rounds: `P findings --follow --duration 120s --json` prints

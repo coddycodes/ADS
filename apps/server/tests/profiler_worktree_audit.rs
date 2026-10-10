@@ -295,10 +295,16 @@ async fn the_audit_and_removal_outcomes_reach_the_profiler() {
         .filter(|event| event["kind"] == "worktree.audit")
         .collect();
     assert!(!scans.is_empty());
+    // Windows reads no working directories, so its scans report that as null.
+    let processes_read = if cfg!(windows) {
+        Value::Null
+    } else {
+        json!(true)
+    };
     assert!(
         scans
             .iter()
-            .all(|scan| scan["compared"] == true && scan["processesRead"] == true),
+            .all(|scan| scan["compared"] == true && scan["processesRead"] == processes_read),
         "{scans:?}"
     );
     fixture.shutdown().await;

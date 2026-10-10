@@ -390,8 +390,6 @@ mod tests {
         WEB_PROCESSES.lock().unwrap().clone()
     }
 
-    /// Spec Decision 1: with the profiler off, nothing runs but the crash hook and the
-    /// sentinel, so a page load scans nothing, and forgets what an earlier scan found.
     /// A child the scan recognises: a copy of `sleep` named as WebKit names its process, with
     /// the directory that holds it.
     fn stand_in_web_process() -> (std::process::Child, tempfile::TempDir) {
@@ -433,6 +431,8 @@ mod tests {
         }
     }
 
+    /// Spec Decision 1: with the profiler off, nothing runs but the crash hook and the
+    /// sentinel, so a page load scans nothing, and forgets what an earlier scan found.
     #[test]
     fn page_loads_scan_for_web_processes_only_while_the_profiler_is_on() {
         let _serial = serial();

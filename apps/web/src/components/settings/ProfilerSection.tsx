@@ -384,7 +384,7 @@ function EnvironmentProfiler({
     : storage === "failing"
       ? "Could not write profiling data. Check free disk space and folder permissions."
       : storage === "locked"
-        ? "Another BiBCode process is already recording to this profiler folder. Close the other BiBCode app or server that uses this data folder, then restart this one."
+        ? "Another BiBCode app or server is already recording to this profiler folder. Close it, then restart this one."
         : null;
 
   return (

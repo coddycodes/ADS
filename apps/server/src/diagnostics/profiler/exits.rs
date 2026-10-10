@@ -539,11 +539,11 @@ fn record(input: FindingInput) -> Option<Occurrence> {
     record_finding(input)
 }
 
-fn emit_event(kind: &'static str, payload: Value) -> Option<String> {
+fn emit_event(kind: &'static str, payload: Value) -> Option<super::store::EventId> {
     #[cfg(test)]
     if let Some(id) = captured(|captured| {
         captured.events.push((kind, payload.clone()));
-        format!("captured-{}", captured.events.len() - 1)
+        super::store::EventId::new(0, captured.events.len() as u64 - 1)
     }) {
         return Some(id);
     }
@@ -867,7 +867,7 @@ pub(crate) struct CapturedFinding {
 #[derive(Default)]
 struct Captured {
     findings: Vec<CapturedFinding>,
-    /// The events emitted, with their kinds; event `n` has the id `captured-<n>`.
+    /// The events emitted, with their kinds; event `n` has the id `00000000-<n>`.
     events: Vec<(&'static str, Value)>,
     /// The pid and executable of each core dump harvest started.
     #[cfg(target_os = "linux")]
@@ -907,7 +907,7 @@ impl CapturedExits {
         captured(|captured| std::mem::take(&mut captured.findings)).unwrap_or_default()
     }
 
-    /// The events emitted so far; event `n` had the id `captured-<n>`.
+    /// The events emitted so far; event `n` had the id `00000000-<n>`.
     pub(crate) fn take_events(&self) -> Vec<(&'static str, Value)> {
         captured(|captured| std::mem::take(&mut captured.events)).unwrap_or_default()
     }
@@ -1262,7 +1262,7 @@ mod tests {
         let events = captured.take_events();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].0, "subprocess.exit");
-        assert_eq!(findings[0].evidence["eventIds"], json!(["captured-0"]));
+        assert_eq!(findings[0].evidence["eventIds"], json!(["00000000-0"]));
     }
 
     #[cfg(target_os = "linux")]
