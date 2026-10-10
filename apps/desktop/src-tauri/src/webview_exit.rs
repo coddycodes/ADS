@@ -123,13 +123,22 @@ fn reason_name(
 /// preview tabs are pages the user opened.
 #[cfg(target_os = "macos")]
 pub(crate) fn watch<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    use tauri::Manager;
+
     builder.on_web_content_process_terminate(|webview| {
         if webview.label() == crate::window::MAIN_WINDOW_LABEL && is_enabled() {
             exits::report_webview_terminated("web-content-terminated");
         }
-        // This hook replaces Tauri's own, which reloads the webview; every webview still does.
-        if let Err(error) = webview.reload() {
-            tracing::warn!(%error, "webview did not reload after its content process ended");
-        }
+        // This hook replaces Tauri's own, which reloads the webview, so every webview still
+        // reloads. From another thread the reload is queued to the event loop instead of running
+        // inside this delegate, where Tauri's own handler only try-borrows the window map.
+        let (app, label) = (webview.app_handle().clone(), webview.label().to_owned());
+        tauri::async_runtime::spawn(async move {
+            if let Some(webview) = app.get_webview(&label)
+                && let Err(error) = webview.reload()
+            {
+                tracing::warn!(%error, "webview did not reload after its content process ended");
+            }
+        });
     })
 }
