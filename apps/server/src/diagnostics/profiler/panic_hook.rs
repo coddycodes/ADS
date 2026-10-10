@@ -49,11 +49,13 @@ pub(super) struct PanicRecord {
 
 /// Installs the hook once per process. It records the panic, then runs the hook it replaced.
 /// It never aborts, so `catch_unwind` and `JoinError::is_panic` recovery keep working. The
-/// first call reads the executable's debug ID, so call it off the async workers.
+/// first call reads the executable's debug ID and resolves the home directory, so the hook
+/// never waits on a slow home mount; call it off the async workers.
 pub fn install_panic_hook() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let _ = main_module();
+        let _ = redact_path("");
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             record(info);
@@ -570,6 +572,31 @@ mod tests {
             )))
         );
         assert_eq!(thread_class(None), "unnamed");
+    }
+
+    /// The hook redacts paths, and resolving the home directory touches the filesystem: a
+    /// hung home mount must stall the install, never a panicking thread. Runs in a fresh
+    /// process, where nothing has resolved it yet.
+    #[test]
+    fn installing_the_hook_resolves_the_home_directory() {
+        const CASE: &str = "panic-hook-resolves-home";
+        const TEST: &str = "diagnostics::profiler::panic_hook::tests::installing_the_hook_resolves_the_home_directory";
+        if crate::test_support::TestSandbox::is_isolated_case(CASE, TEST) {
+            assert!(!super::super::redact::homes_resolved());
+            install_panic_hook();
+            assert!(super::super::redact::homes_resolved());
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+            .env("BIBCODE_TEST_ISOLATED_CASE", CASE)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
     }
 
     /// Lib tests panic on purpose all the time; only a thread that opted in records.

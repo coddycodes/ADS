@@ -21,6 +21,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use super::{
     findings::{Finding, FindingsBook},
+    persisted_enabled,
     store::{self, CRASHES_DIR, FINDINGS_FILE, event_file_index},
 };
 
@@ -31,7 +32,6 @@ pub const MAX_FOLLOW: Duration = Duration::from_secs(600);
 const FOLLOW_POLL: Duration = Duration::from_millis(500);
 const STATUS_FINDINGS: usize = 20;
 const CAPABILITIES_FILE: &str = "capabilities.json";
-const SETTINGS_FILE: &str = "settings.json";
 const DROPPED_KIND: &str = "telemetry.dropped";
 /// A crash sidecar is a small summary; anything bigger is not read.
 const MAX_SIDECAR_BYTES: u64 = 1024 * 1024;
@@ -53,6 +53,8 @@ pub(super) struct StatusLive {
     pub dropped_events: u64,
     /// Failing writes, a degraded runtime, or findings on disk that could not be loaded.
     pub storage_failing: bool,
+    /// Another process holds the directory, so this runtime records nothing. Outranks failing.
+    pub storage_locked: bool,
     pub last_crash_at: Option<String>,
     /// Newest first.
     pub findings: Vec<Finding>,
@@ -78,13 +80,25 @@ pub(super) fn status_json(dir: &Path, live: StatusLive) -> Value {
         "eventCount": live.event_count,
         "droppedEvents": live.dropped_events,
         "lastCrashAt": live.last_crash_at,
-        "capabilities": capabilities(dir, live.storage_failing),
+        "capabilities": capabilities(dir, storage_state(&live)),
         "findings": live.findings.iter().map(Finding::to_wire).collect::<Vec<_>>(),
     })
 }
 
+/// `locked` when another process records to the directory, then `failing` or `ok`. A reader
+/// takes no lock, so it never reports `locked`: a live server holding it is the normal case.
+fn storage_state(live: &StatusLive) -> &'static str {
+    if live.storage_locked {
+        "locked"
+    } else if live.storage_failing {
+        "failing"
+    } else {
+        "ok"
+    }
+}
+
 /// Native capture states come from `capabilities.json` when it holds contract values.
-fn capabilities(dir: &Path, storage_failing: bool) -> Value {
+fn capabilities(dir: &Path, storage: &str) -> Value {
     let recorded: Value = fs::read(dir.join(CAPABILITIES_FILE))
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
@@ -96,7 +110,7 @@ fn capabilities(dir: &Path, storage_failing: bool) -> Value {
     json!({
         "nativeDumps": state("nativeDumps"),
         "osCrashRecords": state("osCrashRecords"),
-        "storage": if storage_failing { "failing" } else { "ok" },
+        "storage": storage,
     })
 }
 
@@ -348,12 +362,7 @@ impl Reader {
 
     /// The persisted `enableProfiler` setting, which sits beside the profiler directory.
     fn enabled(&self) -> bool {
-        self.dir
-            .parent()
-            .and_then(|state| fs::read(state.join(SETTINGS_FILE)).ok())
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            .and_then(|settings| settings.get("enableProfiler")?.as_bool())
-            .unwrap_or(false)
+        self.dir.parent().is_some_and(persisted_enabled)
     }
 
     /// `(events, dropped)` from the lines the event files hold: the sum of `telemetry.dropped`

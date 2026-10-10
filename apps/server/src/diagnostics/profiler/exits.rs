@@ -407,8 +407,9 @@ pub fn report_webview_terminated(reason: &str, process: Option<WebProcess<'_>>) 
     let Some(occurrence) = occurrence else {
         return;
     };
+    // WebKitGTK kills a process over its memory limit with SIGKILL, which dumps no core.
     #[cfg(target_os = "linux")]
-    if let Some(process) = process {
+    if let Some(process) = process.filter(|_| reason == "Crashed") {
         let started_at = time::OffsetDateTime::now_utc() - REPORT_WINDOW;
         attach_coredump(occurrence, process.pid, process.exe, started_at);
     }
@@ -598,6 +599,9 @@ fn counts(watch: Watch, class: ExitClass) -> bool {
     match (watch, class) {
         (_, ExitClass::Requested | ExitClass::Clean) => false,
         (_, ExitClass::Signal { signal, .. }) if deliberate(signal) => false,
+        // 128 + SIGHUP, SIGINT or SIGTERM: the process caught that signal and exited with the
+        // shell's code for it, as a provider CLI does after a targeted kill.
+        (_, ExitClass::NonZero(129 | 130 | 143)) => false,
         (Watch::Failures, _) => true,
         (Watch::Signals, ExitClass::Signal { .. }) => true,
         (Watch::CrashSignals, ExitClass::Signal { signal, .. }) => !typed_in_a_terminal(signal),
@@ -1063,6 +1067,15 @@ mod tests {
             }
         }
         assert!(counts(Watch::Failures, ExitClass::NonZero(1)));
+        // 128 + SIGHUP, SIGINT or SIGTERM: a process that caught the signal and exited with
+        // the shell's code for it, as node does after a targeted kill.
+        for deliberate in [129, 130, 143] {
+            assert!(
+                !counts(Watch::Failures, ExitClass::NonZero(deliberate)),
+                "{deliberate}"
+            );
+        }
+        assert!(counts(Watch::Failures, ExitClass::NonZero(137)));
         assert!(!counts(Watch::Signals, ExitClass::NonZero(1)));
         assert!(!counts(Watch::CrashSignals, ExitClass::NonZero(130)));
         for typed in [libc::SIGQUIT, libc::SIGKILL] {
@@ -1186,7 +1199,7 @@ mod tests {
             label: "claudeAgent",
             ..git(4_000_000_300)
         };
-        report_exit(Watch::Failures, &claude, &exited(143), false);
+        report_exit(Watch::Failures, &claude, &exited(1), false);
         assert_eq!(captured.take().len(), 1, "before the termination signal");
 
         note_terminating();
@@ -1264,7 +1277,14 @@ mod tests {
                 exe,
             }),
         );
-        report_webview_terminated("ExceededMemoryLimit", None);
+        // Killed for its memory use: a SIGKILL leaves no core dump to harvest.
+        report_webview_terminated(
+            "ExceededMemoryLimit",
+            Some(WebProcess {
+                pid: 4_000_000_403,
+                exe,
+            }),
+        );
         report_exit(Watch::Signals, &git(4_000_000_401), &crashed(), false);
         report_exit(
             Watch::Signals,

@@ -280,6 +280,15 @@ const LIMITS: ScanLimits = ScanLimits {
 /// `process_cwds`, or a stand-in in tests.
 type ProcessReader = fn(Vec<u32>, &CancellationToken) -> Vec<(PathBuf, u32)>;
 
+/// Whether `process_cwd` reads anything on this platform.
+const READS_PROCESS_CWDS: bool = cfg!(any(target_os = "linux", target_os = "macos"));
+
+/// The `processesRead` field: whether the working directories were read, or `None` (null)
+/// where this platform reads none, so no scan there can check `worktree.held-open`.
+fn processes_read(read: bool, platform_reads: bool) -> Option<bool> {
+    platform_reads.then_some(read)
+}
+
 /// Which parts of a scan's facts were read in full. The rest of the scan is still audited.
 #[derive(Clone, Copy, Debug)]
 struct Coverage {
@@ -307,7 +316,7 @@ async fn scan(
             "processes": facts.held_open.len(),
             "findings": findings.len(),
             "compared": coverage.compared,
-            "processesRead": coverage.processes,
+            "processesRead": processes_read(coverage.processes, READS_PROCESS_CWDS),
             "durationMs": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         }),
     );
@@ -912,6 +921,15 @@ mod tests {
             .into_iter()
             .map(|finding| (finding.kind, finding.fingerprint_fields))
             .collect()
+    }
+
+    /// Windows reads no working directories, so its scans never claim to have read them.
+    #[test]
+    fn processes_read_is_null_where_no_working_directory_is_read() {
+        assert_eq!(processes_read(true, false), None);
+        assert_eq!(processes_read(false, false), None);
+        assert_eq!(processes_read(true, true), Some(true));
+        assert_eq!(processes_read(false, true), Some(false));
     }
 
     #[test]

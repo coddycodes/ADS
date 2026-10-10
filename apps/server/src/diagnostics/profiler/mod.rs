@@ -32,6 +32,22 @@ pub fn profiler_dir(state_dir: &Path) -> PathBuf {
     state_dir.join("profiler")
 }
 
+/// The `enableProfiler` setting of a settings document: off unless it is `true`.
+pub(crate) fn enabled_setting(settings: &Value) -> bool {
+    settings
+        .get("enableProfiler")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// The persisted `enableProfiler` in the settings file of `state_dir`, read without a server.
+pub(crate) fn persisted_enabled(state_dir: &Path) -> bool {
+    std::fs::read(state_dir.join("settings.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .is_some_and(|settings| enabled_setting(&settings))
+}
+
 /// The live profiler state that hot paths reach through [`global`].
 pub struct ProfilerHandle {
     pub(crate) enabled: AtomicBool,

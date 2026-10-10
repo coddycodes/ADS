@@ -57,8 +57,11 @@ pub trait Detector: Send + Sync {
 
 pub struct ProfilerRuntime {
     dir: PathBuf,
-    /// `None` when another writer holds the directory: the runtime is degraded and records nothing.
+    /// `None` when the directory could not be locked: the runtime is degraded and records
+    /// nothing.
     handle: Option<Arc<ProfilerHandle>>,
+    /// Degraded because another process holds the directory lock, not because of an I/O error.
+    locked: bool,
     parts: Mutex<Option<Parts>>,
     stop: CancellationToken,
     /// Fires once teardown has released the directory; every `shutdown` call waits for it.
@@ -109,6 +112,7 @@ impl ProfilerRuntime {
                 return Self {
                     dir,
                     handle: None,
+                    locked: error.kind() == io::ErrorKind::WouldBlock,
                     parts: Mutex::new(None),
                     stop,
                     done,
@@ -162,6 +166,7 @@ impl ProfilerRuntime {
         Self {
             dir,
             handle: Some(handle),
+            locked: false,
             parts: Mutex::new(Some(Parts {
                 runtime,
                 supervisor,
@@ -185,6 +190,7 @@ impl ProfilerRuntime {
         let mut live = StatusLive {
             // Degraded, or failing writes.
             storage_failing: self.handle.is_none() || stats.failing,
+            storage_locked: self.locked,
             event_count: stats.written,
             dropped_events: stats.dropped,
             ..StatusLive::default()

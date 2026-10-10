@@ -10,7 +10,7 @@ use std::{
 };
 
 use bibcode_server::diagnostics::profiler::{
-    crash::MonitorDetector,
+    crash::{self, MonitorDetector},
     runtime::{Detector, ProfilerRuntime},
     sentinel,
 };
@@ -245,6 +245,8 @@ fn the_monitor_exits_when_its_parent_is_killed() {
     ignore = "minidump-writer unimplemented on Windows arm64"
 )]
 fn the_monitor_socket_is_private_and_never_reused() {
+    // The monitor serves the crash hook: without one attached it never starts.
+    crash::attach();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

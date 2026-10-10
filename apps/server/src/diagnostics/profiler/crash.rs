@@ -20,7 +20,7 @@ use std::{
         Arc, Mutex, MutexGuard, OnceLock, PoisonError,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use crash_handler::{CrashContext, CrashEventResult, CrashHandler};
@@ -29,11 +29,7 @@ use serde_json::{Value, json};
 use tokio::{sync::watch, task::JoinHandle, time::MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
 
-use super::{os_records, profiler_dir, runtime::Detector, store};
-use crate::{
-    config::ServerConfig,
-    data_root::{DataRootRequest, DataRootSource, resolve_data_root},
-};
+use super::{os_records, persisted_enabled, profiler_dir, runtime::Detector, store};
 
 const MONITOR_FLAG: &str = "--crash-monitor";
 /// Set by the parent; the monitor names the crashed process with it in each sidecar.
@@ -56,6 +52,12 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// The monitor drops a connection idle this long; the pings keep a live parent's open.
 const STALE_TIMEOUT: Duration = Duration::from_secs(30);
 const PARENT_CHECK_EVERY: Duration = Duration::from_secs(2);
+/// How long the heartbeat leaves a monitor that may be writing a dump alone once it sees
+/// `CRASHING`. It sees the flag up to one heartbeat after the crash and gives up on a stuck
+/// monitor after one more ping timeout, so a hung dump is abandoned 25 to 35 s after the crash.
+const CRASH_GRACE: Duration = Duration::from_secs(20);
+/// How often the heartbeat looks at `CRASHING` again while it is set.
+const CRASH_RECHECK: Duration = Duration::from_secs(1);
 const MAX_DUMPS: usize = 20;
 /// The `send_message` kind that carries the parent's newest event lines.
 const LAST_EVENTS: u32 = 1;
@@ -76,6 +78,9 @@ const DUMPS_DISABLED: bool = cfg!(all(windows, target_arch = "aarch64"));
 
 /// Read by the crash callback, which must neither block nor allocate.
 static ARMED: AtomicBool = AtomicBool::new(false);
+/// Set by the crash callback while it waits for its dump. A monitor writing a dump answers no
+/// pings, and replacing it then would leave the dump without its sidecar.
+static CRASHING: AtomicBool = AtomicBool::new(false);
 /// The connection to the monitor. The callback only `try_lock`s it; everyone else holds the
 /// lock just long enough to clone or swap the `Arc`, never across I/O.
 static CLIENT: Mutex<Option<Arc<Client>>> = Mutex::new(None);
@@ -124,7 +129,9 @@ fn on_crash(context: &CrashContext) -> CrashEventResult {
     let Some(client) = CLIENT.try_lock().ok().and_then(|slot| slot.clone()) else {
         return CrashEventResult::Handled(false);
     };
+    CRASHING.store(true, Ordering::Release);
     let dumped = client.request_dump(context).is_ok();
+    CRASHING.store(false, Ordering::Release);
     // Never dropped here: if the detector let go of it meanwhile, this is the last reference,
     // and freeing it is not safe in a compromised context. The process ends anyway.
     std::mem::forget(client);
@@ -487,6 +494,13 @@ async fn keep_monitor(detector: MonitorDetector, cancel: CancellationToken) {
         record_capability(&detector.dir, "disabled").await;
         return;
     }
+    // Only the attached hook asks the monitor for a dump; without one a monitor captures
+    // nothing.
+    if !matches!(HANDLER.get(), Some(Some(_))) {
+        tracing::warn!("native crash dumps are unavailable: no crash hook is attached");
+        record_capability(&detector.dir, "unavailable").await;
+        return;
+    }
     if let Err(error) = secure_crashes_dir(&detector.dir).await {
         tracing::warn!(
             %error,
@@ -499,11 +513,21 @@ async fn keep_monitor(detector: MonitorDetector, cancel: CancellationToken) {
     let mut failing = false;
     let mut ticks = tokio::time::interval(PING_EVERY);
     ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let (mut crashing_since, mut holding) = (None, false);
     loop {
         tokio::select! {
             biased;
             () = cancel.cancelled() => break,
-            _ = ticks.tick() => {}
+            _ = ticks.tick(), if !holding => {}
+            () = tokio::time::sleep(CRASH_RECHECK), if holding => {}
+        }
+        holding = dump_in_progress(
+            CRASHING.load(Ordering::Acquire),
+            &mut crashing_since,
+            Instant::now(),
+        );
+        if holding {
+            continue;
         }
         match keep_alive(&detector, &mut monitor, &cancel).await {
             Round::Live => failing = false,
@@ -528,6 +552,17 @@ async fn keep_monitor(detector: MonitorDetector, cancel: CancellationToken) {
         drop(heartbeat);
     }
     drop(client);
+}
+
+/// Whether the heartbeat must leave its monitor alone because a crash is being dumped:
+/// `crashing` has been seen set, continuously, for less than `CRASH_GRACE`. `since` keeps
+/// when it was first seen.
+fn dump_in_progress(crashing: bool, since: &mut Option<Instant>, now: Instant) -> bool {
+    if !crashing {
+        *since = None;
+        return false;
+    }
+    now.saturating_duration_since(*since.get_or_insert(now)) < CRASH_GRACE
 }
 
 /// Makes `crashes/` readable by this user alone before any dump is written into it, since a
@@ -1040,21 +1075,10 @@ pub async fn follow(detector: impl Detector, mut setting: watch::Receiver<bool>)
 }
 
 /// The desktop host's local environment, read before Tauri starts: its profiler directory and
-/// committed `enableProfiler`. The host resolves `BIBCODE_HOME` or `~/.bibcode` as its backend
-/// does, and its in-process server never runs with a dev URL, so the state is in `userdata/`.
+/// committed `enableProfiler`, resolved as `bibcode-desktop profiler` resolves them.
 pub fn desktop_local_profiler() -> Option<(PathBuf, bool)> {
-    let home = dirs::home_dir()?;
-    let request = match std::env::var_os("BIBCODE_HOME") {
-        Some(root) => DataRootRequest::explicit(DataRootSource::Environment, root.into(), home),
-        None => DataRootRequest::default(home),
-    };
-    let state_dir = ServerConfig::new(resolve_data_root(request).ok()?.effective).state_dir();
-    let enabled = fs::read(state_dir.join("settings.json"))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .and_then(|settings| settings.get("enableProfiler")?.as_bool())
-        .unwrap_or(false);
-    Some((profiler_dir(&state_dir), enabled))
+    let state_dir = crate::config::profiler_state_dir(None, None).ok()?;
+    Some((profiler_dir(&state_dir), persisted_enabled(&state_dir)))
 }
 
 /// For the `crash-smoke` binary: runs a [`MonitorDetector`] for `dir` on a runtime that lives
@@ -1135,6 +1159,38 @@ mod tests {
         assert_eq!(parse_monitor_args(&args(&["/s", "/d"])), None);
         assert_eq!(parse_monitor_args(&args(&["/s", "/d", "12", "x"])), None);
         assert_eq!(parse_monitor_args(&args(&["/s", "/d", "pid"])), None);
+    }
+
+    /// The heartbeat holds off while a crash is dumped, but not forever: a monitor that hangs
+    /// in the dump is still replaced, which releases the crashing thread.
+    #[test]
+    fn a_dump_in_progress_holds_off_the_heartbeat_for_a_bounded_time() {
+        let start = Instant::now();
+        let at = |secs| start + Duration::from_secs(secs);
+        let mut since = None;
+        assert!(!dump_in_progress(false, &mut since, start));
+        assert!(dump_in_progress(true, &mut since, at(0)));
+        assert!(dump_in_progress(true, &mut since, at(19)));
+        assert!(
+            !dump_in_progress(true, &mut since, at(20)),
+            "a monitor stuck in a dump is replaced in the end"
+        );
+        assert!(!dump_in_progress(false, &mut since, at(21)));
+        assert_eq!(since, None, "the crash is over");
+        assert!(
+            dump_in_progress(true, &mut since, at(30)),
+            "a later crash has its own grace"
+        );
+    }
+
+    /// The host arms its monitor for the directory and setting the profiler CLI reads.
+    #[test]
+    fn the_desktop_monitor_follows_the_profiler_clis_directory_and_setting() {
+        let state_dir = crate::config::profiler_state_dir(None, None).unwrap();
+        assert_eq!(
+            desktop_local_profiler(),
+            Some((profiler_dir(&state_dir), persisted_enabled(&state_dir)))
+        );
     }
 
     #[test]

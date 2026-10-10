@@ -369,13 +369,23 @@ function EnvironmentProfiler({
     if (profilerDirectory !== null) openDirectory(profilerDirectory);
   };
 
+  const storage = status?.capabilities.storage;
   const statusLine = !enabled
     ? "Off. Turn on to start recording. Crash checks for the previous run still happen."
     : status === null
       ? "Checking..."
       : status.enabled
         ? recordingLine(status)
-        : "Starting...";
+        : storage === "locked"
+          ? "Not recording."
+          : "Starting...";
+  const storageProblem = !enabled
+    ? null
+    : storage === "failing"
+      ? "Could not write profiling data. Check free disk space and folder permissions."
+      : storage === "locked"
+        ? "Another BiBCode process is already recording to this profiler folder. Close the other BiBCode app or server that uses this data folder, then restart this one."
+        : null;
 
   return (
     <>
@@ -385,14 +395,12 @@ function EnvironmentProfiler({
         status={
           <div className="space-y-1">
             <div>{statusLine}</div>
-            {enabled && status?.capabilities.storage === "failing" ? (
+            {storageProblem === null ? null : (
               <div className="flex items-start gap-1.5 text-destructive">
                 <TriangleAlertIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-                <span>
-                  Could not write profiling data. Check free disk space and folder permissions.
-                </span>
+                <span>{storageProblem}</span>
               </div>
-            ) : null}
+            )}
             {error === null ? null : (
               <div className="flex flex-wrap items-center gap-2">
                 <div className="flex items-start gap-1.5 text-destructive">

@@ -75,6 +75,9 @@ fn crash_finding() -> FindingInput {
 #[tokio::test]
 async fn profiler_runtime_scenarios_share_the_process_global_handle_in_sequence() {
     rapid_toggles_never_run_two_detector_sets().await;
+    without_a_crash_hook_no_monitor_starts().await;
+    // From here on this process has its crash hook, as every BiBCode binary does.
+    crash::attach();
     rapid_toggles_never_leave_a_crash_monitor_behind().await;
     #[cfg(unix)]
     a_stuck_runtime_still_replaces_a_hung_monitor().await;
@@ -123,6 +126,30 @@ async fn rapid_toggles_never_run_two_detector_sets() {
     assert_eq!(Counts::get(&counts.max), 1);
     assert_eq!(runtime.status()["enabled"], false);
     assert!(runtime.status()["recordingSince"].is_null());
+    runtime.shutdown().await;
+}
+
+/// The monitor serves the crash hook. Where none is attached, as in this test binary until it
+/// calls `crash::attach()`, no monitor starts and dumps are recorded as unavailable.
+async fn without_a_crash_hook_no_monitor_starts() {
+    let dir = tempfile::tempdir().unwrap();
+    let profiler_dir = profiler::profiler_dir(dir.path());
+    let (_tx, rx) = watch::channel(true);
+    let detector = crash::MonitorDetector::new(profiler_dir.clone(), "server")
+        .with_executable(env!("CARGO_BIN_EXE_bibcode").into());
+    let runtime = ProfilerRuntime::start(dir.path(), rx, vec![Box::new(detector)]);
+    let expected = if cfg!(all(windows, target_arch = "aarch64")) {
+        "disabled"
+    } else {
+        "unavailable"
+    };
+    wait_until("dumps are recorded as unavailable", || {
+        native_dumps(&profiler_dir) == expected
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(monitor_children().is_empty(), "a monitor started");
+    assert_eq!(native_dumps(&profiler_dir), expected);
     runtime.shutdown().await;
 }
 
@@ -274,7 +301,10 @@ async fn a_second_runtime_on_the_same_directory_is_degraded() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let degraded = second.status();
-    assert_eq!(degraded["capabilities"]["storage"], "failing");
+    assert_eq!(
+        degraded["capabilities"]["storage"], "locked",
+        "another process holds the directory: nothing failed to write"
+    );
     assert_eq!(degraded["enabled"], false);
     assert_eq!(first.status()["capabilities"]["storage"], "ok");
     assert_eq!(first.status()["enabled"], true);
@@ -291,7 +321,7 @@ async fn a_second_runtime_on_the_same_directory_is_degraded() {
     let third = ProfilerRuntime::start(dir.path(), rx, vec![]);
     assert_eq!(
         third.status()["capabilities"]["storage"],
-        "failing",
+        "locked",
         "the degraded runtime's shutdown must not release the first runtime's lock"
     );
     third.shutdown().await;
