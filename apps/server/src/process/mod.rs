@@ -13,6 +13,9 @@ pub use appimage::{ChildCommand, EnvironmentInheritance, isolate_appimage_enviro
 #[cfg(windows)]
 pub(crate) use windows_job::WindowsJob;
 
+pub(crate) use background::exited_status;
+#[cfg(unix)]
+pub(crate) use background::{child_exit_without_reaping, exit_status};
 pub use background::{
     configure_background_command, configure_background_std_command,
     configure_supervised_background_command_wrap,

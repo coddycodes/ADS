@@ -114,6 +114,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build());
     #[cfg(target_os = "linux")]
     let builder = builder.manage(linux_theme::LinuxThemeState::default());
+    #[cfg(target_os = "macos")]
+    let builder = webview_exit::watch(builder);
     #[cfg(feature = "desktop-e2e")]
     let builder = builder
         .plugin(desktop_e2e_logging_plugin())
@@ -339,6 +341,7 @@ mod tailscale;
 #[cfg(test)]
 mod test_support;
 mod updates;
+mod webview_exit;
 mod window;
 
 pub use bridge::{

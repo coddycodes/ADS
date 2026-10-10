@@ -639,7 +639,18 @@ fn signal_identity_bound_process(
     if process.creation_identity()? != expected_identity.started_at {
         return Err(SignalError::StaleIdentity(expected_identity.pid));
     }
-    process.signal(signal)
+    // The user stops it on purpose: its owner must not report the exit as a crash.
+    match signal {
+        ProcessSignal::Kill => super::profiler::exits::note_stop_requested(expected_identity.pid),
+        ProcessSignal::Interrupt => {
+            super::profiler::exits::note_interrupt_requested(expected_identity.pid);
+        }
+    }
+    let signalled = process.signal(signal);
+    if signalled.is_err() {
+        super::profiler::exits::withdraw_stop_request(expected_identity.pid);
+    }
+    signalled
 }
 
 #[cfg(target_os = "linux")]

@@ -6,7 +6,7 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::Path,
-    sync::{Arc, Mutex, PoisonError},
+    sync::{Arc, LazyLock, Mutex, PoisonError},
     time::{Duration, Instant},
 };
 
@@ -36,6 +36,59 @@ const FAST_TICKS_TO_SPEED_UP: u32 = 10;
 const REDISCOVER_EVERY: Duration = Duration::from_secs(60);
 /// A build under a terminal can spawn hundreds of processes; the nearest ones are kept.
 const MAX_DESCENDANTS: usize = 128;
+
+/// A process's latest sample, for a report about its death.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LastSample {
+    /// `None` where private memory cannot be read and only RSS is known.
+    pub(crate) private_bytes: Option<u64>,
+    pub(crate) rss_bytes: u64,
+    pub(crate) at: Instant,
+}
+
+/// Each tracked process's latest sample, by pid, while the sampler runs.
+static LAST_SAMPLES: LazyLock<Mutex<LastSamples>> = LazyLock::new(Default::default);
+
+/// A process that left the tracked set stays for one more tick: its death is reported a
+/// moment after the sampler last saw it.
+#[derive(Default)]
+struct LastSamples {
+    current: HashMap<u32, LastSample>,
+    departed: HashMap<u32, LastSample>,
+}
+
+impl LastSamples {
+    fn publish(&mut self, live: HashMap<u32, LastSample>) {
+        let mut departed = std::mem::replace(&mut self.current, live);
+        departed.retain(|pid, _| !self.current.contains_key(pid));
+        self.departed = departed;
+    }
+
+    fn get(&self, pid: u32) -> Option<LastSample> {
+        self.current
+            .get(&pid)
+            .or_else(|| self.departed.get(&pid))
+            .copied()
+    }
+}
+
+/// The latest sample of `pid`, while the sampler runs.
+pub(crate) fn last_sample(pid: u32) -> Option<LastSample> {
+    lock(&LAST_SAMPLES).get(pid)
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Forgets the samples when the sampler stops, however it stops.
+struct ForgetSamples;
+
+impl Drop for ForgetSamples {
+    fn drop(&mut self) {
+        *lock(&LAST_SAMPLES) = LastSamples::default();
+    }
+}
 
 pub struct SamplerDetector {
     registry: ProcessAttributionRegistry,
@@ -84,6 +137,7 @@ async fn run(
     minute: Duration,
     cancel: CancellationToken,
 ) {
+    let _forget = ForgetSamples;
     let sampler = Arc::new(Mutex::new(Sampler::new(
         registry,
         std::process::id(),
@@ -257,6 +311,7 @@ impl Sampler {
                 .unwrap_or(u64::MAX);
         let enabled = is_enabled();
         let mut live = HashSet::new();
+        let mut samples = HashMap::new();
         for pid in tracked {
             let Some(process) = self.system.process(pid) else {
                 continue;
@@ -278,6 +333,14 @@ impl Sampler {
                 Some(bytes) => (bytes, "private"),
                 None => (process.memory(), "rss"),
             };
+            samples.insert(
+                pid.as_u32(),
+                LastSample {
+                    private_bytes: (metric == "private").then_some(private_bytes),
+                    rss_bytes: process.memory(),
+                    at: Instant::now(),
+                },
+            );
             live.insert(identity);
             let series = self.series.entry(identity).or_default();
             // The kind may change: a provider can be registered after rediscovery found it.
@@ -331,6 +394,7 @@ impl Sampler {
             }
             self.closed.push(closed);
         }
+        lock(&LAST_SAMPLES).publish(samples);
         let elapsed = started.elapsed();
         if self.minute.is_some_and(|open| open != minute) {
             self.write_minute(enabled);
@@ -841,6 +905,35 @@ mod tests {
                 let _ = child.wait();
             }
         }
+    }
+
+    #[test]
+    fn a_departed_process_keeps_its_last_sample_for_one_more_tick() {
+        let sample = |rss_bytes| LastSample {
+            private_bytes: Some(rss_bytes / 2),
+            rss_bytes,
+            at: Instant::now(),
+        };
+        let mut samples = LastSamples::default();
+        samples.publish(HashMap::from([(1, sample(100)), (2, sample(200))]));
+        samples.publish(HashMap::from([(1, sample(110))]));
+        assert_eq!(samples.get(1).map(|last| last.rss_bytes), Some(110));
+        assert_eq!(samples.get(2).map(|last| last.rss_bytes), Some(200));
+        samples.publish(HashMap::from([(1, sample(120))]));
+        assert_eq!(samples.get(2), None, "gone a tick after it departed");
+    }
+
+    #[test]
+    fn a_tick_publishes_each_sampled_process() {
+        let mut sampler = Sampler::new(
+            ProcessAttributionRegistry::new(),
+            std::process::id(),
+            MINUTE,
+        );
+        sampler.tick(BASE_INTERVAL);
+        // Other tests' samplers publish too, and every one samples this process.
+        let own = last_sample(std::process::id()).expect("this process was sampled");
+        assert!(own.rss_bytes > 0);
     }
 
     /// Pid reuse is judged by raw identities on both sides. A Linux identity's start time

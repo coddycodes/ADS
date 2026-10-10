@@ -15,7 +15,7 @@ pub const MENU_ACTION_OPEN_SETTINGS: &str = "open-settings";
 pub const MENU_ACTION_CHECK_FOR_UPDATES: &str = "check-for-updates";
 pub const MENU_ACTION_CLOSE_SHORTCUT: &str = "close-shortcut";
 
-const MAIN_WINDOW_LABEL: &str = "main";
+pub(crate) const MAIN_WINDOW_LABEL: &str = "main";
 const MENU_ID_OPEN_SETTINGS: &str = "bibcode:open-settings";
 const MENU_ID_CHECK_FOR_UPDATES: &str = "bibcode:check-for-updates";
 const MENU_ID_CLOSE_SHORTCUT: &str = "bibcode:close-shortcut";
@@ -224,17 +224,49 @@ pub(crate) fn build_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result
         .cloned()
         .expect("tauri.conf.json defines the main window");
     let handle = app.clone();
-    tauri::WebviewWindowBuilder::from_config(app, &config)?
-        .on_new_window(move |url, _features| {
+    let builder = tauri::WebviewWindowBuilder::from_config(app, &config)?.on_new_window(
+        move |url, _features| {
             if main_window_new_window_action(&url) == MainNewWindowAction::OpenExternal
                 && let Err(error) = handle.opener().open_url(url.as_str(), None::<&str>)
             {
                 tracing::warn!("failed to open link externally: {error}");
             }
             tauri::webview::NewWindowResponse::Deny
-        })
-        .build()?;
+        },
+    );
+    // A loaded page runs in a web content process the profiler remembers for crash reports.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let builder = builder.on_page_load(|window, payload| {
+        if payload.event() == tauri::webview::PageLoadEvent::Finished {
+            crate::webview_exit::page_loaded(window.app_handle(), window.label());
+        }
+    });
+    let window = builder.build()?;
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    watch_web_content_process(&window);
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    let _ = window;
     Ok(())
+}
+
+/// Reports the main window's web content process dying to the profiler. macOS registers its
+/// hook on the app builder instead.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn watch_web_content_process<R: Runtime>(window: &WebviewWindow<R>) {
+    let installed = window.with_webview(|webview| {
+        #[cfg(target_os = "linux")]
+        crate::webview_exit::watch(&webview.inner());
+        #[cfg(target_os = "windows")]
+        // SAFETY: Tauri runs this closure on the UI thread that owns the controller.
+        if let Err(error) = unsafe { webview.controller().CoreWebView2() }
+            .and_then(|core| crate::webview_exit::watch(&core))
+        {
+            tracing::warn!(%error, "webview process failures are not watched");
+        }
+    });
+    if let Err(error) = installed {
+        tracing::warn!(%error, "webview process exits are not watched");
+    }
 }
 
 pub fn restore_main_window_state<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {

@@ -435,13 +435,23 @@ async fn termination_signal() -> Result<(), std::io::Error> {
     use tokio::signal::unix::{SignalKind, signal};
 
     let mut terminate = signal(SignalKind::terminate())?;
-    tokio::select! {
+    let received = tokio::select! {
         result = tokio::signal::ctrl_c() => result,
         _ = terminate.recv() => Ok(()),
+    };
+    if received.is_ok() {
+        // A logout or a service stop signals the providers too; their deaths are not crashes.
+        diagnostics::profiler::exits::note_terminating();
     }
+    received
 }
 
 #[cfg(not(unix))]
 async fn termination_signal() -> Result<(), std::io::Error> {
-    tokio::signal::ctrl_c().await
+    let received = tokio::signal::ctrl_c().await;
+    if received.is_ok() {
+        // The console's Ctrl-C reaches the providers too; their deaths are not crashes.
+        diagnostics::profiler::exits::note_terminating();
+    }
+    received
 }

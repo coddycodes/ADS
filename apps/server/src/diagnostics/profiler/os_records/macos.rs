@@ -1,11 +1,15 @@
 //! macOS crash reports: `~/Library/Logs/DiagnosticReports/*.ips`.
 
+use std::{
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
+
 use serde_json::Value;
 
 use super::{MAX_FRAMES, OsCrashRecord};
 
 /// Larger reports are skipped rather than read.
-#[cfg(target_os = "macos")]
 const MAX_REPORT_BYTES: u64 = 8 * 1024 * 1024;
 
 /// A crash report (`bug_type` 309) made of a one-line metadata header and the report body.
@@ -84,6 +88,43 @@ fn record(body: &Value) -> Option<OsCrashRecord> {
         module,
         frames,
         raw_ref: format!("{process} pid {pid}"),
+    })
+}
+
+/// WebKit names the crash reports of a web view's content process after this process.
+pub const WEB_CONTENT_PROCESS: &str = "com.apple.WebKit.WebContent";
+
+/// The newest web content crash report in `dir` written between `earliest` and `latest`,
+/// for process `pid` when it is known. Other applications' web views crash under the same
+/// name.
+pub fn web_content_report(
+    dir: &Path,
+    pid: Option<u32>,
+    earliest: SystemTime,
+    latest: SystemTime,
+) -> Option<OsCrashRecord> {
+    let mut reports: Vec<(SystemTime, PathBuf)> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|entry| is_candidate(&entry.file_name().to_string_lossy(), WEB_CONTENT_PROCESS))
+        .filter_map(|entry| {
+            let metadata = entry.metadata().ok()?;
+            (metadata.len() <= MAX_REPORT_BYTES).then_some(())?;
+            Some((metadata.modified().ok()?, entry.path()))
+        })
+        .filter(|(written, _)| (earliest..=latest).contains(written))
+        .collect();
+    reports.sort();
+    reports.into_iter().rev().find_map(|(_, path)| {
+        let body = ips_body(&std::fs::read_to_string(&path).ok()?)?;
+        if let Some(pid) = pid
+            && body.get("pid").and_then(Value::as_u64) != Some(u64::from(pid))
+        {
+            return None;
+        }
+        let mut record = record(&body)?;
+        record.raw_ref = super::super::redact::redact_path(&path.to_string_lossy());
+        Some(record)
     })
 }
 
@@ -166,6 +207,70 @@ mod tests {
         ));
         assert!(!is_candidate("Safari-2026-10-09-100500.ips", "bibcode"));
         assert!(!is_candidate("bibcode-2026-10-09-100500.diag", "bibcode"));
+    }
+
+    #[test]
+    fn the_newest_web_content_report_near_the_termination_is_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = std::time::SystemTime::now();
+        let write = |name: &str, text: &str, age: std::time::Duration| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, text).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(at - age)
+                .unwrap();
+        };
+        let ours = IPS.replace("bibcode_server::crash_here", "WebCore::crash_here");
+        write(
+            "com.apple.WebKit.WebContent-2026-10-09-100500.ips",
+            &ours,
+            std::time::Duration::from_secs(1),
+        );
+        write(
+            "com.apple.WebKit.WebContent-2026-10-09-100430.ips",
+            IPS,
+            std::time::Duration::from_secs(30),
+        );
+        write(
+            "Safari-2026-10-09-100501.ips",
+            IPS,
+            std::time::Duration::ZERO,
+        );
+        let window = |from: std::time::SystemTime| {
+            (
+                from - std::time::Duration::from_secs(5),
+                from + std::time::Duration::from_secs(60),
+            )
+        };
+        let (earliest, latest) = window(at);
+
+        let record = web_content_report(dir.path(), None, earliest, latest).expect("report");
+        assert_eq!(record.frames[0], "WebCore::crash_here (bibcode + 0x12d687)");
+        // The fixture's process is pid 4242.
+        assert!(web_content_report(dir.path(), Some(4242), earliest, latest).is_some());
+        assert_eq!(
+            web_content_report(dir.path(), Some(4243), earliest, latest),
+            None,
+            "another web view's crash"
+        );
+        // Before the report of this termination is written, an earlier crash's must not do.
+        std::fs::remove_file(
+            dir.path()
+                .join("com.apple.WebKit.WebContent-2026-10-09-100500.ips"),
+        )
+        .unwrap();
+        assert_eq!(
+            web_content_report(dir.path(), None, earliest, latest),
+            None,
+            "written 30 s before the termination"
+        );
+        assert_eq!(
+            web_content_report(&dir.path().join("missing"), None, earliest, latest),
+            None
+        );
     }
 
     #[test]
