@@ -690,11 +690,13 @@ failure attempts every local safeguard even if an earlier recovery step fails:
 persist local-only, restart with a local-only override, close the firewall, and
 stop an unverified backend. Narrowing persists local-only first, restarts and
 verifies local topology, then closes the firewall; it never restores durable
-wide state as compensation. On Windows, closing enumerates the persistent
-firewall store, removes only the named BiBCode rule, and re-enumerates to verify
-absence. Firewall commands run through the shared supervised process runner with
-a 15-second process timeout, a 64 KiB truncated-output bound, and kill/reap
-ownership for the process tree. A serialized firewall worker additionally gives
+wide state as compensation. On Windows, closing reads the persistent
+firewall store, removes only the named BiBCode rule, and reads it again to verify
+absence. A named `netsh` query that fails without returning that rule is absence
+in every display language only after `netsh advfirewall show allprofiles state`
+succeeds; a failed policy read stays incomplete cleanup. Firewall commands run
+through the shared supervised process runner with a 15-second process timeout, a
+64 KiB truncated-output bound, and kill/reap ownership for the process tree. A serialized firewall worker additionally gives
 each caller a five-second deadline that includes spawn. Its bounded desired-state
 coalescer retains at most one in-flight job and the latest pending state; a newer
 pending request releases the superseded caller with an explicit saturation

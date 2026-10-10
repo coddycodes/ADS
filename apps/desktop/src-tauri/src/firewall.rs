@@ -89,6 +89,23 @@ pub(crate) fn remote_access_rule_delete_args() -> Vec<String> {
     ]
 }
 
+/// Locale-independent read of the firewall policy. Exit status alone is the
+/// signal: the profile text is translated, and a successful exit means the
+/// store was read.
+#[must_use]
+#[cfg_attr(
+    all(not(windows), not(test)),
+    expect(dead_code, reason = "Windows-only firewall command")
+)]
+pub(crate) fn remote_access_store_probe_args() -> Vec<String> {
+    vec![
+        "advfirewall".to_owned(),
+        "show".to_owned(),
+        "allprofiles".to_owned(),
+        "state".to_owned(),
+    ]
+}
+
 #[cfg(any(windows, test))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FirewallCommandOutput {
@@ -303,6 +320,39 @@ fn rule_listing_is_absent(output: &FirewallCommandOutput) -> Result<bool, String
     Ok(!text.contains(REMOTE_ACCESS_RULE_NAME))
 }
 
+/// A failed named query that does not include the English miss sentence.
+/// Localized Windows translates that sentence, so the exit status alone cannot
+/// separate "no rule" from "the policy could not be read" until the store
+/// probe succeeds.
+#[cfg(any(windows, test))]
+fn listing_needs_store_probe(output: &FirewallCommandOutput) -> bool {
+    if output.success {
+        return false;
+    }
+    let text = firewall_command_text(output);
+    !text.contains(FIREWALL_RULE_ABSENT_MARKER) && !text.contains(REMOTE_ACCESS_RULE_NAME)
+}
+
+#[cfg(any(windows, test))]
+async fn confirm_rule_listing_is_absent<Runner>(
+    runner: &Runner,
+    output: &FirewallCommandOutput,
+) -> Result<bool, String>
+where
+    Runner: FirewallCommandRunner,
+{
+    if !listing_needs_store_probe(output) {
+        return rule_listing_is_absent(output);
+    }
+    let probe = runner
+        .run("netsh".to_owned(), remote_access_store_probe_args())
+        .await?;
+    if probe.success {
+        return Ok(true);
+    }
+    rule_listing_is_absent(output)
+}
+
 #[cfg(any(windows, test))]
 async fn delete_and_verify_remote_access_rule<Runner>(runner: &Runner) -> Result<(), String>
 where
@@ -311,7 +361,7 @@ where
     let listing = runner
         .run("netsh".to_owned(), remote_access_rule_show_args())
         .await?;
-    if rule_listing_is_absent(&listing)? {
+    if confirm_rule_listing_is_absent(runner, &listing).await? {
         return Ok(());
     }
     let deletion = runner
@@ -321,7 +371,7 @@ where
     let confirmed = runner
         .run("netsh".to_owned(), remote_access_rule_show_args())
         .await?;
-    if rule_listing_is_absent(&confirmed)? {
+    if confirm_rule_listing_is_absent(runner, &confirmed).await? {
         Ok(())
     } else {
         Err(
@@ -544,6 +594,61 @@ mod tests {
             .expect_err("query failure");
         assert!(error.contains("delete and verify"));
         assert!(error.contains("Access is denied."));
+        assert!(super::listing_needs_store_probe(&failure(
+            "Aucune règle ne correspond aux critères spécifiés."
+        )));
+        assert!(!super::listing_needs_store_probe(&FirewallCommandOutput {
+            success: false,
+            stdout: super::FIREWALL_RULE_ABSENT_MARKER.to_owned(),
+            stderr: String::new(),
+        }));
+    }
+
+    #[tokio::test]
+    async fn a_localized_miss_is_absence_only_after_the_policy_store_is_readable() {
+        let french_miss = FirewallCommandOutput {
+            success: false,
+            stdout: "Aucune règle ne correspond aux critères spécifiés.\n".to_owned(),
+            stderr: String::new(),
+        };
+        let runner = FakeFirewallCommandRunner::with_results(vec![
+            Ok(french_miss.clone()),
+            Ok(FirewallCommandOutput {
+                success: true,
+                stdout: "Domain Profile Settings:\r\nState ON\r\n".to_owned(),
+                stderr: String::new(),
+            }),
+            Ok(success()),
+        ]);
+
+        sync_remote_access_rule_with_runner(true, &runner, || {
+            Ok(r"C:\Apps\BiBCode\bibcode-desktop.exe".to_owned())
+        })
+        .await
+        .expect("localized miss still enables remote access");
+
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].1, remote_access_rule_show_args());
+        assert_eq!(calls[1].1, remote_access_store_probe_args());
+        assert_eq!(
+            calls[2].1,
+            remote_access_rule_add_args(r"C:\Apps\BiBCode\bibcode-desktop.exe")
+        );
+
+        let denied = FakeFirewallCommandRunner::with_results(vec![
+            Ok(french_miss),
+            Ok(failure("Access is denied.")),
+        ]);
+        let error = sync_remote_access_rule_with_runner(false, &denied, || {
+            panic!("a failed policy read must not resolve the executable")
+        })
+        .await
+        .expect_err("unreadable store must not count as absence");
+        assert!(error.contains("delete and verify"));
+        assert!(error.contains("Aucune règle"));
+        assert_eq!(denied.calls().len(), 2);
+        assert_eq!(denied.calls()[1].1, remote_access_store_probe_args());
     }
 
     #[tokio::test]
@@ -597,8 +702,10 @@ mod tests {
 
     #[tokio::test]
     async fn disabling_reports_policy_denial_instead_of_claiming_cleanup() {
-        let runner =
-            FakeFirewallCommandRunner::with_results(vec![Ok(failure("Access is denied."))]);
+        let runner = FakeFirewallCommandRunner::with_results(vec![
+            Ok(failure("Access is denied.")),
+            Ok(failure("Access is denied.")),
+        ]);
 
         let error = sync_remote_access_rule_with_runner(false, &runner, || {
             panic!("disabled cleanup must not resolve the executable")
@@ -608,7 +715,9 @@ mod tests {
 
         assert!(error.contains("delete and verify"));
         assert!(error.contains("Access is denied."));
-        assert_eq!(runner.calls().len(), 1);
+        assert_eq!(runner.calls().len(), 2);
+        assert_eq!(runner.calls()[0].1, remote_access_rule_show_args());
+        assert_eq!(runner.calls()[1].1, remote_access_store_probe_args());
     }
 
     #[tokio::test]
@@ -668,8 +777,10 @@ mod tests {
 
     #[tokio::test]
     async fn worker_does_not_add_after_failed_delete_verification() {
-        let runner =
-            FakeFirewallCommandRunner::with_results(vec![Ok(failure("rule is still present"))]);
+        let runner = FakeFirewallCommandRunner::with_results(vec![
+            Ok(failure("rule is still present")),
+            Ok(failure("Access is denied.")),
+        ]);
         let worker = FirewallWorker::start(runner.clone());
 
         let error = worker
@@ -683,8 +794,9 @@ mod tests {
 
         assert!(error.contains("delete and verify"));
         assert!(error.contains("rule is still present"));
-        assert_eq!(runner.calls().len(), 1);
-        assert_eq!(runner.calls()[0].0, "netsh");
+        assert_eq!(runner.calls().len(), 2);
+        assert_eq!(runner.calls()[0].1, remote_access_rule_show_args());
+        assert_eq!(runner.calls()[1].1, remote_access_store_probe_args());
     }
 
     #[derive(Clone)]
