@@ -22,17 +22,18 @@ names another absolute path. The profiler directory is
 `<data root>/userdata/profiler/`, or `<data root>/dev/profiler/` for a server
 started with a dev URL (`vp dev`; read it with `--dev-url`):
 
-| File                   | Holds                                                                                              |
-| ---------------------- | -------------------------------------------------------------------------------------------------- |
-| `events-NNNNNN.ndjson` | Events, one JSON object per line. Files rotate at 10 MiB; a torn last line is skipped.             |
-| `findings.ndjson`      | One line per finding state change; the last line for an `id` wins.                                 |
-| `session.json`         | The clean-shutdown sentinel `{ state, pid, bootId, exe, version, startedAt, oomKillBaseline }`.    |
-| `capabilities.json`    | `nativeDumps` and `osCrashRecords`: `available`, `unavailable` or `disabled`.                      |
-| `crashes/<id>.dmp`     | Minidumps. They hold raw process memory, prompts and tokens included, and never leave the machine. |
-| `crashes/<id>.json`    | [Crash sidecars](#crash-sidecars).                                                                 |
+| File                   | Holds                                                                                                                                                                |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `events-NNNNNN.ndjson` | Events, one JSON object per line. Files rotate at 10 MiB; a torn last line is skipped.                                                                               |
+| `findings.ndjson`      | One line per finding state change; the last line for an `id` wins.                                                                                                   |
+| `session.json`         | The clean-shutdown sentinel `{ state, pid, bootId, exe, version, startedAt, oomKillBaseline }`. `state` is `running`, `stopping` once shutdown begins, then `clean`. |
+| `capabilities.json`    | `nativeDumps` and `osCrashRecords`: `available`, `unavailable` or `disabled`.                                                                                        |
+| `crashes/<id>.dmp`     | Minidumps. They hold raw process memory, prompts and tokens included, and never leave the machine.                                                                   |
+| `crashes/<id>.json`    | [Crash sidecars](#crash-sidecars).                                                                                                                                   |
 
 Retention is 7 days or 256 MB per data root, dumps included, and at most 20
-dumps. The persisted `enableProfiler` setting sits in the `settings.json` beside
+dumps. Old events go before any dump: dumps leave only after 7 days or when they
+alone pass 128 MB, oldest first. The persisted `enableProfiler` setting sits in the `settings.json` beside
 the profiler directory.
 
 ## Envelope
@@ -66,8 +67,11 @@ up to 128 descendants.
 
 - `procs[]`, each with:
   - `pid`;
-  - `kind`: `server` (the profiler's own process), `provider`, `terminal`,
-    `helper` (provider app-server helpers), `webview`, `git` or `other`;
+  - `kind`: `server` (the profiler's own process) or `desktop-host` (the
+    desktop app running the profiler for its in-process server),
+    `provider:<driver>` (such as `provider:codex`; `provider` from older
+    builds), `terminal`, `helper` (provider app-server helpers and the crash
+    monitor), `webview`, `git` or `other`;
   - `label`: the executable name;
   - `metric`: `private` (Linux `RssAnon + VmSwap`, Windows `PrivateUsage`,
     macOS `phys_footprint`) or `rss` where private memory cannot be read;

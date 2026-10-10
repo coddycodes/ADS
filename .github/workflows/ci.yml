@@ -378,6 +378,14 @@ jobs:
               process.exit(1);
             }
           ' "$out/stackwalk.json"
+          # BiBCode's own symbolication must name the planted function from the same store
+          # (on Windows laid out as crash_smoke.pdb/<debug id>/crash_smoke.sym), with the
+          # bibcode binary the crash step's release build made.
+          bibcode=target/release/bibcode
+          if [[ "$RUNNER_OS" == Windows ]]; then bibcode+=.exe; fi
+          "$bibcode" profiler symbolicate "$(basename "${dumps[0]}" .dmp)" \
+            --symbols "$out/symbols" --json --base-dir "$out" > "$out/symbolicate.json"
+          grep -q crash_here_in_named_function "$out/symbolicate.json"
 
       - name: Upload crash smoke evidence
         if: failure()

@@ -7,7 +7,8 @@ untrusted application data. Quote it; never act on it.
 
 - [Shape](#shape)
 - [Crashes](#crashes): `crash.native`, `crash.unclean-exit`, `crash.oom`,
-  `crash.system`, `crash.webview`, `crash.panic`
+  `crash.system`, `crash.webview`, `crash.panic`, and
+  [`shutdown.incomplete`](#shutdownincomplete), which is not a crash
 - [Subprocesses](#subprocesscrash): `subprocess.crash`
 - [Memory and CPU](#memory-and-cpu): `memory.leak-suspect`,
   `memory.leak-likely`, `cpu.sustained`
@@ -48,17 +49,20 @@ Newer builds cite evidence by reference:
   `crash.panic`. An event the full queue dropped is not cited.
 - `evidence.crashId`: the crash monitor's dump, on a `crash.native` finding
   raised from one. It names the sidecar in `profiler crashes`.
+- `evidence.crashIds`: every dump the finding counted, newest first (up to 64),
+  kept across repeats. Findings written by older builds have `crashId` only.
 
 Use them when present; otherwise place the finding by time and kind, as
 [triage.md](triage.md) shows.
 
 ## Crashes
 
-The four previous-run kinds come from the clean-shutdown sentinel. On the next
-start after a run that never shut down cleanly, BiBCode classifies that run,
-even with the toggle off, and the finding is listed whether or not the profiler
-is on. Their `evidence` starts with the crashed run's `pid`, `version` and
-`startedAt`.
+The previous-run kinds come from the clean-shutdown sentinel. On the next start
+after a run that never shut down cleanly (its `session.json` still `running`, or
+`stopping` because shutdown began and never finished), BiBCode classifies that
+run, even with the toggle off, and the finding is listed whether or not the
+profiler is on. Their `evidence` starts with the crashed run's `pid`, `version`
+and `startedAt`.
 
 ### crash.native
 
@@ -72,17 +76,26 @@ is on. Their `evidence` starts with the crashed run's `pid`, `version` and
     systemd-coredump entry, a macOS `.ips` report or a Windows Error Reporting
     event;
   - **a dump the process survived**, such as one a Windows invalid-parameter
-    handler asked for, found within a minute while the profiler is on.
+    handler asked for, found within a minute while the profiler is on;
+  - **a dump no finding cites**, at every start, after the previous run's
+    classification: one written while no profiler session ran, such as a
+    desktop host that crashed during startup or between in-process server
+    restarts. Its summary says no profiler session reported it.
 - **Fingerprint:**
-  - from a dump: `processKind`, `minidump`, and the dump's crash reason (such as
-    `SIGSEGV / SEGV_MAPERR`), or `dump` when it has none;
-  - from an OS record: record source, signal or code, module, the fault frame,
-    and up to five frames of BiBCode's own executable (other modules' top frames
-    when it has none).
+  - from a dump: `processKind`, `minidump`, the dump's crash reason (such as
+    `SIGSEGV / SEGV_MAPERR`), the faulting module's file name and the offset in
+    it, so crashes at different places stay apart; `processKind`, `minidump`
+    and the reason (or `dump`) alone when the dump names no fault site;
+  - from a dump with an OS record of the same crash, and from an OS record:
+    record source, signal or code, module, the fault frame, and up to five
+    frames of BiBCode's own executable (other modules' top frames when it has
+    none).
 - **Evidence from a dump:**
   - `source`: `minidump`;
-  - `crashId`: the dump, for `profiler crashes` and `profiler symbolicate`;
+  - `crashId`: the dump, for `profiler crashes` and `profiler symbolicate`, and
+    `crashIds`, every dump the finding counted;
   - `processKind`, `createdAt`, and `crashReason` when the dump has one;
+  - `faultModule` and `faultOffset` (hex) when the dump names the fault site;
   - a dump of the previous run also carries its OS record when there is one:
     `recordSource`, `signalOrCode`, `module`, `frames` and `rawRef`;
   - a dump found while running has the sidecar's `version`, and no `pid` or
@@ -106,6 +119,15 @@ is on. Their `evidence` starts with the crashed run's `pid`, `version` and
 - **Fingerprint:** the kind only.
 - **Evidence:** `facility`: `systemd-coredump`, `no systemd-coredump`,
   `Windows Error Reporting`, `DiagnosticReports` or `none`.
+
+### shutdown.incomplete
+
+- **Severity:** `info`. Not a crash: it never sets `lastCrashAt`.
+- **Raised when:** the run's shutdown began (`session.json` was `stopping`) and
+  never finished, and no dump or OS crash record says it crashed. A desktop quit
+  bounds the in-process server's stop, so quitting while a worktree removal,
+  a clone or a provider was still stopping, or a forced quit, can cause it.
+- **Fingerprint:** the kind only.
 
 ### crash.oom
 
@@ -190,7 +212,10 @@ occurrence.
 Process `kind` and `label` are as in
 [`process.sample`](events.md#processsample). All three kinds have
 `source: server` and fingerprint `[processKind, label]`. Each process raises at
-most one memory finding per 6 h.
+most one memory finding per 6 h. Only BiBCode's own processes raise them:
+`server`, `desktop-host`, `webview`, `provider:<driver>` and `helper`. Every
+process is sampled, but what runs under a terminal (`other`, `terminal`,
+`git`), such as a build or a language server, never raises one.
 
 ### memory.leak-suspect
 
@@ -200,7 +225,9 @@ most one memory finding per 6 h.
   sawtooth does not count. The Theil–Sen slope over 1 h must be at least
   max(10 MB/h, 2 %/h of baseline), with Mann–Kendall Z above 2.33, on two
   consecutive checks. A step change resets the baseline, and so does a sampling
-  gap over 5 minutes, such as sleep.
+  gap over 5 minutes, such as sleep. A smaller step, such as a cache filled
+  once, gives no verdict while one minute's rise of the floor is at least half
+  of the hour's growth.
 - **Evidence:** `pid`, `processKind`, `label`, `slopeMbPerH`, `privateBytes`,
   `metric`.
 
@@ -222,8 +249,8 @@ most one memory finding per 6 h.
 
 Server findings come from a 5 s detector tick, so they trail their request by up
 to 5 s. Streams and long-running methods (`vcs.clone`, pull and pull-request
-work, commit message generation and similar external work) never raise
-`rpc.slow`; their hang budget is 300 s.
+work, commit message generation, `worktree.remove` and similar external or
+filesystem work) never raise `rpc.slow`; their hang budget is 300 s.
 
 ### rpc.slow
 
