@@ -539,7 +539,8 @@ fn hydrate_posix_path(platform: PosixPlatform) -> PathHydrationReport {
     // SAFETY: `hydrate_process_path` is the first operation in `run`, before
     // Tauri creates worker threads. The shell child and stdout reader are fully
     // joined before this mutation, so no other thread in this process can read
-    // or write the environment concurrently.
+    // or write the environment concurrently. (On macOS the crash hook attached in
+    // `main` owns an exception-port thread, which never touches the environment.)
     unsafe {
         std::env::set_var("PATH", &prepared.value);
     }

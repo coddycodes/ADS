@@ -27,6 +27,7 @@ use crate::{
         DesktopUiProcessObserver, DiagnosticsMonitor, NativeProcessSampler, NativeResourceSampler,
         ProcessAttributionRegistry, TraceDiagnosticsStore, bound_diagnostic_string,
         profiler::{
+            crash::MonitorDetector,
             latency::LatencyDetector,
             profiler_dir,
             runtime::{Detector, ProfilerRuntime},
@@ -143,6 +144,12 @@ impl ProductionRuntime {
         self.provider_runtime.attach_connect_mcp(service).await;
     }
 
+    /// The committed `enableProfiler`, which drives a desktop host's crash monitor.
+    #[must_use]
+    pub fn profiler_enabled_signal(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.server_control.profiler_enabled_signal()
+    }
+
     #[must_use]
     pub fn managed_endpoint_runtime(&self) -> ManagedEndpointRuntime {
         self.managed_endpoint.clone()
@@ -224,10 +231,17 @@ impl ProductionRuntime {
         // Starting replays and compacts the findings file, so it runs off the async workers.
         let profiler_state_dir = config.state_dir();
         let profiler_enabled = control.profiler_enabled_signal();
-        let profiler_detectors: Vec<Box<dyn Detector>> = vec![
+        let mut profiler_detectors: Vec<Box<dyn Detector>> = vec![
             Box::new(SamplerDetector::new(process_attribution.clone())),
             Box::new(LatencyDetector),
         ];
+        // One crash hook per process: a desktop host runs the monitor for the server inside it.
+        if process_tree_cleanup == ProcessTreeCleanup::StandaloneServer {
+            profiler_detectors.push(Box::new(MonitorDetector::new(
+                profiler_dir(&profiler_state_dir),
+                "server",
+            )));
+        }
         let profiler = Arc::new(
             tokio::task::spawn_blocking(move || {
                 ProfilerRuntime::start(&profiler_state_dir, profiler_enabled, profiler_detectors)

@@ -13,7 +13,7 @@ use std::{
 use bibcode_server::diagnostics::{
     ProcessAttributionRegistry,
     profiler::{
-        self, client,
+        self, client, crash,
         findings::{FindingInput, Severity},
         latency,
         runtime::{Detector, ProfilerRuntime},
@@ -21,6 +21,7 @@ use bibcode_server::diagnostics::{
     },
 };
 use futures_util::FutureExt;
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
@@ -74,6 +75,9 @@ fn crash_finding() -> FindingInput {
 #[tokio::test]
 async fn profiler_runtime_scenarios_share_the_process_global_handle_in_sequence() {
     rapid_toggles_never_run_two_detector_sets().await;
+    rapid_toggles_never_leave_a_crash_monitor_behind().await;
+    #[cfg(unix)]
+    a_stuck_runtime_still_replaces_a_hung_monitor().await;
     status_reports_findings_and_disk_use().await;
     a_second_runtime_on_the_same_directory_is_degraded().await;
     a_dropped_runtime_stops_its_detectors_before_releasing_the_directory().await;
@@ -120,6 +124,128 @@ async fn rapid_toggles_never_run_two_detector_sets() {
     assert_eq!(runtime.status()["enabled"], false);
     assert!(runtime.status()["recordingSince"].is_null());
     runtime.shutdown().await;
+}
+
+/// Review Focus 2: off, on, off in quick succession ends with no monitor child. The test
+/// binary cannot be the monitor, so the detector re-executes `bibcode`, whose `main`
+/// dispatches `--crash-monitor` first, as every BiBCode binary does.
+async fn rapid_toggles_never_leave_a_crash_monitor_behind() {
+    let dir = tempfile::tempdir().unwrap();
+    let profiler_dir = profiler::profiler_dir(dir.path());
+    // Left readable by others, as an older build or a umask might leave it.
+    std::fs::create_dir_all(profiler_dir.join("crashes")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let readable = std::fs::Permissions::from_mode(0o755);
+        std::fs::set_permissions(profiler_dir.join("crashes"), readable).unwrap();
+    }
+    let (tx, rx) = watch::channel(true);
+    let detector = crash::MonitorDetector::new(profiler_dir.clone(), "server")
+        .with_executable(env!("CARGO_BIN_EXE_bibcode").into());
+    let runtime = ProfilerRuntime::start(dir.path(), rx, vec![Box::new(detector)]);
+    let disabled = cfg!(all(windows, target_arch = "aarch64"));
+    let expected = if disabled { "disabled" } else { "available" };
+    wait_until("the monitor is connected", || {
+        native_dumps(&profiler_dir) == expected
+            && monitor_children().len() == usize::from(!disabled)
+    })
+    .await;
+    #[cfg(unix)]
+    if !disabled {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(profiler_dir.join("crashes"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o700, "dumps hold raw process memory");
+    }
+
+    for on in [false, true, false] {
+        tx.send(on).unwrap();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    wait_until("the last flip stops the monitor", || {
+        monitor_children().is_empty()
+    })
+    .await;
+    // Nothing restarts it later.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(monitor_children().is_empty());
+    runtime.shutdown().await;
+}
+
+/// The detector must replace a monitor that stopped answering even while the runtime that
+/// started it is stuck, as it is when its only worker faulted and waits on that monitor.
+/// This test's runtime has one thread, so blocking it stands in for that fault.
+#[cfg(unix)]
+async fn a_stuck_runtime_still_replaces_a_hung_monitor() {
+    let dir = tempfile::tempdir().unwrap();
+    let profiler_dir = profiler::profiler_dir(dir.path());
+    let (_tx, rx) = watch::channel(true);
+    let detector = crash::MonitorDetector::new(profiler_dir.clone(), "server")
+        .with_executable(env!("CARGO_BIN_EXE_bibcode").into());
+    let runtime = ProfilerRuntime::start(dir.path(), rx, vec![Box::new(detector)]);
+    wait_until("the monitor is connected", || {
+        native_dumps(&profiler_dir) == "available" && monitor_children().len() == 1
+    })
+    .await;
+    let hung = monitor_children()[0];
+    // SAFETY: a plain signal to this test's own child.
+    assert_eq!(
+        unsafe { libc::kill(hung.as_u32() as libc::pid_t, libc::SIGSTOP) },
+        0
+    );
+    // The next heartbeat is at most 10 s away and gives up after 5 s.
+    std::thread::sleep(Duration::from_secs(20));
+    let children = monitor_children();
+    // SAFETY: as above; a stopped monitor cannot notice anything by itself.
+    unsafe { libc::kill(hung.as_u32() as libc::pid_t, libc::SIGKILL) };
+    assert!(
+        children.len() == 1 && children[0] != hung,
+        "the stopped monitor was not replaced: {children:?} (stopped: {hung})"
+    );
+    runtime.shutdown().await;
+}
+
+async fn wait_until(what: &str, condition: impl Fn() -> bool) {
+    for _ in 0..100 {
+        if condition() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("timed out waiting until {what}");
+}
+
+fn native_dumps(profiler_dir: &std::path::Path) -> String {
+    std::fs::read(profiler_dir.join("capabilities.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|capabilities| capabilities["nativeDumps"].as_str().map(str::to_owned))
+        .unwrap_or_default()
+}
+
+/// Live `--crash-monitor` children of this process.
+fn monitor_children() -> Vec<Pid> {
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing()
+            .without_tasks()
+            .with_cmd(UpdateKind::Always),
+    );
+    let this = Pid::from_u32(std::process::id());
+    system
+        .processes()
+        .values()
+        .filter(|process| {
+            process.parent() == Some(this)
+                && process.cmd().iter().any(|arg| arg == "--crash-monitor")
+        })
+        .map(sysinfo::Process::pid)
+        .collect()
 }
 
 async fn status_reports_findings_and_disk_use() {

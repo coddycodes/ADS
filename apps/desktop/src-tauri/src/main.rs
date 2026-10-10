@@ -1,6 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    // The crash monitor is this binary re-executed: no Tauri, no window, and the
+    // single-instance plugin never sees it.
+    if let Some(code) = bibcode_server::diagnostics::profiler::crash::dispatch_crash_monitor() {
+        std::process::exit(code);
+    }
+    // Once, before WebKit installs its signal handlers, so they chain real crashes down to it.
+    bibcode_server::diagnostics::profiler::crash::attach();
     // The open-url shim, or the Windows `bibcode-open-url.exe` alias: no Tauri, no window,
     // and the single-instance plugin never sees it.
     if let Some(url) = bibcode_server::open_url::current_open_url_invocation() {

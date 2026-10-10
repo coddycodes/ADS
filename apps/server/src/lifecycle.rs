@@ -708,6 +708,15 @@ impl ServerHandle {
         self.update_maintenance.clone()
     }
 
+    /// The production runtime's committed `enableProfiler`, which a desktop host follows to
+    /// run the crash monitor for itself and this in-process server. `None` without one.
+    #[must_use]
+    pub fn profiler_enabled_signal(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        self._production_runtime
+            .as_ref()
+            .map(|runtime| runtime.profiler_enabled_signal())
+    }
+
     pub fn shutdown(&self) {
         self.shutdown.cancel();
     }
