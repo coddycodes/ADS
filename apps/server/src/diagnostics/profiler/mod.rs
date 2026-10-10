@@ -1,3 +1,4 @@
+pub mod client;
 pub mod event;
 pub mod exits;
 pub mod findings;
