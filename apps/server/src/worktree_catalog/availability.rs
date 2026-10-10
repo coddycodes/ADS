@@ -157,6 +157,10 @@ struct RegistryState {
     next_admission_id: u64,
     next_removal_id: u64,
     reconciliation_active: bool,
+    /// Ages added to guards by `backdate_for_test`, so a test needs no clock arithmetic that a
+    /// freshly booted host could not do.
+    #[cfg(test)]
+    age_offsets: HashMap<String, Duration>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -410,11 +414,30 @@ impl WorkspaceAvailabilityRegistry {
 
     /// Every guarded workspace and how long it has held its state. Changes nothing.
     pub(crate) fn guarded(&self) -> Vec<(WorkspaceUnavailable, Duration)> {
-        lock(&self.inner)
+        let state = lock(&self.inner);
+        state
             .entries
             .values()
-            .map(|entry| (unavailable(entry), entry.entered_at.elapsed()))
+            .map(|entry| {
+                let held = entry.entered_at.elapsed();
+                #[cfg(test)]
+                let held = held
+                    + state
+                        .age_offsets
+                        .get(&entry.thread_id)
+                        .copied()
+                        .unwrap_or_default();
+                (unavailable(entry), held)
+            })
             .collect()
+    }
+
+    /// Ages a guard by `by`, so a test can make it look long held.
+    #[cfg(test)]
+    pub(crate) fn backdate_for_test(&self, thread_id: &str, by: Duration) {
+        lock(&self.inner)
+            .age_offsets
+            .insert(thread_id.to_owned(), by);
     }
 
     pub async fn guard_thread(&self, thread_id: &str) -> Result<(), WorkspaceUnavailable> {

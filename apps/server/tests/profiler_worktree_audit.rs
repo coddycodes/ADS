@@ -15,8 +15,9 @@ use bibcode_server::{
         ProcessAttributionRegistry,
         profiler::{
             self,
+            findings::fingerprint,
             runtime::ProfilerRuntime,
-            worktree_audit::{AuditSources, WorktreeAuditDetector},
+            worktree_audit::{AuditSources, WorktreeAuditDetector, scan_once},
         },
     },
     git::GitRepository,
@@ -45,15 +46,16 @@ type TestSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 const RPC_DEADLINE: Duration = Duration::from_secs(60);
 
 #[tokio::test]
-async fn the_scan_flags_an_orphan_directory_and_removals_report_their_outcome() {
+async fn the_audit_and_removal_outcomes_reach_the_profiler() {
     let mut fixture = Fixture::new().await;
-    // Managed worktrees of `main` live in `<root>/.bibcode-worktrees/main/<ref>`.
-    let orphan = fixture.root.path().join(".bibcode-worktrees/main/orphan");
+    let orphan = fixture.managed.join("orphan");
     fs::create_dir_all(&orphan).expect("orphan directory");
+
+    // As in production: the detector starts before the server binds the catalog, and scans
+    // as soon as it is bound rather than ten minutes later.
     let sources = Arc::new(OnceLock::new());
     let state = tempfile::tempdir().expect("profiler state");
     let (_enabled, rx) = watch::channel(true);
-    // As in production: the detector starts before the server binds the catalog.
     let runtime = ProfilerRuntime::start(
         state.path(),
         rx,
@@ -63,38 +65,45 @@ async fn the_scan_flags_an_orphan_directory_and_removals_report_their_outcome() 
         ))],
     );
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert!(
-        sources
-            .set(AuditSources {
-                catalog: fixture.catalog.clone(),
-                repositories: fixture.repositories.clone(),
-            })
-            .is_ok()
-    );
-
-    // The scan runs as soon as its sources are bound, not ten minutes later.
+    assert!(sources.set(fixture.sources()).is_ok());
     let orphan_finding = wait_for_finding(&runtime, "worktree.orphan-dir").await;
     assert_eq!(orphan_finding["severity"], "warn");
-    assert!(
-        !finding_kinds(&runtime).contains(&"worktree.registration-mismatch".to_owned()),
-        "a worktree outside the managed directory is the user's own"
-    );
     assert!(orphan.exists(), "the scan is read-only");
+    let events = shutdown_and_read_events(runtime, state.path()).await;
+    assert!(
+        events
+            .iter()
+            .any(|event| event["kind"] == "worktree.audit" && event["compared"] == true)
+    );
 
-    let thread_id = adopt_external(&mut fixture).await;
-    fs::write(fixture.external.join("dirty.txt"), "dirty\n").expect("dirty file");
+    // From here each scan runs on demand, so every check sees exactly one scan's result.
+    let state = tempfile::tempdir().expect("profiler state");
+    let (_enabled, rx) = watch::channel(true);
+    let runtime = ProfilerRuntime::start(state.path(), rx, vec![]);
+    timeout(RPC_DEADLINE, async {
+        while runtime.status()["enabled"] != true {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the profiler turns on");
+    let sources = fixture.sources();
+    let processes = ProcessAttributionRegistry::new();
+
+    let thread_id = adopt(&mut fixture).await;
+    fs::write(fixture.worktree.join("dirty.txt"), "dirty\n").expect("dirty file");
     remove(&mut fixture, &thread_id, "remove-dirty", false, "2").await;
     assert_eq!(
         failure_reason(fixture.socket(), "3").await,
         "dirty-confirmation-required"
     );
     let failed = wait_for_finding(&runtime, "worktree.removal-failed").await;
-    assert_eq!(failed["severity"], "error");
+    assert_eq!(failed["severity"], "warn");
 
     // Work admitted in the worktree that does not drain within the removal's bound.
     let admitted = fixture
         .availability
-        .acquire_admission(&thread_id, [fixture.external.as_path()])
+        .acquire_admission(&thread_id, [fixture.worktree.as_path()])
         .await
         .expect("admission");
     remove(&mut fixture, &thread_id, "remove-undrained", true, "4").await;
@@ -103,12 +112,17 @@ async fn the_scan_flags_an_orphan_directory_and_removals_report_their_outcome() 
         "session-running"
     );
     drop(admitted);
+    assert_eq!(
+        removal_failures(&runtime),
+        2,
+        "a drain timeout is its own finding"
+    );
 
-    // A caller that stops waiting once the server-owned operation holds the worktree: the
-    // operation still records its outcome.
+    // A client that interrupts the removal once the server-owned operation is waiting for
+    // admitted work to drain: the operation records the outcome, as an event only.
     let admitted = fixture
         .availability
-        .acquire_admission(&thread_id, [fixture.external.as_path()])
+        .acquire_admission(&thread_id, [fixture.worktree.as_path()])
         .await
         .expect("admission");
     remove(&mut fixture, &thread_id, "remove-interrupted", true, "6").await;
@@ -119,6 +133,8 @@ async fn the_scan_flags_an_orphan_directory_and_removals_report_their_outcome() 
     })
     .await
     .expect("the removal holds its removing guard");
+    // Past the plan, which takes milliseconds, and into the drain, which takes 5 s.
+    tokio::time::sleep(Duration::from_secs(1)).await;
     send(
         fixture.socket(),
         json!({ "_tag": "Interrupt", "requestId": "7" }),
@@ -130,12 +146,12 @@ async fn the_scan_flags_an_orphan_directory_and_removals_report_their_outcome() 
     ));
     drop(admitted);
     timeout(RPC_DEADLINE, async {
-        while removal_failures(&runtime) < 3 {
-            tokio::time::sleep(Duration::from_millis(20)).await;
+        while fixture.availability.guard_thread(&thread_id).await.is_err() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
     .await
-    .expect("the interrupted removal records its outcome");
+    .expect("the interrupted removal ends");
 
     request(
         fixture.socket(),
@@ -147,9 +163,69 @@ async fn the_scan_flags_an_orphan_directory_and_removals_report_their_outcome() 
     success_value(fixture.socket(), "8").await;
     assert_eq!(
         removal_failures(&runtime),
-        3,
-        "each failure reason, a drain timeout included, is its own finding"
+        2,
+        "an interrupted removal is not a finding"
     );
+    // An exact retry replays the accepted result: not a new outcome.
+    request(
+        fixture.socket(),
+        "9",
+        "worktree.removeFromBibCode",
+        json!({"commandId":"detach","projectId":"project-1","threadId":thread_id}),
+    )
+    .await;
+    success_value(fixture.socket(), "9").await;
+
+    // The detached worktree stays registered and on disk: the user's own, not a leftover.
+    scan_once(&sources, &processes).await;
+    assert!(
+        !finding_kinds(&runtime).contains(&"worktree.registration-mismatch".to_owned()),
+        "{:?}",
+        finding_kinds(&runtime)
+    );
+
+    // A registration whose directory is gone is a leftover.
+    let leftover = fixture.managed.join("leftover");
+    git(
+        &fixture.git_config,
+        &fixture.main,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature/leftover",
+            &leftover.to_string_lossy(),
+        ],
+    );
+    fs::remove_dir_all(&leftover).expect("remove the leftover's directory");
+    scan_once(&sources, &processes).await;
+    assert_eq!(
+        finding(&runtime, "worktree.registration-mismatch")["fingerprint"],
+        fingerprint(
+            "worktree.registration-mismatch",
+            &["unowned-registration".to_owned()]
+        )
+    );
+
+    // An owned process whose working directory was removed under it.
+    #[cfg(target_os = "linux")]
+    {
+        let doomed = fixture.managed.join("doomed");
+        fs::create_dir(&doomed).expect("doomed directory");
+        let mut child = Command::new("sleep")
+            .arg("60")
+            .current_dir(&doomed)
+            .spawn()
+            .expect("child process");
+        fs::remove_dir(&doomed).expect("remove the child's working directory");
+        scan_once(&sources, &processes).await;
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(
+            finding(&runtime, "worktree.held-open")["fingerprint"],
+            fingerprint("worktree.held-open", &["removed".to_owned()])
+        );
+    }
 
     let events = shutdown_and_read_events(runtime, state.path()).await;
     let removals: Vec<_> = events
@@ -162,36 +238,55 @@ async fn the_scan_flags_an_orphan_directory_and_removals_report_their_outcome() 
                 event["ok"].as_bool().unwrap_or_default(),
                 event["reason"].as_str(),
                 event["drainTimedOut"].as_bool().unwrap_or_default(),
+                event["cancelled"].as_bool().unwrap_or_default(),
             )
         })
         .collect();
-    let [dirty, undrained, interrupted, detached] = removals.as_slice() else {
-        panic!("four removal events: {removals:?}");
-    };
     assert_eq!(
-        *dirty,
+        removals.len(),
+        4,
+        "the replay is not recorded: {removals:?}"
+    );
+    for expected in [
         (
             "delete-git-worktree",
             false,
             Some("dirty-confirmation-required"),
-            false
-        )
+            false,
+            false,
+        ),
+        (
+            "delete-git-worktree",
+            false,
+            Some("session-running"),
+            true,
+            false,
+        ),
+        ("detach-only", true, None, false, false),
+    ] {
+        assert!(removals.contains(&expected), "{expected:?} in {removals:?}");
+    }
+    assert!(
+        removals
+            .iter()
+            .any(|&(mode, ok, _, _, cancelled)| mode == "delete-git-worktree" && !ok && cancelled),
+        "{removals:?}"
     );
-    assert_eq!(
-        *undrained,
-        ("delete-git-worktree", false, Some("session-running"), true)
-    );
-    assert_eq!(
-        (interrupted.0, interrupted.1),
-        ("delete-git-worktree", false)
-    );
-    assert_eq!(*detached, ("detach-only", true, None, false));
-    let scan = events
+    let scans: Vec<_> = events
         .iter()
-        .find(|event| event["kind"] == "worktree.audit")
-        .expect("a worktree.audit event");
-    assert!(scan["findings"].as_u64() >= Some(1));
+        .filter(|event| event["kind"] == "worktree.audit")
+        .collect();
+    assert!(!scans.is_empty());
+    assert!(scans.iter().all(|scan| scan["compared"] == true));
     fixture.shutdown().await;
+}
+
+fn finding(runtime: &ProfilerRuntime, kind: &str) -> Value {
+    runtime.status()["findings"]
+        .as_array()
+        .and_then(|findings| findings.iter().find(|finding| finding["kind"] == kind))
+        .cloned()
+        .unwrap_or_else(|| panic!("no {kind} finding: {:?}", finding_kinds(runtime)))
 }
 
 async fn wait_for_finding(runtime: &ProfilerRuntime, kind: &str) -> Value {
@@ -272,7 +367,7 @@ async fn remove(
     .await;
 }
 
-async fn adopt_external(fixture: &mut Fixture) -> String {
+async fn adopt(fixture: &mut Fixture) -> String {
     request(
         fixture.socket(),
         "0",
@@ -293,7 +388,7 @@ async fn adopt_external(fixture: &mut Fixture) -> String {
         "1",
         "worktree.adopt",
         json!({
-            "commandId":"adopt-external",
+            "commandId":"adopt-worktree",
             "projectId":"project-1",
             "worktreeKey":candidate["worktreeKey"],
             "expectedGeneration":snapshot["generation"],
@@ -311,11 +406,15 @@ async fn adopt_external(fixture: &mut Fixture) -> String {
         .to_owned()
 }
 
-/// A repository with one unadopted worktree, its project, the catalog and the removal RPC.
+/// A repository with one unadopted worktree where BiBCode creates its own, its project, the
+/// catalog and the removal RPC.
 struct Fixture {
-    _git_config: IsolatedGitConfig,
-    root: TempDir,
-    external: PathBuf,
+    git_config: IsolatedGitConfig,
+    _root: TempDir,
+    main: PathBuf,
+    /// Where BiBCode creates the repository's worktrees: `<root>/.bibcode-worktrees/main`.
+    managed: PathBuf,
+    worktree: PathBuf,
     repositories: Repositories,
     catalog: WorktreeCatalogService,
     availability: WorkspaceAvailabilityRegistry,
@@ -331,7 +430,8 @@ impl Fixture {
         let git = |cwd: &Path, args: &[&str]| git(&git_config, cwd, args);
         let root = tempfile::tempdir().expect("fixture root");
         let main = root.path().join("main");
-        let external = root.path().join("external");
+        let managed = root.path().join(".bibcode-worktrees/main");
+        let worktree = managed.join("feature-external");
         fs::create_dir(&main).expect("primary directory");
         git(&main, &["init", "--initial-branch", "main"]);
         git(&main, &["config", "user.email", "audit@example.invalid"]);
@@ -346,7 +446,7 @@ impl Fixture {
                 "add",
                 "-b",
                 "feature/external",
-                &external.to_string_lossy(),
+                &worktree.to_string_lossy(),
             ],
         );
 
@@ -398,9 +498,11 @@ impl Fixture {
             .expect("WebSocket")
             .0;
         Self {
-            _git_config: git_config,
-            root,
-            external,
+            git_config,
+            _root: root,
+            main,
+            managed,
+            worktree,
             repositories,
             catalog,
             availability,
@@ -408,6 +510,13 @@ impl Fixture {
             engine,
             handle: Some(handle),
             socket: Some(socket),
+        }
+    }
+
+    fn sources(&self) -> AuditSources {
+        AuditSources {
+            catalog: self.catalog.clone(),
+            repositories: self.repositories.clone(),
         }
     }
 

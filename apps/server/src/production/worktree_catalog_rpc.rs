@@ -1838,7 +1838,9 @@ async fn remove_from_bibcode(
 ) -> RpcResult {
     let started = Instant::now();
     let input = decode::<WorktreeRemoveFromBibCodeInput>(request)?;
-    let handed_off = Arc::new(AtomicBool::new(false));
+    let trace = Arc::new(RemovalTrace::default());
+    // The token moves into the operation; a client interrupt cancels this clone too.
+    let interrupted = cancellation.clone();
     let result: RpcResult = async {
         let payload_digest = removal_payload_digest(&input)?;
         let command_claim = acquire_worktree_command_claim(
@@ -1851,41 +1853,34 @@ async fn remove_from_bibcode(
         if let Some(result) =
             replay_removal(services, &command_claim, &input.command_id, &payload_digest).await?
         {
+            trace.replayed.store(true, Ordering::Relaxed);
             return Ok(encode(result));
         }
         let operation_runtime = services.operations.clone();
         let services = services.clone();
-        let handed_off = handed_off.clone();
+        let (trace, interrupted) = (trace.clone(), interrupted.clone());
         operation_runtime
             .run(async move {
                 // Recorded here, so a caller that stops waiting does not lose the outcome.
-                handed_off.store(true, Ordering::Relaxed);
+                trace.handed_off.store(true, Ordering::Relaxed);
                 let result = remove_from_bibcode_owned(
                     &services,
                     input,
                     payload_digest,
                     command_claim,
                     cancellation,
+                    &trace,
                 )
                 .await;
-                record_removal_outcome(
-                    DETACH_ONLY,
-                    removal_reason(&result),
-                    started.elapsed(),
-                    false,
-                );
+                trace.record(DETACH_ONLY, &result, started, &interrupted);
                 result
             })
             .await
     }
     .await;
-    if !handed_off.load(Ordering::Relaxed) {
-        record_removal_outcome(
-            DETACH_ONLY,
-            removal_reason(&result),
-            started.elapsed(),
-            false,
-        );
+    // Failed before the server-owned operation started: admission, claim, or replay.
+    if !trace.handed_off.load(Ordering::Relaxed) {
+        trace.record(DETACH_ONLY, &result, started, &interrupted);
     }
     result
 }
@@ -1896,11 +1891,13 @@ async fn remove_from_bibcode_owned(
     payload_digest: String,
     command_claim: CommandAdmissionClaim,
     cancellation: CancellationToken,
+    trace: &RemovalTrace,
 ) -> RpcResult {
     let cleanup_admission = admit_removal_cleanup(services).await?;
     let cleanup_lifecycle = cleanup_admission.clone();
     let reservation = reserve_removal(services, &command_claim, &input, &payload_digest).await?;
     if let Some(result) = reservation.result {
+        trace.replayed.store(true, Ordering::Relaxed);
         return Ok(encode(result));
     }
     let project_id = input.project_id.clone();
@@ -1914,6 +1911,7 @@ async fn remove_from_bibcode_owned(
                     replay_removal(services, &command_claim, &input.command_id, &payload_digest)
                         .await?
                 {
+                    trace.replayed.store(true, Ordering::Relaxed);
                     return Ok(encode(result));
                 }
                 let (ownership, resolved) = resolve_removal_thread_with_ownership(
@@ -1996,7 +1994,9 @@ async fn remove_worktree(
     let started = Instant::now();
     let input = decode::<WorktreeRemoveInput>(request)?;
     let mode = input.mode.label();
-    let handed_off = Arc::new(AtomicBool::new(false));
+    let trace = Arc::new(RemovalTrace::default());
+    // The token moves into the operation; a client interrupt cancels this clone too.
+    let interrupted = cancellation.clone();
     let result: RpcResult = async {
         let payload_digest = removal_payload_digest(&input)?;
         let command_claim = acquire_worktree_command_claim(
@@ -2009,50 +2009,84 @@ async fn remove_worktree(
         if let Some(result) =
             replay_removal(services, &command_claim, &input.command_id, &payload_digest).await?
         {
+            trace.replayed.store(true, Ordering::Relaxed);
             return Ok(encode(result));
         }
         let operation_runtime = services.operations.clone();
         let services = services.clone();
-        let handed_off = handed_off.clone();
+        let (trace, interrupted) = (trace.clone(), interrupted.clone());
         operation_runtime
             .run(async move {
                 // Recorded here, so a caller that stops waiting does not lose the outcome.
-                handed_off.store(true, Ordering::Relaxed);
-                let drain_timed_out = AtomicBool::new(false);
+                trace.handed_off.store(true, Ordering::Relaxed);
                 let result = remove_worktree_owned(
                     &services,
                     input,
                     payload_digest,
                     command_claim,
                     cancellation,
-                    &drain_timed_out,
+                    &trace,
                 )
                 .await;
-                record_removal_outcome(
-                    mode,
-                    removal_reason(&result),
-                    started.elapsed(),
-                    drain_timed_out.load(Ordering::Relaxed),
-                );
+                trace.record(mode, &result, started, &interrupted);
                 result
             })
             .await
     }
     .await;
     // Failed before the server-owned operation started: admission, claim, or replay.
-    if !handed_off.load(Ordering::Relaxed) {
-        record_removal_outcome(mode, removal_reason(&result), started.elapsed(), false);
+    if !trace.handed_off.load(Ordering::Relaxed) {
+        trace.record(mode, &result, started, &interrupted);
     }
     result
 }
 
-/// The kebab-case `reason` of an encoded removal, operation, or catalog error.
+/// What one removal learned about its own outcome, for the profiler.
+#[derive(Default)]
+struct RemovalTrace {
+    /// The server-owned operation started, and records the outcome itself.
+    handed_off: AtomicBool,
+    /// Already-admitted work did not drain within the removal's bound.
+    drain_timed_out: AtomicBool,
+    /// The result replays an earlier accepted removal: not a new outcome.
+    replayed: AtomicBool,
+}
+
+impl RemovalTrace {
+    fn record(
+        &self,
+        mode: &str,
+        result: &RpcResult,
+        started: Instant,
+        cancellation: &CancellationToken,
+    ) {
+        if self.replayed.load(Ordering::Relaxed) {
+            return;
+        }
+        record_removal_outcome(
+            mode,
+            removal_reason(result),
+            started.elapsed(),
+            self.drain_timed_out.load(Ordering::Relaxed),
+            cancellation.is_cancelled(),
+        );
+    }
+}
+
+/// The kebab-case `reason` of an encoded removal, operation, catalog, or availability error.
+/// Anything else reads as `unknown`, so a finding's fingerprint can never carry a path.
 fn removal_reason(result: &RpcResult) -> Result<(), &str> {
     match result {
         Ok(_) => Ok(()),
         Err(error) => Err(error
             .get("reason")
             .and_then(Value::as_str)
+            .filter(|reason| {
+                !reason.is_empty()
+                    && reason.bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
+                    })
+            })
             .unwrap_or("unknown")),
     }
 }
@@ -2063,12 +2097,13 @@ async fn remove_worktree_owned(
     payload_digest: String,
     command_claim: CommandAdmissionClaim,
     cancellation: CancellationToken,
-    drain_timed_out: &AtomicBool,
+    trace: &RemovalTrace,
 ) -> RpcResult {
     let cleanup_admission = admit_removal_cleanup(services).await?;
     let cleanup_lifecycle = cleanup_admission.clone();
     let reservation = reserve_removal(services, &command_claim, &input, &payload_digest).await?;
     if let Some(result) = reservation.result {
+        trace.replayed.store(true, Ordering::Relaxed);
         return Ok(encode(result));
     }
     let project_id = input.project_id.clone();
@@ -2081,6 +2116,7 @@ async fn remove_worktree_owned(
             if let Some(result) =
                 replay_removal(services, &command_claim, &input.command_id, &payload_digest).await?
             {
+                trace.replayed.store(true, Ordering::Relaxed);
                 return Ok(encode(result));
             }
             let (ownership, resolved) = resolve_removal_thread_with_ownership(
@@ -2144,7 +2180,7 @@ async fn remove_worktree_owned(
                 )
                 .await
                 .map_err(|_| {
-                    drain_timed_out.store(true, Ordering::Relaxed);
+                    trace.drain_timed_out.store(true, Ordering::Relaxed);
                     encode(removal_session_running())
                 })?;
                 let request = WorktreeRemovalQuiesceRequest::repository(
@@ -3586,10 +3622,33 @@ mod operation_runtime_tests {
 
     use super::{
         CatalogMutationOutcome, WorktreeCatalogOperationRuntime, WorktreeCatalogRefreshReason,
+        removal_reason,
     };
     use crate::worktree_catalog::CatalogRefreshTrigger;
 
     const EXPECTED_MAX_IN_FLIGHT_WORKTREE_OPERATIONS: usize = 64;
+
+    #[test]
+    fn removal_reasons_are_kebab_case_tokens_or_unknown() {
+        assert_eq!(removal_reason(&Ok(json!({}))), Ok(()));
+        assert_eq!(
+            removal_reason(&Err(json!({"reason":"git-failed"}))),
+            Err("git-failed")
+        );
+        for error in [
+            json!({}),
+            json!({"reason":"/home/user/repo"}),
+            json!({"reason":""}),
+            json!({"reason":"Stale Plan"}),
+            json!({"reason":7}),
+        ] {
+            assert_eq!(
+                removal_reason(&Err(error.clone())),
+                Err("unknown"),
+                "{error}"
+            );
+        }
+    }
 
     #[test]
     fn refresh_reason_defaults_to_explicit_and_maps_only_focus_to_focus() {

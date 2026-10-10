@@ -1,15 +1,50 @@
-use crate::diagnostics::redact_sensitive_text;
+use std::{path::Path, sync::OnceLock};
+
+use crate::{
+    diagnostics::redact_sensitive_text,
+    git::{HostPathPlatform, host_path_platform, normalize_worktree_path_key},
+};
 
 pub(super) const MESSAGE_MAX_BYTES: usize = 2048;
 
-/// Replaces the user's home directory with `~` and applies secret redaction.
+/// Replaces the user's home directory with `~` and applies secret redaction. The home
+/// directory is replaced as `$HOME` spells it and as the filesystem resolves it, so a
+/// symlinked home (`/home/u` to `/data/u`) cannot leak the user name through resolved paths.
 pub fn redact_path(value: &str) -> String {
-    let home = dirs::home_dir().map(|h| h.to_string_lossy().into_owned());
-    let replaced = match home.as_deref() {
-        Some(home) if !home.is_empty() => value.replace(home, "~"),
-        _ => value.to_owned(),
-    };
-    redact_message(&replaced)
+    static HOMES: OnceLock<Vec<String>> = OnceLock::new();
+    let homes = HOMES.get_or_init(|| {
+        dirs::home_dir().map_or_else(Vec::new, |home| spellings(&home, host_path_platform()))
+    });
+    redact_message(&replace_homes(value, homes))
+}
+
+/// `home` as given and as resolved, each also as a worktree identity key (on Windows,
+/// uppercase with forward slashes: how the availability registry spells its paths), longest
+/// first, so a shorter spelling never cuts into a longer one that contains it.
+fn spellings(home: &Path, platform: HostPathPlatform) -> Vec<String> {
+    let mut paths = vec![home.to_path_buf()];
+    if let Ok(resolved) = std::fs::canonicalize(home) {
+        paths.push(resolved);
+    }
+    let mut spellings: Vec<String> = paths
+        .iter()
+        .flat_map(|path| {
+            [
+                path.to_string_lossy().into_owned(),
+                normalize_worktree_path_key(path, platform),
+            ]
+        })
+        .filter(|spelling| !spelling.is_empty())
+        .collect();
+    spellings.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    spellings.dedup();
+    spellings
+}
+
+fn replace_homes(value: &str, homes: &[String]) -> String {
+    homes.iter().fold(value.to_owned(), |value, home| {
+        value.replace(home.as_str(), "~")
+    })
 }
 
 /// Keeps only the executable's file name; arguments may carry prompts or secrets.
@@ -51,6 +86,40 @@ mod tests {
             .to_string_lossy()
             .into_owned();
         assert_eq!(redact_path(&format!("{home}/work/repo")), "~/work/repo");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_home_is_redacted_in_its_resolved_spelling_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("data/u");
+        std::fs::create_dir_all(&real).unwrap();
+        let home = dir.path().join("home-u");
+        std::os::unix::fs::symlink(&real, &home).unwrap();
+        let homes = spellings(&home, HostPathPlatform::Posix);
+        let resolved = std::fs::canonicalize(&real).unwrap();
+        for path in [home.join("work/repo"), resolved.join("work/repo")] {
+            assert_eq!(
+                replace_homes(&path.to_string_lossy(), &homes),
+                "~/work/repo",
+                "{homes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_windows_home_is_redacted_in_its_identity_key_spelling_too() {
+        let homes = spellings(Path::new(r"C:\Users\alice"), HostPathPlatform::Windows);
+        for path in [
+            r"C:\Users\alice\work\missing",
+            "C:/USERS/ALICE/work/missing",
+        ] {
+            assert_eq!(
+                replace_homes(path, &homes).replace('\\', "/"),
+                "~/work/missing",
+                "{homes:?}"
+            );
+        }
     }
 
     #[test]
