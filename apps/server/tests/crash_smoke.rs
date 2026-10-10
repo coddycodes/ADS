@@ -32,10 +32,10 @@ fn native_crash_produces_a_minidump_and_a_sidecar() {
     let out = std::env::var_os("CRASH_SMOKE_OUT").map(PathBuf::from);
     let root = out.as_deref().unwrap_or(temp.path());
     let dir = root.join("userdata").join("profiler");
+    // A persistent directory may hold an earlier run's dump, session and findings.
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    // A persistent directory may hold an earlier run's dump.
     let crashes = dir.join("crashes");
-    let _ = std::fs::remove_dir_all(&crashes);
 
     let started_at = time::OffsetDateTime::now_utc();
     let mut smoke = Command::new(SMOKE).arg(&dir).spawn().unwrap();
@@ -147,13 +147,13 @@ fn native_crash_produces_a_minidump_and_a_sidecar() {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        profiler.shutdown().await;
+        profiler.end_session().await;
     });
     let native = std::fs::read_to_string(dir.join("findings.ndjson"))
         .unwrap()
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find(|finding| finding["kind"] == "crash.native")
+        .rfind(|finding| finding["kind"] == "crash.native")
         .expect("a crash.native finding for the dump");
     assert_eq!(native["evidence"]["crashId"], stem.as_str());
     assert_eq!(native["evidence"]["crashReason"], reason.as_str());
