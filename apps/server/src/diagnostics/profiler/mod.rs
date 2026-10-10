@@ -5,6 +5,7 @@ pub mod redact;
 pub mod runtime;
 pub mod sampler;
 pub mod store;
+pub mod worktree_audit;
 
 use std::{
     path::{Path, PathBuf},

@@ -3,7 +3,7 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 
@@ -30,6 +30,7 @@ use crate::{
             profiler_dir,
             runtime::{Detector, ProfilerRuntime},
             sampler::SamplerDetector,
+            worktree_audit::{AuditSources, WorktreeAuditDetector},
         },
     },
     git::GitRepository,
@@ -223,8 +224,15 @@ impl ProductionRuntime {
         // Starting replays and compacts the findings file, so it runs off the async workers.
         let profiler_state_dir = config.state_dir();
         let profiler_enabled = control.profiler_enabled_signal();
-        let profiler_detectors: Vec<Box<dyn Detector>> =
-            vec![Box::new(SamplerDetector::new(process_attribution.clone()))];
+        // The worktree audit reads the catalog, which is built later and bound below.
+        let worktree_audit_sources = Arc::new(OnceLock::new());
+        let profiler_detectors: Vec<Box<dyn Detector>> = vec![
+            Box::new(SamplerDetector::new(process_attribution.clone())),
+            Box::new(WorktreeAuditDetector::new(
+                worktree_audit_sources.clone(),
+                process_attribution.clone(),
+            )),
+        ];
         let profiler = Arc::new(
             tokio::task::spawn_blocking(move || {
                 ProfilerRuntime::start(&profiler_state_dir, profiler_enabled, profiler_detectors)
@@ -375,6 +383,10 @@ impl ProductionRuntime {
             git_repository.clone(),
             workspace_availability.clone(),
         );
+        let _ = worktree_audit_sources.set(AuditSources {
+            catalog: worktree_catalog.clone(),
+            repositories: repositories.clone(),
+        });
         let pull_requests = PullRequestsRpcServices::with_dependencies(
             config.state_dir(),
             repositories.clone(),
