@@ -9,7 +9,8 @@ use std::{
 };
 
 use clap::{Args, Parser, Subcommand};
-use serde_json::{Map, Value};
+use serde::Serialize as _;
+use serde_json::{Map, Value, ser::Formatter};
 use thiserror::Error;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
@@ -171,7 +172,7 @@ fn execute(
         ProfilerSubcommand::Status { json } => {
             let status = reader.status();
             if json {
-                writeln!(out, "{status}")?;
+                write_json(out, &status)?;
             } else {
                 write_status(out, &status)?;
             }
@@ -219,7 +220,7 @@ fn write_list(
     line: fn(&Value) -> String,
 ) -> io::Result<()> {
     if json {
-        writeln!(out, "{}", Value::Array(items))
+        write_json(out, &Value::Array(items))
     } else if items.is_empty() {
         writeln!(out, "{empty}")
     } else {
@@ -237,11 +238,43 @@ fn write_followed(
     line: fn(&Value) -> String,
 ) -> io::Result<()> {
     if json {
-        writeln!(out, "{item}")?;
+        write_json(out, item)?;
     } else {
         writeln!(out, "{}", line(item))?;
     }
     out.flush()
+}
+
+/// `value` as compact JSON and a newline: what `--json` prints.
+fn write_json(out: &mut impl Write, value: &Value) -> io::Result<()> {
+    value.serialize(&mut serde_json::Serializer::with_formatter(
+        &mut *out,
+        EscapeControls,
+    ))?;
+    writeln!(out)
+}
+
+/// Compact JSON, except that DEL and the C1 controls (CSI is U+009B, OSC is U+009D) are written
+/// as `\u007f`, `\u009b` and so on. serde_json escapes only U+0000 to U+001F, so these would
+/// reach a terminal as they are; a fragment it hands over holds no other control character.
+/// They are ordinary JSON escapes: a parser reads the same value.
+struct EscapeControls;
+
+impl Formatter for EscapeControls {
+    fn write_string_fragment<W>(&mut self, writer: &mut W, fragment: &str) -> io::Result<()>
+    where
+        W: ?Sized + Write,
+    {
+        let mut written = 0;
+        for (at, c) in fragment.char_indices() {
+            if c.is_control() {
+                writer.write_all(&fragment.as_bytes()[written..at])?;
+                write!(writer, "\\u{:04x}", u32::from(c))?;
+                written = at + c.len_utf8();
+            }
+        }
+        writer.write_all(&fragment.as_bytes()[written..])
+    }
 }
 
 fn write_status(out: &mut impl Write, status: &Value) -> io::Result<()> {
@@ -340,8 +373,8 @@ fn crash_line(crash: &Value) -> String {
     clip(line, LINE_WIDTH)
 }
 
-/// A string field with control characters replaced: values come from monitored processes and
-/// must not drive the terminal.
+/// A string field made safe to print by `plain`: values come from monitored processes and
+/// must not drive the terminal or mislead the reader.
 fn text(value: &Value, key: &str, missing: &str) -> String {
     value
         .get(key)
@@ -351,8 +384,31 @@ fn text(value: &Value, key: &str, missing: &str) -> String {
 
 fn plain(text: &str) -> String {
     text.chars()
-        .map(|c| if c.is_control() { '?' } else { c })
+        .map(|c| {
+            if c.is_control() || is_hidden_format(c) {
+                '?'
+            } else {
+                c
+            }
+        })
         .collect()
+}
+
+/// Unicode format characters: they print as nothing, or reorder the text around them (the
+/// "Trojan Source" set). U+00AD soft hyphen, U+061C Arabic letter mark, U+200B to U+200F
+/// zero-width characters and direction marks, U+202A to U+202E embeddings and overrides,
+/// U+2060 to U+206F word joiner, invisible operators, isolates and deprecated shaping
+/// controls, U+FEFF byte order mark.
+fn is_hidden_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{ad}'
+            | '\u{61c}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{206f}'
+            | '\u{feff}'
+    )
 }
 
 fn clip(text: String, width: usize) -> String {
@@ -447,6 +503,67 @@ mod tests {
         let mut out = Vec::new();
         execute(parse(args).unwrap(), &Reader::new(dir), &mut out).unwrap();
         String::from_utf8(out).unwrap()
+    }
+
+    /// The records as the writer stores them: one `Value::to_string` per line, which leaves DEL
+    /// and the C1 controls unescaped.
+    fn ndjson(records: &[Value]) -> String {
+        records.iter().map(|record| format!("{record}\n")).collect()
+    }
+
+    fn event_record(seq: u64, kind: &str, source: &str, payload: Value) -> Value {
+        let mut event = json!({
+            "v": 1, "seq": seq, "sid": "s", "ts": "2026-10-09T10:00:00Z",
+            "kind": kind, "source": source,
+        });
+        event
+            .as_object_mut()
+            .unwrap()
+            .extend(payload.as_object().unwrap().clone());
+        event
+    }
+
+    fn finding_record(kind: &str, title: &str, summary: &str) -> Value {
+        json!({
+            "id": format!("{kind}-aaaaaaaaaaaa"), "fingerprint": "aaaaaaaaaaaa", "kind": kind,
+            "severity": "warn", "firstSeen": "2026-10-09T10:00:00Z",
+            "lastSeen": "2026-10-09T10:00:00Z", "count": 3, "source": "server",
+            "title": title, "summary": summary, "state": "open", "evidence": {},
+        })
+    }
+
+    /// A profiler directory holding these records.
+    fn seeded_dir(
+        events: &[Value],
+        findings: &[Value],
+        crashes: &[Value],
+    ) -> (tempfile::TempDir, std::path::PathBuf) {
+        let state = tempfile::tempdir().unwrap();
+        let dir = state.path().join("profiler");
+        fs::create_dir_all(dir.join("crashes")).unwrap();
+        fs::write(dir.join("events-000000.ndjson"), ndjson(events)).unwrap();
+        fs::write(dir.join("findings.ndjson"), ndjson(findings)).unwrap();
+        for (index, crash) in crashes.iter().enumerate() {
+            fs::write(
+                dir.join(format!("crashes/crash-{index}.json")),
+                crash.to_string(),
+            )
+            .unwrap();
+        }
+        (state, dir)
+    }
+
+    /// DEL is the byte 0x7F, and a C1 control (U+0080 to U+009F) is the UTF-8 pair 0xC2 0x80
+    /// to 0xC2 0x9F.
+    fn assert_no_raw_del_or_c1(bytes: &[u8], context: &str) {
+        let shown = String::from_utf8_lossy(bytes);
+        assert!(!bytes.contains(&0x7f), "{context}: raw DEL in {shown:?}");
+        assert!(
+            !bytes
+                .windows(2)
+                .any(|pair| pair[0] == 0xc2 && (0x80..=0x9f).contains(&pair[1])),
+            "{context}: raw C1 control in {shown:?}"
+        );
     }
 
     #[test]
@@ -593,62 +710,27 @@ mod tests {
         const NAMED: &str = "a\u{1b}b\u{7f}c\u{9b}d\u{9d}e";
         let everything: String = ('\u{0}'..='\u{9f}').filter(|c| c.is_control()).collect();
         assert!(everything.contains('\u{7f}') && everything.contains('\u{9d}'));
-        let state = tempfile::tempdir().unwrap();
-        let dir = state.path().join("profiler");
-        fs::create_dir_all(dir.join("crashes")).unwrap();
-        let ndjson = |records: &[Value]| -> String {
-            records.iter().map(|record| format!("{record}\n")).collect()
-        };
-        let event = |seq: u64, kind: &str, source: &str, payload: Value| {
-            let mut event = json!({
-                "v": 1, "seq": seq, "sid": "s", "ts": "2026-10-09T10:00:00Z",
-                "kind": kind, "source": source,
-            });
-            event
-                .as_object_mut()
-                .unwrap()
-                .extend(payload.as_object().unwrap().clone());
-            event
-        };
-        fs::write(
-            dir.join("events-000000.ndjson"),
-            ndjson(&[
-                event(
+        let (_state, dir) = seeded_dir(
+            &[
+                event_record(
                     0,
                     "rpc.slow",
                     "server",
                     json!({"method": NAMED, "ms": 1200}),
                 ),
-                event(
+                event_record(
                     1,
                     &everything,
                     &everything,
                     json!({(everything.clone()): everything.clone()}),
                 ),
-            ]),
-        )
-        .unwrap();
-        let finding = |kind: &str, title: &str, summary: &str| {
-            json!({
-                "id": format!("{kind}-aaaaaaaaaaaa"), "fingerprint": "aaaaaaaaaaaa", "kind": kind,
-                "severity": "warn", "firstSeen": "2026-10-09T10:00:00Z",
-                "lastSeen": "2026-10-09T10:00:00Z", "count": 3, "source": "server",
-                "title": title, "summary": summary, "state": "open", "evidence": {},
-            })
-        };
-        fs::write(
-            dir.join("findings.ndjson"),
-            ndjson(&[
-                finding("rpc.slow", &format!("Slow {NAMED}"), NAMED),
-                finding(&everything, &everything, &everything),
-            ]),
-        )
-        .unwrap();
-        fs::write(
-            dir.join("crashes/evil.json"),
-            json!({"id": everything, "os": NAMED, (everything.clone()): "v"}).to_string(),
-        )
-        .unwrap();
+            ],
+            &[
+                finding_record("rpc.slow", &format!("Slow {NAMED}"), NAMED),
+                finding_record(&everything, &everything, &everything),
+            ],
+            &[json!({"id": everything, "os": NAMED, (everything.clone()): "v"})],
+        );
 
         let reader = Reader::new(&dir);
         let mut followed = Vec::new();
@@ -707,6 +789,110 @@ mod tests {
         );
     }
 
+    /// Invisible characters that reorder or hide the text around them print as `?` too, and
+    /// ordinary non-ASCII text is left alone.
+    #[test]
+    fn human_output_replaces_format_and_bidi_characters() {
+        let hidden: String = [
+            '\u{ad}'..='\u{ad}',
+            '\u{200b}'..='\u{200f}',
+            '\u{202a}'..='\u{202e}',
+            '\u{2066}'..='\u{2069}',
+            '\u{feff}'..='\u{feff}',
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        const TEXT: &str = "Cafe\u{301} \u{65e5}\u{672c}\u{8a9e} \u{1f642}";
+        let marks = "?".repeat(hidden.chars().count());
+        let (_state, dir) = seeded_dir(
+            &[event_record(
+                0,
+                "rpc.slow",
+                "server",
+                json!({"note": format!("a{hidden}b"), "text": TEXT, (hidden.clone()): "v"}),
+            )],
+            &[finding_record(
+                "rpc.slow",
+                &format!("Slow \u{202e}request\u{2066} {TEXT}"),
+                "s",
+            )],
+            &[json!({"id": "crash-0", "os": format!("x{hidden}y")})],
+        );
+
+        let outputs =
+            ["events", "findings", "status", "crashes"].map(|command| run(&[command], &dir));
+
+        for output in &outputs {
+            for c in hidden.chars() {
+                assert!(
+                    !output.contains(c),
+                    "U+{:04X} reached the output: {output:?}",
+                    u32::from(c)
+                );
+            }
+        }
+        let [events, findings, status, crashes] = &outputs;
+        let title = format!("rpc.slow x3 Slow ?request? {TEXT}\n");
+        assert!(findings.contains(&title), "{findings}");
+        assert!(status.contains(&title), "{status}");
+        assert!(
+            events.contains(&format!("\"note\":\"a{marks}b\"")),
+            "{events}"
+        );
+        assert!(events.contains(&format!("\"text\":\"{TEXT}\"")), "{events}");
+        assert!(crashes.contains(&format!(" os=x{marks}y")), "{crashes}");
+    }
+
+    /// serde_json escapes only U+0000 to U+001F, so DEL and the C1 controls would reach a
+    /// terminal in `--json` output as they are. They are written as `\u007f`, `\u009b` and so
+    /// on instead, and a parser reads back the same values.
+    #[test]
+    fn json_output_escapes_del_and_c1_controls_and_reads_back_identically() {
+        const NAMED: &str = "a\u{1b}b\u{7f}c\u{9b}d\u{9d}e";
+        let everything: String = ('\u{0}'..='\u{9f}').filter(|c| c.is_control()).collect();
+        let event = event_record(
+            0,
+            "rpc.slow",
+            "server",
+            json!({"method": NAMED, (everything.clone()): everything.clone()}),
+        );
+        let finding = finding_record("rpc.slow", NAMED, &everything);
+        let crash = json!({"id": "crash-0", "os": NAMED, (everything.clone()): NAMED});
+        let (_state, dir) = seeded_dir(
+            std::slice::from_ref(&event),
+            std::slice::from_ref(&finding),
+            std::slice::from_ref(&crash),
+        );
+        let on_disk = fs::read_to_string(dir.join("events-000000.ndjson")).unwrap();
+        assert!(
+            on_disk.contains('\u{7f}') && on_disk.contains('\u{9b}') && on_disk.contains('\u{9d}'),
+            "the files must carry the raw characters for this test to mean anything"
+        );
+        let reader = Reader::new(&dir);
+
+        for (args, expected) in [
+            (&["events", "--json"][..], json!([event])),
+            (&["findings", "--json"][..], json!([finding])),
+            (&["crashes", "--json"][..], json!([crash])),
+            (&["status", "--json"][..], reader.status()),
+        ] {
+            let mut out = Vec::new();
+            execute(parse(args).unwrap(), &reader, &mut out).unwrap();
+
+            assert_no_raw_del_or_c1(&out, &format!("{args:?}"));
+            let text = String::from_utf8(out).unwrap();
+            for escape in ["\\u007f", "\\u009b", "\\u009d"] {
+                assert!(text.contains(escape), "{args:?}: no {escape} in {text:?}");
+            }
+            assert_eq!(
+                serde_json::from_str::<Value>(&text).unwrap(),
+                expected,
+                "{args:?}"
+            );
+        }
+    }
+
     #[test]
     fn follow_prints_each_new_record_as_a_json_line() {
         let state = tempfile::tempdir().unwrap();
@@ -714,11 +900,14 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("events-000000.ndjson");
         fs::write(&path, "{\"kind\":\"old\"}\n").unwrap();
+        // The first new record carries DEL, CSI and OSC as the writer would store them.
         let writer = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(100));
             let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
-            file.write_all(b"{\"kind\":\"a\"}\n{\"kind\":\"b\"}\n")
-                .unwrap();
+            file.write_all(
+                "{\"kind\":\"a\",\"note\":\"x\u{7f}\u{9b}\u{9d}y\"}\n{\"kind\":\"b\"}\n".as_bytes(),
+            )
+            .unwrap();
         });
         let mut out = Vec::new();
 
@@ -739,12 +928,19 @@ mod tests {
         .unwrap();
         writer.join().unwrap();
 
+        assert_no_raw_del_or_c1(&out, "events --follow --json");
         let lines: Vec<Value> = String::from_utf8(out)
             .unwrap()
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        assert_eq!(lines, [json!({"kind": "a"}), json!({"kind": "b"})]);
+        assert_eq!(
+            lines,
+            [
+                json!({"kind": "a", "note": "x\u{7f}\u{9b}\u{9d}y"}),
+                json!({"kind": "b"})
+            ]
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 use std::{fs, path::Path, process::Command};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use tempfile::TempDir;
 
 const FINDING: &str = r#"{"id":"rpc.slow-aaaaaaaaaaaa","fingerprint":"aaaaaaaaaaaa","kind":"rpc.slow","severity":"warn","firstSeen":"2020-01-01T10:00:00Z","lastSeen":"2020-01-01T10:05:00Z","count":3,"source":"server","title":"Slow request","summary":"s","state":"open","evidence":{"ms":1200}}"#;
@@ -93,6 +93,48 @@ fn findings_events_and_crashes_print_json_arrays() {
     assert_eq!(events[1]["kind"], "process.sample");
     let crashes = json_stdout(&bibcode(root.path(), &["crashes", "--json"]));
     assert_eq!(crashes, Value::Array(Vec::new()));
+}
+
+/// Text in the files comes from monitored processes, and serde_json leaves DEL, CSI and OSC raw
+/// there. Human output replaces them and the bidi controls that reorder text; `--json` writes
+/// DEL and the C1 controls as `\u` escapes, and a parser reads back the same text.
+#[test]
+fn output_carries_nothing_that_drives_or_misleads_a_terminal() {
+    // DEL, CSI, OSC, then a right-to-left override and a left-to-right isolate.
+    const RAW: &str = "x\u{7f}\u{9b}\u{9d}\u{202e}y\u{2066}z";
+    let root = seeded_root();
+    let profiler = root.path().join("userdata/profiler");
+    let event = json!({
+        "v": 1, "seq": 0, "sid": "aaaa1111", "ts": "2020-01-01T10:00:00Z",
+        "kind": "rpc.slow", "source": "server", "method": RAW,
+    });
+    let mut finding: Value = serde_json::from_str(FINDING).expect("seed finding");
+    finding["title"] = RAW.into();
+    fs::write(profiler.join("events-000000.ndjson"), format!("{event}\n")).expect("events");
+    fs::write(profiler.join("findings.ndjson"), format!("{finding}\n")).expect("findings");
+
+    let human = bibcode(root.path(), &["findings"]);
+    assert!(human.status.success());
+    let human = String::from_utf8(human.stdout).expect("UTF-8");
+    assert!(human.ends_with(" x3 x????y?z\n"), "{human:?}");
+    for (args, field) in [
+        (&["events", "--json"][..], "method"),
+        (&["findings", "--json"][..], "title"),
+    ] {
+        let output = bibcode(root.path(), args);
+        let records = json_stdout(&output);
+        // DEL is the byte 0x7F; a C1 control is the UTF-8 pair 0xC2 0x80 to 0xC2 0x9F.
+        assert!(!output.stdout.contains(&0x7f), "{args:?}: raw DEL");
+        assert!(
+            !output
+                .stdout
+                .windows(2)
+                .any(|pair| pair[0] == 0xc2 && (0x80..=0x9f).contains(&pair[1])),
+            "{args:?}: raw C1 control"
+        );
+        // The data is untouched: only its spelling in the JSON text changed.
+        assert_eq!(records[0][field], RAW, "{args:?}");
+    }
 }
 
 #[test]
