@@ -1,10 +1,11 @@
+#[cfg(windows)]
+use process_wrap::tokio::CommandWrapper;
 #[cfg(unix)]
 use process_wrap::tokio::ProcessGroup;
+use process_wrap::tokio::{ChildWrapper, CommandWrap, KillOnDrop};
+use std::process::ExitStatus;
 #[cfg(windows)]
-use process_wrap::tokio::{ChildWrapper, CommandWrapper};
-use process_wrap::tokio::{CommandWrap, KillOnDrop};
-#[cfg(windows)]
-use std::{future::Future, pin::Pin, process::ExitStatus, sync::Arc, time::Duration};
+use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 use tokio::process::Command;
 
 #[cfg(windows)]
@@ -126,6 +127,90 @@ impl ChildWrapper for WindowsSupervisedChild {
     }
 }
 
+/// Reads a child's exit record without reaping it. WNOWAIT keeps the exited child waitable,
+/// so its PID, and the process group it leads, cannot be reused before its owner has
+/// signalled that group. With `WNOHANG` in `options` it returns `None` while the child runs;
+/// otherwise it blocks until the child exits.
+#[cfg(unix)]
+pub(crate) fn child_exit_without_reaping(
+    process_id: u32,
+    options: i32,
+) -> std::io::Result<Option<libc::siginfo_t>> {
+    let process_id = libc::id_t::try_from(process_id)
+        .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
+    loop {
+        let mut information = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+        // SAFETY: information points to valid writable storage. WNOWAIT keeps
+        // the exited leader waitable so its PID/PGID cannot be reused before
+        // the owned group has been signalled.
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                process_id,
+                information.as_mut_ptr(),
+                libc::WEXITED | libc::WNOWAIT | options,
+            )
+        };
+        if result == 0 {
+            // SAFETY: waitid succeeded with a zero-initialized siginfo_t. A
+            // zero si_pid means WNOHANG found no exit; otherwise it names the
+            // exited child, which WNOWAIT has deliberately left waitable.
+            let information = unsafe { information.assume_init() };
+            return Ok((unsafe { information.si_pid() } != 0).then_some(information));
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+/// The exit status of an owned child's root process once it has exited, read without waiting;
+/// `None` while it runs. On Unix it is not reaped: its owner still signals the process group
+/// the root leads, which a reaped leader no longer holds. On Windows the root's handle is read
+/// directly: a supervised child's own `try_wait` reports nothing until the rest of its job has
+/// ended.
+pub(crate) fn exited_status(child: &dyn ChildWrapper) -> Option<ExitStatus> {
+    #[cfg(unix)]
+    {
+        exit_status(&child_exit_without_reaping(child.id()?, libc::WNOHANG).ok()??)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::ExitStatusExt;
+        use windows_sys::Win32::{
+            Foundation::WAIT_OBJECT_0,
+            System::Threading::{GetExitCodeProcess, WaitForSingleObject},
+        };
+        let handle = child.inner_child().raw_handle()?;
+        // SAFETY: the handle belongs to the `Child` borrowed here, and both calls only read it.
+        if unsafe { WaitForSingleObject(handle, 0) } != WAIT_OBJECT_0 {
+            return None;
+        }
+        let mut code = 0;
+        // SAFETY: as above, and `code` is writable.
+        if unsafe { GetExitCodeProcess(handle, &mut code) } == 0 {
+            return None;
+        }
+        Some(ExitStatus::from_raw(code))
+    }
+}
+
+/// The exit status a `waitid` exit record describes, as `std` reports one.
+#[cfg(unix)]
+pub(crate) fn exit_status(information: &libc::siginfo_t) -> Option<ExitStatus> {
+    use std::os::unix::process::ExitStatusExt;
+    // SAFETY: a CLD_* record from waitid holds the exit code or the signal in si_status.
+    let status = unsafe { information.si_status() };
+    let raw = match information.si_code {
+        libc::CLD_EXITED => (status & 0xff) << 8,
+        libc::CLD_KILLED => status & 0x7f,
+        libc::CLD_DUMPED => (status & 0x7f) | 0x80,
+        _ => return None,
+    };
+    Some(ExitStatus::from_raw(raw))
+}
+
 /// Applies the platform process-tree supervision policy for a non-interactive
 /// background command.
 pub fn configure_supervised_background_command_wrap(command: &mut CommandWrap) {
@@ -134,6 +219,37 @@ pub fn configure_supervised_background_command_wrap(command: &mut CommandWrap) {
     command.wrap(WindowsSupervisedJob);
     #[cfg(unix)]
     command.wrap(ProcessGroup::leader());
+}
+
+#[cfg(all(test, unix))]
+mod unix_tests {
+    use std::{os::unix::process::ExitStatusExt, process::Command};
+
+    use super::{child_exit_without_reaping, exit_status};
+
+    #[test]
+    fn an_exit_is_read_without_reaping_the_child() {
+        for (script, signal, code) in [
+            ("kill -USR1 $$", Some(libc::SIGUSR1), None),
+            ("exit 3", None, Some(3)),
+        ] {
+            let mut child = Command::new("sh").args(["-c", script]).spawn().unwrap();
+            let exit = child_exit_without_reaping(child.id(), 0)
+                .unwrap()
+                .expect("the child exited");
+            let status = exit_status(&exit).expect("an exit record");
+            assert_eq!((status.signal(), status.code()), (signal, code), "{script}");
+            assert_eq!(child.wait().expect("still waitable"), status);
+        }
+        let mut running = Command::new("sleep").arg("30").spawn().unwrap();
+        assert!(
+            child_exit_without_reaping(running.id(), libc::WNOHANG)
+                .unwrap()
+                .is_none()
+        );
+        running.kill().unwrap();
+        running.wait().unwrap();
+    }
 }
 
 #[cfg(all(test, windows))]

@@ -30,6 +30,7 @@ use crate::{
         AttributionKind, AttributionScope, NativeProcessSampler, ProcessAttributionRegistry,
         ProcessRegistration, ProcessRegistrationError, ProcessRegistrationMetadata,
         RegistrationSource,
+        profiler::exits::{self, Exited, Watch},
     },
     orchestration::{
         ProviderTurnDelivery, TurnDeliveryMode, TurnDeliveryState, canonical_command_digest,
@@ -413,6 +414,12 @@ pub trait ProviderDriver: Send + Sync {
     fn rollback(&self, turn_count: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>>;
     fn next_event(&self) -> BoxRuntimeFuture<'_, Option<ProviderEvent>>;
     fn shutdown(&self) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>>;
+    /// The pid and exit status of the provider process this driver owns, once it has exited.
+    /// The event pump reads it when the event stream ends unexpectedly, before `shutdown`
+    /// kills whatever is left. `None` while it runs, or for a driver without its own process.
+    fn exited_process(&self) -> BoxRuntimeFuture<'_, Option<(u32, std::process::ExitStatus)>> {
+        Box::pin(std::future::ready(None))
+    }
     /// Whether `shutdown` ends the provider's native work. An externally owned server keeps
     /// running its turn after BiBCode detaches, so Stop must not settle it by retirement.
     fn owns_native_work(&self) -> bool {
@@ -7810,6 +7817,8 @@ fn spawn_event_pump(
     #[cfg(test)] idle_deadline_test_observer: Option<mpsc::UnboundedSender<IdleDeadlineTestEvent>>,
 ) -> JoinHandle<()> {
     let activity_controller = activity.agent_activity_controller();
+    // The provider process started just before its event pump: its uptime for exit reports.
+    let started = std::time::Instant::now();
     tokio::spawn(async move {
         // Native runtimes can retain their event sender after announcing process loss.
         // EOF and a fatal session.exited share one terminal settlement and cleanup path.
@@ -8086,7 +8095,9 @@ fn spawn_event_pump(
             }
         }
         let mut core_publication = publication.lock().await;
-        if !core_publication.closed && !cancellation.is_cancelled() {
+        // The provider ended its stream by itself: BiBCode did not stop the session.
+        let unexpected = !core_publication.closed && !cancellation.is_cancelled();
+        if unexpected {
             const STREAM_END_ERROR: &str = "Provider event stream ended unexpectedly.";
             let stream_end_message = last_exit_reason.as_deref().map_or_else(
                 || STREAM_END_ERROR.to_owned(),
@@ -8170,6 +8181,24 @@ fn spawn_event_pump(
             handoff.after_unlock.pause().await;
         }
         let _ = settled_tx.send(());
+        // Before `shutdown` kills whatever is left: a process still running did not die.
+        if unexpected
+            && exits::watching()
+            && let Some((pid, status)) = driver.exited_process().await
+        {
+            exits::report_exit(
+                Watch::Failures,
+                &Exited {
+                    kind: "provider",
+                    label: &launch.provider,
+                    exe: &launch.binary_path,
+                    pid,
+                    uptime: started.elapsed(),
+                },
+                &status,
+                false,
+            );
+        }
         if let Err(error) = driver.shutdown().await {
             tracing::debug!(
                 %error,
@@ -9986,8 +10015,27 @@ where
 
 async fn kill_child(child: &SharedChild) {
     let mut child = child.lock().await;
+    if let Some(pid) = child.id() {
+        exits::note_stop_requested(pid);
+    }
     let report = terminate_and_wait(&mut **child).await;
     log_cleanup_failures("provider process", &report);
+}
+
+/// Marks a provider process as stopped on request before a graceful shutdown lets it exit,
+/// so the exit is not reported as a crash.
+async fn note_stop(child: &SharedChild) {
+    if let Some(pid) = child.lock().await.id() {
+        exits::note_stop_requested(pid);
+    }
+}
+
+/// The pid and exit status of a provider process that has exited, read without waiting:
+/// `None` while it runs, or while a stop holds it.
+fn exited_child(child: &SharedChild) -> Option<(u32, std::process::ExitStatus)> {
+    let child = child.try_lock().ok()?;
+    let pid = child.id()?;
+    Some((pid, crate::process::exited_status(&**child)?))
 }
 
 fn runtime_mode(value: &str) -> CodexRuntimeMode {
@@ -10046,6 +10094,7 @@ impl CodexDriver {
         &self,
         graceful_timeout: Duration,
     ) -> Result<bool, ProviderRuntimeError> {
+        note_stop(&self.child).await;
         let result = match tokio::time::timeout(graceful_timeout, self.runtime.shutdown()).await {
             Ok(result) => result.map(|()| true).map_err(provider_error("codex")),
             Err(_) => {
@@ -10451,6 +10500,10 @@ impl ProviderDriver for CodexDriver {
             })
         })
     }
+    fn exited_process(&self) -> BoxRuntimeFuture<'_, Option<(u32, std::process::ExitStatus)>> {
+        Box::pin(std::future::ready(exited_child(&self.child)))
+    }
+
     fn shutdown(&self) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async move {
             self.shutdown_with_grace(CODEX_GRACEFUL_SHUTDOWN_TIMEOUT)
@@ -10702,6 +10755,10 @@ impl ProviderDriver for CursorDriver {
             })
         })
     }
+    fn exited_process(&self) -> BoxRuntimeFuture<'_, Option<(u32, std::process::ExitStatus)>> {
+        Box::pin(std::future::ready(exited_child(&self.child)))
+    }
+
     fn shutdown(&self) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async move {
             kill_child(&self.child).await;
@@ -10903,6 +10960,10 @@ impl ProviderDriver for GrokDriver {
             })
         })
     }
+    fn exited_process(&self) -> BoxRuntimeFuture<'_, Option<(u32, std::process::ExitStatus)>> {
+        Box::pin(std::future::ready(exited_child(&self.child)))
+    }
+
     fn shutdown(&self) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async move {
             kill_child(&self.child).await;
@@ -11224,8 +11285,17 @@ impl ProviderDriver for OpenCodeDriver {
             })
         })
     }
+    fn exited_process(&self) -> BoxRuntimeFuture<'_, Option<(u32, std::process::ExitStatus)>> {
+        Box::pin(std::future::ready(
+            self.child.as_ref().and_then(exited_child),
+        ))
+    }
+
     fn shutdown(&self) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async move {
+            if let Some(child) = &self.child {
+                note_stop(child).await;
+            }
             let result = self
                 .runtime
                 .stop()
@@ -13933,6 +14003,10 @@ impl ProviderDriver for ClaudeDriver {
             Some(first)
         })
     }
+    fn exited_process(&self) -> BoxRuntimeFuture<'_, Option<(u32, std::process::ExitStatus)>> {
+        Box::pin(std::future::ready(exited_child(&self.child)))
+    }
+
     fn shutdown(&self) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async move {
             self.control_responses.close();
@@ -14993,6 +15067,7 @@ mod tests {
         interaction_modes: Vec<String>,
         models: Vec<String>,
         rollbacks: Vec<i64>,
+        exited: Option<(u32, std::process::ExitStatus)>,
         shutdowns: usize,
         shutdown_entered: Option<Arc<tokio::sync::Semaphore>>,
         shutdown_release: Option<Arc<tokio::sync::Semaphore>>,
@@ -15465,6 +15540,12 @@ mod tests {
 
         fn next_event(&self) -> super::BoxRuntimeFuture<'_, Option<super::ProviderEvent>> {
             Box::pin(async move { self.events.lock().await.recv().await })
+        }
+
+        fn exited_process(
+            &self,
+        ) -> super::BoxRuntimeFuture<'_, Option<(u32, std::process::ExitStatus)>> {
+            Box::pin(std::future::ready(self.state.lock().unwrap().exited))
         }
 
         fn shutdown(&self) -> super::BoxRuntimeFuture<'_, Result<(), super::ProviderRuntimeError>> {
@@ -18473,6 +18554,140 @@ done
                 .collect::<Vec<_>>(),
             [("claude:agent:agent-a", "task-a")]
         );
+    }
+
+    /// How BiBCode stopped a session whose provider process died.
+    #[cfg(unix)]
+    #[derive(Clone, Copy)]
+    enum SessionStop {
+        None,
+        /// Its event pump was cancelled before the stream ended.
+        Cancelled,
+        /// Its publication was closed when the pump read the end of the stream.
+        Closed,
+        /// The driver noted the stop before ending the process (a restart).
+        Noted,
+    }
+
+    /// Runs the real event pump over a driver whose event stream has ended and whose process
+    /// `pid` died of SIGSEGV, after `stop`, and returns what it reported.
+    #[cfg(unix)]
+    async fn exits_reported_after_stream_end(pid: u32, stop: SessionStop) -> Vec<Vec<String>> {
+        use std::os::unix::process::ExitStatusExt;
+        let captured = crate::diagnostics::profiler::exits::CapturedExits::start();
+        let engine = supervisor_engine().await;
+        let activity = super::ActivityProjection::new(ActivityRepository::new(
+            engine.repositories().database().clone(),
+        ));
+        let state = Arc::new(StdMutex::new(SupervisorDriverState {
+            exited: Some((pid, std::process::ExitStatus::from_raw(libc::SIGSEGV))),
+            ..SupervisorDriverState::default()
+        }));
+        let (event_sender, event_receiver) = mpsc::channel(1);
+        drop(event_sender);
+        let temp = TempDir::new().expect("launch directory");
+        let mut launch = native_launch(&temp, "codex");
+        launch.thread_id = "t1".to_owned();
+        let driver: Arc<dyn ProviderDriver> = Arc::new(SupervisorDriver {
+            state: state.clone(),
+            events: tokio::sync::Mutex::new(event_receiver),
+        });
+        let (activity_dispatch_sender, _activity_dispatch_receiver) = mpsc::channel(1);
+        let (terminal_sender, _terminal_receiver) = mpsc::unbounded_channel();
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let publication = super::SessionPublicationState::default();
+        let publication = match stop {
+            SessionStop::None => publication,
+            SessionStop::Cancelled => {
+                cancellation.cancel();
+                publication
+            }
+            SessionStop::Closed => super::SessionPublicationState {
+                closed: true,
+                ..publication
+            },
+            SessionStop::Noted => publication,
+        };
+        let pump = super::spawn_event_pump(
+            engine.clone(),
+            driver,
+            launch,
+            None,
+            None,
+            Arc::new(AtomicBool::new(false)),
+            activity,
+            Arc::new(StdMutex::new(super::ProviderActivityLifecycleState::new(
+                crate::activity::ActivityCapabilities::default(),
+            ))),
+            false,
+            Arc::new(RwLock::new(None)),
+            activity_dispatch_sender,
+            "exit-pump-stream-ended".to_owned(),
+            cancellation,
+            Arc::new(tokio::sync::Mutex::new(publication)),
+            None,
+            Arc::new(AtomicU64::new(0)),
+            terminal_sender,
+            Duration::from_secs(3_600),
+            None,
+        );
+        // As a restart does: after the process started, before the pump reads its exit.
+        if matches!(stop, SessionStop::Noted) {
+            crate::diagnostics::profiler::exits::note_stop_requested(pid);
+        }
+        tokio::time::timeout(Duration::from_secs(5), pump)
+            .await
+            .expect("pump ends")
+            .expect("pump task");
+        captured.take()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_exited_provider_process_is_read_without_reaping_it() {
+        use std::os::unix::process::ExitStatusExt;
+        let mut command = process_wrap::tokio::CommandWrap::with_new("sh", |command| {
+            command.args(["-c", "kill -USR1 $$"]);
+        });
+        crate::process::configure_supervised_background_command_wrap(&mut command);
+        let child: super::SharedChild =
+            Arc::new(tokio::sync::Mutex::new(command.spawn().expect("spawn")));
+        let (pid, status) = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(exited) = super::exited_child(&child) {
+                    return exited;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the child exits");
+        assert_eq!(status.signal(), Some(libc::SIGUSR1));
+        assert_eq!(super::exited_child(&child).map(|(read, _)| read), Some(pid));
+        // The stop that follows still finds the process group the unreaped leader holds.
+        let report = super::terminate_and_wait(&mut **child.lock().await).await;
+        assert_eq!(report.failure_count, 0, "{:?}", report.failures);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_provider_process_that_died_under_its_event_stream_is_reported() {
+        assert_eq!(
+            exits_reported_after_stream_end(4_100_000_001, SessionStop::None).await,
+            [["provider", "codex", "SIGSEGV"]]
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_provider_process_bibcode_stopped_is_not_reported() {
+        for (pid, stop) in [
+            (4_100_000_002, SessionStop::Cancelled),
+            (4_100_000_003, SessionStop::Closed),
+            (4_100_000_004, SessionStop::Noted),
+        ] {
+            assert!(exits_reported_after_stream_end(pid, stop).await.is_empty());
+        }
     }
 
     #[tokio::test]

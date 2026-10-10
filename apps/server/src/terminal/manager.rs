@@ -27,6 +27,7 @@ use crate::{
         AttributionKind, AttributionScope, NativeProcessSampler, ProcessAttributionRegistry,
         ProcessRegistration, ProcessRegistrationError, ProcessRegistrationMetadata, ProcessSampler,
         RegistrationSource, build_descendant_entries,
+        profiler::exits::{self, Exited, Watch},
     },
     process::{Platform, ProcessCleanupReport, ShellCandidate, resolve_shell_candidates},
     provider_terminal::{
@@ -255,6 +256,9 @@ struct Session {
     /// Client-supplied command the current process was launched with (never
     /// the prepared one with private env); `None` for a default shell.
     command: Option<TerminalLaunchCommand>,
+    /// The executable the current process was spawned from, and when.
+    executable: String,
+    started: std::time::Instant,
 }
 
 /// What a replacement process keeps from the session it replaces.
@@ -2158,17 +2162,18 @@ impl TerminalManager {
         let mut spawned = None;
         for (spawn, attempted_label) in spawn_candidates {
             attempted.push(attempted_label);
+            let executable = spawn.executable.clone();
             match UncommittedPtyProcess::spawn(self.inner.backend.clone(), spawn, operation.clone())
                 .await
             {
                 Ok(process) => {
-                    spawned = Some(process);
+                    spawned = Some((process, executable));
                     break;
                 }
                 Err(error) => last_error = redact_private_values(error, &private_values),
             }
         }
-        let Some(mut uncommitted_process) = spawned else {
+        let Some((mut uncommitted_process, mut executable)) = spawned else {
             generation
                 .cancel_observer(TerminalObserverCancellationReason::SpawnFailed)
                 .await;
@@ -2208,17 +2213,18 @@ impl TerminalManager {
                 return Err(invalidated_creation_error(&input));
             }
             private_values.clear();
-            let Some((executable, args, env)) = original_command_candidate else {
+            let Some((original, args, env)) = original_command_candidate else {
                 return Err(TerminalError::Io(
                     "prepared terminal launch has no original command".to_owned(),
                 ));
             };
-            let attempted_label = format!("{executable} {args:?}");
+            let attempted_label = format!("{original} {args:?}");
             attempted.push(attempted_label);
+            executable = original.clone();
             uncommitted_process = UncommittedPtyProcess::spawn(
                 self.inner.backend.clone(),
                 PtySpawnInput {
-                    executable,
+                    executable: original,
                     args,
                     cwd: input.cwd.clone(),
                     cols: input.cols,
@@ -2350,6 +2356,8 @@ impl TerminalManager {
             private_output: StreamingSecretRedactor::new(private_values),
             center_panel: input.center_panel || carry_over.center_panel,
             command: input.command.clone(),
+            executable,
+            started: std::time::Instant::now(),
         }));
         let _lifecycle = self.inner.lifecycle.lock().await;
         let _publication = generation.publication.lock().await;
@@ -2674,6 +2682,9 @@ impl TerminalManager {
             .await;
         let (event, summary, status_cwd) = {
             let mut session = session.lock().await;
+            if exits::watching() {
+                report_process_exit(&session);
+            }
             session.status = TerminalStatus::Exited;
             session.attribution_registration.take();
             session.observer.take();
@@ -3372,6 +3383,8 @@ impl TerminalManager {
                     continue;
                 }
                 let exit = identity.process.subscribe_exit();
+                // Stopped on request: the exit that follows is not a crash.
+                exits::note_stop_requested(identity.process.pid());
                 match identity.process.kill() {
                     Ok(()) => targets.push((
                         identity.key,
@@ -3382,6 +3395,7 @@ impl TerminalManager {
                     )),
                     Err(error) => {
                         failed = true;
+                        exits::withdraw_stop_request(identity.process.pid());
                         tracing::warn!(
                             thread_id = %identity.key.0,
                             terminal_id = %identity.key.1,
@@ -3640,6 +3654,39 @@ impl TerminalManager {
                 terminal_id: terminal_id.to_string(),
             })
     }
+}
+
+/// Reports a session's process that ended by itself to the profiler. Only crash signals
+/// count: in a terminal people end processes with `exit 1`, Ctrl-C or `kill`. BiBCode's own
+/// stops invalidate the generation first, or note the stop.
+fn report_process_exit(session: &Session) {
+    let (Some(pid), Some(status)) = (
+        session.pid,
+        session
+            .process
+            .as_ref()
+            .and_then(|process| process.exit_status()),
+    ) else {
+        return;
+    };
+    let driver = session
+        .command
+        .as_ref()
+        .and_then(|command| command.activity.as_ref())
+        .map(|activity| activity.driver_kind.as_str());
+    let (kind, label) = driver.map_or(("terminal", "shell"), |driver| ("provider", driver));
+    exits::report_exit(
+        Watch::CrashSignals,
+        &Exited {
+            kind,
+            label,
+            exe: &session.executable,
+            pid,
+            uptime: session.started.elapsed(),
+        },
+        &status,
+        false,
+    );
 }
 
 async fn wait_for_terminal_process_tree_exit(
@@ -4308,6 +4355,8 @@ mod tests {
         exit: tokio::sync::watch::Sender<Option<PtyExit>>,
         killed: std::sync::atomic::AtomicBool,
         exit_on_kill: std::sync::atomic::AtomicBool,
+        /// What `exit_status` reports once the process has exited.
+        exit_status: std::sync::Mutex<Option<std::process::ExitStatus>>,
         tree_exit_supported: std::sync::atomic::AtomicBool,
         tree_exited: std::sync::atomic::AtomicBool,
         kill_error: std::sync::Mutex<Option<String>>,
@@ -4331,6 +4380,7 @@ mod tests {
                 exit,
                 killed: std::sync::atomic::AtomicBool::new(false),
                 exit_on_kill: std::sync::atomic::AtomicBool::new(true),
+                exit_status: std::sync::Mutex::new(None),
                 tree_exit_supported: std::sync::atomic::AtomicBool::new(false),
                 tree_exited: std::sync::atomic::AtomicBool::new(true),
                 kill_error: std::sync::Mutex::new(None),
@@ -4483,6 +4533,10 @@ mod tests {
 
         fn subscribe_exit(&self) -> tokio::sync::watch::Receiver<Option<PtyExit>> {
             self.exit.subscribe()
+        }
+
+        fn exit_status(&self) -> Option<std::process::ExitStatus> {
+            *self.exit_status.lock().expect("exit status")
         }
     }
 
@@ -8099,6 +8153,127 @@ mod tests {
             }
         ));
         assert!(terminal_claims(&registry, &[pid]).is_empty());
+        manager.shutdown().await;
+    }
+
+    #[cfg(unix)]
+    async fn next_exit(events: &mut TerminalEventReceiver, terminal: &str) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Ok(TerminalEvent::Exited { terminal_id, .. }) = events.recv().await
+                    && terminal_id == terminal
+                {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("exit published");
+    }
+
+    /// A raw Unix wait status: a signal number, or an exit code shifted left by 8.
+    #[cfg(unix)]
+    fn raw_status(raw: i32) -> std::process::ExitStatus {
+        std::os::unix::process::ExitStatusExt::from_raw(raw)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn terminal_and_provider_processes_dying_of_a_crash_signal_are_reported() {
+        let captured = crate::diagnostics::profiler::exits::CapturedExits::start();
+        let root = tempfile::tempdir().unwrap();
+        let backend = Arc::new(HistoryTestBackend::default());
+        let manager = TerminalManager::new(
+            backend.clone(),
+            TerminalManagerOptions {
+                subprocess_poll_interval: Duration::ZERO,
+                ..TerminalManagerOptions::default()
+            },
+        );
+        let mut events = manager.subscribe_events();
+        let mut codex =
+            TerminalOpenInput::new("thread", "codex", root.path().to_path_buf(), 80, 24);
+        codex.command = Some(TerminalLaunchCommand {
+            executable: "codex".to_owned(),
+            args: Vec::new(),
+            label: None,
+            activity: Some(crate::terminal::ProviderTerminalActivityLaunch {
+                driver_kind: "codex".to_owned(),
+                provider_instance_id: "codex".to_owned(),
+            }),
+            env: None,
+        });
+        let shell = |terminal: &str| {
+            TerminalOpenInput::new("thread", terminal, root.path().to_path_buf(), 80, 24)
+        };
+        // A crash, a provider CLI crash, and exits a terminal's user causes on purpose.
+        for (input, status) in [
+            (shell("crashed"), raw_status(libc::SIGSEGV)),
+            (codex, raw_status(libc::SIGABRT)),
+            (shell("interrupted"), raw_status(libc::SIGINT)),
+            (shell("killed"), raw_status(libc::SIGKILL)),
+            (shell("exit-1"), raw_status(1 << 8)),
+        ] {
+            let terminal = input.terminal_id.clone();
+            manager.open(input).await.expect("terminal starts");
+            let process = backend.latest();
+            *process.exit_status.lock().unwrap() = Some(status);
+            process.exit.send_replace(Some(PtyExit {
+                exit_code: status.code().or(Some(1)),
+                signal: None,
+            }));
+            next_exit(&mut events, &terminal).await;
+        }
+
+        assert_eq!(
+            captured.take(),
+            [
+                ["terminal", "shell", "SIGSEGV"],
+                ["provider", "codex", "SIGABRT"]
+            ]
+        );
+        manager.shutdown().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn terminals_bibcode_stops_are_not_reported_whatever_their_exit() {
+        let captured = crate::diagnostics::profiler::exits::CapturedExits::start();
+        let root = tempfile::tempdir().unwrap();
+        let backend = Arc::new(HistoryTestBackend::default());
+        let manager = TerminalManager::new(
+            backend.clone(),
+            TerminalManagerOptions {
+                subprocess_poll_interval: Duration::ZERO,
+                ..TerminalManagerOptions::default()
+            },
+        );
+        for thread in ["quiesced", "closed"] {
+            manager
+                .open(TerminalOpenInput::new(
+                    thread,
+                    "term",
+                    root.path().to_path_buf(),
+                    80,
+                    24,
+                ))
+                .await
+                .expect("terminal starts");
+            // Whatever a kill leaves behind, a stop BiBCode made is not a crash.
+            *backend.latest().exit_status.lock().unwrap() = Some(raw_status(libc::SIGSEGV));
+        }
+
+        manager
+            .quiesce_thread_preserving_history("quiesced")
+            .await
+            .expect("quiesce");
+        manager.close("closed", Some("term")).await.expect("close");
+        // Both kills published their exit; let any exit watcher run.
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+
+        assert!(captured.take().is_empty());
         manager.shutdown().await;
     }
 

@@ -1,4 +1,5 @@
 pub mod event;
+pub mod exits;
 pub mod findings;
 pub mod latency;
 pub mod leak;
@@ -18,7 +19,7 @@ use std::{
     },
 };
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 pub fn profiler_dir(state_dir: &Path) -> PathBuf {
     state_dir.join("profiler")
@@ -97,13 +98,33 @@ pub fn emit_from(source: String, kind: &'static str, payload: Value) {
     }
 }
 
-/// Records one finding occurrence. Does nothing while the profiler is off.
-pub fn record_finding(input: findings::FindingInput) {
+/// Records one finding occurrence and returns it. Does nothing while the profiler is off.
+pub fn record_finding(input: findings::FindingInput) -> Option<findings::Occurrence> {
+    let handle = enabled_handle()?;
+    let finding = handle
+        .findings
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .record(input, time::OffsetDateTime::now_utc(), &handle.sender);
+    Some(findings::Occurrence {
+        id: finding.id,
+        count: finding.count,
+    })
+}
+
+/// Adds what a later lookup found, such as an OS crash record, to the evidence of a recorded
+/// occurrence. Does nothing while the profiler is off.
+pub fn amend_finding(occurrence: &findings::Occurrence, extra: Map<String, Value>) {
     if let Some(handle) = enabled_handle() {
         handle
             .findings
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .record(input, time::OffsetDateTime::now_utc(), &handle.sender);
+            .amend(
+                occurrence,
+                extra,
+                time::OffsetDateTime::now_utc(),
+                &handle.sender,
+            );
     }
 }

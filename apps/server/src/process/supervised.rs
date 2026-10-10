@@ -1,4 +1,11 @@
-use std::{future::Future, io, process::ExitStatus, time::Duration};
+use std::{
+    ffi::OsStr,
+    future::Future,
+    io,
+    path::Path,
+    process::ExitStatus,
+    time::{Duration, Instant},
+};
 
 use process_wrap::tokio::{ChildWrapper, CommandWrap};
 use tokio::{
@@ -8,6 +15,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use super::{ProcessCleanupReport, configure_supervised_background_command_wrap};
+use crate::diagnostics::profiler::exits::{self, Exited, Watch};
 
 const PROCESS_CLEANUP_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 const PROCESS_OUTPUT_READ_BUFFER_BYTES: usize = 8 * 1024;
@@ -125,6 +133,9 @@ where
         max_output_bytes,
         overflow,
     };
+    // What a crash report names, read before the command is wrapped.
+    let watched =
+        exits::watching().then(|| (command.as_std().get_program().to_owned(), Instant::now()));
     let mut command = CommandWrap::from(command);
     configure_supervised_background_command_wrap(&mut command);
     // One absolute budget covers spawn and execution: a stalled process
@@ -161,7 +172,8 @@ where
         .await
         .map_err(SupervisedRunError::Spawn)?;
     let mut guard = SupervisedChildGuard::arm(child);
-    observer(guard.child().id());
+    let pid = guard.child().id();
+    observer(pid);
 
     let outcome = execute_child(
         guard.child_mut(),
@@ -179,7 +191,33 @@ where
         // could have its id reused, which takes a PID wrap-around in between.
         terminate_and_wait_owned(child, cleanup_timeout, "supervised process").await;
     }
+    // A run that timed out, was cancelled or failed was stopped on request.
+    if let (Some((program, spawned)), Some(pid), Ok(output)) = (&watched, pid, &outcome) {
+        report_command_exit(program, pid, &output.status, spawned.elapsed());
+    }
     outcome
+}
+
+/// A completed command that died of a signal. Its exit code is not watched: non-zero is
+/// normal for git.
+fn report_command_exit(program: &OsStr, pid: u32, status: &ExitStatus, uptime: Duration) {
+    let exe = program.to_string_lossy();
+    let name = Path::new(program)
+        .file_name()
+        .unwrap_or(program)
+        .to_string_lossy();
+    exits::report_exit(
+        Watch::Signals,
+        &Exited {
+            kind: "command",
+            label: &name,
+            exe: &exe,
+            pid,
+            uptime,
+        },
+        status,
+        false,
+    );
 }
 
 /// Owns a spawned child until its supervised run settles.
@@ -1377,6 +1415,53 @@ mod tests {
             future_size < PROCESS_OUTPUT_READ_BUFFER_BYTES,
             "output collection future retained an inline 8 KiB read buffer ({future_size} bytes)"
         );
+    }
+
+    #[cfg(unix)]
+    fn shell_request(script: &str, timeout: Duration) -> SupervisedRunRequest {
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        SupervisedRunRequest {
+            command,
+            stdin: None,
+            timeout,
+            cleanup_timeout: PROCESS_CLEANUP_WAIT_TIMEOUT,
+            max_output_bytes: 1024,
+            overflow: SupervisedOverflow::Truncate,
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn only_a_signal_bibcode_did_not_send_reports_a_command_crash() {
+        let captured = crate::diagnostics::profiler::exits::CapturedExits::start();
+        let cancellation = CancellationToken::new();
+        let killed = run_supervised(
+            shell_request("kill -USR1 $$", Duration::from_secs(10)),
+            &cancellation,
+        )
+        .await
+        .expect("signalled run completes");
+        assert!(!killed.status.success());
+        let failed = run_supervised(
+            shell_request("exit 3", Duration::from_secs(10)),
+            &cancellation,
+        )
+        .await
+        .expect("failed run completes");
+        assert_eq!(failed.status.code(), Some(3));
+        let timed_out = run_supervised(
+            shell_request("sleep 30", Duration::from_millis(200)),
+            &cancellation,
+        )
+        .await;
+        assert!(matches!(timed_out, Err(SupervisedRunError::Timeout)));
+
+        assert_eq!(captured.take(), [["command", "sh", "SIGUSR1"]]);
     }
 
     #[cfg(unix)]

@@ -14,7 +14,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use time::{Duration, OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
 
@@ -56,6 +56,14 @@ pub struct FindingInput {
     pub title: String,
     pub summary: String,
     pub evidence: Value,
+}
+
+/// One recorded occurrence of a finding, for evidence a later lookup adds to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Occurrence {
+    pub id: String,
+    /// The finding's `count` once this occurrence was recorded.
+    pub count: u64,
 }
 
 /// A finding as stored and as sent to clients. Timestamps are RFC3339 UTC with whole
@@ -279,6 +287,34 @@ impl FindingsBook {
             });
         }
         finding
+    }
+
+    /// Adds `extra` to the evidence of `occurrence`, for what a lookup finds after it was
+    /// recorded. It is not an occurrence: `count` and `lastSeen` stay. A later occurrence has
+    /// replaced the evidence, so it is left alone; so is a finding no longer in the book.
+    /// Returns whether the evidence was amended.
+    pub fn amend(
+        &mut self,
+        occurrence: &Occurrence,
+        extra: Map<String, Value>,
+        now: OffsetDateTime,
+        events: &EventSender,
+    ) -> bool {
+        let Some(known) = self
+            .by_id
+            .get_mut(&occurrence.id)
+            .filter(|known| known.count == occurrence.count)
+        else {
+            return false;
+        };
+        if let Value::Object(evidence) = &mut known.evidence {
+            evidence.extend(extra);
+        }
+        if let Ok(line) = serde_json::to_value(&*known) {
+            events.send_finding(line);
+        }
+        self.persisted_at.insert(occurrence.id.clone(), now);
+        true
     }
 
     /// The `n` most recently seen findings, newest first.
@@ -660,6 +696,52 @@ mod tests {
 
     fn counts(lines: &[Value]) -> Vec<u64> {
         lines.iter().map(|l| l["count"].as_u64().unwrap()).collect()
+    }
+
+    #[test]
+    fn amended_evidence_is_kept_and_persisted_without_counting_an_occurrence() {
+        let (dir, store) = scratch_sender();
+        let mut book = FindingsBook::default();
+        let recorded = book.record(input("a"), datetime!(2026-10-09 12:00 UTC), &store.sender());
+        let first = Occurrence {
+            id: recorded.id.clone(),
+            count: 1,
+        };
+        let extra = Map::from_iter([("frames".to_owned(), json!(["f (libc.so.6 + 0x10)"]))]);
+        let at = datetime!(2026-10-09 12:00:04 UTC);
+
+        assert!(book.amend(&first, extra.clone(), at, &store.sender()));
+        let unknown = Occurrence {
+            id: "rpc.slow-000000000000".to_owned(),
+            count: 1,
+        };
+        assert!(!book.amend(&unknown, extra.clone(), at, &store.sender()));
+        store.shutdown();
+
+        let amended = &book.newest(1)[0];
+        assert_eq!(
+            (amended.count, amended.last_seen.as_str()),
+            (1, "2026-10-09T12:00:00Z")
+        );
+        assert_eq!(amended.evidence["frames"][0], "f (libc.so.6 + 0x10)");
+        assert_eq!(
+            amended.evidence["eventRefs"], recorded.evidence["eventRefs"],
+            "the recorded evidence stays"
+        );
+        let reloaded = FindingsBook::load(dir.path()).newest(1);
+        assert_eq!(reloaded[0].evidence, amended.evidence);
+
+        // A later occurrence replaced the evidence: the first one's lookup must not mix in.
+        let (_scratch, store) = scratch_sender();
+        let mut book = FindingsBook::default();
+        book.record(input("a"), datetime!(2026-10-09 12:00 UTC), &store.sender());
+        book.record(
+            input("a"),
+            datetime!(2026-10-09 12:00:01 UTC),
+            &store.sender(),
+        );
+        assert!(!book.amend(&first, extra, at, &store.sender()));
+        assert_eq!(book.newest(1)[0].evidence, input("a").evidence);
     }
 
     #[test]
