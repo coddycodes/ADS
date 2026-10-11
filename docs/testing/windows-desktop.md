@@ -635,8 +635,11 @@ pairing offer --endpoint http://<address>:3773` and confirm the dialog refuses
   evidence; do not substitute a manually created rule. Run the host-independent
   deletion-spawn and policy-denial tests, then reproduce a deletion denial
   natively and confirm the app reports incomplete cleanup rather than claiming
-  the rule was removed. A missing rule is benign only when `netsh advfirewall firewall show rule`
-  has queried the store and reported that no rule matches. Deletion uses the
+  the rule was removed. A missing rule is benign when `netsh advfirewall firewall show rule`
+  reports that no rule matches. On a non-English display language that sentence
+  is translated and the command exits 1, so absence also requires a successful
+  `netsh advfirewall show allprofiles state` before the miss is accepted. A
+  failed policy read is still incomplete cleanup. Deletion uses the
   same `netsh` program, not PowerShell: on the Windows ARM64 runner a
   PowerShell firewall query did not finish inside the five-second caller
   budget, the widen failed closed, and the another-device grant was never
