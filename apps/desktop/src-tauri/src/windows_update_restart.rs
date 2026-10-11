@@ -205,36 +205,34 @@ impl ClaimedHandoff {
 
 /// Applies a fresh handoff before any worker thread exists.
 pub(crate) fn adopt_restart_handoff() -> ClaimedHandoff {
-    #[cfg(windows)]
-    {
-        let path = handoff_path(&std::env::temp_dir());
-        let Ok(bytes) = std::fs::read(&path) else {
-            return ClaimedHandoff(None);
-        };
-        let now = now_ms();
-        if handoff_is_expired(&bytes, now) {
-            let _ = std::fs::remove_file(&path);
-            return ClaimedHandoff(None);
-        }
-        let Ok(current_exe) = std::env::current_exe() else {
-            return ClaimedHandoff(None);
-        };
-        let Some(assignments) =
-            assignments_from_handoff(&bytes, &current_exe.to_string_lossy(), now, |key| {
-                std::env::var_os(key).is_some()
-            })
-        else {
-            return ClaimedHandoff(None);
-        };
-        // SAFETY: this runs at the start of `run`, before Tauri creates threads.
-        // No other thread can read the environment concurrently.
-        for (key, value) in assignments {
-            unsafe { std::env::set_var(&key, value) };
-        }
-        ClaimedHandoff(Some(path))
+    ClaimedHandoff(claim_handoff())
+}
+
+#[cfg(windows)]
+fn claim_handoff() -> Option<PathBuf> {
+    let path = handoff_path(&std::env::temp_dir());
+    let bytes = std::fs::read(&path).ok()?;
+    let now = now_ms();
+    if handoff_is_expired(&bytes, now) {
+        let _ = std::fs::remove_file(&path);
+        return None;
     }
-    #[cfg(not(windows))]
-    ClaimedHandoff(None)
+    let current_exe = std::env::current_exe().ok()?;
+    let assignments =
+        assignments_from_handoff(&bytes, &current_exe.to_string_lossy(), now, |key| {
+            std::env::var_os(key).is_some()
+        })?;
+    // SAFETY: this runs at the start of `run`, before Tauri creates threads.
+    // No other thread can read the environment concurrently.
+    for (key, value) in assignments {
+        unsafe { std::env::set_var(&key, value) };
+    }
+    Some(path)
+}
+
+#[cfg(not(windows))]
+fn claim_handoff() -> Option<PathBuf> {
+    None
 }
 
 /// The detached waiter [`prepare_restart_handoff`] started, if any.

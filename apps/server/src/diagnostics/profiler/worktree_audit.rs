@@ -50,6 +50,7 @@ const MAX_PROJECT_ENTRIES: usize = 512;
 const STUCK_AFTER: Duration = Duration::from_secs(10 * 60);
 /// What Linux appends to the path of a working directory that was removed. `process_cwd`
 /// keeps it, and marks a removed directory the same way on macOS.
+#[cfg(unix)]
 const DELETED_MARKER: &str = " (deleted)";
 
 /// Records one `worktree.remove` or `worktree.removeFromBibCode` outcome: a `worktree.removal`
