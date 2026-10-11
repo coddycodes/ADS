@@ -15,6 +15,7 @@ Start with the shared procedure, then use the page for the native host:
   its automated harness runs on Linux and macOS)
 - [Execution report template](./execution-report-template.md)
 - [Flaky-test diagnosis](./flaky-tests.md)
+- [Typography component fixtures](./typography-fixtures.md)
 
 ## Evidence classes
 

@@ -148,7 +148,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
             ) : (
               <FolderClosedIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
             )}
-            <span className="truncate font-mono text-xs text-muted-foreground/90 group-hover:text-foreground/90">
+            <span className="truncate font-mono text-xs text-muted-foreground group-hover:text-foreground/90">
               {node.name}
             </span>
             {hasNonZeroStat(node.stat) && (
@@ -183,7 +183,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           theme={resolvedTheme}
           className="size-3.5 text-muted-foreground/70"
         />
-        <span className="truncate font-mono text-xs text-muted-foreground/80 group-hover:text-foreground/90">
+        <span className="truncate font-mono text-xs text-muted-foreground group-hover:text-foreground/90">
           {node.name}
         </span>
         {node.stat && (

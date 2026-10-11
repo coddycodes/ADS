@@ -436,6 +436,13 @@ describe("GitManagerCreatePullRequestDialog", () => {
           option.textContent?.trim(),
         ),
       ).toEqual(["main", "release/next"]);
+      const list = document.querySelector('[data-slot="combobox-list"]');
+      const viewport = list?.closest('[data-slot="scroll-area-viewport"]');
+      expect(list?.getAttribute("data-text-surface")).toBe("popover");
+      expect(viewport).not.toBeNull();
+      expect(
+        viewport?.closest('[data-slot="combobox-popup"]')?.hasAttribute("data-text-surface"),
+      ).toBe(false);
       expect(vcsEnvironment.listRefs).toHaveBeenLastCalledWith(
         expect.objectContaining({
           input: expect.objectContaining({ refKind: "remote", includeMatchingRemoteRefs: true }),
@@ -679,6 +686,8 @@ describe("GitManagerCreatePullRequestDialog", () => {
 
     expect(popup?.className).toContain("max-w-xl");
     expect(panel).not.toBeNull();
+    expect(panel?.getAttribute("data-text-surface")).toBe("popover");
+    expect(panel?.closest('[data-slot="scroll-area-viewport"]')).not.toBeNull();
     expect(summary?.getAttribute("aria-label")).toBe("Pull request details");
     expect(summary?.textContent).toContain("GitHub · https://github.com");
     expect(input("git-manager-create-pr-head").value).toBe("feature/reviewed");
@@ -714,6 +723,24 @@ describe("GitManagerCreatePullRequestDialog", () => {
           baseUrl: "https://gitlab.example",
         },
       });
+
+    it.each(["github", "gitlab"])(
+      "marks the %s option list inside its scroll viewport",
+      async (provider) => {
+        if (provider === "gitlab") h.status = gitlab();
+        await renderDialog();
+        const assignee = fieldInput("Assignee");
+        await act(async () => fieldButton(assignee.id, "combobox-trigger")?.click());
+        const list = document.querySelector('[data-slot="combobox-list"]');
+        const viewport = list?.closest('[data-slot="scroll-area-viewport"]');
+        expect(list?.querySelector('[role="option"]')).not.toBeNull();
+        expect(list?.getAttribute("data-text-surface")).toBe("popover");
+        expect(viewport).not.toBeNull();
+        expect(
+          viewport?.closest('[data-slot="combobox-popup"]')?.hasAttribute("data-text-surface"),
+        ).toBe(false);
+      },
+    );
 
     it("hides create options on servers without the capability", async () => {
       h.createOptionsSupported = false;

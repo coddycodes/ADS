@@ -63,6 +63,9 @@ const testExclude = [
   // the web package's lane (`vp run test`). See "Web unit tests and the React Compiler"
   // in docs/testing/README.md.
   "apps/web/src/reactCompiler.test.tsx",
+  // These real-component fixtures use their own compiler and owned service ports.
+  // Typography CI runs their dedicated config and complete caller checks.
+  "apps/web/visual/typography/**",
 ] as const;
 
 export default defineConfig({

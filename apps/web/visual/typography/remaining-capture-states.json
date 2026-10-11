@@ -1,0 +1,169 @@
+{
+  "diff-panel-no-thread": [
+    {
+      "actions": [],
+      "state": "initial",
+      "visible_text": ["Select a thread to inspect turn diffs."]
+    }
+  ],
+  "diff-panel-workspace-unavailable": [
+    {
+      "actions": [],
+      "state": "initial",
+      "visible_text": ["Owned fixture workspace is unavailable."]
+    }
+  ],
+  "diff-panel-branch": [
+    {
+      "actions": [],
+      "state": "initial",
+      "visible_text": [
+        "Branch changes",
+        "feature/typography",
+        "main",
+        "This diff was truncated because it exceeded the preview limit. The changes shown are incomplete."
+      ]
+    },
+    {
+      "actions": [
+        {
+          "action": "click",
+          "selector": "button[aria-label=\"Diff scope: Branch changes\"]"
+        },
+        {
+          "action": "focus",
+          "selector": "[data-slot=\"menu-sub-trigger\"]",
+          "text": "Turn"
+        },
+        {
+          "action": "press",
+          "selector": "[data-slot=\"menu-sub-trigger\"]",
+          "text": "Turn",
+          "key": "ArrowRight"
+        }
+      ],
+      "text_site_selectors": [
+        "[data-slot=\"menu-sub-content\"] [data-slot=\"menu-item\"] span.ml-auto.text-xs"
+      ],
+      "note": "Open the actual Turn submenu by keyboard. Review both runtime-formatted timestamps in the original.",
+      "state": "scope-turn-timestamps",
+      "visible_text": ["Turn 1", "Turn 2"]
+    },
+    {
+      "actions": [
+        {
+          "action": "escape"
+        },
+        {
+          "action": "escape"
+        },
+        {
+          "action": "click",
+          "selector": "button[aria-label=\"Change comparison target. Currently main\"]"
+        },
+        {
+          "action": "fill",
+          "selector": "input[placeholder=\"Search refs...\"]",
+          "value": "no-typography-ref-match"
+        }
+      ],
+      "note": "Close the nested Turn submenu and its parent before opening the comparison picker.",
+      "state": "comparison-empty-refs",
+      "visible_text": ["Branch", "Remote", "No matching refs."],
+      "text_site_selectors": []
+    }
+  ],
+  "diff-panel-raw": [
+    {
+      "actions": [],
+      "text_site_selectors": [".diff-panel-viewport p.text-xs", "pre.font-mono.text-xs"],
+      "state": "initial",
+      "visible_text": [
+        "Unsupported diff format. Showing raw patch.",
+        "Owned fixture raw patch text"
+      ]
+    }
+  ],
+  "diff-panel-error": [
+    {
+      "actions": [],
+      "text_site_selectors": [".diff-panel-viewport p.text-red-500\\/80"],
+      "state": "initial",
+      "visible_text": [
+        "Owned fixture diff preview failed.",
+        "No patch available for this selection."
+      ]
+    }
+  ],
+  "diff-panel-missing": [
+    {
+      "actions": [],
+      "state": "initial",
+      "visible_text": ["No patch available for this selection."]
+    }
+  ],
+  "diff-panel-net-zero": [
+    {
+      "actions": [],
+      "state": "initial",
+      "visible_text": ["No net changes in this selection."]
+    }
+  ],
+  "diff-panel-turn-empty": [
+    {
+      "actions": [],
+      "state": "initial",
+      "visible_text": ["No completed turns yet."]
+    }
+  ],
+  "diff-panel-not-repo": [
+    {
+      "actions": [],
+      "state": "initial",
+      "visible_text": ["Turn diffs are unavailable because this project is not a git repository."]
+    }
+  ],
+  "git-actions-publish-dialog": [
+    {
+      "actions": [
+        {
+          "action": "click",
+          "selector": "button[aria-label=\"Git action options\"]"
+        },
+        {
+          "action": "click",
+          "selector": "[role=\"menuitem\"]",
+          "text": "Publish repository..."
+        },
+        {
+          "action": "click",
+          "selector": "button",
+          "text": "Next"
+        }
+      ],
+      "text_site_selectors": ["#publish-repository-path[value=\"\"][placeholder=\"owner/repo\"]"],
+      "note": "GitHub is authenticated with account=None to keep the actual field empty. Do not type a path or click Publish. Step headings are incidental and are not accepted as the empty-path witness.",
+      "state": "empty-repository-path",
+      "visible_text": ["Publish repository", "Repository", "github.com/", "owner/repo"]
+    }
+  ],
+  "settings-share-current-unreachable": [
+    {
+      "actions": [],
+      "note": "Install a limited owned DesktopBridge and select shareChangedSitesData(id) before the fresh registry mount. Loopback fixture origin is required for unreachable help because a nonloopback origin supplies its own pairing URL.",
+      "state": "initial",
+      "visible_text": [
+        "This device",
+        "Copy the token and pair from another client using this backend's reachable host."
+      ]
+    }
+  ],
+  "settings-share-empty-access": [
+    {
+      "actions": [],
+      "note": "Install a limited owned DesktopBridge and select shareChangedSitesData(id) before the fresh registry mount. Loopback fixture origin is required for unreachable help because a nonloopback origin supplies its own pairing URL.",
+      "state": "initial",
+      "visible_text": ["No pairing links or client sessions."]
+    }
+  ]
+}

@@ -146,7 +146,7 @@ function ProviderAuthEmail(props: {
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5">
       {props.separator ? <span aria-hidden>·</span> : null}
-      {props.prefix ? <span className="text-muted-foreground/80">{props.prefix}</span> : null}
+      {props.prefix ? <span className="text-muted-foreground">{props.prefix}</span> : null}
       <RedactedSensitiveText
         value={trimmed}
         ariaLabel="Toggle account email visibility"
@@ -596,7 +596,7 @@ export function ProviderInstanceCard({
   );
 
   const authRowNode = (
-    <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground/80">
+    <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
       {hasAuthenticatedEmail ? (
         <>
           <span>Authenticated as</span>

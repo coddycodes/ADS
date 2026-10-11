@@ -1,0 +1,32 @@
+{
+  "chat-markdown-file-tooltip": [
+    {
+      "state": "file-path-tooltip",
+      "actions": [
+        {
+          "action": "hover",
+          "selector": ".chat-markdown-file-link",
+          "index": 0
+        }
+      ],
+      "owners": ["MarkdownFileLink"],
+      "visible_text": ["src/left/typography-link.ts"],
+      "widget_selectors": [".markdown-file-link-tooltip-scroll"],
+      "note": "Required changed private tooltip text. Wait until the tooltip is displayed; do not credit the visible chip label alone."
+    }
+  ],
+  "chat-provider-picker-open": [
+    {
+      "state": "actual-popup-models",
+      "actions": [],
+      "owners": ["ProviderModelPicker"],
+      "visible_text": ["Typography Sol", "TC", "Reviewed", "Typography Codex"],
+      "widget_selectors": [
+        "[data-chat-provider-model-picker]",
+        "[data-model-picker-content]",
+        "[data-model-picker-model-slug=\"typography-reviewed\"]"
+      ],
+      "note": "Current unlocked ModelPickerContent uses preferShortName; the real second row is Reviewed. TC is the actual trigger accent badge. Require the row inside the actual popup and its provider footer; no replacement renderer."
+    }
+  ]
+}

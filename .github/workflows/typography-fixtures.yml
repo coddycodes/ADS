@@ -1,0 +1,95 @@
+name: Typography fixtures
+
+on:
+  pull_request:
+    paths:
+      - apps/web/**
+      - packages/**
+      - .github/workflows/typography-fixtures.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: typography-fixtures-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    name: Typography ${{ matrix.engine }} ${{ matrix.group }}
+    runs-on: ubuntu-24.04
+    env:
+      BIBCODE_TYPOGRAPHY_SOURCE: ${{ github.event.pull_request.head.sha }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium]
+        group: [core, git, settings]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: voidzero-dev/setup-vp@1b32467adbe183473499fd9d5d372c3ed9641754 # v1.18.0
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+      - name: Check capture caller
+        run: node --test apps/web/visual/typography/*.node-test.mjs
+      - name: Check actual component fixtures
+        working-directory: apps/web
+        run: node ../../scripts/run-local-vp.mjs test run --config visual/typography/vite.config.mjs
+      - name: Build actual component gallery
+        working-directory: apps/web
+        run: node ../../scripts/run-local-vp.mjs build --config visual/typography/vite.config.mjs
+      - name: Capture Chromium component group
+        run: timeout --signal=TERM --kill-after=15s 1080s node apps/web/visual/typography/capture.mjs chromium typography-artifacts/chromium full ${{ matrix.group }}
+      - name: Preserve original captures and source manifest
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: typography-${{ matrix.engine }}-${{ matrix.group }}-${{ github.event.pull_request.head.sha }}
+          path: typography-artifacts/${{ matrix.engine }}
+          if-no-files-found: error
+
+  webkit:
+    name: Typography webkitgtk
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    timeout-minutes: 15
+    env:
+      BIBCODE_TYPOGRAPHY_SOURCE: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Install native tools inside the owned container
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git curl ca-certificates webkit2gtk-driver xvfb xauth dbus-x11
+          test -x /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess
+          test -x /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: voidzero-dev/setup-vp@1b32467adbe183473499fd9d5d372c3ed9641754 # v1.18.0
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+      - name: Check capture caller
+        run: node --test apps/web/visual/typography/*.node-test.mjs
+      - name: Check actual component fixtures
+        working-directory: apps/web
+        run: node ../../scripts/run-local-vp.mjs test run --config visual/typography/vite.config.mjs
+      - name: Build actual component gallery
+        working-directory: apps/web
+        run: node ../../scripts/run-local-vp.mjs build --config visual/typography/vite.config.mjs
+      - name: Capture affected native WebKit popovers
+        run: |
+          timeout --signal=TERM --kill-after=15s 600s dbus-run-session -- xvfb-run -a sh -c 'WebKitWebDriver --port=4444 & driver_pid=$!; trap "kill $driver_pid; wait $driver_pid" EXIT; node apps/web/visual/typography/capture.mjs webkitgtk typography-artifacts/webkitgtk selected git-create-options-users,git-create-options-labels,git-create-options-milestones,git-create-request,git-create-request-branches,git-new-branch-popup,pr-apply-suggestions-popup,pr-base-branch-popup,pr-confirm-action,pr-picker-labels,pr-picker-milestone,pr-dismiss-review,pr-review-popup'
+      - name: Preserve original captures and source manifest
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: typography-webkitgtk-${{ github.event.pull_request.head.sha }}
+          path: typography-artifacts/webkitgtk
+          if-no-files-found: error

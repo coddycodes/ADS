@@ -442,7 +442,7 @@ function CreatePullRequestReviewDialog({
             {capabilityBlockedReason ?? `Review the ${noun} before it is created.`}
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-5">
+        <DialogPanel className="space-y-5" data-text-surface="popover">
           <section
             aria-label={`${capitalize(noun)} details`}
             className="rounded-xl border border-border/70 bg-muted/24 px-4"
@@ -766,8 +766,8 @@ function BranchPicker({
         maxLength={256}
         showClear
       />
-      <ComboboxPopup data-text-surface="popover">
-        <ComboboxList>
+      <ComboboxPopup>
+        <ComboboxList data-text-surface="popover">
           {(branch: string) => (
             <ComboboxItem key={branch} value={branch}>
               {branch}

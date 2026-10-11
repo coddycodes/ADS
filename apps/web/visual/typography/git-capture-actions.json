@@ -1,0 +1,97 @@
+{
+  "git-operation-output": [
+    {
+      "action": "click",
+      "role": "button",
+      "name": "Output (1)"
+    }
+  ],
+  "git-sync-force-dialog": [
+    {
+      "action": "click",
+      "selector": "button:has(> span.truncate)",
+      "role": "button"
+    }
+  ],
+  "git-merge-target-popup": [
+    {
+      "action": "press",
+      "role": "combobox",
+      "name": "Into",
+      "key": "ArrowDown"
+    }
+  ],
+  "git-create-options-users": [
+    {
+      "action": "press",
+      "role": "combobox",
+      "name": "Assignee",
+      "key": "ArrowDown"
+    }
+  ],
+  "git-create-options-labels": [
+    {
+      "action": "press",
+      "role": "combobox",
+      "name": "Labels",
+      "key": "ArrowDown"
+    }
+  ],
+  "git-create-options-milestones": [
+    {
+      "action": "press",
+      "role": "combobox",
+      "name": "Milestone",
+      "key": "ArrowDown"
+    }
+  ],
+  "git-create-request-branches": [
+    {
+      "action": "press",
+      "selector": "#git-manager-create-pr-base",
+      "key": "ArrowDown"
+    }
+  ],
+  "git-new-branch-popup": [
+    {
+      "action": "press",
+      "selector": "#git-manager-create-branch-source",
+      "key": "ArrowDown"
+    }
+  ],
+  "pr-apply-suggestions-popup": [
+    {
+      "action": "click",
+      "role": "button",
+      "name": "Apply suggestions"
+    }
+  ],
+  "pr-base-branch-popup": [
+    {
+      "action": "click",
+      "role": "button",
+      "name": "Change base branch"
+    }
+  ],
+  "pr-picker-labels": [
+    {
+      "action": "click",
+      "role": "button",
+      "name": "Edit Labels"
+    }
+  ],
+  "pr-picker-milestone": [
+    {
+      "action": "click",
+      "role": "button",
+      "name": "Edit Milestone"
+    }
+  ],
+  "pr-dismiss-review": [
+    {
+      "action": "click",
+      "role": "button",
+      "name": "Dismiss review"
+    }
+  ]
+}
