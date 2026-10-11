@@ -858,9 +858,12 @@ with a null environment block, which does not keep the updating process's
 those two variables to a temp handoff that stays valid for ten minutes. The
 replacement applies whichever it does not already have, before it chooses a
 data root or port, so a remote client reconnects to the same endpoint. A
-detached waiter starts the installed executable when the installer exits
-without relaunching it. Linux and macOS still relaunch in-process after
-install, inheriting the process environment. A prepare, cancel, commit, stop, or installer failure attempts to
+detached waiter starts the installed executable only after neither a
+`*-setup.exe` nor a `*-installer.exe` process is running and the installer has
+not relaunched it. The updater launches the downloaded NSIS bytes as
+`{package}-{version}-installer.exe`, so the published `*-setup.exe` basename is
+not the process name of a normal install. Linux and macOS still relaunch
+in-process after install, inheriting the process environment. A prepare, cancel, commit, stop, or installer failure attempts to
 restart the exact prior running set before update coordination is released.
 Any restart onto a port its stopped predecessor held (this update recovery, a
 project-data restart of the target it stopped, a crash restart, or an exposure

@@ -103,6 +103,12 @@ pub(crate) fn handoff_is_expired(bytes: &[u8], now_ms: u64) -> bool {
 }
 
 /// Builds the waiter script. `None` when the executable path cannot be embedded safely.
+///
+/// The published NSIS basename ends in `-setup.exe`, but `tauri-plugin-updater`
+/// writes those bytes to `{package}-{version}-installer.exe` before
+/// `ShellExecuteW`. The running image is therefore
+/// `bibcode-desktop-<version>-installer.exe`. Waiting only for `-setup.exe`
+/// treats that install as finished and starts the app while NSIS is replacing it.
 pub(crate) fn restart_waiter_script(parent_pid: u32, executable: &str) -> Option<String> {
     if executable.is_empty()
         || executable
@@ -128,7 +134,7 @@ pub(crate) fn restart_waiter_script(parent_pid: u32, executable: &str) -> Option
          set /a QUIET=0\r\n\
          set /a LEFT={WAITER_INSTALL_SECONDS}\r\n\
          :while_install\r\n\
-         tasklist /FO CSV /NH 2>nul | findstr /I /C:\"-setup.exe\" >nul\r\n\
+         tasklist /FO CSV /NH 2>nul | findstr /I /C:\"-setup.exe\" /C:\"-installer.exe\" >nul\r\n\
          if not errorlevel 1 (\r\n\
            set /a QUIET=0\r\n\
            set /a LEFT-=1\r\n\
@@ -353,7 +359,7 @@ mod tests {
         assert!(script.contains("set \"PID=4242\""));
         assert!(script.contains("set \"APP=D:\\Apps\\bibcode-desktop.exe\""));
         assert!(script.contains("start \"\" \"%APP%\""));
-        assert!(script.contains("-setup.exe"));
+        assert!(script.contains("/C:\"-setup.exe\" /C:\"-installer.exe\""));
         assert!(script.contains("if %LEFT% LEQ 0 exit /b 0"));
         assert!(!script.contains("goto launch"));
         assert!(restart_waiter_script(1, r#"D:\Apps\bad"name.exe"#).is_none());
