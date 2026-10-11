@@ -1,7 +1,18 @@
 # CI Quality Gates
 
 `.github/workflows/ci.yml` runs on pull requests and pushes to `main`. It has
-five job groups:
+five job groups.
+
+CI and Seeded Packaged Desktop Upgrade each set
+`concurrency.group` to `${{ github.workflow }}-${{ github.ref }}` with
+`cancel-in-progress: true`. A later push to the same branch or pull request
+cancels that workflow's older run, so a burst of merges does not leave a
+native matrix queued for every superseded commit. GitHub keeps a workflow
+run's status at `queued` until every job has left the queue. One macOS job
+still waiting for `macos-26` or `macos-26-intel` therefore lists the whole
+run as queued after Check, Test, and the other native rows have already
+started. Inspect the jobs, not only the run status, before treating the
+workflow as idle.
 
 - **Check** runs `vp check`, workspace typechecking (`vpr typecheck`),
   `cargo fmt --all --check`, Clippy with warnings denied, and the complete
@@ -12,13 +23,18 @@ five job groups:
   It also runs `node --test scripts/check-agent-delivery.node-test.mjs` to verify
   rejection of stale or partial proof, duplicate runs, unchanged failed recipes,
   and repeated rounds without a revised diagnosis.
+  Its 40-minute job budget is the projected cold-cache desktop build (33
+  minutes, from the 26-minute cold Check on `b96fe993` and the longer compile
+  on pull request 65) plus 7 minutes of margin.
 - **Test** runs every workspace package `test` script one task at a time with
   `vp run -r --concurrency-limit 1 test`, then runs `cargo test --workspace -j 2`
   explicitly on Ubuntu 24.04. Serial tasks keep `rustc` from competing with a
   running server or desktop suite, whose 2-second test deadlines have failed
-  on starved hosted runners. Its 60-minute job budget covers setup, the package
-  test graph, the Rust workspace suite, and SSH integration without changing
-  any test-owned deadline. The `-j 2` bound limits concurrent Cargo compilation jobs; Rust
+  on starved hosted runners. Its 75-minute job budget is a completed cold Test
+  (44 minutes on `438136c0`) plus the 21-minute apt stall seen on pull request
+  65 and 10 minutes for the workspace suite and SSH step that were still
+  running when the old 60-minute limit cancelled the job. Test-owned deadlines
+  stay unchanged. The `-j 2` bound limits concurrent Cargo compilation jobs; Rust
   test binaries use the default parallel harness threads. Exact subprocess
   tests may still select `--test-threads=1` inside an isolated child process
   that intentionally owns process-global state.
@@ -102,6 +118,14 @@ SHA-pinned with audited tag comments: Checkout 7.0.1
 (`efb35369e0ad2afab669f228072c1b0d510eae64`), and Rust toolchain 1.98.0
 (`62ae3a85dbdd2bedbb5819da8ce45635129289a1`). Reverify a tag before changing
 its immutable SHA.
+
+Check, Test, and Native desktop restore the Swatinem Rust cache on every run
+and save it only when `github.ref` is `refs/heads/main`, including when a later
+step fails (`cache-on-failure`). Pull requests read that default-branch cache.
+The pnpm store stays on the setup-vp cache. A job cancelled by
+`timeout-minutes` still skips the cache post step, so the Check and Test
+budgets above include a cold compile. Native desktop keeps its 120-minute and
+240-minute row budgets. Release workflows keep their own cache settings.
 
 ## Other Workflows
 

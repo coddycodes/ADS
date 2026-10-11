@@ -41,9 +41,20 @@ export function createTauriPreviewBridge(deps: PreviewBridgeDeps): DesktopPrevie
   const stateListeners = new Set<(tabId: string, state: DesktopPreviewTabState) => void>();
   let stopStateEvents: (() => void) | null = null;
   // Recreating child webviews while switching logical tabs can disconnect the parent app.
-  // Keep one native child for the desktop process lifetime and rebind logical tabs to it.
-  let nativeHostTabId: string | null = null;
-  let activeTabId: string | null = null;
+  // Keep one native child per preview storage partition (one per environment) for the
+  // desktop process lifetime and rebind its logical tabs to it.
+  const hostByPartition = new Map<string, string>();
+  const partitionOfTab = new Map<string, string>();
+  /** Native host -> the logical tab it shows (`null` while hidden with none). */
+  const activeByHost = new Map<string, string | null>();
+
+  const hostOf = (tabId: string): string | undefined => {
+    const partition = partitionOfTab.get(tabId);
+    return partition === undefined ? undefined : hostByPartition.get(partition);
+  };
+  /** The logical tab for a native host's event; `undefined` when `nativeTabId` is no host. */
+  const logicalTabOf = (nativeTabId: string): string | null | undefined =>
+    activeByHost.has(nativeTabId) ? (activeByHost.get(nativeTabId) ?? null) : undefined;
 
   const publishState = (tabId: string, state: DesktopPreviewTabState) => {
     stateByTab.set(tabId, state);
@@ -69,11 +80,12 @@ export function createTauriPreviewBridge(deps: PreviewBridgeDeps): DesktopPrevie
   const startStateEvents = () => {
     if (stopStateEvents) return;
     stopStateEvents = listen<PreviewStateEventPayload>("preview://state", (payload) => {
-      if (nativeHostTabId !== null && payload.tabId === nativeHostTabId) {
-        if (activeTabId === null) return;
-        const state = { ...payload.state, tabId: activeTabId };
-        zoomByTab.set(activeTabId, state.zoomFactor);
-        publishState(activeTabId, state);
+      const logicalTabId = logicalTabOf(payload.tabId);
+      if (logicalTabId !== undefined) {
+        if (logicalTabId === null) return;
+        const state = { ...payload.state, tabId: logicalTabId };
+        zoomByTab.set(logicalTabId, state.zoomFactor);
+        publishState(logicalTabId, state);
         return;
       }
       zoomByTab.set(payload.tabId, payload.state.zoomFactor);
@@ -106,7 +118,7 @@ export function createTauriPreviewBridge(deps: PreviewBridgeDeps): DesktopPrevie
     command: string,
     tabId: string,
     args: Record<string, unknown> = {},
-  ): Promise<T> => invoke<T>(command, { ...args, tabId: nativeHostTabId ?? tabId });
+  ): Promise<T> => invoke<T>(command, { ...args, tabId: hostOf(tabId) ?? tabId });
 
   const setZoom = (tabId: string, getFactor: (committed: number) => number): Promise<void> =>
     enqueueTabOperation(tabId, async () => {
@@ -118,14 +130,20 @@ export function createTauriPreviewBridge(deps: PreviewBridgeDeps): DesktopPrevie
     });
 
   const bridge: DesktopPreviewBridge = {
-    createTab: (tabId) =>
+    createTab: (tabId, environmentId) =>
       enqueueTabOperation(tabId, async () => {
-        activeTabId = tabId;
-        if (nativeHostTabId !== null) {
-          const presentation = boundsByTab.get(tabId);
+        // Only an absent environment is the local one: any id, even a falsy one,
+        // gets its own storage, so isolation never fails open.
+        const isLocal = environmentId === null || environmentId === undefined;
+        const partition = isLocal ? "local" : `environment:${environmentId}`;
+        partitionOfTab.set(tabId, partition);
+        const presentation = boundsByTab.get(tabId);
+        const host = hostByPartition.get(partition);
+        if (host !== undefined) {
+          activeByHost.set(host, tabId);
           if (presentation) {
             await invoke("desktop_preview_set_bounds", {
-              tabId: nativeHostTabId,
+              tabId: host,
               bounds: presentation.bounds,
               visible: presentation.visible,
             });
@@ -133,39 +151,53 @@ export function createTauriPreviewBridge(deps: PreviewBridgeDeps): DesktopPrevie
           publishIdleIfUnknown(tabId);
           return;
         }
-        try {
-          await invoke("desktop_preview_create_tab", { tabId });
-          nativeHostTabId = tabId;
-        } catch (error) {
-          if (activeTabId === tabId) activeTabId = null;
-          throw error;
+        // While other hosts exist, setBounds held this tab's bounds back.
+        const boundsHeldBack = hostByPartition.size > 0;
+        await invoke("desktop_preview_create_tab", isLocal ? { tabId } : { tabId, environmentId });
+        hostByPartition.set(partition, tabId);
+        activeByHost.set(tabId, tabId);
+        // The latest bounds: a resize or occlusion may have landed during creation.
+        const latest = boundsByTab.get(tabId);
+        if (boundsHeldBack && latest) {
+          await invoke("desktop_preview_set_bounds", {
+            tabId,
+            bounds: latest.bounds,
+            visible: latest.visible,
+          });
         }
         publishIdleIfUnknown(tabId);
       }),
     closeTab: (tabId) =>
       enqueueTabOperation(tabId, async () => {
-        if (nativeHostTabId === null) {
+        const host = hostOf(tabId);
+        if (host === undefined) {
           await invoke("desktop_preview_close_tab", { tabId });
-        } else if (activeTabId === tabId) {
+        } else if (activeByHost.get(host) === tabId) {
           const presentation = boundsByTab.get(tabId);
           if (presentation) {
             await invoke("desktop_preview_set_bounds", {
-              tabId: nativeHostTabId,
+              tabId: host,
               bounds: presentation.bounds,
               visible: false,
             });
           }
-          activeTabId = null;
+          activeByHost.set(host, null);
         }
+        partitionOfTab.delete(tabId);
         zoomByTab.delete(tabId);
         stateByTab.delete(tabId);
         boundsByTab.delete(tabId);
       }),
     setBounds: (tabId, bounds: DesktopPreviewBounds, visible) => {
       boundsByTab.set(tabId, { bounds, visible });
-      if (nativeHostTabId !== null && activeTabId !== tabId) return Promise.resolve();
+      const host = hostOf(tabId);
+      // A tab not shown on its host, or not yet on one while other hosts exist,
+      // gets its bounds from createTab.
+      if (host !== undefined ? activeByHost.get(host) !== tabId : hostByPartition.size > 0) {
+        return Promise.resolve();
+      }
       return invoke("desktop_preview_set_bounds", {
-        tabId: nativeHostTabId ?? tabId,
+        tabId: host ?? tabId,
         bounds,
         visible,
       });
@@ -197,10 +229,18 @@ export function createTauriPreviewBridge(deps: PreviewBridgeDeps): DesktopPrevie
     resetZoom: (tabId) => setZoom(tabId, () => 1),
     hardReload: (tabId) => invokeForTab("desktop_preview_hard_reload", tabId),
     openDevTools: (tabId) => invokeForTab("desktop_preview_open_devtools", tabId),
-    clearCookies: () =>
-      invoke("desktop_preview_clear_data", { cookies: true, cache: false, storage: true }),
-    clearCache: () =>
-      invoke("desktop_preview_clear_data", { cookies: false, cache: true, storage: false }),
+    clearCookies: (tabId) =>
+      invokeForTab("desktop_preview_clear_data", tabId, {
+        cookies: true,
+        cache: false,
+        storage: true,
+      }),
+    clearCache: (tabId) =>
+      invokeForTab("desktop_preview_clear_data", tabId, {
+        cookies: false,
+        cache: true,
+        storage: false,
+      }),
     setAnnotationTheme: () => Promise.resolve(),
     pickElement: unsupported("preview.pickElement"),
     cancelPickElement: () => Promise.resolve(),
@@ -254,12 +294,10 @@ export function createTauriPreviewBridge(deps: PreviewBridgeDeps): DesktopPrevie
     },
     onNewWindowRequest: (listener) =>
       listen<{ tabId: string; url: string }>("preview://new-window", (payload) => {
-        // One native child is reused for every logical tab (see nativeHostTabId);
+        // Native children are reused across logical tabs (see hostByPartition);
         // remap exactly like the preview://state handler does.
-        const tabId =
-          nativeHostTabId !== null && payload.tabId === nativeHostTabId
-            ? activeTabId
-            : payload.tabId;
+        const logicalTabId = logicalTabOf(payload.tabId);
+        const tabId = logicalTabId === undefined ? payload.tabId : logicalTabId;
         if (tabId !== null) listener(tabId, payload.url);
       }),
     onPointerEvent: () => () => {},

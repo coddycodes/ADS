@@ -166,6 +166,9 @@ function findRepositorySubtractionReason(path: string): string | null {
   if (NodePath.matchesGlob(path, "apps/desktop/e2e/**")) {
     return "packaged-desktop-ui-automation";
   }
+  if (NodePath.matchesGlob(path, "apps/web/visual/typography/**")) {
+    return "standalone-component-capture-fixtures";
+  }
   if (NodePath.matchesGlob(path, "**/*.d.ts")) {
     return "declaration";
   }
@@ -249,6 +252,17 @@ function readNonEmptyLines(path: string): string[] {
 }
 
 describe("root coverage policy", () => {
+  it("keeps standalone capture fixtures in their explicitly tested lane", async () => {
+    const viteModule = await loadRootViteModule();
+    expect(viteModule.default.test?.exclude).toContain("apps/web/visual/typography/**");
+    expect(readRepositoryFile(".github/workflows/typography-fixtures.yml")).toContain(
+      "test run --config visual/typography/vite.config.mjs",
+    );
+    for (const path of NodeFS.globSync("apps/web/src/**/*.{ts,tsx}", { cwd: REPOSITORY_ROOT })) {
+      const source = readRepositoryFile(path);
+      expect(source, path).not.toMatch(/(?:from\s*|import\s*\()\s*["'][^"']*visual\/typography/);
+    }
+  });
   it("excludes local Git worktrees from the root test graph", async () => {
     const viteModule = await loadRootViteModule();
 

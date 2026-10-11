@@ -55,6 +55,17 @@ export function showFileOutsideWorkspaceNotice(input: {
   );
 }
 
+/** An SSH preview fell back to another local port because `hostPort` is taken on this computer. */
+export function showSamePortBusyNotice(hostPort: string): void {
+  toastManager.add(
+    stackedThreadToast({
+      type: "info",
+      title: `${hostPort} is in use on this computer`,
+      description: `This preview runs on a different local port. Apps that expect ${hostPort} (OAuth sign-in, for example) may not work until you free it.`,
+    }),
+  );
+}
+
 /** Copies a link; a refused clipboard leaves nothing further to do. */
 export function copyLink(url: string): void {
   copyLinkAction(url).onClick();

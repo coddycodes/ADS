@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BiBCode typography fixtures</title>
+    <script>
+      const theme = new URLSearchParams(window.location.search).get("theme") ?? "light";
+      if (theme !== "light" && theme !== "dark") throw new Error("Typography theme refused.");
+      window.localStorage.setItem("bibcode:theme", theme);
+    </script>
+  </head>
+  <body class="bg-background font-sans text-sm text-foreground">
+    <div id="root"></div>
+    <script type="module" src="/main.tsx"></script>
+  </body>
+</html>

@@ -29,6 +29,20 @@ describe("desktopTabLifetime", () => {
     vi.unstubAllGlobals();
   });
 
+  it("creates the native tab in its environment's preview storage", async () => {
+    createTab.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
+    const remote = acquireDesktopTab("tab_remote", "env-remote");
+    await remote.ready;
+    const local = acquireDesktopTab("tab_local", null);
+    await local.ready;
+
+    expect(createTab).toHaveBeenCalledWith("tab_remote", "env-remote");
+    expect(createTab).toHaveBeenCalledWith("tab_local", null);
+    remote.release();
+    local.release();
+    await vi.runAllTimersAsync();
+  });
+
   it("shares tab creation readiness across concurrent leases", async () => {
     let resolveCreation: (() => void) | undefined;
     createTab.mockReturnValueOnce(
@@ -37,8 +51,8 @@ describe("desktopTabLifetime", () => {
       }),
     );
 
-    const first = acquireDesktopTab("tab_readiness");
-    const second = acquireDesktopTab("tab_readiness");
+    const first = acquireDesktopTab("tab_readiness", null);
+    const second = acquireDesktopTab("tab_readiness", null);
 
     expect(createTab).toHaveBeenCalledOnce();
     expect(first.ready).toBe(second.ready);
@@ -56,8 +70,8 @@ describe("desktopTabLifetime", () => {
   });
 
   it("closes a tab only after the last lease releases", async () => {
-    const first = acquireDesktopTab("tab_shared");
-    const second = acquireDesktopTab("tab_shared");
+    const first = acquireDesktopTab("tab_shared", null);
+    const second = acquireDesktopTab("tab_shared", null);
     await first.ready;
 
     first.release();
@@ -74,9 +88,9 @@ describe("desktopTabLifetime", () => {
   });
 
   it("cancels a pending close when the tab is acquired again", async () => {
-    const first = acquireDesktopTab("tab_reacquired");
+    const first = acquireDesktopTab("tab_reacquired", null);
     first.release();
-    const second = acquireDesktopTab("tab_reacquired");
+    const second = acquireDesktopTab("tab_reacquired", null);
 
     await vi.runAllTimersAsync();
     expect(closeTab).not.toHaveBeenCalled();
@@ -94,13 +108,13 @@ describe("desktopTabLifetime", () => {
         resolveCreation = resolve;
       }),
     );
-    const owner = acquireDesktopTab("tab_interactive");
+    const owner = acquireDesktopTab("tab_interactive", null);
     const navigateDesktopTab = Reflect.get(desktopTabLifetime, "navigateDesktopTab") as
-      | ((tabId: string, url: string) => Promise<void>)
+      | ((tabId: string, partition: string | null, url: string) => Promise<void>)
       | undefined;
 
     expect(navigateDesktopTab).toEqual(expect.any(Function));
-    const navigation = navigateDesktopTab!("tab_interactive", "https://interactive.test/");
+    const navigation = navigateDesktopTab!("tab_interactive", null, "https://interactive.test/");
     await Promise.resolve();
     expect(previewNavigate).not.toHaveBeenCalled();
 
@@ -116,8 +130,8 @@ describe("desktopTabLifetime", () => {
   });
 
   it("treats each acquired lease release as idempotent", async () => {
-    const first = acquireDesktopTab("tab_idempotent");
-    const second = acquireDesktopTab("tab_idempotent");
+    const first = acquireDesktopTab("tab_idempotent", null);
+    const second = acquireDesktopTab("tab_idempotent", null);
     await first.ready;
 
     first.release();
@@ -132,14 +146,15 @@ describe("desktopTabLifetime", () => {
 
   it("retries a rejected creation generation instead of poisoning later navigation", async () => {
     createTab.mockRejectedValueOnce(new Error("create boom")).mockResolvedValueOnce(undefined);
-    const owner = acquireDesktopTab("tab_create_retry");
+    const owner = acquireDesktopTab("tab_create_retry", null);
     await expect(owner.ready).rejects.toThrow("create boom");
     const navigateDesktopTab = Reflect.get(desktopTabLifetime, "navigateDesktopTab") as (
       tabId: string,
+      partition: string | null,
       url: string,
     ) => Promise<void>;
 
-    await navigateDesktopTab("tab_create_retry", "https://recovered.test/");
+    await navigateDesktopTab("tab_create_retry", null, "https://recovered.test/");
 
     expect(createTab).toHaveBeenCalledTimes(2);
     expect(previewNavigate).toHaveBeenCalledExactlyOnceWith(
@@ -154,11 +169,12 @@ describe("desktopTabLifetime", () => {
     previewNavigate.mockRejectedValueOnce(new Error("navigate boom"));
     const navigateDesktopTab = Reflect.get(desktopTabLifetime, "navigateDesktopTab") as (
       tabId: string,
+      partition: string | null,
       url: string,
     ) => Promise<void>;
 
     await expect(
-      navigateDesktopTab("tab_navigation_failure", "https://failure.test/"),
+      navigateDesktopTab("tab_navigation_failure", null, "https://failure.test/"),
     ).rejects.toThrow("navigate boom");
     await vi.runAllTimersAsync();
 

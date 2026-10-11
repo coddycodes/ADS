@@ -21,6 +21,7 @@ import {
 import { resolvePreviewTarget } from "~/browser/browserTargetResolver";
 import { showPreviewUnreachableMessage, showPreviewUnreachableNotice } from "~/browser/linkNotices";
 import { navigateDesktopTab } from "~/browser/desktopTabLifetime";
+import { previewPartitionFor } from "~/browser/previewPartition";
 import { canonicalizePreviewUrl, resolveForNavigation } from "~/browser/previewGateway";
 import { failPreviewTabNavigation } from "~/browser/previewTabFailure";
 import { useEnvironment, useEnvironmentHttpBaseUrl } from "~/state/environments";
@@ -220,7 +221,11 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
           if (result._tag === "Failure") throw squashAtomCommandFailure(result);
           updatePreviewServerSnapshot(threadRef, result.value);
           if (superseded()) return;
-          await navigateDesktopTab(tabId, resolvedUrl);
+          await navigateDesktopTab(
+            tabId,
+            previewPartitionFor(threadRef.environmentId),
+            resolvedUrl,
+          );
           rememberPreviewUrl(threadRef, canonicalUrl);
         } else {
           await openPreviewSession({
@@ -262,7 +267,13 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
     })
       .then((target) => {
         if (!isCurrent()) return;
-        if (target.kind === "ok") return navigateDesktopTab(tabId, target.url);
+        if (target.kind === "ok") {
+          return navigateDesktopTab(
+            tabId,
+            previewPartitionFor(threadRef.environmentId),
+            target.url,
+          );
+        }
         // Nothing loads, so fail the tab (here only, or shared for a refusal).
         return failPreviewTabNavigation({
           threadRef,

@@ -47,6 +47,10 @@ interface WorkflowJob {
 }
 
 interface Workflow {
+  readonly concurrency?: {
+    readonly group?: string;
+    readonly "cancel-in-progress"?: boolean;
+  };
   readonly on?: Record<string, unknown>;
   readonly jobs?: Record<string, WorkflowJob>;
 }
@@ -69,6 +73,16 @@ function allStepCommands(job: WorkflowJob): string {
 }
 
 describe("cross-platform CI contract", () => {
+  it("cancels superseded CI and seeded-upgrade runs on the same ref", () => {
+    for (const path of [CI_WORKFLOW_PATH, DESKTOP_UPGRADE_WORKFLOW_PATH]) {
+      const { workflow } = readWorkflow(path);
+      expect(workflow.concurrency).toEqual({
+        group: "${{ github.workflow }}-${{ github.ref }}",
+        "cancel-in-progress": true,
+      });
+    }
+  });
+
   it("serializes package tests directly in CI and release preflight", () => {
     for (const [path, job] of [
       [CI_WORKFLOW_PATH, "test"],
@@ -129,10 +143,28 @@ describe("cross-platform CI contract", () => {
     ]);
   });
 
-  it("allows the full test job to finish sequential workspace and SSH verification", () => {
+  it("budgets Check and Test for a cold Rust cache plus a stalled apt install", () => {
     const { workflow } = readWorkflow(CI_WORKFLOW_PATH);
 
-    expect(requireJob(workflow, "test")["timeout-minutes"]).toBeGreaterThanOrEqual(60);
+    // Cold Check projected at 33 minutes, plus 7 minutes of margin.
+    expect(requireJob(workflow, "check")["timeout-minutes"]).toBe(40);
+    // Cold Test finished in 44 minutes. A 21-minute apt stall and 10 minutes
+    // for the unfinished workspace suite plus SSH is 75.
+    expect(requireJob(workflow, "test")["timeout-minutes"]).toBe(75);
+  });
+
+  it("saves CI Rust build caches from main so pull requests restore them", () => {
+    const { workflow } = readWorkflow(CI_WORKFLOW_PATH);
+
+    for (const name of ["check", "test", "native_desktop"] as const) {
+      const step = requireJob(workflow, name).steps?.find(
+        (candidate) => candidate.name === "Cache Rust build output",
+      );
+      expect(step?.uses).toContain("Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6");
+      expect(step?.with?.["save-if"]).toBe("${{ github.ref == 'refs/heads/main' }}");
+      expect(step?.with?.["cache-on-failure"]).toBe("true");
+      expect(String(step?.with?.workspaces)).toContain(". -> target");
+    }
   });
 
   it("allows native CI to finish host tests, optimized recovery probes, and bundles", () => {

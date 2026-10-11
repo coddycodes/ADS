@@ -1854,10 +1854,10 @@
       "target": "0.1.5",
       "channel": "stable",
       "source": "https://crates.io/crates/http-body-util",
-      "cohort": "embedded-browser-preview",
+      "cohort": "rust-current",
       "platforms": ["linux", "macos", "windows"],
       "status": "current",
-      "notes": "Body combinators for the internal browser preview gateway, which streams request and response bodies between the webview and the previewed server without buffering them."
+      "notes": "Preview gateway HTTP/1 body helpers (Empty, Full, BoxBody). Target equals the version already declared in the workspace manifest; no newer release was judged."
     },
     {
       "key": "rust:workspace:httpdate",
@@ -1877,10 +1877,10 @@
       "target": "1.11.1",
       "channel": "stable",
       "source": "https://crates.io/crates/hyper",
-      "cohort": "embedded-browser-preview",
+      "cohort": "rust-current",
       "platforms": ["linux", "macos", "windows"],
       "status": "current",
-      "notes": "The internal browser preview gateway's HTTP/1.1 listener and its reverse proxy to the previewed server, WebSocket upgrades included. Features: client, http1, server."
+      "notes": "Preview gateway HTTP/1 server and client. Enabled features are client, http1, and server. Target equals the version already declared in the workspace manifest; no newer release was judged."
     },
     {
       "key": "rust:workspace:hyper-util",
@@ -1889,10 +1889,10 @@
       "target": "0.1.20",
       "channel": "stable",
       "source": "https://crates.io/crates/hyper-util",
-      "cohort": "embedded-browser-preview",
+      "cohort": "rust-current",
       "platforms": ["linux", "macos", "windows"],
       "status": "current",
-      "notes": "Tokio I/O and timer adapters that run the preview gateway's hyper connections on the server's runtime. Feature: tokio."
+      "notes": "Preview gateway Tokio IO and timer adapters. The enabled feature is tokio only. Target equals the version already declared in the workspace manifest; no newer release was judged."
     },
     {
       "key": "rust:workspace:if-addrs",

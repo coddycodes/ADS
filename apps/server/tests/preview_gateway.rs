@@ -306,12 +306,14 @@ async fn bootstrap_sets_port_named_cookie_and_redirects_via_page() {
         set_cookie.starts_with(&format!("bibcode-gw-{}=", gateway.running.gateway_port)),
         "{set_cookie}"
     );
-    for attribute in ["HttpOnly", "SameSite=Strict", "Path=/"] {
+    // Lax, so an OAuth provider's top-level redirect back to the app carries it.
+    for attribute in ["HttpOnly", "SameSite=Lax", "Path=/"] {
         assert!(
             set_cookie.contains(attribute),
             "{set_cookie} lacks {attribute}"
         );
     }
+    assert!(!set_cookie.contains("SameSite=Strict"), "{set_cookie}");
     let page = response.text().await.unwrap();
     assert!(page.contains("location.replace(\"/?key=ab\")"), "{page}");
 }

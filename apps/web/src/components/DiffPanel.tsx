@@ -764,15 +764,15 @@ export default function DiffPanel({
           {workspaceUnavailable}
         </div>
       ) : !activeThread ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground">
           Select a thread to inspect turn diffs.
         </div>
       ) : !isGitRepo ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground">
           Turn diffs are unavailable because this project is not a git repository.
         </div>
       ) : selectedTurnId !== null && orderedTurnDiffSummaries.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground">
           No completed turns yet.
         </div>
       ) : (
@@ -801,7 +801,7 @@ export default function DiffPanel({
                   }
                 />
               ) : (
-                <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
+                <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground">
                   <p>
                     {hasNoNetChanges
                       ? "No net changes in this selection."
@@ -878,10 +878,10 @@ export default function DiffPanel({
             ) : (
               <div className="min-h-0 flex-1 overflow-auto p-2">
                 <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground/75">{renderablePatch.reason}</p>
+                  <p className="text-xs text-muted-foreground">{renderablePatch.reason}</p>
                   <pre
                     className={cn(
-                      "max-h-[72vh] rounded-md border border-border/70 bg-background/70 p-3 font-mono text-xs leading-relaxed text-muted-foreground/90",
+                      "max-h-[72vh] rounded-md border border-border/70 bg-background/70 p-3 font-mono text-xs leading-relaxed text-muted-foreground",
                       wordWrap
                         ? "overflow-auto whitespace-pre-wrap wrap-break-word"
                         : "overflow-auto",

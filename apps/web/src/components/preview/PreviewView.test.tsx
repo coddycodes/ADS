@@ -186,8 +186,10 @@ vi.mock("~/browser/linkNotices", () => ({
     h.unreachableNotices.push({ message, url }),
 }));
 
+vi.mock("~/browser/previewPartition", () => ({ previewPartitionFor: () => null }));
+
 vi.mock("~/browser/desktopTabLifetime", () => ({
-  navigateDesktopTab: (tabId: string, url: string) => {
+  navigateDesktopTab: (tabId: string, _partition: string | null, url: string) => {
     h.navigationOrder.push("desktop");
     h.desktopNavigateCalls.push([tabId, url]);
     return h.desktopNavigateRejects

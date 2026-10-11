@@ -1,0 +1,441 @@
+{
+  "settings-add-provider": [
+    {
+      "state": "driver-grid",
+      "actions": [],
+      "visible_text": ["Add provider instance", "Codex", "Coming Soon"]
+    },
+    {
+      "state": "identity",
+      "actions": [
+        {
+          "action": "click",
+          "selector": "button",
+          "role": "button",
+          "name": "Next"
+        }
+      ],
+      "visible_text": ["Label", "Instance ID", "Accent color"]
+    },
+    {
+      "state": "configuration",
+      "actions": [
+        {
+          "action": "click",
+          "selector": "button",
+          "role": "button",
+          "name": "Next"
+        }
+      ],
+      "visible_text": ["Binary path", "Path to the Codex binary used by this instance."],
+      "widget_selectors": ["#add-provider-codex-binaryPath"],
+      "note": "Two Next clicks from initial driver step. Do not click Add instance."
+    }
+  ],
+  "settings-diagnostics-panel": [
+    {
+      "state": "trace-summary",
+      "actions": [
+        {
+          "action": "scrollIntoView",
+          "selector": "span.min-w-0.truncate",
+          "text": "Spans"
+        }
+      ],
+      "owners": ["StatBlock", "DiagnosticsLastChecked", "DiagnosticsSettingsPanel"],
+      "visible_text": ["Spans", "Checked"]
+    },
+    {
+      "state": "failures",
+      "actions": [
+        {
+          "action": "scrollIntoView",
+          "text": "Latest Failures"
+        }
+      ],
+      "owners": ["ExpandableText", "DiagnosticsTable"],
+      "visible_text": ["Show full error", "fixture.trace.failed"]
+    },
+    {
+      "state": "full-error",
+      "actions": [
+        {
+          "action": "click",
+          "role": "button",
+          "name": "Show full error",
+          "index": 0,
+          "selector": "button"
+        }
+      ],
+      "owners": ["ExpandableText"],
+      "visible_text": ["Show less"]
+    },
+    {
+      "state": "slow-spans",
+      "actions": [
+        {
+          "action": "scrollIntoView",
+          "text": "Slowest Spans"
+        }
+      ],
+      "owners": ["DiagnosticsTable"],
+      "visible_text": ["fixture.trace.slow"]
+    },
+    {
+      "state": "trace-id",
+      "actions": [
+        {
+          "action": "scrollIntoView",
+          "selector": "span.font-mono.text-xs",
+          "text": "trace-0123456789ab...vwxyz-9876",
+          "index": 0
+        }
+      ],
+      "owners": ["TraceIdCell"],
+      "visible_text": ["trace-0123456789ab...vwxyz-9876"],
+      "note": "Reveal the actual right-hand Trace column through its scroller; the name/table witness remains in slow-spans."
+    }
+  ],
+  "settings-keybindings": [
+    {
+      "state": "row",
+      "actions": [],
+      "owners": ["KeybindingTableRow", "KeybindingsSettingsPanel"],
+      "visible_text": ["Terminal: Split"]
+    },
+    {
+      "state": "expanded-search",
+      "actions": [
+        {
+          "action": "click",
+          "role": "button",
+          "name": "Search keybindings",
+          "selector": "button"
+        }
+      ],
+      "owners": ["ExpandableHeaderSearch"],
+      "visible_text": ["Search keybindings"],
+      "note": "The search placeholder is emitted by the actual input; a nonempty query keeps the header input open after blur."
+    },
+    {
+      "state": "condition-tree",
+      "actions": [
+        {
+          "action": "click",
+          "role": "button",
+          "name": "Edit when clause for Terminal: Split",
+          "selector": "button"
+        }
+      ],
+      "owners": ["WhenExpressionBuilder", "WhenExpressionNodeEditor"],
+      "visible_text": ["When", "Condition", "Group", "Not"]
+    },
+    {
+      "state": "parse-error",
+      "actions": [
+        {
+          "action": "fill",
+          "role": "textbox",
+          "name": "When expression",
+          "value": "terminalFocus && (",
+          "selector": "input[aria-label=\"When expression\"]"
+        }
+      ],
+      "owners": ["WhenExpressionBuilder"],
+      "visible_text": ["Use variables with !, &&, ||, and parentheses."]
+    },
+    {
+      "state": "shortcut-edit-copy",
+      "actions": [
+        {
+          "action": "fill",
+          "role": "textbox",
+          "name": "When expression",
+          "value": "terminalFocus && (!composerFocus || threadFocus)",
+          "selector": "input[aria-label=\"When expression\"]"
+        },
+        {
+          "action": "escape"
+        },
+        {
+          "action": "focus",
+          "role": "button",
+          "name": "Edit shortcut for Terminal: Split",
+          "selector": "button"
+        }
+      ],
+      "owners": ["KeybindingTableRow"],
+      "visible_text": ["Edit"],
+      "note": "Restore the original fixture clause through the real expression input before closing; incremental invalid typing leaves a dirty row and hides the shortcut pill."
+    }
+  ],
+  "settings-provider-last-checked": [
+    {
+      "state": "initial",
+      "actions": [],
+      "visible_text": ["Checked"],
+      "widget_selectors": ["section > div:first-child span.text-xs.text-muted-foreground"],
+      "note": "Checked derives from owned primaryServerProvidersAtom liveProvider.checkedAt; serverConfig is not required."
+    }
+  ],
+  "settings-about-version": [
+    {
+      "state": "initial",
+      "actions": [],
+      "visible_text": ["Version", "Current version of the application."],
+      "widget_selectors": ["h3 span.inline-flex > code"],
+      "note": "Actual code text is APP_VERSION from branding. Configure APP_VERSION from current web package version; default is 0.0.0."
+    }
+  ],
+  "settings-share-clients": [
+    {
+      "state": "endpoint-client-rows",
+      "actions": [],
+      "owners": [
+        "PairingLinkListRow",
+        "ConnectedClientListRow",
+        "AdvertisedEndpointListRow",
+        "PairingClientsList"
+      ],
+      "visible_text": [
+        "Fixture pairing link",
+        "Fixture desktop client",
+        "Fixture network endpoint",
+        "Paired clients"
+      ],
+      "note": "prepareSettingsFixture must install the owned bridge before mounting; do not click revoke, copy, QR, exposure or default-endpoint actions."
+    }
+  ],
+  "settings-preview-agent-controller": [
+    {
+      "state": "initial",
+      "actions": [],
+      "visible_text": ["Agent controlling browser"]
+    }
+  ],
+  "settings-preview-human-controller": [
+    {
+      "state": "initial",
+      "actions": [],
+      "visible_text": ["Human control"]
+    }
+  ],
+  "settings-device-toolbar": [
+    {
+      "state": "toolbar",
+      "actions": [],
+      "owners": ["BrowserDeviceToolbar"],
+      "visible_text": ["Dimensions", "Responsive", "×"]
+    },
+    {
+      "state": "preset-menu",
+      "actions": [
+        {
+          "action": "click",
+          "role": "combobox",
+          "name": "Browser device preset"
+        }
+      ],
+      "owners": ["BrowserDeviceToolbar"],
+      "visible_text": ["Standard"]
+    }
+  ],
+  "settings-provider-card": [
+    {
+      "state": "expanded-card",
+      "actions": [],
+      "owners": ["ProviderInstanceCard", "ProviderEnvironmentSection", "ProviderAuthEmail"],
+      "visible_text": ["Authenticated as", "Environment variables", "Sensitive"]
+    },
+    {
+      "state": "revealed-email",
+      "actions": [
+        {
+          "action": "click",
+          "role": "button",
+          "name": "Toggle account email visibility",
+          "selector": "button"
+        }
+      ],
+      "owners": ["ProviderAuthEmail", "RedactedSensitiveText"],
+      "visible_text": ["typography@example.invalid"]
+    }
+  ],
+  "settings-provider-card-unauthenticated": [
+    {
+      "state": "email-prefix-empty-environment",
+      "actions": [],
+      "owners": ["ProviderEnvironmentSection", "ProviderAuthEmail"],
+      "visible_text": [
+        "Email",
+        "Add variables to pass API keys, base URLs, or other per-instance CLI settings."
+      ]
+    }
+  ],
+  "settings-provider-models": [
+    {
+      "state": "rows",
+      "actions": [],
+      "owners": ["ProviderModelsSection"],
+      "visible_text": ["hidden", "custom", "Sol fixture model"]
+    },
+    {
+      "state": "capability-tooltip",
+      "actions": [
+        {
+          "action": "hover",
+          "role": "button",
+          "name": "Details for Sol fixture model",
+          "selector": "button"
+        }
+      ],
+      "owners": ["ProviderModelsSection"],
+      "visible_text": ["Fast mode", "Thinking", "Reasoning"]
+    }
+  ],
+  "settings-provider-fields": [
+    {
+      "state": "schema-fields",
+      "actions": [],
+      "owners": ["ProviderSettingsFieldRow"],
+      "visible_text": ["Binary path", "Path to the Codex binary used by this instance."],
+      "note": "All real driver definitions render, including password and textarea controls. Dialog variant is reached by AddProviderInstanceDialog Next."
+    }
+  ],
+  "settings-redacted-email": [
+    {
+      "state": "revealed-email",
+      "actions": [
+        {
+          "action": "click",
+          "role": "button",
+          "name": "Toggle fixture email visibility",
+          "selector": "button"
+        }
+      ],
+      "owners": ["RedactedSensitiveText"],
+      "visible_text": ["typography@example.invalid"]
+    }
+  ],
+  "settings-resource-diagnostics": [
+    {
+      "state": "live-processes",
+      "actions": [],
+      "owners": ["SummaryMetric", "SortHeader", "LiveProcessTable", "ResourceDiagnosticsSections"],
+      "visible_text": ["Live Processes", "Codex fixture worker"]
+    },
+    {
+      "state": "memory-history",
+      "actions": [
+        {
+          "action": "scrollIntoView",
+          "text": "Resource History"
+        }
+      ],
+      "owners": [
+        "HistorySortHeader",
+        "ResourceHistoryWindowSelector",
+        "HistoryMetricToggle",
+        "ResourceHistoryChart",
+        "HistoryProcessTable"
+      ],
+      "visible_text": ["Resource History", "BiBCode Core average", "External Tooling average"]
+    },
+    {
+      "state": "cpu-history",
+      "actions": [
+        {
+          "action": "click",
+          "role": "button",
+          "name": "CPU history",
+          "selector": "button"
+        }
+      ],
+      "owners": ["HistoryMetricToggle", "ResourceHistoryChart", "HistoryProcessTable"],
+      "visible_text": ["CPU"]
+    }
+  ],
+  "settings-layout": [
+    {
+      "state": "initial",
+      "actions": [],
+      "visible_text": [
+        "Typography settings section",
+        "Typography settings row",
+        "Secondary text supplied through the real SettingsRow description prop."
+      ]
+    }
+  ],
+  "status-provider-usage": [
+    {
+      "state": "footer",
+      "actions": [],
+      "owners": ["ProviderUsageControl"],
+      "visible_text": ["Session", "28% left"]
+    },
+    {
+      "state": "real-detail-popover",
+      "actions": [
+        {
+          "action": "click",
+          "role": "button",
+          "name": "Codex usage",
+          "selector": "button"
+        }
+      ],
+      "owners": ["ProviderUsageControl"],
+      "visible_text": ["Codex usage", "Provider settings"]
+    }
+  ],
+  "status-provider-usage-detail": [
+    {
+      "state": "initial",
+      "actions": [],
+      "visible_text": ["Codex usage", "Fixture plan", "Next expiry: in 1d", "Provider settings"]
+    }
+  ],
+  "status-provider-usage-unavailable": [
+    {
+      "state": "initial",
+      "actions": [],
+      "visible_text": ["Usage is unavailable for this provider."]
+    }
+  ],
+  "status-provider-window-meter": [
+    {
+      "state": "initial",
+      "actions": [],
+      "visible_text": ["28% remaining", "Resets in 5m", "Caution"]
+    }
+  ],
+  "status-resource-usage": [
+    {
+      "state": "resource-popover",
+      "actions": [
+        {
+          "action": "click",
+          "role": "button",
+          "name_prefix": "Combined monitored resources:",
+          "selector": "button[aria-label^=\"Combined monitored resources:\"]"
+        }
+      ],
+      "owners": ["ResourceUsageSegment", "ResourceTotalsCard"],
+      "visible_text": ["Resource Manager", "BiBCode Core", "External Tooling", "Highest consumers"]
+    }
+  ],
+  "status-resource-unavailable": [
+    {
+      "state": "unavailable-resource-popover",
+      "actions": [
+        {
+          "action": "click",
+          "role": "button",
+          "name_prefix": "Combined monitored resources unavailable;",
+          "selector": "button[aria-label^=\"Combined monitored resources unavailable;\"]"
+        }
+      ],
+      "owners": ["ResourceUsageSegment", "ResourceTotalsCard"],
+      "visible_text": ["Unavailable", "BiBCode Core", "External Tooling"]
+    }
+  ]
+}

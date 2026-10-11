@@ -1204,6 +1204,7 @@ describe("tauriDesktopBridge", () => {
     await expect(bridge.discoverSshHosts()).resolves.toBeNull();
     await expect(bridge.disconnectSshEnvironment(sshTarget)).resolves.toBeNull();
     await expect(bridge.sshForward(sshTarget, 5173)).resolves.toBe(45123);
+    await expect(bridge.sshForward(sshTarget, 41000, 5173)).resolves.toBe(45123);
     await expect(bridge.releaseSshForward(sshTarget, 5173)).resolves.toBeNull();
     await expect(bridge.resolveSshPasswordPrompt?.("request-1", "secret")).resolves.toBeNull();
     await expect(bridge.getServerExposureState()).resolves.toBeNull();
@@ -1248,6 +1249,11 @@ describe("tauriDesktopBridge", () => {
     expect(harness.invoke).toHaveBeenCalledWith("desktop_bridge_ssh_forward", {
       target: sshTarget,
       remotePort: 5173,
+    });
+    expect(harness.invoke).toHaveBeenCalledWith("desktop_bridge_ssh_forward", {
+      target: sshTarget,
+      remotePort: 41000,
+      preferredLocalPort: 5173,
     });
     expect(harness.invoke).toHaveBeenCalledWith("desktop_bridge_release_ssh_forward", {
       target: sshTarget,

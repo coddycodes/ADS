@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, Url};
+use tauri::{AppHandle, Url};
 use uuid::Uuid;
 
 use super::PendingBounds;
@@ -67,8 +67,12 @@ fn validate_artifact_path(directory: &Path, requested: &Path) -> Result<PathBuf,
 }
 
 #[tauri::command]
-pub async fn desktop_preview_create_tab(app: AppHandle, tab_id: String) -> Result<(), String> {
-    run_on_worker(move || host::create_tab(&app, &tab_id)).await
+pub async fn desktop_preview_create_tab(
+    app: AppHandle,
+    tab_id: String,
+    environment_id: Option<String>,
+) -> Result<(), String> {
+    run_on_worker(move || host::create_tab(&app, &tab_id, environment_id.as_deref())).await
 }
 
 #[tauri::command]
@@ -148,17 +152,14 @@ pub fn desktop_preview_open_devtools(app: AppHandle, tab_id: String) -> Result<(
 #[tauri::command]
 pub async fn desktop_preview_clear_data(
     app: AppHandle,
+    tab_id: String,
     cookies: bool,
     cache: bool,
     storage: bool,
 ) -> Result<(), String> {
-    // All preview tabs share one profile, so clearing through any live
-    // preview webview clears data for the complete preview session.
-    let webview = app
-        .webviews()
-        .into_iter()
-        .find_map(|(label, webview)| label.starts_with("preview-").then_some(webview))
-        .ok_or_else(|| "no live preview webview to clear data through".to_string())?;
+    // Each environment's previews keep their own profile, so clearing through
+    // this tab's webview clears that environment's preview storage.
+    let webview = host::with_tab_webview(&app, &tab_id, |webview| Ok(webview.clone()))?;
 
     run_on_worker(move || {
         Platform::clear_data(
@@ -253,7 +254,7 @@ mod tests {
     fn create_tab_command_is_async() {
         fn assert_async_command<Command, CommandFuture>(_: Command)
         where
-            Command: Fn(tauri::AppHandle, String) -> CommandFuture,
+            Command: Fn(tauri::AppHandle, String, Option<String>) -> CommandFuture,
             CommandFuture: Future<Output = Result<(), String>>,
         {
         }

@@ -962,7 +962,7 @@ impl SshEnvironmentManager {
     fn port_forward_plan(
         &self,
         target: &SshEnvironmentTarget,
-        local_port: u16,
+        bind: ForwardBind,
         remote_port: u16,
         auth: &SshAuthOptions,
     ) -> Result<SshEnvironmentLaunchPlan, String> {
@@ -971,12 +971,20 @@ impl SshEnvironmentManager {
             // Not a server; the plan's server kind goes unused.
             server_kind: "external".to_string(),
         };
-        let mut plan = self.forward_plan(target, local_port, remote, auth)?;
-        let spec = format!("{local_port}:127.0.0.1:{remote_port}");
-        for arg in &mut plan.args {
-            if *arg == spec {
-                *arg = format!("127.0.0.1:{spec}");
-            }
+        let mut plan = self.forward_plan(target, bind.port, remote, auth)?;
+        let spec = format!("{}:127.0.0.1:{remote_port}", bind.port);
+        let index = plan
+            .args
+            .iter()
+            .position(|arg| *arg == spec)
+            .ok_or_else(|| "SSH port forward plan lost its forward.".to_string())?;
+        plan.args[index] = format!("127.0.0.1:{spec}");
+        if bind.ipv6 {
+            // Before the IPv4 forward, which the readiness probe connects to.
+            plan.args.splice(
+                index - 1..index - 1,
+                ["-L".to_string(), format!("[::1]:{spec}")],
+            );
         }
         plan.args
             .splice(0..0, ["-o".to_string(), "ControlPath=none".to_string()]);
@@ -997,6 +1005,7 @@ impl SshEnvironmentManager {
         prompts: &SshPasswordPromptManager,
         target: SshEnvironmentTarget,
         remote_port: u16,
+        preferred_local_port: Option<u16>,
     ) -> Result<u16, String> {
         if !self.child_reaper.accepting() {
             return Err("SSH process owner is shutting down.".to_string());
@@ -1037,38 +1046,21 @@ impl SshEnvironmentManager {
             forward.child.terminate_and_reap().await;
         }
 
-        let askpass_launcher = self.askpass_launcher()?;
+        // A live forward was reused above whatever its local port, so an open
+        // tab never switches origin; the preference only shapes a new one.
+        let preferred = preferred_local_port.filter(|port| *port >= 1024);
+        let (local_port, mut child) = match self
+            .spawn_port_forward(app, prompts, &key, &target, remote_port, preferred)
+            .await
+        {
+            // Another process took the preferred port after the attempt's probe.
+            Err(error) if preferred.is_some() && is_forward_bind_failure(&error) => {
+                self.spawn_port_forward(app, prompts, &key, &target, remote_port, None)
+                    .await?
+            }
+            result => result?,
+        };
         let io_runtime = self.io_runtime.handle()?;
-        let (local_port, mut child) = self
-            .run_with_ssh_auth(app, prompts, &key, &target, |auth| {
-                // Each attempt picks its port just before spawning, so a
-                // password prompt never leaves a picked port unbound for long.
-                let plan = portpicker::pick_unused_port()
-                    .ok_or_else(|| {
-                        "Could not find an available local SSH port forward port.".to_string()
-                    })
-                    .and_then(|local_port| {
-                        self.port_forward_plan(&target, local_port, remote_port, &auth)
-                    });
-                let askpass_launcher = askpass_launcher.clone();
-                let io_runtime = io_runtime.clone();
-                async move {
-                    let plan = plan?;
-                    let local_port = plan.local_port;
-                    let child = run_on_ssh_io(&io_runtime, async move {
-                        start_ssh_tunnel(
-                            &plan,
-                            &auth,
-                            askpass_launcher,
-                            SshForwardKind::PortForward,
-                        )
-                        .await
-                    })
-                    .await?;
-                    Ok((local_port, child))
-                }
-            })
-            .await?;
         let stderr_drain = drain_forward_stderr(&io_runtime, &mut child);
         let forward = SshPortForward {
             child,
@@ -1088,6 +1080,50 @@ impl SshEnvironmentManager {
                 Err(error)
             }
         }
+    }
+
+    /// Spawns one forward child to `remote_port` on the `preferred` local port
+    /// when it is free, otherwise on a random `127.0.0.1` port.
+    async fn spawn_port_forward<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        prompts: &SshPasswordPromptManager,
+        key: &str,
+        target: &SshEnvironmentTarget,
+        remote_port: u16,
+        preferred: Option<u16>,
+    ) -> Result<(u16, ManagedSshChild), String> {
+        let askpass_launcher = self.askpass_launcher()?;
+        let io_runtime = self.io_runtime.handle()?;
+        self.run_with_ssh_auth(app, prompts, key, target, |auth| {
+            // Each attempt checks or picks its port just before spawning, so a
+            // password prompt never hands ssh a port another process took
+            // meanwhile (the readiness probe could then reach that listener).
+            let plan = preferred
+                .and_then(probe_preferred_port)
+                .map(Ok)
+                .unwrap_or_else(|| {
+                    portpicker::pick_unused_port()
+                        .map(|port| ForwardBind { port, ipv6: false })
+                        .ok_or_else(|| {
+                            "Could not find an available local SSH port forward port.".to_string()
+                        })
+                })
+                .and_then(|bind| self.port_forward_plan(target, bind, remote_port, &auth));
+            let askpass_launcher = askpass_launcher.clone();
+            let io_runtime = io_runtime.clone();
+            async move {
+                let plan = plan?;
+                let local_port = plan.local_port;
+                let child = run_on_ssh_io(&io_runtime, async move {
+                    start_ssh_tunnel(&plan, &auth, askpass_launcher, SshForwardKind::PortForward)
+                        .await
+                })
+                .await?;
+                Ok((local_port, child))
+            }
+        })
+        .await
     }
 
     /// Terminates and reaps the forward of `remote_port`, if there is one.
@@ -2555,6 +2591,37 @@ fn least_recent_forward<'a>(
         .filter(|(id, _)| *id != keep)
         .min_by_key(|(_, forward)| forward.last_requested)
         .map(|(id, _)| id)
+}
+
+/// The local end of a preview forward: a port on `127.0.0.1`, and on `[::1]`
+/// too when `ipv6`, so `localhost` cannot reach another local server on the
+/// other family.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ForwardBind {
+    port: u16,
+    ipv6: bool,
+}
+
+/// The bind for a preferred local port when it is free on IPv4 and, when the
+/// client has IPv6 loopback, on IPv6. `None` means fall back to a random port.
+fn probe_preferred_port(port: u16) -> Option<ForwardBind> {
+    if port < 1024 {
+        return None;
+    }
+    std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).ok()?;
+    let ipv6 = match std::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, port)) {
+        Ok(_) => true,
+        // No IPv6 loopback at all: nothing else can answer `localhost` there.
+        Err(_) if std::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0)).is_err() => false,
+        Err(_) => return None,
+    };
+    Some(ForwardBind { port, ipv6 })
+}
+
+/// Whether a failed forward lost its local bind (another process took the
+/// port after the probe), as opposed to an authentication or network failure.
+fn is_forward_bind_failure(error: &str) -> bool {
+    error.contains("Address already in use") || error.contains("Could not request local forwarding")
 }
 
 /// Polls until the forward's local port accepts a TCP connection while the
@@ -7505,7 +7572,7 @@ exit 1
         let prompts = SshPasswordPromptManager::with_timeout(Duration::ZERO);
 
         let error = manager
-            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5173)
+            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5173, None)
             .await
             .expect_err("no tunnel, no forward");
 
@@ -7517,14 +7584,14 @@ exit 1
         // forwards with it.
         let (key, _) = publish_fixture_tunnel(&manager, "http://127.0.0.1:9/", None);
         manager
-            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5173)
+            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5173, None)
             .await
             .expect("forward over the live tunnel");
         let forward = forward_pid(&manager, &key, 5173).expect("forward pid");
         kill_managed_child(&manager, &key, None).await;
 
         let error = manager
-            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5174)
+            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5174, None)
             .await
             .expect_err("a dead tunnel carries no forward");
         assert_eq!(error, "SSH connection is not active.");
@@ -7544,7 +7611,7 @@ exit 1
         let prompts = SshPasswordPromptManager::with_timeout(Duration::ZERO);
         let (key, _) = publish_fixture_tunnel(&manager, "http://127.0.0.1:9/", None);
         let ensure = |remote_port| {
-            manager.ensure_port_forward(app.handle(), &prompts, fixture_target(), remote_port)
+            manager.ensure_port_forward(app.handle(), &prompts, fixture_target(), remote_port, None)
         };
 
         let first = ensure(5173).await.expect("first forward");
@@ -7589,7 +7656,15 @@ exit 1
         );
 
         let plan = manager
-            .port_forward_plan(&target, 45123, 5173, &SshAuthOptions::batch())
+            .port_forward_plan(
+                &target,
+                ForwardBind {
+                    port: 45123,
+                    ipv6: false,
+                },
+                5173,
+                &SshAuthOptions::batch(),
+            )
             .expect("port forward plan");
 
         assert_eq!(plan.program, "fixture-ssh");
@@ -7619,6 +7694,264 @@ exit 1
         );
     }
 
+    #[test]
+    fn preferred_port_forward_binds_both_loopback_families() {
+        let manager = SshEnvironmentManager::with_ssh_program(
+            "fixture-ssh",
+            SshOperationDeadlines::default(),
+        );
+        let forwards = |ipv6| {
+            let plan = manager
+                .port_forward_plan(
+                    &fixture_target(),
+                    ForwardBind { port: 5173, ipv6 },
+                    41000,
+                    &SshAuthOptions::batch(),
+                )
+                .expect("plan");
+            plan.args
+                .windows(2)
+                .filter(|pair| pair[0] == "-L")
+                .map(|pair| pair[1].clone())
+                .collect::<Vec<_>>()
+        };
+        // IPv4 last: the fake ssh records and binds the last -L.
+        assert_eq!(
+            forwards(true),
+            [
+                "[::1]:5173:127.0.0.1:41000",
+                "127.0.0.1:5173:127.0.0.1:41000"
+            ]
+        );
+        assert_eq!(
+            forwards(false),
+            ["127.0.0.1:5173:127.0.0.1:41000"],
+            "no IPv6 loopback, one IPv4 bind"
+        );
+    }
+
+    #[test]
+    fn preferred_port_probe() {
+        assert_eq!(
+            probe_preferred_port(80),
+            None,
+            "below 1024 is never preferred"
+        );
+        let free = portpicker::pick_unused_port().expect("free port");
+        assert_eq!(probe_preferred_port(free).map(|bind| bind.port), Some(free));
+        let v4 = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("v4");
+        assert_eq!(probe_preferred_port(v4.local_addr().unwrap().port()), None);
+    }
+
+    #[test]
+    fn preferred_port_busy_on_ipv6_falls_back() {
+        let Ok(v6) = std::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0)) else {
+            return; // no IPv6 loopback on this host
+        };
+        let port = v6.local_addr().unwrap().port();
+        if std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).is_err() {
+            return; // the IPv4 side happens to be taken too; nothing to assert
+        }
+        assert_eq!(probe_preferred_port(port), None);
+    }
+
+    #[test]
+    fn forward_bind_failures_are_recognised() {
+        assert!(is_forward_bind_failure(
+            "SSH port forward exited before becoming ready with status exit status: 255: bind [127.0.0.1]:5173: Address already in use"
+        ));
+        assert!(is_forward_bind_failure(
+            "Could not request local forwarding."
+        ));
+        assert!(!is_forward_bind_failure(
+            "Permission denied (publickey,password)."
+        ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn preferred_port_forward_uses_the_canonical_local_port() {
+        let fake = fake_ssh::FakeSsh::with_body(LISTENING_PORT_FORWARD);
+        let manager = fake.manager(SshOperationDeadlines::default());
+        let app = mock_app();
+        let prompts = SshPasswordPromptManager::with_timeout(Duration::ZERO);
+        publish_fixture_tunnel(&manager, "http://127.0.0.1:9/", None);
+        let preferred = portpicker::pick_unused_port().expect("free port");
+
+        let local_port = manager
+            .ensure_port_forward(
+                app.handle(),
+                &prompts,
+                fixture_target(),
+                41000,
+                Some(preferred),
+            )
+            .await
+            .expect("forward");
+
+        assert_eq!(local_port, preferred);
+        assert_eq!(
+            recorded_forwards(&fake),
+            vec![format!("127.0.0.1:{preferred}:127.0.0.1:41000")]
+        );
+        manager.shutdown().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn busy_preferred_port_falls_back_to_a_random_port() {
+        let fake = fake_ssh::FakeSsh::with_body(LISTENING_PORT_FORWARD);
+        let manager = fake.manager(SshOperationDeadlines::default());
+        let app = mock_app();
+        let prompts = SshPasswordPromptManager::with_timeout(Duration::ZERO);
+        publish_fixture_tunnel(&manager, "http://127.0.0.1:9/", None);
+        let busy = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("busy");
+        let busy_port = busy.local_addr().unwrap().port();
+
+        let local_port = manager
+            .ensure_port_forward(
+                app.handle(),
+                &prompts,
+                fixture_target(),
+                41000,
+                Some(busy_port),
+            )
+            .await
+            .expect("forward");
+
+        assert_ne!(local_port, busy_port);
+        assert_eq!(
+            recorded_forwards(&fake),
+            vec![format!("127.0.0.1:{local_port}:127.0.0.1:41000")]
+        );
+        manager.shutdown().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn preferred_port_lost_to_a_race_retries_on_a_random_port() {
+        // The fake refuses the first forward with ssh's bind error, then listens.
+        let fake = fake_ssh::FakeSsh::with_body(&format!(
+            r#"if [ -z "$*" ] && [ ! -e "$dir/raced" ]; then
+  : >"$dir/raced"
+  printf 'bind [127.0.0.1]:%s: Address already in use\n' "$forward" >&2
+  exit 255
+fi
+{LISTENING_PORT_FORWARD}"#
+        ));
+        let manager = fake.manager(SshOperationDeadlines::default());
+        let app = mock_app();
+        let prompts = SshPasswordPromptManager::with_timeout(Duration::ZERO);
+        publish_fixture_tunnel(&manager, "http://127.0.0.1:9/", None);
+        let preferred = portpicker::pick_unused_port().expect("free port");
+
+        let local_port = manager
+            .ensure_port_forward(
+                app.handle(),
+                &prompts,
+                fixture_target(),
+                41000,
+                Some(preferred),
+            )
+            .await
+            .expect("the race falls back instead of failing");
+
+        assert_ne!(local_port, preferred);
+        assert_eq!(
+            recorded_forwards(&fake),
+            vec![format!("127.0.0.1:{local_port}:127.0.0.1:41000")]
+        );
+        manager.shutdown().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn auth_failure_is_not_retried_on_a_random_port() {
+        let fake = fake_ssh::FakeSsh::with_body(
+            "printf 'Permission denied (publickey).\\n' >&2\nprintf x >>\"$dir/attempts\"\nexit 255\n",
+        );
+        let manager = fake.manager(SshOperationDeadlines::default());
+        let app = mock_app();
+        let prompts = SshPasswordPromptManager::with_timeout(Duration::ZERO);
+        publish_fixture_tunnel(&manager, "http://127.0.0.1:9/", None);
+        let preferred = portpicker::pick_unused_port().expect("free port");
+
+        manager
+            .ensure_port_forward(
+                app.handle(),
+                &prompts,
+                fixture_target(),
+                41000,
+                Some(preferred),
+            )
+            .await
+            .expect_err("auth failure");
+
+        let attempts = fs::read_to_string(fake.path("attempts")).unwrap_or_default();
+        assert_eq!(attempts.len(), 1, "a non-bind failure is not retried");
+        manager.shutdown().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn preferred_port_taken_before_an_attempt_falls_back() {
+        // Each authentication attempt checks the port again: one taken while a
+        // password prompt was open must not be handed to ssh (whose readiness
+        // probe could then reach the other listener).
+        let fake = fake_ssh::FakeSsh::with_body(LISTENING_PORT_FORWARD);
+        let manager = fake.manager(SshOperationDeadlines::default());
+        let app = mock_app();
+        let prompts = SshPasswordPromptManager::with_timeout(Duration::ZERO);
+        let (key, _) = publish_fixture_tunnel(&manager, "http://127.0.0.1:9/", None);
+        let taken = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("taken");
+        let taken_port = taken.local_addr().unwrap().port();
+
+        let (local_port, mut child) = manager
+            .spawn_port_forward(
+                app.handle(),
+                &prompts,
+                &key,
+                &fixture_target(),
+                41000,
+                Some(taken_port),
+            )
+            .await
+            .expect("forward on another port");
+
+        assert_ne!(local_port, taken_port);
+        child.terminate_and_reap().await;
+        manager.shutdown().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn live_forward_is_reused_whatever_its_local_port() {
+        let fake = fake_ssh::FakeSsh::with_body(LISTENING_PORT_FORWARD);
+        let manager = fake.manager(SshOperationDeadlines::default());
+        let app = mock_app();
+        let prompts = SshPasswordPromptManager::with_timeout(Duration::ZERO);
+        publish_fixture_tunnel(&manager, "http://127.0.0.1:9/", None);
+        let busy = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("busy");
+        let preferred = busy.local_addr().unwrap().port();
+        let ensure = || {
+            manager.ensure_port_forward(
+                app.handle(),
+                &prompts,
+                fixture_target(),
+                41000,
+                Some(preferred),
+            )
+        };
+
+        let fallback = ensure().await.expect("fallback");
+        drop(busy); // the preferred port frees up
+        let again = ensure().await.expect("reuse");
+
+        assert_eq!(again, fallback, "an open tab keeps its origin");
+        assert_eq!(recorded_forwards(&fake).len(), 1);
+        manager.shutdown().await;
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn port_forward_spawns_ssh_forwarding_to_loopback_remote_port() {
@@ -7629,7 +7962,7 @@ exit 1
         publish_fixture_tunnel(&manager, "http://127.0.0.1:9/", None);
 
         let local_port = manager
-            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5173)
+            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5173, None)
             .await
             .expect("forward");
 
@@ -7673,7 +8006,7 @@ exit 1
         publish_fixture_tunnel(&manager, "http://127.0.0.1:9/", None);
 
         manager
-            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5173)
+            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5173, None)
             .await
             .expect("forward");
 
@@ -7702,7 +8035,7 @@ exit 1
         let (key, _) = publish_fixture_tunnel(&manager, "http://127.0.0.1:9/", None);
 
         let error = manager
-            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5173)
+            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5173, None)
             .await
             .expect_err("an exited forward is not ready");
 
@@ -7723,7 +8056,7 @@ exit 1
         // Dropping a cached tunnel reaps its forwards.
         let (key, tunnel) = publish_fixture_tunnel(&manager, "http://127.0.0.1:9/", None);
         manager
-            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5173)
+            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5173, None)
             .await
             .expect("forward");
         let forward = forward_pid(&manager, &key, 5173).expect("forward pid");
@@ -7735,7 +8068,7 @@ exit 1
         // Shutdown reaps them too.
         publish_fixture_tunnel(&manager, "http://127.0.0.1:9/", None);
         manager
-            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5173)
+            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5173, None)
             .await
             .expect("forward");
         let forward = forward_pid(&manager, &key, 5173).expect("forward pid");
@@ -7754,7 +8087,7 @@ exit 1
         let (key, tunnel) = publish_fixture_tunnel(&manager, "http://127.0.0.1:9/", None);
         for remote_port in [5173, 8080] {
             manager
-                .ensure_port_forward(app.handle(), &prompts, fixture_target(), remote_port)
+                .ensure_port_forward(app.handle(), &prompts, fixture_target(), remote_port, None)
                 .await
                 .expect("forward");
         }
@@ -7787,7 +8120,7 @@ exit 1
         let prompts = SshPasswordPromptManager::with_timeout(Duration::ZERO);
         let (key, _) = publish_fixture_tunnel(&manager, "http://127.0.0.1:9/", None);
         let ensure = |remote_port| {
-            manager.ensure_port_forward(app.handle(), &prompts, fixture_target(), remote_port)
+            manager.ensure_port_forward(app.handle(), &prompts, fixture_target(), remote_port, None)
         };
         for remote_port in 5001..=5008 {
             ensure(remote_port).await.expect("forward");
@@ -7830,25 +8163,25 @@ exit 1
         let per_second = SSH_PORT_FORWARD_BUDGET - SSH_MAX_PORT_FORWARDS_PER_TUNNEL;
         for remote_port in 5001..5001 + SSH_MAX_PORT_FORWARDS_PER_TUNNEL as u16 {
             manager
-                .ensure_port_forward(app.handle(), &prompts, fixture_target(), remote_port)
+                .ensure_port_forward(app.handle(), &prompts, fixture_target(), remote_port, None)
                 .await
                 .expect("first tunnel forward");
         }
         for remote_port in 6001..6001 + per_second as u16 {
             manager
-                .ensure_port_forward(app.handle(), &prompts, second_target(), remote_port)
+                .ensure_port_forward(app.handle(), &prompts, second_target(), remote_port, None)
                 .await
                 .expect("second tunnel forward");
         }
         // Requesting 5001 again makes 5002 the least recently used anywhere.
         manager
-            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5001)
+            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 5001, None)
             .await
             .expect("reused forward");
         let evicted = forward_pid(&manager, &first, 5002).expect("forward pid");
 
         manager
-            .ensure_port_forward(app.handle(), &prompts, second_target(), 7001)
+            .ensure_port_forward(app.handle(), &prompts, second_target(), 7001, None)
             .await
             .expect("forward over budget");
 
@@ -7874,14 +8207,14 @@ exit 1
         let (key, _) = publish_fixture_tunnel(&manager, "http://127.0.0.1:9/", None);
         for remote_port in 5001..5001 + SSH_MAX_PORT_FORWARDS_PER_TUNNEL as u16 {
             manager
-                .ensure_port_forward(app.handle(), &prompts, fixture_target(), remote_port)
+                .ensure_port_forward(app.handle(), &prompts, fixture_target(), remote_port, None)
                 .await
                 .expect("forward");
         }
         let least_recent = forward_pid(&manager, &key, 5001).expect("forward pid");
 
         manager
-            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 9999)
+            .ensure_port_forward(app.handle(), &prompts, fixture_target(), 9999, None)
             .await
             .expect_err("the fake refuses 9999");
 

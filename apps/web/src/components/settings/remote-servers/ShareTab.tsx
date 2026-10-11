@@ -377,7 +377,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
           </p>
           {shareablePairingUrl === null ? (
-            <p className="text-xs text-muted-foreground/70">
+            <p className="text-xs text-muted-foreground">
               Copy the token and pair from another client using this backend&apos;s reachable host.
             </p>
           ) : null}
@@ -540,7 +540,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
             />
             <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
             {clientSession.current ? (
-              <span className="text-xs text-muted-foreground/80 rounded-md border border-border/50 bg-muted/50 px-1 py-0.5">
+              <span className="text-xs text-muted-foreground rounded-md border border-border/50 bg-muted/50 px-1 py-0.5">
                 This device
               </span>
             ) : null}
@@ -651,7 +651,7 @@ const PairingClientsList = memo(function PairingClientsList({
 
       {pairingLinks.length === 0 && clientSessions.length === 0 && !isLoading ? (
         <div className={accessRowClassName(presentation)}>
-          <p className="text-xs text-muted-foreground/60">No pairing links or client sessions.</p>
+          <p className="text-xs text-muted-foreground">No pairing links or client sessions.</p>
         </div>
       ) : null}
     </>

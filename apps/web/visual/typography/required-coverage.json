@@ -1,0 +1,250 @@
+[
+  {
+    "module": "browser/BrowserDeviceToolbar.tsx",
+    "owners": ["BrowserDeviceToolbar"]
+  },
+  {
+    "module": "components/ChatMarkdown.tsx",
+    "owners": ["MarkdownFileLink"]
+  },
+  {
+    "module": "components/DiffPanel.tsx",
+    "owners": ["DiffPanel"]
+  },
+  {
+    "module": "components/GitActionsControl.tsx",
+    "owners": ["PublishRepositoryDialog"]
+  },
+  {
+    "module": "components/PlanSidebar.tsx",
+    "owners": ["PlanSidebar"]
+  },
+  {
+    "module": "components/SourceControlCommits.tsx",
+    "owners": ["SourceControlCommitRow"]
+  },
+  {
+    "module": "components/activity/ActivityEntryRow.tsx",
+    "owners": ["ActivityEntryRow"]
+  },
+  {
+    "module": "components/activity/ActivityRoster.tsx",
+    "owners": ["ActivityRecordRow"]
+  },
+  {
+    "module": "components/chat/ChangedFilesTree.tsx",
+    "owners": ["ChangedFilesTree"]
+  },
+  {
+    "module": "components/chat/ComposerPendingElementContexts.tsx",
+    "owners": ["ComposerPendingElementContextChip"]
+  },
+  {
+    "module": "components/chat/ComposerPreviewAnnotationCards.tsx",
+    "owners": ["TargetStat", "ComposerPreviewAnnotationCards"]
+  },
+  {
+    "module": "components/chat/ModelListRow.tsx",
+    "owners": ["ModelListRow"]
+  },
+  {
+    "module": "components/chat/ProviderInstanceIcon.tsx",
+    "owners": ["ProviderInstanceIcon"]
+  },
+  {
+    "module": "components/chat/ProviderModelPicker.tsx",
+    "owners": ["ProviderModelPicker"]
+  },
+  {
+    "module": "components/files/LocalCommentAnnotation.tsx",
+    "owners": ["LocalCommentAnnotation"]
+  },
+  {
+    "module": "components/gitManager/GitManagerInProgressStrip.tsx",
+    "owners": ["GitManagerInProgressStrip"]
+  },
+  {
+    "module": "components/gitManager/changes/GitManagerChangeRow.tsx",
+    "owners": ["GitManagerChangeRow"]
+  },
+  {
+    "module": "components/gitManager/changes/GitManagerDiffPane.tsx",
+    "owners": ["GitManagerDiffPane"]
+  },
+  {
+    "module": "components/gitManager/diff/GitManagerImageDiff.tsx",
+    "owners": ["ImagePane"]
+  },
+  {
+    "module": "components/gitManager/history/GitManagerCommitDetail.tsx",
+    "owners": ["IdentityBadge", "ChangedFileRow", "GitManagerCommitDetail"]
+  },
+  {
+    "module": "components/gitManager/merge/GitManagerMergeDialog.tsx",
+    "owners": ["GitManagerMergeDialog"]
+  },
+  {
+    "module": "components/gitManager/rewrite/GitManagerMultiCommitOperationDialog.tsx",
+    "owners": ["BranchChoiceGroup", "GitManagerMultiCommitOperationDialog"]
+  },
+  {
+    "module": "components/gitManager/staging/GitManagerStagingGutter.tsx",
+    "owners": ["GutterLineControl", "GutterRunControl", "GitManagerTextStagingGutter"]
+  },
+  {
+    "module": "components/gitManager/stash/GitManagerStashDiff.tsx",
+    "owners": ["StashFileRow", "GitManagerStashDiff"]
+  },
+  {
+    "module": "components/gitManager/stash/GitManagerStashList.tsx",
+    "owners": ["GitManagerStashRowView"]
+  },
+  {
+    "module": "components/gitManager/tags/GitManagerTagsView.tsx",
+    "owners": ["TagSection", "LocalTagRows", "RemoteTagsSection"]
+  },
+  {
+    "module": "components/gitManager/toolbar/GitManagerOperationBanner.tsx",
+    "owners": ["GitManagerOperationBanner"]
+  },
+  {
+    "module": "components/gitManager/toolbar/GitManagerSyncButton.tsx",
+    "owners": ["GitManagerSyncButton"]
+  },
+  {
+    "module": "components/preview/PreviewView.tsx",
+    "owners": ["PreviewView"]
+  },
+  {
+    "module": "components/settings/AddProviderInstanceDialog.tsx",
+    "owners": ["AddProviderInstanceDialog"]
+  },
+  {
+    "module": "components/settings/DiagnosticsSettings.tsx",
+    "owners": [
+      "StatBlock",
+      "ExpandableText",
+      "DiagnosticsTable",
+      "TraceIdCell",
+      "DiagnosticsLastChecked",
+      "DiagnosticsSettingsPanel"
+    ]
+  },
+  {
+    "module": "components/settings/KeybindingsSettings.tsx",
+    "owners": [
+      "ExpandableHeaderSearch",
+      "WhenExpressionNodeEditor",
+      "WhenExpressionBuilder",
+      "KeybindingTableRow",
+      "KeybindingsSettingsPanel"
+    ]
+  },
+  {
+    "module": "components/settings/ProviderInstanceCard.tsx",
+    "owners": ["ProviderEnvironmentSection", "ProviderInstanceCard", "ProviderAuthEmail"]
+  },
+  {
+    "module": "components/settings/ProviderModelsSection.tsx",
+    "owners": ["ProviderModelsSection"]
+  },
+  {
+    "module": "components/settings/ProviderSettingsForm.tsx",
+    "owners": ["ProviderSettingsFieldRow"]
+  },
+  {
+    "module": "components/settings/RedactedSensitiveText.tsx",
+    "owners": ["RedactedSensitiveText"]
+  },
+  {
+    "module": "components/settings/ResourceDiagnosticsSections.tsx",
+    "owners": [
+      "SummaryMetric",
+      "SortHeader",
+      "HistorySortHeader",
+      "LiveProcessTable",
+      "ResourceHistoryWindowSelector",
+      "HistoryMetricToggle",
+      "ResourceHistoryChart",
+      "HistoryProcessTable",
+      "ResourceDiagnosticsSections"
+    ]
+  },
+  {
+    "module": "components/settings/SettingsPanels.tsx",
+    "owners": ["ProviderLastChecked", "AboutVersionTitle"]
+  },
+  {
+    "module": "components/settings/remote-servers/ShareTab.tsx",
+    "owners": [
+      "PairingLinkListRow",
+      "ConnectedClientListRow",
+      "AdvertisedEndpointListRow",
+      "PairingClientsList"
+    ]
+  },
+  {
+    "module": "components/settings/settingsLayout.tsx",
+    "owners": ["SettingsSection", "SettingsRow"]
+  },
+  {
+    "module": "components/status-bar/ProviderUsageControl.tsx",
+    "owners": ["ProviderUsageControl"]
+  },
+  {
+    "module": "components/status-bar/ProviderUsageDetail.tsx",
+    "owners": ["ProviderUsageDetail"]
+  },
+  {
+    "module": "components/status-bar/ProviderUsageWindowMeter.tsx",
+    "owners": ["ProviderUsageWindowMeter"]
+  },
+  {
+    "module": "components/status-bar/ResourceUsageSegment.tsx",
+    "owners": ["ResourceTotalsCard", "ResourceUsageSegment"]
+  },
+  {
+    "module": "components/ui/badge.tsx",
+    "owners": ["Badge"]
+  },
+  {
+    "module": "components/gitManager/provider/CreatePullRequestOptions.tsx",
+    "owners": ["OptionPicker"]
+  },
+  {
+    "module": "components/gitManager/provider/GitManagerCreatePullRequestDialog.tsx",
+    "owners": ["CreatePullRequestReviewDialog", "BranchPicker"]
+  },
+  {
+    "module": "components/pullRequests/shared/PullRequestsSuggestionBlock.tsx",
+    "owners": ["PullRequestsApplySuggestionsButton"]
+  },
+  {
+    "module": "components/pullRequests/edit/PullRequestsBaseBranchPicker.tsx",
+    "owners": ["BranchChoices"]
+  },
+  {
+    "module": "components/pullRequests/edit/PullRequestsConfirmAction.tsx",
+    "owners": ["PullRequestsConfirmAction"]
+  },
+  {
+    "module": "components/pullRequests/edit/PullRequestsPicker.tsx",
+    "owners": ["PickerDialog"]
+  },
+  {
+    "module": "components/pullRequests/review/PullRequestsDismissReview.tsx",
+    "owners": ["PullRequestsDismissReview"]
+  },
+  {
+    "module": "components/pullRequests/review/PullRequestsReviewPopover.tsx",
+    "owners": ["PullRequestsReviewPopover"]
+  },
+  {
+    "module": "components/gitManager/dialogs/GitManagerBranchDialogs.tsx",
+    "owners": ["CreateBranchDialog"]
+  },
+  {
+    "module": "index.css",
+    "owners": ["MarkdownCodeBlockTitleContent"]
+  }
+]

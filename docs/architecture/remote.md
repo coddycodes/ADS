@@ -958,9 +958,17 @@ a ControlPersist master on older OpenSSH, a backgrounded process) can keep
 them open indefinitely. Errors built from such output end with
 `[output cut off]`.
 
-**Preview port forwards.** `DesktopBridge.sshForward(target, remotePort)`
+**Preview port forwards.** `DesktopBridge.sshForward(target, remotePort, preferredLocalPort?)`
 (`desktop_bridge_ssh_forward`) forwards a port on the SSH host's loopback,
-such as the preview gateway's, to a free local port and returns it. It needs
+such as the preview gateway's, to a local port and returns it. A preferred
+local port of 1024 or more that is free on `127.0.0.1` and, when this computer
+has IPv6 loopback, on `[::1]` is bound on both
+(`-L [::1]:<port>:127.0.0.1:<remote> -L 127.0.0.1:<port>:127.0.0.1:<remote>`),
+so `localhost` cannot reach another local server on the other family.
+Otherwise, or when `ssh` then reports the bind lost to another process
+(`Address already in use`, `Could not request local forwarding`; an
+authentication failure is never retried this way), the forward binds one
+free `127.0.0.1` port. It needs
 the target's live tunnel ("SSH connection is not active." otherwise) and holds
 the same per-target lock. Each forward is a dedicated
 `ssh -o ControlPath=none … -o ExitOnForwardFailure=yes -n -N -L 127.0.0.1:<local>:127.0.0.1:<remote>`
@@ -974,7 +982,8 @@ readiness allowance, which forwards behind a `ProxyCommand` or bastion need
 too); after that its
 stderr is drained so refused-channel messages never fill the pipe and block
 `ssh`. Requests are idempotent per remote port:
-a live forward is reused and a dead one replaced. A tunnel keeps at most 8
+a live forward is reused whatever its local port (so an open preview never
+switches origin) and a dead one replaced. A tunnel keeps at most 8
 forwards and all tunnels together at most 12, which keeps tunnels, forwards,
 and the replacements being started well under the 32-child reaper capacity
 so reconnect, stop, and pairing still find room. A forward beyond either
@@ -1120,10 +1129,14 @@ address)` gets its own listener on an ephemeral port, so two clients that
   and caller's session, lasts 60 s, and works once. The client navigates to
   `/__bibcode/bootstrap?cap=<token>&to=<path>`, where `to` is a path with no
   scheme or host. The gateway sets
-  `bibcode-gw-<gatewayPort>=<id>; HttpOnly; SameSite=Strict; Path=/` and
+  `bibcode-gw-<gatewayPort>=<id>; HttpOnly; SameSite=Lax; Path=/` and
   returns a `200` page that calls `location.replace(to)`. The follow-up
   navigation then comes from the gateway's own site, so the browser sends the
-  `Strict` cookie even when the BiBCode UI is on another site. Every later
+  cookie even when the BiBCode UI is on another site. `Lax` (not `Strict`)
+  lets a top-level `GET` navigation from another site, such as an OAuth
+  provider redirecting back to `http://localhost:<port>/callback`, carry the
+  cookie; cross-site subrequests do not, and the Origin rule below refuses
+  cross-site writes and WebSocket upgrades. Every later
   request needs that cookie; without it the gateway returns `401` with "This
   preview link expired. Go back to BiBCode and open it again."
 - **Principal binding.** A gateway session lives no longer than its BiBCode

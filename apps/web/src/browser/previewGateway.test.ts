@@ -13,6 +13,9 @@ vi.mock("~/state/session", () => ({ readPreparedConnection }));
 vi.mock("~/connection/catalog", () => ({ environmentCatalog: { catalogValueAtom: "catalog" } }));
 vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: { get: () => catalog } }));
 
+const { showSamePortBusyNotice } = vi.hoisted(() => ({ showSamePortBusyNotice: vi.fn() }));
+vi.mock("./linkNotices", () => ({ showSamePortBusyNotice }));
+
 import {
   canonicalizePreviewUrl,
   type GatewayOpenMutation,
@@ -53,6 +56,7 @@ let releaseSshForward: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   resetPreviewGatewayForTests();
   readPreparedConnection.mockReset();
+  showSamePortBusyNotice.mockReset();
   catalog.entries = new Map([
     [
       environmentId,
@@ -115,7 +119,118 @@ describe("resolveForNavigation", () => {
       environmentId,
       input: { threadId, url: "http://localhost:5173/" },
     });
-    expect(sshForward).toHaveBeenCalledWith(sshTarget, 41000);
+    expect(sshForward).toHaveBeenCalledWith(sshTarget, 41000, 5173);
+  });
+
+  it("opens an SSH preview on the canonical origin when the same local port is free", async () => {
+    readPreparedConnection.mockReturnValue(ssh());
+    sshForward.mockImplementationOnce(
+      async (_target: unknown, _gatewayPort: number, preferred?: number) => preferred,
+    );
+    const gatewayOpen = vi.fn(async () => opened(41000));
+
+    await expect(
+      resolveForNavigation({
+        environmentId,
+        threadId,
+        canonicalUrl: "http://127.0.0.1:5173/cb?x=1",
+        gatewayOpen,
+      }),
+    ).resolves.toEqual({
+      kind: "ok",
+      url: "http://localhost:5173/__bibcode/bootstrap?cap=CAP&to=%2Fcb%3Fx%3D1",
+    });
+    expect(sshForward).toHaveBeenCalledWith(sshTarget, 41000, 5173);
+    // The real origin maps to itself, so the address bar and history keep it.
+    expect(isGatewayClientUrl("http://localhost:5173/next")).toBe(true);
+    expect(canonicalizePreviewUrl("http://localhost:5173/next")).toBe("http://localhost:5173/next");
+    expect(showSamePortBusyNotice).not.toHaveBeenCalled();
+  });
+
+  it("frees a replaced listener's forward before asking for the same local port again", async () => {
+    readPreparedConnection.mockReturnValue(ssh());
+    // The desktop: one forward per gateway port; a held local port is busy.
+    const held = new Map<number, number>();
+    sshForward.mockImplementation(
+      async (_target: unknown, gatewayPort: number, preferred?: number) => {
+        const live = held.get(gatewayPort);
+        if (live !== undefined) return live;
+        const local =
+          preferred !== undefined && ![...held.values()].includes(preferred) ? preferred : 50_000;
+        held.set(gatewayPort, local);
+        return local;
+      },
+    );
+    releaseSshForward.mockImplementation(async (_target: unknown, gatewayPort: number) => {
+      held.delete(gatewayPort);
+    });
+    const open = (gatewayPort: number) =>
+      resolveForNavigation({
+        environmentId,
+        threadId,
+        canonicalUrl: "http://localhost:5173/",
+        gatewayOpen: vi.fn(async () => opened(gatewayPort)),
+        tabId: "tab-1",
+      });
+
+    await expect(open(41000)).resolves.toMatchObject({
+      url: expect.stringMatching(/^http:\/\/localhost:5173\//),
+    });
+    // The server closed the idle listener and opened a new one.
+    await expect(open(42000)).resolves.toMatchObject({
+      url: expect.stringMatching(/^http:\/\/localhost:5173\//),
+    });
+
+    expect(releaseSshForward).toHaveBeenCalledWith(sshTarget, 41000);
+    expect(showSamePortBusyNotice).not.toHaveBeenCalled();
+  });
+
+  it("shows the busy-port note once per environment and origin", async () => {
+    readPreparedConnection.mockReturnValue(ssh());
+    const gatewayOpen = vi.fn(async () => opened(41000));
+    const open = (url: string) =>
+      resolveForNavigation({ environmentId, threadId, canonicalUrl: url, gatewayOpen });
+
+    await expect(open("http://localhost:5173/")).resolves.toMatchObject({
+      kind: "ok",
+      url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:50000\//),
+    });
+    await open("http://localhost:5173/other");
+    await open("http://localhost:8080/");
+
+    expect(showSamePortBusyNotice).toHaveBeenCalledTimes(2);
+    expect(showSamePortBusyNotice).toHaveBeenNthCalledWith(1, "localhost:5173");
+    expect(showSamePortBusyNotice).toHaveBeenNthCalledWith(2, "localhost:8080");
+  });
+
+  it("sends no port preference for a port browsers refuse to load", async () => {
+    readPreparedConnection.mockReturnValue(ssh());
+    const gatewayOpen = vi.fn(async () => opened(41000));
+
+    await resolveForNavigation({
+      environmentId,
+      threadId,
+      canonicalUrl: "http://localhost:6000/",
+      gatewayOpen,
+    });
+
+    expect(sshForward).toHaveBeenCalledWith(sshTarget, 41000, undefined);
+    expect(showSamePortBusyNotice).not.toHaveBeenCalled();
+  });
+
+  it("sends no port preference below 1024", async () => {
+    readPreparedConnection.mockReturnValue(ssh());
+    const gatewayOpen = vi.fn(async () => opened(41000));
+
+    await resolveForNavigation({
+      environmentId,
+      threadId,
+      canonicalUrl: "http://localhost/",
+      gatewayOpen,
+    });
+
+    expect(sshForward).toHaveBeenCalledWith(sshTarget, 41000, undefined);
+    expect(showSamePortBusyNotice).not.toHaveBeenCalled();
   });
 
   it("refuses SSH loopback without a desktop bridge before minting a capability", async () => {

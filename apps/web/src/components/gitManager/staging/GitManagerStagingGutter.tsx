@@ -285,7 +285,7 @@ const GitManagerTextStagingGutter = memo(function GitManagerTextStagingGutter({
         {onApplySelection === undefined ? null : (
           <button
             aria-describedby={disabledReason === null ? undefined : DISABLED_REASON_ID}
-            className="h-6 w-full rounded border border-input px-1 text-xs font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-6 w-full rounded border border-input px-1 py-0.5 text-xs font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
             disabled={selectionDisabled}
             title={disabledReason ?? undefined}
             type="button"
@@ -297,7 +297,7 @@ const GitManagerTextStagingGutter = memo(function GitManagerTextStagingGutter({
         {area === "staged" || onRequestDiscard === undefined ? null : (
           <button
             aria-describedby={disabledReason === null ? undefined : DISABLED_REASON_ID}
-            className="h-6 w-full rounded border border-destructive/50 px-1 text-xs font-medium text-destructive outline-none hover:bg-destructive/10 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-6 w-full rounded border border-destructive/50 px-1 py-0.5 text-xs font-medium text-destructive outline-none hover:bg-destructive/10 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
             disabled={selectionDisabled}
             type="button"
             onClick={onRequestDiscard}

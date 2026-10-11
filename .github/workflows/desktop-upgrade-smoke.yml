@@ -7,6 +7,12 @@ on:
 permissions:
   contents: read
 
+# Same ref policy as CI: a new push cancels the previous six-target upgrade
+# matrix instead of leaving 240–360 minute macOS jobs in the runner queue.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   seeded_upgrade_smoke:
     name: Seeded upgrade - ${{ matrix.label }}

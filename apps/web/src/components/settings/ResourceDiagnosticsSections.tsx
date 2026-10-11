@@ -49,7 +49,7 @@ export interface ResourceDiagnosticsSectionsProps {
 function SummaryMetric({ label, value }: { readonly label: string; readonly value: string }) {
   return (
     <div className="min-w-0">
-      <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground/70">
+      <div className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
         {label}
       </div>
       <div className="mt-0.5 truncate font-mono text-sm font-semibold tabular-nums text-foreground">
@@ -244,7 +244,7 @@ function LiveProcessTable({
           <col className="w-[7%]" />
           <col className="w-[8%]" />
         </colgroup>
-        <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-xs uppercase tracking-[0.08em] text-muted-foreground/70">
+        <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-xs uppercase tracking-[0.08em] text-muted-foreground">
           <tr>
             <SortHeader
               label={LIVE_PROCESS_COLUMNS[0]}
@@ -354,7 +354,7 @@ function LiveProcessTable({
                   </div>
                 ) : (
                   <span
-                    className="block text-right text-muted-foreground/50"
+                    className="block text-right text-muted-foreground"
                     aria-label="Not signalable"
                   >
                     —
@@ -516,7 +516,7 @@ function HistoryProcessTable({
       className="max-h-[min(64vh,44rem)] w-full max-w-full border-t border-border/60"
     >
       <table className="w-full min-w-[1480px] table-fixed text-left text-xs">
-        <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-xs uppercase tracking-[0.08em] text-muted-foreground/70">
+        <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-xs uppercase tracking-[0.08em] text-muted-foreground">
           <tr>
             <HistorySortHeader
               label={HISTORY_PROCESS_COLUMNS[0]}

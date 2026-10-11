@@ -717,7 +717,52 @@ pub fn is_supported() -> bool {
     }
 }
 
-pub fn create_tab(app: &AppHandle, tab_id: &str) -> Result<(), String> {
+/// The SHA-256 of an environment's preview partition key.
+fn preview_partition_hash(environment_id: &str) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(format!("bibcode-preview:{environment_id}")).into()
+}
+
+/// The preview profile directory, relative to the app data directory, for an
+/// environment's previews. The local environment (`None`) keeps the original
+/// shared profile, so its saved preview data survives; any other environment
+/// gets its own, named by a hash so the id never reaches the path.
+// macOS partitions by data store instead; kept there for its tests.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub(crate) fn preview_profile_dir(environment_id: Option<&str>) -> std::path::PathBuf {
+    match environment_id {
+        None => std::path::PathBuf::from("preview-profile"),
+        Some(id) => {
+            let hex: String = preview_partition_hash(id)[..16]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            std::path::Path::new("preview-profiles").join(hex)
+        }
+    }
+}
+
+/// The macOS website data store identifier for an environment's previews,
+/// following the same partitioning as [`preview_profile_dir`].
+// Other platforms partition by directory; kept there for its tests.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn preview_data_store_id(environment_id: Option<&str>) -> [u8; 16] {
+    match environment_id {
+        None => *b"bibcodepreview01",
+        Some(id) => {
+            let hash = preview_partition_hash(id);
+            let mut store = [0_u8; 16];
+            store.copy_from_slice(&hash[..16]);
+            store
+        }
+    }
+}
+
+pub fn create_tab(
+    app: &AppHandle,
+    tab_id: &str,
+    environment_id: Option<&str>,
+) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     ensure_macos_isolated_profile_available(is_supported())?;
 
@@ -730,7 +775,7 @@ pub fn create_tab(app: &AppHandle, tab_id: &str) -> Result<(), String> {
         .path()
         .app_data_dir()
         .map_err(|error| format!("failed to resolve preview profile directory: {error}"))?
-        .join("preview-profile");
+        .join(preview_profile_dir(environment_id));
 
     let state = app.state::<PreviewHostState>();
     let (label, initial_bounds, progress) = {
@@ -844,10 +889,11 @@ pub fn create_tab(app: &AppHandle, tab_id: &str) -> Result<(), String> {
             }
         });
 
-    // Preview browsing data is isolated from the main application session.
+    // Preview browsing data is isolated from the main application session and,
+    // per environment, from other environments' previews.
     #[cfg(target_os = "macos")]
     {
-        builder = builder.data_store_identifier(*b"bibcodepreview01");
+        builder = builder.data_store_identifier(preview_data_store_id(environment_id));
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1156,6 +1202,48 @@ pub fn close_tab(app: &AppHandle, tab_id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+
+    #[test]
+    fn local_environment_keeps_the_legacy_preview_profile() {
+        assert_eq!(
+            super::preview_profile_dir(None),
+            std::path::Path::new("preview-profile")
+        );
+        assert_eq!(super::preview_data_store_id(None), *b"bibcodepreview01");
+    }
+
+    #[test]
+    fn each_environment_gets_its_own_stable_preview_profile() {
+        let a = super::preview_profile_dir(Some("env-a"));
+        assert_eq!(a.parent(), Some(std::path::Path::new("preview-profiles")));
+        let name = a.file_name().and_then(|name| name.to_str()).expect("name");
+        assert_eq!(name.len(), 32);
+        assert!(
+            name.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        );
+        assert_eq!(a, super::preview_profile_dir(Some("env-a")), "stable");
+        assert_ne!(a, super::preview_profile_dir(Some("env-b")));
+
+        // The id never reaches the path: only the hash does.
+        let evil = super::preview_profile_dir(Some("../evil"));
+        assert_eq!(evil.components().count(), 2, "{}", evil.display());
+        assert!(!evil.to_string_lossy().contains("evil"));
+
+        let store_a = super::preview_data_store_id(Some("env-a"));
+        assert_ne!(store_a, *b"bibcodepreview01");
+        assert_ne!(store_a, super::preview_data_store_id(Some("env-b")));
+        assert_eq!(store_a, super::preview_data_store_id(Some("env-a")));
+        // Only an absent environment is the local one.
+        assert_ne!(
+            super::preview_profile_dir(Some("")),
+            super::preview_profile_dir(None)
+        );
+        assert_ne!(
+            super::preview_data_store_id(Some("")),
+            super::preview_data_store_id(None)
+        );
+    }
 
     use super::{
         BeginCreation, BoundsReconciliation, BoundsUpdate, ClosePlan, CreationCommit,

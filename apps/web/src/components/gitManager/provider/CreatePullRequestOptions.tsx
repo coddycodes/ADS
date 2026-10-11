@@ -80,8 +80,8 @@ function OptionPicker(props: OptionPickerProps) {
         disabled={props.disabled}
       >
         <ComboboxInput id={id} placeholder={props.multiple ? "Search" : "None"} showClear />
-        <ComboboxPopup data-text-surface="popover">
-          <ComboboxList>
+        <ComboboxPopup>
+          <ComboboxList data-text-surface="popover">
             {(entryId: string) => (
               <ComboboxItem key={entryId} value={entryId}>
                 {byId.get(entryId)?.label ?? entryId}

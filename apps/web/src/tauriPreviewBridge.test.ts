@@ -151,15 +151,15 @@ const commandCases: readonly CommandCase[] = [
   },
   {
     name: "clearCookies",
-    run: (bridge) => bridge.clearCookies(),
+    run: (bridge) => bridge.clearCookies("t1"),
     command: "desktop_preview_clear_data",
-    args: { cookies: true, cache: false, storage: true },
+    args: { tabId: "t1", cookies: true, cache: false, storage: true },
   },
   {
     name: "clearCache",
-    run: (bridge) => bridge.clearCache(),
+    run: (bridge) => bridge.clearCache("t1"),
     command: "desktop_preview_clear_data",
-    args: { cookies: false, cache: true, storage: false },
+    args: { tabId: "t1", cookies: false, cache: true, storage: false },
   },
   {
     name: "captureScreenshot",
@@ -194,6 +194,131 @@ describe("tauriPreviewBridge", () => {
     expect(invoke).toHaveBeenLastCalledWith("desktop_preview_navigate", {
       tabId: "logical-a",
       url: "https://b.test/",
+    });
+  });
+
+  it("keeps one long-lived native host per environment's preview storage", async () => {
+    const { bridge, invoke } = makeBridge();
+
+    await bridge.createTab("local-a");
+    await bridge.closeTab("local-a");
+    await bridge.createTab("remote-a", "env-remote");
+    await bridge.closeTab("remote-a");
+    await bridge.createTab("remote-b", "env-remote");
+    await bridge.closeTab("remote-b");
+    await bridge.createTab("local-b", null);
+
+    expect(
+      invoke.mock.calls.filter(([command]) => command === "desktop_preview_create_tab"),
+    ).toEqual([
+      ["desktop_preview_create_tab", { tabId: "local-a" }],
+      ["desktop_preview_create_tab", { tabId: "remote-a", environmentId: "env-remote" }],
+    ]);
+    expect(invoke.mock.calls.some(([command]) => command === "desktop_preview_close_tab")).toBe(
+      false,
+    );
+  });
+
+  it("never shares the local environment's storage with a falsy environment id", async () => {
+    const { bridge, invoke } = makeBridge();
+    await bridge.createTab("local-a");
+    await bridge.closeTab("local-a");
+    await bridge.createTab("odd-a", "");
+
+    expect(
+      invoke.mock.calls.filter(([command]) => command === "desktop_preview_create_tab"),
+    ).toEqual([
+      ["desktop_preview_create_tab", { tabId: "local-a" }],
+      ["desktop_preview_create_tab", { tabId: "odd-a", environmentId: "" }],
+    ]);
+  });
+
+  it("routes each logical tab through its own environment's native host", async () => {
+    const { bridge, invoke, emit } = makeBridge();
+    const received: Array<readonly [string, string]> = [];
+    bridge.onStateChange((tabId, state) => {
+      if (state.navStatus.kind !== "Idle") received.push([tabId, state.navStatus.url]);
+    });
+    await bridge.createTab("local-a");
+    await bridge.closeTab("local-a");
+    await bridge.createTab("remote-a", "env-remote");
+    invoke.mockClear();
+
+    await bridge.refresh("remote-a");
+    expect(invoke.mock.calls).toEqual([["desktop_preview_refresh", { tabId: "remote-a" }]]);
+
+    // The hidden local host shows no tab, so its events go nowhere.
+    emit("preview://state", statePayload("local-a", 1, "https://local.test/"));
+    emit("preview://state", statePayload("remote-a", 1, "https://remote.test/"));
+    expect(received).toEqual([["remote-a", "https://remote.test/"]]);
+
+    await bridge.closeTab("remote-a");
+    await bridge.createTab("local-b");
+    invoke.mockClear();
+    await bridge.refresh("local-b");
+    expect(invoke.mock.calls).toEqual([["desktop_preview_refresh", { tabId: "local-a" }]]);
+  });
+
+  it("clears the preview storage of the tab's own environment", async () => {
+    const { bridge, invoke } = makeBridge();
+    await bridge.createTab("local-a");
+    await bridge.closeTab("local-a");
+    await bridge.createTab("remote-a", "env-remote");
+    await bridge.closeTab("remote-a");
+    await bridge.createTab("remote-b", "env-remote");
+    invoke.mockClear();
+
+    await bridge.clearCookies("remote-b");
+
+    expect(invoke.mock.calls).toEqual([
+      [
+        "desktop_preview_clear_data",
+        { tabId: "remote-a", cookies: true, cache: false, storage: true },
+      ],
+    ]);
+  });
+
+  it("gives a new environment host the latest bounds set while it was created", async () => {
+    const { bridge, invoke } = makeBridge();
+    const early = { x: 5, y: 6, width: 400, height: 250 };
+    const late = { x: 7, y: 8, width: 500, height: 300 };
+    await bridge.createTab("local-a");
+    await bridge.closeTab("local-a");
+    await bridge.setBounds("remote-a", early, true);
+    let finishCreate!: () => void;
+    invoke.mockImplementation((command: string) =>
+      command === "desktop_preview_create_tab"
+        ? new Promise<void>((resolve) => {
+            finishCreate = resolve;
+          })
+        : Promise.resolve(undefined),
+    );
+    const creating = bridge.createTab("remote-a", "env-remote");
+    await Promise.resolve();
+    // A resize or modal occlusion lands while the native host is being created.
+    await bridge.setBounds("remote-a", late, false);
+    finishCreate();
+    await creating;
+
+    expect(invoke).toHaveBeenLastCalledWith("desktop_preview_set_bounds", {
+      tabId: "remote-a",
+      bounds: late,
+      visible: false,
+    });
+  });
+
+  it("gives a new environment host the bounds its tab already has", async () => {
+    const { bridge, invoke } = makeBridge();
+    const bounds = { x: 5, y: 6, width: 400, height: 250 };
+    await bridge.createTab("local-a");
+    await bridge.closeTab("local-a");
+    await bridge.setBounds("remote-a", bounds, true);
+    await bridge.createTab("remote-a", "env-remote");
+
+    expect(invoke).toHaveBeenLastCalledWith("desktop_preview_set_bounds", {
+      tabId: "remote-a",
+      bounds,
+      visible: true,
     });
   });
 

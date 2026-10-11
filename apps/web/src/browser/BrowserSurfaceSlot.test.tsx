@@ -39,6 +39,7 @@ vi.mock("~/components/preview/previewBridge", () => ({
   },
 }));
 
+vi.mock("./previewPartition", () => ({ previewPartitionFor: () => null }));
 vi.mock("~/browser/browserPointerStore", () => ({
   useBrowserPointerStore: (selector: (state: { clear: typeof h.clearBrowserPointer }) => unknown) =>
     selector({ clear: h.clearBrowserPointer }),
@@ -279,7 +280,7 @@ describe("NativePreviewTabHost native lifecycle", () => {
     await mount(hosts(Hosts, surfaces, sessions, "browser:tab-b"));
     await flush();
 
-    expect(h.createTab.mock.calls).toEqual([["tab-b"]]);
+    expect(h.createTab.mock.calls).toEqual([["tab-b", null]]);
     expect(h.navigate.mock.calls).toEqual([["tab-b", "https://b.test/"]]);
     expect(h.listeners).toHaveLength(1);
   });
@@ -304,12 +305,15 @@ describe("NativePreviewTabHost native lifecycle", () => {
     await flush();
 
     expect(h.closeTab).toHaveBeenCalledExactlyOnceWith("tab-a");
-    expect(h.createTab.mock.calls).toEqual([["tab-a"]]);
+    expect(h.createTab.mock.calls).toEqual([["tab-a", null]]);
 
     closing.resolve();
     await flush();
 
-    expect(h.createTab.mock.calls).toEqual([["tab-a"], ["tab-b"]]);
+    expect(h.createTab.mock.calls).toEqual([
+      ["tab-a", null],
+      ["tab-b", null],
+    ]);
     expect(h.navigate).toHaveBeenLastCalledWith("tab-b", "https://b.test/");
   });
 
@@ -354,7 +358,7 @@ describe("NativePreviewTabHost native lifecycle", () => {
     const mounted = await mount(hosts(Hosts, surfaces, sessions, "browser:tab-a"));
     await flush();
 
-    expect(h.createTab.mock.calls).toEqual([["tab-a"]]);
+    expect(h.createTab.mock.calls).toEqual([["tab-a", null]]);
     expect(h.listeners).toHaveLength(1);
 
     await rerender(mounted, hosts(Hosts, surfaces, sessions, null));
@@ -402,7 +406,11 @@ describe("NativePreviewTabHost native lifecycle", () => {
     );
     await flush();
 
-    expect(h.createTab.mock.calls).toEqual([["tab-a"], ["tab-b"], ["tab-a"]]);
+    expect(h.createTab.mock.calls).toEqual([
+      ["tab-a", null],
+      ["tab-b", null],
+      ["tab-a", null],
+    ]);
     expect(h.navigate.mock.calls).toEqual([
       ["tab-a", "https://a.test/"],
       ["tab-b", "https://b.test/"],
@@ -432,7 +440,7 @@ describe("NativePreviewTabHost native lifecycle", () => {
     );
     await flush();
 
-    expect(h.createTab.mock.calls).toEqual([["tab-idle"]]);
+    expect(h.createTab.mock.calls).toEqual([["tab-idle", null]]);
     expect(h.navigate).not.toHaveBeenCalled();
     expect(h.listeners).toHaveLength(1);
 

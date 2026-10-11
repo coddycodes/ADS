@@ -6,13 +6,20 @@ on:
     branches:
       - main
 
+# One run per branch or pull request. Superseded pushes were keeping full
+# native matrices, including macos-26 and macos-26-intel, queued for hours.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     name: Check
     runs-on: ubuntu-24.04
-    # GitHub-hosted runners have fewer vCPUs than the upstream Blacksmith
-    # runners, so the jobs need more headroom.
-    timeout-minutes: 30
+    # Cold Check on b96fe993 finished in 26 minutes with an empty Rust
+    # cache. PR 65's cold release compile projected 33 minutes once the rpm
+    # bundle finished. 33 minutes plus 7 minutes of margin is 40.
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,9 +36,15 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # Save only from main. Pull-request copies of these keys filled the
+      # 10 GB Actions budget and evicted the Check and Test entries.
+      # cache-on-failure publishes a compile that already ran when a later
+      # step fails. A timeout cancellation still skips the post step.
       - name: Cache Rust build output
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: "true"
           workspaces: |
             . -> target
 
@@ -76,9 +89,10 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-24.04
-    # Allow setup and the sequential package, Rust workspace, and SSH suites to
-    # finish; the complete passing graph can exceed the former 45-minute budget.
-    timeout-minutes: 60
+    # Cold Test on 438136c0 finished in 44 minutes. PR 65's apt stall added
+    # 21 minutes, and the cancelled workspace suite still had SSH left.
+    # 44 + 21 + 10 minutes of margin is 75.
+    timeout-minutes: 75
     # Full debug info in every linked test binary fills the runner disk.
     env:
       CARGO_PROFILE_TEST_DEBUG: "0"
@@ -96,9 +110,15 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@62ae3a85dbdd2bedbb5819da8ce45635129289a1 # 1.98.0
 
+      # Save only from main. Pull-request copies of these keys filled the
+      # 10 GB Actions budget and evicted the Check and Test entries.
+      # cache-on-failure publishes a compile that already ran when a later
+      # step fails. A timeout cancellation still skips the post step.
       - name: Cache Rust build output
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: "true"
           workspaces: |
             . -> target
 
@@ -214,9 +234,15 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@62ae3a85dbdd2bedbb5819da8ce45635129289a1 # 1.98.0
 
+      # Save only from main. Pull-request copies of these keys filled the
+      # 10 GB Actions budget and evicted the Check and Test entries.
+      # cache-on-failure publishes a compile that already ran when a later
+      # step fails. A timeout cancellation still skips the post step.
       - name: Cache Rust build output
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: "true"
           workspaces: |
             . -> target
 

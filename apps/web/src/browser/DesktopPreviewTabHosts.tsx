@@ -15,6 +15,7 @@ import {
   resolveForNavigation,
   retainPreviewTab,
 } from "./previewGateway";
+import { previewPartitionFor } from "./previewPartition";
 import { failPreviewTabNavigation } from "./previewTabFailure";
 
 export interface DesktopPreviewTabHostDescriptor {
@@ -79,7 +80,10 @@ export function NativePreviewTabHost(props: {
   useEffect(() => {
     let disposed = false;
     retainPreviewTab(tabId);
-    const lease = acquireDesktopTab(tabId);
+    const lease = acquireDesktopTab(
+      tabId,
+      previewPartitionFor(navigationRef.current.threadRef.environmentId),
+    );
     const initialUrl = initialUrlRef.current;
     const {
       threadRef: ref,

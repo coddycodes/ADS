@@ -2745,7 +2745,7 @@ browser tab), the environment's address, and each gateway port.
   passes through `/__bibcode/bootstrap`, and ends on
   `http://<server address>:<gateway port>/` with the listing. The browser's
   developer tools list a `bibcode-gw-<gateway port>` cookie for that origin
-  that is `HttpOnly`, `SameSite=Strict`, and `Path=/`. A plain reload of the
+  that is `HttpOnly`, `SameSite=Lax`, and `Path=/`. A plain reload of the
   tab still shows the listing, which proves the cookie survived the
   `location.replace` hop.
 - **Cross-port 403.** Open the 8124 link too, so two gateway origins share the

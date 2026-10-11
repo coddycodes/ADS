@@ -112,10 +112,10 @@ export function PreviewMoreMenu({
           </span>
         </div>
         <MenuSeparator />
-        <MenuItem onClick={() => void bridge.clearCookies().catch(() => undefined)}>
+        <MenuItem onClick={callTab(bridge.clearCookies)} disabled={tabDisabled}>
           Clear cookies
         </MenuItem>
-        <MenuItem onClick={() => void bridge.clearCache().catch(() => undefined)}>
+        <MenuItem onClick={callTab(bridge.clearCache)} disabled={tabDisabled}>
           Clear cache
         </MenuItem>
       </MenuPopup>

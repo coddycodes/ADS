@@ -116,10 +116,10 @@ export function ResourceUsageSegment({
         {!iconOnly ? (
           <>
             <span className="font-mono tabular-nums">{compactMemoryLabel}</span>
-            <span className="text-muted-foreground/50">·</span>
+            <span className="text-muted-foreground">·</span>
             <CpuIcon className="size-3" />
             <span className="font-mono tabular-nums">{compactCpuLabel}</span>
-            <span className="text-muted-foreground/50">·</span>
+            <span className="text-muted-foreground">·</span>
             <TerminalIcon className="size-3" />
           </>
         ) : null}

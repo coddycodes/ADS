@@ -1,11 +1,16 @@
+// @effect-diagnostics nodeBuiltinImport:off - The CSS contract checks the actual Linux stylesheet.
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+
+import * as NodeFS from "node:fs";
 
 import {
   applyLinuxWebkitTypography,
   shouldApplyLinuxWebkitTypography,
 } from "./linuxWebkitTypography";
+
+const stylesheet = NodeFS.readFileSync(`${import.meta.dirname}/index.css`, "utf8");
 
 const linuxUserAgent = "Test/1.0 (X11; Linux x86_64)";
 const macUserAgent = "Test/1.0 (Macintosh; Intel Mac OS X)";
@@ -69,5 +74,25 @@ describe("applyLinuxWebkitTypography", () => {
     );
     expect(markers).toHaveLength(1);
     expect(markers[0]?.value).toBe("");
+  });
+});
+
+describe("Linux reading backgrounds", () => {
+  it.each([true, false])("paints popover content only with the Linux gate %s", (linux) => {
+    if (linux) document.documentElement.dataset.linuxWebkit = "";
+    const style = document.createElement("style");
+    style.textContent = stylesheet;
+    const content = document.createElement("div");
+    content.dataset.textSurface = "popover";
+    content.style.setProperty("--popover", "rgb(17, 34, 51)");
+    content.textContent = "Create pull request";
+    document.head.append(style);
+    document.body.append(content);
+    try {
+      expect(getComputedStyle(content).backgroundColor === "rgb(17, 34, 51)").toBe(linux);
+    } finally {
+      content.remove();
+      style.remove();
+    }
   });
 });

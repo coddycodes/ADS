@@ -704,7 +704,10 @@ pairing offer --endpoint http://<address>:3773` and confirm the dialog refuses
   sidebar, transcript, settings column, and Agents list shows colored fringes
   at glyph edges like the window title (LCD subpixel text) rather than
   gray-only edges; and the sidebar and timeline have no top or bottom scroll
-  fade, which is expected on Linux only;
+  fade, which is expected on Linux only. Include the Create PR/MR review
+  dialog and its open branch and option lists in the text-rendering review;
+  their scrolling text and opaque popover backing must retain the same
+  readable rendering as other Linux reading areas;
 - AppImage window identity, icon, launcher, and taskbar grouping are correct;
 - external worktree grouping, paths, actions, physical identity, and restart
   are correct;

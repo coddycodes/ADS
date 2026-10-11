@@ -37,9 +37,13 @@ flowchart TB
   content is hosted in Tauri child webviews; preview automation is brokered by
   the Rust server and consumed by the React host. On the Tauri desktop host only
   tab status, open, and navigate are supported and advertised; snapshot, click,
-  type, and the other automation calls are not yet. Its single native view
-  drives only the visible tab, so open always shows the tab, and a request for a
-  thread that is not on screen times out. In browser mode there is no child
+  type, and the other automation calls are not yet. Its native views drive
+  only the visible tab, so open always shows the tab, and a request for a
+  thread that is not on screen times out. The desktop keeps one long-lived
+  native view per environment's preview storage (the local environment keeps
+  the original profile; each other environment gets its own), because
+  recreating child webviews while switching tabs disconnected the app; logical
+  tabs rebind to their environment's view. In browser mode there is no child
   webview: the client advertises only status and open, and open shows a prompt
   and returns `pending-user` at once; the page opens only if the user clicks Open. The server prefers the host
   with more operations, so a connected desktop serves automation first.
@@ -1251,13 +1255,14 @@ nested scroller starts over, and alpha theme tokens such as `--muted` and
 `--accent` never count. A `mask-image` on the scrolled content or an ancestor
 with `opacity` below 1 forces grayscale even with a painted ancestor. Reading
 surfaces therefore mark the content wrapper inside their scroller with
-`data-text-surface="background|card|sidebar"`, which the Linux CSS paints with
+`data-text-surface="background|card|sidebar|popover"`, which the Linux CSS paints with
 the matching opaque token, and the Linux CSS removes the `ScrollArea`
 scroll-fade mask, so Linux has no scroll fade. Coverage today is the sidebar
-content, the chat timeline rows, the settings column, and the Agents list;
-every other scroller, including menus, dialogs, popovers, the git manager
-lists, and file preview, renders grayscale text on Linux until it adopts a
-wrapper. Any new scrollable reading surface must add one.
+content, the chat timeline rows, the settings column, the Agents list, and the
+Create pull/merge request dialog with its branch and option lists. Other
+scrollers, including remaining menus, dialogs, popovers, the git manager lists,
+and file preview, render grayscale text on Linux until they adopt a wrapper.
+Any new scrollable reading surface must add one.
 
 ## Profiler
 

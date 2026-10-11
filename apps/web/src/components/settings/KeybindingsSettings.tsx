@@ -161,7 +161,7 @@ function ExpandableHeaderSearch({
         }}
         placeholder="Search keybindings"
         aria-label="Search keybindings"
-        className="h-6 w-44 rounded-md border border-input bg-background pl-7 pr-2 text-xs text-foreground outline-none placeholder:text-muted-foreground/72 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24"
+        className="h-6 w-44 rounded-md border border-input bg-background pl-7 pr-2 text-xs text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24"
       />
     </div>
   );
@@ -840,7 +840,7 @@ function KeybindingTableRow({
             className="group inline-flex h-7 items-center gap-1.5 rounded-md border border-transparent px-1.5 outline-none transition-colors hover:border-border/70 hover:bg-background focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24"
           >
             <KeybindingPill value={row.key} />
-            <span className="text-xs uppercase tracking-[0.08em] text-muted-foreground/0 transition-opacity group-hover:text-muted-foreground/70 group-focus-visible:text-muted-foreground/70">
+            <span className="text-xs uppercase tracking-[0.08em] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
               Edit
             </span>
           </button>

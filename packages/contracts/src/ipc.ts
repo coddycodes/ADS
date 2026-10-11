@@ -1300,14 +1300,21 @@ export interface DesktopBridge {
   disconnectSshEnvironment: (target: DesktopSshEnvironmentTarget) => Promise<void>;
   /**
    * Forwards `remotePort` on the target's loopback over its live SSH
-   * connection and resolves the local port. Idempotent per remote port. The
-   * forward ends when the connection ends or reconnects, on
+   * connection and resolves the local port. With `preferredLocalPort` (1024 or
+   * more) free on this computer's 127.0.0.1 and ::1, the forward binds it on
+   * both; otherwise, or when it is lost to another process, a random local
+   * port. Idempotent per remote port: a live forward is reused whatever its
+   * local port. The forward ends when the connection ends or reconnects, on
    * `releaseSshForward`, on LRU eviction when its connection holds more than
    * 8 forwards, or on budget eviction when all connections hold more than 12.
    * Eviction takes the least recently used forward, and only after the new
    * one is ready; a later call for the same port opens a new forward.
    */
-  sshForward: (target: DesktopSshEnvironmentTarget, remotePort: number) => Promise<number>;
+  sshForward: (
+    target: DesktopSshEnvironmentTarget,
+    remotePort: number,
+    preferredLocalPort?: number,
+  ) => Promise<number>;
   releaseSshForward: (target: DesktopSshEnvironmentTarget, remotePort: number) => Promise<void>;
   fetchSshEnvironmentDescriptor: (httpBaseUrl: string) => Promise<ExecutionEnvironmentDescriptor>;
   /**
@@ -1370,7 +1377,12 @@ export interface DesktopBridge {
 }
 
 export interface DesktopPreviewBridge {
-  createTab: (tabId: string) => Promise<void>;
+  /**
+   * `environmentId` selects the preview storage: each environment's previews
+   * keep their own cookies, storage, and service workers; `null` or absent is
+   * the local environment's profile.
+   */
+  createTab: (tabId: string, environmentId?: string | null) => Promise<void>;
   closeTab: (tabId: string) => Promise<void>;
   /**
    * Electron-era API: associate a renderer-mounted `<webview>`. Absent on
@@ -1394,10 +1406,10 @@ export interface DesktopPreviewBridge {
   hardReload: (tabId: string) => Promise<void>;
   /** Open the guest webview's DevTools (detached). */
   openDevTools: (tabId: string) => Promise<void>;
-  /** Drop cookies + storage data for the preview partition (all tabs). */
-  clearCookies: () => Promise<void>;
-  /** Drop the HTTP cache for the preview partition (all tabs). */
-  clearCache: () => Promise<void>;
+  /** Drop cookies + storage data from `tabId`'s environment's preview storage (all its tabs). */
+  clearCookies: (tabId: string) => Promise<void>;
+  /** Drop the HTTP cache from `tabId`'s environment's preview storage (all its tabs). */
+  clearCache: (tabId: string) => Promise<void>;
   /**
    * Electron-era one-shot config for mounting a preview `<webview>`. Absent
    * on the Tauri host, which owns webview configuration natively. Replaces three

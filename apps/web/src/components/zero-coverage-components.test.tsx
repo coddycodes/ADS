@@ -594,8 +594,8 @@ describe("preview empty and menu surfaces", () => {
     expect(previewBridgeMock.zoomOut).toHaveBeenCalledWith("tab-1");
     expect(previewBridgeMock.zoomIn).toHaveBeenCalledWith("tab-1");
     expect(previewBridgeMock.resetZoom).toHaveBeenCalledWith("tab-1");
-    expect(previewBridgeMock.clearCookies).toHaveBeenCalledOnce();
-    expect(previewBridgeMock.clearCache).toHaveBeenCalledOnce();
+    expect(previewBridgeMock.clearCookies).toHaveBeenCalledExactlyOnceWith("tab-1");
+    expect(previewBridgeMock.clearCache).toHaveBeenCalledExactlyOnceWith("tab-1");
     expect(onToggleDeviceToolbar).toHaveBeenCalledOnce();
   });
 

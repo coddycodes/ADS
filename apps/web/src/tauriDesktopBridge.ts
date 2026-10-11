@@ -531,8 +531,8 @@ function createTauriDesktopBridge(
       tauriInvokeDesktop("desktop_bridge_ensure_ssh_environment", { target, options }),
     disconnectSshEnvironment: (target) =>
       tauriInvokeOr("desktop_bridge_disconnect_ssh_environment", { target }, () => undefined),
-    sshForward: (target, remotePort) =>
-      tauriInvokeDesktop("desktop_bridge_ssh_forward", { target, remotePort }),
+    sshForward: (target, remotePort, preferredLocalPort) =>
+      tauriInvokeDesktop("desktop_bridge_ssh_forward", { target, remotePort, preferredLocalPort }),
     releaseSshForward: (target, remotePort) =>
       tauriInvokeOr("desktop_bridge_release_ssh_forward", { target, remotePort }, () => undefined),
     fetchSshEnvironmentDescriptor: (httpBaseUrl: string) =>

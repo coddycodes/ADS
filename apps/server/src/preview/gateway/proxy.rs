@@ -439,8 +439,11 @@ async fn bootstrap(state: &Listener, query: &str) -> Response<ProxyBody> {
         .checked()
         .insert(claims.session_id.clone(), now_millis());
     let mut response = html(StatusCode::OK, bootstrap_page(&to));
+    // Lax: an OAuth provider's top-level GET redirect back to the app carries
+    // it; cross-site subrequests do not, and the Origin rule refuses cross-site
+    // writes and WebSocket upgrades.
     let cookie = format!(
-        "{}={id}; HttpOnly; SameSite=Strict; Path=/",
+        "{}={id}; HttpOnly; SameSite=Lax; Path=/",
         gateway_cookie_name(state.gateway_port)
     );
     insert(response.headers_mut(), SET_COOKIE, &cookie);

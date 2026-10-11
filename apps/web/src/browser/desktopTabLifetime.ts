@@ -1,6 +1,8 @@
 import { previewBridge } from "~/components/preview/previewBridge";
 
 interface DesktopTabLease {
+  /** The tab's preview storage partition (its environment; `null` for the local one). */
+  readonly partition: string | null;
   references: number;
   closeTimer: number | null;
   ready: Promise<void>;
@@ -53,7 +55,7 @@ function createTab(tabId: string, lease: DesktopTabLease): void {
     for (const [inactiveTabId, inactiveLease] of inactive) {
       await closeTab(inactiveTabId, inactiveLease);
     }
-    await previewBridge?.createTab(tabId);
+    await previewBridge?.createTab(tabId, lease.partition);
   });
   lease.ready = ready;
   lease.createFailed = false;
@@ -62,10 +64,11 @@ function createTab(tabId: string, lease: DesktopTabLease): void {
   });
 }
 
-export function acquireDesktopTab(tabId: string): AcquiredDesktopTab {
+export function acquireDesktopTab(tabId: string, partition: string | null): AcquiredDesktopTab {
   let current = leases.get(tabId);
   if (!current) {
     current = {
+      partition,
       references: 0,
       closeTimer: null,
       ready: Promise.resolve(),
@@ -108,10 +111,11 @@ export function acquireDesktopTab(tabId: string): AcquiredDesktopTab {
 
 export async function navigateDesktopTab(
   tabId: string,
+  partition: string | null,
   url: string,
   shouldNavigate: () => boolean = () => true,
 ): Promise<void> {
-  const lease = acquireDesktopTab(tabId);
+  const lease = acquireDesktopTab(tabId, partition);
   try {
     await lease.navigate(url, shouldNavigate);
   } finally {

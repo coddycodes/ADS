@@ -155,7 +155,7 @@ const PlanSidebar = memo(function PlanSidebar({
             {label}
           </Badge>
           {activePlan ? (
-            <span className="text-xs text-muted-foreground/60 tabular-nums">
+            <span className="text-xs text-muted-foreground tabular-nums">
               {formatTimestamp(activePlan.createdAt, timestampFormat)}
             </span>
           ) : null}
@@ -197,7 +197,7 @@ const PlanSidebar = memo(function PlanSidebar({
         <div className="p-3 space-y-4">
           {/* Explanation */}
           {activePlan?.explanation ? (
-            <p className="text-[13px] leading-relaxed text-muted-foreground/80">
+            <p className="text-[13px] leading-relaxed text-muted-foreground">
               {activePlan.explanation}
             </p>
           ) : null}
@@ -205,7 +205,7 @@ const PlanSidebar = memo(function PlanSidebar({
           {/* Plan Steps */}
           {activePlan && activePlan.steps.length > 0 ? (
             <div className="space-y-1">
-              <p className="mb-2 text-xs font-semibold tracking-widest text-muted-foreground/40 uppercase">
+              <p className="mb-2 text-xs font-semibold tracking-widest text-muted-foreground uppercase">
                 Steps
               </p>
               {activePlan.steps.map((step) => (
@@ -222,10 +222,10 @@ const PlanSidebar = memo(function PlanSidebar({
                     className={cn(
                       "text-[13px] leading-snug",
                       step.status === "completed"
-                        ? "text-muted-foreground/50 line-through decoration-muted-foreground/20"
+                        ? "text-muted-foreground line-through decoration-muted-foreground/20"
                         : step.status === "inProgress"
                           ? "text-foreground/90"
-                          : "text-muted-foreground/70",
+                          : "text-muted-foreground",
                     )}
                   >
                     {step.step}
@@ -248,7 +248,7 @@ const PlanSidebar = memo(function PlanSidebar({
                 ) : (
                   <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground/40 transition-transform" />
                 )}
-                <span className="text-xs font-semibold tracking-widest text-muted-foreground/40 uppercase group-hover:text-muted-foreground/60">
+                <span className="text-xs font-semibold tracking-widest text-muted-foreground uppercase group-hover:text-foreground">
                   {planTitle ?? "Full Plan"}
                 </span>
               </button>
@@ -268,8 +268,8 @@ const PlanSidebar = memo(function PlanSidebar({
           {/* Empty state */}
           {!activePlan && !planMarkdown ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
-              <p className="text-[13px] text-muted-foreground/40">No active plan yet.</p>
-              <p className="mt-1 text-xs text-muted-foreground/30">
+              <p className="text-[13px] text-muted-foreground">No active plan yet.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
                 Plans will appear here when generated.
               </p>
             </div>

@@ -2035,8 +2035,9 @@ pub async fn desktop_bridge_ssh_forward(
     prompts: State<'_, SshPasswordPromptManager>,
     target: SshEnvironmentTarget,
     remote_port: u16,
+    preferred_local_port: Option<u16>,
 ) -> Result<u16, String> {
-    ssh.ensure_port_forward(&app, &prompts, target, remote_port)
+    ssh.ensure_port_forward(&app, &prompts, target, remote_port, preferred_local_port)
         .await
 }
 

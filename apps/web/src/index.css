@@ -371,6 +371,10 @@ html[data-linux-webkit] [data-text-surface="sidebar"] {
   background-color: var(--sidebar, var(--background));
 }
 
+html[data-linux-webkit] [data-text-surface="popover"] {
+  background-color: var(--popover);
+}
+
 /* The scroll-fade mask on ScrollArea viewports routes the scrolled contents
    through a transparent mask layer, which forces grayscale text regardless of
    the painted wrapper (measured: sidebar 0.000 → 0.667 fringe ratio with the

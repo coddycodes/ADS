@@ -1000,8 +1000,12 @@ thread's environment is:
   name such as `devbox` or `box.lan`; the preview loads from
   `http://<server address>:<gateway port>`;
 - desktop-managed SSH, on desktop only; the desktop forwards the gateway port
-  over the SSH connection, and the preview loads from
-  `http://127.0.0.1:<local port>`.
+  over the SSH connection. The preview loads from the same address as on the
+  server, such as `http://localhost:5173`, so sign-in redirects and other
+  links to that address keep working. When that port is already in use on
+  your computer, it loads from `http://127.0.0.1:<local port>` instead, and a
+  note says the port is in use and that apps expecting it (OAuth sign-in, for
+  example) may not work until you free it.
 
 The gateway opens one port per thread and dev-server port, so the client must
 be able to reach that host on ports other than BiBCode's own. The BiBCode

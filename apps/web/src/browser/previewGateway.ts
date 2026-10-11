@@ -12,6 +12,7 @@ import { readPreparedConnection } from "~/state/session";
 import { isBrowserMode } from "~/components/preview/previewBridge";
 
 import { formatHost, resolvePreviewTarget, UNREACHABLE_MESSAGES } from "./browserTargetResolver";
+import { showSamePortBusyNotice } from "./linkNotices";
 
 export type GatewayOpenMutation = (input: {
   environmentId: EnvironmentId;
@@ -68,6 +69,12 @@ interface SshForwardEntry {
    * a tab's native history can go Back to a replaced forward's origin.
    */
   readonly origins: Set<string>;
+  /**
+   * The release of a forward whose gateway listener the server replaced. It
+   * may still hold the local port the replacement wants, so a resolution
+   * waits for it before asking for that port.
+   */
+  retiring: Promise<void> | null;
 }
 
 /** Per environment: `<threadId> <canonical origin>` -> forward bookkeeping. */
@@ -85,6 +92,19 @@ let nextLeaseId = 0;
 
 /** The entry that last installed each local client origin. */
 const originOwners = new Map<string, SshForwardEntry>();
+
+/**
+ * Ports of 1024 or more that browser engines refuse to load (the Fetch
+ * standard's "bad ports"). A forward on one could never show the page, so they
+ * keep a random local port.
+ */
+const BROWSER_BLOCKED_PORTS = new Set([
+  1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669,
+  6679, 6697, 10080,
+]);
+
+/** `<environmentId> <canonical origin>` pairs whose busy-port note was shown this session. */
+const samePortNotices = new Set<string>();
 
 function releaseForward(forward: SshForward): void {
   void window.desktopBridge
@@ -111,7 +131,7 @@ function openEntry(environmentId: EnvironmentId, key: string): SshForwardEntry {
   }
   let entry = entries.get(key);
   if (!entry) {
-    entry = { forward: null, holders: new Set(), pending: 0, origins: new Set() };
+    entry = { forward: null, holders: new Set(), pending: 0, origins: new Set(), retiring: null };
     entries.set(key, entry);
   }
   return entry;
@@ -237,11 +257,28 @@ export async function resolveForNavigation(input: {
     if (!bridge) return fail({ message: UNREACHABLE_MESSAGES.ssh(label) });
     const target = readSshTarget(environmentId);
     if (!target) return fail({ message: retryMessage(label), retryable: true });
+    // The same local port keeps the page on its real origin (OAuth redirects,
+    // CORS allowlists); ports below 1024 need privileges on this computer.
+    const canonicalPort = Number(canonical.port);
+    const preferred =
+      canonicalPort >= 1024 && !BROWSER_BLOCKED_PORTS.has(canonicalPort)
+        ? canonicalPort
+        : undefined;
+    if (entry?.forward && entry.forward.gatewayPort !== gatewayPort) {
+      // The server replaced the listener (it closes idle ones); the old
+      // forward leads nowhere but may still hold the preferred local port.
+      const replaced = entry.forward;
+      entry.forward = null;
+      entry.retiring = bridge
+        .releaseSshForward(replaced.target, replaced.gatewayPort)
+        .catch(() => undefined);
+    }
+    await entry?.retiring;
     let localPort: number;
     try {
       // Forwards end when the managed tunnel reconnects; the bridge call is
       // idempotent while one is alive, so every navigation re-establishes it.
-      localPort = await bridge.sshForward(target, gatewayPort);
+      localPort = await bridge.sshForward(target, gatewayPort, preferred);
     } catch (cause) {
       return fail({
         message: isSshNotActive(cause)
@@ -250,7 +287,16 @@ export async function resolveForNavigation(input: {
         retryable: true,
       });
     }
-    clientOrigin = `http://127.0.0.1:${localPort}`;
+    if (localPort === preferred) {
+      clientOrigin = canonical.origin;
+    } else {
+      clientOrigin = `http://127.0.0.1:${localPort}`;
+      const noticeKey = `${environmentId} ${canonical.origin}`;
+      if (preferred !== undefined && !samePortNotices.has(noticeKey)) {
+        samePortNotices.add(noticeKey);
+        showSamePortBusyNotice(canonical.host);
+      }
+    }
     // Mapped before settling: settling may release (and forget) it at once.
     canonicalOrigins.set(clientOrigin, canonical.origin);
     settle({ target, gatewayPort }, clientOrigin);
@@ -372,6 +418,7 @@ export function resetPreviewGatewayForTests(): void {
   leaseTimers.clear();
   canonicalOrigins.clear();
   originOwners.clear();
+  samePortNotices.clear();
   sshForwards.clear();
   tabGenerations.clear();
 }
