@@ -114,8 +114,7 @@ pub const FRAME_SCRIPT: &str = r#"(() => {
 
 /// Only the BiBCode UI that opened the preview, and the preview's own pages
 /// (frames nested inside it), may frame it. `None` for an IPv6 origin: browsers
-/// don't parse IPv6 host sources, so the gateway cookie (which another site's
-/// frame never carries) is the only guard there.
+/// don't parse IPv6 host sources, and such a UI frames no preview.
 pub fn frame_ancestors_policy(ui_origin: &str) -> Option<String> {
     (!ui_origin.contains("://[")).then(|| format!("frame-ancestors 'self' {ui_origin}"))
 }
@@ -168,7 +167,15 @@ pub fn strip_frame_ancestors(value: &[u8]) -> Option<Vec<u8>> {
 
 /// Lets `ui_origin` (a validated BiBCode UI origin) frame the response:
 /// replaces the upstream's framing restrictions with the gateway's policy.
+/// When that policy cannot name the origin, the response fails closed as
+/// [`apply_self_only_framing`] leaves it.
 pub fn apply_frame_policy(headers: &mut HeaderMap, ui_origin: &str) {
+    let Some(policy) =
+        frame_ancestors_policy(ui_origin).and_then(|policy| HeaderValue::from_str(&policy).ok())
+    else {
+        apply_self_only_framing(headers);
+        return;
+    };
     headers.remove(X_FRAME_OPTIONS);
     let policies: Vec<HeaderValue> = headers
         .get_all(CONTENT_SECURITY_POLICY)
@@ -180,11 +187,7 @@ pub fn apply_frame_policy(headers: &mut HeaderMap, ui_origin: &str) {
     for policy in policies {
         headers.append(CONTENT_SECURITY_POLICY, policy);
     }
-    if let Some(policy) = frame_ancestors_policy(ui_origin)
-        && let Ok(policy) = HeaderValue::from_str(&policy)
-    {
-        headers.append(CONTENT_SECURITY_POLICY, policy);
-    }
+    headers.append(CONTENT_SECURITY_POLICY, policy);
 }
 
 /// The BiBCode UI origin from the bootstrap link, kept only when it is a bare
@@ -521,13 +524,30 @@ mod tests {
         );
     }
 
+    /// An IPv6 UI cannot be named in `frame-ancestors` and frames no preview, so
+    /// the response keeps the upstream's rules and allows only its own pages.
     #[test]
-    fn ipv6_hosts_get_no_gateway_frame_ancestors() {
+    fn an_ipv6_ui_origin_keeps_the_upstream_rules_and_self_only_framing() {
         let mut headers = HeaderMap::new();
         headers.insert(X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+        headers.append(
+            CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("frame-ancestors 'none'; img-src *"),
+        );
         apply_frame_policy(&mut headers, "http://[fd00::1]:3773");
-        assert!(headers.get(X_FRAME_OPTIONS).is_none());
-        assert!(headers.get(CONTENT_SECURITY_POLICY).is_none());
+        assert_eq!(headers.get(X_FRAME_OPTIONS).unwrap(), "DENY");
+        let policies: Vec<&str> = headers
+            .get_all(CONTENT_SECURITY_POLICY)
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect();
+        assert_eq!(
+            policies,
+            [
+                "frame-ancestors 'none'; img-src *",
+                "frame-ancestors 'self'"
+            ]
+        );
     }
 
     #[test]

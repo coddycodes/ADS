@@ -1161,9 +1161,9 @@ address)` gets its own listener on an ephemeral port, so two clients that
   (`'self'` for frames nested in the preview),
   and the upstream's `X-Frame-Options` and `frame-ancestors` directives are
   dropped from each of its policies (its other directives stay, byte for byte),
-  so only that BiBCode UI can frame the preview. IPv6 origins get no gateway
-  `frame-ancestors`, since browsers don't parse IPv6 host sources; a frame from
-  another site never carries the `Lax` gateway cookie. Sessions without a UI
+  so only that BiBCode UI can frame the preview. Browsers don't parse IPv6 host
+  sources, and an IPv6 UI frames no preview, so a session with an IPv6 UI
+  origin fails closed like one without a UI origin. Sessions without a UI
   origin (desktop views, system-browser tabs) keep the upstream's framing rules
   and add `frame-ancestors 'self'`, so a same-site sibling cannot frame them
   with the gateway cookie. A bootstrap without `ui` keeps the UI origin of the
