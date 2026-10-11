@@ -16,7 +16,7 @@ use serde_json::{Map, Value, json};
 use time::OffsetDateTime;
 
 use super::{
-    cli::{parse_since, write_json},
+    cli::{parse_since, plain, to_json, write_json},
     reader::Reader,
     symbolicate::{Target, symbolicate},
 };
@@ -436,12 +436,12 @@ enum Cut {
 /// they give way) lose entries from their `Cut` end until it fits. A result that still does
 /// not fit is replaced by a note that says so.
 fn tool_result(mut content: Value, lists: &[(&str, Cut)]) -> Value {
-    let mut text = content.to_string();
+    let mut text = to_json(&content);
     if chars(&text) > MAX_RESULT_CHARS {
         content["truncated"] = true.into();
         for &(pointer, cut) in lists {
             loop {
-                text = content.to_string();
+                text = to_json(&content);
                 let excess = chars(&text).saturating_sub(MAX_RESULT_CHARS);
                 match content.pointer_mut(pointer) {
                     Some(Value::Array(items)) if excess > 0 && !items.is_empty() => {
@@ -456,7 +456,7 @@ fn tool_result(mut content: Value, lists: &[(&str, Cut)]) -> Value {
                 "truncated": true,
                 "error": "The result is too long to return; ask for fewer or newer records.",
             });
-            text = content.to_string();
+            text = to_json(&content);
         }
     }
     json!({
@@ -475,7 +475,7 @@ fn drop_entries(items: &mut Vec<Value>, cut: Cut, excess: usize) {
             Cut::Back => &items[items.len() - 1 - count],
         };
         // The entry and the comma before or after it.
-        freed += chars(&item.to_string()) + 1;
+        freed += chars(&to_json(item)) + 1;
         count += 1;
     }
     match cut {
@@ -490,7 +490,7 @@ fn chars(text: &str) -> usize {
 
 /// A tool that ran but could not do what was asked: the agent reads why.
 fn tool_failure(message: String) -> Value {
-    json!({ "content": [{ "type": "text", "text": bounded(&message) }], "isError": true })
+    json!({ "content": [{ "type": "text", "text": bounded(&plain(&message)) }], "isError": true })
 }
 
 fn rpc_error(code: i64, message: &str) -> Value {
@@ -1064,5 +1064,59 @@ mod tests {
         assert_eq!(responses[0]["error"]["code"], -32603);
         assert_eq!(responses[1]["id"], 2);
         assert_eq!(responses[1]["result"], json!({}));
+    }
+
+    /// The model reads `content[0].text` after its client has parsed the JSON-RPC line, so the
+    /// escapes on that line are gone by then. The text itself is JSON written with the same
+    /// escapes, so a Tag or bidi character reaches the model as visible `\u` text.
+    /// `structuredContent` is decoded to the raw characters by every client: that is its ceiling.
+    #[test]
+    fn tool_text_carries_hidden_characters_as_visible_escapes() {
+        const RAW: &str = "x\u{202e}y\u{e0041}z";
+        let (_state, dir) = seeded(0, 0);
+        let mut finding = json!({
+            "id": "rpc.slow-1", "fingerprint": "1", "kind": "rpc.slow", "severity": "warn",
+            "firstSeen": "2026-10-09T10:00:00Z", "lastSeen": "2026-10-09T10:00:00Z", "count": 1,
+            "source": "server", "title": "", "summary": "s", "state": "open", "evidence": {},
+        });
+        finding["title"] = RAW.into();
+        fs::write(dir.join("findings.ndjson"), format!("{finding}\n")).unwrap();
+
+        let responses = exchange(&dir, &[call_tool(1, "profiler_findings", json!({}))]);
+
+        let text = responses[0]["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap();
+        assert!(text.is_ascii(), "{text:?}");
+        assert!(text.contains(r"x\u202ey\udb40\udc41z"), "{text:?}");
+        let parsed: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(parsed["findings"][0]["title"], RAW);
+        assert_eq!(
+            responses[0]["result"]["structuredContent"]["findings"][0]["title"],
+            RAW
+        );
+    }
+
+    /// A cut measures entries as the escaped text they take up, so hidden characters do not
+    /// make it drop records that fit.
+    #[test]
+    fn a_cut_counts_hidden_characters_as_their_escapes() {
+        let (_state, dir) = seeded(0, 0);
+        write_events(&dir, 50, &"\u{202e}".repeat(400));
+
+        let responses = exchange(
+            &dir,
+            &[call_tool(1, "profiler_events", json!({ "limit": 50 }))],
+        );
+
+        let result = &responses[0]["result"];
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.chars().count() <= MAX_RESULT_CHARS, "{}", text.len());
+        assert_eq!(result["structuredContent"]["truncated"], true);
+        let kept = result["structuredContent"]["events"]
+            .as_array()
+            .unwrap()
+            .len();
+        assert!(kept > 25 && kept < 50, "{kept}");
     }
 }

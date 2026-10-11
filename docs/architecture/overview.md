@@ -1647,6 +1647,10 @@ their only network access is an explicit download of the public symbol
 archives. Human CLI output escapes control and bidirectional-text characters,
 and JSON output, the CLI's `--json` and the MCP server's, escapes DEL, the C1
 controls, the Unicode format characters, and the Tag characters as `\uXXXX`.
+An MCP tool's `text` is JSON written the same way, so the escapes are still
+visible after the client parses the message; `structuredContent` and error text
+cannot carry escapes, so error text replaces those characters with `?` and
+clients decode `structuredContent` to the raw characters.
 
 ### Readers
 

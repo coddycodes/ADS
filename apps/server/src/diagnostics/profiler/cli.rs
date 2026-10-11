@@ -273,12 +273,22 @@ pub(super) fn write_json(out: &mut impl Write, value: &Value) -> io::Result<()> 
     writeln!(out)
 }
 
+/// `value` as the same compact JSON as [`write_json`], without the newline.
+pub(super) fn to_json(value: &Value) -> String {
+    let mut text = Vec::new();
+    write_json(&mut text, value).expect("writing to a Vec cannot fail");
+    text.pop();
+    String::from_utf8(text).expect("serde_json writes UTF-8")
+}
+
 /// Compact JSON, except that DEL and the C1 controls (CSI is U+009B, OSC is U+009D), the
 /// Unicode format characters and the Tag characters are written as `\u007f`, `\u202e` and so on
 /// (a surrogate pair above U+FFFF). serde_json escapes only U+0000 to U+001F, so these would
 /// reach a terminal as they are, or a model as text a person never sees; a fragment it hands
 /// over holds no other control character. They are ordinary JSON escapes: a parser reads the
-/// same value. The CLI's `--json` and the MCP server both write through this.
+/// same value. The CLI's `--json`, the MCP server's lines and its tool `text` (JSON inside a
+/// JSON string, so the escapes survive the client's parse) write through this; an MCP client
+/// still decodes `structuredContent` to the raw characters.
 struct EscapeControls;
 
 impl Formatter for EscapeControls {
@@ -445,7 +455,7 @@ fn text(value: &Value, key: &str, missing: &str) -> String {
         .map_or_else(|| missing.to_owned(), plain)
 }
 
-fn plain(text: &str) -> String {
+pub(super) fn plain(text: &str) -> String {
     text.chars()
         .map(|c| {
             if c.is_control() || is_hidden_format(c) {
