@@ -194,7 +194,10 @@ it.layer(NodeServices.layer)("Tauri production hardening", (it) => {
         path.join(repoRoot, "apps/desktop/src-tauri/windows/installer-hooks.nsh"),
       );
       assert.match(installerHook, /!macro NSIS_HOOK_PREINSTALL/);
-      assert.match(installerHook, /KillProcessCurrentUser "\$\{MAINBINARYNAME\}\.exe"/);
+      assert.match(
+        installerHook,
+        /\$PassiveMode = 1[\s\S]*\$\{Silent\}[\s\S]*\$\{FileExists\} "\$INSTDIR\\\$\{MAINBINARYNAME\}\.exe"[\s\S]*KillProcessCurrentUser "\$\{MAINBINARYNAME\}\.exe"/,
+      );
       assert.match(installerHook, /Delete "\$INSTDIR\\\$\{MAINBINARYNAME\}\.exe"/);
       assert.equal(installerHook.includes("MessageBox"), false);
       assert.equal(installerHook.includes("Abort"), false);
