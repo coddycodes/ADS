@@ -740,7 +740,9 @@ environment shares the host process. SSH forwarding is owned by the Tauri host;
 provider, terminal, and managed relay processes are supervised by the server.
 Neither path introduces a production Node server or packaged helper sidecar.
 The only extra BiBCode process is the [Profiler](#profiler)'s crash monitor:
-the same executable, relaunched only while the profiler is on.
+the same executable, relaunched only while the profiler is on. A Windows update
+also starts a detached `cmd.exe` restart waiter, which is not a BiBCode
+executable.
 
 The server can also open preview gateway listeners. Each one reverse-proxies
 one loopback dev server for one thread to a client that is not on the server's
@@ -1580,7 +1582,9 @@ it.
   `server`, or `desktop-host` for a server inside the desktop app;
   `provider:<driver>` for a registered provider; `terminal`; `webview`;
   `helper` for registered helpers and the crash monitor (a descendant running
-  BiBCode's own executable); `git`; and `other`. Every kind is sampled, but
+  BiBCode's own executable); `git`; and `other`. On Windows and Linux,
+  `webview` also covers preview tabs' web content, which descends from the
+  desktop host like the main window's. Every kind is sampled, but
   leak and CPU findings are raised only for BiBCode's own processes (`server`,
   `desktop-host`, `webview`, `provider:*`, and `helper`): what runs under a
   terminal, such as a build or a language server, is the user's. Once a minute
@@ -1760,6 +1764,18 @@ bounded memory, and works while the server is stopped.
 - An idle crash monitor costs about 0.2% of a core, from `minidumper`'s fixed
   10 ms poll loop.
 - Each release carries about 470 MB of symbol archives.
+- On Windows and Linux a preview tab's web content counts as `webview`, so a
+  previewed app that leaks or keeps a core busy can raise a `webview` finding.
+  Telling the two apart needs the preview host's process ids or command lines.
+- A browser-mode preview runs in a frame on the page's main thread, so a
+  stall the previewed app causes counts as the client's `client.stall`.
+  Neither the heartbeat nor Long Animation Frames can tell it apart: the
+  gateway's frame is cross-origin, and frames do not attribute cross-origin
+  scripts.
+- The restart waiter of a Windows update treats a `bibcode-desktop.exe` with a
+  window as the relaunched app, so the profiler's windowless `profiler mcp`
+  server and crash monitor do not count. The passive installer's preinstall
+  hook ends every same-user `bibcode-desktop.exe`, an MCP server included.
 
 ## Request and event flow
 

@@ -76,7 +76,8 @@ untrusted.
 
 - Claude Code: `claude mcp add bibcode-profiler -- bibcode profiler mcp`. For a
   remote host, use `-- ssh <host> bibcode profiler mcp`; on a desktop, the
-  desktop executable.
+  desktop executable. A Windows update ends an MCP server that runs the
+  desktop executable, since the installer replaces it; restart it afterwards.
 - Codex, in `~/.codex/config.toml`:
 
   ```toml

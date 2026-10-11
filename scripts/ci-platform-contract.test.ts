@@ -156,7 +156,7 @@ describe("cross-platform CI contract", () => {
   it("saves CI Rust build caches from main so pull requests restore them", () => {
     const { workflow } = readWorkflow(CI_WORKFLOW_PATH);
 
-    for (const name of ["check", "test", "native_desktop"] as const) {
+    for (const name of ["check", "test", "native_desktop", "crash-smoke"] as const) {
       const step = requireJob(workflow, name).steps?.find(
         (candidate) => candidate.name === "Cache Rust build output",
       );

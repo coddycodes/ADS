@@ -149,7 +149,10 @@ Covers `memory.leak-suspect`, `memory.leak-likely`, `cpu.sustained`,
    - `helper`: provider app-server helpers in
      `apps/server/src/provider_terminal/`.
    - `terminal`: shell sessions; `apps/server/src/terminal/`.
-   - `webview`: the UI in `apps/web/src/` running in the system webview.
+   - `webview`: the UI in `apps/web/src/` running in the system webview. On
+     Windows and Linux it also includes preview tabs' web content, which runs
+     the previewed app's code: before filing, check whether the growth or CPU
+     follows a preview tab rather than BiBCode's own window.
    - `git`, `other`: descendants named by `label`; find who spawns them with
      `rg -n '"<label>"' apps/server/src`.
 4. **CPU:** correlate `cpuMax` minutes with `rpc.timing`, `worktree.audit`,
@@ -184,7 +187,9 @@ Covers `rpc.slow`, `rpc.hang`, `rpc.saturation`, `client.stall` and
 5. **Client findings:** `capabilities` says how the client measured
    (`long-animation-frame` or the `heartbeat` timer, and `event` for
    interactions). Pair stalls with the `client.request` records and UI actions
-   in the same window.
+   in the same window. In browser mode a preview runs in a frame on the same
+   main thread, so a stall while a preview was open may be the previewed
+   app's.
 6. **Remote servers:** request records live on the environment that served the
    request, so run `P` on that host (`ssh <host> bibcode profiler …`). Client
    stalls and interactions are copied to every enabled environment.

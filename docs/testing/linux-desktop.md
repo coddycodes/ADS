@@ -797,6 +797,10 @@ ones:
   only after the window loaded: the host also scans for its web processes when
   the profiler turns on, so the record must still be found. Record whether the
   window recovered on its own, after a reload, or only after a restart.
+  Repeat once more after opening and navigating preview tabs from two
+  environments: preview tabs add `WebKitWebProcess` children, and the finding
+  carries the core dump record only when exactly one remembered child ended.
+  Record whether it did.
 - **Shutdown.** With the profiler on and a provider session and a terminal
   open, quit through the app menu, then start again and stop the app with
   `kill -TERM <desktop pid>`. Neither stop may add a `crash.webview` or

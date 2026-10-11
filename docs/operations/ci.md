@@ -119,7 +119,7 @@ SHA-pinned with audited tag comments: Checkout 7.0.1
 (`62ae3a85dbdd2bedbb5819da8ce45635129289a1`). Reverify a tag before changing
 its immutable SHA.
 
-Check, Test, and Native desktop restore the Swatinem Rust cache on every run
+Check, Test, Native desktop, and Crash smoke restore the Swatinem Rust cache on every run
 and save it only when `github.ref` is `refs/heads/main`, including when a later
 step fails (`cache-on-failure`). Pull requests read that default-branch cache.
 The pnpm store stays on the setup-vp cache. A job cancelled by

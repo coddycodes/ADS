@@ -2,7 +2,7 @@
 
 ## [v0.9.0] - 2026-10-09
 
-BiBCode v0.9.0 opens clicked links in the in-app browser by default, reaches a development server on the server's localhost from SSH, LAN, tailnet, and WSL clients, keeps chat panels and provider conversations across clients and restarts, and merges a branch without checking it out. This release includes the changes since v0.8.2. Database migrations 053 and 054 ship with this release.
+BiBCode v0.9.0 opens clicked links in the in-app browser by default, reaches a development server on the server's localhost from SSH, LAN, tailnet, and WSL clients, keeps chat panels and provider conversations across clients and restarts, merges a branch without checking it out, and adds a Profiler that records crashes, leaks, CPU, and slow responses for diagnosis. This release includes the changes since v0.8.2. Database migrations 053 and 054 ship with this release.
 
 ### Links
 
@@ -18,6 +18,23 @@ BiBCode v0.9.0 opens clicked links in the in-app browser by default, reaches a d
 - The gateway binds the address the caller used to reach the server and refuses public and proxied callers with `not-reachable`. Access uses a 60-second single-use capability URL. An HttpOnly cookie is set on a bootstrap page, then the target path replaces it. BiBCode Connect (relay) environments still get the unreachable notice. HTTPS development servers are not proxied.
 - Provider sessions and every terminal receive `BROWSER=bibcode-open-url`. `bibcode open-url <url>` posts to the server, and the client showing the thread opens it. If no client is listening, the helper prints the URL. On Windows the helper is a `bibcode-open-url.exe` alias.
 - A typed server refusal (HTTPS, a non-loopback URL, or nothing listening) is shared. A failure of this client's own reach stays on that client and shows an overlay with Reload.
+
+- Over SSH, a preview tab keeps the development server's real origin (`http://localhost:<port>`) when that port is free on this computer, so OAuth redirects and CORS allowlists work as on the server. When it is busy, the preview uses a random `127.0.0.1` port and a note names the busy port once. Each environment's previews keep their own cookies and storage. The system browser always opens SSH previews on `127.0.0.1`, since it has no per-environment storage.
+- In browser mode, previews open in the page instead of a new tab, framed through the gateway. Removing an environment deletes its preview profile unless one of its previews was opened this session.
+
+### Profiler
+
+- Settings → About → Diagnostics → **Profiler**, off by default. While it is on, BiBCode records to local files under its data directory and lists findings in Diagnostics. Each environment has its own switch, and clients send their measurements to the server they are connected to.
+- Crashes: a crash of the app or server is recorded with where it crashed. A minidump is written by the same executable relaunched as a crash monitor, and the operating system's own crash record is used too (systemd-coredump or the journal, Windows Error Reporting, macOS crash reports). Panics, webview crashes, provider and helper process crashes, and exits that did not finish shutting down are recorded as well.
+- Memory leaks and sustained CPU in BiBCode's own processes, slow and hung requests with the time split between server, network, and rendering, interface stalls and slow interactions, and failed or incomplete worktree removals.
+- `bibcode profiler status | findings | events | crashes | symbolicate` reads the data, Diagnostics exports it, optionally with crash dumps, and `bibcode profiler mcp` serves the same read-only data to an AI harness. The `bibcode-profiler` repository skill in `docs/skills/` monitors the profiler, investigates findings, and drafts GitHub issues after checking for duplicates.
+- Nothing from prompts, messages, or terminals is recorded, and minidumps never leave the machine unless they are exported. A client paired with an older server shows that its profiler is not available there instead of failing the connection.
+
+### Windows updates
+
+- A Windows update relaunched by an elevated installer returns on the same data root and port, so remote clients reconnect to the same address. A detached waiter starts the app if the installer exits without relaunching it, and it is stopped when the installer fails to start. The handoff is deleted once the new version is running, so a later ordinary launch keeps its own defaults.
+- The installer's preinstall hook, which ends a running BiBCode and retries replacing it, now runs only for passive and silent installs. An interactive install keeps the standard prompt.
+- Remote access on a non-English Windows no longer fails when `netsh` reports a missing firewall rule in another language.
 
 ### Chat panels and sessions
 
@@ -53,6 +70,8 @@ BiBCode v0.9.0 opens clicked links in the in-app browser by default, reaches a d
 
 ### Known limitations
 
+- The Profiler's native crash checks on Windows and macOS run in CI, and its overhead was measured only on a headless Linux server. On Windows and Linux a preview tab's web content counts as the webview, so a busy or leaking previewed app can raise a webview finding. A stall caused by a browser-mode preview counts as the client's. A Windows update ends a running `profiler mcp` server.
+
 - Windows and macOS builds, and the native desktop checks for link routing, cross-client panels, the preview gateway, and Source Control merge, were not run. Validation for those features was on Linux. The Linux preview child-webview geometry check was launched, but the desktop session was locked, so the UI was not driven. Live preview-gateway procedures (SSH preview, the brainstorm companion over SSH, browser-mode cross-site bootstrap, revocation, the cross-port 403, and whether Codex agents receive `BIBCODE_OPEN_URL_AUTH`) were not run. `fetch .` publishing was not exercised on reftable repositories, and a packaged end-to-end walk through Source Control merge was not run.
 - On desktop, agent `preview_open` always shows the tab (`show: false` is ignored), and a request for a thread that is not on screen times out. Server ports on BiBCode Connect still show the unreachable notice. HTTPS development servers are not proxied. A hostname that resolves to `127.0.1.1` on the same machine is refused as proxied; use `localhost`. A reverse proxy on another LAN host, global IPv6 to a `::`-bound server, and dev Vite over the LAN are refused. The desktop does not report native page-load failures; after a page has loaded, a dropped forward shows the webview's own error page, and Reload recovers.
 - A visible terminal tab still closes itself when its session reports `closed` or `exited`. A restart that fails while another client is viewing the tab closes it there too. Split arrangement and tab order stay per client. Terminal scrollback is still lost when the server restarts.
@@ -63,7 +82,7 @@ BiBCode v0.9.0 opens clicked links in the in-app browser by default, reaches a d
 
 ### Downloads
 
-Desktop installers and standalone server distributions support macOS, Linux, and Windows on ARM64 and x64. Linux server `.deb` and `.rpm` packages are included for both architectures. Stable desktop updater payloads and signatures use the six-target `latest.json` manifest.
+Desktop installers and standalone server distributions support macOS, Linux, and Windows on ARM64 and x64. Linux server `.deb` and `.rpm` packages are included for both architectures. Symbol archives (`bibcode-desktop-symbols-*.zip`, `bibcode-server-symbols-*.zip`) let `bibcode profiler symbolicate` name the functions in a crash; they are optional downloads. Stable desktop updater payloads and signatures use the six-target `latest.json` manifest.
 
 On macOS, copy BiBCode.app from the DMG to Applications before launching it. macOS bundles remain ad-hoc signed and unnotarized; Windows installers remain without Authenticode.
 

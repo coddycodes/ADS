@@ -242,7 +242,13 @@ describe("resolveForNavigation", () => {
     readPreparedConnection.mockReturnValue(ssh());
     const gatewayOpen = vi.fn(async () => opened(41000));
     const open = (url: string) =>
-      resolveForNavigation({ environmentId, threadId, canonicalUrl: url, gatewayOpen, tabId: "tab-1" });
+      resolveForNavigation({
+        environmentId,
+        threadId,
+        canonicalUrl: url,
+        gatewayOpen,
+        tabId: "tab-1",
+      });
 
     await expect(open("http://localhost:5173/")).resolves.toMatchObject({
       kind: "ok",

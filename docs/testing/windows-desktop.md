@@ -799,6 +799,16 @@ ones:
   `profiler_*` tools, and the process must exit with code 0 at the end of
   input. Then register the same command in an MCP client and call
   `profiler_status`.
+- **Update with the profiler on.** With the profiler on, an MCP server from
+  the step above running, and the app started with `$env:BIBCODE_HOME` and
+  `$env:BIBCODE_PORT` set, install an update through the in-app updater. Record
+  that the passive installer ended the MCP server, that the app came back on
+  the same data root and port, and that `%TEMP%\bibcode-desktop-restart.json`
+  is gone once it is running. After the restart, `profiler findings --json`
+  holds no new `crash.unclean-exit` or `shutdown.incomplete` finding: the update
+  quiesced the server and marked the session clean first. Then quit the app
+  and start it again from its shortcut: it uses the default data root and
+  port, not the update's.
 
 ## Process and Job cleanup
 

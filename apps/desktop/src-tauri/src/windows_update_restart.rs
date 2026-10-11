@@ -113,6 +113,9 @@ const WAITER_APP_VAR: &str = "BIBCODE_RESTART_APP";
 /// Builds the waiter script, ASCII only. `None` when the executable path cannot
 /// be passed to `start` safely.
 ///
+/// The app counts as relaunched only with a window: the profiler's `profiler
+/// mcp` server and crash monitor run the same executable without one.
+///
 /// The published NSIS basename ends in `-setup.exe`, but `tauri-plugin-updater`
 /// writes those bytes to `{package}-{version}-installer.exe` before
 /// `ShellExecuteW`. The running image is therefore
@@ -150,7 +153,7 @@ pub(crate) fn restart_waiter_script(parent_pid: u32, executable: &str) -> Option
            ping -n 2 127.0.0.1 >nul\r\n\
            goto while_install\r\n\
          )\r\n\
-         tasklist /FI \"IMAGENAME eq bibcode-desktop.exe\" /NH 2>nul | findstr /I /C:\"bibcode-desktop.exe\" >nul\r\n\
+         tasklist /FI \"IMAGENAME eq bibcode-desktop.exe\" /FI \"WINDOWTITLE ne N/A\" /NH 2>nul | findstr /I /C:\"bibcode-desktop.exe\" >nul\r\n\
          if not errorlevel 1 exit /b 0\r\n\
          set /a QUIET+=1\r\n\
          if %QUIET% LSS 3 (\r\n\
@@ -428,6 +431,9 @@ mod tests {
         assert!(script.contains("start \"\" \"%BIBCODE_RESTART_APP%\""));
         assert!(script.contains("/C:\"-setup.exe\" /C:\"-installer.exe\""));
         assert!(script.contains("if %LEFT% LEQ 0 exit /b 0"));
+        assert!(
+            script.contains("/FI \"IMAGENAME eq bibcode-desktop.exe\" /FI \"WINDOWTITLE ne N/A\"")
+        );
         assert!(!script.contains("goto launch"));
         assert!(restart_waiter_script(1, r#"D:\Apps\bad"name.exe"#).is_none());
     }
