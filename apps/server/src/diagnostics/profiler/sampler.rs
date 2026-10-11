@@ -991,26 +991,34 @@ mod tests {
         assert!(private_bytes(std::process::id()).is_some_and(|bytes| bytes > 0));
     }
 
-    /// `sleep 30` children, killed and reaped on drop.
-    #[cfg(target_os = "linux")]
+    /// Children that idle for about 30 s, killed and reaped on drop.
     struct Sleepers(Vec<std::process::Child>);
 
-    #[cfg(target_os = "linux")]
     impl Sleepers {
         fn spawn(count: usize) -> Self {
             Self(
                 (0..count)
                     .map(|_| {
-                        std::process::Command::new("sleep")
-                            .arg("30")
+                        let mut command = if cfg!(windows) {
+                            let mut ping = std::process::Command::new("ping");
+                            ping.args(["-n", "31", "127.0.0.1"]);
+                            ping
+                        } else {
+                            let mut sleep = std::process::Command::new("sleep");
+                            sleep.arg("30");
+                            sleep
+                        };
+                        command
+                            .stdout(std::process::Stdio::null())
                             .spawn()
-                            .expect("spawn sleep")
+                            .expect("spawn an idle child")
                     })
                     .collect(),
             )
         }
 
         /// Kills and reaps one child, so its pid leaves `/proc`.
+        #[cfg(target_os = "linux")]
         fn end(&mut self, index: usize) {
             let _ = self.0[index].kill();
             let _ = self.0[index].wait();
@@ -1024,7 +1032,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
     impl Drop for Sleepers {
         fn drop(&mut self) {
             for child in &mut self.0 {
@@ -1130,8 +1137,8 @@ mod tests {
     }
 
     /// The tick refresh over our own process and 20 children. A parallel build can load a
-    /// dev machine, so outside CI the budget scales with the load per core.
-    #[cfg(target_os = "linux")]
+    /// dev machine, so outside CI the budget scales with the load per core. Windows and
+    /// macOS only print their timing, for the execution report.
     #[test]
     fn a_tick_over_twenty_children_takes_under_five_ms() {
         let children = Sleepers::spawn(20);
@@ -1154,24 +1161,27 @@ mod tests {
             .map(|_| sampler.tick(BASE_INTERVAL).as_secs_f64() * 1000.0)
             .collect();
         let median_ms = median(&mut ticks);
-        let load = if std::env::var_os("CI").is_some() {
-            1.0
-        } else {
-            let load1: f64 = std::fs::read_to_string("/proc/loadavg")
-                .ok()
-                .and_then(|text| text.split_whitespace().next()?.parse().ok())
-                .unwrap_or(0.0);
-            (load1 / sampler.cpus).max(1.0)
-        };
         eprintln!(
-            "sampler overhead: median tick {median_ms:.3} ms over {} processes, first tick with rediscovery {:.3} ms, load factor {load:.2}",
+            "sampler overhead: median tick {median_ms:.3} ms over {} processes, first tick with rediscovery {:.3} ms",
             sampler.series.len(),
             first_tick.as_secs_f64() * 1000.0
         );
-        assert!(
-            median_ms < 5.0 * load,
-            "median tick {median_ms:.3} ms, budget {:.3} ms",
-            5.0 * load
-        );
+        #[cfg(target_os = "linux")]
+        {
+            let load = if std::env::var_os("CI").is_some() {
+                1.0
+            } else {
+                let load1: f64 = std::fs::read_to_string("/proc/loadavg")
+                    .ok()
+                    .and_then(|text| text.split_whitespace().next()?.parse().ok())
+                    .unwrap_or(0.0);
+                (load1 / sampler.cpus).max(1.0)
+            };
+            assert!(
+                median_ms < 5.0 * load,
+                "median tick {median_ms:.3} ms, budget {:.3} ms, load factor {load:.2}",
+                5.0 * load
+            );
+        }
     }
 }
