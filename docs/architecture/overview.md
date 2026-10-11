@@ -880,8 +880,14 @@ with a null environment block, which does not keep the updating process's
 `BIBCODE_HOME` or `BIBCODE_PORT`. Before the installer starts, the host writes
 those two variables to a temp handoff that stays valid for ten minutes. The
 replacement applies whichever it does not already have, before it chooses a
-data root or port, so a remote client reconnects to the same endpoint. A
-detached waiter starts the installed executable only after neither a
+data root or port, so a remote client reconnects to the same endpoint. Once
+it holds the single instance it deletes the handoff, so a later ordinary
+launch keeps its own defaults, while a duplicate launch rejected meanwhile
+leaves it for the installer's replacement. A
+detached waiter, which receives the executable path in an environment variable
+so a non-ASCII install path survives the console code page, is stopped and the
+handoff deleted when the installer fails to start. Otherwise it starts the
+installed executable only after neither a
 `*-setup.exe` nor a `*-installer.exe` process is running and the installer has
 not relaunched it. The updater launches the downloaded NSIS bytes as
 `{package}-{version}-installer.exe`, so the published `*-setup.exe` basename is

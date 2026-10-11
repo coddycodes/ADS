@@ -1237,7 +1237,12 @@ identity` on page loads (document or iframe Fetch Metadata, or, on plain-HTTP
   forwards: a tab holds its forward until the tab closes, or 60 s after its
   view unmounts unless it mounts again; a system-browser open holds one for
   5 minutes. It calls `releaseSshForward` only when no lease remains, and when
-  the server replaces a target's listener. Only a typed gateway refusal that
+  the server replaces a target's listener. Every open asks for the canonical
+  port as the forward's local port, since later opens reuse that forward, but
+  only a preview tab loads on the canonical origin, because its profile is the
+  environment's own. A system-browser open always loads on
+  `http://127.0.0.1:<local port>`, so it never shares a `localhost` origin's
+  storage with other local apps. Only a typed gateway refusal that
   holds for every client (`https-unsupported`, `not-admitted`, `no-upstream`)
   becomes the shared tab's `LoadFailed`. A failure of the client's own reach
   (SSH forward, missing bridge or profile, transport, `unavailable`,

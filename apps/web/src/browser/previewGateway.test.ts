@@ -127,6 +127,7 @@ describe("resolveForNavigation", () => {
         threadId,
         canonicalUrl: "http://127.0.0.1:5173/",
         gatewayOpen,
+        tabId: "tab-1",
       }),
     ).resolves.toEqual({
       kind: "ok",
@@ -153,6 +154,7 @@ describe("resolveForNavigation", () => {
         threadId,
         canonicalUrl: "http://127.0.0.1:5173/cb?x=1",
         gatewayOpen,
+        tabId: "tab-1",
       }),
     ).resolves.toEqual({
       kind: "ok",
@@ -162,6 +164,39 @@ describe("resolveForNavigation", () => {
     // The real origin maps to itself, so the address bar and history keep it.
     expect(isGatewayClientUrl("http://localhost:5173/next")).toBe(true);
     expect(canonicalizePreviewUrl("http://localhost:5173/next")).toBe("http://localhost:5173/next");
+    expect(showSamePortBusyNotice).not.toHaveBeenCalled();
+  });
+
+  it("keeps a system-browser open off the canonical origin, which no preview profile isolates", async () => {
+    readPreparedConnection.mockReturnValue(ssh());
+    // The desktop: one forward per gateway port, reused whatever its local port.
+    const held = new Map<number, number>();
+    sshForward.mockImplementation(
+      async (_target: unknown, gatewayPort: number, preferred?: number) => {
+        const local = held.get(gatewayPort) ?? preferred ?? 50_000;
+        held.set(gatewayPort, local);
+        return local;
+      },
+    );
+    const open = (tabId?: string) =>
+      resolveForNavigation({
+        environmentId,
+        threadId,
+        canonicalUrl: "http://localhost:5173/cb",
+        gatewayOpen: vi.fn(async () => opened(41000)),
+        ...(tabId === undefined ? {} : { tabId }),
+      });
+
+    await expect(open()).resolves.toEqual({
+      kind: "ok",
+      url: "http://127.0.0.1:5173/__bibcode/bootstrap?cap=CAP&to=%2Fcb",
+    });
+    // A tab opened after it reuses the forward and still gets the real origin.
+    await expect(open("tab-1")).resolves.toEqual({
+      kind: "ok",
+      url: "http://localhost:5173/__bibcode/bootstrap?cap=CAP&to=%2Fcb",
+    });
+    expect(sshForward).toHaveBeenNthCalledWith(1, sshTarget, 41000, 5173);
     expect(showSamePortBusyNotice).not.toHaveBeenCalled();
   });
 
@@ -207,7 +242,7 @@ describe("resolveForNavigation", () => {
     readPreparedConnection.mockReturnValue(ssh());
     const gatewayOpen = vi.fn(async () => opened(41000));
     const open = (url: string) =>
-      resolveForNavigation({ environmentId, threadId, canonicalUrl: url, gatewayOpen });
+      resolveForNavigation({ environmentId, threadId, canonicalUrl: url, gatewayOpen, tabId: "tab-1" });
 
     await expect(open("http://localhost:5173/")).resolves.toMatchObject({
       kind: "ok",

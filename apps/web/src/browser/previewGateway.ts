@@ -259,6 +259,7 @@ export async function resolveForNavigation(input: {
     if (!target) return fail({ message: retryMessage(label), retryable: true });
     // The same local port keeps the page on its real origin (OAuth redirects,
     // CORS allowlists); ports below 1024 need privileges on this computer.
+    // Every open asks for it, since a tab reuses whichever forward came first.
     const canonicalPort = Number(canonical.port);
     const preferred =
       canonicalPort >= 1024 && !BROWSER_BLOCKED_PORTS.has(canonicalPort)
@@ -287,12 +288,19 @@ export async function resolveForNavigation(input: {
         retryable: true,
       });
     }
-    if (localPort === preferred) {
+    // Only a preview tab loads on the real origin: its profile is this
+    // environment's own, while the system browser would share that origin's
+    // storage with every other app ever served there. 127.0.0.1 keeps a
+    // system-browser open off a `localhost` origin.
+    // ponytail: a canonical origin that is itself 127.0.0.1 stays shared;
+    // a forward per open would need the desktop to key forwards by more than
+    // the gateway port.
+    if (tabId !== undefined && localPort === preferred) {
       clientOrigin = canonical.origin;
     } else {
       clientOrigin = `http://127.0.0.1:${localPort}`;
       const noticeKey = `${environmentId} ${canonical.origin}`;
-      if (preferred !== undefined && !samePortNotices.has(noticeKey)) {
+      if (preferred !== undefined && localPort !== preferred && !samePortNotices.has(noticeKey)) {
         samePortNotices.add(noticeKey);
         showSamePortBusyNotice(canonical.host);
       }
