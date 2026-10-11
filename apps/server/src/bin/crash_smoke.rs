@@ -33,8 +33,14 @@ fn main() {
 /// The frame the CI symbolication looks for.
 #[inline(never)]
 fn crash_here_in_named_function() {
+    // A stack frame of its own: Windows x64 keeps unwind data only for functions that have
+    // one, and CI walks to the caller through it. The frame and the byte below also keep
+    // this body unlike the profiler's own crash-test fault, which the MSVC linker's
+    // identical-code folding would otherwise merge with it and name this frame after.
+    let mut frame = [0u8; 64];
+    std::hint::black_box(&mut frame);
     // A write into the unmapped first page. Not to null itself: debug builds check writes
     // through null pointers and abort before the fault happens.
     // SAFETY: none. This fault is the point of the binary.
-    unsafe { std::ptr::dangling_mut::<u8>().write_volatile(1) }
+    unsafe { std::ptr::dangling_mut::<u8>().write_volatile(0x5a) }
 }
