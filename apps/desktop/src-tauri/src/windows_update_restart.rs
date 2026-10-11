@@ -238,7 +238,7 @@ fn claim_handoff() -> Option<PathBuf> {
 /// The detached waiter [`prepare_restart_handoff`] started, if any.
 pub(crate) struct RestartWaiter {
     #[cfg(all(windows, not(test)))]
-    child: Option<std::process::Child>,
+    process: Option<std::os::windows::io::OwnedHandle>,
 }
 
 impl RestartWaiter {
@@ -247,9 +247,15 @@ impl RestartWaiter {
     pub(crate) fn cancel(self) {
         #[cfg(all(windows, not(test)))]
         {
-            if let Some(mut child) = self.child {
-                let _ = child.kill();
-                let _ = child.wait();
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::System::Threading::{TerminateProcess, WaitForSingleObject};
+
+            if let Some(process) = self.process {
+                // SAFETY: `process` is the waiter's live process handle, owned here.
+                unsafe {
+                    TerminateProcess(process.as_raw_handle(), 1);
+                    WaitForSingleObject(process.as_raw_handle(), 5_000);
+                }
             }
             let _ = std::fs::remove_file(handoff_path(&std::env::temp_dir()));
         }
@@ -259,29 +265,26 @@ impl RestartWaiter {
 /// Publishes the handoff and a detached waiter. Failures must not block install.
 pub(crate) fn prepare_restart_handoff() -> RestartWaiter {
     #[cfg(all(windows, not(test)))]
-    let child = publish_restart_handoff().unwrap_or_else(|error| {
+    let process = publish_restart_handoff().unwrap_or_else(|error| {
         tracing::warn!(%error, "windows update restart handoff was not published");
         None
     });
     RestartWaiter {
         #[cfg(all(windows, not(test)))]
-        child,
+        process,
     }
 }
 
 #[cfg(all(windows, not(test)))]
-fn publish_restart_handoff() -> Result<Option<std::process::Child>, String> {
-    use std::os::windows::process::CommandExt;
-    use std::process::{Command, Stdio};
-
+fn publish_restart_handoff() -> Result<Option<std::os::windows::io::OwnedHandle>, String> {
     let executable_path = std::env::current_exe()
         .map_err(|error| format!("could not resolve the installed executable: {error}"))?;
     let executable = executable_path.to_string_lossy().to_string();
     let env = capture_handoff_env(|key| std::env::var(key).ok());
-    if !env.is_empty() {
-        if let Err(error) = write_restart_handoff(&executable, env) {
-            tracing::warn!(%error, "windows update restart handoff file was not published");
-        }
+    if !env.is_empty()
+        && let Err(error) = write_restart_handoff(&executable, env)
+    {
+        tracing::warn!(%error, "windows update restart handoff file was not published");
     }
     let Some(script) = restart_waiter_script(std::process::id(), &executable) else {
         return Ok(None);
@@ -289,33 +292,134 @@ fn publish_restart_handoff() -> Result<Option<std::process::Child>, String> {
     let script_path = std::env::temp_dir().join("bibcode-desktop-restart-waiter.cmd");
     std::fs::write(&script_path, script)
         .map_err(|error| format!("could not write the restart waiter: {error}"))?;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-    let mut command = Command::new("cmd.exe");
-    command
-        .args(["/d", "/c", &script_path.to_string_lossy()])
-        .env(WAITER_APP_VAR, &executable_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let spawned = command
-        .creation_flags(
-            DETACHED_PROCESS
-                | CREATE_NEW_PROCESS_GROUP
-                | CREATE_NO_WINDOW
-                | CREATE_BREAKAWAY_FROM_JOB,
-        )
-        .spawn();
-    let child = match spawned {
-        Ok(child) => child,
-        Err(_) => command
-            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
-            .spawn()
-            .map_err(|error| format!("could not start the restart waiter: {error}"))?,
+    spawn_waiter(&script_path, &executable_path)
+        .map(Some)
+        .map_err(|error| format!("could not start the restart waiter: {error}"))
+}
+
+/// Starts `cmd.exe` on the waiter script without inheriting any handle.
+///
+/// `std::process::Command` always lets the child inherit every inheritable
+/// handle. One of those can be the write end of a pipe some ancestor reads, such
+/// as a launching script or test harness. The waiter, and the copy it starts,
+/// would then keep that reader waiting until they exit. The script redirects
+/// all its output, so it needs no standard handles.
+#[cfg(all(windows, not(test)))]
+fn spawn_waiter(
+    script_path: &Path,
+    executable_path: &Path,
+) -> std::io::Result<std::os::windows::io::OwnedHandle> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::{FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
+    use windows_sys::Win32::System::Threading::{
+        CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW,
+        CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DETACHED_PROCESS, PROCESS_INFORMATION,
+        STARTUPINFOW,
     };
-    Ok(Some(child))
+
+    let mut system = vec![0u16; 260];
+    // SAFETY: the buffer holds `system.len()` UTF-16 units.
+    let length = unsafe { GetSystemDirectoryW(system.as_mut_ptr(), system.len() as u32) } as usize;
+    if length == 0 || length >= system.len() {
+        return Err(std::io::Error::last_os_error());
+    }
+    system.truncate(length);
+    system.extend("\\cmd.exe".encode_utf16());
+    let script: Vec<u16> = script_path.as_os_str().encode_wide().collect();
+    let mut application = system.clone();
+    application.push(0);
+    let environment = waiter_environment(
+        std::env::vars_os()
+            .map(|(name, value)| (name.encode_wide().collect(), value.encode_wide().collect())),
+        &WAITER_APP_VAR.encode_utf16().collect::<Vec<_>>(),
+        executable_path.as_os_str().encode_wide().collect(),
+    );
+    let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
+    let mut failure = None;
+    // A job that forbids breakaway refuses the first attempt.
+    for flags in [base | CREATE_BREAKAWAY_FROM_JOB, base] {
+        let mut command_line = waiter_command_line(&system, &script);
+        // SAFETY: an all-zero STARTUPINFOW with `cb` set asks for no standard handles.
+        let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
+        startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+        // SAFETY: an all-zero PROCESS_INFORMATION is the expected output buffer.
+        let mut information: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: every string is NUL-terminated UTF-16, the command line is
+        // writable as CreateProcessW requires, and the environment block ends
+        // with two NULs.
+        let created = unsafe {
+            CreateProcessW(
+                application.as_ptr(),
+                command_line.as_mut_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                flags | CREATE_UNICODE_ENVIRONMENT,
+                environment.as_ptr().cast(),
+                std::ptr::null(),
+                &startup,
+                &mut information,
+            )
+        };
+        if created == 0 {
+            failure = Some(std::io::Error::last_os_error());
+            continue;
+        }
+        // SAFETY: CreateProcessW returned both handles, and nothing else owns them.
+        return Ok(unsafe {
+            drop(OwnedHandle::from_raw_handle(information.hThread));
+            OwnedHandle::from_raw_handle(information.hProcess)
+        });
+    }
+    Err(failure.unwrap_or_else(std::io::Error::last_os_error))
+}
+
+/// `"<cmd>" /d /c "<script>"`, NUL-terminated. Windows paths cannot contain `"`.
+fn waiter_command_line(cmd: &[u16], script: &[u16]) -> Vec<u16> {
+    let quote = u16::from(b'"');
+    let mut line = vec![quote];
+    line.extend_from_slice(cmd);
+    line.push(quote);
+    line.extend(" /d /c ".encode_utf16());
+    line.push(quote);
+    line.extend_from_slice(script);
+    line.push(quote);
+    line.push(0);
+    line
+}
+
+/// A `CREATE_UNICODE_ENVIRONMENT` block: the inherited variables with `name`
+/// set to `value`, sorted by name ignoring case as Windows keeps them, each
+/// `name=value` NUL-terminated, and one more NUL at the end.
+fn waiter_environment(
+    inherited: impl IntoIterator<Item = (Vec<u16>, Vec<u16>)>,
+    name: &[u16],
+    value: Vec<u16>,
+) -> Vec<u16> {
+    let folded = |text: &[u16]| -> Vec<u16> {
+        text.iter()
+            .map(|&unit| match u8::try_from(unit) {
+                Ok(byte) => u16::from(byte.to_ascii_uppercase()),
+                Err(_) => unit,
+            })
+            .collect()
+    };
+    let mut variables: Vec<(Vec<u16>, Vec<u16>)> = inherited
+        .into_iter()
+        .filter(|(inherited_name, _)| folded(inherited_name) != folded(name))
+        .collect();
+    variables.push((name.to_vec(), value));
+    variables.sort_by_cached_key(|(variable, _)| folded(variable));
+    let mut block = Vec::new();
+    for (variable, value) in variables {
+        block.extend(variable);
+        block.push(u16::from(b'='));
+        block.extend(value);
+        block.push(0);
+    }
+    block.push(0);
+    block
 }
 
 #[cfg(all(windows, not(test)))]
@@ -434,5 +538,50 @@ mod tests {
         );
         assert!(!script.contains("goto launch"));
         assert!(restart_waiter_script(1, r#"D:\Apps\bad"name.exe"#).is_none());
+    }
+
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().collect()
+    }
+
+    #[test]
+    fn waiter_command_line_quotes_both_paths_and_ends_with_nul() {
+        let line = waiter_command_line(
+            &wide(r"C:\Windows\system32\cmd.exe"),
+            &wide(r"C:\Users\José Á\AppData\Local\Temp\bibcode-desktop-restart-waiter.cmd"),
+        );
+        assert_eq!(line.last(), Some(&0));
+        assert_eq!(
+            String::from_utf16(&line[..line.len() - 1]).expect("UTF-16"),
+            r#""C:\Windows\system32\cmd.exe" /d /c "C:\Users\José Á\AppData\Local\Temp\bibcode-desktop-restart-waiter.cmd""#
+        );
+    }
+
+    #[test]
+    fn waiter_environment_sets_the_app_path_once_in_a_sorted_block() {
+        let block = waiter_environment(
+            [
+                (wide("Path"), wide(r"C:\Windows")),
+                (wide("bibcode_restart_app"), wide("stale")),
+                (wide("=C:"), wide(r"C:\")),
+                (wide("BIBCODE_HOME"), wide(r"D:\lane\data")),
+            ],
+            &wide(WAITER_APP_VAR),
+            wide(r"C:\Users\José\bibcode-desktop.exe"),
+        );
+        assert_eq!(&block[block.len() - 2..], &[0, 0]);
+        let entries: Vec<String> = block[..block.len() - 2]
+            .split(|&unit| unit == 0)
+            .map(|entry| String::from_utf16(entry).expect("UTF-16"))
+            .collect();
+        assert_eq!(
+            entries,
+            [
+                r"=C:=C:\",
+                r"BIBCODE_HOME=D:\lane\data",
+                r"BIBCODE_RESTART_APP=C:\Users\José\bibcode-desktop.exe",
+                r"Path=C:\Windows",
+            ]
+        );
     }
 }

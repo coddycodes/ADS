@@ -888,7 +888,9 @@ launch keeps its own defaults, while a duplicate launch rejected meanwhile
 leaves it for the installer's replacement. A
 detached waiter, which receives the executable path in an environment variable
 so a non-ASCII install path survives the console code page, is stopped and the
-handoff deleted when the installer fails to start. Otherwise it starts the
+handoff deleted when the installer fails to start. It starts without inheriting
+any handle, so neither it nor the copy it starts keeps open a pipe that
+whatever launched BiBCode is still reading. Otherwise it starts the
 installed executable only after neither a
 `*-setup.exe` nor a `*-installer.exe` process is running and the installer has
 not relaunched it. The updater launches the downloaded NSIS bytes as
