@@ -680,8 +680,8 @@ gh workflow run release.yml --ref main -f channel=stable -f version="$version" -
 
 Both runs perform preflight and the native build matrices. The current job
 budgets are 60 minutes for preflight, 90 for each desktop build, 120 for each
-server build, and 25 for the release job, which moves about 470 MB of symbol
-archives; these are timeouts, not expected completion durations.
+server build, and 25 for the release job, which moves about 440 MB of symbol
+archives (28 to 45 MB each); these are timeouts, not expected completion durations.
 Use Actions job timings to plan the tag and approval runs separately.
 
 After publication, check latest through the REST endpoint. `isLatest` is not a
