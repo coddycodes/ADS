@@ -366,6 +366,7 @@ fn a_dead_or_hung_monitor_is_replaced() {
     system.refresh_processes(ProcessesToUpdate::Some(&[first[0]]), true);
     assert!(system.process(first[0]).unwrap().kill());
     let second = replacement(parent, first[0], Duration::from_secs(20));
+    assert_ne!(second, first[0]);
 
     #[cfg(unix)]
     {
