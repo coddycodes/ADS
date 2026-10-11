@@ -935,7 +935,7 @@ describe("release symbols and crash smoke contract", () => {
     expect(symbolicate.run).toContain("shopt -s nullglob");
     expect(symbolicate.run).toContain("Expected one minidump in");
     expect(symbolicate.run).toContain("Build ID: [0-9a-f]{40}$");
-    expect(symbolicate.run).toContain('caller?.function !== "crash_smoke::main"');
+    expect(symbolicate.run).toContain('name(caller) !== "crash_smoke::main"');
     expect(symbolicate.run).toContain('caller?.trust !== "cfi"');
     expect(upload.if).toBe("failure()");
     expect(upload.with?.path).toBe("${{ runner.temp }}/crash-smoke");

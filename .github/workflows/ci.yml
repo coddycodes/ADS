@@ -397,9 +397,11 @@ jobs:
             import { readFileSync } from "node:fs";
             const walk = JSON.parse(readFileSync(process.argv[1], "utf8"));
             const [crash, caller] = walk.crashing_thread.frames;
+            // Symbols dumped from a PDB name a function with its parameter list.
+            const name = (frame) => frame?.function?.replace(/\(\)$/, "");
             if (
-              crash?.function !== "crash_smoke::crash_here_in_named_function" ||
-              caller?.function !== "crash_smoke::main" ||
+              name(crash) !== "crash_smoke::crash_here_in_named_function" ||
+              name(caller) !== "crash_smoke::main" ||
               caller?.trust !== "cfi"
             ) {
               console.error("Unexpected crashing frames:", JSON.stringify([crash, caller], null, 2));
