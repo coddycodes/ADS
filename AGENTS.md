@@ -95,6 +95,41 @@ from the template, not in living runbooks. When affected runbooks need no
 change, state in the final report that they were **reviewed and remain
 accurate**.
 
+## Profiler, Crash, and Trace Coverage
+
+The opt-in [Profiler](docs/architecture/overview.md#profiler), the crash hook,
+and the native logs and trace ([Observability](docs/operations/observability.md))
+see only what passes through their hooks. A change that adds or alters any of
+the following keeps it covered in the same change:
+
+- **Child processes:** spawn through `process::supervised` or the provider and
+  terminal runtimes, or call `diagnostics::profiler::exits::report_exit` with
+  the right `Watch`, so an unrequested death becomes a `subprocess.crash`.
+  Register BiBCode-owned processes with
+  `ProcessAttributionRegistry::register_identity` so the sampler attributes
+  their memory and CPU.
+- **RPC methods:** register them through the `rpc/session.rs` wrappers, which
+  time every handler. Add a method that waits on a network, provider, hosting
+  service, or hook to `is_long_running` in `diagnostics/profiler/latency.rs`;
+  otherwise it raises false `rpc.slow` and `rpc.hang` findings. `is_background`
+  only raises the floor of the log-only relative tier.
+- **Worktree removal:** record every outcome of a new removal path with
+  `worktree_audit::record_removal_outcome`.
+- **Binaries and re-exec modes:** handle `--crash-monitor` and attach the crash
+  hook first in `main`, before Tauri, Tokio, or WebKit install anything.
+- **Shutdown:** stop a new service before the profiler's teardown, which runs
+  last in the quiesce sequence.
+- **Events, findings, logs, and trace records:** emit through
+  `profiler::emit`, `profiler::record_finding`, or `tracing`, and log failures
+  at operational boundaries with `tracing::warn!` or `tracing::error!`. On hot
+  paths, check `profiler::is_enabled()` before allocating. Redact profiler
+  records through `diagnostics::profiler::redact`, never record prompt,
+  message, or terminal content, and keep paths and timestamps out of
+  fingerprints.
+- **Documentation:** describe a new or changed event or finding in
+  `docs/skills/bibcode-profiler/references/` and the
+  [Profiler](docs/architecture/overview.md#profiler) section.
+
 ## Architectural Decision Standards
 
 Before editing, identify:
@@ -176,8 +211,11 @@ No task is complete until all applicable requirements have evidence:
 7. Final `git diff` and `git status --short` review for unintended edits,
    generated files, debug output, dependency drift, and missing documentation.
 8. A synced configured vendored subtree when its matching dependency changes.
-9. Report the exact validation commands, any command that could not run, and
-   residual risk.
+9. A profiler coverage line in the final report: which items of
+   [Profiler, Crash, and Trace Coverage](#profiler-crash-and-trace-coverage)
+   the change touches and how each stays covered, or that none applies.
+10. Report the exact validation commands, any command that could not run, and
+    residual risk.
 
 `vp test` is the built-in Vite+ test command and `vp run test` is the workspace
 package-script graph. Select broader checks according to risk; a broad suite
