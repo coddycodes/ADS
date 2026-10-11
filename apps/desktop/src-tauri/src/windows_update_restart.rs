@@ -64,25 +64,26 @@ pub(crate) fn capture_handoff_env(
         .collect()
 }
 
+/// The variables a fresh handoff for `current_exe` sets, or `None` when the
+/// handoff is not this executable's or not fresh. `Some` with no variables is
+/// still this restart's handoff, already applied by inheritance.
 pub(crate) fn assignments_from_handoff(
     bytes: &[u8],
     current_exe: &str,
     now_ms: u64,
     already_set: impl Fn(&str) -> bool,
-) -> Vec<(String, String)> {
-    let Ok(handoff) = serde_json::from_slice::<RestartHandoff>(bytes) else {
-        return Vec::new();
-    };
+) -> Option<Vec<(String, String)>> {
+    let handoff = serde_json::from_slice::<RestartHandoff>(bytes).ok()?;
     if handoff.version != HANDOFF_VERSION || handoff.exe != current_exe {
-        return Vec::new();
+        return None;
     }
     if now_ms.saturating_add(HANDOFF_FUTURE_SKEW_MS) < handoff.created_at_ms {
-        return Vec::new();
+        return None;
     }
     if now_ms.saturating_sub(handoff.created_at_ms) > HANDOFF_TTL_MS {
-        return Vec::new();
+        return None;
     }
-    handoff
+    let assignments = handoff
         .env
         .into_iter()
         .filter(|(key, value)| {
@@ -91,7 +92,8 @@ pub(crate) fn assignments_from_handoff(
                 && !value.chars().any(|character| character.is_control())
                 && !already_set(key)
         })
-        .collect()
+        .collect();
+    Some(assignments)
 }
 
 pub(crate) fn handoff_is_expired(bytes: &[u8], now_ms: u64) -> bool {
@@ -102,7 +104,14 @@ pub(crate) fn handoff_is_expired(bytes: &[u8], now_ms: u64) -> bool {
         || now_ms.saturating_add(HANDOFF_FUTURE_SKEW_MS) < handoff.created_at_ms
 }
 
-/// Builds the waiter script. `None` when the executable path cannot be embedded safely.
+/// The waiter's environment variable that names the executable to start.
+/// `cmd.exe` reads a batch file in the console code page, so a path written
+/// into the script would lose non-ASCII characters; an environment variable
+/// stays UTF-16.
+const WAITER_APP_VAR: &str = "BIBCODE_RESTART_APP";
+
+/// Builds the waiter script, ASCII only. `None` when the executable path cannot
+/// be passed to `start` safely.
 ///
 /// The published NSIS basename ends in `-setup.exe`, but `tauri-plugin-updater`
 /// writes those bytes to `{package}-{version}-installer.exe` before
@@ -121,7 +130,6 @@ pub(crate) fn restart_waiter_script(parent_pid: u32, executable: &str) -> Option
         "@echo off\r\n\
          setlocal EnableExtensions\r\n\
          set \"PID={parent_pid}\"\r\n\
-         set \"APP={executable}\"\r\n\
          set /a LEFT={WAITER_PARENT_SECONDS}\r\n\
          :while_parent\r\n\
          tasklist /FI \"PID eq %PID%\" /NH 2>nul | findstr /C:\"%PID%\" >nul\r\n\
@@ -151,7 +159,7 @@ pub(crate) fn restart_waiter_script(parent_pid: u32, executable: &str) -> Option
            ping -n 2 127.0.0.1 >nul\r\n\
            goto while_install\r\n\
          )\r\n\
-         start \"\" \"%APP%\"\r\n\
+         start \"\" \"%{WAITER_APP_VAR}%\"\r\n\
          exit /b 0\r\n"
     ))
 }
@@ -178,55 +186,96 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// A handoff this launch adopted. [`ClaimedHandoff::release`] deletes it once
+/// this launch owns the single instance, so a later ordinary launch keeps its
+/// own defaults while a duplicate launch rejected meanwhile leaves it for the
+/// installer's replacement.
+pub(crate) struct ClaimedHandoff(Option<PathBuf>);
+
+impl ClaimedHandoff {
+    pub(crate) fn release(self) {
+        if let Some(path) = self.0 {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 /// Applies a fresh handoff before any worker thread exists.
-pub(crate) fn adopt_restart_handoff() {
+pub(crate) fn adopt_restart_handoff() -> ClaimedHandoff {
     #[cfg(windows)]
     {
         let path = handoff_path(&std::env::temp_dir());
         let Ok(bytes) = std::fs::read(&path) else {
-            return;
+            return ClaimedHandoff(None);
         };
         let now = now_ms();
         if handoff_is_expired(&bytes, now) {
             let _ = std::fs::remove_file(&path);
-            return;
+            return ClaimedHandoff(None);
         }
         let Ok(current_exe) = std::env::current_exe() else {
-            return;
+            return ClaimedHandoff(None);
         };
-        let assignments =
+        let Some(assignments) =
             assignments_from_handoff(&bytes, &current_exe.to_string_lossy(), now, |key| {
                 std::env::var_os(key).is_some()
-            });
-        if assignments.is_empty() {
-            return;
-        }
+            })
+        else {
+            return ClaimedHandoff(None);
+        };
         // SAFETY: this runs at the start of `run`, before Tauri creates threads.
         // No other thread can read the environment concurrently.
         for (key, value) in assignments {
             unsafe { std::env::set_var(&key, value) };
         }
+        ClaimedHandoff(Some(path))
     }
+    #[cfg(not(windows))]
+    ClaimedHandoff(None)
 }
 
-/// Publishes the handoff and a detached waiter. Failures must not block install.
-pub(crate) fn prepare_restart_handoff() {
+/// The detached waiter [`prepare_restart_handoff`] started, if any.
+pub(crate) struct RestartWaiter {
     #[cfg(all(windows, not(test)))]
-    {
-        if let Err(error) = publish_restart_handoff() {
-            tracing::warn!(%error, "windows update restart handoff was not published");
+    child: Option<std::process::Child>,
+}
+
+impl RestartWaiter {
+    /// The installer did not start: stop the waiter, which would otherwise
+    /// start this version again once the user quits, and drop the handoff.
+    pub(crate) fn cancel(self) {
+        #[cfg(all(windows, not(test)))]
+        {
+            if let Some(mut child) = self.child {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            let _ = std::fs::remove_file(handoff_path(&std::env::temp_dir()));
         }
     }
 }
 
+/// Publishes the handoff and a detached waiter. Failures must not block install.
+pub(crate) fn prepare_restart_handoff() -> RestartWaiter {
+    #[cfg(all(windows, not(test)))]
+    let child = publish_restart_handoff().unwrap_or_else(|error| {
+        tracing::warn!(%error, "windows update restart handoff was not published");
+        None
+    });
+    RestartWaiter {
+        #[cfg(all(windows, not(test)))]
+        child,
+    }
+}
+
 #[cfg(all(windows, not(test)))]
-fn publish_restart_handoff() -> Result<(), String> {
+fn publish_restart_handoff() -> Result<Option<std::process::Child>, String> {
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
 
-    let executable = std::env::current_exe()
+    let executable_path = std::env::current_exe()
         .map_err(|error| format!("could not resolve the installed executable: {error}"))?;
-    let executable = executable.to_string_lossy().to_string();
+    let executable = executable_path.to_string_lossy().to_string();
     let env = capture_handoff_env(|key| std::env::var(key).ok());
     if !env.is_empty() {
         if let Err(error) = write_restart_handoff(&executable, env) {
@@ -234,7 +283,7 @@ fn publish_restart_handoff() -> Result<(), String> {
         }
     }
     let Some(script) = restart_waiter_script(std::process::id(), &executable) else {
-        return Ok(());
+        return Ok(None);
     };
     let script_path = std::env::temp_dir().join("bibcode-desktop-restart-waiter.cmd");
     std::fs::write(&script_path, script)
@@ -246,6 +295,7 @@ fn publish_restart_handoff() -> Result<(), String> {
     let mut command = Command::new("cmd.exe");
     command
         .args(["/d", "/c", &script_path.to_string_lossy()])
+        .env(WAITER_APP_VAR, &executable_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -257,13 +307,14 @@ fn publish_restart_handoff() -> Result<(), String> {
                 | CREATE_BREAKAWAY_FROM_JOB,
         )
         .spawn();
-    if spawned.is_err() {
-        command
+    let child = match spawned {
+        Ok(child) => child,
+        Err(_) => command
             .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
             .spawn()
-            .map_err(|error| format!("could not start the restart waiter: {error}"))?;
-    }
-    Ok(())
+            .map_err(|error| format!("could not start the restart waiter: {error}"))?,
+    };
+    Ok(Some(child))
 }
 
 #[cfg(all(windows, not(test)))]
@@ -311,7 +362,18 @@ mod tests {
             });
         assert_eq!(
             assignments,
-            vec![("BIBCODE_PORT".to_owned(), "43123".to_owned())]
+            Some(vec![("BIBCODE_PORT".to_owned(), "43123".to_owned())])
+        );
+    }
+
+    /// A restart that inherited both variables still claims the handoff, so
+    /// `adopt_restart_handoff` deletes it before a later ordinary launch.
+    #[test]
+    fn a_matching_handoff_is_claimed_even_when_nothing_is_left_to_apply() {
+        let bytes = encode_handoff(r"D:\Apps\bibcode-desktop.exe", 1_000, sample_env());
+        assert_eq!(
+            assignments_from_handoff(&bytes, r"D:\Apps\bibcode-desktop.exe", 1_500, |_| true),
+            Some(Vec::new())
         );
     }
 
@@ -322,7 +384,7 @@ mod tests {
         let bytes = encode_handoff(r"D:\Apps\bibcode-desktop.exe", 1_000, env);
         assert!(
             assignments_from_handoff(&bytes, r"D:\Other\bibcode-desktop.exe", 1_500, |_| false)
-                .is_empty()
+                .is_none()
         );
         assert!(
             assignments_from_handoff(
@@ -331,11 +393,12 @@ mod tests {
                 1_000 + HANDOFF_TTL_MS + 1,
                 |_| false,
             )
-            .is_empty()
+            .is_none()
         );
         assert!(handoff_is_expired(&bytes, 1_000 + HANDOFF_TTL_MS + 1));
         let applied =
-            assignments_from_handoff(&bytes, r"D:\Apps\bibcode-desktop.exe", 1_500, |_| false);
+            assignments_from_handoff(&bytes, r"D:\Apps\bibcode-desktop.exe", 1_500, |_| false)
+                .expect("a matching handoff");
         assert!(applied.iter().all(|(key, _)| key != "OTHER"));
     }
 
@@ -357,8 +420,12 @@ mod tests {
     fn waiter_script_names_the_parent_and_refuses_an_unsafe_path() {
         let script = restart_waiter_script(4242, r"D:\Apps\bibcode-desktop.exe").expect("script");
         assert!(script.contains("set \"PID=4242\""));
-        assert!(script.contains("set \"APP=D:\\Apps\\bibcode-desktop.exe\""));
-        assert!(script.contains("start \"\" \"%APP%\""));
+        // cmd.exe reads the script in the console code page: the path is not in it.
+        assert!(script.is_ascii());
+        assert!(!script.contains(r"D:\Apps"));
+        let unicode = restart_waiter_script(1, r"C:\Users\José\bibcode-desktop.exe");
+        assert!(unicode.is_some_and(|script| script.is_ascii()));
+        assert!(script.contains("start \"\" \"%BIBCODE_RESTART_APP%\""));
         assert!(script.contains("/C:\"-setup.exe\" /C:\"-installer.exe\""));
         assert!(script.contains("if %LEFT% LEQ 0 exit /b 0"));
         assert!(!script.contains("goto launch"));

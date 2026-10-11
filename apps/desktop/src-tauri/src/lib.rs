@@ -91,7 +91,7 @@ macro_rules! bridge_command_names {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    windows_update_restart::adopt_restart_handoff();
+    let restart_handoff = windows_update_restart::adopt_restart_handoff();
     let shell_path_hydration = shell_environment::hydrate_process_path();
     // After the PATH hydration, which must run before any thread exists, and before Tauri.
     crash_monitor::start();
@@ -126,6 +126,8 @@ pub fn run() {
         .plugin(tauri_plugin_wdio::init())
         .plugin(tauri_plugin_wdio_webdriver::init());
     let builder = builder.setup(move |app| {
+        // Setup runs only in the launch the single-instance plugin kept.
+        restart_handoff.release();
         // Built here (not from config) so it can route new-window requests;
         // first, so everything below still runs after the main window exists.
         window::build_main_window(app.handle())?;
