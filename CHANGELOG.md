@@ -1,14 +1,73 @@
 # Changelog
 
-## [Unreleased]
+## [v0.9.0] - 2026-10-09
+
+BiBCode v0.9.0 opens clicked links in the in-app browser by default, reaches a development server on the server's localhost from SSH, LAN, tailnet, and WSL clients, keeps chat panels and provider conversations across clients and restarts, and merges a branch without checking it out. This release includes the changes since v0.8.2. Database migrations 053 and 054 ship with this release.
+
+### Links
+
+- Settings → General → **Open links in** chooses **BiBCode browser** or **System browser**. The new `browserLinkTarget` default is `app`, so a clicked link opens in the in-app browser. The row is shown only where that browser exists.
+- Chat links, chat file chips, terminal URLs, OSC 8 hyperlinks, terminal `.html`, `.htm`, and `.pdf` paths, preview popups, and agent `preview_open` share one router. In chat, a modifier-click or middle-click opens the other target. In the terminal, Ctrl/Cmd+Shift-click does.
+- A server-loopback URL (`localhost`, `127.0.0.0/8`, `0.0.0.0`, `[::]`, `*.localhost`) is resolved for the thread's environment. On the same host it opens unchanged. For a LAN, tailnet, WSL, or host name it is rewritten onto the server's address. A public IP, or a server this client cannot reach, shows a notice with **Copy link** instead of opening the wrong machine. A development server on the server's own localhost uses the preview gateway below, including over SSH.
+- Network and device paths (`\\server`, `//server`, `\\?\`, `\\.\`) and `file://` URLs with a host are refused from the terminal. An OSC 8 link whose visible text does not match its destination asks for confirmation. Chat links to network or device paths never become file links.
+- On the desktop, preview popups become new preview tabs in the same thread, and the opener plugin's click capture is off. Agent-written HTML, XHTML, SVG, and `*+xml` assets are served with a sandbox content security policy. Discovered ports are attributed to the terminal that started them.
+
+### Preview gateway
+
+- A development server on the server's `localhost` opens in the BiBCode browser from a desktop over SSH, a browser on the LAN or tailnet, and WSL. Shared preview state keeps the canonical `http://localhost:<port>` URL, and each client loads the address it can reach.
+- The gateway binds the address the caller used to reach the server and refuses public and proxied callers with `not-reachable`. Access uses a 60-second single-use capability URL. An HttpOnly cookie is set on a bootstrap page, then the target path replaces it. BiBCode Connect (relay) environments still get the unreachable notice. HTTPS development servers are not proxied.
+- Provider sessions and every terminal receive `BROWSER=bibcode-open-url`. `bibcode open-url <url>` posts to the server, and the client showing the thread opens it. If no client is listening, the helper prints the URL. On Windows the helper is a `bibcode-open-url.exe` alias.
+- A typed server refusal (HTTPS, a non-loopback URL, or nothing listening) is shared. A failure of this client's own reach stays on that client and shows an overlay with Reload.
+
+### Chat panels and sessions
+
+- An AI terminal or chat panel opened in one client appears, with its existing work, in every client connected to the same server. Closing one closes it everywhere. A tab adopted from another client does not take focus. A label taken from the command follows the session's current command; a custom label stays.
+- Closing a chat panel archives it instead of deleting it, so its history and provider resume state survive. **+ → Reopen closed chat** lists up to 10 of the host's archived panels, newest first, and brings the panel back on every client. The menu shows **No closed chats** when there are none, and **Couldn't load closed chats. Select to retry.** when loading fails. Settings → Archived hides panel threads. Deleting a thread also deletes its panel threads.
+- A provider session stays up while a subagent is still working. Idle suspension no longer shuts the driver down 60 seconds after the turn that launched those subagents. A clean server shutdown saves each session as suspended with its resume cursor, so an ordinary restart or update continues the same provider conversation. Explicit stop, delete, and restart are unchanged.
+- **Import CLI sessions…** on the project menu imports Claude Code and Codex CLI sessions whose working directory is the project root, from the last 30 days, at most 200, excluding BiBCode's own conversations. The imported thread shows that history, and the next message resumes the same CLI conversation. A session that is already imported offers **Open**.
+- When a provider conversation cannot be resumed, BiBCode starts a new one and sends a bounded summary of this thread. The thread records "Couldn't resume the previous <provider> conversation. Started a new one with a summary of this thread." The composer notice reads "Sent in a new conversation with a summary of earlier messages." The stored message keeps the typed text. A Cursor `session/load` error starts a replacement session only when the provider says that saved session is gone. Any other JSON-RPC error is returned and the saved session id stays in place. OpenCode starts a new session only on a 404. Claude resumes only when its transcript file still exists.
 
 ### Git
 
-- The Git Manager **Merge…** dialog has an **Into** picker. Choose another local branch to merge into it without checking it out: your files and checked-out branch stay as they are, a merge that would conflict is refused before anything changes, and a branch checked out in another worktree is blocked.
+- The Git Manager **Merge…** dialog has an **Into** picker. Choose another local branch to merge into it without checking it out: your files and checked-out branch stay as they are, a merge that would conflict is refused before anything changes, and a branch checked out in another worktree is blocked. The result is published with a fast-forward-only update, so a target that moved is left unchanged.
 - The Merge dialog lists remote branches as sources.
-- Source Control has **Merge into current branch…**: pick a local or remote branch, **Fetch** it, and merge it into the checked-out branch. A merge in progress shows **Commit merge** and **Abort**, with **Ours**, **Theirs**, and **Mark resolved** for each conflicted file.
+- Source Control has **Merge into current branch…**: pick a local or remote branch, **Fetch** it, and merge it into the checked-out branch. A merge in progress shows **Commit merge** and **Abort**, with **Ours**, **Theirs**, and **Mark resolved** for each conflicted file. **Commit merge** stays disabled until every conflict is resolved, and the control shows "Resolve and stage every conflicted file first."
 - Source Control and the Git Manager Changes tab no longer lose their file list while a merge has conflicts, and conflicted files appear once.
 - On Git older than 2.38, the merge preview says which Git version it needs instead of reporting unrelated histories.
+
+### Pull and merge requests
+
+- GitLab detail and timeline reads that do not depend on each other now run together, and suggestion note bodies on one discussion page run together too. The list was already one wave.
+- While the document is visible, a GitLab merge request paints from the last stored snapshot and stays current. Hiding the document stops that refresh. Merge, review, comment, and the other actions stay inactive until a live detail succeeds on this visit. A row hovered for 150 ms prefetches detail and timeline, at most two per environment, and a prefetch younger than 5 seconds is shown when the merge request opens.
+- GitLab Overview shows **Approve** under the description. It approves the current head and does not post pending inline comments. After approval the same control becomes **Revoke approval**. Until the live detail succeeds it stays inactive with **Loading…**. GitHub still approves from the review popover, and GitHub routes stay on demand.
+- Snapshots live in the environment SQLite database, capped at 32 MiB. Files over 1 MiB are not stored. Logout and authentication or permission failures delete that host's rows. Rescan does not.
+
+### Database
+
+- Migration 053, `PullRequestSnapshots`, creates `pull_request_snapshots` with host, project, kind, key, fingerprint, payload, observed time, and generation. That table holds the GitLab merge-request snapshots above.
+- Migration 054, `ProjectionThreadHostThread`, adds a nullable `host_thread_id` column on `projection_threads` when that table exists without the column. A panel thread records its host thread so every client can open it as a tab under that host.
+
+### Tests
+
+- An intentional hermetic-guard abort still ends in `SIGABRT`. It now clears the core limit and, on Linux, the dumpable flag before aborting, so a passing guard test no longer writes a core or raises a desktop crash notification. Release builds without the hermetic feature are unchanged.
+
+### Known limitations
+
+- Windows and macOS builds, and the native desktop checks for link routing, cross-client panels, the preview gateway, and Source Control merge, were not run. Validation for those features was on Linux. The Linux preview child-webview geometry check was launched, but the desktop session was locked, so the UI was not driven. Live preview-gateway procedures (SSH preview, the brainstorm companion over SSH, browser-mode cross-site bootstrap, revocation, the cross-port 403, and whether Codex agents receive `BIBCODE_OPEN_URL_AUTH`) were not run. `fetch .` publishing was not exercised on reftable repositories, and a packaged end-to-end walk through Source Control merge was not run.
+- On desktop, agent `preview_open` always shows the tab (`show: false` is ignored), and a request for a thread that is not on screen times out. Server ports on BiBCode Connect still show the unreachable notice. HTTPS development servers are not proxied. A hostname that resolves to `127.0.1.1` on the same machine is refused as proxied; use `localhost`. A reverse proxy on another LAN host, global IPv6 to a `::`-bound server, and dev Vite over the LAN are refused. The desktop does not report native page-load failures; after a page has loaded, a dropped forward shows the webview's own error page, and Reload recovers.
+- A visible terminal tab still closes itself when its session reports `closed` or `exited`. A restart that fails while another client is viewing the tab closes it there too. Split arrangement and tab order stay per client. Terminal scrollback is still lost when the server restarts.
+- Session continuity applies to BiBCode-hosted agent sessions after the desktop app is rebuilt and reinstalled. A provider that keeps emitting no-op events can hold a session until the 30-minute quiet cap, and a projection that fails to apply can leave a subagent marked live until that cap. A prompt that is already being sent when a chat panel closes still starts. A Codex model taken from an imported transcript may be retired. Symlinked workspace paths may list Claude sessions that cannot be resumed.
+- A reconcile that finds a provider conversation gone can replace the saved cursor while the row stays frozen to the old id, and a later explicit Retry then fails the identity check. A released frozen retry shows both the new-conversation activity and the notice. A crash right after sending can resend the handoff once.
+- Pipe-pattern core handlers are not asserted to skip a filesystem core. The dumpable clear still applies on Linux. Hermetic report mode and allowed roots are unchanged.
+- Open-url tokens live 8 hours with no renewal. `delivered` means a subscriber exists, not that the URL was opened. A desktop SSH forward can be shared across threads after an ephemeral port is reused.
+
+### Downloads
+
+Desktop installers and standalone server distributions support macOS, Linux, and Windows on ARM64 and x64. Linux server `.deb` and `.rpm` packages are included for both architectures. Stable desktop updater payloads and signatures use the six-target `latest.json` manifest.
+
+On macOS, copy BiBCode.app from the DMG to Applications before launching it. macOS bundles remain ad-hoc signed and unnotarized; Windows installers remain without Authenticode.
+
+**Full Changelog**: https://github.com/mubeda/BibCode/compare/v0.8.2...v0.9.0
 
 ## [v0.8.2] - 2026-10-07
 
