@@ -419,9 +419,20 @@ terminal (`python3 -m http.server 8123 --bind 127.0.0.1`), open
 
 After each step, the preview must fill exactly the browser panel's content
 area: no offset, no gap, no overlap of the panel header or the conversation,
-and no stale area left behind. Record a screenshot per backend after the split
+and no stale area left behind. With the preview showing, click and type in the
+conversation's composer and scroll the conversation, then click a link and
+scroll inside the preview: input outside the preview reaches the app, input
+inside it reaches the page. Record a screenshot per backend after the split
 drag. A preview that does not follow its panel is a product failure; record
 the backend, scale, and step that broke it.
+
+The placement itself is covered by an ignored unit test that needs a display;
+run it per backend before the manual steps:
+
+```sh
+GDK_BACKEND=wayland cargo test -p bibcode-desktop --lib preview_child_follows -- --ignored --test-threads=1
+GDK_BACKEND=x11 cargo test -p bibcode-desktop --lib preview_child_follows -- --ignored --test-threads=1
+```
 
 ### GTK light/dark theme
 

@@ -20,6 +20,7 @@ import {
   setPreviewLocalFailure,
   updatePreviewServerSnapshot,
   isPreviewSupportedInRuntime,
+  canPreviewAnyUrlInRuntime,
 } from "./previewStateStore";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 
@@ -629,10 +630,22 @@ describe("previewStateStore (single-tab)", () => {
   });
 
   it("detects desktop preview runtime support", () => {
-    expect(isPreviewSupportedInRuntime()).toBe(false);
     vi.stubGlobal("window", { desktopBridge: { preview: {} } });
-    expect(isPreviewSupportedInRuntime()).toBe(true);
+    expect([isPreviewSupportedInRuntime(), canPreviewAnyUrlInRuntime()]).toEqual([true, true]);
     vi.stubGlobal("window", { desktopBridge: {} });
+    expect([isPreviewSupportedInRuntime(), canPreviewAnyUrlInRuntime()]).toEqual([false, false]);
+    vi.unstubAllGlobals();
+  });
+
+  it("frames only gateway previews in a browser tab served over plain HTTP", () => {
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("location", { protocol: "http:", hostname: "box.lan" });
+    expect([isPreviewSupportedInRuntime(), canPreviewAnyUrlInRuntime()]).toEqual([true, false]);
+    // An HTTPS page cannot frame the HTTP gateway.
+    vi.stubGlobal("location", { protocol: "https:", hostname: "box.lan" });
+    expect([isPreviewSupportedInRuntime(), canPreviewAnyUrlInRuntime()]).toEqual([false, false]);
+    // Nor can an IPv6 page: its policy can't name its own host's other ports.
+    vi.stubGlobal("location", { protocol: "http:", hostname: "[::1]" });
     expect(isPreviewSupportedInRuntime()).toBe(false);
     vi.unstubAllGlobals();
   });

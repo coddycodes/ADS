@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
 vi.mock("./previewStateStore", () => ({
   applyPreviewServerSnapshot: h.applyPreviewServerSnapshot,
   isPreviewSupportedInRuntime: () => h.previewSupported,
+  canPreviewAnyUrlInRuntime: () => h.previewSupported,
   rememberPreviewUrl: h.rememberPreviewUrl,
 }));
 

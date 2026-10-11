@@ -148,8 +148,10 @@ its own preview profile.
 - **Cost.** Each profile in use is its own browser process group on Windows
   (WebView2 environment) and its own web context elsewhere, kept while the app
   runs.
-- **Not covered.** A removed environment's profile stays on disk; threads in
-  one environment share its profile (as in a normal browser).
+- **Removed environments.** Removing an environment deletes its profile
+  (follow-up, 2026-10-09), unless one of its previews was opened this session:
+  that native view lives until the app exits, so the profile stays on disk. Threads in one environment share its profile, as in a
+  normal browser.
 
 Testing: Rust unit tests for the profile directory and identifier derivation
 (stable, distinct per environment, legacy for the local environment, never

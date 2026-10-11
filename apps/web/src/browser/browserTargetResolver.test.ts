@@ -1,5 +1,5 @@
 import { EnvironmentId } from "@bibcode/contracts";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const readPreparedConnection = vi.fn();
 
@@ -16,6 +16,7 @@ const bearer = (httpBaseUrl: string) =>
 
 describe("browser target resolver", () => {
   beforeEach(() => readPreparedConnection.mockReset());
+  afterEach(() => vi.unstubAllGlobals());
 
   it("keeps environment ports canonical on a private network host", async () => {
     readPreparedConnection.mockReturnValue(bearer("http://192.168.1.25:3773"));
@@ -47,6 +48,42 @@ describe("browser target resolver", () => {
       resolutionKind: "direct",
       environmentId: "environment-1",
     });
+  });
+
+  it("frames a same-host server's localhost through its gateway in a browser tab", async () => {
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("location", { protocol: "http:", hostname: "localhost" });
+    readPreparedConnection.mockReturnValue(
+      conn({ _tag: "PrimaryConnectionTarget" }, "http://localhost:3773"),
+    );
+    const { resolvePreviewTarget } = await import("./browserTargetResolver");
+    // The environment's own address reaches its gateway; the literal loopback
+    // stays as a direct open would load it.
+    expect(resolvePreviewTarget(env, "http://127.0.0.2:5173/x")).toEqual({
+      kind: "gateway",
+      via: "host",
+      host: "localhost",
+      // Outside the frame (a new tab, no thread) it still opens directly.
+      direct: true,
+      url: "http://127.0.0.2:5173/x",
+    });
+    expect(resolvePreviewTarget(env, "http://0.0.0.0:5173/")).toMatchObject({
+      url: "http://localhost:5173/",
+    });
+    // The gateway serves no HTTPS and admits no `*.localhost` name: those open directly.
+    for (const url of ["https://localhost:5173/", "http://app.localhost:5173/"]) {
+      expect(resolvePreviewTarget(env, url)).toEqual({ kind: "reachable", url });
+    }
+    readPreparedConnection.mockReturnValue(
+      conn({ _tag: "PrimaryConnectionTarget" }, "http://[::1]:4000"),
+    );
+    expect(resolvePreviewTarget(env, "http://localhost:5173/")).toMatchObject({ host: "::1" });
+    // The server's own origin is already reachable.
+    expect(resolvePreviewTarget(env, "http://[::1]:4000/a")).toEqual({
+      kind: "reachable",
+      url: "http://[::1]:4000/a",
+    });
+    vi.unstubAllGlobals();
   });
 
   it("refuses public hosts until the authenticated gateway exists", async () => {

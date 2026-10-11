@@ -248,7 +248,9 @@ desktop machine listens on port 8123. With **Open links in** set to
   developer tools; in the second, `localStorage.getItem("probe")` returns
   `null`. Switching back to the first environment's preview still returns
   `"first"`, and a preview from the local environment keeps the data it had
-  before.
+  before. Remove the second environment in **Settings → Remote servers**: its
+  `preview-profiles/<hash>` directory (macOS: its data store) is gone when
+  no preview of it was opened this session (otherwise it stays on disk).
 - With **Open links in** set to **System browser**, the same click opens the
   system browser at `http://localhost:8123/` (at `http://127.0.0.1:<local port>/`
   when port 8123 is busy on the desktop machine), and the listing loads.

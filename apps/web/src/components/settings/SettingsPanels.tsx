@@ -65,7 +65,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
-import { isPreviewSupportedInRuntime } from "../../previewStateStore";
+import { canPreviewAnyUrlInRuntime } from "../../previewStateStore";
 import {
   primaryServerObservabilityAtom,
   primaryServerProvidersAtom,
@@ -429,8 +429,9 @@ export function useGeneralSettingsRestore(onRestored?: () => void) {
   const { theme, setTheme } = useTheme();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
-  // The link target row is hidden where the BiBCode browser can't open links.
-  const linkTargetShown = isPreviewSupportedInRuntime();
+  // The link target row is hidden where the BiBCode browser can't open every
+  // link (browser mode frames only this server's localhost previews).
+  const linkTargetShown = canPreviewAnyUrlInRuntime();
 
   const changedSettingLabels = useMemo(
     () => [
@@ -534,7 +535,7 @@ export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
-  const linkTargetShown = isPreviewSupportedInRuntime();
+  const linkTargetShown = canPreviewAnyUrlInRuntime();
 
   return (
     <SettingsPageContainer>

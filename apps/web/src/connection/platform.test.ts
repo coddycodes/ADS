@@ -46,6 +46,7 @@ const pf = vi.hoisted(() => ({
   descriptorCalls: [] as string[],
   bearerBootstrapCalls: [] as string[],
   clearCalls: [] as string[],
+  previewForgetCalls: [] as string[],
   trackCalls: [] as Array<{ requestId: string; request: EnvironmentRpcRequestObservation }>,
   ackCalls: [] as string[],
 }));
@@ -64,6 +65,13 @@ vi.mock("../rpc/requestLatencyState", () => ({
   },
   acknowledgeRpcRequest: (requestId: string) => {
     pf.ackCalls.push(requestId);
+  },
+}));
+
+vi.mock("../browser/previewStorageCleanup", () => ({
+  forgetPreviewStorage: (environmentId: string) => {
+    pf.previewForgetCalls.push(environmentId);
+    return Promise.resolve();
   },
 }));
 
@@ -327,6 +335,7 @@ function resetPf(): void {
   pf.descriptorCalls = [];
   pf.bearerBootstrapCalls = [];
   pf.clearCalls.length = 0;
+  pf.previewForgetCalls.length = 0;
   pf.trackCalls.length = 0;
   pf.ackCalls.length = 0;
 }
@@ -826,6 +835,8 @@ describe("connectionPlatformLayer environment side effects", () => {
       const cleanup = yield* EnvironmentOwnedDataCleanup;
       yield* cleanup.clear(EnvironmentId.make("environment-x"));
       expect(pf.clearCalls).toContain("environment-x");
+      // A removed environment's desktop preview storage goes with it.
+      expect(pf.previewForgetCalls).toContain("environment-x");
     }).pipe(Effect.provide(connectionPlatformLayer));
   });
 

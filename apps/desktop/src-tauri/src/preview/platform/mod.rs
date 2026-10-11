@@ -5,6 +5,8 @@ mod macos;
 #[cfg(target_os = "macos")]
 #[allow(unused_imports)]
 pub use macos::MacosWebviewOps as Platform;
+#[cfg(target_os = "macos")]
+pub use macos::remove_data_store;
 
 #[cfg(target_os = "windows")]
 mod windows;
@@ -17,6 +19,16 @@ mod linux;
 #[cfg(target_os = "linux")]
 #[allow(unused_imports)]
 pub use linux::LinuxWebviewOps as Platform;
+
+/// Places a preview webview at its bounds (logical, relative to the main
+/// webview). Only Linux needs more than `set_position`/`set_size`: see
+/// `linux::place_child`.
+pub fn place_child(webview: &tauri::Webview, x: f64, y: f64, width: f64, height: f64) {
+    #[cfg(target_os = "linux")]
+    linux::place_child(webview, x, y, width, height);
+    #[cfg(not(target_os = "linux"))]
+    let _ = (webview, x, y, width, height);
+}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]

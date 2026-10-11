@@ -127,6 +127,7 @@ vi.mock("./components/ThreadTerminalPanel", () => ({
 
 vi.mock("./previewStateStore", () => ({
   isPreviewSupportedInRuntime: () => h.previewSupported,
+  canPreviewAnyUrlInRuntime: () => h.previewSupported,
 }));
 
 vi.mock("./components/preview/PreviewPanelShell", () => ({
@@ -144,6 +145,11 @@ vi.mock("./components/preview/PreviewView", () => ({
 
 vi.mock("./browser/browserSurfaceStore", () => ({
   acquireBrowserSurface: () => h.lease,
+  // Browser mode's frame preview bridge streams surface bounds from the store.
+  useBrowserSurfaceStore: {
+    getState: () => ({ byTabId: {}, occlusionOwners: new Set() }),
+    subscribe: () => () => undefined,
+  },
 }));
 
 vi.mock("./components/preview/usePreviewBridge", () => ({

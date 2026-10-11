@@ -77,7 +77,7 @@ import { usePreparedConnection } from "../state/session";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
-import { isPreviewSupportedInRuntime } from "../previewStateStore";
+import { canPreviewAnyUrlInRuntime } from "../previewStateStore";
 import {
   isBrowserPreviewFile,
   openFileInPreview,
@@ -1361,7 +1361,7 @@ function ChatMarkdown({
           const faviconHost = resolveExternalLinkHost(href);
           const isSameDocumentLink = href?.startsWith("#") ?? false;
           const onClick = props.onClick;
-          const canOpenInPreview = Boolean(threadRef) && isPreviewSupportedInRuntime();
+          const canOpenInPreview = Boolean(threadRef) && canPreviewAnyUrlInRuntime();
           const routeLink = (event: ReactMouseEvent<HTMLAnchorElement>, invert: boolean) => {
             if (!href || !isHttpUrl(href)) return;
             event.preventDefault();
@@ -1489,7 +1489,7 @@ function ChatMarkdown({
             onOpen={openInPreferredEditor}
             onOpenInBrowser={
               threadRef &&
-              isPreviewSupportedInRuntime() &&
+              canPreviewAnyUrlInRuntime() &&
               isBrowserPreviewFile(fileLinkMeta.filePath)
                 ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
                 : undefined

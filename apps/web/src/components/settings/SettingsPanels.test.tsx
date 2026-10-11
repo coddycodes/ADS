@@ -209,6 +209,7 @@ vi.mock("../../localApi", () => ({
 
 vi.mock("../../previewStateStore", () => ({
   isPreviewSupportedInRuntime: () => h.previewSupported,
+  canPreviewAnyUrlInRuntime: () => h.previewSupported,
 }));
 
 vi.mock("../../branding", () => ({

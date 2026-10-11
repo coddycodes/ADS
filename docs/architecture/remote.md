@@ -1153,6 +1153,45 @@ address)` gets its own listener on an ephemeral port, so two clients that
   reaches the upstream. Only after that exact match does the gateway rewrite
   `Origin` to `http://localhost:<port>` on these requests, so upstreams that
   compare `Origin` with `Host` accept them.
+- **Framing (browser mode).** The bootstrap accepts `ui=<origin>` and keeps it
+  only when it is a bare `http`/`https` origin on the gateway's own host,
+  canonicalized; the gateway session remembers it and the bootstrap page stores
+  it in the frame's `sessionStorage`. Every response for such a session (and its
+  bootstrap) carries `Content-Security-Policy: frame-ancestors 'self' <that origin>`
+  (`'self'` for frames nested in the preview),
+  and the upstream's `X-Frame-Options` and `frame-ancestors` directives are
+  dropped from each of its policies (its other directives stay, byte for byte),
+  so only that BiBCode UI can frame the preview. IPv6 origins get no gateway
+  `frame-ancestors`, since browsers don't parse IPv6 host sources; a frame from
+  another site never carries the `Lax` gateway cookie. Sessions without a UI
+  origin (desktop views, system-browser tabs) keep the upstream's framing rules
+  and add `frame-ancestors 'self'`, so a same-site sibling cannot frame them
+  with the gateway cookie. A bootstrap without `ui` keeps the UI origin of the
+  browser's current session for that target, so opening a framed preview in a
+  tab does not break the frame. The gateway's own pages (expired link, nothing
+  listening) carry no upstream content, so without a session origin they get no
+  framing restriction and still explain themselves inside a frame. Every
+  response varies by `Cookie`. Only
+  pages on the server's host may frame a preview, and a frame from another site
+  never carries the `Lax` gateway cookie. The UI's own policy, in turn, adds
+  `frame-src 'self' http://<request host>:*` (the `Host` it was loaded from,
+  letters, digits, dots, and hyphens only; no host source for IPv6), so the page
+  may frame its host's gateways on their per-target ports. `GET /__bibcode/frame.js` (no session needed) is a
+  navigation reporter: inside a frame with a stored UI origin it posts
+  `{ type: "bibcode-preview-frame", url, title, canGoBack, canGoForward }` to
+  that origin on load, `popstate`, `hashchange`, history changes, and title
+  changes, and obeys `bibcode-preview-command` back/forward/reload messages from
+  it only. Back and Forward use the Navigation API, which traverses only the
+  frame's own history; without it they are reported unavailable (the joint
+  `history` would move BiBCode's own tab). The gateway inserts the reporter right after the first `<head>` tag
+  of uncompressed `200` `text/html` responses found in the first 64 KiB
+  (outside comments, quoted attribute values, and script or style contents;
+  never in downloads or `Cache-Control: no-transform` responses, and a page
+  whose body starts before any `<head>`, or whose pre-head script uses HTML's
+  escaped script state, streams untouched)
+  (dropping `content-length`), and asks the upstream for `accept-encoding:
+identity` on page loads (document or iframe Fetch Metadata, or, on plain-HTTP
+  origins that send none, an `Accept` naming `text/html`).
 - **Forwarding.** `Host` becomes `localhost:<port>`. The gateway strips
   BiBCode's session cookie, every `bibcode-gw-*` cookie, `authorization`,
   `dpop`, and hop-by-hop headers, including `proxy-connection`. In responses

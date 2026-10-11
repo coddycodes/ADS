@@ -162,6 +162,12 @@ const commandCases: readonly CommandCase[] = [
     args: { tabId: "t1", cookies: false, cache: true, storage: false },
   },
   {
+    name: "forgetEnvironment",
+    run: (bridge) => bridge.forgetEnvironment("env-gone"),
+    command: "desktop_preview_forget_environment",
+    args: { environmentId: "env-gone" },
+  },
+  {
     name: "captureScreenshot",
     run: (bridge) => bridge.captureScreenshot("t1"),
     command: "desktop_preview_capture_screenshot",

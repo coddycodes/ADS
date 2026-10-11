@@ -83,6 +83,8 @@ const h = vi.hoisted(() => {
     clipboardWriteRejects: false,
     clipboardWriteCalls: [] as string[],
     localApi: null as unknown,
+    browserMode: false,
+    direct: false,
   };
   return state;
 });
@@ -149,7 +151,13 @@ vi.mock("~/browser/browserTargetResolver", () => ({
     h.unreachableReason
       ? { kind: "unreachable", reason: h.unreachableReason, environmentLabel: "Box" }
       : h.gateway
-        ? { kind: "gateway", via: "host", host: "10.0.0.2", url }
+        ? {
+            kind: "gateway",
+            via: "host",
+            host: "10.0.0.2",
+            url,
+            ...(h.direct ? { direct: true } : {}),
+          }
         : { kind: "reachable", url: h.resolvedUrl },
 }));
 
@@ -246,6 +254,7 @@ vi.mock("./previewBridge", () => ({
   get previewBridge() {
     return h.previewBridge;
   },
+  isBrowserMode: () => h.browserMode,
 }));
 
 vi.mock("./previewActionBus", () => ({
@@ -617,6 +626,8 @@ beforeEach(() => {
   h.clipboardWriteRejects = false;
   h.clipboardWriteCalls.length = 0;
   h.localApi = null;
+  h.browserMode = false;
+  h.direct = false;
 
   const windowStub = {
     setTimeout: (cb: () => void) => {
@@ -722,6 +733,8 @@ describe("PreviewView rendering", () => {
       recording: false,
       automation: false,
       imageClipboard: false,
+      screenshot: true,
+      pageTools: true,
     });
     h.previewBridge = bridge;
 
@@ -731,6 +744,27 @@ describe("PreviewView rendering", () => {
     expect(chrome.onPickElement).toBeUndefined();
     expect(chrome.recordingSupported).toBe(false);
     expect(typeof chrome.onCapture).toBe("function");
+  });
+
+  it("hides screenshots and page tools the preview host doesn't offer", () => {
+    seedSession();
+    const bridge = makeBridge();
+    registerPreviewRuntimeCapabilities(bridge as never, {
+      picker: false,
+      recording: false,
+      automation: false,
+      imageClipboard: false,
+      screenshot: false,
+      pageTools: false,
+    });
+    h.previewBridge = bridge;
+
+    renderView();
+
+    const chrome = captured("chromeRow");
+    expect(chrome.onCapture).toBeUndefined();
+    const menu = (chrome.trailingActions as ReactElement).props as Record<string, unknown>;
+    expect(menu.pageTools).toBe(false);
   });
 
   it("renders the unreachable overlay and controller banner for a failed load", () => {
@@ -1163,6 +1197,93 @@ describe("navigation handlers", () => {
     ]);
   });
 
+  it("opens a new tab inside the click in browser mode, then points it at the preview", async () => {
+    seedSession();
+    h.previewBridge = makeBridge();
+    h.browserMode = true;
+    h.gateway = true;
+    const replace = vi.fn();
+    const open = vi.fn(() => ({ opener: {}, location: { replace }, close: vi.fn() }));
+    vi.stubGlobal("window", { ...window, open });
+    renderView();
+
+    (captured("chromeRow").onOpenInBrowser as () => void)();
+    // A tab opened after an await would be blocked as a popup.
+    expect(open).toHaveBeenCalledWith("about:blank", "_blank");
+    expect(replace).not.toHaveBeenCalled();
+    await flush();
+    expect(replace).toHaveBeenCalledWith(h.gatewayNavUrl);
+  });
+
+  it("opens a same-host page in a new tab on its own origin", () => {
+    seedSession();
+    h.previewBridge = makeBridge();
+    h.browserMode = true;
+    h.gateway = true;
+    h.direct = true;
+    const replace = vi.fn();
+    vi.stubGlobal("window", {
+      ...window,
+      open: () => ({ opener: {}, location: { replace }, close: vi.fn() }),
+    });
+    renderView();
+
+    (captured("chromeRow").onOpenInBrowser as () => void)();
+    expect(replace).toHaveBeenCalledWith(captured("chromeRow").url);
+    expect(h.resolveForNavigationCalls).toHaveLength(0);
+  });
+
+  it("opens the failed address, not the page the frame still shows, in a new tab", async () => {
+    seedSession({
+      navStatus: {
+        _tag: "LoadFailed",
+        url: "https://example.com/",
+        title: "",
+        code: 0,
+        description: "Can't frame it.",
+      },
+      overlay: {
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        controller: "human",
+        zoomFactor: 1,
+        url: "http://previous.local/",
+      },
+    });
+    h.previewBridge = makeBridge();
+    h.browserMode = true;
+    const replace = vi.fn();
+    vi.stubGlobal("window", {
+      ...window,
+      open: () => ({ opener: {}, location: { replace }, close: vi.fn() }),
+    });
+    renderView();
+
+    (captured("unreachable").onOpenInNewTab as () => void)();
+    await flush();
+    expect(replace).toHaveBeenCalledWith("https://example.com/");
+  });
+
+  it("offers a new tab for a page the browser-mode panel can't show", () => {
+    seedSession({
+      navStatus: {
+        _tag: "LoadFailed",
+        url: "https://example.com/",
+        title: "",
+        code: 0,
+        description: "Can't frame it.",
+      },
+    });
+    h.previewBridge = makeBridge();
+    renderView();
+    expect(captured("unreachable").onOpenInNewTab).toBeUndefined();
+
+    h.browserMode = true;
+    renderView();
+    expect(typeof captured("unreachable").onOpenInNewTab).toBe("function");
+  });
+
   it("invokes open-in-browser without throwing (local api unavailable under node)", () => {
     seedSession();
     h.previewBridge = makeBridge();
@@ -1312,6 +1433,8 @@ describe("handleCapture: screenshots", () => {
       recording: false,
       automation: false,
       imageClipboard: false,
+      screenshot: true,
+      pageTools: true,
     });
     h.previewBridge = bridge;
     renderView();

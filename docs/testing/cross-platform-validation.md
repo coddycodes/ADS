@@ -2755,6 +2755,39 @@ browser tab), the environment's address, and each gateway port.
   that is `HttpOnly`, `SameSite=Lax`, and `Path=/`. A plain reload of the
   tab still shows the listing, which proves the cookie survived the
   `location.replace` hop.
+- **Browser-mode panel preview.** Open the BiBCode UI over plain HTTP on the
+  environment's own address (`http://<server address>:<server port>`). Click
+  the 8123 link: it opens in the Browser surface, not a new tab, and the address
+  bar shows `http://localhost:8123/`. Open a directory in the listing: the
+  address bar follows it. In a browser with the Navigation API (record the
+  browser and version), Back and Forward move inside the frame and leave the
+  BiBCode tab where it is; without it they stay disabled. The frame's document
+  response in the developer tools carries
+  `Content-Security-Policy: frame-ancestors 'self' http://<server address>:<server port>`
+  and no `X-Frame-Options`. Serve a Vite app on the environment and preview it:
+  an edit hot-reloads inside the frame. Serve a page that sends
+  `X-Frame-Options: DENY` (for example a small Python handler): it still shows.
+  Typing `https://example.com/` in the address bar shows "Can't show this page
+  here" with **Open in new tab**, which opens it in a new tab. The capture
+  button is gone, and the more menu holds only the device toolbar; the
+  toolbar's Reload reloads the frame. Modifier-click the 8123 link: it opens in a new tab.
+  On a framed page, a plain click on a link to another site (add one to the
+  served directory, for example an `index.html` linking `https://example.com/`)
+  opens that site in a new tab and leaves the frame on the page; a link to
+  `http://localhost:8124/` opens as a new BiBCode browser tab showing the 8124
+  listing. With the address bar focused, Ctrl/Cmd `+` zooms the browser tab.
+  Narrow the window to 980 px or less: the preview shows inside the right-panel
+  sheet, and the more menu opens above it.
+- **Browser mode on the server's machine.** Open the UI at
+  `http://localhost:<server port>` on the server's own machine and click the
+  8123 link: it opens in the Browser surface through a gateway port on
+  `localhost`, not directly on 8123. Modifier-click it, or click it in a
+  terminal that belongs to no thread: it opens `http://localhost:8123/`
+  directly in a new tab.
+- **Browser mode over HTTPS.** Open the UI over HTTPS (Tailscale Serve or a TLS
+  reverse proxy). The `+` menu has no Browser, and the preview shortcut shows
+  "Previews open in a new tab". A gateway link is refused as a proxied address
+  (above).
 - **Cross-port 403.** Open the 8124 link too, so two gateway origins share the
   host. In the 8124 tab's developer console run
   `fetch('http://<server address>:<8123 gateway port>/', {method: 'POST', mode: 'no-cors', credentials: 'include'})`
@@ -2791,7 +2824,8 @@ browser tab), the environment's address, and each gateway port.
 - **Agent open in a browser tab.** With only a browser-mode client on the
   thread, ask the agent to call `preview_open` for `http://localhost:8123/`:
   the "Agent wants to open <address>" bar appears and the agent's result is
-  `pending-user`.
+  `pending-user`. On a UI served over plain HTTP on the environment's own host,
+  **Open** shows the page in the Browser surface.
 
 Pending native checks: Windows `bibcode-open-url.exe` started from `cmd` and
 PowerShell (the desktop build attaches to the parent console; record whether

@@ -84,7 +84,7 @@ import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { openLink } from "~/browser/openLink";
 import { showFileOutsideWorkspaceNotice, showPreviewFailedNotice } from "~/browser/linkNotices";
 import { openFileInPreview } from "~/browser/openFileInPreview";
-import { isPreviewSupportedInRuntime } from "~/previewStateStore";
+import { canPreviewAnyUrlInRuntime } from "~/previewStateStore";
 import { createTerminalOutputSink } from "./terminalOutputSink";
 import { installTerminalReplyGuard } from "./terminalReplyGuard";
 import { proposeTerminalDimensions, registerTerminalSizeReader } from "./terminalSizing";
@@ -1786,7 +1786,7 @@ export function TerminalViewport({
               if (
                 previewFile !== null &&
                 readHasThread() &&
-                isPreviewSupportedInRuntime() &&
+                canPreviewAnyUrlInRuntime() &&
                 !physicalShiftKey(event)
               ) {
                 void (async () => {

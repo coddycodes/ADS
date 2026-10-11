@@ -13,6 +13,9 @@ vi.mock("~/browser/openLink", () => ({ openLink: h.openLink }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => h.openPreview }));
 vi.mock("~/state/preview", () => ({ previewEnvironment: { open: {} } }));
 vi.mock("~/state/session", () => ({ readPreparedConnection: () => ({ label: "Build box" }) }));
+vi.mock("~/hooks/useSettings", () => ({
+  getClientSettings: () => ({ browserLinkTarget: "app" }),
+}));
 
 import { enqueueOpenPrompt, resetOpenPromptsForTests } from "~/browser/openPromptQueue";
 
@@ -89,6 +92,20 @@ describe("OpenPromptBanner", () => {
       onError: expect.any(Function),
     });
     expect(container.textContent).toBe("");
+  });
+
+  it("opens a blocked new tab in a new tab again, not in the BiBCode browser", async () => {
+    await act(async () =>
+      enqueueOpenPrompt({
+        source: "link",
+        blocked: true,
+        url: "http://localhost:5173/",
+        threadRef,
+      }),
+    );
+    await act(async () => button("Open").click());
+
+    expect(h.openLink).toHaveBeenCalledWith(expect.objectContaining({ invert: true }));
   });
 
   it("keeps the prompt when opening is refused, so it can be retried", async () => {

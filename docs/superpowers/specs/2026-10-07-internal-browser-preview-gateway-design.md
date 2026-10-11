@@ -303,6 +303,12 @@ child follow `desktop_preview_set_bounds` on panel move/resize?
   `apps/desktop/src-tauri/src/preview/platform/linux.rs` and route bounds
   through it; validate on both display servers.
 
+Result (2026-10-09): broken on both display servers — Tauri packs Linux child
+webviews into the window's content box and wry moves only children of a
+`GtkFixed`. Fixed by wrapping the main webview's slot in a `GtkOverlay` with a
+pass-through `GtkFixed` layer; an ignored display test verifies placement on
+Wayland and X11.
+
 ## Failure and edge cases
 
 - Upstream not listening → gateway `502` page: "Nothing is listening on port

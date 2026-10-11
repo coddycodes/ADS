@@ -303,9 +303,11 @@ export async function resolveForNavigation(input: {
   }
 
   const to = `${canonical.pathname}${canonical.search}${canonical.hash}`;
+  // Browser mode names this page so the gateway lets it frame the preview.
+  const ui = isBrowserMode() ? `&ui=${encodeURIComponent(location.origin)}` : "";
   return {
     kind: "ok",
-    url: `${clientOrigin}${BOOTSTRAP_PATH}?cap=${encodeURIComponent(capability)}&to=${encodeURIComponent(to)}`,
+    url: `${clientOrigin}${BOOTSTRAP_PATH}?cap=${encodeURIComponent(capability)}&to=${encodeURIComponent(to)}${ui}`,
   };
 }
 

@@ -242,7 +242,24 @@ describe("PreviewChromeRow", () => {
     expect(document.activeElement).toBe(urlInput);
   });
 
+  it("names the browser action after where it opens", async () => {
+    // Browser mode (no desktop host): the system browser is this one.
+    let mounted = await mount(
+      renderRow({ displayUrl: "example.test", onOpenInBrowser: callbacks.onOpenInBrowser }),
+    );
+    expect(button(mounted.container, "Open in new tab")).toBeTruthy();
+    mounted.root.unmount();
+
+    window.desktopBridge = {} as never;
+    mounted = await mount(
+      renderRow({ displayUrl: "example.test", onOpenInBrowser: callbacks.onOpenInBrowser }),
+    );
+    delete window.desktopBridge;
+    expect(button(mounted.container, "Open in system browser")).toBeTruthy();
+  });
+
   it("shows and invokes optional browser and annotation actions", async () => {
+    window.desktopBridge = {} as never;
     const mounted = await mount(
       renderRow({
         displayUrl: "example.test",
@@ -252,6 +269,7 @@ describe("PreviewChromeRow", () => {
       }),
     );
 
+    delete window.desktopBridge;
     await click(button(mounted.container, "Open in system browser"));
     await click(button(mounted.container, "Cancel annotation"));
 

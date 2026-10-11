@@ -1383,6 +1383,11 @@ export interface DesktopPreviewBridge {
    * the local environment's profile.
    */
   createTab: (tabId: string, environmentId?: string | null) => Promise<void>;
+  /**
+   * Deletes a removed environment's preview storage, unless one of its previews
+   * was opened this session (that native view lives until the app exits).
+   */
+  forgetEnvironment: (environmentId: string) => Promise<void>;
   closeTab: (tabId: string) => Promise<void>;
   /**
    * Electron-era API: associate a renderer-mounted `<webview>`. Absent on

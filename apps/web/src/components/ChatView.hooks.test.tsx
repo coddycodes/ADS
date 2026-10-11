@@ -316,6 +316,7 @@ vi.mock("../assets/assetUrls", () => ({
 
 vi.mock("../previewStateStore", () => ({
   isPreviewSupportedInRuntime: () => h.previewSupported,
+  canPreviewAnyUrlInRuntime: () => h.previewSupported,
   setActivePreviewTab: (threadRef: unknown, tabId: unknown) => {
     h.setActivePreviewTabCalls.push({ threadRef, tabId });
   },

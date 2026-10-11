@@ -75,6 +75,7 @@ macro_rules! desktop_preview_commands {
             desktop_preview_set_zoom,
             desktop_preview_open_devtools,
             desktop_preview_clear_data,
+            desktop_preview_forget_environment,
             desktop_preview_capture_screenshot,
             desktop_preview_reveal_artifact,
         ]
@@ -248,6 +249,7 @@ pub fn run() {
         preview::commands::desktop_preview_set_zoom,
         preview::commands::desktop_preview_open_devtools,
         preview::commands::desktop_preview_clear_data,
+        preview::commands::desktop_preview_forget_environment,
         preview::commands::desktop_preview_capture_screenshot,
         preview::commands::desktop_preview_reveal_artifact,
         #[cfg(feature = "desktop-e2e")]

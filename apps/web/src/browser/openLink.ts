@@ -1,10 +1,10 @@
 import type { EnvironmentId, ScopedThreadRef } from "@bibcode/contracts";
 import { isAtomCommandInterrupted, runAtomCommand } from "@bibcode/client-runtime/state/runtime";
 
-import { isBrowserMode } from "~/components/preview/previewBridge";
+import { isBrowserMode, isThisPageHost } from "~/components/preview/previewBridge";
 import { getClientSettings } from "~/hooks/useSettings";
 import { readLocalApi } from "~/localApi";
-import { isPreviewSupportedInRuntime } from "~/previewStateStore";
+import { canPreviewAnyUrlInRuntime, isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { previewEnvironment } from "~/state/preview";
 
@@ -51,6 +51,7 @@ export function openLink(input: {
 }): OpenLinkOutcome {
   let url = input.url;
   let viaGateway = false;
+  let gatewayHost: string | null = null;
   const environmentId = input.threadRef?.environmentId ?? input.environmentId ?? null;
   if (environmentId !== null) {
     const resolution = resolvePreviewTarget(environmentId, url);
@@ -60,12 +61,21 @@ export function openLink(input: {
     }
     // A gateway URL stays canonical: the internal browser resolves it per client.
     url = resolution.url;
-    viaGateway = resolution.kind === "gateway";
+    // A same-host page needs the gateway only inside the frame; a new tab or a
+    // thread-less open loads it directly.
+    viaGateway = resolution.kind === "gateway" && !(resolution.via === "host" && resolution.direct);
+    gatewayHost =
+      resolution.kind === "gateway" && resolution.via === "host" ? resolution.host : null;
   }
   const destination = chooseLinkDestination({
     setting: getClientSettings().browserLinkTarget,
     invert: input.invert,
-    canUseApp: input.threadRef !== null && isPreviewSupportedInRuntime(),
+    // Browser mode frames only gateway previews on this page's host; other
+    // addresses open in a new tab.
+    canUseApp:
+      input.threadRef !== null &&
+      (canPreviewAnyUrlInRuntime() ||
+        (gatewayHost !== null && isPreviewSupportedInRuntime() && isThisPageHost(gatewayHost))),
   });
   if (destination === "system" || input.threadRef === null) {
     if (viaGateway) {

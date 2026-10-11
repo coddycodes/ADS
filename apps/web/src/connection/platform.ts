@@ -54,6 +54,7 @@ import {
   resolvePrimaryEnvironmentHttpBaseUrl,
   type PrimaryEnvironmentTarget,
 } from "../environments/primary/target";
+import { forgetPreviewStorage } from "../browser/previewStorageCleanup";
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
 import { isHostedStaticApp } from "../hostedPairing";
 import { clientCollector, PROFILER_CORRELATION_HEADER } from "../profiler/clientCollector";
@@ -738,6 +739,7 @@ const environmentOwnedDataCleanupLayer = Layer.succeed(
     clear: (environmentId) =>
       Effect.sync(() => {
         clearComposerDraftsEnvironment(environmentId);
+        void forgetPreviewStorage(environmentId);
       }),
   }),
 );

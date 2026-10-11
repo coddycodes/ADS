@@ -99,6 +99,24 @@ describe("resolveForNavigation", () => {
     expect(sshForward).not.toHaveBeenCalled();
   });
 
+  it("names this BiBCode page on the bootstrap url in browser mode so it may frame the preview", async () => {
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("location", { origin: "http://192.168.1.5:3773", protocol: "http:" });
+    readPreparedConnection.mockReturnValue(lan());
+
+    await expect(
+      resolveForNavigation({
+        environmentId,
+        threadId,
+        canonicalUrl: "http://localhost:5173/",
+        gatewayOpen: vi.fn(async () => opened(41000)),
+      }),
+    ).resolves.toEqual({
+      kind: "ok",
+      url: "http://192.168.1.5:41000/__bibcode/bootstrap?cap=CAP&to=%2F&ui=http%3A%2F%2F192.168.1.5%3A3773",
+    });
+  });
+
   it("resolves SSH loopback through gateway plus local forward", async () => {
     readPreparedConnection.mockReturnValue(ssh());
     const gatewayOpen = vi.fn(async () => opened(41000, "C+/="));

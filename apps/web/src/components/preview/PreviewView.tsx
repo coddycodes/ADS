@@ -18,7 +18,9 @@ import {
   updatePreviewServerSnapshot,
   useThreadPreviewState,
 } from "~/previewStateStore";
+import { openPendingTab } from "~/browser/browserTab";
 import { resolvePreviewTarget } from "~/browser/browserTargetResolver";
+import { enqueueOpenPrompt } from "~/browser/openPromptQueue";
 import { showPreviewUnreachableMessage, showPreviewUnreachableNotice } from "~/browser/linkNotices";
 import { navigateDesktopTab } from "~/browser/desktopTabLifetime";
 import { previewPartitionFor } from "~/browser/previewPartition";
@@ -28,7 +30,7 @@ import { useEnvironment, useEnvironmentHttpBaseUrl } from "~/state/environments"
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { previewBridge } from "./previewBridge";
+import { isBrowserMode, previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
 import { openPreviewSession } from "./openPreviewSession";
 import { PreviewChromeRow } from "./PreviewChromeRow";
@@ -145,6 +147,8 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const pickerSupported = supportsPreviewRuntimeCapability(previewBridge, "picker");
   const recordingSupported = supportsPreviewRuntimeCapability(previewBridge, "recording");
   const imageClipboardSupported = supportsPreviewRuntimeCapability(previewBridge, "imageClipboard");
+  const screenshotSupported = supportsPreviewRuntimeCapability(previewBridge, "screenshot");
+  const pageToolsSupported = supportsPreviewRuntimeCapability(previewBridge, "pageTools");
   const viewportResize = useBrowserViewportResize({
     tabId: tabId ?? "",
     viewport,
@@ -287,16 +291,16 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   }, [gatewayOpen, localFailure, reportStatus, tabId, threadRef, url]);
 
   const handleZoomIn = useCallback(() => {
-    if (previewBridge && tabId) void previewBridge.zoomIn(tabId);
-  }, [tabId]);
+    if (previewBridge && tabId && pageToolsSupported) void previewBridge.zoomIn(tabId);
+  }, [pageToolsSupported, tabId]);
 
   const handleZoomOut = useCallback(() => {
-    if (previewBridge && tabId) void previewBridge.zoomOut(tabId);
-  }, [tabId]);
+    if (previewBridge && tabId && pageToolsSupported) void previewBridge.zoomOut(tabId);
+  }, [pageToolsSupported, tabId]);
 
   const handleResetZoom = useCallback(() => {
-    if (previewBridge && tabId) void previewBridge.resetZoom(tabId);
-  }, [tabId]);
+    if (previewBridge && tabId && pageToolsSupported) void previewBridge.resetZoom(tabId);
+  }, [pageToolsSupported, tabId]);
 
   const handleViewportChange = useCallback(
     async (nextViewport: PreviewViewportSetting) => {
@@ -351,14 +355,37 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
     if (previewBridge && tabId) void previewBridge.goForward(tabId);
   }, [tabId]);
 
+  const openInNewTab = useCallback(
+    (address: string) => {
+      // Browser mode opens the tab inside the click: one opened after an await is blocked.
+      const tab = isBrowserMode() ? openPendingTab() : null;
+      if (isBrowserMode() && !tab) {
+        enqueueOpenPrompt({ source: "link", blocked: true, url: address, threadRef });
+        return;
+      }
+      if (!tab && !localApi) return;
+      const target = resolvePreviewTarget(threadRef.environmentId, address);
+      if (target.kind === "gateway" && target.via === "host" && target.direct) {
+        // A same-host page needs the gateway only in the frame; a tab keeps its origin.
+        if (tab) tab.navigate(target.url);
+        else void localApi?.shell.openExternal(target.url).catch(() => undefined);
+        return;
+      }
+      // The stored URL is canonical; a remote server's loopback must not open
+      // this computer's localhost.
+      void resolveForThisClient(address, undefined, () => isMountedRef.current)
+        .then((resolved) => {
+          if (resolved === null) return tab?.close();
+          return tab ? tab.navigate(resolved) : localApi?.shell.openExternal(resolved);
+        })
+        .catch(() => tab?.close());
+    },
+    [resolveForThisClient, threadRef],
+  );
+
   const handleOpenInBrowser = useCallback(() => {
-    if (!localApi || !url) return;
-    // The stored URL is canonical; a remote server's loopback must not open
-    // this computer's localhost.
-    void resolveForThisClient(url, undefined, () => isMountedRef.current)
-      .then((resolved) => (resolved === null ? undefined : localApi.shell.openExternal(resolved)))
-      .catch(() => undefined);
-  }, [resolveForThisClient, url]);
+    if (url) openInNewTab(url);
+  }, [openInNewTab, url]);
 
   const handleCapture = useCallback(
     (record: boolean) => {
@@ -737,7 +764,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         onRefresh={handleRefresh}
         onSubmit={(next) => void handleSubmitUrl(next)}
         onOpenInBrowser={tabId ? handleOpenInBrowser : undefined}
-        onCapture={previewBridge && tabId ? handleCapture : undefined}
+        onCapture={previewBridge && tabId && screenshotSupported ? handleCapture : undefined}
         captureDisabled={showEmptyState || isUnreachable}
         recording={tabId !== null && activeRecordingTabId === tabId}
         recordingSupported={recordingSupported}
@@ -754,6 +781,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
           previewBridge ? (
             <PreviewMoreMenu
               tabId={tabId}
+              pageTools={pageToolsSupported}
               zoomFactor={desktopOverlay?.zoomFactor ?? 1}
               deviceToolbarVisible={viewport._tag !== "fill"}
               onToggleDeviceToolbar={handleToggleDeviceToolbar}
@@ -840,6 +868,8 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
               code={failure.code}
               description={failure.description}
               onReload={handleRefresh}
+              // The address the error names, not the page the frame still shows.
+              onOpenInNewTab={isBrowserMode() ? () => openInNewTab(failure.url) : undefined}
             />
           </div>
         ) : null}

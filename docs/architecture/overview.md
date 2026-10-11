@@ -43,9 +43,32 @@ flowchart TB
   native view per environment's preview storage (the local environment keeps
   the original profile; each other environment gets its own), because
   recreating child webviews while switching tabs disconnected the app; logical
-  tabs rebind to their environment's view. In browser mode there is no child
-  webview: the client advertises only status and open, and open shows a prompt
-  and returns `pending-user` at once; the page opens only if the user clicks Open. The server prefers the host
+  tabs rebind to their environment's view. On Linux, Tauri packs child
+  webviews into the window's content box, where bounds cannot move them, so
+  the desktop wraps the main webview in a `GtkOverlay` with a pass-through
+  `GtkFixed` layer and places preview views there
+  (`apps/desktop/src-tauri/src/preview/platform/linux.rs`). Removing an environment deletes its preview storage with its other
+  environment-owned data (`EnvironmentOwnedDataCleanup`, through
+  `desktop_preview_forget_environment`); a profile one of its previews used in
+  this session stays on disk, since its native view lives until the app exits. In browser mode there is no child
+  webview. A page served over plain HTTP implements the same `DesktopPreviewBridge`
+  with sandboxed iframes mounted inside each tab's panel slot
+  (`apps/web/src/browser/framePreviewBridge.ts`, chosen in
+  `components/preview/previewBridge.ts`; the same `browserSurfaceSync` stream
+  drives their visibility and moves a frame into a remounted slot, reopening
+  the page it last reported). It frames only gateway bootstrap URLs on
+  the page's own host, the only host a gateway lets frame it, including a
+  same-host server's loopback, which `browserTargetResolver` routes
+  through the gateway on the environment's own address; the bootstrap's `ui=` parameter
+  names the page's origin so the gateway lets it frame the preview
+  ([Framing](remote.md#preview-gateway)). The gateway's injected `/__bibcode/frame.js` reports
+  each page's URL, title, and history by `postMessage`, and Back, Forward, and
+  Reload go back as messages. Its failures stay local to the client, and
+  `previewRuntimeCapabilities` turns off picking, recording, screenshots, page
+  tools, and automation. An HTTPS page has no preview bridge, so gateway links
+  open in new tabs. In browser mode the client advertises only status and open
+  for automation, and open shows a prompt and returns `pending-user` at once;
+  the page opens only if the user clicks Open. The server prefers the host
   with more operations, so a connected desktop serves automation first.
   Loopback dev servers on a remote environment load through the server's
   preview gateway. Typography and text-contrast
