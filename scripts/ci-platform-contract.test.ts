@@ -439,15 +439,32 @@ describe("cross-platform release contract", () => {
     const server = requireJob(workflow, "build_server");
     const release = requireJob(workflow, "release");
 
+    // Intel x64 needs more than 90 minutes when its Rust cache is cold.
+    expect(desktop["timeout-minutes"]).toBe("${{ matrix.jobTimeoutMinutes }}");
     expect(desktop.strategy?.matrix?.include).toEqual([
-      { label: "macOS arm64", runner: "macos-26", platform: "mac", target: "dmg", arch: "arm64" },
-      { label: "macOS x64", runner: "macos-15-intel", platform: "mac", target: "dmg", arch: "x64" },
+      {
+        label: "macOS arm64",
+        runner: "macos-26",
+        platform: "mac",
+        target: "dmg",
+        arch: "arm64",
+        jobTimeoutMinutes: 90,
+      },
+      {
+        label: "macOS x64",
+        runner: "macos-15-intel",
+        platform: "mac",
+        target: "dmg",
+        arch: "x64",
+        jobTimeoutMinutes: 150,
+      },
       {
         label: "Linux arm64",
         runner: "ubuntu-22.04-arm",
         platform: "linux",
         target: "appimage",
         arch: "arm64",
+        jobTimeoutMinutes: 90,
       },
       {
         label: "Linux x64",
@@ -455,6 +472,7 @@ describe("cross-platform release contract", () => {
         platform: "linux",
         target: "appimage",
         arch: "x64",
+        jobTimeoutMinutes: 90,
       },
       {
         label: "Windows arm64",
@@ -462,6 +480,7 @@ describe("cross-platform release contract", () => {
         platform: "win",
         target: "nsis",
         arch: "arm64",
+        jobTimeoutMinutes: 90,
       },
       {
         label: "Windows x64",
@@ -469,6 +488,7 @@ describe("cross-platform release contract", () => {
         platform: "win",
         target: "nsis",
         arch: "x64",
+        jobTimeoutMinutes: 90,
       },
     ]);
     expect(server.strategy?.matrix?.include).toEqual([
