@@ -99,7 +99,10 @@ pub const ACTIVE_RPC_METHODS: &[RpcMethodSpec] = &[
     mutation_unary("preview.refresh"),
     mutation_unary("preview.reportStatus"),
     mutation_unary("preview.resize"),
-    mutation_stream("previewAutomation.connect"),
+    // The desktop shell holds this for the window lifetime. It only registers an
+    // in-memory automation host, so a mutation permit would make update drain
+    // time out and the installer would never start.
+    read_stream("previewAutomation.connect"),
     mutation_unary("previewAutomation.focusHost"),
     mutation_unary("previewAutomation.respond"),
     read_unary("projects.createDownloadUrl"),
@@ -255,6 +258,15 @@ mod tests {
                 mode: MethodMode::Stream,
                 mutability: MethodMutability::Read,
             }
+        );
+    }
+
+    #[test]
+    fn preview_automation_connect_does_not_hold_a_mutation_permit() {
+        assert!(ACTIVE_RPC_METHODS.contains(&read_stream("previewAutomation.connect")));
+        assert_eq!(
+            method_mutability("previewAutomation.connect"),
+            Some(MethodMutability::Read)
         );
     }
 

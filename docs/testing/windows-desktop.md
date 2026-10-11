@@ -444,14 +444,24 @@ In the CI-only seeded upgrade lanes, the updater host exiting is not proof of
 installation. Before cleanup and relaunch, the harness waits for the installed
 executable's exact candidate `ProductVersion`, a readable SHA-256, and no
 candidate-named updater installer. Its bounded `windows-install-handoff.log`
-records path/version/hash and installer PID/path observations without command
-lines or credentials. Inspect that artifact on timeout; the later public
+records path, version, hash, read and installer-lookup timings, and installer
+PID observations without command lines or credentials. The probe reads the
+executable in-process and lists installers with `tasklist.exe`. PowerShell
+produced no JSON within a twenty-second sample on the ARM64 runner, including
+after the host had exited, so a sample is no longer a PowerShell process. Each
+file read and installer lookup has its own short bound. The probe hashes the
+executable only after its product version is already the candidate. A read or
+lookup that hits its bound is an unavailable sample: the log keeps the timings
+and any version already read, and that sample does not satisfy the predicate.
+The protected-baseline install command stays open until the host exits into that
+installer. Ending the command on the first `protecting` event stops the host
+before NSIS starts. Inspect that artifact on timeout; the later public
 runtime-version and retained-data checks remain required.
-Each PowerShell observation keeps its ten-second command bound. A command
-deadline becomes an unavailable sample only after the exact child emits
+A command deadline becomes an unavailable sample only after the exact child emits
 `close`; the next sample remains inside the original overall installation
 deadline. Cleanup that cannot prove `close` within its existing five-second
-budget fails the lane, including after forced termination. Spawn and other
+budget fails the lane, including after forced termination, and the smoke
+process exits nonzero instead of waiting out the job budget. Spawn and other
 cleanup errors remain fatal. An unavailable sample never satisfies the exact
 version/hash/no-installer predicate.
 
@@ -625,8 +635,12 @@ pairing offer --endpoint http://<address>:3773` and confirm the dialog refuses
   evidence; do not substitute a manually created rule. Run the host-independent
   deletion-spawn and policy-denial tests, then reproduce a deletion denial
   natively and confirm the app reports incomplete cleanup rather than claiming
-  the rule was removed. A missing rule is benign only when the persistent
-  firewall store can be queried and its absence verified. Capture the shared
+  the rule was removed. A missing rule is benign only when `netsh advfirewall firewall show rule`
+  has queried the store and reported that no rule matches. Deletion uses the
+  same `netsh` program, not PowerShell: on the Windows ARM64 runner a
+  PowerShell firewall query did not finish inside the five-second caller
+  budget, the widen failed closed, and the another-device grant was never
+  minted. Capture the shared
   runbook's four explicit ceremony outcomes: authoritative local-only
   confirmation even after cancellation failure, another live access reason kept
   wide, cancellation and cleanup both unconfirmed, and cleanup topology
@@ -641,7 +655,7 @@ pairing offer --endpoint http://<address>:3773` and confirm the dialog refuses
   Burst multiple requests while one command is in flight and confirm the worker
   retains only the latest pending desired state, reports superseded callers
   explicitly, and applies that latest state after mandatory late cleanup.
-  Separately confirm a hung `netsh` or PowerShell child is terminated and reaped
+  Separately confirm a hung `netsh` child is terminated and reaped
   by its 15-second process timeout and never retains the exposure coordinator
   indefinitely;
 

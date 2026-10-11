@@ -536,11 +536,13 @@ fn hydrate_posix_path(platform: PosixPlatform) -> PathHydrationReport {
         Err(reason) => return PathHydrationReport::Unchanged { reason },
     };
 
-    // SAFETY: `hydrate_process_path` is the first operation in `run`, before
-    // Tauri creates worker threads. The shell child and stdout reader are fully
-    // joined before this mutation, so no other thread in this process can read
-    // or write the environment concurrently. (On macOS the crash hook attached in
-    // `main` owns an exception-port thread, which never touches the environment.)
+    // SAFETY: `hydrate_process_path` runs at the start of `run`, before Tauri
+    // creates worker threads. The Windows restart handoff adopt may already
+    // have set its variables; it creates no threads. The shell child and stdout
+    // reader are fully joined before this mutation, so no other thread in this
+    // process can read or write the environment concurrently. (On macOS the
+    // crash hook attached in `main` owns an exception-port thread, which never
+    // touches the environment.)
     unsafe {
         std::env::set_var("PATH", &prepared.value);
     }

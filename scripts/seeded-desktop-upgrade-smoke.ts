@@ -3,8 +3,10 @@
 // @effect-diagnostics globalConsole:off - The standalone harness reports bounded progress.
 // @effect-diagnostics globalFetch:off - The standalone harness probes its loopback update server.
 // @effect-diagnostics globalTimers:off - The standalone harness owns bounded process timeouts.
+// @effect-diagnostics globalDate:off - The standalone harness timestamps host samples outside Effect.
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
 import * as NodeURL from "node:url";
@@ -427,6 +429,7 @@ export function createSeededUpgradeDriverSpec(input: {
   readonly remoteSecretPath?: string;
   readonly remoteUploadSecretPath?: string;
   readonly remoteEvidencePath?: string;
+  readonly remoteTracePath?: string;
   readonly appBinaryPath?: string;
   readonly platform?: SeededUpgradePlatform;
 }): string {
@@ -500,12 +503,26 @@ async function observe(seed) {
       throw new Error("The packaged primary bootstrap is unavailable.");
     }
     const bearer = await bridge.getLocalEnvironmentBearerToken();
-    const descriptorResponse = await fetch(
-      new URL("/.well-known/bibcode/environment", bootstrap.httpBaseUrl),
-    );
-    if (!descriptorResponse.ok) {
-      throw new Error("The environment descriptor request failed.");
-    }
+    const descriptorResponse = await new Promise((resolve, reject) => {
+      const startedAt = Date.now();
+      const poll = () => {
+        fetch(new URL("/.well-known/bibcode/environment", bootstrap.httpBaseUrl))
+          .then((response) => {
+            if (response.ok) return resolve(response);
+            if (Date.now() - startedAt >= 5000) {
+              return reject(new Error("The environment descriptor request failed."));
+            }
+            setTimeout(poll, 200);
+          })
+          .catch(() => {
+            if (Date.now() - startedAt >= 5000) {
+              return reject(new Error("The environment descriptor request failed."));
+            }
+            setTimeout(poll, 200);
+          });
+      };
+      poll();
+    });
     const descriptor = await descriptorResponse.json();
     const ticketResponse = await fetch(
       new URL("/api/auth/websocket-ticket", bootstrap.httpBaseUrl),
@@ -606,63 +623,146 @@ async function observe(seed) {
 
 describe("seeded packaged upgrade ${input.lane} ${input.phase}", () => {
   it("uses public desktop and authenticated RPC boundaries", async () => {
-    const observation = await observe(${input.phase === "seed-and-install" ? "true" : "false"});
+    const observation = await (async () => {
+      let lastError;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          return await observe(${input.phase === "seed-and-install" ? "true" : "false"});
+        } catch (error) {
+          lastError = error;
+          const message = String(error && error.message ? error.message : error);
+          const retryable = /Load failed|environment descriptor request failed|Timed out opening RPC|RPC failed|Timed out waiting for orchestration\\.subscribeShell/.test(message);
+          if (!retryable || attempt === 1) throw error;
+          await browser.pause(250);
+        }
+      }
+      throw lastError;
+    })();
     NodeFS.writeFileSync(input.resultPath, JSON.stringify(observation));
     ${
       input.phase === "seed-and-install" && input.lane === "remote-install"
         ? `
+    const traceRemote = (entry) => {
+      try {
+        if (typeof input.remoteTracePath !== "string") return;
+        const text = typeof entry.message === "string" ? entry.message : "";
+        const message = text
+          .replace(/https?:\\/\\/\\S+/gi, "[url]")
+          .replace(/[A-Za-z0-9+/=_-]{20,}/g, "[redacted]")
+          .slice(0, 240);
+        const line = { at: new Date().toISOString(), step: entry.step };
+        if (typeof entry.found === "boolean") line.found = entry.found;
+        if (typeof entry.clicked === "boolean") line.clicked = entry.clicked;
+        if (typeof entry.widened === "boolean") line.widened = entry.widened;
+        if (message.length > 0) line.message = message;
+        NodeFS.appendFileSync(input.remoteTracePath, JSON.stringify(line) + "\\n");
+      } catch {
+        // A trace write must not replace the credential failure it records.
+      }
+    };
     await browser.execute(() => { window.location.hash = "/settings/remote-servers?tab=share"; });
+    let found = false;
+    let clicked = false;
     let widened = false;
     try {
       await browser.waitUntil(async () => browser.execute(() => [...document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Generate pairing offer")), { timeout: 30000, interval: 100 });
-      const generated = await browser.execute(() => {
+      found = true;
+      clicked = await browser.execute(() => {
         const button = [...document.querySelectorAll("button")].find((entry) => entry.textContent?.trim() === "Generate pairing offer");
         if (!button || button.disabled) return false;
         button.click(); return true;
       });
-      if (generated) await browser.waitUntil(async () => browser.execute(async () => (await window.desktopBridge.getServerExposureState()).mode === "network-accessible"), { timeout: 60000, interval: 250 });
-      widened = generated;
-    } catch { widened = false; }
-    const credentials = await browser.execute(async (widened) => {
-      const bootstrap = window.desktopBridge.getLocalEnvironmentBootstraps().find((entry) => entry.id === "primary");
-      if (!bootstrap?.httpBaseUrl || !bootstrap.bootstrapToken) throw new Error("Remote verification bootstrap unavailable.");
-      if (widened) {
-        const bearer = await window.desktopBridge.getLocalEnvironmentBearerToken();
-        // Exposure precedes minting. Stay below the embedded driver's 30-second command bound.
-        const deadline = Date.now() + 20000;
-        while (Date.now() < deadline) {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), Math.min(5000, deadline - Date.now()));
-          let links;
+      if (clicked) await browser.waitUntil(async () => browser.execute(async () => (await window.desktopBridge.getServerExposureState()).mode === "network-accessible"), { timeout: 60000, interval: 250 });
+      widened = clicked;
+      traceRemote({ step: "share-ui", found, clicked, widened });
+    } catch (error) {
+      traceRemote({ step: "share-ui", found, clicked, widened: false, message: String(error && error.message ? error.message : error) });
+      widened = false;
+    }
+    let credentials;
+    try {
+    credentials = await browser.execute(async (widened) => {
+      const readBootstrap = () => window.desktopBridge.getLocalEnvironmentBootstraps().find((entry) => entry.id === "primary");
+      if (!widened) {
+        const bootstrap = readBootstrap();
+        if (!bootstrap?.httpBaseUrl || !bootstrap.bootstrapToken) throw new Error("Remote verification bootstrap unavailable.");
+        return { endpoint: bootstrap.httpBaseUrl, bootstrapToken: bootstrap.bootstrapToken };
+      }
+      // The bridge cache updates when the restarted backend is ready. Hold neither
+      // the first endpoint nor the first bearer across that publication.
+      const deadline = Date.now() + 20000;
+      let sawTransportFailure = false;
+      let attempts = 0;
+      let lastStatus = null;
+      let endpointChanged = false;
+      let previousEndpoint = null;
+      while (Date.now() < deadline) {
+        attempts += 1;
+        const bootstrap = readBootstrap();
+        const endpoint = bootstrap && typeof bootstrap.httpBaseUrl === "string" ? bootstrap.httpBaseUrl : "";
+        if (previousEndpoint !== null && endpoint !== previousEndpoint) endpointChanged = true;
+        if (endpoint.length > 0) previousEndpoint = endpoint;
+        let links = null;
+        if (!endpoint || !bootstrap?.bootstrapToken) {
+          sawTransportFailure = true;
+        } else {
+          let bearer = null;
           try {
-            const response = await fetch(new URL("/api/auth/pairing-links", bootstrap.httpBaseUrl), {
-              headers: { authorization: "Bearer " + bearer },
-              signal: controller.signal,
-            });
-            if (!response.ok) throw new Error();
-            links = await response.json();
+            bearer = await window.desktopBridge.getLocalEnvironmentBearerToken();
           } catch {
-            throw new Error("Remote verification pairing grant unavailable.");
-          } finally {
-            clearTimeout(timeout);
+            bearer = null;
           }
+          if (typeof bearer !== "string" || bearer.length === 0) {
+            sawTransportFailure = true;
+          } else {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), Math.min(5000, deadline - Date.now()));
+            try {
+              const response = await fetch(new URL("/api/auth/pairing-links", endpoint), {
+                headers: { authorization: "Bearer " + bearer },
+                signal: controller.signal,
+              });
+              if (!response.ok) {
+                if (typeof response.status === "number") lastStatus = response.status;
+                throw new Error();
+              }
+              links = await response.json();
+              sawTransportFailure = false;
+            } catch {
+              // A refused request is not the grant. Keep polling without copying
+              // transport details, URLs, or response bodies.
+              sawTransportFailure = true;
+              links = null;
+            } finally {
+              clearTimeout(timeout);
+            }
+          }
+        }
+        if (links !== null) {
           if (!Array.isArray(links)) throw new Error("Remote verification pairing grant response invalid.");
-          // AuthPairingLink publishes reach and credential; offHost is server-private metadata.
           const grant = links.find((link) => link !== null && typeof link === "object" &&
             link.reach === "another-device" && typeof link.id === "string" && link.id.trim().length > 0 &&
             typeof link.credential === "string" && link.credential.trim().length > 0);
           if (grant && Date.now() < deadline) {
-            // Redeeming the offered grant keeps the wide listener alive across the update.
-            return { endpoint: bootstrap.httpBaseUrl, bootstrapToken: grant.credential };
+            return { endpoint, bootstrapToken: grant.credential };
           }
-          await new Promise((resolve) => setTimeout(resolve, Math.max(0, Math.min(250, deadline - Date.now()))));
         }
-        throw new Error("Remote verification has no live native sharing grant.");
+        if (Date.now() >= deadline) break;
+        await new Promise((resolve) => setTimeout(resolve, Math.max(0, Math.min(250, deadline - Date.now()))));
       }
-      return { endpoint: bootstrap.httpBaseUrl, bootstrapToken: bootstrap.bootstrapToken };
+      const detail = "status=" + (typeof lastStatus === "number" ? String(lastStatus) : "none") +
+        " attempts=" + attempts + " endpointChanged=" + endpointChanged;
+      if (sawTransportFailure) throw new Error("Remote verification pairing grant unavailable. " + detail);
+      throw new Error("Remote verification has no live native sharing grant.");
     }, widened);
+    traceRemote({ step: "credentials-returned" });
     // Private receipt is outside retained evidence; the controller uses it to redact logs.
     NodeFS.writeFileSync(input.remoteSecretPath, JSON.stringify(credentials), { mode: 0o600 });
+    traceRemote({ step: "receipt-written" });
+    } catch (error) {
+      traceRemote({ step: "credentials", message: String(error && error.message ? error.message : error) });
+      throw error;
+    }
     NodeFS.writeFileSync(input.resultPath, JSON.stringify({ ...observation, installAttempted: false }));
     const { runRemoteInstallDriver } = await import(input.remoteInstallDriverPath);
     const evidence = await runRemoteInstallDriver({
@@ -746,7 +846,6 @@ describe("seeded packaged upgrade ${input.lane} ${input.phase}", () => {
         if (typeof state?.phase === "string" && !observed.includes(state.phase)) {
           observed.push(state.phase);
         }
-        if (lane === "protected-baseline" && state?.phase === "protecting") finish(null);
       })).then(async () => {
         const install = await bridge.installUpdate();
         if (install?.completed !== true) return finish("install did not complete");
@@ -768,7 +867,6 @@ describe("seeded packaged upgrade ${input.lane} ${input.phase}", () => {
       phases: [...preparation.phases, ...installation.phases],
       installAttempted: true,
     }));
-    await new Promise((resolve) => setTimeout(resolve, 30000));
     `
           : ""
     }
@@ -878,6 +976,19 @@ export function verifySeededUpgradeOutcome(
   }
 }
 
+export function remoteEvidenceReadFailure(
+  error: unknown,
+): SeededDesktopUpgradeSmokeError | undefined {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? (error as { readonly code?: unknown }).code
+      : undefined;
+  if (code !== "ENOENT") return undefined;
+  return new SeededDesktopUpgradeSmokeError(
+    "The remote-install lane finished without remote-rpc.json.",
+  );
+}
+
 export function assertWebDriverPhaseExit(input: {
   readonly exitCode: number;
   readonly installAttempted: boolean;
@@ -952,71 +1063,214 @@ export async function readWindowsCandidateProbe(
   }
 }
 
-// Read-only, CI-only evidence. Paths and versions cross as environment values,
-// never PowerShell source; process command lines and credentials are not collected.
-export const windowsUpgradeObservationScript = `
-$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$observation = [ordered]@{
-  observedAtUtc = [System.DateTime]::UtcNow.ToString('o')
-  path = $env:BIBCODE_SEEDED_APPLICATION_PATH
-  exists = $false
-  productVersion = $null
-  fileVersion = $null
-  sha256 = $null
-  installers = @()
-  error = $null
-}
-try {
-  $observation.exists = Test-Path -LiteralPath $observation.path -PathType Leaf
-  if ($observation.exists) {
-    $file = Get-Item -LiteralPath $observation.path
-    $observation.productVersion = $file.VersionInfo.ProductVersion
-    $observation.fileVersion = $file.VersionInfo.FileVersion
-    $observation.sha256 = (Get-FileHash -LiteralPath $observation.path -Algorithm SHA256).Hash
-  }
-  $suffix = '-' + $env:BIBCODE_SEEDED_CANDIDATE_VERSION + '-installer.exe'
-  $observation.installers = @(Get-CimInstance Win32_Process | Where-Object {
-    $_.Name.EndsWith($suffix, [System.StringComparison]::OrdinalIgnoreCase)
-  } | ForEach-Object {
-    [ordered]@{ pid = $_.ProcessId; parentPid = $_.ParentProcessId; path = $_.ExecutablePath }
-  })
-} catch {
-  $observation.error = $_.FullyQualifiedErrorId
-}
-$observation | ConvertTo-Json -Compress -Depth 4
-`;
+const probeStepTimedOut = (cause: unknown): boolean => {
+  if (typeof cause !== "object" || cause === null) return false;
+  const value = cause as {
+    readonly code?: unknown;
+    readonly killed?: unknown;
+    readonly name?: unknown;
+  };
+  return (
+    value.killed === true ||
+    value.code === "ABORT_ERR" ||
+    value.code === "ETIMEDOUT" ||
+    value.name === "AbortError" ||
+    value.name === "TimeoutError"
+  );
+};
 
-async function waitForWindowsInstalledCandidate(input: {
+const probeStepFailure = (cause: unknown, label: string): string => {
+  if (probeStepTimedOut(cause)) return `${label} timed out`;
+  const code =
+    typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+  return `${label} ${typeof code === "string" && code.length > 0 ? code : "failed"}`;
+};
+
+const readAlignedProductVersion = (bytes: Buffer, base: number, offset: number): string | null => {
+  const misalignment = (offset - base) % 4;
+  const aligned = misalignment === 0 ? offset : offset + (4 - misalignment);
+  const chars: string[] = [];
+  let cursor = aligned;
+  while (cursor + 1 < bytes.length && chars.length <= 128) {
+    const code = bytes[cursor]! | (bytes[cursor + 1]! << 8);
+    if (code === 0) return chars.length > 0 ? chars.join("") : null;
+    if (code < 32 || code > 126) return null;
+    chars.push(String.fromCharCode(code));
+    cursor += 2;
+  }
+  return null;
+};
+
+/** UTF-16 ProductVersion from a VERSIONINFO resource, aligned to that resource. */
+export function productVersionFromExecutableBytes(bytes: Buffer): string | null {
+  const marker = Buffer.from("VS_VERSION_INFO\u0000", "utf16le");
+  const key = Buffer.from("ProductVersion\u0000", "utf16le");
+  let from = 0;
+  while (from + marker.length <= bytes.length) {
+    const markerAt = bytes.indexOf(marker, from);
+    if (markerAt < 0) return null;
+    if (markerAt < 6) {
+      from = markerAt + 2;
+      continue;
+    }
+    const base = markerAt - 6;
+    const length = bytes.readUInt16LE(base);
+    const end =
+      length > marker.length + 6 && base + length <= bytes.length
+        ? base + length
+        : Math.min(bytes.length, markerAt + 8_192);
+    let cursor = markerAt + marker.length;
+    while (cursor < end) {
+      const index = bytes.indexOf(key, cursor);
+      if (index < 0 || index >= end) break;
+      const value = readAlignedProductVersion(bytes, base, index + key.length);
+      if (value !== null) return value;
+      cursor = index + 2;
+    }
+    from = markerAt + 2;
+  }
+  return null;
+}
+
+/** tasklist truncates image names at 25 characters. Command lines are not read. */
+export function windowsInstallerProcesses(
+  csv: string,
+  expectedExe: string,
+): Array<{ readonly pid: number; readonly parentPid: null; readonly path: null }> {
+  const expected = expectedExe.toLowerCase();
+  const installers: Array<{ readonly pid: number; readonly parentPid: null; readonly path: null }> =
+    [];
+  for (const row of csv.split(/\r?\n/)) {
+    const match = /^"([^"]+)","(\d+)"/.exec(row);
+    if (match === null) continue;
+    const image = match[1]!;
+    const normalized = image.toLowerCase();
+    const isInstaller =
+      normalized === expected || (expected.startsWith(normalized) && image.length >= 25);
+    if (!isInstaller) continue;
+    installers.push({ pid: Number(match[2]), parentPid: null, path: null });
+  }
+  return installers;
+}
+
+const windowsProbeStepMs = 8_000;
+
+export async function observeWindowsInstalledCandidate(input: {
+  readonly appBinaryPath: string;
+  readonly candidateVersion: string;
+  readonly productName?: string;
+  readonly readFile?: (path: string) => Promise<Buffer>;
+  readonly listProcesses?: () => Promise<string>;
+}): Promise<{
+  readonly observedAtUtc: string;
+  readonly path: string;
+  readonly exists: boolean;
+  readonly productVersion: string | null;
+  readonly sha256: string | null;
+  readonly installers: ReadonlyArray<{
+    readonly pid: number;
+    readonly parentPid: null;
+    readonly path: null;
+  }>;
+  readonly error: string | null;
+  readonly readMs: number | null;
+  readonly tasklistMs: number | null;
+}> {
+  const productName = input.productName ?? "BiBCode";
+  const expectedExe = `${productName}-${input.candidateVersion}-installer.exe`;
+  const readFile =
+    input.readFile ??
+    ((path: string) =>
+      NodeFS.promises.readFile(path, { signal: AbortSignal.timeout(windowsProbeStepMs) }));
+  const listProcesses =
+    input.listProcesses ??
+    (() =>
+      new Promise<string>((resolve, reject) => {
+        NodeChildProcess.execFile(
+          "tasklist.exe",
+          ["/FO", "CSV", "/NH"],
+          { timeout: windowsProbeStepMs, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+          (error, stdout) => {
+            if (error) reject(error);
+            else resolve(stdout);
+          },
+        );
+      }));
+  const errors: string[] = [];
+  let exists = false;
+  let productVersion: string | null = null;
+  let sha256: string | null = null;
+  let readMs: number | null = null;
+  const readStarted = Date.now();
+  try {
+    const bytes = await readFile(input.appBinaryPath);
+    readMs = Date.now() - readStarted;
+    exists = true;
+    productVersion = productVersionFromExecutableBytes(bytes);
+    if (productVersion === input.candidateVersion) {
+      sha256 = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+    }
+  } catch (cause) {
+    readMs = Date.now() - readStarted;
+    const code =
+      typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+    exists = code !== "ENOENT";
+    errors.push(probeStepFailure(cause, "executable read"));
+  }
+  let installers: Array<{ readonly pid: number; readonly parentPid: null; readonly path: null }> =
+    [];
+  let tasklistMs: number | null = null;
+  const listStarted = Date.now();
+  try {
+    installers = windowsInstallerProcesses(await listProcesses(), expectedExe);
+    tasklistMs = Date.now() - listStarted;
+  } catch (cause) {
+    tasklistMs = Date.now() - listStarted;
+    errors.push(probeStepFailure(cause, "installer lookup"));
+  }
+  return {
+    observedAtUtc: new Date().toISOString(),
+    path: input.appBinaryPath,
+    exists,
+    productVersion,
+    sha256,
+    installers,
+    error: errors.length > 0 ? errors.join("; ") : null,
+    readMs,
+    tasklistMs,
+  };
+}
+
+export async function waitForWindowsInstalledCandidate(input: {
   readonly appBinaryPath: string;
   readonly candidateVersion: string;
   readonly evidenceDirectory: string;
   readonly timeoutMs: number;
+  readonly intervalMs?: number;
+  readonly now?: () => number;
+  readonly sleep?: (milliseconds: number) => Promise<void>;
+  readonly readFile?: (path: string) => Promise<Buffer>;
+  readonly listProcesses?: () => Promise<string>;
 }): Promise<void> {
   await waitForUpgradeCondition({
     description: `Windows candidate ${input.candidateVersion} at the installed application path`,
-    intervalMs: 1_000,
+    intervalMs: input.intervalMs ?? 1_000,
+    now: input.now,
+    sleep: input.sleep,
     timeoutMs: input.timeoutMs,
     probe: async () => {
-      const { exitCode, observation } = await readWindowsCandidateProbe(() =>
-        runBoundedCommand({
-          command: "powershell.exe",
-          args: ["-NoProfile", "-NonInteractive", "-Command", windowsUpgradeObservationScript],
-          cwd: NodePath.dirname(input.appBinaryPath),
-          env: {
-            ...process.env,
-            BIBCODE_SEEDED_APPLICATION_PATH: input.appBinaryPath,
-            BIBCODE_SEEDED_CANDIDATE_VERSION: input.candidateVersion,
-          },
-          timeoutMs: 10_000,
-        }),
-      );
+      const observation = await observeWindowsInstalledCandidate({
+        appBinaryPath: input.appBinaryPath,
+        candidateVersion: input.candidateVersion,
+        ...(input.readFile === undefined ? {} : { readFile: input.readFile }),
+        ...(input.listProcesses === undefined ? {} : { listProcesses: input.listProcesses }),
+      });
       await NodeFS.promises.appendFile(
         NodePath.join(input.evidenceDirectory, "windows-install-handoff.log"),
-        `${JSON.stringify({ exitCode, observation })}\n`,
+        `${JSON.stringify({ exitCode: observation.error === null ? 0 : null, observation })}\n`,
         { mode: 0o600 },
       );
-      return exitCode === 0 && windowsCandidateIsInstalled(observation, input.candidateVersion);
+      return windowsCandidateIsInstalled(observation, input.candidateVersion);
     },
   });
 }
@@ -1247,18 +1501,56 @@ const observeOwnedChildClose = (child: NodeChildProcess.ChildProcess): void => {
   child.once("close", () => closedOwnedChildren.add(child));
 };
 
+/**
+ * Windows `cmd /c` (the MSVC wrapper) survives `child.kill` together with
+ * grandchildren such as `findstr`. `taskkill /T` is the tree signal; the
+ * direct kill still runs so a missing `taskkill` cannot skip the deadline.
+ */
+export const ownedChildTreeKillCommand = (
+  platform: NodeJS.Platform,
+  pid: number | undefined,
+): { readonly args: readonly string[]; readonly command: string } | undefined => {
+  if (platform !== "win32" || pid === undefined) return undefined;
+  return { args: ["/F", "/T", "/PID", String(pid)], command: "taskkill.exe" };
+};
+
+const releaseOwnedChild = (child: NodeChildProcess.ChildProcess): void => {
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+  child.stdin?.destroy();
+  child.unref();
+};
+
+const killOwnedChildTree = (child: NodeChildProcess.ChildProcess): void => {
+  // oxlint-disable-next-line bibcode/no-global-process-runtime -- taskkill is the Windows host tree signal for this child.
+  const plan = ownedChildTreeKillCommand(process.platform, child.pid);
+  if (plan === undefined) return;
+  try {
+    const killer = NodeChildProcess.spawn(plan.command, [...plan.args], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    killer.unref();
+  } catch {
+    // The direct SIGKILL below still releases this process.
+  }
+};
+
 export const terminateSeededUpgradeChild = async (
   child: NodeChildProcess.ChildProcess,
 ): Promise<void> => {
   if (closedOwnedChildren.has(child)) return;
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
+      killOwnedChildTree(child);
       try {
         child.kill("SIGKILL");
       } catch (cause) {
+        releaseOwnedChild(child);
         reject(cause);
         return;
       }
+      releaseOwnedChild(child);
       reject(
         new SeededDesktopUpgradeSmokeError("Owned child cleanup did not close within 5000ms."),
       );
@@ -1273,10 +1565,21 @@ export const terminateSeededUpgradeChild = async (
         child.kill("SIGTERM");
       } catch (cause) {
         clearTimeout(timeout);
+        releaseOwnedChild(child);
         reject(cause);
       }
     }
   });
+};
+
+export const reportSeededUpgradeSmokeFailure = (
+  error: unknown,
+  exit: (code: number) => void = (code) => {
+    process.exit(code);
+  },
+): void => {
+  console.error(error instanceof Error ? error.message : "Seeded packaged-upgrade smoke failed.");
+  exit(1);
 };
 
 export const runBoundedCommand = async (input: {
@@ -1790,6 +2093,7 @@ const runWebDriverPhase = async (input: {
             remoteSecretPath,
             remoteUploadSecretPath,
             remoteEvidencePath: NodePath.join(input.evidenceDirectory, "remote-rpc.json"),
+            remoteTracePath: NodePath.join(input.evidenceDirectory, "remote-credential-trace.log"),
           }
         : {}),
     }),
@@ -1840,23 +2144,37 @@ const runWebDriverPhase = async (input: {
       installAttempted = false;
     }
   }
-  const privateSecrets =
-    input.lane === "remote-install"
-      ? await readRemoteFixtureSecrets({
-          credentialReceiptPath: remoteSecretPath,
-          uploadReceiptPath: remoteUploadSecretPath,
-          requireCredentialReceipt: true,
-          requireUploadReceipt: installAttempted,
-        })
-      : [];
-  await NodeFS.promises.writeFile(
-    NodePath.join(input.evidenceDirectory, `${input.phase}.log`),
-    redactAndBoundUpgradeEvidence(`${result.stdout}\n${result.stderr}`, {
-      maxBytes: 64 * 1024,
-      roots: [input.dataRoot, input.runRoot],
-      secrets: privateSecrets,
-    }),
-  );
+  const phaseLogPath = NodePath.join(input.evidenceDirectory, `${input.phase}.log`);
+  const writePhaseLog = async (body: string, secrets: ReadonlyArray<string>): Promise<void> => {
+    await NodeFS.promises.writeFile(
+      phaseLogPath,
+      redactAndBoundUpgradeEvidence(body, {
+        maxBytes: 64 * 1024,
+        roots: [input.dataRoot, input.runRoot],
+        secrets,
+      }),
+    );
+  };
+  let privateSecrets: ReadonlyArray<string> = [];
+  if (input.lane === "remote-install") {
+    try {
+      privateSecrets = await readRemoteFixtureSecrets({
+        credentialReceiptPath: remoteSecretPath,
+        uploadReceiptPath: remoteUploadSecretPath,
+        requireCredentialReceipt: true,
+        requireUploadReceipt: installAttempted,
+      });
+    } catch (error) {
+      if (isMissingCredentialReceipt(error)) {
+        await writePhaseLog(
+          "Remote WebDriver output was withheld because the private credential receipt was not published.\n",
+          [],
+        );
+      }
+      throw error;
+    }
+  }
+  await writePhaseLog(`${result.stdout}\n${result.stderr}`, privateSecrets);
   assertWebDriverPhaseExit({
     exitCode: result.exitCode,
     installAttempted,
@@ -2041,9 +2359,15 @@ const runUpgradeLane = async (input: {
     });
   }
   if (input.lane === "remote-install") {
-    const remote = await readObservation<
-      Omit<RemoteInstallEvidence, "preUpdateBackups"> & { widened: boolean }
-    >(NodePath.join(input.layout.evidenceDirectory, "remote-rpc.json"));
+    const remotePath = NodePath.join(input.layout.evidenceDirectory, "remote-rpc.json");
+    let remote: Omit<RemoteInstallEvidence, "preUpdateBackups"> & { widened: boolean };
+    try {
+      remote = await readObservation(remotePath);
+    } catch (error) {
+      const failure = remoteEvidenceReadFailure(error);
+      if (failure !== undefined) throw failure;
+      throw error;
+    }
     await writePrivateJson(
       NodePath.join(input.layout.evidenceDirectory, "remote-host.json"),
       remote,
@@ -2086,11 +2410,18 @@ const runUpgradeLane = async (input: {
   );
 };
 
+const missingCredentialReceiptMessage = "The private remote credential receipt is unavailable.";
+
+const isMissingCredentialReceipt = (error: unknown): boolean =>
+  error instanceof SeededDesktopUpgradeSmokeError &&
+  error.message === missingCredentialReceiptMessage;
+
 const copyBoundedEvidence = async (input: {
   readonly artifactDirectory: string;
   readonly layout: SeededUpgradeRunLayout;
   readonly requestLogPath: string;
   readonly secrets: ReadonlyArray<string>;
+  readonly withholdLanes?: ReadonlyArray<string>;
 }): Promise<void> => {
   await NodeFS.promises.mkdir(input.artifactDirectory, { recursive: true });
   const lanes = [
@@ -2099,9 +2430,20 @@ const copyBoundedEvidence = async (input: {
     ["remote-install", input.layout.remoteInstall],
   ] as const;
   for (const [lane, layout] of lanes) {
+    const withheld = input.withholdLanes?.includes(lane) === true;
     if (!NodeFS.existsSync(layout.evidenceDirectory)) continue;
     for (const source of await walkFiles(layout.evidenceDirectory)) {
       if (!/\.(?:json|log|txt)$/i.test(source)) continue;
+      // Raw remote WebDriver logs can contain a grant returned before the receipt
+      // write. Keep only the redacted trace and the secret-free phase marker.
+      if (
+        withheld &&
+        (NodePath.dirname(source) !== layout.evidenceDirectory ||
+          (NodePath.basename(source) !== "remote-credential-trace.log" &&
+            NodePath.basename(source) !== "seed-and-install.log"))
+      ) {
+        continue;
+      }
       const bounded = redactAndBoundUpgradeEvidence(
         await NodeFS.promises.readFile(source, "utf8"),
         {
@@ -2115,20 +2457,19 @@ const copyBoundedEvidence = async (input: {
         bounded,
       );
     }
-    if (NodeFS.existsSync(layout.dataRoot)) {
-      const tree = (await walkFiles(layout.dataRoot))
-        .map((path) => NodePath.relative(layout.dataRoot, path))
-        .slice(0, 1_000)
-        .join("\n");
-      await NodeFS.promises.writeFile(
-        NodePath.join(input.artifactDirectory, `${lane}-root-tree.txt`),
-        redactAndBoundUpgradeEvidence(tree, {
-          maxBytes: 32 * 1024,
-          roots: [layout.dataRoot],
-          secrets: input.secrets,
-        }),
-      );
-    }
+    if (withheld || !NodeFS.existsSync(layout.dataRoot)) continue;
+    const tree = (await walkFiles(layout.dataRoot))
+      .map((path) => NodePath.relative(layout.dataRoot, path))
+      .slice(0, 1_000)
+      .join("\n");
+    await NodeFS.promises.writeFile(
+      NodePath.join(input.artifactDirectory, `${lane}-root-tree.txt`),
+      redactAndBoundUpgradeEvidence(tree, {
+        maxBytes: 32 * 1024,
+        roots: [layout.dataRoot],
+        secrets: input.secrets,
+      }),
+    );
   }
   if (NodeFS.existsSync(input.requestLogPath)) {
     await NodeFS.promises.writeFile(
@@ -2141,6 +2482,8 @@ const copyBoundedEvidence = async (input: {
     );
   }
 };
+
+export { copyBoundedEvidence };
 
 export async function runSeededDesktopUpgradeSmoke(
   input: SeededDesktopUpgradeSmokeInput,
@@ -2454,6 +2797,7 @@ export async function runSeededDesktopUpgradeSmoke(
     } catch {
       /* Before the remote phase, no install marker is expected. */
     }
+    let withholdLanes: ReadonlyArray<string> = [];
     try {
       secrets.push(
         ...(await readRemoteFixtureSecrets({
@@ -2463,19 +2807,35 @@ export async function runSeededDesktopUpgradeSmoke(
           requireUploadReceipt: installAttempted,
         })),
       );
-    } catch {
-      failure ??= new SeededDesktopUpgradeSmokeError(
-        "Private remote fixture receipts were invalid; evidence was not retained.",
-      );
-      safeToRetainEvidence = false;
+    } catch (error) {
+      if (isMissingCredentialReceipt(error)) {
+        // The receipt was never published, so raw remote logs may contain a
+        // returned grant. Keep every earlier lane and a secret-free marker.
+        withholdLanes = ["remote-install"];
+        failure ??= error;
+      } else {
+        failure ??= new SeededDesktopUpgradeSmokeError(
+          "Private remote fixture receipts were invalid; evidence was not retained.",
+        );
+        safeToRetainEvidence = false;
+      }
     }
-    if (safeToRetainEvidence)
+    if (safeToRetainEvidence) {
+      await NodeFS.promises.mkdir(input.artifactDirectory, { recursive: true });
+      if (withholdLanes.length > 0) {
+        await NodeFS.promises.writeFile(
+          NodePath.join(input.artifactDirectory, "remote-install-phase-withheld.txt"),
+          "Remote WebDriver output was withheld because the private credential receipt was not published.\n",
+        );
+      }
       await copyBoundedEvidence({
         artifactDirectory: input.artifactDirectory,
         layout,
         requestLogPath,
         secrets,
+        withholdLanes,
       }).catch(() => undefined);
+    }
     try {
       await cleanup.cleanup();
     } catch (cleanupError) {
@@ -2492,7 +2852,6 @@ async function main(): Promise<void> {
 
 if (import.meta.main) {
   main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : "Seeded packaged-upgrade smoke failed.");
-    process.exitCode = 1;
+    reportSeededUpgradeSmokeFailure(error);
   });
 }

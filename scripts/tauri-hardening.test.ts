@@ -35,7 +35,16 @@ const CapabilityConfiguration = Schema.fromJsonString(
   Schema.Struct({ permissions: Schema.Array(Schema.String) }),
 );
 const PlatformToolsTauriConfiguration = Schema.fromJsonString(
-  Schema.Struct({ bundle: Schema.Struct({ useLocalToolsDir: Schema.Boolean }) }),
+  Schema.Struct({
+    bundle: Schema.Struct({
+      useLocalToolsDir: Schema.Boolean,
+      windows: Schema.optionalKey(
+        Schema.Struct({
+          nsis: Schema.Struct({ installerHooks: Schema.String }),
+        }),
+      ),
+    }),
+  }),
 );
 const DesktopPackageConfiguration = Schema.fromJsonString(
   Schema.Struct({ scripts: Schema.Struct({ build: Schema.String }) }),
@@ -180,6 +189,15 @@ it.layer(NodeServices.layer)("Tauri production hardening", (it) => {
       // ARM64 build never depends on a per-account cache that x86 filesystem
       // redirection can make unreachable for the NSIS bootstrapper.
       assert.equal(windows.bundle.useLocalToolsDir, true);
+      assert.equal(windows.bundle.windows?.nsis.installerHooks, "./windows/installer-hooks.nsh");
+      const installerHook = yield* fs.readFileString(
+        path.join(repoRoot, "apps/desktop/src-tauri/windows/installer-hooks.nsh"),
+      );
+      assert.match(installerHook, /!macro NSIS_HOOK_PREINSTALL/);
+      assert.match(installerHook, /KillProcessCurrentUser "\$\{MAINBINARYNAME\}\.exe"/);
+      assert.match(installerHook, /Delete "\$INSTDIR\\\$\{MAINBINARYNAME\}\.exe"/);
+      assert.equal(installerHook.includes("MessageBox"), false);
+      assert.equal(installerHook.includes("Abort"), false);
       assert.equal(
         tauri.build.beforeBuildCommand,
         "node ../../scripts/prepare-tauri-appimage-tools.ts && vp run --filter @bibcode/web build && node ../../scripts/apply-web-brand-assets.ts production apps/web/dist",

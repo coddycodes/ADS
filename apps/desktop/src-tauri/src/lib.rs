@@ -90,6 +90,7 @@ macro_rules! bridge_command_names {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    windows_update_restart::adopt_restart_handoff();
     let shell_path_hydration = shell_environment::hydrate_process_path();
     // After the PATH hydration, which must run before any thread exists, and before Tauri.
     crash_monitor::start();
@@ -346,6 +347,7 @@ mod test_support;
 mod updates;
 mod webview_exit;
 mod window;
+mod windows_update_restart;
 
 pub use bridge::{
     desktop_bridge_bootstrap_ssh_bearer_session, desktop_bridge_fetch_environment_descriptor,

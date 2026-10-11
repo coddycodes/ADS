@@ -151,7 +151,10 @@ outputs (candidate, previous stable, protected baseline), each with a separate
 10-minute frozen install; the cached repository `target` does not warm these
 outputs. Intel's remaining 60 minutes cover setup, all upgrade lanes, evidence,
 and cleanup. `remote-install` reuses the protected package. These allowances
-leave product, WebDriver, and restart deadlines intact; record a packaging
+leave product, WebDriver, and restart deadlines intact. Verify retries once
+when WebKit reports `Load failed` or the shell snapshot is not ready yet, and
+it still requires the candidate version, retained project, and storage
+identity. Record a packaging
 timeout separately from native upgrade results, and never run this CI harness
 locally. See the [seeded matrix procedure](../operations/release.md#seeded-packaged-upgrade-matrix).
 

@@ -53,32 +53,39 @@ pub(crate) fn remote_access_rule_add_args(program: &str) -> Vec<String> {
     ]
 }
 
+#[cfg_attr(
+    all(not(windows), not(test)),
+    expect(dead_code, reason = "Windows-only firewall command")
+)]
+const FIREWALL_RULE_ABSENT_MARKER: &str = "No rules match the specified criteria.";
+
 #[must_use]
 #[cfg_attr(
     all(not(windows), not(test)),
     expect(dead_code, reason = "Windows-only firewall command")
 )]
-pub(crate) fn remote_access_rule_delete_and_verify_args() -> Vec<String> {
-    let script = format!(
-        "$ErrorActionPreference = 'Stop'; \
-         $name = '{REMOTE_ACCESS_RULE_NAME}'; \
-         $rules = @(Get-NetFirewallRule -PolicyStore PersistentStore -ErrorAction Stop | \
-           Where-Object {{ $_.DisplayName -eq $name }}); \
-         if ($rules.Count -gt 0) {{ \
-           $rules | Remove-NetFirewallRule -ErrorAction Stop \
-         }}; \
-         $remaining = @(Get-NetFirewallRule -PolicyStore PersistentStore -ErrorAction Stop | \
-           Where-Object {{ $_.DisplayName -eq $name }}); \
-         if ($remaining.Count -ne 0) {{ \
-           throw 'remote access firewall rule is still present after deletion' \
-         }}"
-    );
+pub(crate) fn remote_access_rule_show_args() -> Vec<String> {
     vec![
-        "-NoLogo".to_owned(),
-        "-NoProfile".to_owned(),
-        "-NonInteractive".to_owned(),
-        "-Command".to_owned(),
-        script,
+        "advfirewall".to_owned(),
+        "firewall".to_owned(),
+        "show".to_owned(),
+        "rule".to_owned(),
+        format!("name={REMOTE_ACCESS_RULE_NAME}"),
+    ]
+}
+
+#[must_use]
+#[cfg_attr(
+    all(not(windows), not(test)),
+    expect(dead_code, reason = "Windows-only firewall command")
+)]
+pub(crate) fn remote_access_rule_delete_args() -> Vec<String> {
+    vec![
+        "advfirewall".to_owned(),
+        "firewall".to_owned(),
+        "delete".to_owned(),
+        "rule".to_owned(),
+        format!("name={REMOTE_ACCESS_RULE_NAME}"),
     ]
 }
 
@@ -269,6 +276,62 @@ impl FirewallCommandRunner for ProcessFirewallCommandRunner {
 }
 
 #[cfg(any(windows, test))]
+fn firewall_command_text(output: &FirewallCommandOutput) -> String {
+    format!("{}\n{}", output.stdout, output.stderr)
+}
+
+/// `Ok(true)` when the named rule is confirmed absent. A query that neither
+/// reports absence nor succeeds is an error, so a missing rule is accepted
+/// only after the store was actually read.
+#[cfg(any(windows, test))]
+fn rule_listing_is_absent(output: &FirewallCommandOutput) -> Result<bool, String> {
+    let text = firewall_command_text(output);
+    if text.contains(FIREWALL_RULE_ABSENT_MARKER) {
+        return Ok(true);
+    }
+    if !output.success {
+        let details = text.trim();
+        let details = if details.is_empty() {
+            "command exited unsuccessfully without output"
+        } else {
+            details
+        };
+        return Err(format!(
+            "failed to delete and verify the remote access firewall rule: {details}"
+        ));
+    }
+    Ok(!text.contains(REMOTE_ACCESS_RULE_NAME))
+}
+
+#[cfg(any(windows, test))]
+async fn delete_and_verify_remote_access_rule<Runner>(runner: &Runner) -> Result<(), String>
+where
+    Runner: FirewallCommandRunner,
+{
+    let listing = runner
+        .run("netsh".to_owned(), remote_access_rule_show_args())
+        .await?;
+    if rule_listing_is_absent(&listing)? {
+        return Ok(());
+    }
+    let deletion = runner
+        .run("netsh".to_owned(), remote_access_rule_delete_args())
+        .await?;
+    require_firewall_command_success("delete the remote access firewall rule", deletion)?;
+    let confirmed = runner
+        .run("netsh".to_owned(), remote_access_rule_show_args())
+        .await?;
+    if rule_listing_is_absent(&confirmed)? {
+        Ok(())
+    } else {
+        Err(
+            "failed to delete and verify the remote access firewall rule: remote access firewall rule is still present after deletion"
+                .to_owned(),
+        )
+    }
+}
+
+#[cfg(any(windows, test))]
 async fn sync_remote_access_rule_with_runner<Runner, ResolveProgram>(
     enabled: bool,
     runner: &Runner,
@@ -278,16 +341,7 @@ where
     Runner: FirewallCommandRunner,
     ResolveProgram: FnOnce() -> Result<String, String>,
 {
-    let deletion = runner
-        .run(
-            "powershell.exe".to_owned(),
-            remote_access_rule_delete_and_verify_args(),
-        )
-        .await?;
-    require_firewall_command_success(
-        "delete and verify the remote access firewall rule",
-        deletion,
-    )?;
+    delete_and_verify_remote_access_rule(runner).await?;
     if !enabled {
         return Ok(());
     }
@@ -444,17 +498,86 @@ mod tests {
     }
 
     #[test]
-    fn delete_script_removes_the_named_persistent_rule_and_verifies_absence() {
-        let args = remote_access_rule_delete_and_verify_args();
+    fn show_and_delete_arguments_name_the_persistent_rule() {
         assert_eq!(
-            &args[..4],
-            ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]
+            remote_access_rule_show_args(),
+            vec![
+                "advfirewall".to_string(),
+                "firewall".to_string(),
+                "show".to_string(),
+                "rule".to_string(),
+                "name=BiBCode Remote Access".to_string(),
+            ]
         );
-        let script = &args[4];
-        assert!(script.contains("Get-NetFirewallRule -PolicyStore PersistentStore"));
-        assert!(script.contains("Remove-NetFirewallRule -ErrorAction Stop"));
-        assert!(script.contains("BiBCode Remote Access"));
-        assert!(script.contains("$remaining.Count -ne 0"));
+        assert_eq!(
+            remote_access_rule_delete_args(),
+            vec![
+                "advfirewall".to_string(),
+                "firewall".to_string(),
+                "delete".to_string(),
+                "rule".to_string(),
+                "name=BiBCode Remote Access".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_absent_listing_is_accepted_only_when_the_store_was_read() {
+        assert!(super::rule_listing_is_absent(&success()).expect("empty success is absent"));
+        assert!(
+            super::rule_listing_is_absent(&FirewallCommandOutput {
+                success: false,
+                stdout: super::FIREWALL_RULE_ABSENT_MARKER.to_owned(),
+                stderr: String::new(),
+            })
+            .expect("explicit absence")
+        );
+        assert!(
+            !super::rule_listing_is_absent(&FirewallCommandOutput {
+                success: true,
+                stdout: "Rule Name: BiBCode Remote Access\n".to_owned(),
+                stderr: String::new(),
+            })
+            .expect("present rule")
+        );
+        let error = super::rule_listing_is_absent(&failure("Access is denied."))
+            .expect_err("query failure");
+        assert!(error.contains("delete and verify"));
+        assert!(error.contains("Access is denied."));
+    }
+
+    #[tokio::test]
+    async fn a_present_rule_is_deleted_and_absence_is_confirmed_before_add() {
+        let runner = FakeFirewallCommandRunner::with_results(vec![
+            Ok(FirewallCommandOutput {
+                success: true,
+                stdout: "Rule Name: BiBCode Remote Access\n".to_owned(),
+                stderr: String::new(),
+            }),
+            Ok(success()),
+            Ok(FirewallCommandOutput {
+                success: false,
+                stdout: super::FIREWALL_RULE_ABSENT_MARKER.to_owned(),
+                stderr: String::new(),
+            }),
+            Ok(success()),
+        ]);
+
+        sync_remote_access_rule_with_runner(true, &runner, || {
+            Ok(r"C:\Apps\BiBCode\bibcode-desktop.exe".to_owned())
+        })
+        .await
+        .expect("replace a present rule");
+
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 4);
+        assert_eq!(calls[0].1, remote_access_rule_show_args());
+        assert_eq!(calls[1].1, remote_access_rule_delete_args());
+        assert_eq!(calls[2].1, remote_access_rule_show_args());
+        assert_eq!(
+            calls[3].1,
+            remote_access_rule_add_args(r"C:\Apps\BiBCode\bibcode-desktop.exe")
+        );
     }
 
     #[tokio::test]
@@ -469,7 +592,7 @@ mod tests {
 
         assert!(error.contains("launch denied"));
         assert_eq!(runner.calls().len(), 1);
-        assert_eq!(runner.calls()[0].0, "powershell.exe");
+        assert_eq!(runner.calls()[0].0, "netsh");
     }
 
     #[tokio::test]
@@ -500,7 +623,7 @@ mod tests {
 
         let calls = runner.calls();
         assert_eq!(calls.len(), 2);
-        assert_eq!(calls[0].0, "powershell.exe");
+        assert_eq!(calls[0].1, remote_access_rule_show_args());
         assert_eq!(calls[1].0, "netsh");
         assert_eq!(
             calls[1].1,
@@ -539,13 +662,7 @@ mod tests {
                 .iter()
                 .map(|(executable, _)| executable.as_str())
                 .collect::<Vec<_>>(),
-            [
-                "powershell.exe",
-                "netsh",
-                "powershell.exe",
-                "netsh",
-                "powershell.exe",
-            ]
+            ["netsh", "netsh", "netsh", "netsh", "netsh"]
         );
     }
 
@@ -567,7 +684,7 @@ mod tests {
         assert!(error.contains("delete and verify"));
         assert!(error.contains("rule is still present"));
         assert_eq!(runner.calls().len(), 1);
-        assert_eq!(runner.calls()[0].0, "powershell.exe");
+        assert_eq!(runner.calls()[0].0, "netsh");
     }
 
     #[derive(Clone)]
@@ -608,12 +725,12 @@ mod tests {
             args: Vec<String>,
         ) -> impl std::future::Future<Output = Result<FirewallCommandOutput, String>> + Send
         {
+            let should_block = args.iter().any(|arg| arg == "add")
+                && self.block_next_add.swap(false, Ordering::SeqCst);
             self.calls
                 .lock()
                 .expect("firewall calls")
                 .push((executable.clone(), args));
-            let should_block =
-                executable == "netsh" && self.block_next_add.swap(false, Ordering::SeqCst);
             let release_add = self.release_add.clone();
             async move {
                 if should_block {
@@ -702,13 +819,7 @@ mod tests {
                 .iter()
                 .map(|(executable, _)| executable.as_str())
                 .collect::<Vec<_>>(),
-            [
-                "powershell.exe",
-                "netsh",
-                "powershell.exe",
-                "powershell.exe",
-                "netsh",
-            ]
+            ["netsh", "netsh", "netsh", "netsh", "netsh"]
         );
         later
             .await
@@ -770,7 +881,7 @@ mod tests {
                 .iter()
                 .map(|(executable, _)| executable.as_str())
                 .collect::<Vec<_>>(),
-            ["powershell.exe", "netsh", "powershell.exe"],
+            ["netsh", "netsh", "netsh"],
             "only the in-flight operation and latest queued state should execute"
         );
     }

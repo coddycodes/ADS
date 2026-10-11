@@ -798,7 +798,9 @@ maintenance owner admits status and other read traffic, rejects new mutating
 HTTP and WebSocket RPC operations, and keeps a permit until every admitted
 mutation has committed or failed. RPC mutability comes from the typed method
 inventory; long-lived read streams therefore never hold a mutation permit, and
-unknown methods fail closed as mutations. Each admitted mutation has a bounded,
+unknown methods fail closed as mutations. `previewAutomation.connect` is one of
+those read streams: the desktop shell holds it for the window lifetime to
+register an in-memory automation host. Each admitted mutation has a bounded,
 sanitized operation label and age for diagnostics, without arguments, query
 values, or payloads. Preparation then drains existing mutation permits with a
 bound, quiesces runtime-owned writers, queues, providers, terminals, and
@@ -842,7 +844,20 @@ backend exits cleanly; cancellation, preparation failure, and lease expiry also
 exit instead of resuming a partially quiesced runtime. The host marks those
 exits as expected, stops every backend from the captured running set, and does
 not invoke the platform installer until every included backend has committed
-and stopped. A prepare, cancel, commit, stop, or installer failure attempts to
+and stopped. On Windows the passive NSIS package then replaces
+`bibcode-desktop.exe` and relaunches it. Its preinstall hook ends a same-user
+`bibcode-desktop.exe` and retries deleting that installed file for up to 15
+seconds, so a brief lock after the updater exits does not become the
+template's file-in-use dialog. A file that is still locked after that
+retry reaches the template dialog unchanged. An elevated installer relaunches
+through `CreateProcessWithTokenW` with a null environment block, which does
+not keep the updating process's `BIBCODE_HOME` or `BIBCODE_PORT`. Before the
+installer starts, the host writes those two variables to a temp handoff that
+stays valid for ten minutes. The replacement applies whichever it does not
+already have, before it chooses a data root or port, so a remote client
+reconnects to the same endpoint. A detached waiter starts the installed
+executable when the installer exits without relaunching it. Linux and macOS
+still relaunch in-process after install, inheriting the process environment. A prepare, cancel, commit, stop, or installer failure attempts to
 restart the exact prior running set before update coordination is released.
 Any restart onto a port its stopped predecessor held (this update recovery, a
 project-data restart of the target it stopped, a crash restart, or an exposure

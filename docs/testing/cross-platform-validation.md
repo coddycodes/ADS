@@ -1383,9 +1383,16 @@ The seeded `remote-install` lane runs only on disposable native CI runners. It
 checks candidate boot/version, retained storage/project/backup, observed
 percent/stage, requester log count, and Linux mount/runtime ownership. Record
 whether a live native grant actually widened; `widened: false` is not a wide
-live pass. Host notice can remain tests-only under the approved validation
-contract. Never execute the seeded harness locally, even with an isolated data
-root; legacy cleanup can terminate another desktop app.
+live pass. When the private credential receipt is not published, raw remote
+WebDriver logs stay withheld. The retained `remote-credential-trace.log`
+records whether the share control was found, clicked, and widened, plus the
+redacted credential error. A pairing-link failure includes the HTTP status,
+attempt count, and whether the bootstrap endpoint changed during the wait. It
+does not include the endpoint or the response body. The wait re-reads the
+desktop bootstrap on each attempt because that cache updates when the restarted
+server is ready. Host notice can remain tests-only under the approved
+validation contract. Never execute the seeded harness locally, even with an
+isolated data root; legacy cleanup can terminate another desktop app.
 
 For seeded CI qualification, distinguish a packaging-child timeout from a
 runtime-upgrade failure. The candidate, previous stable, and protected baseline

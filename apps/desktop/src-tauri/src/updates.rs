@@ -960,6 +960,7 @@ impl DesktopUpdateManager {
             }
             return Err(error.message);
         }
+        crate::windows_update_restart::prepare_restart_handoff();
         downloaded
             .update
             .install(&downloaded.bytes)
