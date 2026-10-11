@@ -74,6 +74,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** `git.runStackedAction` accepts `pullRequestOptions` and reports `pr.warning`. */
   pullRequestCreateOptions: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   vcsCloneReattach: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** `server.getProfilerStatus` and `server.reportProfilerClientBatch`, and `enableProfiler`. */
+  profiler: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

@@ -102,8 +102,10 @@ Modes chain: monitor, then diagnose what appeared, then report it.
    **Settings → About → View diagnostics → Profiler → Record profiling data**,
    choosing the environment first when several are connected. The switch
    applies live. Turning it on is the user's call, because it records on their
-   machine and costs about 1 % CPU, so make no change to `settings.json`
-   yourself. Re-run `status` once they confirm.
+   machine and adds a small CPU and disk cost (an idle headless server measured
+   about 0.25 % of one core and under 1 MB of disk a day; desktop and remote
+   sessions are not measured), so make no change to `settings.json` yourself.
+   Re-run `status` once they confirm.
 2. Report anything abnormal in `capabilities` (`nativeDumps`, `osCrashRecords`,
    `storage`), and the dropped-event count when the status includes one.
    `storage: "locked"` means another BiBCode app or server records to the same

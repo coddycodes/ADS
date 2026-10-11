@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, BufWriter, Write},
+    io::{self, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -23,11 +23,18 @@ const FINDINGS_TMP_FILE: &str = "findings.ndjson.tmp";
 pub(super) const CRASHES_DIR: &str = "crashes";
 const WRITE_BUFFER_BYTES: usize = 64 * 1024;
 
+/// Everything the profiler directory may hold: events, crash dumps and findings.
+pub const MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
+/// The share of `MAX_TOTAL_BYTES` crash dumps may take. Events never push dumps out, so a busy
+/// client cannot evict the crash evidence; dumps leave by age, or beyond this share.
+pub const MAX_DUMP_BYTES: u64 = 128 * 1024 * 1024;
+
 #[derive(Clone, Debug)]
 pub struct StoreConfig {
     pub dir: PathBuf,
     pub max_file_bytes: u64,
     pub max_total_bytes: u64,
+    pub max_dump_bytes: u64,
     pub max_age: Duration,
     pub flush_every: Duration,
 }
@@ -37,7 +44,8 @@ impl StoreConfig {
         Self {
             dir,
             max_file_bytes: 10 * 1024 * 1024,
-            max_total_bytes: 256 * 1024 * 1024,
+            max_total_bytes: MAX_TOTAL_BYTES,
+            max_dump_bytes: MAX_DUMP_BYTES,
             max_age: Duration::from_secs(7 * 24 * 3600),
             flush_every: Duration::from_secs(2),
         }
@@ -287,7 +295,14 @@ impl Writer {
     fn run(mut self, rx: Receiver<Message>) {
         let mut last_flush = Instant::now();
         loop {
-            match rx.recv_timeout(self.config.flush_every) {
+            // Idle, it sleeps until a message arrives: the periodic flush runs only while there
+            // is something to flush.
+            let received = if self.has_pending() {
+                rx.recv_timeout(self.config.flush_every)
+            } else {
+                rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
+            };
+            match received {
                 Ok(Message::Event(number, event)) => self.write(number, event),
                 Ok(Message::Finding(finding)) => self.append_finding(&finding),
                 Ok(Message::Maintain) => self.enforce_retention(),
@@ -306,6 +321,15 @@ impl Writer {
             }
         }
         self.finish();
+    }
+
+    /// Whether the periodic flush has work: lines not yet committed (still buffered, or a line
+    /// larger than the buffer written past it), or drops not yet reported.
+    fn has_pending(&self) -> bool {
+        self.out
+            .as_ref()
+            .is_some_and(|(out, len)| !out.buffer().is_empty() || *len > self.committed)
+            || self.counters.dropped.load(Ordering::Relaxed) > self.reported_drops + self.in_flight
     }
 
     /// Final report and close. Closing can itself lose lines (a failed rotation or last
@@ -456,17 +480,32 @@ impl Writer {
         }
     }
 
+    /// Appends one line. A file whose last line is torn (a full disk cut a write short, or a
+    /// crash did) gets a newline first, so the fragment stays a line of its own that readers
+    /// skip instead of corrupting this one; a write that fails is cut back off the file.
     fn append_finding(&mut self, finding: &Value) {
         let appended = serde_json::to_vec(finding)
             .map_err(io::Error::from)
             .and_then(|mut bytes| {
                 bytes.push(b'\n');
                 fs::create_dir_all(&self.config.dir)?;
-                OpenOptions::new()
+                let mut file = OpenOptions::new()
                     .create(true)
+                    .read(true)
                     .append(true)
-                    .open(self.config.dir.join(FINDINGS_FILE))?
-                    .write_all(&bytes)
+                    .open(self.config.dir.join(FINDINGS_FILE))?;
+                let committed = file.metadata()?.len();
+                if committed > 0 {
+                    let mut last = [0u8];
+                    file.seek(SeekFrom::End(-1))?;
+                    file.read_exact(&mut last)?;
+                    if last[0] != b'\n' {
+                        bytes.insert(0, b'\n');
+                    }
+                }
+                file.write_all(&bytes).inspect_err(|_| {
+                    let _ = file.set_len(committed);
+                })
             });
         if appended.is_err() {
             self.count_lost(1);
@@ -556,11 +595,13 @@ impl Writer {
 
     /// Retention for the whole profiler directory, run before every new events file and on
     /// `Message::Maintain`. Rotated `events-*` files and crash dumps (with their `.json`
-    /// sidecars, or a sidecar alone once its dump is gone) are considered together, oldest
-    /// modification time first:
+    /// sidecars, or a sidecar alone once its dump is gone), each oldest modification time
+    /// first:
     /// 1. anything older than `max_age` is deleted;
-    /// 2. while the total (events + `crashes/` + `findings.ndjson`) plus room for the new live
-    ///    file exceeds `max_total_bytes`, the oldest remaining file is deleted.
+    /// 2. while the dumps alone exceed `max_dump_bytes`, the oldest dump is deleted;
+    /// 3. while the total (events + `crashes/` + `findings.ndjson`) plus room for the new live
+    ///    file exceeds `max_total_bytes`, the oldest events file is deleted. Dumps are never
+    ///    deleted to make room for events, so a busy client cannot evict crash evidence.
     ///
     /// `findings.ndjson` counts toward the total but is not trimmed here; whoever appends
     /// findings owns compacting that file. An open live file counts toward the total but is
@@ -572,25 +613,43 @@ impl Writer {
         let mut total = events.iter().map(|f| f.len).sum::<u64>()
             + dir_size(&crashes)
             + file_len(&dir.join(FINDINGS_FILE));
-        let mut candidates: Vec<Retained> = events
+        let mut events: Vec<Retained> = events
             .into_iter()
             .filter(|file| self.live_path.as_ref() != Some(&file.path))
             .collect();
-        candidates.extend(crash_dumps(&crashes));
-        candidates.sort_by(|a, b| (a.modified, &a.path).cmp(&(b.modified, &b.path)));
+        let mut dumps = crash_dumps(&crashes);
+        let now = SystemTime::now();
+        for files in [&mut events, &mut dumps] {
+            files.sort_by(|a, b| (a.modified, &a.path).cmp(&(b.modified, &b.path)));
+            files.retain(|file| {
+                let expired = now
+                    .duration_since(file.modified)
+                    .is_ok_and(|age| age > self.config.max_age);
+                if expired {
+                    total = total.saturating_sub(file.remove());
+                }
+                !expired
+            });
+        }
+        let mut dump_total: u64 = dumps.iter().map(Retained::size).sum();
+        for dump in &dumps {
+            if dump_total <= self.config.max_dump_bytes {
+                break;
+            }
+            let freed = dump.remove();
+            dump_total = dump_total.saturating_sub(freed);
+            total = total.saturating_sub(freed);
+        }
         // The live file about to be opened may grow to `max_file_bytes`.
         let budget = self
             .config
             .max_total_bytes
             .saturating_sub(self.config.max_file_bytes);
-        let now = SystemTime::now();
-        for file in candidates {
-            let expired = now
-                .duration_since(file.modified)
-                .is_ok_and(|age| age > self.config.max_age);
-            if expired || total > budget {
-                total = total.saturating_sub(file.remove());
+        for file in &events {
+            if total <= budget {
+                break;
             }
+            total = total.saturating_sub(file.remove());
         }
     }
 }
@@ -604,6 +663,11 @@ struct Retained {
 }
 
 impl Retained {
+    /// The bytes it holds, its sidecar included.
+    fn size(&self) -> u64 {
+        self.len + self.sidecar.as_ref().map_or(0, |(_, len)| *len)
+    }
+
     /// Deletes the file, then its sidecar, so a failed delete never leaves a dump without its
     /// sidecar. Returns the bytes freed.
     fn remove(&self) -> u64 {
@@ -841,23 +905,110 @@ mod tests {
         store.shutdown();
     }
 
+    /// Events, a client's included, never push a dump out: dumps leave by age or by their
+    /// own share only.
     #[test]
-    fn retention_deletes_crash_dumps_when_events_alone_cannot_fit() {
+    fn retention_never_deletes_a_dump_to_make_room_for_events() {
         let dir = tempfile::tempdir().unwrap();
         let crashes = dir.path().join("crashes");
         std::fs::create_dir_all(&crashes).unwrap();
         std::fs::write(crashes.join("old.dmp"), vec![0u8; 800]).unwrap();
         std::fs::write(crashes.join("old.json"), b"{}").unwrap();
+        age(&crashes.join("old.dmp"), 3600);
         let store = ProfilerStore::start(StoreConfig {
             max_total_bytes: 900,
+            max_dump_bytes: 850,
             ..config(dir.path())
         });
         for n in 0..40 {
             store.sender().send(event(n));
         }
         store.shutdown();
-        assert!(!crashes.join("old.dmp").exists());
-        assert!(!crashes.join("old.json").exists());
+        assert!(crashes.join("old.dmp").exists());
+        assert!(crashes.join("old.json").exists());
+        let rotated = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter(|e| {
+                let name = e.as_ref().unwrap().file_name();
+                event_file_index(&name.to_string_lossy()).is_some()
+            })
+            .count();
+        assert_eq!(rotated, 1, "only the live events file is left");
+    }
+
+    #[test]
+    fn retention_deletes_the_oldest_dumps_over_their_share() {
+        let dir = tempfile::tempdir().unwrap();
+        let crashes = dir.path().join("crashes");
+        std::fs::create_dir_all(&crashes).unwrap();
+        for (name, hours) in [("a", 3), ("b", 2), ("c", 1)] {
+            std::fs::write(crashes.join(format!("{name}.dmp")), vec![0u8; 300]).unwrap();
+            std::fs::write(crashes.join(format!("{name}.json")), b"{}").unwrap();
+            age(&crashes.join(format!("{name}.dmp")), hours * 3600);
+        }
+        // 906 bytes of dumps against a 700-byte share: the oldest goes, sidecar after dump.
+        let store = ProfilerStore::start(StoreConfig {
+            max_total_bytes: 1 << 20,
+            max_dump_bytes: 700,
+            ..config(dir.path())
+        });
+        store.sender().send(event(1));
+        store.shutdown();
+        assert!(!crashes.join("a.dmp").exists());
+        assert!(!crashes.join("a.json").exists());
+        for name in ["b.dmp", "b.json", "c.dmp", "c.json"] {
+            assert!(crashes.join(name).exists(), "{name}");
+        }
+    }
+
+    /// A finding line torn by a full disk (or a crash) must not merge with the next one: the
+    /// next line starts on a line of its own, and readers skip the fragment.
+    #[test]
+    fn a_torn_findings_line_never_merges_with_the_next_one() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(FINDINGS_FILE), b"{\"id\":\"torn").unwrap();
+        let store = ProfilerStore::start(config(dir.path()));
+        store.sender().send_finding(json!({ "id": "whole" }));
+        store.shutdown();
+        let text = std::fs::read_to_string(dir.path().join(FINDINGS_FILE)).unwrap();
+        assert_eq!(text, "{\"id\":\"torn\n{\"id\":\"whole\"}\n");
+    }
+
+    /// With nothing buffered the writer has no reason to wake every 2 s.
+    #[test]
+    fn the_writer_waits_for_work_only_while_something_is_buffered() {
+        let dir = tempfile::tempdir().unwrap();
+        let counters = Arc::new(Counters::default());
+        let mut writer = Writer::new(config(dir.path()), counters.clone());
+        assert!(!writer.has_pending(), "idle");
+        writer.write(0, event(0));
+        assert!(writer.has_pending(), "a line in the buffer");
+        writer.flush();
+        assert!(!writer.has_pending(), "flushed");
+        counters.dropped.fetch_add(1, Ordering::Relaxed);
+        assert!(writer.has_pending(), "a drop to report");
+        writer.report_drops();
+        writer.flush();
+        assert!(!writer.has_pending(), "reported");
+        // A line larger than the buffer goes past it to the file, still uncommitted.
+        let mut writer = Writer::new(
+            StoreConfig {
+                max_file_bytes: 1 << 20,
+                ..config(dir.path())
+            },
+            Arc::new(Counters::default()),
+        );
+        writer.write(
+            1,
+            ProfilerEvent {
+                kind: "test.event",
+                source: "server".into(),
+                payload: json!({ "big": "x".repeat(WRITE_BUFFER_BYTES + 1) }),
+            },
+        );
+        assert!(writer.has_pending(), "an uncommitted line past the buffer");
+        writer.flush();
+        assert!(!writer.has_pending());
     }
 
     #[test]
@@ -1064,7 +1215,7 @@ mod tests {
     }
 
     #[test]
-    fn retention_deletes_the_oldest_file_first_across_events_and_dumps() {
+    fn retention_deletes_events_before_an_older_dump() {
         let dir = tempfile::tempdir().unwrap();
         let crashes = dir.path().join("crashes");
         std::fs::create_dir_all(&crashes).unwrap();
@@ -1074,15 +1225,16 @@ mod tests {
         age(&crashes.join("a.dmp"), 3 * 3600);
         age(&dir.path().join("events-000000.ndjson"), 2 * 3600);
         age(&crashes.join("b.dmp"), 3600);
-        // Budget is 700 - 300 = 400 and the directory holds 650: only the oldest file must go.
+        // Budget is 700 - 300 = 400 and the directory holds 650: the events file goes, though
+        // a dump is older.
         let store = ProfilerStore::start(StoreConfig {
             max_total_bytes: 700,
             ..config(dir.path())
         });
         store.sender().send(event(1));
         store.shutdown();
-        assert!(!crashes.join("a.dmp").exists(), "oldest file is a dump");
-        assert!(dir.path().join("events-000000.ndjson").exists());
+        assert!(!dir.path().join("events-000000.ndjson").exists());
+        assert!(crashes.join("a.dmp").exists(), "an older dump stays");
         assert!(crashes.join("b.dmp").exists());
     }
 

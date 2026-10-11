@@ -2567,7 +2567,7 @@ sizes. Cover relevant:
   between light and dark while the app shows the home screen and again while it
   shows a thread: the window follows each switch without a reload; with
   **Light** or **Dark** selected, the app ignores the switch;
-- **Settings → Diagnostics → Profiler** in light and dark: the environment
+- **Settings → About → View diagnostics → Profiler** in light and dark: the environment
   selector with a remote environment connected; the switch off (**Off. Turn on
   to start recording. Crash checks for the previous run still happen.**),
   **Starting...**, and recording (**Recording since … · … MB · … events**, plus
@@ -2577,7 +2577,10 @@ sizes. Cover relevant:
   disposable data root started first and holds the folder; **Open folder** enabled only for the primary
   environment on desktop and **Export bundle** only for the primary
   environment, each otherwise disabled with its stated reason; **Include crash
-  dumps** and its warning; and the findings list, empty (**No findings yet.**)
+  dumps** and its warning, disabled with Export bundle's reason when it is;
+  where an environment runs a BiBCode older than the profiler, only
+  the disabled switch with "This server's BiBCode version has no profiler.
+  Update the server to record."; and the findings list, empty (**No findings yet.**)
   and after the [Profiler crash smoke](#profiler-crash-smoke), with each
   finding's severity icon, title, count, and last seen. While an environment records,
   the status bar shows the **Profiler** segment; its tooltip lists the
@@ -2821,7 +2824,8 @@ platform's renderer isolation. The profiler directory is then
 `$BIBCODE_HOME/userdata/profiler`. Run `profiler` commands with the same
 executable and the same `BIBCODE_HOME`: `<executable> profiler status --json`.
 
-1. **Enable.** Launch the app, open **Settings → Diagnostics → Profiler**, keep
+1. **Enable.** Launch the app, open **Settings → About → View diagnostics →
+   Profiler**, keep
    the local environment selected, and turn on **Record profiling data**. The
    status line moves from **Starting...** to **Recording since …**.
 2. **Capabilities.** Within 10 s, `capabilities.json` exists. Record it and the
@@ -2846,10 +2850,11 @@ executable and the same `BIBCODE_HOME`: `<executable> profiler status --json`.
    process, its `bootId` is the current boot, and its `version`, `os`, and
    `arch` match the build;
    `profiler crashes --json` lists it.
-5. **Restart.** Start the app without the variable. Diagnostics → Profiler lists
-   a `crash.native` finding (error) for the previous run, and
+5. **Restart.** Start the app without the variable. The Diagnostics Profiler
+   section lists a `crash.native` finding (error) for the previous run, and
    `profiler findings --kind 'crash.*' --json` shows `evidence.crashId` equal to
-   the sidecar `id`. The same run has no second crash finding, such as a
+   the sidecar `id`, listed in `evidence.crashIds` too, and `evidence.faultModule`
+   naming the faulting module. The same run has no second crash finding, such as a
    `crash.unclean-exit`. Where the platform kept an OS crash record, its frames
    may be attached to the evidence.
 6. **Symbolicate.** Run

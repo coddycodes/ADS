@@ -24,7 +24,7 @@ use super::{
 };
 
 /// Envelope fields of an event line; the rest is its payload.
-const ENVELOPE: [&str; 6] = ["v", "seq", "sid", "ts", "kind", "source"];
+const ENVELOPE: [&str; 7] = ["v", "seq", "sid", "eventId", "ts", "kind", "source"];
 const PAYLOAD_WIDTH: usize = 160;
 const LINE_WIDTH: usize = 200;
 
@@ -273,10 +273,22 @@ pub(super) fn write_json(out: &mut impl Write, value: &Value) -> io::Result<()> 
     writeln!(out)
 }
 
-/// Compact JSON, except that DEL and the C1 controls (CSI is U+009B, OSC is U+009D) are written
-/// as `\u007f`, `\u009b` and so on. serde_json escapes only U+0000 to U+001F, so these would
-/// reach a terminal as they are; a fragment it hands over holds no other control character.
-/// They are ordinary JSON escapes: a parser reads the same value.
+/// `value` as the same compact JSON as [`write_json`], without the newline.
+pub(super) fn to_json(value: &Value) -> String {
+    let mut text = Vec::new();
+    write_json(&mut text, value).expect("writing to a Vec cannot fail");
+    text.pop();
+    String::from_utf8(text).expect("serde_json writes UTF-8")
+}
+
+/// Compact JSON, except that DEL and the C1 controls (CSI is U+009B, OSC is U+009D), the
+/// Unicode format characters and the Tag characters are written as `\u007f`, `\u202e` and so on
+/// (a surrogate pair above U+FFFF). serde_json escapes only U+0000 to U+001F, so these would
+/// reach a terminal as they are, or a model as text a person never sees; a fragment it hands
+/// over holds no other control character. They are ordinary JSON escapes: a parser reads the
+/// same value. The CLI's `--json`, the MCP server's lines and its tool `text` (JSON inside a
+/// JSON string, so the escapes survive the client's parse) write through this; an MCP client
+/// still decodes `structuredContent` to the raw characters.
 struct EscapeControls;
 
 impl Formatter for EscapeControls {
@@ -286,9 +298,11 @@ impl Formatter for EscapeControls {
     {
         let mut written = 0;
         for (at, c) in fragment.char_indices() {
-            if c.is_control() {
+            if c.is_control() || is_hidden_format(c) {
                 writer.write_all(&fragment.as_bytes()[written..at])?;
-                write!(writer, "\\u{:04x}", u32::from(c))?;
+                for unit in c.encode_utf16(&mut [0; 2]) {
+                    write!(writer, "\\u{unit:04x}")?;
+                }
                 written = at + c.len_utf8();
             }
         }
@@ -441,7 +455,7 @@ fn text(value: &Value, key: &str, missing: &str) -> String {
         .map_or_else(|| missing.to_owned(), plain)
 }
 
-fn plain(text: &str) -> String {
+pub(super) fn plain(text: &str) -> String {
     text.chars()
         .map(|c| {
             if c.is_control() || is_hidden_format(c) {
@@ -453,20 +467,36 @@ fn plain(text: &str) -> String {
         .collect()
 }
 
-/// Unicode format characters: they print as nothing, or reorder the text around them (the
-/// "Trojan Source" set). U+00AD soft hyphen, U+061C Arabic letter mark, U+200B to U+200F
-/// zero-width characters and direction marks, U+202A to U+202E embeddings and overrides,
-/// U+2060 to U+206F word joiner, invisible operators, isolates and deprecated shaping
-/// controls, U+FEFF byte order mark.
+/// Unicode format (Cf) characters and the Tag characters: they print as nothing, or reorder
+/// the text around them (the "Trojan Source" set), and Tags can carry text a person never
+/// sees. U+00AD soft hyphen, U+0600 to U+0605, U+061C Arabic letter mark, U+06DD, U+070F,
+/// U+0890 and U+0891, U+08E2, U+180E Mongolian vowel separator, U+200B to U+200F zero-width
+/// characters and direction marks, U+202A to U+202E embeddings and overrides, U+2060 to U+206F
+/// word joiner, invisible operators, isolates and deprecated shaping controls, U+FEFF byte
+/// order mark, U+FFF9 to U+FFFB interlinear annotations, U+110BD, U+110CD, U+13430 to
+/// U+1343F, U+1BCA0 to U+1BCA3, U+1D173 to U+1D17A, and U+E0000 to U+E007F, the Tags.
 fn is_hidden_format(c: char) -> bool {
     matches!(
         c,
         '\u{ad}'
+            | '\u{600}'..='\u{605}'
             | '\u{61c}'
+            | '\u{6dd}'
+            | '\u{70f}'
+            | '\u{890}'..='\u{891}'
+            | '\u{8e2}'
+            | '\u{180e}'
             | '\u{200b}'..='\u{200f}'
             | '\u{202a}'..='\u{202e}'
             | '\u{2060}'..='\u{206f}'
             | '\u{feff}'
+            | '\u{fff9}'..='\u{fffb}'
+            | '\u{110bd}'
+            | '\u{110cd}'
+            | '\u{13430}'..='\u{1343f}'
+            | '\u{1bca0}'..='\u{1bca3}'
+            | '\u{1d173}'..='\u{1d17a}'
+            | '\u{e0000}'..='\u{e007f}'
     )
 }
 
@@ -782,7 +812,7 @@ mod tests {
         fs::write(
             dir.join("events-000000.ndjson"),
             concat!(
-                r#"{"v":1,"seq":0,"sid":"s","ts":"2026-10-09T10:00:00Z","kind":"rpc.slow","source":"server","method":"x\u001b[31m","ms":1200}"#,
+                r#"{"v":1,"seq":0,"sid":"s","eventId":"0000000a-0","ts":"2026-10-09T10:00:00Z","kind":"rpc.slow","source":"server","method":"x\u001b[31m","ms":1200}"#,
                 "\n",
                 r#"{"v":1,"seq":1,"sid":"s","ts":"2026-10-09T10:00:01Z","kind":"process.sample","source":"server"}"#,
                 "\n",
@@ -813,6 +843,7 @@ mod tests {
             human.contains("\"ms\":1200") && !human.contains('\u{1b}'),
             "{human}"
         );
+        assert!(!human.contains("eventId"), "an envelope field: {human}");
         let findings = run(&["findings"], &dir);
         assert_eq!(
             findings,
@@ -1012,6 +1043,36 @@ mod tests {
                 "{args:?}"
             );
         }
+    }
+
+    /// Unicode Tag characters and the format (Cf) characters are invisible to a person but read
+    /// by a model, so every JSON reader gets them escaped; a parser reads back the same values.
+    #[test]
+    fn json_output_escapes_tag_and_format_characters() {
+        let hidden = "a\u{e0041}\u{e007f}b\u{202e}c\u{200b}d\u{2066}e\u{feff}f\u{ad}g";
+        let mut out = Vec::new();
+        write_json(&mut out, &json!({ "title": hidden, (hidden): 1 })).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        for escape in [
+            "\\udb40\\udc41",
+            "\\udb40\\udc7f",
+            "\\u202e",
+            "\\u200b",
+            "\\u2066",
+            "\\ufeff",
+            "\\u00ad",
+        ] {
+            assert!(text.contains(escape), "no {escape} in {text}");
+        }
+        assert!(
+            text.chars()
+                .all(|c| !is_hidden_format(c) && !c.is_control() || c == '\n'),
+            "{text:?}"
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&text).unwrap(),
+            json!({ "title": hidden, (hidden): 1 })
+        );
     }
 
     #[test]

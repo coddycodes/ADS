@@ -40,22 +40,27 @@ pub(crate) fn page_loaded<R: tauri::Runtime>(_app: &tauri::AppHandle<R>, _label:
     remember_web_processes(is_enabled());
 }
 
-/// From the in-process server's start on, scans for our web processes as its profiler turns
-/// on, since the page loaded before then. Elsewhere than Linux nothing is scanned ahead.
+/// From the in-process server's start on, finds the main window's web content process as its
+/// profiler turns on, since the page loaded before then: Linux scans for our web processes,
+/// macOS reads the main window's web content pid. Windows reads nothing ahead.
 pub(crate) fn follow_server(handle: &bibcode_server::ServerHandle) {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     if let Some(setting) = handle.profiler_enabled_signal() {
         tauri::async_runtime::spawn(follow_setting(setting));
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let _ = handle;
 }
 
 /// Applies each committed value of the setting until its sender is gone.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 async fn follow_setting(mut setting: tokio::sync::watch::Receiver<bool>) {
     loop {
-        remember_web_processes(*setting.borrow_and_update());
+        let enabled = *setting.borrow_and_update();
+        #[cfg(target_os = "linux")]
+        remember_web_processes(enabled);
+        #[cfg(target_os = "macos")]
+        remember_web_content_pid(enabled);
         if setting.changed().await.is_err() {
             break;
         }
@@ -272,11 +277,46 @@ fn reason_name(
 #[cfg(target_os = "macos")]
 static WEB_CONTENT_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-/// The main window finished loading a page: remembers its web content pid. From another
-/// thread `with_webview` is queued to the event loop rather than run inside WebKit's
-/// navigation delegate.
+/// Reads the main window's current web content pid, for when the profiler turns on after its
+/// page loaded. Set by each finished page load.
+#[cfg(target_os = "macos")]
+#[allow(clippy::type_complexity)]
+static READ_WEB_CONTENT_PID: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>> =
+    std::sync::Mutex::new(None);
+
+/// The main window finished loading a page: remembers its web content pid while the profiler
+/// is on, and how to read it once the profiler turns on.
 #[cfg(target_os = "macos")]
 pub(crate) fn page_loaded<R: tauri::Runtime>(app: &tauri::AppHandle<R>, label: &str) {
+    let (app, label) = (app.clone(), label.to_owned());
+    *READ_WEB_CONTENT_PID
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+        Some(Box::new(move || read_web_content_pid(&app, &label)));
+    remember_web_content_pid(is_enabled());
+}
+
+/// While the profiler is on, reads the main window's web content pid; off, it reads nothing
+/// and forgets the last one, as Linux forgets its web processes.
+#[cfg(target_os = "macos")]
+fn remember_web_content_pid(enabled: bool) {
+    if !enabled {
+        WEB_CONTENT_PID.store(0, std::sync::atomic::Ordering::Relaxed);
+        return;
+    }
+    if let Some(read) = READ_WEB_CONTENT_PID
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+    {
+        read();
+    }
+}
+
+/// Reads the web content pid of the webview `label`. From another thread `with_webview` is
+/// queued to the event loop rather than run inside WebKit's navigation delegate.
+#[cfg(target_os = "macos")]
+fn read_web_content_pid<R: tauri::Runtime>(app: &tauri::AppHandle<R>, label: &str) {
     use tauri::Manager;
 
     let (app, label) = (app.clone(), label.to_owned());

@@ -13,6 +13,8 @@ const RECENT_WINDOW_MIN: usize = 15;
 const GAP_RESET_MIN: u64 = 5;
 const MB: f64 = 1024.0 * 1024.0;
 const STEP_MIN_BYTES: f64 = 64.0 * MB;
+/// The share of an hour's growth that one minute's rise may take before it reads as a step.
+const STEP_SHARE: f64 = 0.5;
 const CPU_THRESHOLD: f64 = 0.8;
 const CPU_SUSTAINED_SECS: u64 = 300;
 /// Minute medians arrive 60 s apart, or 120 s when the throttled sampler skips a minute.
@@ -127,6 +129,11 @@ impl LeakDetector {
             .map(|(m, v)| (*m as f64 / 60.0, *v / MB))
             .collect();
         let recent = &points[points.len() - SUSPECT_WINDOW_MIN..];
+        // A step too small to reset the baseline (under 64 MB) still reads as steady growth
+        // once it passes the middle of the hour. Growth that one minute dominates is a step.
+        if step_dominated(recent) {
+            return LeakVerdict::None;
+        }
         let slope = theil_sen(recent); // MB per hour
         let threshold = (10.0f64).max(0.02 * baseline / MB);
         let z = mann_kendall_z(&recent.iter().map(|p| p.1).collect::<Vec<_>>());
@@ -197,6 +204,19 @@ impl CpuDetector {
         let start = *self.above_since.get_or_insert(at_secs);
         at_secs.saturating_sub(start) >= CPU_SUSTAINED_SECS
     }
+}
+
+/// Whether the largest one-minute rise of the floor is at least half of the window's growth.
+fn step_dominated(points: &[(f64, f64)]) -> bool {
+    let (Some(first), Some(last)) = (points.first(), points.last()) else {
+        return false;
+    };
+    let growth = last.1 - first.1;
+    let largest_jump = points
+        .windows(2)
+        .map(|pair| pair[1].1 - pair[0].1)
+        .fold(0.0, f64::max);
+    growth > 0.0 && largest_jump >= STEP_SHARE * growth
 }
 
 pub fn theil_sen(points: &[(f64, f64)]) -> f64 {
@@ -404,6 +424,68 @@ mod tests {
             ),
             "{verdicts:?}"
         );
+    }
+
+    /// `(minute, verdict kind)` of every verdict for `minutes` of `f`.
+    fn verdicts_of(minutes: u64, f: impl Fn(u64) -> u64) -> Vec<(u64, &'static str)> {
+        let mut det = LeakDetector::default();
+        (0..minutes)
+            .filter_map(|m| {
+                det.push_minute(m, f(m)).map(|verdict| {
+                    let kind = match verdict {
+                        LeakVerdict::Suspect { .. } => "suspect",
+                        LeakVerdict::Likely { .. } => "likely",
+                        LeakVerdict::None => "none",
+                    };
+                    (m, kind)
+                })
+            })
+            .collect()
+    }
+
+    /// A small deterministic ±3 MB jitter.
+    fn noise(m: u64) -> i64 {
+        let x = m.wrapping_mul(2_654_435_761) % 7;
+        (x as i64 - 3) * MB as i64
+    }
+
+    /// A permanent step under the 64 MB reset (a cache filled once, a library loaded) moves
+    /// the floor in one minute. Once it passes the middle of the hour, Theil–Sen and
+    /// Mann–Kendall read it as steady growth, so it must give no verdict.
+    #[test]
+    fn a_single_step_under_64_mb_is_not_a_leak() {
+        for step in [12u64, 30, 50, 60] {
+            let stepped = move |m: u64| if m < 120 { 500 * MB } else { (500 + step) * MB };
+            assert_eq!(verdicts_of(800, stepped), [], "a {step} MB step");
+            let noisy = move |m: u64| (stepped(m) as i64 + noise(m)) as u64;
+            assert_eq!(verdicts_of(800, noisy), [], "a {step} MB step with noise");
+        }
+    }
+
+    /// The step guard leaves real leaks alone: each rate keeps the verdicts it had without it.
+    #[test]
+    fn leaks_keep_their_verdicts_beside_the_step_guard() {
+        type Verdicts = &'static [(u64, &'static str)];
+        const SUSPECT_THEN_LIKELY: Verdicts = &[(75, "suspect"), (435, "likely"), (795, "likely")];
+        let cases: [(u64, Verdicts, Verdicts); 5] = [
+            // 10 MB/h on 500 MB sits exactly on the threshold: the clean line's Theil–Sen
+            // slope rounds just under it, the noisy one's just over.
+            (10, &[], &[(75, "suspect"), (446, "likely")]),
+            (15, SUSPECT_THEN_LIKELY, SUSPECT_THEN_LIKELY),
+            (30, SUSPECT_THEN_LIKELY, SUSPECT_THEN_LIKELY),
+            (100, SUSPECT_THEN_LIKELY, SUSPECT_THEN_LIKELY),
+            (
+                1000,
+                &[(75, "likely"), (435, "likely"), (795, "likely")],
+                &[(75, "likely"), (435, "likely"), (795, "likely")],
+            ),
+        ];
+        for (rate, clean, noisy) in cases {
+            let leak = move |m: u64| 500 * MB + m * rate * MB / 60;
+            assert_eq!(verdicts_of(800, leak), clean, "{rate} MB/h");
+            let jittered = move |m: u64| (leak(m) as i64 + noise(m)) as u64;
+            assert_eq!(verdicts_of(800, jittered), noisy, "{rate} MB/h with noise");
+        }
     }
 
     #[test]

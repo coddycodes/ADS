@@ -2541,12 +2541,22 @@ so current clients display its summary timing as unavailable.
 ## Profiler timing and client reports
 
 The [Profiler](./overview.md#profiler) adds two unary methods, whose schemas are
-in [`profiler.ts`](../../packages/contracts/src/profiler.ts):
+in [`profiler.ts`](../../packages/contracts/src/profiler.ts). A server advertises
+them with the environment descriptor's `capabilities.profiler`, which decodes as
+`false` for an older server. Clients send neither method, poll no status, and
+start no collector for an environment without it, because an older server
+answers an unknown method with a connection-level defect: it fails every request
+in flight on that connection and silences its config stream while the socket
+stays open. An older server also stores and echoes back an `enableProfiler: true`
+it never acts on, so clients ignore that setting without the capability. A
+client that still receives `Unknown request tag: server.getProfilerStatus` or
+`server.reportProfilerClientBatch` treats it as a permanent refusal for that
+environment.
 
-| RPC                                | Scope                   | Purpose                                                                                                                                                                                                                                                                                                                                                |
-| ---------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `server.getProfilerStatus`         | `orchestration:read`    | `ProfilerStatus`: `enabled`, `recordingSince`, `diskBytes`, `eventCount`, `droppedEvents`, `lastCrashAt`, `capabilities` (`nativeDumps`, `osCrashRecords`, and `storage`: `ok`, `failing`, or `locked` when another process records to the folder), and the 20 newest findings without evidence. It reads the profiler directory on a blocking thread. |
-| `server.reportProfilerClientBatch` | `orchestration:operate` | One client batch. It answers `{ accepted: true }` once recorded and `{ accepted: false }` while the profiler is off. A batch over 64 KiB or with more than 64 records or histograms fails with `ProfilerClientBatchTooLarge`, an invalid field with `ProfilerClientBatchInvalid`, before the toggle is checked and with nothing written.               |
+| RPC                                | Scope                   | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server.getProfilerStatus`         | `orchestration:read`    | `ProfilerStatus`: `enabled`, `recordingSince`, `diskBytes`, `eventCount`, `droppedEvents`, `lastCrashAt`, `capabilities` (`nativeDumps`, `osCrashRecords`, and `storage`: `ok`, `failing`, or `locked` when another process records to the folder), and the 20 newest findings without evidence. It reads the profiler directory on a blocking thread.                                                                                                                                                                                                |
+| `server.reportProfilerClientBatch` | `orchestration:operate` | One client batch. It answers `{ accepted: true }` once recorded, `{ accepted: false }` while the profiler is off, and `{ accepted: false, reason: "too-frequent" }`, with nothing written, for a batch within 5 s of the same `clientId`'s previous one (the collector sends every 10 s; the last 256 client ids are remembered). A batch over 64 KiB or with more than 64 records or histograms fails with `ProfilerClientBatchTooLarge`, an invalid field with `ProfilerClientBatchInvalid`, before the toggle is checked and with nothing written. |
 
 ### Server timing
 
@@ -2582,7 +2592,8 @@ the monotonic clock, each holding 100 log-scale buckets that grow by a factor of
   `getCommits`, `getChecks`, `getFiles`, `getContext`, `getVocabulary`, and
   `getCreateDefaults`; `updater.check` and `updater.install`;
   `server.updateProvider`, `server.refreshProviders`, and
-  `server.refreshProviderUsage`; `worktree.createManaged`; and
+  `server.refreshProviderUsage`; `worktree.createManaged` and `worktree.remove`
+  (which deletes the whole tree, dependencies and build output included); and
   `agentSessions.import`. They still emit `rpc.timing`, but never raise
   `rpc.slow` or count toward saturation.
 - **Hangs.** Each 5 s tick checks the unary requests still in flight. One past
@@ -2621,7 +2632,8 @@ never timestamps.
 
 [`clientCollector.ts`](../../apps/web/src/profiler/clientCollector.ts) observes
 every RPC through the environment request observer. It measures only while at
-least one connected environment's `enableProfiler` is on, and then records:
+least one connected environment has `capabilities.profiler` and its
+`enableProfiler` on, and then records:
 
 - the round trip of each request, and its render time, from the response to the
   second animation frame after it;
@@ -2640,9 +2652,9 @@ interactions, and heap go to every profiled environment. A sample that spans a
 visibility change or a sleep is dropped. A sleep shows as the wall clock
 running more than 5 s ahead of the monotonic clock; with Long Animation Frames,
 whose engines count sleep in the monotonic clock, a heartbeat over 60 s late
-counts too. An authorization refusal stops reporting to that environment for
-the session; every other failure is swallowed, so profiling never surfaces an
-error. The batch RPC is excluded from the slow-request acknowledgement
+counts too. An authorization refusal, or an older server's unknown-method
+defect, stops reporting to that environment for the session; every other failure
+is swallowed, so profiling never surfaces an error. The batch RPC is excluded from the slow-request acknowledgement
 indicator.
 
 The server drops records and histograms of methods it does not serve. Each

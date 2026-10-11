@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { memo } from "react";
 
+import { profilerRecording } from "../../profiler/profilerSupport";
 import { useEnvironments } from "../../state/environments";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -14,8 +15,7 @@ export const ProfilerRecordingSegment = memo(function ProfilerRecordingSegment()
   const { environments } = useEnvironments();
   const recording = environments.filter(
     (environment) =>
-      environment.connection.phase === "connected" &&
-      environment.serverConfig?.settings.enableProfiler === true,
+      environment.connection.phase === "connected" && profilerRecording(environment.serverConfig),
   );
   if (recording.length === 0) return null;
 
@@ -41,7 +41,7 @@ export const ProfilerRecordingSegment = memo(function ProfilerRecordingSegment()
       </TooltipTrigger>
       <TooltipPopup side="top" align="end">
         <div className="space-y-1 text-xs">
-          <div className="font-medium">Recording on</div>
+          <div className="font-medium">Profiler on</div>
           <ul>
             {recording.map(({ environmentId, label }) => (
               <li key={environmentId}>{label.trim() ? label : environmentId}</li>

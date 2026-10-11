@@ -77,7 +77,11 @@ five job groups:
   must read the dump's crash reason and crashing-thread frames.
   `scripts/dump-symbols.ts` then dumps that binary (with its dSYM on macOS and
   its PDB on Windows), and `minidump-stackwalk --json` must name
-  `crash_here_in_named_function`. `dump_syms` 2.3.9 and `minidump-stackwalk`
+  `crash_here_in_named_function`, with its caller unwound through CFI. The
+  release build's own
+  `bibcode profiler symbolicate <id> --symbols <store> --json` must name it too,
+  from the same store, so BiBCode's symbolication is proven on every OS and not
+  only the third-party walker. `dump_syms` 2.3.9 and `minidump-stackwalk`
   0.27.0 are installed with `cargo install --locked`, and Rust Cache keeps them
   in `~/.cargo/bin`. A failed run uploads the dump, its sidecar, the symbol
   store, and the stack walk as the `crash-smoke-<os>` artifact. The Windows

@@ -39,7 +39,8 @@ Body:
 
 ## Evidence
 
-- `<sid>:<seq>` `<event kind>`: <one-line description>
+- `<eventId>` (or `<sid>:<seq>` for an event without one) `<event kind>`:
+  <one-line description>
 - <Crash sidecar `<crash-id>`: the minidump stays on the reporter's machine.>
 
 ## Stack

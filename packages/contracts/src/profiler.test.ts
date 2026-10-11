@@ -5,6 +5,7 @@ import {
   PROFILER_CLIENT_BATCH_LIMITS,
   ProfilerClientBatch,
   ProfilerClientBatchInvalid,
+  ProfilerClientBatchResult,
   ProfilerClientBatchTooLarge,
   ProfilerStatus,
 } from "./profiler.ts";
@@ -13,6 +14,7 @@ import { WsServerReportProfilerClientBatchRpc } from "./rpc.ts";
 const decodeStatus = Schema.decodeUnknownSync(ProfilerStatus);
 const decodeBatch = Schema.decodeUnknownSync(ProfilerClientBatch);
 const decodeBatchError = Schema.decodeUnknownSync(WsServerReportProfilerClientBatchRpc.errorSchema);
+const decodeBatchResult = Schema.decodeUnknownSync(ProfilerClientBatchResult);
 
 describe("profiler contracts", () => {
   it("defaults the profiler off", () => {
@@ -81,6 +83,15 @@ describe("profiler contracts", () => {
     stalls: { count: 0, totalMs: 0, maxMs: 0 },
     interactions: { count: 0, maxMs: 0 },
     jsHeapBytes: null,
+  });
+
+  it("says why a batch was not accepted, and reads an older server's answer", () => {
+    expect(decodeBatchResult({ accepted: false, reason: "too-frequent" })).toEqual({
+      accepted: false,
+      reason: "too-frequent",
+    });
+    expect(decodeBatchResult({ accepted: true })).toEqual({ accepted: true });
+    expect(() => decodeBatchResult({ accepted: false, reason: "other" })).toThrow();
   });
 
   it("declares the server's batch rejections as typed errors of the batch RPC", () => {

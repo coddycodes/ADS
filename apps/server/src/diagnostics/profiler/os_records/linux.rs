@@ -23,11 +23,36 @@ pub struct CoredumpEntry {
 
 /// Unreadable output, or an entry missing a field, yields no entries for it.
 pub fn parse_coredumpctl_list(json: &str) -> Vec<CoredumpEntry> {
-    serde_json::from_str::<Vec<Value>>(json)
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|entry| serde_json::from_value(entry).ok())
-        .collect()
+    coredumpctl_list(json).unwrap_or_default()
+}
+
+/// The entries of `coredumpctl --json=short list` output, or `None` when it is not a JSON
+/// list: a `coredumpctl` without `--json` (systemd before 250) prints nothing on stdout, and so
+/// does one that found no coredump.
+fn coredumpctl_list(json: &str) -> Option<Vec<CoredumpEntry>> {
+    Some(
+        serde_json::from_str::<Vec<Value>>(json)
+            .ok()?
+            .into_iter()
+            .filter_map(|entry| serde_json::from_value(entry).ok())
+            .collect(),
+    )
+}
+
+/// The latest record in `journalctl -o json` coredump output (already narrowed to one pid)
+/// whose executable has the same file name as `exe`: the record when `coredumpctl` cannot
+/// list it. A process that reused the pid has another executable.
+pub fn journal_record_for_exe(journal: &str, exe: &str) -> Option<OsCrashRecord> {
+    journal
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .rfind(|record| {
+            record
+                .get("COREDUMP_EXE")
+                .and_then(journal_text)
+                .is_some_and(|recorded| same_executable(&recorded, exe))
+        })
+        .and_then(|record| parse_journal_message(&record))
 }
 
 /// The latest entry for `pid` whose executable has the same file name as `exe`.
@@ -103,6 +128,24 @@ fn frame(line: &str) -> Option<&str> {
     Some(rest)
 }
 
+/// systemd-coredump's journal records matching `pid` since `since`, on `boot` when given.
+#[cfg(target_os = "linux")]
+async fn coredump_journal(since: &str, pid: &str, boot: Option<&str>) -> Option<String> {
+    // `-a`: a backtrace longer than 4096 bytes is `null` without it.
+    let mut args = vec![
+        "-a",
+        "-o",
+        "json",
+        "--no-pager",
+        "--output-fields=MESSAGE,COREDUMP_PID,COREDUMP_SIGNAL,COREDUMP_SIGNAL_NAME,COREDUMP_TIMESTAMP,COREDUMP_EXE",
+        since,
+        COREDUMP_MESSAGE_ID,
+        pid,
+    ];
+    args.extend(boot);
+    super::query("journalctl", &args).await
+}
+
 /// The journal match for the boot a run recorded: `/proc/sys/kernel/random/boot_id` without
 /// its dashes. After a reboot the pid may belong to another process that crashed since.
 pub fn boot_match(boot_id: &str) -> Option<String> {
@@ -135,32 +178,27 @@ pub fn user_service_events(proc_self_cgroup: &str) -> Option<PathBuf> {
 }
 
 /// Looks up a systemd-coredump entry for the previous run's pid and executable, then its
-/// journal record with the backtrace. No `coredumpctl` reads as no record.
+/// journal record with the backtrace. When `coredumpctl --json` is missing (systemd before
+/// 250) or fails, the journal is queried for the pid directly. Neither tool reads as no record.
 #[cfg(target_os = "linux")]
 pub(super) async fn harvest(previous: &super::SessionRecord) -> Option<OsCrashRecord> {
     let since = format!("--since=@{}", super::started_at(previous)?.unix_timestamp());
     let mut list_args = vec!["--json=short", "--no-pager", "list", &since];
     let boot = previous.boot_id.as_deref().and_then(boot_match);
     list_args.extend(boot.as_deref());
-    let list = super::query("coredumpctl", &list_args).await?;
-    let entry = matching_entry(parse_coredumpctl_list(&list), previous.pid, &previous.exe)?;
+    let list = super::query("coredumpctl", &list_args)
+        .await
+        .and_then(|list| coredumpctl_list(&list));
+    let Some(list) = list else {
+        let pid = format!("COREDUMP_PID={}", previous.pid);
+        let journal = coredump_journal(&since, &pid, boot.as_deref()).await?;
+        return journal_record_for_exe(&journal, &previous.exe);
+    };
+    let entry = matching_entry(list, previous.pid, &previous.exe)?;
     let pid = format!("COREDUMP_PID={}", entry.pid);
-    // `-a`: a backtrace longer than 4096 bytes is `null` without it.
-    let journal = super::query(
-        "journalctl",
-        &[
-            "-a",
-            "-o",
-            "json",
-            "--no-pager",
-            "--output-fields=MESSAGE,COREDUMP_PID,COREDUMP_SIGNAL,COREDUMP_SIGNAL_NAME,COREDUMP_TIMESTAMP",
-            &since,
-            COREDUMP_MESSAGE_ID,
-            &pid,
-        ],
-    )
-    .await
-    .unwrap_or_default();
+    let journal = coredump_journal(&since, &pid, None)
+        .await
+        .unwrap_or_default();
     journal_record(&journal, &entry).or_else(|| {
         Some(OsCrashRecord {
             source: "coredump",
@@ -224,6 +262,31 @@ mod tests {
         let record = journal_record(&journal, &entry).expect("record");
         assert_eq!(record.signal_or_code, "SIGABRT");
         assert!(journal_record(&format!("{reused}\n"), &entry).is_none());
+    }
+
+    /// Without `coredumpctl --json` (systemd 249) the journal, queried for the pid, is the
+    /// record: the latest one for the same executable.
+    #[test]
+    fn the_journal_alone_finds_the_record_when_coredumpctl_cannot_list_it() {
+        assert_eq!(
+            coredumpctl_list(""),
+            None,
+            "an unsupported --json prints nothing"
+        );
+        assert_eq!(coredumpctl_list("No coredumps found."), None);
+        assert_eq!(coredumpctl_list("[]"), Some(Vec::new()));
+
+        let ours: Value = serde_json::from_str(JOURNAL).unwrap();
+        let mut reused = ours.clone();
+        reused["COREDUMP_EXE"] = "/usr/bin/other".into();
+        reused["COREDUMP_SIGNAL_NAME"] = "SIGSEGV".into();
+        let journal = format!("{ours}\n{reused}\n");
+        let record = journal_record_for_exe(&journal, "~/bin/bibcode_server-fe771ab9e6f4b1bc")
+            .expect("our executable's record");
+        assert_eq!(record.signal_or_code, "SIGABRT");
+        assert_eq!(record.frames.len(), 8);
+        assert!(journal_record_for_exe(&journal, "bibcode").is_none());
+        assert!(journal_record_for_exe("", "bibcode_server-fe771ab9e6f4b1bc").is_none());
     }
 
     #[test]

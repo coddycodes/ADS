@@ -218,9 +218,10 @@ Delete the unused result values above. Do not leave an ambiguous status.
 - Crash trigger and observed process exit (signal or exit code, Windows Error
   Reporting dialog):
 - Dump id, `.dmp` size in bytes, and sidecar `processKind`, `parentPid`,
-  `version`, `os`, and `arch`:
-- Finding after the restart (kind, severity, `crashId`, attached OS crash
-  record, absence of a duplicate crash finding):
+  `bootId`, `version`, `os`, and `arch`:
+- Finding after the restart (kind, severity, `crashId` and `crashIds`,
+  `faultModule`, attached OS crash record, absence of a duplicate crash
+  finding):
 - Symbolication command, symbol source (local store or `--download`), crash
   reason, first named frame, and duration:
 - Platform manual checks, each pass, fail, or unavailable with evidence (webview

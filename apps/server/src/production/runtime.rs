@@ -234,8 +234,12 @@ impl ProductionRuntime {
         let profiler_enabled = control.profiler_enabled_signal();
         // The worktree audit reads the catalog, which is built later and bound below.
         let worktree_audit_sources = Arc::new(OnceLock::new());
+        let sampler = SamplerDetector::new(process_attribution.clone());
         let mut profiler_detectors: Vec<Box<dyn Detector>> = vec![
-            Box::new(SamplerDetector::new(process_attribution.clone())),
+            Box::new(match process_tree_cleanup {
+                ProcessTreeCleanup::StandaloneServer => sampler,
+                ProcessTreeCleanup::EmbeddedHost => sampler.in_desktop_host(),
+            }),
             Box::new(LatencyDetector),
             Box::new(WorktreeAuditDetector::new(
                 worktree_audit_sources.clone(),
@@ -740,6 +744,10 @@ impl ProductionRuntime {
         if *quiesced {
             return Ok(());
         }
+        // First, so a run killed while its services stop (a desktop quit bounds the stop) reads
+        // as an incomplete shutdown on the next start, not as a crash.
+        let profiler = self.profiler.clone();
+        let _ = tokio::task::spawn_blocking(move || profiler.begin_stopping()).await;
         self.server_control.shutdown_capability_discovery().await;
         self.preview_gateway.shutdown().await;
         let process_ownership = self.terminal_services.freeze_process_ownership().await;
@@ -775,7 +783,7 @@ impl ProductionRuntime {
         }
         self.orchestration.shutdown().await;
         // Last, so the events and panics of every other service's shutdown are recorded, and a
-        // crash anywhere in the shutdown still reads as an unclean exit on the next start.
+        // crash anywhere in the shutdown still reads as a crash on the next start.
         self.profiler.end_session().await;
         *quiesced = true;
         match first_error {

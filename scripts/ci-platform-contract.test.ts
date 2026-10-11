@@ -891,6 +891,14 @@ describe("release symbols and crash smoke contract", () => {
     expect(symbolicate.run).toContain("--pdb target/release/crash_smoke.pdb");
     expect(symbolicate.run).toContain("minidump-stackwalk --json");
     expect(symbolicate.run).toContain("grep -q crash_here_in_named_function");
+    // BiBCode's own symbolication, from the release build the crash step made, names it too.
+    expect(symbolicate.run).toContain(
+      '"$bibcode" profiler symbolicate "$(basename "${dumps[0]}" .dmp)"',
+    );
+    expect(symbolicate.run).toContain('--symbols "$out/symbols" --json --base-dir "$out"');
+    expect(symbolicate.run).toContain(
+      'grep -q crash_here_in_named_function "$out/symbolicate.json"',
+    );
     // No dump fails with its count, Linux proves a sha1 build-id, and the caller is unwound by CFI.
     expect(symbolicate.run).toContain("shopt -s nullglob");
     expect(symbolicate.run).toContain("Expected one minidump in");

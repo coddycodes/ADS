@@ -6,7 +6,12 @@
 //! correlation ID only: a record without a join entry has an unknown slow part, never a
 //! guessed one, because matching by method and time can blame the wrong request.
 
-use std::io;
+use std::{
+    collections::HashMap,
+    io,
+    sync::{LazyLock, Mutex, PoisonError},
+    time::{Duration, Instant},
+};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -42,15 +47,31 @@ const STALL_FINDING_MS: f64 = 1_000.0;
 const INTERACTION_FINDING_MS: f64 = 500.0;
 /// The source of client findings. Events name their client: `client:<clientId>`.
 const SOURCE: &str = "client";
+/// The collector sends every 10 s; a client sending faster is refused the extra batches, which
+/// bounds what one client can write.
+const MIN_BATCH_INTERVAL: Duration = Duration::from_secs(5);
+/// Client ids whose last batch is remembered; past this, the least recently seen is forgotten.
+const MAX_PACED_CLIENTS: usize = 256;
+
+static PACER: LazyLock<Mutex<BatchPacer>> = LazyLock::new(Default::default);
 
 /// Handles one batch: `{ "accepted": true }` once it is recorded, `{ "accepted": false }`
-/// while the profiler is off, and a `ProfilerClientBatchTooLarge` or
-/// `ProfilerClientBatchInvalid` error, with nothing written, for a batch over its limits or
-/// with an invalid field. Validation comes first, so a bad batch is refused whatever the toggle.
+/// while the profiler is off, `{ "accepted": false, "reason": "too-frequent" }`, with nothing
+/// written, for a client's batch within 5 s of its previous one, and a
+/// `ProfilerClientBatchTooLarge` or `ProfilerClientBatchInvalid` error, with nothing written,
+/// for a batch over its limits or with an invalid field. Validation comes first, so a bad
+/// batch is refused whatever the toggle.
 pub fn ingest_client_batch(batch: Value, env_id: &str) -> Result<Value, Value> {
     let batch = validate(&batch)?;
     if !is_enabled() {
         return Ok(json!({ "accepted": false }));
+    }
+    let admitted = PACER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .admit(&batch.client_id, Instant::now());
+    if !admitted {
+        return Ok(json!({ "accepted": false, "reason": "too-frequent" }));
     }
     let book = global_latency();
     let analysis = analyze(&batch, env_id, |id| book.find_join(id));
@@ -68,6 +89,34 @@ pub fn ingest_client_batch(batch: Value, env_id: &str) -> Result<Value, Value> {
         });
     }
     Ok(json!({ "accepted": true }))
+}
+
+/// When each client's last admitted batch arrived, for the minimum batch interval.
+#[derive(Default)]
+struct BatchPacer {
+    last: HashMap<String, Instant>,
+}
+
+impl BatchPacer {
+    /// Admits a batch from `client_id` unless its previous admitted batch is under 5 s old.
+    // ponytail: evicting scans all 256 entries; fine at one batch per client per 5 s.
+    fn admit(&mut self, client_id: &str, now: Instant) -> bool {
+        if let Some(last) = self.last.get(client_id) {
+            if now.saturating_duration_since(*last) < MIN_BATCH_INTERVAL {
+                return false;
+            }
+        } else if self.last.len() >= MAX_PACED_CLIENTS
+            && let Some(stalest) = self
+                .last
+                .iter()
+                .min_by_key(|(_, at)| **at)
+                .map(|(id, _)| id.clone())
+        {
+            self.last.remove(&stalest);
+        }
+        self.last.insert(client_id.to_owned(), now);
+        true
+    }
 }
 
 /// `ProfilerClientBatch` from `packages/contracts/src/profiler.ts`. Unknown fields are
@@ -509,6 +558,37 @@ mod tests {
             .filter(|(event, _)| *event == kind)
             .map(|(_, payload)| payload)
             .collect()
+    }
+
+    #[test]
+    fn a_client_sends_at_most_one_batch_per_five_seconds() {
+        let mut pacer = BatchPacer::default();
+        let start = Instant::now();
+        assert!(pacer.admit("c1", start));
+        assert!(!pacer.admit("c1", start + Duration::from_millis(4_999)));
+        assert!(pacer.admit("c2", start), "each client has its own interval");
+        assert!(pacer.admit("c1", start + MIN_BATCH_INTERVAL));
+        // A refused batch does not restart the interval.
+        assert!(!pacer.admit("c1", start + Duration::from_secs(9)));
+        assert!(pacer.admit("c1", start + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn the_pacer_forgets_the_least_recently_seen_client_past_256() {
+        let mut pacer = BatchPacer::default();
+        let start = Instant::now();
+        for n in 0..MAX_PACED_CLIENTS {
+            let at = start + Duration::from_millis(n as u64);
+            assert!(pacer.admit(&format!("c{n}"), at));
+        }
+        let later = start + Duration::from_secs(1);
+        assert!(pacer.admit("newcomer", later));
+        assert_eq!(pacer.last.len(), MAX_PACED_CLIENTS);
+        assert!(!pacer.last.contains_key("c0"), "the stalest client went");
+        assert!(
+            !pacer.admit("c1", later),
+            "a remembered client is still paced"
+        );
     }
 
     #[test]

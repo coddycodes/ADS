@@ -2424,6 +2424,7 @@ fn environment_descriptor(config: &ServerConfig, activity_protocol_registered: b
             "pullRequestCreateOptions": true,
             "vcsCloneReattach": true,
             "attachmentStaging": true,
+            "profiler": true,
         },
     })
 }
@@ -6333,6 +6334,8 @@ mod tests {
                 "Git Manager capability {capability} was not advertised"
             );
         }
+        // Clients send the profiler RPCs only to servers that advertise them.
+        assert_eq!(descriptor["capabilities"]["profiler"], true);
     }
 
     #[test]

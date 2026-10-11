@@ -563,10 +563,12 @@ mod tests {
             .env("BIBCODE_TEST_ISOLATED_CASE", CASE)
             .output()
             .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{stdout}");
+        // A filter that no longer names this test runs nothing, and that passes too.
         assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stdout)
+            stdout.contains("test result: ok. 1 passed;"),
+            "the child ran exactly this test: {stdout}"
         );
     }
 

@@ -69,6 +69,7 @@ fn connect_environment_descriptor(config: &ServerConfig) -> serde_json::Value {
             "pullRequestCreateOptions": true,
             "vcsCloneReattach": true,
             "attachmentStaging": true,
+            "profiler": true,
         },
     })
 }
@@ -609,7 +610,9 @@ fn authorize_handler(auth: AuthService) -> crate::production::http_routes::Autho
         Box::pin(async move {
             crate::auth::authorize_http_request(&auth, &headers, &method, &uri, scope)
                 .await
-                .map(|_| ())
+                .map(|principal| crate::production::http_routes::Authorized {
+                    scopes: principal.scopes,
+                })
                 .map_err(crate::auth::auth_error_response)
         }) as crate::production::http_routes::BoxFuture<_>
     })
@@ -1139,6 +1142,7 @@ mod tests {
         assert_eq!(descriptor["capabilities"]["pullRequestCreateOptions"], true);
         assert_eq!(descriptor["capabilities"]["vcsCloneReattach"], true);
         assert_eq!(descriptor["capabilities"]["attachmentStaging"], true);
+        assert_eq!(descriptor["capabilities"]["profiler"], true);
         assert_eq!(
             descriptor["remoteUpdateSupport"],
             serde_json::json!({

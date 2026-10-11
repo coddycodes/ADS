@@ -1,5 +1,6 @@
-//! The clean-shutdown sentinel. `session.json` records that a run is in progress; an orderly
-//! shutdown marks it clean, so the next start can tell how a run that never did ended.
+//! The clean-shutdown sentinel. `session.json` records that a run is in progress, then that its
+//! shutdown began; an orderly shutdown marks it clean, so the next start can tell how a run
+//! that never did ended.
 
 use std::{collections::HashSet, fs, io, path::Path};
 
@@ -18,12 +19,17 @@ use super::{
 const SESSION_FILE: &str = "session.json";
 const SESSION_TMP_FILE: &str = "session.json.tmp";
 const RUNNING: &str = "running";
+/// Shutdown began: a run left in this state was being shut down, not crashed, unless a dump
+/// or an OS crash record says otherwise.
+const STOPPING: &str = "stopping";
 const CLEAN: &str = "clean";
 /// Outside Linux the boot ID is the boot time in seconds, derived from the wall clock (Windows
 /// subtracts the uptime from it), so a clock adjustment shifts it slightly.
 const BOOT_TIME_SLACK_SECS: u64 = 60;
 /// Frames that make up a native crash's fingerprint.
 const FINGERPRINT_FRAMES: usize = 5;
+/// A larger dump is not opened: its fingerprint falls back to the process kind alone.
+const MAX_PARSED_DUMP_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +55,8 @@ pub enum PreviousRun {
         facility: &'static str,
     },
     SystemCrash,
+    /// Shutdown began and never finished, and nothing says the run crashed.
+    ShutdownIncomplete,
 }
 
 /// A crash dump's sidecar, as far as linking it to a finding needs.
@@ -66,39 +74,59 @@ pub struct DumpSidecar {
     pub boot_id: Option<String>,
 }
 
-/// A crash dump and its crash reason, when the dump says.
+/// Where a dumped crash happened: the faulting instruction's module and its offset there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fault {
+    /// The module's file name, without its directory.
+    pub module: String,
+    pub offset: u64,
+}
+
+/// A crash dump, its crash reason and its fault site, when the dump says.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Dump {
     pub sidecar: DumpSidecar,
     pub reason: Option<String>,
+    pub fault: Option<Fault>,
 }
 
 impl Dump {
-    /// Reads the crash reason from the dump's exception stream. The dump is mapped, not read
-    /// whole, and nothing is symbolicated: that is the CLI's job.
+    /// Reads the crash reason and the fault site from the dump's exception stream and module
+    /// list. The dump is mapped, not read whole, and nothing is symbolicated: that is the CLI's
+    /// job. Blocks on file I/O, so it runs off the async workers, once per dump.
     pub fn read(dir: &Path, sidecar: DumpSidecar) -> Self {
         let path = dir
             .join(store::CRASHES_DIR)
             .join(format!("{}.dmp", sidecar.id));
+        let (reason, fault) = read_dump(&path);
         Self {
-            reason: crash_reason(&path),
+            reason,
+            fault,
             sidecar,
         }
     }
 
-    /// `[processKind, "minidump", crash reason or "dump"]`.
+    /// `[processKind, "minidump", crash reason, fault module, fault offset]`, so faults at
+    /// different places stay apart; `[processKind, "minidump", crash reason or "dump"]` when the
+    /// dump names no fault site.
     fn fingerprint_fields(&self) -> Vec<String> {
-        vec![
+        let mut fields = vec![
             self.sidecar.process_kind.clone(),
             "minidump".to_owned(),
             self.reason.clone().unwrap_or_else(|| "dump".to_owned()),
-        ]
+        ];
+        if let Some(fault) = &self.fault {
+            fields.extend([fault.module.clone(), format!("{:#x}", fault.offset)]);
+        }
+        fields
     }
 
     fn evidence(&self) -> Map<String, Value> {
         let mut evidence = Map::from_iter([
             ("source".to_owned(), "minidump".into()),
             ("crashId".to_owned(), self.sidecar.id.clone().into()),
+            // Every dump this finding counted, newest first; `FindingsBook` merges repeats.
+            ("crashIds".to_owned(), vec![self.sidecar.id.clone()].into()),
             (
                 "processKind".to_owned(),
                 self.sidecar.process_kind.clone().into(),
@@ -111,12 +139,41 @@ impl Dump {
         if let Some(reason) = &self.reason {
             evidence.insert("crashReason".to_owned(), reason.clone().into());
         }
+        if let Some(fault) = &self.fault {
+            evidence.insert("faultModule".to_owned(), fault.module.clone().into());
+            evidence.insert(
+                "faultOffset".to_owned(),
+                format!("{:#x}", fault.offset).into(),
+            );
+        }
         evidence
     }
 
     /// The `crash.native` finding of a dump written while BiBCode kept running, such as one a
     /// Windows invalid-parameter handler asked for.
     pub fn running_finding(&self) -> FindingInput {
+        self.finding(format!(
+            "The crash monitor wrote minidump {} for the {} process ({}), which kept running.",
+            self.sidecar.id,
+            self.sidecar.process_kind,
+            self.reason.as_deref().unwrap_or("a native fault"),
+        ))
+    }
+
+    /// The `crash.native` finding of a dump no finding linked to its run: written for a process
+    /// that no profiler session classified, such as a desktop host that crashed during startup.
+    pub fn unlinked_finding(&self) -> FindingInput {
+        self.finding(format!(
+            "The crash monitor wrote minidump {} for the {} process (pid {}, {}), and no \
+             profiler session reported it.",
+            self.sidecar.id,
+            self.sidecar.process_kind,
+            self.sidecar.parent_pid,
+            self.reason.as_deref().unwrap_or("a native fault"),
+        ))
+    }
+
+    fn finding(&self, summary: String) -> FindingInput {
         let reason = self.reason.as_deref().unwrap_or("a native fault");
         let mut evidence = self.evidence();
         if let Some(version) = &self.sidecar.version {
@@ -128,11 +185,7 @@ impl Dump {
             source: "server".into(),
             fingerprint_fields: self.fingerprint_fields(),
             title: format!("Native crash dumped: {reason}"),
-            summary: format!(
-                "The crash monitor wrote minidump {} for the {} process ({reason}), which kept \
-                 running.",
-                self.sidecar.id, self.sidecar.process_kind
-            ),
+            summary,
             evidence: Value::Object(evidence),
         }
     }
@@ -141,14 +194,45 @@ impl Dump {
 /// The crash reason a minidump's exception stream holds, such as `SIGSEGV / SEGV_MAPERR` or
 /// `EXCEPTION_ACCESS_VIOLATION_WRITE`.
 pub fn crash_reason(dump: &Path) -> Option<String> {
-    let dump = minidump::Minidump::read_path(dump).ok()?;
-    let system = dump.get_stream::<minidump::MinidumpSystemInfo>().ok()?;
-    let exception = dump.get_stream::<minidump::MinidumpException>().ok()?;
-    Some(
-        exception
-            .get_crash_reason(system.os, system.cpu)
-            .to_string(),
-    )
+    read_dump(dump).0
+}
+
+/// The crash reason and the fault site of a minidump: the module that holds the crashing
+/// thread's instruction pointer, or the exception address when the dump has no context. A
+/// file over 256 MiB, or one that is not a minidump, yields neither.
+fn read_dump(path: &Path) -> (Option<String>, Option<Fault>) {
+    if fs::metadata(path).map_or(true, |meta| meta.len() > MAX_PARSED_DUMP_BYTES) {
+        return (None, None);
+    }
+    let Ok(dump) = minidump::Minidump::read_path(path) else {
+        return (None, None);
+    };
+    let (Ok(system), Ok(exception)) = (
+        dump.get_stream::<minidump::MinidumpSystemInfo>(),
+        dump.get_stream::<minidump::MinidumpException>(),
+    ) else {
+        return (None, None);
+    };
+    let reason = exception
+        .get_crash_reason(system.os, system.cpu)
+        .to_string();
+    let misc = dump.get_stream::<minidump::MinidumpMiscInfo>().ok();
+    let address = exception.context(&system, misc.as_ref()).map_or(
+        exception.raw.exception_record.exception_address,
+        |context| context.get_instruction_pointer(),
+    );
+    let fault = dump
+        .get_stream::<minidump::MinidumpModuleList>()
+        .ok()
+        .and_then(|modules| {
+            use minidump::Module;
+            let module = modules.module_at_address(address)?;
+            Some(Fault {
+                module: os_records::file_name(&module.code_file()).to_owned(),
+                offset: address.checked_sub(module.base_address())?,
+            })
+        });
+    (Some(reason), fault)
 }
 
 /// Every readable crash sidecar in the profiler directory `dir`, newest `createdAt` first;
@@ -201,10 +285,10 @@ pub fn dump_of_run<'a>(
         .filter(|sidecar| !linked.contains(&sidecar.id))
 }
 
-/// Returns the previous record if it was left `running`, then records this run as running
-/// through a synced temp file and a rename. Blocks on file I/O.
+/// Returns the previous record if it was left `running` or `stopping`, then records this run as
+/// running through a synced temp file and a rename. Blocks on file I/O.
 pub fn begin_session(dir: &Path) -> Option<SessionRecord> {
-    let previous = read(dir).filter(|record| record.state == RUNNING);
+    let previous = read(dir).filter(|record| record.state == RUNNING || record.state == STOPPING);
     let current = SessionRecord {
         state: RUNNING.into(),
         pid: std::process::id(),
@@ -220,6 +304,17 @@ pub fn begin_session(dir: &Path) -> Option<SessionRecord> {
     previous
 }
 
+/// Marks this process's running session as stopping: its shutdown has begun. A clean record,
+/// or one another process wrote, is left alone. Blocks on file I/O.
+pub fn mark_stopping(dir: &Path) {
+    if let Some(mut record) =
+        read(dir).filter(|record| record.pid == std::process::id() && record.state == RUNNING)
+    {
+        record.state = STOPPING.into();
+        write(dir, &record);
+    }
+}
+
 /// Marks this process's session clean. A record another process wrote after this one
 /// released the directory is left alone. Blocks on file I/O.
 pub fn end_session(dir: &Path) {
@@ -229,9 +324,9 @@ pub fn end_session(dir: &Path) {
     }
 }
 
-/// The run's own crash dump is the most specific evidence, then an OS crash record; a
-/// different boot means the system went down with the run; a risen `oom_kill` count points at
-/// the OOM killer.
+/// The run's own crash dump is the most specific evidence, then an OS crash record; a run
+/// whose shutdown had begun otherwise just never finished it; a different boot means the
+/// system went down with the run; a risen `oom_kill` count points at the OOM killer.
 pub fn classify(
     previous: &SessionRecord,
     current_boot: Option<&str>,
@@ -239,7 +334,7 @@ pub fn classify(
     record: Option<OsCrashRecord>,
     dump: Option<Dump>,
 ) -> PreviousRun {
-    if previous.state != RUNNING {
+    if previous.state != RUNNING && previous.state != STOPPING {
         return PreviousRun::Clean;
     }
     if let Some(dump) = dump {
@@ -247,6 +342,9 @@ pub fn classify(
     }
     if let Some(record) = record {
         return PreviousRun::Crash(record);
+    }
+    if previous.state == STOPPING {
+        return PreviousRun::ShutdownIncomplete;
     }
     if let (Some(before), Some(now)) = (previous.boot_id.as_deref(), current_boot)
         && !same_boot(before, now)
@@ -283,27 +381,32 @@ pub fn finding_for(previous: &SessionRecord, run: PreviousRun) -> Option<Finding
         PreviousRun::Dump(dump, record) => {
             let reason = dump.reason.as_deref().unwrap_or("a native fault");
             let mut extra = dump.evidence();
-            // The OS record of the same crash, when there is one, adds its frames.
-            if let Some(record) = &record {
-                let frames: Vec<String> = record.frames.iter().map(|f| redact_path(f)).collect();
-                extra.extend([
-                    ("recordSource".to_owned(), record.source.into()),
-                    (
-                        "signalOrCode".to_owned(),
-                        record.signal_or_code.clone().into(),
-                    ),
-                    (
-                        "module".to_owned(),
-                        record.module.as_deref().map(redact_path).into(),
-                    ),
-                    ("frames".to_owned(), frames.into()),
-                    ("rawRef".to_owned(), redact_path(&record.raw_ref).into()),
-                ]);
-            }
+            // The OS record of the same crash, when there is one, adds its frames, and its own
+            // module's frames tell crashes apart as they do without a dump.
+            let fingerprint_fields = match &record {
+                Some(record) => {
+                    let site = RecordSite::of(previous, record);
+                    extra.extend([
+                        ("recordSource".to_owned(), record.source.into()),
+                        (
+                            "signalOrCode".to_owned(),
+                            record.signal_or_code.clone().into(),
+                        ),
+                        (
+                            "module".to_owned(),
+                            record.module.as_deref().map(redact_path).into(),
+                        ),
+                        ("frames".to_owned(), site.frames.clone().into()),
+                        ("rawRef".to_owned(), redact_path(&record.raw_ref).into()),
+                    ]);
+                    site.fingerprint_fields
+                }
+                None => dump.fingerprint_fields(),
+            };
             (
                 "crash.native",
                 Severity::Error,
-                dump.fingerprint_fields(),
+                fingerprint_fields,
                 format!("Previous run crashed with {reason}"),
                 format!(
                     "{reason} in the {} process; the crash monitor wrote minidump {}.",
@@ -313,40 +416,16 @@ pub fn finding_for(previous: &SessionRecord, run: PreviousRun) -> Option<Finding
             )
         }
         PreviousRun::Crash(record) => {
-            // OS records hold paths and symbols; nothing from them is kept unredacted.
-            let frames: Vec<String> = record.frames.iter().map(|f| redact_path(f)).collect();
-            // Every abort shares libc's and std's top frames, so our own executable's frames
-            // tell crashes apart; other modules' top frames stand in when it has none.
-            let own = os_records::file_name(&previous.exe);
-            let own_frames: Vec<&String> = frames
-                .iter()
-                .filter(|frame| {
-                    !own.is_empty()
-                        && os_records::frame_module(frame)
-                            .is_some_and(|module| module.eq_ignore_ascii_case(own))
-                })
-                .collect();
-            let (module, key_frames) = if own_frames.is_empty() {
-                (
-                    record.module.as_deref().map(redact_path),
-                    frames.iter().collect::<Vec<_>>(),
-                )
-            } else {
-                (Some(own.to_owned()), own_frames)
-            };
+            let RecordSite {
+                fingerprint_fields,
+                module,
+                frames,
+            } = RecordSite::of(previous, &record);
             let shown_module = module.as_deref().unwrap_or("an unknown module");
-            let mut fields = vec![
-                record.source.to_owned(),
-                record.signal_or_code.clone(),
-                shown_module.to_owned(),
-            ];
-            // The fault site too: faults at different places behind one caller stay apart.
-            fields.extend(frames.first().cloned());
-            fields.extend(key_frames.into_iter().take(FINGERPRINT_FRAMES).cloned());
             (
                 "crash.native",
                 Severity::Error,
-                fields,
+                fingerprint_fields,
                 format!("Previous run crashed with {}", record.signal_or_code),
                 format!(
                     "{} in {shown_module}, from the OS crash record ({})",
@@ -391,6 +470,18 @@ pub fn finding_for(previous: &SessionRecord, run: PreviousRun) -> Option<Finding
             "The computer restarted, crashed or lost power while BiBCode was running.".to_owned(),
             json!({}),
         ),
+        // Not a `crash.*` kind: it never sets the last crash.
+        PreviousRun::ShutdownIncomplete => (
+            "shutdown.incomplete",
+            Severity::Info,
+            Vec::new(),
+            "BiBCode did not finish shutting down".to_owned(),
+            "The previous run began shutting down and stopped before it finished, and no crash \
+             record matched it. Quitting while work was still stopping, or a forced quit, can \
+             cause this."
+                .to_owned(),
+            json!({}),
+        ),
     };
     if let (Value::Object(evidence), Value::Object(extra)) = (&mut evidence, extra) {
         evidence.extend(extra);
@@ -404,6 +495,53 @@ pub fn finding_for(previous: &SessionRecord, run: PreviousRun) -> Option<Finding
         summary,
         evidence,
     })
+}
+
+/// Where an OS crash record says a crash happened, redacted.
+struct RecordSite {
+    fingerprint_fields: Vec<String>,
+    /// The module the fingerprint names: our own executable when a frame is in it.
+    module: Option<String>,
+    frames: Vec<String>,
+}
+
+impl RecordSite {
+    fn of(previous: &SessionRecord, record: &OsCrashRecord) -> Self {
+        // OS records hold paths and symbols; nothing from them is kept unredacted.
+        let frames: Vec<String> = record.frames.iter().map(|f| redact_path(f)).collect();
+        // Every abort shares libc's and std's top frames, so our own executable's frames
+        // tell crashes apart; other modules' top frames stand in when it has none.
+        let own = os_records::file_name(&previous.exe);
+        let own_frames: Vec<&String> = frames
+            .iter()
+            .filter(|frame| {
+                !own.is_empty()
+                    && os_records::frame_module(frame)
+                        .is_some_and(|module| module.eq_ignore_ascii_case(own))
+            })
+            .collect();
+        let (module, key_frames) = if own_frames.is_empty() {
+            (
+                record.module.as_deref().map(redact_path),
+                frames.iter().collect::<Vec<_>>(),
+            )
+        } else {
+            (Some(own.to_owned()), own_frames)
+        };
+        let mut fingerprint_fields = vec![
+            record.source.to_owned(),
+            record.signal_or_code.clone(),
+            module.as_deref().unwrap_or("an unknown module").to_owned(),
+        ];
+        // The fault site too: faults at different places behind one caller stay apart.
+        fingerprint_fields.extend(frames.first().cloned());
+        fingerprint_fields.extend(key_frames.into_iter().take(FINGERPRINT_FRAMES).cloned());
+        Self {
+            fingerprint_fields,
+            module,
+            frames,
+        }
+    }
 }
 
 /// Linux's boot ID; elsewhere the boot time in seconds.
@@ -528,6 +666,7 @@ mod tests {
         let dump = |reason: Option<&str>| Dump {
             sidecar: sidecar("6f1c", 42, "2026-10-09T10:02:00Z", Some("b1")),
             reason: reason.map(Into::into),
+            fault: None,
         };
         let record = OsCrashRecord {
             source: "coredump",
@@ -541,17 +680,18 @@ mod tests {
             &prev,
             Some("b2"),
             Some(4),
-            Some(record),
+            Some(record.clone()),
             Some(dump(Some("SIGSEGV / SEGV_MAPERR"))),
         );
         let input = finding_for(&prev, run).unwrap();
         assert_eq!(input.kind, "crash.native");
         assert_eq!(input.severity, Severity::Error);
-        assert_eq!(
-            input.fingerprint_fields,
-            ["server", "minidump", "SIGSEGV / SEGV_MAPERR"]
-        );
+        // The record's own-module frames tell crashes apart, as without a dump.
+        let recorded = finding_for(&prev, PreviousRun::Crash(record)).unwrap();
+        assert_eq!(input.fingerprint_fields, recorded.fingerprint_fields);
+        assert_eq!(input.fingerprint_fields[2], "bibcode");
         assert_eq!(input.evidence["crashId"], "6f1c");
+        assert_eq!(input.evidence["crashIds"], json!(["6f1c"]));
         assert_eq!(input.evidence["source"], "minidump");
         assert_eq!(input.evidence["recordSource"], "coredump");
         assert_eq!(input.evidence["frames"][0], "main (bibcode + 0x10)");
@@ -567,6 +707,57 @@ mod tests {
         assert_eq!(running.kind, "crash.native");
         assert_eq!(running.fingerprint_fields, ["server", "minidump", "dump"]);
         assert_eq!(running.evidence["crashId"], "6f1c");
+    }
+
+    /// Without an OS record, a dump's fault site keeps different crashes apart, and the same
+    /// site again is a repeat of one finding.
+    #[test]
+    fn dumps_are_told_apart_by_their_fault_site() {
+        let dump = |id: &str, offset: u64| Dump {
+            sidecar: sidecar(id, 42, "2026-10-09T10:02:00Z", Some("b1")),
+            reason: Some("SIGSEGV / SEGV_MAPERR".into()),
+            fault: Some(Fault {
+                module: "bibcode".into(),
+                offset,
+            }),
+        };
+        assert_eq!(
+            dump("a", 0x1234).running_finding().fingerprint_fields,
+            [
+                "server",
+                "minidump",
+                "SIGSEGV / SEGV_MAPERR",
+                "bibcode",
+                "0x1234"
+            ]
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let store = store::ProfilerStore::start(store::StoreConfig::new(dir.path().into()));
+        let mut book = super::super::findings::FindingsBook::default();
+        let now = OffsetDateTime::now_utc();
+        for (id, offset) in [("a", 0x1234), ("b", 0x5678), ("c", 0x1234)] {
+            book.record_now(dump(id, offset).running_finding(), now, &store.sender());
+        }
+        // The previous run's dump without a record follows the same rule.
+        let prev = previous();
+        let previous_run = finding_for(&prev, PreviousRun::Dump(dump("d", 0x5678), None)).unwrap();
+        assert_eq!(
+            previous_run.fingerprint_fields,
+            dump("x", 0x5678).running_finding().fingerprint_fields
+        );
+        store.shutdown();
+        let mut counts: Vec<u64> = book.newest(10).iter().map(|f| f.count).collect();
+        counts.sort_unstable();
+        assert_eq!(counts, [1, 2], "two sites, one of them twice");
+    }
+
+    #[test]
+    fn a_dump_over_256_mib_is_not_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("huge.dmp");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(MAX_PARSED_DUMP_BYTES + 1).unwrap();
+        assert_eq!(read_dump(&path), (None, None));
     }
 
     /// The newest-dump rule goes by when the monitor wrote each dump, not by file times, which
@@ -624,6 +815,59 @@ mod tests {
             classify(&prev, Some("1791550000"), None, None, None),
             PreviousRun::SystemCrash
         ));
+    }
+
+    /// A run that began shutting down and never finished is not a crash, unless a dump or an
+    /// OS record says it crashed on the way out.
+    #[test]
+    fn a_shutdown_that_never_finished_is_info_unless_it_crashed() {
+        let prev = SessionRecord {
+            state: "stopping".into(),
+            ..previous()
+        };
+        // Another boot and a risen OOM count do not make it a crash either.
+        let run = classify(&prev, Some("b2"), Some(4), None, None);
+        assert!(matches!(run, PreviousRun::ShutdownIncomplete), "{run:?}");
+        let input = finding_for(&prev, run).unwrap();
+        assert_eq!(input.kind, "shutdown.incomplete");
+        assert_eq!(input.severity, Severity::Info);
+        assert_eq!(input.title, "BiBCode did not finish shutting down");
+        assert_eq!(input.evidence["pid"], 42);
+
+        let dump = Dump {
+            sidecar: sidecar("d", 42, "2026-10-09T10:02:00Z", Some("b1")),
+            reason: Some("SIGSEGV / SEGV_MAPERR".into()),
+            fault: None,
+        };
+        assert!(matches!(
+            classify(&prev, Some("b1"), Some(3), None, Some(dump)),
+            PreviousRun::Dump(..)
+        ));
+        let record = OsCrashRecord {
+            source: "coredump",
+            signal_or_code: "SIGSEGV".into(),
+            module: None,
+            frames: vec![],
+            raw_ref: "pid 42".into(),
+        };
+        assert!(matches!(
+            classify(&prev, Some("b1"), Some(3), Some(record), None),
+            PreviousRun::Crash(_)
+        ));
+    }
+
+    #[test]
+    fn mark_stopping_records_a_shutdown_in_progress_for_the_next_start() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(begin_session(dir.path()).is_none());
+        mark_stopping(dir.path());
+        let prev = begin_session(dir.path()).expect("a shutdown that never finished");
+        assert_eq!(prev.state, "stopping");
+        // An orderly end after it is clean; a clean record is never turned back.
+        mark_stopping(dir.path());
+        end_session(dir.path());
+        mark_stopping(dir.path());
+        assert!(begin_session(dir.path()).is_none());
     }
 
     #[test]

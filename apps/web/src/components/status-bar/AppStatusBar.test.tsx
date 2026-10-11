@@ -220,7 +220,10 @@ describe("AppStatusBarView", () => {
         environmentId: "primary",
         label: "Local",
         connection: { phase: "connected" },
-        serverConfig: { settings: { enableProfiler: true } },
+        serverConfig: {
+          environment: { capabilities: { profiler: true } },
+          settings: { enableProfiler: true },
+        },
       },
     ];
     try {

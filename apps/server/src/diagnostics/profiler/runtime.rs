@@ -76,9 +76,10 @@ struct Parts {
     /// dropped on a thread outside it.
     runtime: tokio::runtime::Handle,
     supervisor: JoinHandle<()>,
-    /// Classifies the previous run; teardown waits for it (at most the 5 s harvest timeout)
-    /// so its finding reaches the store before the session is marked clean.
-    classification: Option<JoinHandle<()>>,
+    /// Classifies the previous run, then raises the dumps no finding links; teardown waits for
+    /// it (at most the 5 s harvest timeout) so its findings reach the store before the session
+    /// is marked clean.
+    classification: JoinHandle<()>,
     /// Raises the hook's panics as findings; teardown waits for the ones already handed over.
     panics: JoinHandle<()>,
     store: ProfilerStore,
@@ -147,15 +148,19 @@ impl ProfilerRuntime {
             .filter(|previous| !(earlier_in_process && previous.pid == std::process::id()));
         install_panic_hook();
         let runtime = tokio::runtime::Handle::current();
-        let classification = previous.map(|previous| {
-            runtime.spawn(classify_previous_run(handle.clone(), previous, dir.clone()))
-        });
-        let panics = runtime.spawn(raise_panics(handle.clone(), panic_records, stop.clone()));
-        // This run's dumps: written for this process since it started.
+        // This run's dumps: written for this process since it started. Older ones are earlier
+        // runs', raised at start when no finding links them.
         let dumps = DumpScan {
             dir: dir.clone(),
             since: OffsetDateTime::now_utc(),
         };
+        let classification = runtime.spawn(classify_earlier_runs(
+            handle.clone(),
+            previous,
+            dir.clone(),
+            dumps.since,
+        ));
+        let panics = runtime.spawn(raise_panics(handle.clone(), panic_records, stop.clone()));
         let supervisor = runtime.spawn(supervise(
             handle.clone(),
             enabled,
@@ -204,10 +209,22 @@ impl ProfilerRuntime {
         status_json(&self.dir, live)
     }
 
+    /// Records that the server's shutdown began, before the other services stop: a run that
+    /// never finishes it then reads as an incomplete shutdown on the next start, not as a
+    /// crash. Only the directory's owner writes, and only before its teardown began. Blocks on
+    /// file I/O.
+    pub fn begin_stopping(&self) {
+        // Held while writing, so teardown cannot release the directory meanwhile.
+        let parts = lock(&self.parts);
+        if parts.is_some() {
+            sentinel::mark_stopping(&self.dir);
+        }
+    }
+
     /// The orderly end of a run: `shutdown`, with the session marked clean as teardown's last
     /// step before the directory is released, so whoever takes the directory next never reads
     /// a stale `running` record. A degraded runtime does not own the directory and writes
-    /// nothing. A plain `shutdown` or a drop leaves the session `running`.
+    /// nothing. A plain `shutdown` leaves the session as it was; a drop marks it `stopping`.
     pub async fn end_session(&self) {
         self.mark_clean.store(true, Ordering::Relaxed);
         self.shutdown().await;
@@ -226,9 +243,6 @@ impl ProfilerRuntime {
     /// run a second detector set beside them.
     fn begin_teardown(&self) {
         self.stop.cancel();
-        if let Some(handle) = &self.handle {
-            uninstall(handle);
-        }
         let Some(Parts {
             runtime,
             supervisor,
@@ -242,11 +256,13 @@ impl ProfilerRuntime {
         };
         let done = self.done.clone();
         let (dir, mark_clean) = (self.dir.clone(), self.mark_clean.clone());
+        // Uninstalled once the detectors stopped, so their last events (the sampler's open
+        // minute) are still written; also if this task never runs, when it is dropped.
+        let installed = UninstallOnDrop(self.handle.clone());
         runtime.spawn(async move {
             let _ = supervisor.await;
-            if let Some(classification) = classification {
-                let _ = classification.await;
-            }
+            drop(installed);
+            let _ = classification.await;
             let _ = panics.await;
             // The store joins its writer thread, which must not block an async worker.
             let _ = tokio::task::spawn_blocking(move || {
@@ -267,9 +283,25 @@ impl ProfilerRuntime {
 
 impl Drop for ProfilerRuntime {
     /// A runtime dropped without `shutdown` (a server start that failed after creating it)
-    /// must not leave its handle installed, its detectors running, or the directory locked.
+    /// must not leave its handle installed, its detectors running, or the directory locked,
+    /// and its run stopped rather than crashed. That one write blocks: the process may exit
+    /// right after a failed start, before a background task would run.
     fn drop(&mut self) {
+        if !self.mark_clean.load(Ordering::Relaxed) {
+            self.begin_stopping();
+        }
         self.begin_teardown();
+    }
+}
+
+/// Uninstalls the global handle when dropped.
+struct UninstallOnDrop(Option<Arc<ProfilerHandle>>);
+
+impl Drop for UninstallOnDrop {
+    fn drop(&mut self) {
+        if let Some(handle) = &self.0 {
+            uninstall(handle);
+        }
     }
 }
 
@@ -301,9 +333,45 @@ fn lock_dir(dir: &Path) -> io::Result<File> {
     }
 }
 
+/// Classifies the previous run when it never marked its session clean, then raises a
+/// `crash.native` finding for each dump that no finding links, such as one a desktop host
+/// wrote while it crashed during startup, before any profiler session began. The dumps of the
+/// current run, written since `since`, are the running scan's.
+async fn classify_earlier_runs(
+    handle: Arc<ProfilerHandle>,
+    previous: Option<SessionRecord>,
+    dir: PathBuf,
+    since: OffsetDateTime,
+) {
+    if let Some(previous) = previous {
+        classify_previous_run(handle.clone(), previous, dir.clone()).await;
+    }
+    // The findings file was not read in full, so a dump a finding cites may look unlinked;
+    // the next start, which retries the read, raises what is truly unlinked.
+    if lock(&handle.findings).is_partial() {
+        return;
+    }
+    let _ = tokio::task::spawn_blocking(move || {
+        let boot = sentinel::boot_id();
+        // Oldest first, so the findings record the dumps in the order they happened.
+        for sidecar in sentinel::dump_sidecars(&dir).into_iter().rev() {
+            if sentinel::dump_is_of(&sidecar, std::process::id(), since, boot.as_deref())
+                || !lock(&handle.linked_dumps).insert(sidecar.id.clone())
+            {
+                continue;
+            }
+            let finding = sentinel::Dump::read(&dir, sidecar).unlinked_finding();
+            // Persisted at once with its `crashIds`, so the next start links this dump.
+            lock(&handle.findings).record_now(finding, OffsetDateTime::now_utc(), &handle.sender);
+        }
+    })
+    .await;
+}
+
 /// Reads the crash dump and the OS crash records for a run that never marked its session
 /// clean and records the finding. The finding goes straight into the book, not through
-/// `record_finding`, so it is listed whether or not the profiler is on.
+/// `record_finding`, so it is listed whether or not the profiler is on. A dump is persisted
+/// at once, with its `crashIds`, so the next start knows it is linked.
 async fn classify_previous_run(handle: Arc<ProfilerHandle>, previous: SessionRecord, dir: PathBuf) {
     let record = os_records::harvest_previous_crash(&previous).await;
     let dump = {
@@ -328,7 +396,7 @@ async fn classify_previous_run(handle: Arc<ProfilerHandle>, previous: SessionRec
         dump,
     );
     if let Some(input) = sentinel::finding_for(&previous, run) {
-        lock(&handle.findings).record(input, OffsetDateTime::now_utc(), &handle.sender);
+        lock(&handle.findings).record_now(input, OffsetDateTime::now_utc(), &handle.sender);
     }
 }
 

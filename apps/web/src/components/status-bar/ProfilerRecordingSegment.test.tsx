@@ -10,7 +10,10 @@ interface FakeEnvironment {
   readonly environmentId: string;
   readonly label: string;
   readonly connection: { readonly phase: string };
-  readonly serverConfig: { readonly settings: { readonly enableProfiler: boolean } } | null;
+  readonly serverConfig: {
+    readonly environment: { readonly capabilities: { readonly profiler: boolean } };
+    readonly settings: { readonly enableProfiler: boolean };
+  } | null;
 }
 
 const h = vi.hoisted(() => ({
@@ -45,14 +48,16 @@ const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
 
 function environment(
   label: string,
-  options: { enableProfiler?: boolean; phase?: string; config?: boolean } = {},
+  options: { enableProfiler?: boolean; phase?: string; config?: boolean; profiler?: boolean } = {},
 ): FakeEnvironment {
-  const { enableProfiler = false, phase = "connected", config = true } = options;
+  const { enableProfiler = false, phase = "connected", config = true, profiler = true } = options;
   return {
     environmentId: `env-${label}`,
     label,
     connection: { phase },
-    serverConfig: config ? { settings: { enableProfiler } } : null,
+    serverConfig: config
+      ? { environment: { capabilities: { profiler } }, settings: { enableProfiler } }
+      : null,
   };
 }
 
@@ -101,6 +106,14 @@ describe("ProfilerRecordingSegment", () => {
     expect(container.textContent).toBe("");
   });
 
+  it("ignores an older server that echoes back a stored enableProfiler", async () => {
+    h.environments = [environment("Old", { enableProfiler: true, profiler: false })];
+
+    const container = await render();
+
+    expect(container.textContent).toBe("");
+  });
+
   it("shows the segment and lists every recording environment", async () => {
     h.environments = [
       environment("Local", { enableProfiler: true }),
@@ -116,7 +129,7 @@ describe("ProfilerRecordingSegment", () => {
       "Profiler recording, open diagnostics settings",
     );
     const popup = container.querySelector("[data-tooltip-popup]")!;
-    expect(popup.textContent).toContain("Recording on");
+    expect(popup.textContent).toContain("Profiler on");
     expect([...popup.querySelectorAll("li")].map((item) => item.textContent)).toEqual([
       "Local",
       "Build box",

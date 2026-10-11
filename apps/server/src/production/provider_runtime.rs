@@ -9899,6 +9899,7 @@ where
             kind: AttributionKind::Provider,
             label: request.provider_label.clone(),
             source: RegistrationSource::Provider,
+            driver: Some(request.provider.clone()),
         },
     ) {
         Ok(registration) => Some(registration),
@@ -23645,6 +23646,7 @@ done
                             kind: AttributionKind::Provider,
                             label: "capacity fixture".to_owned(),
                             source: crate::diagnostics::RegistrationSource::Provider,
+                            driver: None,
                         },
                     )
                     .expect("fill registry")

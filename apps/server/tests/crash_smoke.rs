@@ -156,8 +156,25 @@ fn native_crash_produces_a_minidump_and_a_sidecar() {
         .rfind(|finding| finding["kind"] == "crash.native")
         .expect("a crash.native finding for the dump");
     assert_eq!(native["evidence"]["crashId"], stem.as_str());
+    assert_eq!(native["evidence"]["crashIds"], serde_json::json!([stem]));
     assert_eq!(native["evidence"]["crashReason"], reason.as_str());
     assert_eq!(native["evidence"]["pid"], parent);
+    // The fault site comes from the dump's own exception context and module list: the crash
+    // is in the smoke binary itself, at an offset into it.
+    let module = native["evidence"]["faultModule"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        module.eq_ignore_ascii_case("crash-smoke")
+            || module.eq_ignore_ascii_case("crash-smoke.exe"),
+        "{native}"
+    );
+    assert!(
+        native["evidence"]["faultOffset"]
+            .as_str()
+            .is_some_and(|offset| offset.starts_with("0x")),
+        "{native}"
+    );
 }
 
 /// The runbooks' release-build hook: with `BIBCODE_PROFILER_CRASH_TEST=1` an armed process

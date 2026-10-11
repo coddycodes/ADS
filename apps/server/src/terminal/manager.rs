@@ -2280,6 +2280,7 @@ impl TerminalManager {
                     kind: AttributionKind::Terminal,
                     label: label.clone(),
                     source: RegistrationSource::Terminal,
+                    driver: None,
                 },
             ) {
                 Ok(registration) => Some(registration),
@@ -8083,6 +8084,7 @@ mod tests {
                             kind: AttributionKind::Provider,
                             label: "capacity fixture".to_owned(),
                             source: RegistrationSource::Provider,
+                            driver: None,
                         },
                     )
                     .expect("fill registry")
