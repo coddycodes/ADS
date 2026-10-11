@@ -926,9 +926,11 @@ The right panel hosts persistent tool surfaces for the active thread. Use its
 `+` menu to add Browser, Terminal, Files, Diff, or Source Control. Activity and
 Plan surfaces can also appear when the active provider/session supplies them.
 
-- **Browser** opens a local application preview or URL. It is a Tauri child
-  webview, so it exists in the desktop app on macOS 14+, Windows, and Linux, not
-  in a browser tab.
+- **Browser** opens a local application preview or URL. In the desktop app on
+  macOS 14+, Windows, and Linux it is a Tauri child webview. In a browser tab
+  served over plain HTTP it shows the server's localhost dev servers in a frame
+  (see [Previewing the server's dev servers](#previewing-the-servers-dev-servers));
+  a browser tab served over HTTPS has no Browser surface.
 - **Terminal** starts a shell in the active workspace.
 - **Diff** reviews branch or worktree changes.
 - **Activity** shows structured provider activity when available.
@@ -938,9 +940,11 @@ Plan surfaces can also appear when the active provider/session supplies them.
 
 Web links open in the BiBCode browser by default. **Settings → General → Open
 links in** chooses **BiBCode browser** or **System browser**; a change applies to
-the next click. Without a thread, without desktop preview support (for example
-macOS before 14), or in a browser tab, web links open in the system browser, and
-the setting is not shown.
+the next click. Without a thread or without desktop preview support (for example
+macOS before 14), web links open in the system browser, and the setting is not
+shown. In a browser tab the setting is not shown either: links to the server's
+localhost dev servers open in the Browser surface when the tab is served over
+plain HTTP from that server, and every other link opens a new browser tab.
 
 - **Chat:** Ctrl/Cmd-, Shift-, or Alt-click or middle-click opens the other
   target. Right-click on an `http(s)` link offers **Open in BiBCode browser**,
@@ -1064,10 +1068,34 @@ When you reach the server on a public address under a host name, or through a
 reverse proxy or Tailscale Serve, the server refuses the preview with the
 messages above. See [Reverse proxies](./remote-access.md#reverse-proxies).
 
-**In a browser tab**, a gateway link opens a new browser tab. The tab opens
-blank at once and loads the preview after BiBCode resolves it; if resolution
-fails, the tab closes and the notice appears. If the browser blocks the new
-tab, a bar at the top of the window asks again:
+**In a browser tab served over plain HTTP**, a link to the localhost of the
+server that serves the page opens in the Browser surface, through the gateway
+even when the browser runs on the server's own machine. Another environment's
+gateway refuses to be framed by this page, so its links open new tabs. The address bar shows the `localhost` address and
+follows the page. Back and Forward need a browser with the Navigation API;
+without it, or on a page whose security policy blocks BiBCode's navigation
+script, they stay disabled and the address bar keeps the address you opened.
+Screenshots, recording, element picking, zoom, hard reload, DevTools, and
+clearing site data aren't available there (**Reload** in the address bar
+reloads the page); the browser's own DevTools inspect the frame. An address
+the frame can't show, such as another site, says so with **Open in new tab**;
+the address bar's **Open in new tab** button does the same for any page. A
+link to the server's `localhost`, however you open it, opens as a new BiBCode
+browser tab, and a click on a link to another site opens a new browser tab.
+A redirect to another site (a sign-in provider, for example) can't show in the
+frame; the browser shows its own error there, and **Reload** returns to the
+last page the frame reported.
+
+Zoom keys zoom the whole browser tab there. While you type or click inside the
+page, BiBCode's shortcuts don't reach BiBCode; Ctrl/Cmd+R and F5 reload only
+the page.
+
+**In a browser tab served over HTTPS or on an IPv6 address**, or with a
+modifier-click, a gateway link opens a new browser tab: such a page can't frame
+the plain-HTTP gateway. The
+tab opens blank at once and loads the preview after BiBCode resolves it; if
+resolution fails, the tab closes and the notice appears. If the browser blocks
+the new tab, a bar at the top of the window asks again:
 
 - "Agent wants to open <address>": the agent's `preview_open`.
 - "A command wants to open <address>": a `$BROWSER` request (below).

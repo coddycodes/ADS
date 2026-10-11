@@ -373,6 +373,7 @@ vi.mock("~/hooks/useLocalStorage", () => ({
 
 vi.mock("~/previewStateStore", () => ({
   isPreviewSupportedInRuntime: () => testState.isPreviewSupported,
+  canPreviewAnyUrlInRuntime: () => testState.isPreviewSupported,
 }));
 
 vi.mock("~/terminal-links", () => ({

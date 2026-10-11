@@ -4,6 +4,12 @@ import { useEffect } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteContext";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
+import {
+  HTTPS_PREVIEW_NOTICE,
+  isBrowserMode,
+  previewBridge,
+} from "../components/preview/previewBridge";
+import { supportsPreviewRuntimeCapability } from "../previewRuntimeCapabilities";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import {
   startNewLocalThreadFromContext,
@@ -86,11 +92,19 @@ function ChatRouteGlobalShortcuts() {
         if (!routeThreadRef) return;
         if (!isPreviewSupportedInRuntime()) {
           toastManager.add(
-            stackedThreadToast({
-              type: "info",
-              title: "Preview is desktop-only",
-              description: "Open BiBCode in the desktop app to use the in-app preview.",
-            }),
+            stackedThreadToast(
+              isBrowserMode()
+                ? {
+                    type: "info",
+                    title: "Previews open in a new tab",
+                    description: HTTPS_PREVIEW_NOTICE,
+                  }
+                : {
+                    type: "info",
+                    title: "Preview is desktop-only",
+                    description: "Open BiBCode in the desktop app to use the in-app preview.",
+                  },
+            ),
           );
           return;
         }
@@ -101,13 +115,13 @@ function ChatRouteGlobalShortcuts() {
       // The remaining preview commands only fire when the panel is the
       // currently-focused tenant. The `when: previewFocus` rule already
       // gates this, but defend against the keybinding being misconfigured.
-      if (
-        command === "preview.refresh" ||
-        command === "preview.focusUrl" ||
+      const zoom =
         command === "preview.zoomIn" ||
         command === "preview.zoomOut" ||
-        command === "preview.resetZoom"
-      ) {
+        command === "preview.resetZoom";
+      // A host without page zoom (browser mode) leaves the keys to the browser's own zoom.
+      if (zoom && !supportsPreviewRuntimeCapability(previewBridge, "pageTools")) return;
+      if (command === "preview.refresh" || command === "preview.focusUrl" || zoom) {
         event.preventDefault();
         event.stopPropagation();
         const action =

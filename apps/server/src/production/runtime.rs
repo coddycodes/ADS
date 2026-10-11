@@ -3,7 +3,7 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 
@@ -26,6 +26,14 @@ use crate::{
     diagnostics::{
         DesktopUiProcessObserver, DiagnosticsMonitor, NativeProcessSampler, NativeResourceSampler,
         ProcessAttributionRegistry, TraceDiagnosticsStore, bound_diagnostic_string,
+        profiler::{
+            crash::MonitorDetector,
+            latency::LatencyDetector,
+            profiler_dir,
+            runtime::{Detector, ProfilerRuntime},
+            sampler::SamplerDetector,
+            worktree_audit::{AuditSources, WorktreeAuditDetector},
+        },
     },
     git::GitRepository,
     mcp::preview_automation::PreviewAutomationBroker,
@@ -119,6 +127,7 @@ pub struct ProductionRuntime {
     status_broadcaster: crate::git::StatusBroadcaster,
     workspace: WorkspaceRpc,
     _resource_sampler: Arc<NativeResourceSampler>,
+    profiler: Arc<ProfilerRuntime>,
     update_quiesced: tokio::sync::Mutex<bool>,
 }
 
@@ -134,6 +143,12 @@ pub fn finalize_rpc_registry(
 impl ProductionRuntime {
     pub async fn attach_connect_mcp(&self, service: Arc<ConnectMcpService>) {
         self.provider_runtime.attach_connect_mcp(service).await;
+    }
+
+    /// The committed `enableProfiler`, which drives a desktop host's crash monitor.
+    #[must_use]
+    pub fn profiler_enabled_signal(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.server_control.profiler_enabled_signal()
     }
 
     #[must_use]
@@ -212,6 +227,39 @@ impl ProductionRuntime {
             .await,
         );
         let provider_update_checks = control.start_provider_update_checks();
+        // Built before the profiler, whose sampler reads it; it has no dependencies.
+        let process_attribution = ProcessAttributionRegistry::new();
+        // Starting replays and compacts the findings file, so it runs off the async workers.
+        let profiler_state_dir = config.state_dir();
+        let profiler_enabled = control.profiler_enabled_signal();
+        // The worktree audit reads the catalog, which is built later and bound below.
+        let worktree_audit_sources = Arc::new(OnceLock::new());
+        let sampler = SamplerDetector::new(process_attribution.clone());
+        let mut profiler_detectors: Vec<Box<dyn Detector>> = vec![
+            Box::new(match process_tree_cleanup {
+                ProcessTreeCleanup::StandaloneServer => sampler,
+                ProcessTreeCleanup::EmbeddedHost => sampler.in_desktop_host(),
+            }),
+            Box::new(LatencyDetector),
+            Box::new(WorktreeAuditDetector::new(
+                worktree_audit_sources.clone(),
+                process_attribution.clone(),
+            )),
+        ];
+        // One crash hook per process: a desktop host runs the monitor for the server inside it.
+        if process_tree_cleanup == ProcessTreeCleanup::StandaloneServer {
+            profiler_detectors.push(Box::new(MonitorDetector::new(
+                profiler_dir(&profiler_state_dir),
+                "server",
+            )));
+        }
+        let profiler = Arc::new(
+            tokio::task::spawn_blocking(move || {
+                ProfilerRuntime::start(&profiler_state_dir, profiler_enabled, profiler_detectors)
+            })
+            .await
+            .map_err(|error| error.to_string())?,
+        );
         let chat_activity_controller = AgentActivityController::new(
             control
                 .agent_activity_enabled(AgentActivitySource::Chat)
@@ -264,7 +312,6 @@ impl ProductionRuntime {
             Arc::new(tokio::time::Instant::now),
         );
         let upload_sweeper = attachment_uploads.start_sweeper();
-        let process_attribution = ProcessAttributionRegistry::new();
         let managed_endpoint =
             ManagedEndpointRuntime::with_process_attribution(process_attribution.clone());
         let provider_settings = ProviderSettingsStore::new(&state_paths.state_dir);
@@ -311,7 +358,8 @@ impl ProductionRuntime {
             },
             process_attribution.clone(),
         );
-        let diagnostic_bundle = DiagnosticBundleService::new(&state_paths.logs_dir);
+        let diagnostic_bundle = DiagnosticBundleService::new(&state_paths.logs_dir)
+            .with_profiler_dir(profiler_dir(&state_paths.state_dir));
         let operational_logs = OperationalLogs::start(
             &state_paths,
             &terminal_manager,
@@ -355,6 +403,10 @@ impl ProductionRuntime {
             git_repository.clone(),
             workspace_availability.clone(),
         );
+        let _ = worktree_audit_sources.set(AuditSources {
+            catalog: worktree_catalog.clone(),
+            repositories: repositories.clone(),
+        });
         let pull_requests = PullRequestsRpcServices::with_dependencies(
             config.state_dir(),
             repositories.clone(),
@@ -445,7 +497,9 @@ impl ProductionRuntime {
             control.clone(),
             process_tree_cleanup,
         )
-        .with_workspace_admission(workspace_availability.clone(), repositories.clone());
+        .with_workspace_admission(workspace_availability.clone(), repositories.clone())
+        .with_profiler(&profiler)
+        .with_environment_id(&config.environment_id);
         let worktree_runtime = WorktreeRuntime::start(
             orchestration.clone(),
             provider_runtime.clone(),
@@ -565,6 +619,7 @@ impl ProductionRuntime {
             status_broadcaster,
             workspace,
             _resource_sampler: resource_sampler,
+            profiler,
             update_quiesced: tokio::sync::Mutex::new(false),
         })
     }
@@ -671,10 +726,11 @@ impl ProductionRuntime {
     pub async fn diagnostic_logs(
         &self,
         frontend_log: String,
+        include_crash_dumps: bool,
     ) -> Result<DiagnosticLogsHttpResponse, HttpRouteError> {
         let bundle = self
             .diagnostic_bundle
-            .build(frontend_log, OffsetDateTime::now_utc())
+            .build(frontend_log, include_crash_dumps, OffsetDateTime::now_utc())
             .await
             .map_err(internal_error)?;
         Ok(DiagnosticLogsHttpResponse {
@@ -688,6 +744,10 @@ impl ProductionRuntime {
         if *quiesced {
             return Ok(());
         }
+        // First, so a run killed while its services stop (a desktop quit bounds the stop) reads
+        // as an incomplete shutdown on the next start, not as a crash.
+        let profiler = self.profiler.clone();
+        let _ = tokio::task::spawn_blocking(move || profiler.begin_stopping()).await;
         self.server_control.shutdown_capability_discovery().await;
         self.preview_gateway.shutdown().await;
         let process_ownership = self.terminal_services.freeze_process_ownership().await;
@@ -722,6 +782,9 @@ impl ProductionRuntime {
             }
         }
         self.orchestration.shutdown().await;
+        // Last, so the events and panics of every other service's shutdown are recorded, and a
+        // crash anywhere in the shutdown still reads as a crash on the next start.
+        self.profiler.end_session().await;
         *quiesced = true;
         match first_error {
             Some(error) => Err(error),
@@ -2730,7 +2793,7 @@ mod tests {
         assert!(favicon.bytes.starts_with(b"<svg"));
 
         let diagnostics = runtime
-            .diagnostic_logs("frontend runtime test".to_string())
+            .diagnostic_logs("frontend runtime test".to_string(), false)
             .await
             .expect("diagnostic bundle should build");
         assert!(diagnostics.filename.ends_with(".zip"));

@@ -20,6 +20,8 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/in
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
+import { isBrowserMode } from "./previewBridge";
+
 interface Props {
   url: string;
   displayUrl?: string | undefined;
@@ -85,6 +87,8 @@ export function PreviewChromeRow({
   pickDisabledReason,
   trailingActions,
 }: Props) {
+  // In a browser tab, the "system browser" is this browser.
+  const openInBrowserLabel = isBrowserMode() ? "Open in new tab" : "Open in system browser";
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [draft, setDraft] = useState(url);
   const [inputFocused, setInputFocused] = useState(false);
@@ -212,14 +216,14 @@ export function PreviewChromeRow({
                       variant="ghost"
                       size="icon-xs"
                       onClick={onOpenInBrowser}
-                      aria-label="Open in system browser"
+                      aria-label={openInBrowserLabel}
                       type="button"
                     />
                   }
                 >
                   <ExternalLink />
                 </TooltipTrigger>
-                <TooltipPopup>Open in system browser</TooltipPopup>
+                <TooltipPopup>{openInBrowserLabel}</TooltipPopup>
               </Tooltip>
             </InputGroupAddon>
           ) : null}

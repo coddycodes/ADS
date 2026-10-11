@@ -7,10 +7,10 @@ use objc2::runtime::AnyObject;
 use objc2_app_kit::{
     NSBitmapImageFileType, NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSImage,
 };
-use objc2_foundation::{NSDate, NSDictionary, NSError, NSSet, NSString, NSThread};
+use objc2_foundation::{NSDate, NSDictionary, NSError, NSSet, NSString, NSThread, NSUUID};
 use objc2_web_kit::{
-    WKSnapshotConfiguration, WKWebView, WKWebsiteDataTypeCookies, WKWebsiteDataTypeDiskCache,
-    WKWebsiteDataTypeIndexedDBDatabases, WKWebsiteDataTypeLocalStorage,
+    WKSnapshotConfiguration, WKWebView, WKWebsiteDataStore, WKWebsiteDataTypeCookies,
+    WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeIndexedDBDatabases, WKWebsiteDataTypeLocalStorage,
     WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeSessionStorage,
 };
 
@@ -241,6 +241,45 @@ impl PlatformWebviewOps for MacosWebviewOps {
             .map_err(|error| PreviewPlatformError::Unavailable(error.to_string()))?;
         rx.recv_timeout(PLATFORM_CALL_TIMEOUT)
             .map_err(|_| PreviewPlatformError::Timeout)
+    }
+}
+
+/// Deletes a persistent website data store by its identifier (an environment's
+/// preview storage). No live WKWebView may use it; callers keep a profile a
+/// preview used this session.
+pub fn remove_data_store(app: &tauri::AppHandle, identifier: [u8; 16]) -> Result<(), String> {
+    ensure_completion_wait_allowed().map_err(super::super::host::platform_err)?;
+    let (tx, rx) = mpsc::sync_channel::<Result<(), String>>(1);
+    app.run_on_main_thread(move || {
+        let Some(main_thread) = MainThreadMarker::new() else {
+            let _ = tx.send(Err(
+                "preview data store removal left the main thread".to_string()
+            ));
+            return;
+        };
+        let uuid = NSUUID::from_bytes(identifier);
+        let done = RcBlock::new(move |error: *mut NSError| {
+            let result = if error.is_null() {
+                Ok(())
+            } else {
+                // SAFETY: WebKit passes a valid NSError when the pointer is not null.
+                Err(unsafe { &*error }.localizedDescription().to_string())
+            };
+            let _ = tx.send(result);
+        });
+        // SAFETY: Called on the main thread with a retained identifier and block.
+        unsafe {
+            WKWebsiteDataStore::removeDataStoreForIdentifier_completionHandler(
+                &uuid,
+                &done,
+                main_thread,
+            );
+        }
+    })
+    .map_err(|error| error.to_string())?;
+    match rx.recv_timeout(PLATFORM_CALL_TIMEOUT) {
+        Ok(result) => result,
+        Err(_) => Err("timed out removing the preview data store".to_string()),
     }
 }
 

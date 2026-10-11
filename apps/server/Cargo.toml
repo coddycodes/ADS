@@ -1,7 +1,8 @@
 [package]
 name = "bibcode-server"
-version = "0.8.2"
+version = "0.9.0"
 description = "BiBCode Rust server runtime"
+default-run = "bibcode"
 edition.workspace = true
 rust-version.workspace = true
 
@@ -13,13 +14,21 @@ path = "src/lib.rs"
 name = "bibcode"
 path = "src/main.rs"
 
+# The CI crash smoke: arms the crash monitor, then crashes in a named function.
+[[bin]]
+name = "crash-smoke"
+path = "src/bin/crash_smoke.rs"
+
 [features]
 hermetic-test-guard = []
 
 [dependencies]
 axum.workspace = true
+backtrace.workspace = true
 base64.workspace = true
+breakpad-symbols.workspace = true
 clap.workspace = true
+crash-handler.workspace = true
 dirs.workspace = true
 ed25519-dalek.workspace = true
 futures-util.workspace = true
@@ -30,7 +39,11 @@ httpdate.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 mime_guess.workspace = true
+minidump.workspace = true
+minidump-processor.workspace = true
+minidumper.workspace = true
 notify.workspace = true
+object.workspace = true
 open.workspace = true
 percent-encoding.workspace = true
 p256.workspace = true
@@ -60,6 +73,7 @@ zip.workspace = true
 [dev-dependencies]
 bibcode-server = { workspace = true, features = ["hermetic-test-guard"] }
 tempfile.workspace = true
+time = { workspace = true, features = ["macros"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower.workspace = true
 
@@ -78,10 +92,13 @@ windows-sys = { workspace = true, features = [
   "Win32_Security_Authorization",
   "Win32_Storage_FileSystem",
   "Win32_System_Console",
+  "Win32_System_Diagnostics_Debug",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_JobObjects",
+  "Win32_System_LibraryLoader",
   "Win32_System_IO",
   "Win32_System_Kernel",
+  "Win32_System_ProcessStatus",
   "Win32_System_SystemInformation",
   "Win32_System_Threading",
   "Win32_UI_WindowsAndMessaging",

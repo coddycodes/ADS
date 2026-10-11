@@ -3,7 +3,7 @@
 ## Delivery discipline
 
 For ongoing issue batches and repeated validation failures, use
-[issue-delivery](.agents/skills/issue-delivery/SKILL.md).
+[issue-delivery](docs/skills/issue-delivery/SKILL.md).
 
 | Rule                                                                                                  | Enforcement                                                                                                            |
 | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
@@ -54,7 +54,7 @@ Documentation-only and very small mechanical work may use the relevant subset
 only after consulting `docs/README.md`. This keeps the workflow proportionate
 without letting agents skip documentation discovery.
 For releases and flaky tests, use [the release runbook](docs/operations/release.md) and [testing runbooks](docs/testing/README.md).
-Repository skills live in `.agents/skills/`, mirrored byte for byte to `.claude/skills/`.
+Repository skills live in `docs/skills/<name>/`. `.agents/skills/<name>/SKILL.md` and its byte-identical copy in `.claude/skills/` are stubs that repeat the skill's frontmatter and point there.
 
 ## Evidence and Documentation
 
@@ -218,7 +218,9 @@ evolvable as the codebase grows.
 
 Node.js and TypeScript are development dependencies for the frontend and
 repository tooling only. Do not add a production Node runtime, Electron host,
-TypeScript server, or native helper sidecar.
+TypeScript server, or native helper sidecar. Exception: while the Profiler is
+on, the same BiBCode executable is relaunched as `--crash-monitor` to write
+minidumps (see `docs/superpowers/specs/2026-10-09-profiler-design.md`).
 
 ## Reference Repos
 

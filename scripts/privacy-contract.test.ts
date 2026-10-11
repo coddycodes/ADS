@@ -218,8 +218,11 @@ describe("zero-telemetry privacy contract", () => {
     ]);
     expect(serverDependencyNames).toEqual([
       "axum",
+      "backtrace",
       "base64",
+      "breakpad-symbols",
       "clap",
+      "crash-handler",
       "dirs",
       "ed25519-dalek",
       "futures-util",
@@ -230,7 +233,11 @@ describe("zero-telemetry privacy contract", () => {
       "hyper",
       "hyper-util",
       "mime_guess",
+      "minidump",
+      "minidump-processor",
+      "minidumper",
       "notify",
+      "object",
       "open",
       "p256",
       "percent-encoding",

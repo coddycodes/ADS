@@ -301,3 +301,126 @@ jobs:
           --arch "${{ matrix.arch }}"
           --output-dir native-artifacts
           --verbose
+
+  # A real native crash under the crash monitor on every OS, symbolicated with symbols dumped
+  # the way the release pipeline dumps them.
+  crash-smoke:
+    name: Crash smoke - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    # A cold optimized build of the server and two pinned tool compiles.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Node runs dump-symbols.ts, which needs no workspace dependencies.
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@1b32467adbe183473499fd9d5d372c3ed9641754 # v1.18.0
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@62ae3a85dbdd2bedbb5819da8ce45635129289a1 # 1.98.0
+
+      - name: Cache Rust build output
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: "true"
+          workspaces: |
+            . -> target
+
+      # Rust Cache keeps ~/.cargo/bin, so a restored runner skips both compiles. Bash, because
+      # the Windows default (pwsh) only fails a step on its last command's exit code.
+      - name: Install pinned symbol tools
+        shell: bash
+        run: |
+          node scripts/run-msvc.mjs cargo install dump_syms --locked --version 2.3.9
+          node scripts/run-msvc.mjs cargo install minidump-stackwalk --locked --version 0.27.0
+
+      # The release symbol profile from release.yml: unstripped, with line tables, a dSYM on
+      # macOS and a GNU build-id on Linux. CRASH_SMOKE_OUT keeps the dump after the test.
+      - name: Crash the smoke binary
+        shell: bash
+        env:
+          CRASH_SMOKE_OUT: ${{ runner.temp }}/crash-smoke
+        run: |
+          set -euo pipefail
+          export CARGO_PROFILE_RELEASE_STRIP=none CARGO_PROFILE_RELEASE_DEBUG=line-tables-only
+          case "$RUNNER_OS" in
+            Linux) export RUSTFLAGS="-C link-arg=-Wl,--build-id=sha1" ;;
+            macOS) export CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed ;;
+          esac
+          node scripts/run-msvc.mjs cargo test -p bibcode-server --test crash_smoke --release
+
+      - name: Symbolicate the dump
+        shell: bash
+        env:
+          CRASH_SMOKE_OUT: ${{ runner.temp }}/crash-smoke
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          # Bash globs treat the backslashes of a Windows runner.temp as escapes.
+          out="${CRASH_SMOKE_OUT//\\//}"
+          case "$RUNNER_OS" in
+            Linux)
+              # The 20-byte (sha1) GNU build-id that the release RUSTFLAGS ask the linker for.
+              notes="$(readelf -n target/release/crash-smoke)"
+              if ! grep -Eq 'Build ID: [0-9a-f]{40}$' <<< "$notes"; then
+                echo "crash-smoke has no 20-byte GNU build-id." >&2
+                exit 1
+              fi
+              symbols=(--binary target/release/crash-smoke --module-name crash-smoke)
+              ;;
+            macOS) symbols=(--binary target/release/crash-smoke --module-name crash-smoke --dsym target/release/crash-smoke.dSYM) ;;
+            Windows) symbols=(--binary target/release/crash-smoke.exe --module-name crash-smoke.exe --pdb target/release/crash_smoke.pdb) ;;
+          esac
+          node scripts/dump-symbols.ts "${symbols[@]}" --out "$out/symbols"
+          # The smoke test uses CRASH_SMOKE_OUT as a data root, as `bibcode profiler` reads one.
+          dumps=("$out"/userdata/profiler/crashes/*.dmp)
+          if (( ${#dumps[@]} != 1 )); then
+            printf 'Expected one minidump in %s/userdata/profiler/crashes, found %s.\n' "$out" "${#dumps[@]}" >&2
+            exit 1
+          fi
+          # The test already ran `bibcode profiler symbolicate` on this dump; minidump-stackwalk
+          # also reports each frame's trust, which proves the CFI unwind below.
+          minidump-stackwalk --json "${dumps[0]}" "$out/symbols" > "$out/stackwalk.json"
+          grep -q crash_here_in_named_function "$out/stackwalk.json"
+          # The caller must be found through the STACK CFI records, not only named.
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const walk = JSON.parse(readFileSync(process.argv[1], "utf8"));
+            const [crash, caller] = walk.crashing_thread.frames;
+            // Symbols dumped from a PDB name a function with its parameter list.
+            const name = (frame) => frame?.function?.replace(/\(\)$/, "");
+            if (
+              name(crash) !== "crash_smoke::crash_here_in_named_function" ||
+              name(caller) !== "crash_smoke::main" ||
+              caller?.trust !== "cfi"
+            ) {
+              console.error("Unexpected crashing frames:", JSON.stringify([crash, caller], null, 2));
+              process.exit(1);
+            }
+          ' "$out/stackwalk.json"
+          # BiBCode's own symbolication must name the planted function from the same store
+          # (on Windows laid out as crash_smoke.pdb/<debug id>/crash_smoke.sym), with the
+          # bibcode binary the crash step's release build made.
+          bibcode=target/release/bibcode
+          if [[ "$RUNNER_OS" == Windows ]]; then bibcode+=.exe; fi
+          "$bibcode" profiler symbolicate "$(basename "${dumps[0]}" .dmp)" \
+            --symbols "$out/symbols" --json --base-dir "$out" > "$out/symbolicate.json"
+          grep -q crash_here_in_named_function "$out/symbolicate.json"
+
+      - name: Upload crash smoke evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: crash-smoke-${{ matrix.os }}
+          path: ${{ runner.temp }}/crash-smoke
+          if-no-files-found: ignore

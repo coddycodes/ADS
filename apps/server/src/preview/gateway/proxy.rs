@@ -21,9 +21,9 @@ use hyper::{
     Method, Request, Response, StatusCode, Uri, Version,
     body::{Body, Bytes, Incoming},
     header::{
-        AUTHORIZATION, CACHE_CONTROL, CONNECTION, CONTENT_TYPE, COOKIE, HOST, HeaderMap,
-        HeaderName, HeaderValue, LOCATION, ORIGIN, RETRY_AFTER, SET_COOKIE, TRANSFER_ENCODING,
-        UPGRADE,
+        ACCEPT, ACCEPT_ENCODING, AUTHORIZATION, CACHE_CONTROL, CONNECTION, CONTENT_DISPOSITION,
+        CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, HOST, HeaderMap, HeaderName,
+        HeaderValue, LOCATION, ORIGIN, RETRY_AFTER, SET_COOKIE, TRANSFER_ENCODING, UPGRADE, VARY,
     },
     http::uri::Authority,
     server::conn::http1 as server_http1,
@@ -40,6 +40,7 @@ use tokio_util::sync::CancellationToken;
 use super::{
     GatewaySession, GatewaySessions,
     capability::CapabilityIssuer,
+    frame,
     rewrite::{
         HOP_BY_HOP, bootstrap_page, bootstrap_target, client_origin, filter_set_cookie,
         gateway_cookie_name, gateway_origin_allowed, gateway_session_from_cookie, rewrite_location,
@@ -337,7 +338,63 @@ async fn serve_connection(stream: TcpStream, state: Arc<Listener>) {
     }
 }
 
+/// Responses to a preview a browser-mode BiBCode UI opened, the gateway's own pages
+/// included, may be framed by that UI only (see `frame::apply_frame_policy`). Other
+/// sessions (desktop views, system-browser tabs) keep the upstream's framing rules,
+/// and only the preview's own pages may frame them.
 async fn handle(state: Arc<Listener>, request: Request<Incoming>) -> Response<ProxyBody> {
+    let ui_origin = framing_ui_origin(&state, &request);
+    let mut response = handle_request(state, request).await;
+    let gateway_page = response.extensions().get::<GatewayPage>().is_some();
+    let headers = response.headers_mut();
+    match ui_origin {
+        Some(ui_origin) => frame::apply_frame_policy(headers, &ui_origin),
+        // A gateway page (expired link, nothing listening) holds no upstream content or
+        // authority, so a frame whose session is gone can still explain what happened.
+        None if gateway_page => {}
+        None => frame::apply_self_only_framing(headers),
+    }
+    // The framing rules depend on the gateway session.
+    headers.append(VARY, HeaderValue::from_static("cookie"));
+    response
+}
+
+/// Marks a response the gateway wrote itself (its own pages), as opposed to one
+/// forwarded from the upstream.
+#[derive(Clone, Copy)]
+struct GatewayPage;
+
+/// The BiBCode UI allowed to frame this request's preview: a bootstrap's validated
+/// `ui=`, or else the browser's current session's, so opening the same target in a
+/// tab (which replaces the shared cookie) keeps an open frame working.
+fn framing_ui_origin(state: &Listener, request: &Request<Incoming>) -> Option<String> {
+    let current = state
+        .session_for(request.headers())
+        .and_then(|session| session.ui_origin);
+    if request.uri().path() != BOOTSTRAP_PATH {
+        return current;
+    }
+    let host = request
+        .headers()
+        .get(HOST)
+        .and_then(|value| value.to_str().ok())
+        .filter(|host| valid_host(host))
+        .unwrap_or_default();
+    bootstrap_ui_origin(request.uri().query().unwrap_or_default(), host).or(current)
+}
+
+/// The validated BiBCode UI origin a bootstrap link carries in `ui=`.
+fn bootstrap_ui_origin(query: &str, host: &str) -> Option<String> {
+    query.split('&').find_map(|pair| {
+        let (name, value) = pair.split_once('=')?;
+        (name == "ui")
+            .then(|| percent_decode_str(value).decode_utf8().ok())
+            .flatten()
+            .and_then(|ui| frame::validated_ui_origin(&ui, host))
+    })
+}
+
+async fn handle_request(state: Arc<Listener>, request: Request<Incoming>) -> Response<ProxyBody> {
     state.touch();
     let Some(host) = request
         .headers()
@@ -349,7 +406,11 @@ async fn handle(state: Arc<Listener>, request: Request<Incoming>) -> Response<Pr
         return bad_request();
     };
     if request.uri().path() == BOOTSTRAP_PATH {
-        return bootstrap(&state, request.uri().query().unwrap_or_default()).await;
+        let ui_origin = framing_ui_origin(&state, &request);
+        return bootstrap(&state, request.uri().query().unwrap_or_default(), ui_origin).await;
+    }
+    if request.uri().path() == frame::FRAME_SCRIPT_PATH {
+        return frame_script();
     }
     let Some(session) = state.session_for(request.headers()) else {
         return expired();
@@ -399,7 +460,11 @@ async fn handle(state: Arc<Listener>, request: Request<Incoming>) -> Response<Pr
     .await
 }
 
-async fn bootstrap(state: &Listener, query: &str) -> Response<ProxyBody> {
+async fn bootstrap(
+    state: &Listener,
+    query: &str,
+    ui_origin: Option<String>,
+) -> Response<ProxyBody> {
     let (mut cap, mut to) = (None, None);
     for pair in query.split('&') {
         let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
@@ -434,11 +499,14 @@ async fn bootstrap(state: &Listener, query: &str) -> Response<ProxyBody> {
     let Some(expiry) = state.principal_expiry(&claims.session_id).await else {
         return expired();
     };
-    let id = state.ctx.sessions.create(&claims, expiry);
+    let id = state
+        .ctx
+        .sessions
+        .create(&claims, expiry, ui_origin.clone());
     state
         .checked()
         .insert(claims.session_id.clone(), now_millis());
-    let mut response = html(StatusCode::OK, bootstrap_page(&to));
+    let mut response = html(StatusCode::OK, bootstrap_page(&to, ui_origin.as_deref()));
     // Lax: an OAuth provider's top-level GET redirect back to the app carries
     // it; cross-site subrequests do not, and the Origin rule refuses cross-site
     // writes and WebSocket upgrades.
@@ -527,7 +595,61 @@ async fn forward(
 
     let (mut parts, body) = response.into_parts();
     rewrite_response_headers(&mut parts.headers, &state, client_origin);
+    if injectable_html(parts.status, &parts.headers) {
+        parts.headers.remove(CONTENT_LENGTH);
+        return Response::from_parts(parts, frame::inject_frame_script(body).boxed());
+    }
     Response::from_parts(parts, body.boxed())
+}
+
+/// A successful, uncompressed HTML page the navigation reporter can join.
+fn injectable_html(status: StatusCode, headers: &HeaderMap) -> bool {
+    let html = headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(';')
+                .next()
+                .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("text/html"))
+        });
+    let identity = headers
+        .get(CONTENT_ENCODING)
+        .and_then(|value| value.to_str().ok())
+        .is_none_or(|value| value.trim().eq_ignore_ascii_case("identity"));
+    // A download reaches the user exactly as the app sent it.
+    let attachment = headers
+        .get(CONTENT_DISPOSITION)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(';')
+                .next()
+                .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("attachment"))
+        });
+    // `no-transform` forbids intermediaries from changing the body.
+    let no_transform = headers
+        .get_all(CACHE_CONTROL)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|directive| directive.trim().eq_ignore_ascii_case("no-transform"));
+    status == StatusCode::OK && html && identity && !attachment && !no_transform
+}
+
+fn frame_script() -> Response<ProxyBody> {
+    let mut response = Response::new(
+        Full::new(Bytes::from_static(frame::FRAME_SCRIPT.as_bytes()))
+            .map_err(|never| match never {})
+            .boxed(),
+    );
+    let headers = response.headers_mut();
+    headers.insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("text/javascript; charset=utf-8"),
+    );
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    response
 }
 
 /// Connects to the target's upstream; a refused `localhost` upstream is retried once on the
@@ -564,6 +686,18 @@ fn upstream_request_headers(
         && let Ok(kept) = HeaderValue::from_bytes(&kept)
     {
         headers.insert(COOKIE, kept);
+    }
+    // A page load's HTML must arrive uncompressed for the reporter to join it.
+    // Plain-HTTP origins get no Fetch Metadata, so a request for HTML counts too.
+    let navigation = match headers.get("sec-fetch-dest") {
+        Some(dest) => dest.as_bytes() == b"document" || dest.as_bytes() == b"iframe",
+        None => headers
+            .get(ACCEPT)
+            .and_then(|accept| accept.to_str().ok())
+            .is_some_and(|accept| accept.contains("text/html")),
+    };
+    if navigation {
+        headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
     }
     let authority = format!("localhost:{upstream_port}");
     insert(headers, HOST, &authority);
@@ -666,6 +800,7 @@ fn html(status: StatusCode, body: String) -> Response<ProxyBody> {
         HeaderValue::from_static("text/html; charset=utf-8"),
     );
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response.extensions_mut().insert(GatewayPage);
     response
 }
 

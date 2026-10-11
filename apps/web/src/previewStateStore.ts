@@ -14,6 +14,7 @@ import {
 } from "@bibcode/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
+import { canFrameGatewayPreviews } from "./components/preview/previewBridge";
 import { PREVIEW_RECENT_URL_LIMIT } from "./components/preview/previewConstants";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 
@@ -483,7 +484,17 @@ export function removePreviewThread(ref: ScopedThreadRef): void {
   changedPreviewThreadKeys.delete(threadKey);
 }
 
+/** The preview panel can show pages: the desktop's native views, or framed gateway previews in browser mode. */
 export function isPreviewSupportedInRuntime(): boolean {
+  return canPreviewAnyUrlInRuntime() || canFrameGatewayPreviews();
+}
+
+/**
+ * The panel can show any address, including file previews. Browser mode frames
+ * only gateway previews: other pages would share BiBCode's own origin or refuse
+ * to be framed.
+ */
+export function canPreviewAnyUrlInRuntime(): boolean {
   if (typeof window === "undefined") return false;
   return Boolean(window.desktopBridge?.preview);
 }

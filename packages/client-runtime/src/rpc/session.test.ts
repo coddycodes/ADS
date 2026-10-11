@@ -548,6 +548,70 @@ describe("RpcSessionFactory", () => {
     ),
   );
 
+  // Why clients gate the profiler RPCs on the `profiler` capability: an older server answers an
+  // unknown method with a connection-level defect, which fails every request in flight and
+  // silences the shared config stream, while the transport stays open.
+  it.effect("an unknown-request defect fails other requests and silences the config stream", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const readyFiber = yield* Effect.forkChild(session.ready);
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        const configRequest = yield* completeInitialConfig(socket);
+        yield* Fiber.join(readyFiber);
+
+        const config = yield* Effect.forkChild(
+          session.client[WS_METHODS.subscribeServerConfig]({}).pipe(
+            Stream.take(2),
+            Stream.runCollect,
+          ),
+        );
+        const other = yield* Effect.forkChild(
+          session.client[WS_METHODS.serverGetTraceDiagnostics]({}).pipe(Effect.exit),
+        );
+        const profiler = yield* Effect.forkChild(
+          session.client[WS_METHODS.serverGetProfilerStatus]({}).pipe(Effect.exit),
+        );
+        yield* awaitRequest(socket, 2);
+        socket.serverMessage(
+          encodeJson({
+            _tag: "Defect",
+            defect: `Unknown request tag: ${WS_METHODS.serverGetProfilerStatus}`,
+          }),
+        );
+
+        for (const exit of [yield* Fiber.join(other), yield* Fiber.join(profiler)]) {
+          expect(exit._tag).toBe("Failure");
+          if (exit._tag === "Failure") {
+            expect(exit.cause.reasons.some(Cause.isDieReason)).toBe(true);
+          }
+        }
+        // A later settings change on the original config stream never reaches a subscriber.
+        socket.serverMessage(
+          encodeJson({
+            _tag: "Chunk",
+            requestId: configRequest.id,
+            values: [
+              {
+                version: 1,
+                type: "settingsUpdated",
+                payload: { settings: encodeServerSettings(DEFAULT_SERVER_SETTINGS) },
+              },
+            ],
+          }),
+        );
+        for (let index = 0; index < 50; index += 1) yield* Effect.yieldNow;
+        expect(config.pollUnsafe()).toBeUndefined();
+        // And the session still looks connected.
+        const closed = yield* Effect.forkChild(session.closed);
+        for (let index = 0; index < 20; index += 1) yield* Effect.yieldNow;
+        expect(closed.pollUnsafe()).toBeUndefined();
+      }),
+    ),
+  );
+
   it.effect("starts host-key sessions with a binary Noise NK message A", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();

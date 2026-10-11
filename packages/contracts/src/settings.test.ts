@@ -125,6 +125,19 @@ describe("ServerSettings agent activity", () => {
   });
 });
 
+describe("ServerSettings profiler", () => {
+  it("defaults off and patches the toggle", () => {
+    expect(decodeServerSettings({}).enableProfiler).toBe(false);
+    expect(decodeServerSettings({ enableProfiler: true }).enableProfiler).toBe(true);
+    expect(decodeServerSettingsPatch({ enableProfiler: true })).toEqual({ enableProfiler: true });
+  });
+
+  it("rejects a non-boolean profiler toggle", () => {
+    expect(() => decodeServerSettings({ enableProfiler: "true" })).toThrow();
+    expect(() => decodeServerSettingsPatch({ enableProfiler: 1 })).toThrow();
+  });
+});
+
 describe("ServerSettings automatic Git fetch", () => {
   it("defaults fresh and legacy settings to three minutes", () => {
     expect(Duration.toMillis(decodeServerSettings({}).automaticGitFetchInterval)).toBe(180_000);

@@ -55,7 +55,12 @@ typed deadline only after the exact owned child emits `close`, including pipe
 closure. Exit status or a kill request alone is insufficient. The installed
 candidate poll records that deadline as unavailable and retries within its
 existing overall bound; a five-second cleanup deadline, failed spawn, or other
-cleanup error stays fatal. Keep unavailable observations in the private handoff
+cleanup error stays fatal and the smoke process exits nonzero. Releasing the
+child handle is required: `process.exitCode` alone leaves a child that never
+emits `close` on the event loop, and a Windows job then runs until its
+240-minute budget. The sample looks up the candidate installer by
+process name and hashes the executable only after its product version matches,
+so the ten-second bound can finish on ARM64. Keep unavailable observations in the private handoff
 log and retain the strict version/hash/no-installer predicate. Hermetic support
 tests cover exit-before-close, cleanup failure, transient samples, and an
 all-unavailable poll; actual installer qualification remains CI-only.

@@ -31,7 +31,10 @@ use super::{
 };
 use crate::{
     auth::{AuthService, ClientMetadata, Principal, authorization_error, required_scope},
-    diagnostics::TraceDiagnosticsStore,
+    diagnostics::{
+        TraceDiagnosticsStore,
+        profiler::latency::{FIRST_ITEM, RequestTimer},
+    },
     json_size::encoded_json_len,
     maintenance::{RpcAdmissionGate, RpcPermit, rpc_mutability},
     preview::gateway::registry::ClientReach,
@@ -517,11 +520,21 @@ impl RpcRegistry {
             name,
             RpcMethod::Unary(Arc::new(move |request, context, cancellation| {
                 let started = tokio::time::Instant::now();
+                // Read before the handler takes the request; `None` while the profiler is off.
+                let timer = RequestTimer::unary(&diagnostic_name, &request.headers);
                 let future = handler(request, context, cancellation);
                 let trace_diagnostics = trace_diagnostics.clone();
                 let diagnostic_name = diagnostic_name.clone();
                 Box::pin(async move {
                     let result = future.await;
+                    if let Some(timer) = timer {
+                        let outcome = if result.result.is_ok() {
+                            "success"
+                        } else {
+                            "failure"
+                        };
+                        timer.finish(&diagnostic_name, outcome);
+                    }
                     if let (Some(trace_diagnostics), Err(error)) =
                         (&trace_diagnostics, &result.result)
                         && let Err(write_error) = trace_diagnostics.record_timed_failure(
@@ -1183,6 +1196,7 @@ async fn run_stream(
 ) {
     let request_id = request.id.clone();
     let method = request.tag.clone();
+    let mut first_item = RequestTimer::stream(&request.headers);
     let mut stream = handler(request, context, cancellation.clone());
     loop {
         let item = tokio::select! {
@@ -1207,6 +1221,9 @@ async fn run_stream(
             .await;
             return;
         };
+        if let Some(timer) = first_item.take() {
+            timer.finish(&method, FIRST_ITEM);
+        }
         match item {
             Err(error) => {
                 send_stream_terminal(
@@ -1281,6 +1298,7 @@ async fn run_latest_stream(
 ) {
     let request_id = request.id.clone();
     let method = request.tag.clone();
+    let mut first_item = RequestTimer::stream(&request.headers);
     let mut stream = handler(request, context, cancellation.clone());
     loop {
         let item = tokio::select! {
@@ -1307,6 +1325,9 @@ async fn run_latest_stream(
         let Some(item) = item else {
             continue;
         };
+        if let Some(timer) = first_item.take() {
+            timer.finish(&method, FIRST_ITEM);
+        }
         match item {
             Err(error) => {
                 send_latest_stream_terminal(
@@ -2867,5 +2888,176 @@ mod tests {
         .expect("async data admission");
         assert!(control.try_recv().is_err());
         assert!(data.try_recv().expect("async fallback frame").is_control());
+    }
+
+    /// Runs one frame of `requests` through a session and returns the response frames once
+    /// `responses` of them were written. Each request is observed before its response is sent.
+    async fn answer_frame(registry: RpcRegistry, requests: Value, responses: usize) -> Vec<Value> {
+        let (written, mut frames) = mpsc::unbounded_channel();
+        let sink = Box::pin(futures_util::sink::unfold(
+            written,
+            |written, message: Message| async move {
+                if let Message::Text(text) = &message
+                    && let Ok(frame) = serde_json::from_str::<Value>(text)
+                {
+                    let _ = written.send(frame);
+                }
+                Ok::<_, Infallible>(written)
+            },
+        ));
+        let (inbound_sender, inbound_receiver) = mpsc::channel(1);
+        let reader = stream::unfold(inbound_receiver, |mut receiver| async {
+            receiver.recv().await.map(|item| (Ok(item), receiver))
+        });
+        let shutdown = CancellationToken::new();
+        let session = tokio::spawn(run_session_split_budgeted(
+            sink,
+            OutboundFraming::Whole,
+            ConnectionLiveness::new(),
+            reader,
+            registry,
+            RpcSessionContext::unauthenticated(),
+            shutdown.clone(),
+            None,
+        ));
+        inbound_sender
+            .send(RpcInboundFrame::plain(Message::Text(
+                requests.to_string().into(),
+            )))
+            .await
+            .expect("send requests");
+        let mut answered = Vec::new();
+        while answered.len() < responses {
+            answered.push(
+                timeout(Duration::from_secs(2), frames.recv())
+                    .await
+                    .expect("every request is answered")
+                    .expect("response frame"),
+            );
+        }
+        shutdown.cancel();
+        drop(inbound_sender);
+        timeout(Duration::from_secs(2), session)
+            .await
+            .expect("session cleanup deadline")
+            .expect("session joins");
+        answered
+    }
+
+    /// Registers `method` to answer whether it saw itself in the profiler's in-flight registry.
+    fn register_in_flight_probe(registry: &mut RpcRegistry, method: &'static str) {
+        registry.register_unary(method, move |_request, _cancellation| async move {
+            Ok(json!(crate::diagnostics::profiler::latency::in_flight(
+                method
+            )))
+        });
+    }
+
+    fn answer_of<'a>(frames: &'a [Value], id: &str) -> &'a Value {
+        &frames
+            .iter()
+            .find(|frame| frame["requestId"] == id)
+            .expect("a response for the request")["exit"]["value"]
+    }
+
+    // `#[tokio::test]` runs the session and its request tasks on this thread, which the pin
+    // reaches; the process-global profiler handle belongs to whichever test started first.
+    #[tokio::test]
+    async fn profiler_joins_a_request_by_its_correlation_header_only() {
+        use crate::diagnostics::profiler::latency::{self, PinnedProfiling};
+        let _profiling = PinnedProfiling::new(true);
+        let mut registry = RpcRegistry::empty();
+        register_in_flight_probe(&mut registry, "test.profiler.joined");
+        register_in_flight_probe(&mut registry, "test.profiler.unjoined");
+        registry.register_stream("test.profiler.stream", |_request, _cancellation| {
+            let (sender, receiver) = mpsc::channel(1);
+            let _ = sender.try_send(Ok(vec![json!(1)]));
+            receiver
+        });
+
+        let frames = answer_frame(
+            registry,
+            json!([
+                {
+                    "_tag": "Request", "id": "1", "tag": "test.profiler.joined", "payload": {},
+                    "headers": [["X-Bibcode-Profiler-Rid", "t9:c1:7"]]
+                },
+                {
+                    "_tag": "Request", "id": "2", "tag": "test.profiler.unjoined", "payload": {},
+                    "headers": [["traceparent", "00-t9"]]
+                },
+                {
+                    "_tag": "Request", "id": "3", "tag": "test.profiler.stream", "payload": {},
+                    "headers": [["x-bibcode-profiler-rid", "t9:s:1"]]
+                }
+            ]),
+            3,
+        )
+        .await;
+
+        assert_eq!(
+            answer_of(&frames, "1"),
+            &json!(true),
+            "registered while running"
+        );
+        assert!(
+            !latency::in_flight("test.profiler.joined"),
+            "removed on completion"
+        );
+        let book = latency::global_latency();
+        let joined = book.find_join("t9:c1:7").expect("joined by the header");
+        assert_eq!(joined.method, "test.profiler.joined");
+        assert_eq!(
+            book.find_join("t9:s:1").map(|entry| entry.method),
+            Some("test.profiler.stream".to_owned()),
+            "a stream is joined at its first item"
+        );
+        assert!(
+            book.windows
+                .lock()
+                .expect("windows")
+                .contains_key(&("test.profiler.unjoined".to_owned(), "success")),
+            "the request without the header was still timed"
+        );
+        assert!(
+            !book
+                .joins
+                .lock()
+                .expect("join log")
+                .entries
+                .iter()
+                .any(|entry| entry.method == "test.profiler.unjoined"),
+            "a request without the header is not joined"
+        );
+    }
+
+    #[tokio::test]
+    async fn profiler_off_leaves_requests_untouched() {
+        use crate::diagnostics::profiler::latency::{self, PinnedProfiling};
+        let _profiling = PinnedProfiling::new(false);
+        let mut registry = RpcRegistry::empty();
+        register_in_flight_probe(&mut registry, "test.profiler.off");
+
+        let frames = answer_frame(
+            registry,
+            json!([{
+                "_tag": "Request", "id": "1", "tag": "test.profiler.off", "payload": {},
+                "headers": [["x-bibcode-profiler-rid", "t9:off:1"]]
+            }]),
+            1,
+        )
+        .await;
+
+        assert_eq!(answer_of(&frames, "1"), &json!(false), "never registered");
+        let book = latency::global_latency();
+        assert!(book.find_join("t9:off:1").is_none());
+        assert!(
+            !book
+                .windows
+                .lock()
+                .expect("windows")
+                .keys()
+                .any(|(method, _)| method == "test.profiler.off")
+        );
     }
 }

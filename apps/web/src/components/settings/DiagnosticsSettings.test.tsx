@@ -256,6 +256,16 @@ vi.mock("./settingsLayout", () => ({
   ),
 }));
 
+vi.mock("./ProfilerSection", () => ({
+  ProfilerSection: (props: AnyProps) => (
+    <section
+      data-section-title="Profiler"
+      data-selected-environment={(props.selectedEnvironmentId as string | null) ?? ""}
+      data-reports-selection={typeof props.onSelectEnvironment === "function"}
+    />
+  ),
+}));
+
 vi.mock("../ui/scroll-area", () => ({
   ScrollArea: (props: AnyProps) => <div data-scroll-area>{props.children as ReactNode}</div>,
 }));
@@ -1020,6 +1030,30 @@ describe("DiagnosticsSettingsPanel open logs directory", () => {
   });
 });
 
+describe("DiagnosticsSettingsPanel profiler section", () => {
+  it("leads the page with the Profiler section", () => {
+    seedAll();
+    const markup = render();
+
+    expect(markup.match(/data-section-title="([^"]+)"/)?.[1]).toBe("Profiler");
+    expect(markup).toContain('data-selected-environment=""');
+  });
+
+  it("shows the environment the route holds and passes selections back", () => {
+    seedAll();
+    const onChange = vi.fn();
+    const markup = renderToStaticMarkup(
+      <DiagnosticsSettingsPanel
+        profilerEnvironmentId={EnvironmentId.make("luna")}
+        onProfilerEnvironmentChange={onChange}
+      />,
+    );
+
+    expect(markup).toContain('data-selected-environment="luna"');
+    expect(markup).toContain('data-reports-selection="true"');
+  });
+});
+
 describe("DiagnosticsSettingsPanel diagnostic log download", () => {
   it("renders the final download section with status-bar clearance", () => {
     seedAll();
@@ -1031,6 +1065,7 @@ describe("DiagnosticsSettingsPanel diagnostic log download", () => {
     expect(markup).toContain("server.log");
     expect(markup).toContain("server.trace.ndjson");
     expect(markup).toContain("frontend.log");
+    expect(markup).toContain("profiler");
     expect(markup).toContain("Download logs");
   });
 

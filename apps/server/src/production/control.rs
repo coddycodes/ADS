@@ -19,7 +19,7 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use crate::{
     ServerConfig,
     activity::AgentActivitySource,
-    diagnostics::TraceDiagnosticsStore,
+    diagnostics::{TraceDiagnosticsStore, profiler::enabled_setting},
     persistence::{read_json, write_bytes_atomically, write_json_atomically},
     production::{
         agent_activity::AgentActivitySettingsHandler,
@@ -284,6 +284,7 @@ pub struct NativeServerControl {
     keybindings_path: PathBuf,
     settings: Arc<RwLock<Value>>,
     automatic_git_fetch_interval: watch::Sender<Duration>,
+    profiler_enabled: watch::Sender<bool>,
     settings_update_lock: Arc<Mutex<()>>,
     settings_generation: Arc<AtomicU64>,
     agent_activity_handler: AgentActivityHandlerSlot,
@@ -377,6 +378,7 @@ impl NativeServerControl {
         redact_sensitive_environment(&mut settings);
         let (automatic_git_fetch_interval, _) =
             watch::channel(automatic_git_fetch_interval(&settings));
+        let (profiler_enabled, _) = watch::channel(enabled_setting(&settings));
         let loaded_keybindings = keybindings::load(&keybindings_path).await;
         let cwd = std::env::current_dir().unwrap_or_else(|_| config.base_dir.clone());
         let provider_maintenance = ProviderMaintenance::new();
@@ -394,6 +396,7 @@ impl NativeServerControl {
             keybindings_path,
             settings: Arc::new(RwLock::new(settings.clone())),
             automatic_git_fetch_interval,
+            profiler_enabled,
             settings_update_lock: Arc::new(Mutex::new(())),
             settings_generation: Arc::new(AtomicU64::new(0)),
             agent_activity_handler: AgentActivityHandlerSlot::default(),
@@ -471,6 +474,11 @@ impl NativeServerControl {
 
     pub(crate) fn automatic_git_fetch_interval_signal(&self) -> watch::Sender<Duration> {
         self.automatic_git_fetch_interval.clone()
+    }
+
+    /// The committed `enableProfiler` setting; changes as soon as a settings update commits.
+    pub fn profiler_enabled_signal(&self) -> watch::Receiver<bool> {
+        self.profiler_enabled.subscribe()
     }
 
     /// The provider inventory this control publishes, for a launch to read a model's capabilities.
@@ -602,6 +610,12 @@ impl NativeServerControl {
                     *current = next_fetch_interval;
                     true
                 });
+            let next_profiler_enabled = enabled_setting(&next);
+            commit_control.profiler_enabled.send_if_modified(|current| {
+                let changed = *current != next_profiler_enabled;
+                *current = next_profiler_enabled;
+                changed
+            });
             commit_control.publish(json!({
                 "version": 1,
                 "type": "settingsUpdated",
@@ -1796,6 +1810,7 @@ fn validate_settings_document(settings: &Value) -> Result<(), String> {
     validate_optional_bool(object, "enableAgentActivity")?;
     validate_optional_bool(object, "enableChatAgentActivity")?;
     validate_optional_bool(object, "enableTerminalAgentActivity")?;
+    validate_optional_bool(object, "enableProfiler")?;
     validate_optional_bool(object, "newWorktreesStartFromOrigin")?;
     validate_optional_string(object, "worktreeBaseDirectory")?;
     validate_optional_string(object, "addProjectBaseDirectory")?;
@@ -2409,6 +2424,7 @@ fn environment_descriptor(config: &ServerConfig, activity_protocol_registered: b
             "pullRequestCreateOptions": true,
             "vcsCloneReattach": true,
             "attachmentStaging": true,
+            "profiler": true,
         },
     })
 }
@@ -4624,6 +4640,13 @@ mod tests {
         );
     }
 
+    #[test]
+    fn profiler_setting_must_be_a_boolean() {
+        assert!(validate_settings_document(&json!({"enableProfiler": true})).is_ok());
+        assert!(validate_settings_document(&json!({})).is_ok());
+        assert!(validate_settings_document(&json!({"enableProfiler": "true"})).is_err());
+    }
+
     #[tokio::test]
     async fn agent_activity_legacy_key_is_removed_on_the_next_persisted_settings_write() {
         let temp = tempfile::tempdir().expect("control root");
@@ -6311,6 +6334,8 @@ mod tests {
                 "Git Manager capability {capability} was not advertised"
             );
         }
+        // Clients send the profiler RPCs only to servers that advertise them.
+        assert_eq!(descriptor["capabilities"]["profiler"], true);
     }
 
     #[test]

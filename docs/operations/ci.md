@@ -1,7 +1,7 @@
 # CI Quality Gates
 
 `.github/workflows/ci.yml` runs on pull requests and pushes to `main`. It has
-four job groups.
+five job groups.
 
 CI and Seeded Packaged Desktop Upgrade each set
 `concurrency.group` to `${{ github.workflow }}-${{ github.ref }}` with
@@ -82,6 +82,26 @@ workflow as idle.
   spaces, dollar signs, backticks, and typographic quotes. Every Git/home
   configuration input is fixture-owned. Other platforms skip that native case;
   their string assertions remain compatibility evidence.
+- **Crash smoke** runs on `ubuntu-latest`, `windows-latest`, and
+  `macos-latest`. It builds with the release symbol profile from
+  [Symbol assets](./release.md#symbol-assets) and runs
+  `cargo test -p bibcode-server --test crash_smoke --release` with
+  `CRASH_SMOKE_OUT` set to `${{ runner.temp }}/crash-smoke`, so the minidump that
+  the `crash-smoke` binary leaves under the crash monitor survives the test. The
+  test treats that directory as a data root (the dump lands in
+  `userdata/profiler/crashes/`), and `bibcode profiler symbolicate <id> --json`
+  must read the dump's crash reason and crashing-thread frames.
+  `scripts/dump-symbols.ts` then dumps that binary (with its dSYM on macOS and
+  its PDB on Windows), and `minidump-stackwalk --json` must name
+  `crash_here_in_named_function`, with its caller unwound through CFI. The
+  release build's own
+  `bibcode profiler symbolicate <id> --symbols <store> --json` must name it too,
+  from the same store, so BiBCode's symbolication is proven on every OS and not
+  only the third-party walker. `dump_syms` 2.3.9 and `minidump-stackwalk`
+  0.27.0 are installed with `cargo install --locked`, and Rust Cache keeps them
+  in `~/.cargo/bin`. A failed run uploads the dump, its sidecar, the symbol
+  store, and the stack walk as the `crash-smoke-<os>` artifact. The Windows
+  ARM64 dump path stays disabled, so the job has no ARM64 rows.
 
 The Check and Test jobs install the Linux libraries required by Tauri. The
 native matrix installs them only on Linux and otherwise uses each platform's
@@ -99,7 +119,7 @@ SHA-pinned with audited tag comments: Checkout 7.0.1
 (`62ae3a85dbdd2bedbb5819da8ce45635129289a1`). Reverify a tag before changing
 its immutable SHA.
 
-Check, Test, and Native desktop restore the Swatinem Rust cache on every run
+Check, Test, Native desktop, and Crash smoke restore the Swatinem Rust cache on every run
 and save it only when `github.ref` is `refs/heads/main`, including when a later
 step fails (`cache-on-failure`). Pull requests read that default-branch cache.
 The pnpm store stays on the setup-vp cache. A job cancelled by
@@ -126,7 +146,10 @@ budgets above include a cold compile. Native desktop keeps its 120-minute and
   cold, isolated 90-minute packaging children, three 10-minute frozen installs,
   and 60 minutes for setup, runtime verification, evidence, and cleanup.
   The other five rows and the separate WSL job keep 240 minutes; their packaging
-  children keep 45 minutes. `remote-install` reuses the protected package.
+  children keep 45 minutes. If owned-child cleanup does not observe `close`
+  within five seconds, the harness releases that child and exits nonzero so the
+  job cannot stay open for the rest of the 240-minute budget.
+  `remote-install` reuses the protected package.
   Repository `target` caching cannot warm the run root's three Cargo outputs.
   These packaging allowances are separate from the native desktop CI job above
   and preserve all existing product, WebDriver, and restart deadlines.
@@ -136,7 +159,8 @@ budgets above include a cold compile. Native desktop keeps its 120-minute and
 - `.github/workflows/release.yml` runs the stable/nightly release pipeline. See
   the [Release Checklist](./release.md). Its separate server matrix builds six
   archives, four Linux packages, and native distribution evidence before release
-  assembly can create a draft.
+  assembly can create a draft. Both matrices also publish Breakpad
+  [symbol archives](./release.md#symbol-assets).
 - `.github/workflows/deploy-relay.yml` deploys the BiBCode Connect relay from
   `main` only when the required Cloudflare repository configuration exists.
 - `.github/workflows/issue-labels.yml`, `pr-size.yml`, and `pr-vouch.yml` enforce

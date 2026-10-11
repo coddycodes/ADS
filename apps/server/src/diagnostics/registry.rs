@@ -27,6 +27,9 @@ pub struct ProcessRegistrationMetadata {
     pub kind: AttributionKind,
     pub label: String,
     pub source: RegistrationSource,
+    /// A provider process's driver (`codex`, `claudeAgent`), which names its profiler kind
+    /// `provider:<driver>`.
+    pub driver: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -134,6 +137,34 @@ impl ProcessAttributionRegistry {
                     .entries
                     .get(registration_id)
                     .map(|entry| entry.identity)
+            })
+            .collect()
+    }
+
+    /// Every registered process and its source. Unlike `bind_and_snapshot` it leaves the
+    /// observation state alone: that state belongs to the on-demand monitor, and a sampler
+    /// that sees only part of the process table would suppress claims the monitor reports.
+    pub(crate) fn registered_sources(&self) -> Vec<(ProcessIdentity, RegistrationSource)> {
+        lock_state(&self.inner)
+            .entries
+            .values()
+            .map(|entry| (entry.identity, entry.metadata.source))
+            .collect()
+    }
+
+    /// [`registered_sources`](Self::registered_sources) with each provider's driver.
+    pub(crate) fn registered_kinds(
+        &self,
+    ) -> Vec<(ProcessIdentity, RegistrationSource, Option<String>)> {
+        lock_state(&self.inner)
+            .entries
+            .values()
+            .map(|entry| {
+                (
+                    entry.identity,
+                    entry.metadata.source,
+                    entry.metadata.driver.clone(),
+                )
             })
             .collect()
     }
@@ -316,6 +347,7 @@ mod tests {
             kind: AttributionKind::Provider,
             label: label.to_owned(),
             source: RegistrationSource::Provider,
+            driver: None,
         }
     }
 

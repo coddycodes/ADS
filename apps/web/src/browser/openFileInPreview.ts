@@ -17,7 +17,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import {
   applyPreviewServerSnapshot,
-  isPreviewSupportedInRuntime,
+  canPreviewAnyUrlInRuntime,
   rememberPreviewUrl,
 } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -62,7 +62,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
   }) => Promise<AtomCommandResult<AssetCreateUrlResult, AssetError>>;
   readonly openPreview: OpenPreviewMutation<PreviewError>;
 }): Promise<AtomCommandResult<void, AssetError | PreviewError | BrowserPreviewUnavailableError>> {
-  if (!isPreviewSupportedInRuntime()) {
+  if (!canPreviewAnyUrlInRuntime()) {
     return AsyncResult.failure(
       Cause.fail(
         new BrowserPreviewUnavailableError({

@@ -54,8 +54,10 @@ import {
   resolvePrimaryEnvironmentHttpBaseUrl,
   type PrimaryEnvironmentTarget,
 } from "../environments/primary/target";
+import { forgetPreviewStorage } from "../browser/previewStorageCleanup";
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
 import { isHostedStaticApp } from "../hostedPairing";
+import { clientCollector, PROFILER_CORRELATION_HEADER } from "../profiler/clientCollector";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { makeEnvironmentSelection } from "./environmentSelection";
 import { acknowledgeRpcRequest, trackRpcRequestSent } from "../rpc/requestLatencyState";
@@ -737,6 +739,7 @@ const environmentOwnedDataCleanupLayer = Layer.succeed(
     clear: (environmentId) =>
       Effect.sync(() => {
         clearComposerDraftsEnvironment(environmentId);
+        void forgetPreviewStorage(environmentId);
       }),
   }),
 );
@@ -749,9 +752,17 @@ const rpcRequestObserverLayer = Layer.succeed(
         nextObservedRpcRequestId += 1;
         const requestId = `${environmentId}:${nextObservedRpcRequestId}`;
         trackRpcRequestSent(requestId, { method, environmentId });
-        return Effect.sync(() => {
-          acknowledgeRpcRequest(requestId);
-        });
+        const profiled = clientCollector.observeRequest(environmentId, method);
+        return {
+          headers:
+            profiled.correlationId === null
+              ? {}
+              : { [PROFILER_CORRELATION_HEADER]: profiled.correlationId },
+          complete: Effect.sync(() => {
+            acknowledgeRpcRequest(requestId);
+            profiled.complete();
+          }),
+        };
       }),
   }),
 );

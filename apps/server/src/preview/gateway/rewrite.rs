@@ -147,15 +147,25 @@ pub fn bootstrap_target(to: &str) -> Option<String> {
 }
 
 /// Page that replaces the bootstrap URL, and its capability, with `to`. An invalid `to`
-/// falls back to `/` so the page can never navigate off the gateway origin.
-pub fn bootstrap_page(to: &str) -> String {
-    let target = bootstrap_target(to).unwrap_or_else(|| "/".to_owned());
-    let literal = serde_json::to_string(&target)
-        .expect("a string always serializes")
-        .replace('<', "\\u003c");
+/// falls back to `/` so the page can never navigate off the gateway origin. A validated
+/// BiBCode UI origin is kept in the frame's `sessionStorage` for the navigation reporter.
+pub fn bootstrap_page(to: &str, ui_origin: Option<&str>) -> String {
+    let script_literal = |value: &str| {
+        serde_json::to_string(value)
+            .expect("a string always serializes")
+            .replace('<', "\\u003c")
+    };
+    let target = script_literal(&bootstrap_target(to).unwrap_or_else(|| "/".to_owned()));
+    let remember = ui_origin.map_or_else(String::new, |origin| {
+        format!(
+            "try{{sessionStorage.setItem({},{})}}catch(e){{}};",
+            script_literal(super::frame::UI_ORIGIN_STORAGE_KEY),
+            script_literal(origin)
+        )
+    });
     format!(
         "<!doctype html><meta charset=\"utf-8\"><meta name=\"referrer\" content=\"no-referrer\">\
-<title>Opening preview</title><script>location.replace({literal})</script>"
+<title>Opening preview</title><script>{remember}location.replace({target})</script>"
     )
 }
 
@@ -206,7 +216,7 @@ mod tests {
         ] {
             assert_eq!(bootstrap_target(bad), None, "{bad:?}");
         }
-        let page = bootstrap_page("/a?b=\"</script>");
+        let page = bootstrap_page("/a?b=\"</script>", None);
         assert!(page.contains("location.replace("));
         assert!(!page.contains("</script>\""));
         assert_eq!(page.matches("</script>").count(), 1);
@@ -214,7 +224,7 @@ mod tests {
 
     #[test]
     fn bootstrap_page_never_navigates_off_path() {
-        let page = bootstrap_page("//evil.test/");
+        let page = bootstrap_page("//evil.test/", None);
         assert!(page.contains("location.replace(\"/\")"));
     }
 

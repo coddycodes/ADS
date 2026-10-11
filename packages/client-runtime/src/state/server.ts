@@ -147,6 +147,14 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:process-diagnostics",
       tag: WS_METHODS.serverGetProcessDiagnostics,
     }),
+    profilerStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:profiler-status",
+      tag: WS_METHODS.serverGetProfilerStatus,
+    }),
+    reportProfilerClientBatch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:report-profiler-client-batch",
+      tag: WS_METHODS.serverReportProfilerClientBatch,
+    }),
     processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,

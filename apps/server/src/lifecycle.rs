@@ -69,6 +69,7 @@ fn connect_environment_descriptor(config: &ServerConfig) -> serde_json::Value {
             "pullRequestCreateOptions": true,
             "vcsCloneReattach": true,
             "attachmentStaging": true,
+            "profiler": true,
         },
     })
 }
@@ -555,10 +556,13 @@ fn core_http_routes(
         }) as crate::production::http_routes::BoxFuture<_>
     });
     let diagnostic_runtime = runtime.clone();
-    let diagnostic_logs = Arc::new(move |frontend_log, _context| {
+    let diagnostic_logs = Arc::new(move |frontend_log, include_crash_dumps, _context| {
         let runtime = diagnostic_runtime.clone();
-        Box::pin(async move { runtime.diagnostic_logs(frontend_log).await })
-            as crate::production::http_routes::BoxFuture<_>
+        Box::pin(async move {
+            runtime
+                .diagnostic_logs(frontend_log, include_crash_dumps)
+                .await
+        }) as crate::production::http_routes::BoxFuture<_>
     });
     let transfer_download = runtime.transfer_download_handler();
     let transfer_upload = runtime.transfer_upload_handler();
@@ -606,7 +610,9 @@ fn authorize_handler(auth: AuthService) -> crate::production::http_routes::Autho
         Box::pin(async move {
             crate::auth::authorize_http_request(&auth, &headers, &method, &uri, scope)
                 .await
-                .map(|_| ())
+                .map(|principal| crate::production::http_routes::Authorized {
+                    scopes: principal.scopes,
+                })
                 .map_err(crate::auth::auth_error_response)
         }) as crate::production::http_routes::BoxFuture<_>
     })
@@ -633,7 +639,7 @@ fn fallback_http_routes(auth: AuthService) -> HttpRoutesState {
             ))
         }) as crate::production::http_routes::BoxFuture<_>
     });
-    let diagnostic_logs = Arc::new(move |_frontend_log, _context| {
+    let diagnostic_logs = Arc::new(move |_frontend_log, _include_crash_dumps, _context| {
         Box::pin(async move {
             Err(HttpRouteError::new(
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -703,6 +709,15 @@ impl ServerHandle {
     #[must_use]
     pub fn update_maintenance(&self) -> Option<Arc<UpdateMaintenance>> {
         self.update_maintenance.clone()
+    }
+
+    /// The production runtime's committed `enableProfiler`, which a desktop host follows to
+    /// run the crash monitor for itself and this in-process server. `None` without one.
+    #[must_use]
+    pub fn profiler_enabled_signal(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        self._production_runtime
+            .as_ref()
+            .map(|runtime| runtime.profiler_enabled_signal())
     }
 
     pub fn shutdown(&self) {
@@ -1127,6 +1142,7 @@ mod tests {
         assert_eq!(descriptor["capabilities"]["pullRequestCreateOptions"], true);
         assert_eq!(descriptor["capabilities"]["vcsCloneReattach"], true);
         assert_eq!(descriptor["capabilities"]["attachmentStaging"], true);
+        assert_eq!(descriptor["capabilities"]["profiler"], true);
         assert_eq!(
             descriptor["remoteUpdateSupport"],
             serde_json::json!({

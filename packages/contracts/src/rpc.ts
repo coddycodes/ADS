@@ -300,6 +300,13 @@ import {
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
+import {
+  ProfilerClientBatch,
+  ProfilerClientBatchInvalid,
+  ProfilerClientBatchResult,
+  ProfilerClientBatchTooLarge,
+  ProfilerStatus,
+} from "./profiler.ts";
 import { VcsError, VcsStatusSummary } from "./vcs.ts";
 import {
   ProjectWorktreeDiscoveryPolicy,
@@ -552,6 +559,8 @@ export const WS_METHODS = {
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
+  serverGetProfilerStatus: "server.getProfilerStatus",
+  serverReportProfilerClientBatch: "server.reportProfilerClientBatch",
   serverSignalProcess: "server.signalProcess",
   serverGetProviderUsage: "server.getProviderUsage",
   serverRefreshProviderUsage: "server.refreshProviderUsage",
@@ -690,6 +699,25 @@ export const WsServerGetProcessResourceHistoryRpc = Rpc.make(
     payload: ServerProcessResourceHistoryInput,
     success: ServerProcessResourceHistoryResult,
     error: EnvironmentRpcError,
+  },
+);
+
+export const WsServerGetProfilerStatusRpc = Rpc.make(WS_METHODS.serverGetProfilerStatus, {
+  payload: Schema.Struct({}),
+  success: ProfilerStatus,
+  error: EnvironmentRpcError,
+});
+
+export const WsServerReportProfilerClientBatchRpc = Rpc.make(
+  WS_METHODS.serverReportProfilerClientBatch,
+  {
+    payload: ProfilerClientBatch,
+    success: ProfilerClientBatchResult,
+    error: Schema.Union([
+      ProfilerClientBatchTooLarge,
+      ProfilerClientBatchInvalid,
+      EnvironmentRpcError,
+    ]),
   },
 );
 
@@ -1760,6 +1788,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetProcessResourceHistoryRpc,
+  WsServerGetProfilerStatusRpc,
+  WsServerReportProfilerClientBatchRpc,
   WsServerSignalProcessRpc,
   WsServerGetProviderUsageRpc,
   WsServerRefreshProviderUsageRpc,

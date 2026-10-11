@@ -76,6 +76,8 @@ describe("AppRoot", () => {
       recording: false,
       automation: false,
       imageClipboard: false,
+      screenshot: true,
+      pageTools: true,
     });
     h.previewBridge = bridge;
 

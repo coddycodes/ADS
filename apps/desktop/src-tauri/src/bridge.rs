@@ -1,3 +1,4 @@
+use bibcode_server::diagnostic_bundle::MAX_DIAGNOSTIC_ARCHIVE_BYTES;
 use bibcode_server::process::configure_background_std_command;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -68,7 +69,6 @@ const PRIMARY_LOCAL_ENVIRONMENT_ID: &str = "primary";
 const WSL_INSTANCE_ID_PREFIX: &str = "wsl:";
 const REMOTE_API_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const TAURI_DESKTOP_BRIDGE_VERSION: u16 = 3;
-const MAX_DIAGNOSTIC_ARCHIVE_BYTES: usize = 20 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DesktopSettings {

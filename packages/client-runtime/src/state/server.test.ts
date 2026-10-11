@@ -316,3 +316,77 @@ describe("workspace provider capabilities", () => {
     );
   });
 });
+
+describe("server profiler status query", () => {
+  it.effect("reads the status from the selected environment", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("environment-profiler");
+      const calls: unknown[] = [];
+      const status = {
+        enabled: true,
+        recordingSince: "2026-10-09T12:00:00.000Z",
+        diskBytes: 1024,
+        eventCount: 3,
+        droppedEvents: 0,
+        lastCrashAt: null,
+        capabilities: { nativeDumps: "available", osCrashRecords: "available", storage: "ok" },
+        findings: [],
+      };
+      const networkHop = Effect.promise(
+        () => new Promise<void>((resolve) => setImmediate(resolve)),
+      );
+      const session = yield* SubscriptionRef.make(
+        Option.some({
+          client: {
+            [WS_METHODS.serverGetProfilerStatus]: (input: unknown) =>
+              networkHop.pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    calls.push(input);
+                    return status;
+                  }),
+                ),
+              ),
+          },
+        } as never),
+      );
+      const supervisor = EnvironmentSupervisor.of({
+        target: { environmentId, label: "Profiler environment" },
+        session,
+        state: yield* SubscriptionRef.make({ phase: "connected", generation: 1 }),
+      } as never);
+      const selectedEnvironments: string[] = [];
+      const environmentRegistry = EnvironmentRegistry.of({
+        run: <A, E>(
+          selectedEnvironmentId: string,
+          effect: Effect.Effect<A, E, EnvironmentSupervisor>,
+        ) => {
+          selectedEnvironments.push(selectedEnvironmentId);
+          return Effect.provideService(effect, EnvironmentSupervisor, supervisor);
+        },
+        followStream: <A, E>(_: string, stream: Stream.Stream<A, E, EnvironmentSupervisor>) =>
+          Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+      } as never);
+      const atoms = createServerEnvironmentAtoms(
+        Atom.runtime(Layer.succeed(EnvironmentRegistry, environmentRegistry)),
+        { initialConfigValueAtom: () => Atom.make(null) },
+      );
+      const atomRegistry = AtomRegistry.make();
+      const atom = atoms.profilerStatus({ environmentId, input: {} });
+      const release = atomRegistry.mount(atom);
+
+      yield* Effect.promise(async () => {
+        for (let turn = 0; turn < 50; turn += 1) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+      });
+
+      expect(Option.getOrNull(AsyncResult.value(atomRegistry.get(atom)))).toEqual(status);
+      expect(selectedEnvironments).toContain(environmentId);
+      expect(calls[0]).toEqual({});
+      expect(atoms.profilerStatus({ environmentId, input: {} })).toBe(atom);
+      release();
+      atomRegistry.dispose();
+    }),
+  );
+});

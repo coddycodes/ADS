@@ -1,0 +1,22 @@
+[
+  {
+    "time": 1790613559844471,
+    "pid": 1966,
+    "uid": 1000,
+    "gid": 1000,
+    "sig": 6,
+    "corefile": "present",
+    "exe": "/usr/bin/gnome-keyring-daemon",
+    "size": 284431
+  },
+  {
+    "time": 1790707025243866,
+    "pid": 1732134,
+    "uid": 1000,
+    "gid": 1000,
+    "sig": 6,
+    "corefile": "present",
+    "exe": "/work/workspaces/orca/BibCode/main/target/debug/deps/bibcode_server-fe771ab9e6f4b1bc",
+    "size": 739904
+  }
+]

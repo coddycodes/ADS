@@ -149,6 +149,16 @@ pub fn desktop_preview_open_devtools(app: AppHandle, tab_id: String) -> Result<(
     })
 }
 
+/// Deletes a removed environment's preview storage unless one of its previews
+/// was opened this session.
+#[tauri::command]
+pub async fn desktop_preview_forget_environment(
+    app: AppHandle,
+    environment_id: String,
+) -> Result<(), String> {
+    run_on_worker(move || host::forget_environment(&app, &environment_id)).await
+}
+
 #[tauri::command]
 pub async fn desktop_preview_clear_data(
     app: AppHandle,

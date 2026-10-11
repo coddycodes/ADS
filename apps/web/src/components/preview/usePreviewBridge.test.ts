@@ -46,6 +46,7 @@ const hooks = vi.hoisted(() => {
 
 const testState = vi.hoisted(() => ({
   appliedStates: [] as Array<{ threadRef: unknown; tabId: string; state: unknown }>,
+  browserMode: false,
   bridge: null as null | {
     onStateChange: (listener: (tabId: string, state: DesktopPreviewTabState) => void) => () => void;
   },
@@ -105,6 +106,7 @@ vi.mock("./previewBridge", () => ({
   get previewBridge() {
     return testState.bridge;
   },
+  isBrowserMode: () => testState.browserMode,
 }));
 
 import { usePreviewBridge } from "./usePreviewBridge";
@@ -155,6 +157,7 @@ function emit(tabId: string, navStatus: DesktopPreviewNavStatus): void {
 beforeEach(() => {
   hooks.reset();
   testState.appliedStates = [];
+  testState.browserMode = false;
   testState.bridge = {
     onStateChange: (listener) => {
       testState.listener = listener;
@@ -350,6 +353,30 @@ describe("usePreviewBridge", () => {
 
     emit("tab-1", { kind: "Loading", url: "http://10.0.0.2:41000/x", title: "" });
     expect(testState.localFailureCalls.at(-1)).toEqual([threadRef, "tab-1", null]);
+  });
+
+  it("keeps a page the browser-mode panel can't frame local to this client", () => {
+    testState.browserMode = true;
+    renderHook();
+    runEffect();
+
+    emit("tab-1", {
+      kind: "LoadFailed",
+      url: "https://example.com/",
+      title: "",
+      code: 0,
+      description: "Can't frame it.",
+    });
+
+    // The desktop app shows this page fine: the shared tab must not fail.
+    expect(testState.reportCalls).toHaveLength(0);
+    expect(testState.localFailureCalls).toEqual([
+      [
+        threadRef,
+        "tab-1",
+        { url: "https://example.com/", code: 0, description: "Can't frame it." },
+      ],
+    ]);
   });
 
   it("clears a local failure when a history move settles without Loading, not on a repeat", () => {

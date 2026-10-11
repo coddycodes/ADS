@@ -960,10 +960,15 @@ impl DesktopUpdateManager {
             }
             return Err(error.message);
         }
-        downloaded
+        let waiter = crate::windows_update_restart::prepare_restart_handoff();
+        let installed = downloaded
             .update
             .install(&downloaded.bytes)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string());
+        if installed.is_err() {
+            waiter.cancel();
+        }
+        installed
     }
 
     #[cfg(test)]

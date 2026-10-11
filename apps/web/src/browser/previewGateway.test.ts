@@ -99,6 +99,24 @@ describe("resolveForNavigation", () => {
     expect(sshForward).not.toHaveBeenCalled();
   });
 
+  it("names this BiBCode page on the bootstrap url in browser mode so it may frame the preview", async () => {
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("location", { origin: "http://192.168.1.5:3773", protocol: "http:" });
+    readPreparedConnection.mockReturnValue(lan());
+
+    await expect(
+      resolveForNavigation({
+        environmentId,
+        threadId,
+        canonicalUrl: "http://localhost:5173/",
+        gatewayOpen: vi.fn(async () => opened(41000)),
+      }),
+    ).resolves.toEqual({
+      kind: "ok",
+      url: "http://192.168.1.5:41000/__bibcode/bootstrap?cap=CAP&to=%2F&ui=http%3A%2F%2F192.168.1.5%3A3773",
+    });
+  });
+
   it("resolves SSH loopback through gateway plus local forward", async () => {
     readPreparedConnection.mockReturnValue(ssh());
     const gatewayOpen = vi.fn(async () => opened(41000, "C+/="));
@@ -109,6 +127,7 @@ describe("resolveForNavigation", () => {
         threadId,
         canonicalUrl: "http://127.0.0.1:5173/",
         gatewayOpen,
+        tabId: "tab-1",
       }),
     ).resolves.toEqual({
       kind: "ok",
@@ -135,6 +154,7 @@ describe("resolveForNavigation", () => {
         threadId,
         canonicalUrl: "http://127.0.0.1:5173/cb?x=1",
         gatewayOpen,
+        tabId: "tab-1",
       }),
     ).resolves.toEqual({
       kind: "ok",
@@ -144,6 +164,39 @@ describe("resolveForNavigation", () => {
     // The real origin maps to itself, so the address bar and history keep it.
     expect(isGatewayClientUrl("http://localhost:5173/next")).toBe(true);
     expect(canonicalizePreviewUrl("http://localhost:5173/next")).toBe("http://localhost:5173/next");
+    expect(showSamePortBusyNotice).not.toHaveBeenCalled();
+  });
+
+  it("keeps a system-browser open off the canonical origin, which no preview profile isolates", async () => {
+    readPreparedConnection.mockReturnValue(ssh());
+    // The desktop: one forward per gateway port, reused whatever its local port.
+    const held = new Map<number, number>();
+    sshForward.mockImplementation(
+      async (_target: unknown, gatewayPort: number, preferred?: number) => {
+        const local = held.get(gatewayPort) ?? preferred ?? 50_000;
+        held.set(gatewayPort, local);
+        return local;
+      },
+    );
+    const open = (tabId?: string) =>
+      resolveForNavigation({
+        environmentId,
+        threadId,
+        canonicalUrl: "http://localhost:5173/cb",
+        gatewayOpen: vi.fn(async () => opened(41000)),
+        ...(tabId === undefined ? {} : { tabId }),
+      });
+
+    await expect(open()).resolves.toEqual({
+      kind: "ok",
+      url: "http://127.0.0.1:5173/__bibcode/bootstrap?cap=CAP&to=%2Fcb",
+    });
+    // A tab opened after it reuses the forward and still gets the real origin.
+    await expect(open("tab-1")).resolves.toEqual({
+      kind: "ok",
+      url: "http://localhost:5173/__bibcode/bootstrap?cap=CAP&to=%2Fcb",
+    });
+    expect(sshForward).toHaveBeenNthCalledWith(1, sshTarget, 41000, 5173);
     expect(showSamePortBusyNotice).not.toHaveBeenCalled();
   });
 
@@ -189,7 +242,13 @@ describe("resolveForNavigation", () => {
     readPreparedConnection.mockReturnValue(ssh());
     const gatewayOpen = vi.fn(async () => opened(41000));
     const open = (url: string) =>
-      resolveForNavigation({ environmentId, threadId, canonicalUrl: url, gatewayOpen });
+      resolveForNavigation({
+        environmentId,
+        threadId,
+        canonicalUrl: url,
+        gatewayOpen,
+        tabId: "tab-1",
+      });
 
     await expect(open("http://localhost:5173/")).resolves.toMatchObject({
       kind: "ok",

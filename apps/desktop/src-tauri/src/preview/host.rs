@@ -758,6 +758,87 @@ pub(crate) fn preview_data_store_id(environment_id: Option<&str>) -> [u8; 16] {
     }
 }
 
+/// Environments whose preview profile a native view holds (or is being
+/// created with) this session. Views live until the app exits, so an entry is
+/// never removed.
+fn profiles_in_use() -> &'static Mutex<std::collections::HashSet<String>> {
+    static IN_USE: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+    IN_USE.get_or_init(Default::default)
+}
+
+/// Deletes an environment's preview profile directory; an absent one is fine.
+// macOS partitions by data store instead; kept there for its tests.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub(crate) fn remove_profile_directory(
+    app_data: &std::path::Path,
+    environment_id: &str,
+) -> std::io::Result<()> {
+    match std::fs::remove_dir_all(app_data.join(preview_profile_dir(Some(environment_id)))) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
+}
+
+fn remove_environment_profile(
+    app: &AppHandle,
+    app_data: &std::path::Path,
+    environment_id: &str,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app_data;
+        super::platform::remove_data_store(app, preview_data_store_id(Some(environment_id)))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        remove_profile_directory(app_data, environment_id)
+            .map_err(|error| format!("failed to remove the preview profile: {error}"))
+    }
+}
+
+/// Marks an environment's profile as in use before its native view is created,
+/// so a concurrent removal leaves it alone instead of deleting files being opened.
+pub(crate) fn reserve_preview_profile(
+    in_use: &Mutex<std::collections::HashSet<String>>,
+    environment_id: Option<&str>,
+) {
+    if let Some(environment_id) = environment_id
+        && let Ok(mut in_use) = in_use.lock()
+    {
+        in_use.insert(environment_id.to_owned());
+    }
+}
+
+/// Deletes a removed environment's profile with `remove`, unless a native view
+/// holds or is opening it this session: then the profile stays on disk (no view
+/// is ever recreated to release it). The decision and the deletion run under
+/// the in-use lock, so no view can open the profile meanwhile.
+pub(crate) fn forget_profile(
+    in_use: &Mutex<std::collections::HashSet<String>>,
+    environment_id: &str,
+    remove: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    let in_use = in_use.lock().map_err(|error| error.to_string())?;
+    if in_use.contains(environment_id) {
+        tracing::info!("kept a removed environment's preview profile: a preview holds it");
+        return Ok(());
+    }
+    remove(environment_id)
+}
+
+/// Deletes a removed environment's preview storage unless one of its previews
+/// was opened this session.
+pub fn forget_environment(app: &AppHandle, environment_id: &str) -> Result<(), String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("failed to resolve preview profile directory: {error}"))?;
+    forget_profile(profiles_in_use(), environment_id, |environment_id| {
+        remove_environment_profile(app, &app_data, environment_id)
+    })
+}
+
 pub fn create_tab(
     app: &AppHandle,
     tab_id: &str,
@@ -900,6 +981,7 @@ pub fn create_tab(
         builder = builder.data_directory(profile_dir);
     }
 
+    reserve_preview_profile(profiles_in_use(), environment_id);
     creation_lease.mark_creation_attempted();
     let webview = window
         .add_child(
@@ -948,6 +1030,13 @@ pub fn create_tab(
             Err(error) => return Err(error),
         };
 
+        super::platform::place_child(
+            &webview,
+            snapshot.0.x,
+            snapshot.0.y,
+            snapshot.0.width.max(1.0),
+            snapshot.0.height.max(1.0),
+        );
         let apply_result = webview
             .set_position(LogicalPosition::new(snapshot.0.x, snapshot.0.y))
             .and_then(|()| {
@@ -1114,6 +1203,13 @@ pub fn set_bounds(
     };
 
     while let Some(current) = snapshot {
+        super::platform::place_child(
+            &current.webview,
+            current.bounds.x,
+            current.bounds.y,
+            current.bounds.width.max(1.0),
+            current.bounds.height.max(1.0),
+        );
         current
             .webview
             .set_position(LogicalPosition::new(current.bounds.x, current.bounds.y))
@@ -1202,6 +1298,45 @@ pub fn close_tab(app: &AppHandle, tab_id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+
+    #[test]
+    fn a_profile_in_use_this_session_is_kept_and_an_idle_one_removed() {
+        let in_use = std::sync::Mutex::new(std::collections::HashSet::new());
+        super::reserve_preview_profile(&in_use, Some("env-opening"));
+        super::reserve_preview_profile(&in_use, None);
+
+        let mut removed = Vec::new();
+        for id in ["env-opening", "env-idle"] {
+            super::forget_profile(&in_use, id, |id| {
+                removed.push(id.to_owned());
+                Ok(())
+            })
+            .expect("forget");
+        }
+
+        assert_eq!(removed, ["env-idle"]);
+    }
+
+    #[test]
+    fn removing_an_environment_profile_deletes_only_its_directory() {
+        let app_data = tempfile::tempdir().expect("temp");
+        let mine = app_data
+            .path()
+            .join(super::preview_profile_dir(Some("env-a")));
+        let other = app_data
+            .path()
+            .join(super::preview_profile_dir(Some("env-b")));
+        let local = app_data.path().join(super::preview_profile_dir(None));
+        for dir in [&mine, &other, &local] {
+            std::fs::create_dir_all(dir.join("Default")).expect("profile");
+        }
+
+        super::remove_profile_directory(app_data.path(), "env-a").expect("remove");
+        super::remove_profile_directory(app_data.path(), "env-gone").expect("absent is fine");
+
+        assert!(!mine.exists());
+        assert!(other.exists() && local.exists());
+    }
 
     #[test]
     fn local_environment_keeps_the_legacy_preview_profile() {

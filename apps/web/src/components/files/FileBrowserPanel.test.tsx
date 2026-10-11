@@ -196,6 +196,7 @@ vi.mock("~/pierre-icons", () => ({ BIBCODE_PIERRE_ICONS: {} }));
 
 vi.mock("~/previewStateStore", () => ({
   isPreviewSupportedInRuntime: () => testState.isPreviewSupported,
+  canPreviewAnyUrlInRuntime: () => testState.isPreviewSupported,
 }));
 
 vi.mock("~/rightPanelStore", () => ({

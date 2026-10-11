@@ -366,6 +366,54 @@ owned through the terminal operation result, is released on completion, and
 shutdown closes admission before draining every accepted task. There is no
 unbounded waiter queue.
 
+### Audit
+
+While the [Profiler](./overview.md#profiler) is on, the worktree audit records
+removal outcomes and scans the catalog. It only observes: it never prunes,
+deletes, or refreshes anything.
+
+**Removal outcomes.** `worktree.remove` and `worktree.removeFromBibCode` write
+one `worktree.removal` event per outcome, with the mode, success, the error's
+kebab-case `reason`, the duration, and whether the admission drain timed out, a
+capacity limit was hit, or the client cancelled. A reason that is not plain
+kebab-case reads as `unknown`, so no path reaches a fingerprint, and a replay of
+an accepted removal records nothing. A failure becomes a
+`worktree.removal-failed` finding, fingerprinted by its reason, only when it is
+not the protocol working as designed:
+
+| Outcome                                                                                                                                                                                                                                                                           | Finding                            |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `stale-plan`, `stale-generation`, `session-running`, `thread-not-found`, `operation-shutting-down`, or `orchestration-failed` after the client cancelled                                                                                                                          | None; the event only               |
+| An admission-drain timeout, which answers `session-running`                                                                                                                                                                                                                       | Warn, as `admission-drain-timeout` |
+| `cleanup-capacity`, `operation-capacity`, `dirty-confirmation-required`, `prune-confirmation-required`, `locked`, `protected-target`, `environment-unsupported`, `command-conflict`, `ownership-conflict`, `replacement-conflict`, `repository-mismatch`, `workspace-unavailable` | Warn                               |
+| `git-failed`, `internal`, `orchestration-failed` without a cancel, `workspace-identity-unavailable`, and any other reason, `unknown` included                                                                                                                                     | Error                              |
+
+**Scan.** The first scan runs when the profiler turns on and then every 10
+minutes, at most one at a time; a tick that finds the previous scan's
+filesystem work still running, or the catalog not built yet, looks again a
+second later. A scan reads the catalog's guards and owned worktrees, the
+directories one level under each managed worktree directory (up to 500 per
+directory), each project's `git worktree list --porcelain` (8 s per project), and
+the working directories of the processes BiBCode owns (5 s). The comparison with
+the filesystem and Git is abandoned after 30 s, and only managed directories
+whose owners and registrations were all read are compared. The catalog and
+process facts are audited regardless, and the scan's `worktree.audit` event says
+what was covered (`compared`, `processesRead`). Findings are fingerprinted by
+kind and reason, never a path, so each problem is one finding however many
+worktrees show it; the redacted path appears in the summary and evidence.
+
+| Finding                          | Severity | Condition                                                                                                                                          |
+| -------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `worktree.missing`               | Warn     | A catalog entry is `missing-registered` or `missing-unregistered`.                                                                                 |
+| `worktree.stuck-removal`         | Error    | A `removing` guard has been held for more than 10 minutes.                                                                                         |
+| `worktree.orphan-dir`            | Warn     | A directory in a managed worktree directory has no catalog owner and no Git registration.                                                          |
+| `worktree.registration-mismatch` | Warn     | Git registers a worktree in a managed worktree directory, its directory is gone, and no catalog entry owns it.                                     |
+| `worktree.held-open`             | Warn     | A process BiBCode owns works inside a missing worktree, inside one stuck in removal, or in a deleted directory under a managed worktree directory. |
+
+`worktree.held-open` reads working directories on Linux and macOS only. On
+Windows the process step reads nothing, so the audit event's `processesRead` is
+`null` there.
+
 ## Protocol, capability, and operations
 
 The live method names and scopes are mirrored in

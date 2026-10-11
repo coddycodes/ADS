@@ -783,6 +783,25 @@ fn if_none_match_matches(header: &str, etag: &str) -> bool {
         })
 }
 
+/// The UI's policy. Browser mode frames preview gateways on the host the page was
+/// loaded from, one port per target, so `frame-src` allows that host on any port.
+/// An IPv6 host gets none: the gateway lets no IPv6 page frame it.
+fn content_security_policy(headers: &HeaderMap) -> String {
+    let gateways = headers
+        .get(HOST)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<hyper::http::uri::Authority>().ok())
+        .map(|authority| authority.host().to_owned())
+        // Only name and IPv4 characters reach the policy (never `;`, `,`, or `[`).
+        .filter(|host| {
+            host.bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-')
+        })
+        .map(|host| format!(" http://{host}:*"))
+        .unwrap_or_default();
+    format!("{CONTENT_SECURITY_POLICY_VALUE}; frame-src 'self'{gateways}")
+}
+
 async fn stream_file(
     path: PathBuf,
     content_hashed: bool,
@@ -837,7 +856,7 @@ async fn stream_file(
         .header(CONTENT_LENGTH, metadata.len())
         .header(CACHE_CONTROL, cache_control)
         .header("x-content-type-options", "nosniff")
-        .header("content-security-policy", CONTENT_SECURITY_POLICY_VALUE);
+        .header("content-security-policy", content_security_policy(headers));
     if let Some(etag) = etag {
         response = response.header(ETAG, etag);
     }
@@ -893,6 +912,26 @@ fn internal_server_error() -> Response {
 #[cfg(test)]
 mod tests {
     use tower::ServiceExt;
+
+    #[test]
+    fn the_ui_may_frame_only_its_own_hosts_preview_gateways() {
+        let csp = |host: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(HOST, HeaderValue::from_str(host).unwrap());
+            super::content_security_policy(&headers)
+        };
+        assert!(csp("box.lan:3773").ends_with("; frame-src 'self' http://box.lan:*"));
+        // The gateway frames no IPv6 host, and a Host that isn't an authority adds nothing.
+        for host in [
+            "[::1]:3773",
+            "box.lan:3773; script-src *",
+            "a b",
+            "box.lan;x:3773",
+        ] {
+            assert!(csp(host).ends_with("; frame-src 'self'"), "{host}");
+        }
+        assert!(super::content_security_policy(&HeaderMap::new()).ends_with("; frame-src 'self'"));
+    }
 
     use super::*;
 

@@ -1,12 +1,22 @@
 import type { DesktopPreviewBridge } from "@bibcode/contracts";
 
-export type PreviewRuntimeCapability = "picker" | "recording" | "automation" | "imageClipboard";
+export type PreviewRuntimeCapability =
+  | "picker"
+  | "recording"
+  | "automation"
+  | "imageClipboard"
+  /** Capturing the page as an image. */
+  | "screenshot"
+  /** Zoom, developer tools, and clearing site data. */
+  | "pageTools";
 
 export interface PreviewRuntimeCapabilities {
   readonly picker: boolean;
   readonly recording: boolean;
   readonly automation: boolean;
   readonly imageClipboard: boolean;
+  readonly screenshot: boolean;
+  readonly pageTools: boolean;
 }
 
 const capabilitiesByBridge = new WeakMap<DesktopPreviewBridge, PreviewRuntimeCapabilities>();

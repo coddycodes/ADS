@@ -75,6 +75,7 @@ macro_rules! desktop_preview_commands {
             desktop_preview_set_zoom,
             desktop_preview_open_devtools,
             desktop_preview_clear_data,
+            desktop_preview_forget_environment,
             desktop_preview_capture_screenshot,
             desktop_preview_reveal_artifact,
         ]
@@ -90,7 +91,10 @@ macro_rules! bridge_command_names {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let restart_handoff = windows_update_restart::adopt_restart_handoff();
     let shell_path_hydration = shell_environment::hydrate_process_path();
+    // After the PATH hydration, which must run before any thread exists, and before Tauri.
+    crash_monitor::start();
     let builder = tauri::Builder::<bridge::DesktopRuntime>::new()
         .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}))
         .manage(backend::BackendSupervisor::new())
@@ -114,12 +118,16 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build());
     #[cfg(target_os = "linux")]
     let builder = builder.manage(linux_theme::LinuxThemeState::default());
+    #[cfg(target_os = "macos")]
+    let builder = webview_exit::watch(builder);
     #[cfg(feature = "desktop-e2e")]
     let builder = builder
         .plugin(desktop_e2e_logging_plugin())
         .plugin(tauri_plugin_wdio::init())
         .plugin(tauri_plugin_wdio_webdriver::init());
     let builder = builder.setup(move |app| {
+        // Setup runs only in the launch the single-instance plugin kept.
+        restart_handoff.release();
         // Built here (not from config) so it can route new-window requests;
         // first, so everything below still runs after the main window exists.
         window::build_main_window(app.handle())?;
@@ -243,6 +251,7 @@ pub fn run() {
         preview::commands::desktop_preview_set_zoom,
         preview::commands::desktop_preview_open_devtools,
         preview::commands::desktop_preview_clear_data,
+        preview::commands::desktop_preview_forget_environment,
         preview::commands::desktop_preview_capture_screenshot,
         preview::commands::desktop_preview_reveal_artifact,
         #[cfg(feature = "desktop-e2e")]
@@ -319,6 +328,7 @@ mod backend;
 mod bridge;
 mod config;
 mod context_menu;
+mod crash_monitor;
 mod data_safety;
 #[cfg(any(feature = "desktop-e2e", test))]
 mod desktop_e2e_page_load;
@@ -339,7 +349,9 @@ mod tailscale;
 #[cfg(test)]
 mod test_support;
 mod updates;
+mod webview_exit;
 mod window;
+mod windows_update_restart;
 
 pub use bridge::{
     desktop_bridge_bootstrap_ssh_bearer_session, desktop_bridge_fetch_environment_descriptor,

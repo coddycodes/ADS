@@ -11,6 +11,8 @@ import { previewBridge } from "./previewBridge";
 interface Props {
   /** Active preview tab id. Tab-targeting actions are disabled without it. */
   tabId: string | null;
+  /** Hard reload, DevTools, zoom, and clearing site data; browser-mode frames have none. */
+  pageTools: boolean;
   /** Current zoom factor as a number (1.0 = 100%). */
   zoomFactor: number;
   /** Fixed viewport modes expose the device toolbar and resize rails. */
@@ -22,12 +24,14 @@ interface Props {
 }
 
 /**
- * Three-dot menu in the chrome row. Wires Hard reload, DevTools, zoom
- * controls, and storage-clearing actions. Only mounted by `PreviewView`
- * when the desktop bridge is present, so we can call it unconditionally.
+ * Three-dot menu in the chrome row. Wires the device toolbar and, where the
+ * host has them (`pageTools`), Hard reload, DevTools, zoom controls, and
+ * storage-clearing actions. Only mounted by `PreviewView` when a preview
+ * bridge is present.
  */
 export function PreviewMoreMenu({
   tabId,
+  pageTools,
   zoomFactor,
   deviceToolbarVisible,
   onToggleDeviceToolbar,
@@ -59,65 +63,73 @@ export function PreviewMoreMenu({
         <TooltipPopup>More</TooltipPopup>
       </Tooltip>
       <MenuPopup align="end" sideOffset={6} className="min-w-56">
-        <MenuItem onClick={callTab(bridge.hardReload)} disabled={tabDisabled}>
-          Hard reload
-        </MenuItem>
-        <MenuItem onClick={callTab(bridge.openDevTools)} disabled={tabDisabled}>
-          Open DevTools
-        </MenuItem>
+        {pageTools ? (
+          <>
+            <MenuItem onClick={callTab(bridge.hardReload)} disabled={tabDisabled}>
+              Hard reload
+            </MenuItem>
+            <MenuItem onClick={callTab(bridge.openDevTools)} disabled={tabDisabled}>
+              Open DevTools
+            </MenuItem>
+          </>
+        ) : null}
         <MenuItem onClick={onToggleDeviceToolbar} disabled={tabDisabled}>
           {deviceToolbarVisible ? "Hide device toolbar" : "Show device toolbar"}
         </MenuItem>
-        <MenuSeparator />
-        <div
-          role="group"
-          aria-label="Zoom"
-          className="flex min-h-7 items-center justify-between gap-2 rounded-sm px-2 py-1 text-sm text-foreground"
-        >
-          <span>Zoom</span>
-          <span className="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="icon-xs"
-              type="button"
-              onClick={callTab(bridge.zoomOut)}
-              aria-label="Zoom out"
-              disabled={tabDisabled}
+        {pageTools ? (
+          <>
+            <MenuSeparator />
+            <div
+              role="group"
+              aria-label="Zoom"
+              className="flex min-h-7 items-center justify-between gap-2 rounded-sm px-2 py-1 text-sm text-foreground"
             >
-              <Minus />
-            </Button>
-            <span className="min-w-12 text-center text-xs tabular-nums text-muted-foreground">
-              {zoomLabel}
-            </span>
-            <Button
-              variant="outline"
-              size="icon-xs"
-              type="button"
-              onClick={callTab(bridge.zoomIn)}
-              aria-label="Zoom in"
-              disabled={tabDisabled}
-            >
-              <PlusIcon />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              type="button"
-              onClick={callTab(bridge.resetZoom)}
-              aria-label="Reset zoom"
-              disabled={tabDisabled}
-            >
-              <RotateCcw />
-            </Button>
-          </span>
-        </div>
-        <MenuSeparator />
-        <MenuItem onClick={callTab(bridge.clearCookies)} disabled={tabDisabled}>
-          Clear cookies
-        </MenuItem>
-        <MenuItem onClick={callTab(bridge.clearCache)} disabled={tabDisabled}>
-          Clear cache
-        </MenuItem>
+              <span>Zoom</span>
+              <span className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="icon-xs"
+                  type="button"
+                  onClick={callTab(bridge.zoomOut)}
+                  aria-label="Zoom out"
+                  disabled={tabDisabled}
+                >
+                  <Minus />
+                </Button>
+                <span className="min-w-12 text-center text-xs tabular-nums text-muted-foreground">
+                  {zoomLabel}
+                </span>
+                <Button
+                  variant="outline"
+                  size="icon-xs"
+                  type="button"
+                  onClick={callTab(bridge.zoomIn)}
+                  aria-label="Zoom in"
+                  disabled={tabDisabled}
+                >
+                  <PlusIcon />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  type="button"
+                  onClick={callTab(bridge.resetZoom)}
+                  aria-label="Reset zoom"
+                  disabled={tabDisabled}
+                >
+                  <RotateCcw />
+                </Button>
+              </span>
+            </div>
+            <MenuSeparator />
+            <MenuItem onClick={callTab(bridge.clearCookies)} disabled={tabDisabled}>
+              Clear cookies
+            </MenuItem>
+            <MenuItem onClick={callTab(bridge.clearCache)} disabled={tabDisabled}>
+              Clear cache
+            </MenuItem>
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );

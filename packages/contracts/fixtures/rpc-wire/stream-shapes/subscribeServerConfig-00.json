@@ -47,6 +47,7 @@
           "enableProviderUpdateChecks": true,
           "enableChatAgentActivity": true,
           "enableTerminalAgentActivity": false,
+          "enableProfiler": false,
           "automaticGitFetchInterval": 180000,
           "defaultThreadEnvMode": "local",
           "newWorktreesStartFromOrigin": false,

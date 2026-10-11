@@ -7,6 +7,7 @@ const showPreviewUnreachableNotice = vi.fn();
 const openUrlInPreview = vi.fn();
 const openExternal = vi.fn();
 let previewSupported = true;
+let anyUrlSupported = true;
 let setting: "app" | "system" = "app";
 
 vi.mock("./browserTargetResolver", () => ({ resolvePreviewTarget }));
@@ -18,7 +19,10 @@ vi.mock("./linkNotices", () => ({
   showPreviewUnreachableMessage,
 }));
 vi.mock("./openFileInPreview", () => ({ openUrlInPreview }));
-vi.mock("~/previewStateStore", () => ({ isPreviewSupportedInRuntime: () => previewSupported }));
+vi.mock("~/previewStateStore", () => ({
+  isPreviewSupportedInRuntime: () => previewSupported,
+  canPreviewAnyUrlInRuntime: () => anyUrlSupported,
+}));
 vi.mock("~/localApi", () => ({ readLocalApi: () => ({ shell: { openExternal } }) }));
 vi.mock("~/hooks/useSettings", () => ({
   getClientSettings: () => ({ browserLinkTarget: setting }),
@@ -54,6 +58,7 @@ describe("openLink", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     previewSupported = true;
+    anyUrlSupported = true;
     setting = "app";
     openUrlInPreview.mockResolvedValue(AsyncResult.success(undefined));
     openExternal.mockResolvedValue(undefined);
@@ -103,6 +108,7 @@ describe("openLink", () => {
 
   it("falls back to the system browser when preview is unsupported", async () => {
     previewSupported = false;
+    anyUrlSupported = false;
     resolvePreviewTarget.mockReturnValue({ kind: "reachable", url: "https://example.com/" });
     const { openLink } = await import("./openLink");
     expect(openLink({ url: "https://example.com/", threadRef, invert: false, openPreview })).toBe(
@@ -169,6 +175,67 @@ describe("openLink", () => {
       url: "http://localhost:5173/",
       openPreview,
     });
+  });
+
+  it("in browser mode frames only gateway addresses on this page's host in the panel", async () => {
+    anyUrlSupported = false;
+    vi.stubGlobal("location", { hostname: "10.0.0.2" });
+    const { openLink } = await import("./openLink");
+    resolvePreviewTarget.mockReturnValue({
+      kind: "gateway",
+      via: "host",
+      host: "10.0.0.2",
+      url: "http://localhost:5173/",
+    });
+    expect(openLink({ url: "http://localhost:5173/", threadRef, invert: false, openPreview })).toBe(
+      "app",
+    );
+    expect(openUrlInPreview).toHaveBeenCalledTimes(1);
+
+    resolvePreviewTarget.mockReturnValue({ kind: "reachable", url: "https://example.com/" });
+    expect(openLink({ url: "https://example.com/", threadRef, invert: false, openPreview })).toBe(
+      "system",
+    );
+    // Another host's gateway refuses to be framed by this page.
+    resolvePreviewTarget.mockReturnValue({
+      kind: "gateway",
+      via: "host",
+      host: "10.0.0.3",
+      url: "http://localhost:5173/",
+    });
+    vi.stubGlobal("window", { open: () => null });
+    expect(openLink({ url: "http://localhost:5173/", threadRef, invert: false, openPreview })).toBe(
+      "system",
+    );
+    expect(openUrlInPreview).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("opens a same-host page directly when it leaves the panel", async () => {
+    anyUrlSupported = false;
+    vi.stubGlobal("location", { hostname: "localhost" });
+    resolvePreviewTarget.mockReturnValue({
+      kind: "gateway",
+      via: "host",
+      host: "localhost",
+      direct: true,
+      url: "http://localhost:5173/",
+    });
+    const { openLink } = await import("./openLink");
+    // No thread to admit a gateway target, and a modifier-click for a new tab.
+    expect(
+      openLink({ url: "http://localhost:5173/", threadRef: null, invert: false, openPreview }),
+    ).toBe("system");
+    expect(openLink({ url: "http://localhost:5173/", threadRef, invert: true, openPreview })).toBe(
+      "system",
+    );
+    expect(openExternal.mock.calls).toEqual([
+      ["http://localhost:5173/"],
+      ["http://localhost:5173/"],
+    ]);
+    expect(resolveForNavigation).not.toHaveBeenCalled();
+    expect(showPreviewUnreachableMessage).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 
   describe("gateway address in the system browser", () => {

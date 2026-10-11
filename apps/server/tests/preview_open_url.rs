@@ -110,7 +110,7 @@ fn router(connect: Arc<ConnectMcpService>, preview: PreviewManager) -> Router {
             Box::pin(async { Err(StatusCode::UNAUTHORIZED.into_response()) })
         }),
         Arc::new(|_operation, _payload, _context| Box::pin(async { Err(unavailable()) })),
-        Arc::new(|_log, _context| Box::pin(async { Err(unavailable()) })),
+        Arc::new(|_log, _include_crash_dumps, _context| Box::pin(async { Err(unavailable()) })),
         Arc::new(|_token, _path, _context| Box::pin(async { Err(unavailable()) })),
         Arc::new(|_method, _body, _context| Box::pin(async { Err(unavailable()) })),
         Arc::new(|_token, _context| Box::pin(async { Err(unavailable()) })),

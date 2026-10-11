@@ -2046,6 +2046,9 @@ async fn wait_for_termination_signal() {
     if terminate.recv().await.is_none() {
         std::future::pending().await
     }
+    // A logout signals the whole session; the processes that die with BiBCode are not
+    // crashes.
+    bibcode_server::diagnostics::profiler::exits::note_terminating();
 }
 
 fn emit_backend_ready<R: Runtime>(
@@ -2144,6 +2147,8 @@ async fn start_managed_backend(
                 let _ = handle.join().await;
                 return Err(BackendStartFailure::other(error));
             }
+            crate::crash_monitor::follow_server(&handle);
+            crate::webview_exit::follow_server(&handle);
 
             Ok((
                 config.clone(),

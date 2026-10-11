@@ -813,6 +813,107 @@ async fn independent_agent_activity_settings_control_routed_rpc_gates_and_trace(
 }
 
 #[tokio::test]
+async fn production_profiler_status_follows_the_setting_live() {
+    let temp = TempDir::new().expect("temporary directory");
+    let config = test_config(&temp);
+    hermetic_providers::write_hermetic_settings(&config.state_dir(), json!({}));
+    let handle = ServerRuntime::start(config)
+        .await
+        .expect("production server starts");
+    let mut socket = Some(open_socket(handle.local_addr()).await);
+
+    let result = AssertUnwindSafe(async {
+        let socket = socket.as_mut().expect("socket");
+        // Request ids must be unique unsigned decimal strings.
+        let mut next_id = 1_u32..;
+        let mut id = move || next_id.next().expect("ids never run out").to_string();
+        let off =
+            success_value(request(socket, &id(), "server.getProfilerStatus", json!({})).await);
+        assert_eq!(off["enabled"], false);
+        assert_eq!(off["capabilities"]["storage"], "ok");
+
+        for enabled in [true, false] {
+            let updated = success_value(
+                request(
+                    socket,
+                    &id(),
+                    "server.updateSettings",
+                    json!({ "patch": { "enableProfiler": enabled } }),
+                )
+                .await,
+            );
+            assert_eq!(updated["enableProfiler"], enabled);
+            let mut status = Value::Null;
+            for _ in 0..100 {
+                status = success_value(
+                    request(socket, &id(), "server.getProfilerStatus", json!({})).await,
+                );
+                if status["enabled"] == enabled {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert_eq!(
+                status["enabled"], enabled,
+                "the toggle applies without a restart"
+            );
+            assert_eq!(status["recordingSince"].is_string(), enabled);
+            assert_eq!(status["capabilities"]["storage"], "ok");
+        }
+    })
+    .catch_unwind()
+    .await;
+
+    close_socket(&mut socket).await;
+    handle.shutdown();
+    handle.join().await.expect("server joins");
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[tokio::test]
+async fn a_failed_production_start_releases_the_profiler_directory() {
+    let temp = TempDir::new().expect("temporary directory");
+    let config = test_config(&temp);
+    hermetic_providers::write_hermetic_settings(&config.state_dir(), json!({}));
+    let key_pair = config.state_dir().join("environment-jwt.json");
+    std::fs::write(&key_pair, b"not a key pair").expect("corrupt key pair");
+    assert!(
+        ServerRuntime::start(config.clone()).await.is_err(),
+        "a corrupt key pair fails startup after the production runtime exists"
+    );
+    std::fs::remove_file(&key_pair).expect("remove corrupt key pair");
+
+    // The failed start's profiler tears down in the background; a retry then owns the directory.
+    let mut storage = Value::Null;
+    for _ in 0..20 {
+        let handle = ServerRuntime::start(config.clone())
+            .await
+            .expect("production server starts");
+        let mut socket = Some(open_socket(handle.local_addr()).await);
+        let status = success_value(
+            request(
+                socket.as_mut().expect("socket"),
+                "1",
+                "server.getProfilerStatus",
+                json!({}),
+            )
+            .await,
+        );
+        close_socket(&mut socket).await;
+        handle.shutdown();
+        handle.join().await.expect("server joins");
+        storage = status["capabilities"]["storage"].clone();
+        if storage == "ok" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(storage, "ok", "the failed start kept the profiler lock");
+}
+
+#[tokio::test]
 async fn registrar_serves_concrete_server_and_terminal_metadata_rpcs() {
     let temp = TempDir::new().expect("temporary directory");
     let services = fixture_services();
@@ -1738,6 +1839,50 @@ async fn server_terminal_auxiliary_rpcs_surface_runtime_state_validation_and_int
         assert_eq!(history["windowMs"], 5_000);
         assert_eq!(history["bucketMs"], 1_000);
 
+        let profiler =
+            success_value(request(control, "10", "server.getProfilerStatus", json!({})).await);
+        assert_eq!(profiler["enabled"], false);
+        assert_eq!(profiler["capabilities"]["storage"], "ok");
+        assert_eq!(profiler["findings"], json!([]));
+        // A valid batch is ignored while the profiler is off.
+        let reported = success_value(
+            request(
+                control,
+                "11",
+                "server.reportProfilerClientBatch",
+                client_batch(1),
+            )
+            .await,
+        );
+        assert_eq!(reported["accepted"], false);
+        // Over 64 records, and over 64 KiB: typed errors, and the connection stays open.
+        assert_error_tag(
+            request(
+                control,
+                "12",
+                "server.reportProfilerClientBatch",
+                client_batch(65),
+            )
+            .await,
+            "ProfilerClientBatchTooLarge",
+        );
+        let mut oversized = client_batch(1);
+        oversized["capabilities"] = json!(["x".repeat(70 * 1024)]);
+        assert_error_tag(
+            request(control, "13", "server.reportProfilerClientBatch", oversized).await,
+            "ProfilerClientBatchTooLarge",
+        );
+        let at_the_limit = success_value(
+            request(
+                control,
+                "14",
+                "server.reportProfilerClientBatch",
+                client_batch(64),
+            )
+            .await,
+        );
+        assert_eq!(at_the_limit["accepted"], false);
+
         let refreshed = success_value(
             request(
                 control,
@@ -1919,6 +2064,8 @@ fn registrar_source_contains_every_owned_rpc_name() {
         "server.getConfig",
         "server.getProcessDiagnostics",
         "server.getProcessResourceHistory",
+        "server.getProfilerStatus",
+        "server.reportProfilerClientBatch",
         "server.getProviderUsage",
         "server.consumeCodexRateLimitReset",
         "server.getSettings",
@@ -1938,6 +2085,28 @@ fn registrar_source_contains_every_owned_rpc_name() {
     ] {
         assert!(source.contains(method), "registrar is missing {method}");
     }
+}
+
+/// A `ProfilerClientBatch` as the web collector sends it, with `records` slow requests.
+fn client_batch(records: usize) -> Value {
+    json!({
+        "clientId": "c1",
+        "capabilities": ["heartbeat", "event"],
+        "windowMs": 10_000,
+        "records": (1..=records)
+            .map(|n| json!({
+                "correlationId": format!("c1:{n}"),
+                "method": "server.getConfig",
+                "rttMs": 1_500.5,
+                "renderMs": 12.25,
+                "startedAtMs": 2_000.0,
+            }))
+            .collect::<Vec<_>>(),
+        "histograms": [{ "method": "server.getConfig", "buckets": [[3, 7], [64, 1]] }],
+        "stalls": { "count": 1, "totalMs": 200, "maxMs": 200 },
+        "interactions": { "count": 0, "maxMs": 0 },
+        "jsHeapBytes": 52_428_800,
+    })
 }
 
 fn fixture_services() -> ServerTerminalServices {

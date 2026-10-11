@@ -14,6 +14,8 @@ interface Props {
    */
   description: string;
   onReload: () => void;
+  /** Browser mode: the page may still open in a tab of its own. */
+  onOpenInNewTab?: (() => void) | undefined;
 }
 
 /**
@@ -21,7 +23,7 @@ interface Props {
  * For BiBCode's own reasons the site may be fine, so the heading says it
  * can't be shown here instead.
  */
-export function PreviewUnreachable({ url, code, description, onReload }: Props) {
+export function PreviewUnreachable({ url, code, description, onReload, onOpenInNewTab }: Props) {
   const [showDetails, setShowDetails] = useState(false);
   const host = safeHost(url) ?? url;
   // BiBCode's own reason already says what to do; network tips and codes don't apply.
@@ -69,6 +71,11 @@ export function PreviewUnreachable({ url, code, description, onReload }: Props) 
             </Button>
           )}
           <div className="flex-1" />
+          {onOpenInNewTab ? (
+            <Button type="button" variant="outline" size="sm" onClick={onOpenInNewTab}>
+              Open in new tab
+            </Button>
+          ) : null}
           <Button type="button" size="sm" onClick={onReload}>
             Reload
           </Button>

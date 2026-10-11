@@ -54,13 +54,15 @@ version, Rust/updater/archive identities, platform count, or signing policy.
 Release builds retain `panic=unwind`. Wry's macOS custom-protocol handlers use
 Objective-C exception recovery when navigation cancels an in-flight request;
 `panic=abort` turns that recoverable condition into process termination. Thin LTO,
-one codegen unit, and symbol stripping remain enabled. Native macOS CI executes
-the release-profile `objc_exception_probe`, and the desktop crate rejects an
-abort profile on macOS.
+one codegen unit, and symbol stripping remain enabled; the release jobs strip
+their binaries after dumping symbols (see [Symbol assets](#symbol-assets)).
+Native macOS CI executes the release-profile `objc_exception_probe`, and the
+desktop crate rejects an abort profile on macOS.
 
-Each matrix job installs the frontend build toolchain and Rust, restores Cargo
-caches, and runs `scripts/build-desktop-artifact.ts`. Tauri compiles the native
-host and in-process server and embeds the built React assets. No Node runtime or
+Each matrix job installs the frontend build toolchain, Rust, and the pinned
+`dump_syms`, restores Cargo caches, and runs
+`scripts/build-desktop-artifact.ts --symbols`. Tauri compiles the native host
+and in-process server and embeds the built React assets. No Node runtime or
 TypeScript server is packaged.
 
 A separate native matrix builds `bibcode` plus the matching static web client for the
@@ -99,11 +101,68 @@ and Linux or `.zip` for Windows. Public OS/architecture keys are
 - `bibcode-server-<version>-1.x86_64.rpm`
 
 The packages are direct GitHub Release downloads, not hosted APT or RPM repositories.
+Before staging, each server job dumps the binary's symbols and strips it; see
+[Symbol assets](#symbol-assets).
 Every release includes `bibcode-server-SHA256SUMS`; optional server `.minisig` files
 appear only when both dedicated server-signing secrets are configured.
 Windows server archives are written through `scripts/create-portable-zip.ps1`, which assigns
 forward-slash entry names explicitly. The artifact builder rejects a mislabeled non-ZIP payload,
 backslash entry names, duplicate entries, traversal, or paths outside the versioned root.
+
+## Symbol Assets
+
+Each release also contains twelve Breakpad symbol archives, one for each
+release binary: `bibcode-desktop-symbols-<version>-<os>-<architecture>.zip` and
+`bibcode-server-symbols-<version>-<os>-<architecture>.zip`, with the public
+OS/architecture keys of the server archives. Each archive holds one `.sym` file
+in symbol-store layout, `<module>/<debug id>/<module>.sym`. On Windows the module
+is named after its PDB: `<name>.pdb/<debug id>/<name>.sym`. `minidump-stackwalk`
+and the profiler's symbolication read that layout from the extracted archive.
+`scripts/assemble-release-assets.ts` requires all twelve and still rejects any
+other unlisted file. The archives are not covered by `bibcode-server-SHA256SUMS`
+or the optional server signatures.
+
+The archive names are a client contract. `bibcode profiler symbolicate
+--download`, and the profiler MCP tool `profiler_symbolicate` with
+`download: true`, fetch
+`https://github.com/mubeda/BibCode/releases/download/v<version>/<archive>` for
+the version, OS, and architecture recorded in the crash sidecar or panic event,
+and unpack it into `<state dir>/profiler-symbols/`. The repository is the
+updater's, which a test pins. A release that lacks the archive answers "the
+release publishes no symbols", so renaming an archive or dropping it from a
+release breaks symbolication of that release's crashes.
+
+The shipped binaries stay stripped. `[profile.release]` keeps `strip = "symbols"`,
+and the release jobs override the profile through the environment of their own
+builds, so `dump_syms` reads the symbols before they are removed:
+
+- `CARGO_PROFILE_RELEASE_STRIP=none` and
+  `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only` on every target;
+- `CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed` on macOS, so rustc writes a dSYM;
+- `RUSTFLAGS=-C link-arg=-Wl,--build-id=sha1` on Linux, so the debug ID that
+  minidumps and symbols share never depends on the linker's default.
+
+The desktop jobs run `scripts/build-desktop-artifact.ts --symbols`:
+`tauri build --no-bundle`, then `scripts/dump-symbols.ts`, then the strip, then
+`tauri bundle`. The Tauri CLI's bundle step does not run Cargo, and must not:
+Cargo re-links its unstripped `deps/` artifact over the stripped binary even
+when nothing needs rebuilding. The wrapper therefore fails the job unless the
+binary is still the stripped file after bundling, and unless the copy in each
+bundle that has a readable one (the macOS app, the AppImage's file system) has
+its build ID and symbol table; Windows installers pack the binary itself. The
+server jobs build `bibcode` with the same profile (the Linux build inside its
+Ubuntu 20.04 container), then dump and strip it on the runner before staging.
+Both strip as rustc does for executables, with `strip --strip-all` on Linux and
+plain `strip` on macOS, into a copy that replaces the binary, so Cargo's
+hard-linked `deps/` artifact keeps its symbols for the next build. Apple silicon
+runs only signed code, so the server job runs `codesign --verify` on the
+stripped arm64 binary. Windows ships its binaries as linked and keeps the names
+in the PDB, which is not published. Both matrices install `dump_syms` 2.3.9 with
+`cargo install --locked`; Rust Cache keeps `~/.cargo/bin`, so a restored runner
+skips that compile. `scripts/dump-symbols.ts` fails the job when a `.sym` lacks
+functions with source lines or `STACK` records (unwind data). The CI
+`crash-smoke` job exercises the same profile and dump on Linux, macOS, and
+Windows; see [CI quality gates](./ci.md).
 
 ## Version Source
 
@@ -462,8 +521,8 @@ only that disposable worktree after a successful integration.
    - the release contains a nonempty `.sig` asset for each target;
    - the release contains `latest.json`, two macOS DMGs, two Linux AppImages,
      and two Windows NSIS installers, plus the standalone server archives,
-     Linux `.deb`/`.rpm` packages, and updater payload archives required by the
-     manifest; and
+     Linux `.deb`/`.rpm` packages, updater payload archives required by the
+     manifest, and the twelve [symbol archives](#symbol-assets); and
    - no private key or passphrase is present in any asset, manifest, or log.
 
 5. Confirm the workflow's comparison of sorted asset names with its generated
@@ -565,7 +624,9 @@ curated notes after every new or regenerated draft.
 
 Use a fresh inspection directory and the previous stable tag. Compare asset
 names with only the version replaced; a changed asset set needs an explanation
-from the current workflow, rather than a fixed historical asset count:
+from the current workflow, rather than a fixed historical asset count. The first
+release with [symbol archives](#symbol-assets) adds twelve
+`bibcode-{desktop,server}-symbols-*.zip` names to the previous set:
 
 ```sh
 set -eu
@@ -618,8 +679,9 @@ gh workflow run release.yml --ref main -f channel=stable -f version="$version" -
 ```
 
 Both runs perform preflight and the native build matrices. The current job
-budgets are 60 minutes for preflight, 90 for each desktop build, and 120 for
-each server build; these are timeouts, not expected completion durations.
+budgets are 60 minutes for preflight, 90 for each desktop build, 120 for each
+server build, and 25 for the release job, which moves about 440 MB of symbol
+archives (28 to 45 MB each); these are timeouts, not expected completion durations.
 Use Actions job timings to plan the tag and approval runs separately.
 
 After publication, check latest through the REST endpoint. `isLatest` is not a
@@ -711,6 +773,9 @@ Build a specific release target:
 ```powershell
 node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64 --output-dir release --verbose
 ```
+
+Release CI adds `--symbols`, which needs `dump_syms` on `PATH`
+(`cargo install dump_syms --locked --version 2.3.9`).
 
 Equivalent root shortcuts are `dist:desktop:dmg`,
 `dist:desktop:dmg:arm64`, `dist:desktop:dmg:x64`,

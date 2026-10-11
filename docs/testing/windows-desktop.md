@@ -65,11 +65,12 @@ Computer Use capture:
   `C:\Windows\System32\config\systemprofile\AppData\Local`, where x86
   filesystem redirection on ARM64 makes the x86 NSIS bootstrapper fail with
   `Unable to start child process, error 0x2` after the Rust release build has
-  already completed. `scripts/run-msvc.mjs` refuses `tauri build` under the
-  SYSTEM profile before compiling and names the offending environment
-  variables; record that exit code 3 as a harness misconfiguration, switch to
-  `--current-user`, and rerun. Confirm the account with `whoami` and
-  `$env:LOCALAPPDATA` before the first expensive command.
+  already completed. `scripts/run-msvc.mjs` refuses `tauri build` and
+  `tauri bundle` under the SYSTEM profile before compiling or packaging and
+  names the offending environment variables; record that exit code 3 as a
+  harness misconfiguration, switch to `--current-user`, and rerun. Confirm the
+  account with `whoami` and `$env:LOCALAPPDATA` before the first expensive
+  command.
 
 - Install workspace dependencies with that same account, from the checkout
   root, so pnpm's hard-linked store stays readable to the account that runs the
@@ -443,14 +444,24 @@ In the CI-only seeded upgrade lanes, the updater host exiting is not proof of
 installation. Before cleanup and relaunch, the harness waits for the installed
 executable's exact candidate `ProductVersion`, a readable SHA-256, and no
 candidate-named updater installer. Its bounded `windows-install-handoff.log`
-records path/version/hash and installer PID/path observations without command
-lines or credentials. Inspect that artifact on timeout; the later public
+records path, version, hash, read and installer-lookup timings, and installer
+PID observations without command lines or credentials. The probe reads the
+executable in-process and lists installers with `tasklist.exe`. PowerShell
+produced no JSON within a twenty-second sample on the ARM64 runner, including
+after the host had exited, so a sample is no longer a PowerShell process. Each
+file read and installer lookup has its own short bound. The probe hashes the
+executable only after its product version is already the candidate. A read or
+lookup that hits its bound is an unavailable sample: the log keeps the timings
+and any version already read, and that sample does not satisfy the predicate.
+The protected-baseline install command stays open until the host exits into that
+installer. Ending the command on the first `protecting` event stops the host
+before NSIS starts. Inspect that artifact on timeout; the later public
 runtime-version and retained-data checks remain required.
-Each PowerShell observation keeps its ten-second command bound. A command
-deadline becomes an unavailable sample only after the exact child emits
+A command deadline becomes an unavailable sample only after the exact child emits
 `close`; the next sample remains inside the original overall installation
 deadline. Cleanup that cannot prove `close` within its existing five-second
-budget fails the lane, including after forced termination. Spawn and other
+budget fails the lane, including after forced termination, and the smoke
+process exits nonzero instead of waiting out the job budget. Spawn and other
 cleanup errors remain fatal. An unavailable sample never satisfies the exact
 version/hash/no-installer predicate.
 
@@ -624,8 +635,15 @@ pairing offer --endpoint http://<address>:3773` and confirm the dialog refuses
   evidence; do not substitute a manually created rule. Run the host-independent
   deletion-spawn and policy-denial tests, then reproduce a deletion denial
   natively and confirm the app reports incomplete cleanup rather than claiming
-  the rule was removed. A missing rule is benign only when the persistent
-  firewall store can be queried and its absence verified. Capture the shared
+  the rule was removed. A missing rule is benign when `netsh advfirewall firewall show rule`
+  reports that no rule matches. On a non-English display language that sentence
+  is translated and the command exits 1, so absence also requires a successful
+  `netsh advfirewall show allprofiles state` before the miss is accepted. A
+  failed policy read is still incomplete cleanup. Deletion uses the
+  same `netsh` program, not PowerShell: on the Windows ARM64 runner a
+  PowerShell firewall query did not finish inside the five-second caller
+  budget, the widen failed closed, and the another-device grant was never
+  minted. Capture the shared
   runbook's four explicit ceremony outcomes: authoritative local-only
   confirmation even after cancellation failure, another live access reason kept
   wide, cancellation and cleanup both unconfirmed, and cleanup topology
@@ -640,7 +658,7 @@ pairing offer --endpoint http://<address>:3773` and confirm the dialog refuses
   Burst multiple requests while one command is in flight and confirm the worker
   retains only the latest pending desired state, reports superseded callers
   explicitly, and applies that latest state after mandatory late cleanup.
-  Separately confirm a hung `netsh` or PowerShell child is terminated and reaped
+  Separately confirm a hung `netsh` child is terminated and reaped
   by its 15-second process timeout and never retains the exposure coordinator
   indefinitely;
 
@@ -708,6 +726,89 @@ pairing offer --endpoint http://<address>:3773` and confirm the dialog refuses
 
 Record unavailable authenticated provider scenarios instead of substituting a
 different executable or exposing credentials.
+
+## Profiler crash smoke
+
+Run the shared [Profiler crash smoke](./cross-platform-validation.md#profiler-crash-smoke)
+against a symbol build, as the interactive account. Install the pinned
+`dump_syms` once (`cargo install dump_syms --locked --version 2.3.9`), then:
+
+```powershell
+node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64 --symbols
+```
+
+Windows ships the binary as linked, and its symbols come from the PDB: the store
+under `target\<triple>\release\symbols` names the module after the PDB. On a
+Windows ARM64 host, build with `--arch arm64` and expect
+`nativeDumps: "disabled"`: no hook is attached there, so
+`BIBCODE_PROFILER_CRASH_TEST` does nothing, and the crash steps are unavailable
+evidence.
+
+- **Executable.** Use the release `bibcode-desktop.exe` that the symbol build
+  produced under `target\<triple>\release\`, never an installed copy, with
+  `$env:BIBCODE_HOME` set to the test-owned root. The release build is a
+  GUI-subsystem program, so PowerShell waits for it only when its output is
+  piped: run `& $exe profiler status --json | Out-String`, then read
+  `$LASTEXITCODE`.
+- **Capabilities.** Expect `nativeDumps: "available"` on x64 and
+  `osCrashRecords: "available"`. While the profiler is on, the per-user
+  `%TEMP%` holds one `bibcode-<random>` directory with `monitor.sock`.
+- **Crash.** Set `$env:BIBCODE_PROFILER_CRASH_TEST = '1'`, start the app, and
+  remove the variable from the shell once it has started. The callback leaves
+  the crash to Windows Error Reporting after the dump, so the process ends with
+  an access violation (`0xC0000005`), an Application log Event 1000 is written,
+  and an interactive desktop may show the "stopped working" dialog. Record
+  whether it appeared. Dismiss it before the restart: until then the crashed
+  process may remain, and the single-instance plugin would hand the new launch
+  to it. After the restart, confirm the Event 1000 record with
+  `Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000 } -MaxEvents 5 | Format-List TimeCreated, Message`.
+
+Then perform these native checks and record each result, including unavailable
+ones:
+
+- **WebView2 failure report.** Crash a WebView2 process of the main window
+  where the harness allows it, for example by navigating it to `edge://crash`
+  from the packaged E2E WebDriver session. Diagnostics lists a `crash.webview`
+  finding named after the failure kind, such as `render-process-exited`, with
+  `exitCode` in its evidence. The profiler looks for WebView2's minidump once,
+  right after the failure, and adds its `dump` file name when it is already
+  there: record whether it was. Record where WebView2 wrote the minidump:
+  directly in the folder that
+  `FailureReportFolderPath` names, or in its `reports` subfolder. Ending the
+  renderer from Task Manager is a deliberate termination and must add no
+  finding. Record the crash case as unavailable when no route exists.
+- **Provider exit code.** With the profiler on and a provider session running,
+  end the provider's root process with `Stop-Process -Id <pid> -Force`, and
+  record whether its Job still held other processes. Within seconds, a
+  `subprocess.crash` finding reports "exited with code -1" (`Stop-Process`
+  ends the process with `0xFFFFFFFF`): the exit code is read from
+  the root process handle without waiting for the whole Job to end. Record the
+  delay.
+- **Shutdown.** With the profiler on and a provider session and a terminal
+  open, quit the app normally. After the next start no new `crash.webview`
+  (a `ProcessFailed` raised during shutdown) or `subprocess.crash` finding
+  exists.
+- **Console attach.** Run `profiler status` from `cmd.exe` and from
+  PowerShell, with and without piping the output. The executable borrows the
+  calling console, so `cmd.exe` returns its prompt at once: record whether the
+  output prints over the next prompt and whether `%ERRORLEVEL%` or
+  `$LASTEXITCODE` holds the exit code, and whether `start /wait` changes that.
+- **MCP over piped stdio.** Run
+  `'{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | & $exe profiler mcp`.
+  Standard output must carry exactly one JSON-RPC line listing the five
+  `profiler_*` tools, and the process must exit with code 0 at the end of
+  input. Then register the same command in an MCP client and call
+  `profiler_status`.
+- **Update with the profiler on.** With the profiler on, an MCP server from
+  the step above running, and the app started with `$env:BIBCODE_HOME` and
+  `$env:BIBCODE_PORT` set, install an update through the in-app updater. Record
+  that the passive installer ended the MCP server, that the app came back on
+  the same data root and port, and that `%TEMP%\bibcode-desktop-restart.json`
+  is gone once it is running. After the restart, `profiler findings --json`
+  holds no new `crash.unclean-exit` or `shutdown.incomplete` finding: the update
+  quiesced the server and marked the session clean first. Then quit the app
+  and start it again from its shortcut: it uses the default data root and
+  port, not the update's.
 
 ## Process and Job cleanup
 

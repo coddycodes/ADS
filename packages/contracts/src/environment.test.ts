@@ -94,6 +94,10 @@ describe("execution environment contracts", () => {
       gitPullRequestBranchSelection: true,
     });
   });
+  it("defaults the profiler capability off for older servers and preserves advertised support", () => {
+    expect(decodeTerminalCapabilities({}).profiler).toBe(false);
+    expect(decodeTerminalCapabilities({ profiler: true }).profiler).toBe(true);
+  });
   it("defaults ordered terminal input support to false when omitted", () => {
     expect(decodeTerminalCapabilities({}).terminalOrderedInput).toBe(false);
   });

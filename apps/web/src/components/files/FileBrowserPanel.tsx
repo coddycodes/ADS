@@ -24,7 +24,7 @@ import { useTheme } from "~/hooks/useTheme";
 import { inferProjectTitleFromPath } from "~/lib/projectPaths";
 import { cn, newProjectId } from "~/lib/utils";
 import { BIBCODE_PIERRE_ICONS } from "~/pierre-icons";
-import { isPreviewSupportedInRuntime } from "~/previewStateStore";
+import { canPreviewAnyUrlInRuntime } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { assetEnvironment } from "~/state/assets";
 import {
@@ -896,7 +896,7 @@ export default function FileBrowserPanel({
               entryKind,
               isPreviewable:
                 item.kind === "file" &&
-                isPreviewSupportedInRuntime() &&
+                canPreviewAnyUrlInRuntime() &&
                 isBrowserPreviewFile(relativePath),
               isMarkdown: item.kind === "file" && isMarkdownPreviewFile(relativePath),
               isPrimaryEnv,

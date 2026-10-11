@@ -18,7 +18,9 @@ export function runTauriBuild(options = {}) {
   const env = options.env ?? NodeProcess.env;
   const args = options.args ?? NodeProcess.argv.slice(2);
   const runWithToolchain = options.runMsvc ?? runMsvc;
-  return runWithToolchain(["pnpm", "exec", "tauri", "build", ...args], {
+  // `bundle` packages what an earlier `tauri build --no-bundle` compiled; linuxdeploy runs here.
+  const command = args[0] === "bundle" ? args : ["build", ...args];
+  return runWithToolchain(["pnpm", "exec", "tauri", ...command], {
     env: tauriBuildEnvironment(platform, env),
   });
 }

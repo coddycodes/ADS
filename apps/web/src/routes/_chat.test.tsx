@@ -21,6 +21,7 @@ const harness = vi.hoisted(() => ({
   terminalFocused: false,
   previewFocused: false,
   previewSupported: true,
+  pageTools: true,
   startLocal: vi.fn(),
   startThread: vi.fn(),
   dispatchPreview: vi.fn(),
@@ -77,8 +78,13 @@ vi.mock("../keybindings", () => ({
 vi.mock("../terminalSurfaceState", () => ({
   useThreadHasTerminalSurface: () => harness.terminalSurfaceOpen,
 }));
+vi.mock("../previewRuntimeCapabilities", () => ({
+  supportsPreviewRuntimeCapability: (_bridge: unknown, capability: string) =>
+    capability !== "pageTools" || harness.pageTools,
+}));
 vi.mock("../previewStateStore", () => ({
   isPreviewSupportedInRuntime: () => harness.previewSupported,
+  canPreviewAnyUrlInRuntime: () => harness.previewSupported,
 }));
 vi.mock("../rightPanelStore", () => ({
   selectActiveRightPanel: () => harness.previewPanel,
@@ -230,14 +236,33 @@ describe("_chat route", () => {
 
     harness.routeThreadRef = { environmentId: "environment-1", threadId: "thread-1" };
     harness.previewSupported = false;
+    // A browser tab without previews is an HTTPS page that cannot frame them.
     installHandler()(keyboardEvent());
-    expect(harness.toastAdd).toHaveBeenCalledWith(
+    expect(harness.toastAdd).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: "Previews open in a new tab" }),
+    );
+    window.desktopBridge = {} as never;
+    installHandler()(keyboardEvent());
+    delete window.desktopBridge;
+    expect(harness.toastAdd).toHaveBeenLastCalledWith(
       expect.objectContaining({ title: "Preview is desktop-only" }),
     );
 
     harness.previewSupported = true;
     installHandler()(keyboardEvent());
     expect(harness.dispatchPreview).toHaveBeenCalledWith("toggle-panel");
+  });
+
+  it("leaves zoom keys to the browser when the preview host has no zoom", () => {
+    harness.pageTools = false;
+    harness.command = "preview.zoomIn";
+    harness.previewPanel = "preview";
+    harness.previewFocused = true;
+    const event = keyboardEvent();
+    installHandler()(event);
+    harness.pageTools = true;
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(harness.dispatchPreview).not.toHaveBeenCalled();
   });
 
   it.each([

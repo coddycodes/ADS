@@ -18,7 +18,7 @@ import {
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { previewBridge } from "./previewBridge";
+import { isBrowserMode, previewBridge } from "./previewBridge";
 
 /**
  * Mirrors low-latency desktop state into the store and reflects navigation
@@ -56,10 +56,11 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
       // This client couldn't reach its own gateway origin (a dropped SSH
       // forward, a LAN route): another client may load the page fine, so the
       // failure stays on this client instead of failing the shared tab.
+      // In browser mode every failure is the frame's own (it frames only gateway pages).
       if (
         state.navStatus.kind === "LoadFailed" &&
         nativeState.navStatus.kind === "LoadFailed" &&
-        isGatewayClientUrl(nativeState.navStatus.url)
+        (isGatewayClientUrl(nativeState.navStatus.url) || isBrowserMode())
       ) {
         const { url, code, description } = state.navStatus;
         setPreviewLocalFailure(threadRef, tabId, { url, code, description });

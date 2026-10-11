@@ -24,8 +24,16 @@ import {
   assertBaselineVersionIsOlder,
   assertSeededUpgradeBuildVersion,
   assertWebDriverPhaseExit,
+  remoteEvidenceReadFailure,
   windowsCandidateIsInstalled,
+  productVersionFromExecutableBytes,
+  windowsInstallerProcesses,
+  observeWindowsInstalledCandidate,
+  waitForWindowsInstalledCandidate,
+  copyBoundedEvidence,
   readWindowsCandidateProbe,
+  ownedChildTreeKillCommand,
+  reportSeededUpgradeSmokeFailure,
   terminateSeededUpgradeChild,
   SeededUpgradeCommandTimeoutError,
   buildLocalUpdaterManifest,
@@ -311,7 +319,9 @@ const remoteRetentionFixture = async () => {
     stdout: "fixture-private-returned-token",
     stderr: "private receipt write failed",
   }));
-  const copyBoundedEvidence = vi.fn(async () => {});
+  const copyBoundedEvidence = vi.fn(
+    async (_input: { readonly withholdLanes?: ReadonlyArray<string> }): Promise<void> => {},
+  );
   const cleanup = vi.fn(async () => {});
   const context = NodeVM.createContext({
     NodeFS,
@@ -326,6 +336,9 @@ const remoteRetentionFixture = async () => {
     createSeededUpgradeWdioConfig,
     readRemoteFixtureSecrets,
     redactAndBoundUpgradeEvidence,
+    isMissingCredentialReceipt: (error: unknown) =>
+      error instanceof SeededDesktopUpgradeSmokeError &&
+      error.message === "The private remote credential receipt is unavailable.",
     assertWebDriverPhaseExit,
     assertRemoteInstallPort,
     SeededDesktopUpgradeSmokeError,
@@ -382,9 +395,12 @@ describe("remote phase receipt retention boundaries", () => {
     const fixture = await remoteRetentionFixture();
     try {
       const error = await fixture.runPhase().catch((error: unknown) => error);
-      expect(
-        NodeFS.existsSync(NodePath.join(fixture.evidenceDirectory, "seed-and-install.log")),
-      ).toBe(false);
+      const log = await NodeFS.promises.readFile(
+        NodePath.join(fixture.evidenceDirectory, "seed-and-install.log"),
+        "utf8",
+      );
+      expect(log).toContain("private credential receipt was not published");
+      expect(log).not.toContain("fixture-private-returned-token");
       expect(error).toBeInstanceOf(SeededDesktopUpgradeSmokeError);
       expect(String(error)).not.toContain("fixture-private-returned-token");
     } finally {
@@ -400,8 +416,18 @@ describe("remote phase receipt retention boundaries", () => {
           fixture.runCommand.mockRejectedValue(new Error("fixture launch failure"));
         await fixture.runPhase().catch(() => undefined);
         const finalError = await fixture.finalize();
-        expect(fixture.copyBoundedEvidence).not.toHaveBeenCalled();
+        expect(fixture.copyBoundedEvidence).toHaveBeenCalledOnce();
+        expect(fixture.copyBoundedEvidence.mock.calls[0]?.[0]?.withholdLanes).toEqual([
+          "remote-install",
+        ]);
+        const marker = await NodeFS.promises.readFile(
+          NodePath.join(fixture.root, "retained", "remote-install-phase-withheld.txt"),
+          "utf8",
+        );
+        expect(marker).toContain("private credential receipt was not published");
+        expect(marker).not.toContain("fixture-private-returned-token");
         expect(finalError).toBeInstanceOf(SeededDesktopUpgradeSmokeError);
+        expect(String(finalError)).not.toContain("fixture-private-returned-token");
         expect(fixture.cleanup).toHaveBeenCalledOnce();
       } finally {
         await fixture.dispose();
@@ -504,7 +530,7 @@ const remoteGrantFixture = (responses: ReadonlyArray<unknown>) => {
     remoteEvidencePath: absolute("remote", "evidence", "remote-rpc.json"),
   };
   const spec = createSeededUpgradeDriverSpec(input);
-  const start = spec.indexOf("    const credentials = await browser.execute(");
+  const start = spec.indexOf("    let credentials;");
   const end = spec.indexOf("\n  });\n});", start);
   if (start < 0 || end < 0) throw new Error("Generated remote credential scenario is missing.");
   // Replace module loading only; run the actual browser callback and handoff statements.
@@ -521,6 +547,7 @@ const remoteGrantFixture = (responses: ReadonlyArray<unknown>) => {
   const context = {
     input,
     widened: true,
+    traceRemote: () => {},
     observation: { projectId: "remote-project" },
     browser: { execute },
     window: {
@@ -646,6 +673,7 @@ describe("generated remote sharing grant handoff", () => {
   it.each(["http", "body", "transport"])(
     "sanitizes %s failures before any private handoff",
     async (failure) => {
+      vi.useFakeTimers();
       const fixture = remoteGrantFixture([[publicPairingGrant]]);
       fixture.fetch.mockImplementation(async () => {
         if (failure === "transport") throw new Error("fixture-private-network-detail");
@@ -656,11 +684,144 @@ describe("generated remote sharing grant handoff", () => {
           },
         };
       });
-      await expect(fixture.run()).rejects.toThrow("Remote verification pairing grant unavailable.");
+      const outcome = fixture.run().then(
+        () => "unexpected success",
+        (error: Error) => error.message,
+      );
+      await vi.runAllTimersAsync();
+      expect(String(await outcome)).toContain("Remote verification pairing grant unavailable.");
+      expect(String(await outcome)).toContain("status=");
+      expect(String(await outcome)).toContain("attempts=");
+      expect(String(await outcome)).toContain("endpointChanged=false");
+      expect(String(await outcome)).not.toContain("fixture-private");
+      expect(fixture.fetch.mock.calls.length).toBeGreaterThan(1);
       expect(fixture.files.size).toBe(0);
       expect(fixture.driver).not.toHaveBeenCalled();
     },
   );
+
+  it("retries a restart-time pairing refusal until the grant is published", async () => {
+    vi.useFakeTimers();
+    const fixture = remoteGrantFixture([[publicPairingGrant]]);
+    fixture.fetch
+      .mockRejectedValueOnce(new Error("fixture-private-reset"))
+      .mockResolvedValueOnce({ ok: true, json: async () => [publicPairingGrant] });
+    const outcome = fixture.run().then(
+      () => null,
+      (error: Error) => error.message,
+    );
+    await vi.runAllTimersAsync();
+    expect(await outcome).toBeNull();
+    expect(fixture.driver).toHaveBeenCalledOnce();
+    expect(fixture.files.size).toBeGreaterThan(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("uses the bootstrap published after the restarted server replaces the cached endpoint", async () => {
+    vi.useFakeTimers();
+    const fixture = remoteGrantFixture([[publicPairingGrant]]);
+    let reads = 0;
+    fixture.context.window.desktopBridge.getLocalEnvironmentBootstraps = () => {
+      reads += 1;
+      return [
+        {
+          id: "primary",
+          httpBaseUrl: reads === 1 ? "http://127.0.0.1:1" : "http://127.0.0.1:43123",
+          bootstrapToken: "fixture-desktop-bootstrap",
+        },
+      ];
+    };
+    fixture.fetch.mockImplementation(async (url: URL) => {
+      if (url.origin === "http://127.0.0.1:1") throw new Error("fixture-private-reset");
+      return { ok: true, status: 200, json: async () => [publicPairingGrant] };
+    });
+    const outcome = fixture.run().then(
+      () => null,
+      (error: Error) => error.message,
+    );
+    await vi.runAllTimersAsync();
+    expect(await outcome).toBeNull();
+    expect(reads).toBeGreaterThan(1);
+    expect(fixture.driver).toHaveBeenCalledOnce();
+    expect(fixture.fetch.mock.calls.map((call) => call[0]?.origin)).toEqual([
+      "http://127.0.0.1:1",
+      "http://127.0.0.1:43123",
+    ]);
+  });
+
+  it("records share and credential steps without the grant or its endpoint", () => {
+    const spec = createSeededUpgradeDriverSpec({
+      candidateVersion: "0.7.3",
+      expectedDataRoot: absolute("remote", "data"),
+      lane: "remote-install",
+      phase: "seed-and-install",
+      projectId: "remote-project",
+      resultPath: absolute("remote", "before.json"),
+      workspaceRoot: absolute("remote", "workspace"),
+      platform: "linux",
+      appBinaryPath: absolute("RemoteLane.AppImage"),
+      remoteInstallDriverPath: "fixture:driver",
+      remoteHarnessPath: "fixture:host",
+      remoteSecretPath: absolute("remote", "private.json"),
+      remoteUploadSecretPath: absolute("remote", "upload-private.json"),
+      remoteEvidencePath: absolute("remote", "evidence", "remote-rpc.json"),
+      remoteTracePath: absolute("remote", "evidence", "remote-credential-trace.log"),
+    });
+    const start = spec.indexOf("    const traceRemote = (entry) => {");
+    const end = spec.indexOf("    await browser.execute(() => { window.location.hash", start);
+    if (start < 0 || end < 0) throw new Error("Generated remote trace is missing.");
+    const lines: string[] = [];
+    const traceRemote = NodeVM.runInNewContext(`${spec.slice(start, end)}\ntraceRemote;`, {
+      input: { remoteTracePath: absolute("remote", "evidence", "remote-credential-trace.log") },
+      NodeFS: {
+        appendFileSync: (_path: string, line: string) => {
+          lines.push(line);
+        },
+      },
+      Date,
+    }) as (entry: {
+      readonly step: string;
+      readonly message?: string;
+      readonly found?: boolean;
+      readonly clicked?: boolean;
+      readonly widened?: boolean;
+    }) => void;
+    const secret = "fixture-distinct-grant-token-value";
+    traceRemote({
+      step: "credentials",
+      found: true,
+      clicked: true,
+      widened: true,
+      message: `grant ${secret} at http://10.0.0.8:43123/secret`,
+    });
+    expect(lines).toHaveLength(1);
+    const parsed = JSON.parse(lines[0]!) as {
+      readonly step: string;
+      readonly message: string;
+      readonly found: boolean;
+      readonly widened: boolean;
+    };
+    expect(parsed).toMatchObject({
+      step: "credentials",
+      found: true,
+      clicked: true,
+      widened: true,
+    });
+    expect(parsed.message).toContain("[redacted]");
+    expect(parsed.message).toContain("[url]");
+    expect(parsed.message).not.toContain(secret);
+    expect(parsed.message).not.toContain("10.0.0.8");
+    const failingWriter = NodeVM.runInNewContext(`${spec.slice(start, end)}\ntraceRemote;`, {
+      input: { remoteTracePath: absolute("remote", "evidence", "remote-credential-trace.log") },
+      NodeFS: {
+        appendFileSync: () => {
+          throw new Error("fixture-private-disk");
+        },
+      },
+      Date,
+    }) as (entry: { readonly step: string }) => void;
+    expect(() => failingWriter({ step: "credentials" })).not.toThrow();
+  });
 
   it("aborts a stalled grant request before the embedded driver command deadline", async () => {
     vi.useFakeTimers();
@@ -687,12 +848,12 @@ describe("generated remote sharing grant handoff", () => {
       }),
     );
     await vi.runAllTimersAsync();
-    expect(await outcome).toMatchObject({
-      message: "Remote verification pairing grant unavailable.",
-    });
+    expect((await outcome).message).toContain("Remote verification pairing grant unavailable.");
+    expect((await outcome).message).toContain("status=none");
+    expect((await outcome).message).not.toContain("fixture-private");
     expect((await outcome).elapsed).toBeGreaterThan(0);
     expect((await outcome).elapsed).toBeLessThan(30_000);
-    expect(aborted).toHaveBeenCalledOnce();
+    expect(aborted.mock.calls.length).toBeGreaterThan(1);
     expect(fixture.driver).not.toHaveBeenCalled();
     expect(fixture.files.size).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
@@ -838,6 +999,19 @@ describe("seeded packaging build budgets", () => {
   );
 });
 
+/** Minimal VERSIONINFO whose ProductVersion alignment is relative to the resource, not the file. */
+const windowsVersionResource = (productVersion: string, prefixLength = 0): Buffer => {
+  const marker = Buffer.from("VS_VERSION_INFO\u0000", "utf16le");
+  const key = Buffer.from("ProductVersion\u0000", "utf16le");
+  const value = Buffer.from(`${productVersion}\u0000`, "utf16le");
+  let body = Buffer.concat([Buffer.alloc(6), marker, key]);
+  const misalignment = body.length % 4;
+  if (misalignment !== 0) body = Buffer.concat([body, Buffer.alloc(4 - misalignment)]);
+  body = Buffer.concat([body, value]);
+  body.writeUInt16LE(body.length, 0);
+  return Buffer.concat([Buffer.alloc(prefixLength, 0xab), body]);
+};
+
 describe("seeded packaged desktop upgrade harness", () => {
   it("keeps polling after a joined command deadline but still requires the installed candidate", async () => {
     const candidate = "0.7.4-upgrade.synthetic";
@@ -931,6 +1105,7 @@ describe("seeded packaged desktop upgrade harness", () => {
     vi.useFakeTimers();
     const child = new NodeChildProcess.ChildProcess();
     const kill = vi.spyOn(child, "kill").mockReturnValue(true);
+    const unref = vi.spyOn(child, "unref").mockImplementation(() => undefined);
     const rejection = expect(terminateSeededUpgradeChild(child)).rejects.toThrow(
       /child cleanup did not close within 5000ms/,
     );
@@ -938,9 +1113,37 @@ describe("seeded packaged desktop upgrade harness", () => {
       await vi.advanceTimersByTimeAsync(5_000);
       await rejection;
       expect(kill.mock.calls).toEqual([["SIGTERM"], ["SIGKILL"]]);
+      expect(unref).toHaveBeenCalledOnce();
     } finally {
       child.emit("close", null, "SIGKILL");
       vi.useRealTimers();
+    }
+  });
+
+  it("kills the Windows process tree when owned-child cleanup gives up", () => {
+    expect(ownedChildTreeKillCommand("win32", 4242)).toEqual({
+      args: ["/F", "/T", "/PID", "4242"],
+      command: "taskkill.exe",
+    });
+    expect(ownedChildTreeKillCommand("win32", undefined)).toBeUndefined();
+    expect(ownedChildTreeKillCommand("linux", 4242)).toBeUndefined();
+  });
+
+  it("exits nonzero when the smoke caller reports a failure", () => {
+    const exit = vi.fn();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      reportSeededUpgradeSmokeFailure(
+        new SeededDesktopUpgradeSmokeError("Owned child cleanup did not close within 5000ms."),
+        exit,
+      );
+      expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+      expect(error).toHaveBeenCalledWith("Owned child cleanup did not close within 5000ms.");
+      reportSeededUpgradeSmokeFailure("not an error", exit);
+      expect(exit).toHaveBeenLastCalledWith(1);
+      expect(error).toHaveBeenLastCalledWith("Seeded packaged-upgrade smoke failed.");
+    } finally {
+      error.mockRestore();
     }
   });
 
@@ -972,6 +1175,233 @@ describe("seeded packaged desktop upgrade harness", () => {
     expect(windowsCandidateIsInstalled(null, candidate)).toBe(false);
   });
 
+  it("reads ProductVersion from a VERSIONINFO resource that is not file-aligned", () => {
+    const version = "0.8.3-upgrade.194";
+    const bytes = windowsVersionResource(version, 2);
+    expect(productVersionFromExecutableBytes(bytes)).toBe(version);
+    expect(productVersionFromExecutableBytes(Buffer.from("ProductVersion"))).toBeNull();
+  });
+
+  it("matches a truncated installer image without treating a short prefix as that installer", () => {
+    const expected = "BiBCode-0.8.3-upgrade.194-installer.exe";
+    const truncated = expected.slice(0, 25);
+    const csv = [
+      `"${truncated}","592","Console","1","12,345 K"`,
+      `"${expected}","593","Console","1","12,345 K"`,
+      `"BiBCode","9","Console","1","1 K"`,
+      `"notepad.exe","11","Console","1","1 K"`,
+    ].join("\r\n");
+    expect(windowsInstallerProcesses(csv, expected)).toEqual([
+      { pid: 592, parentPid: null, path: null },
+      { pid: 593, parentPid: null, path: null },
+    ]);
+  });
+
+  it("records an in-process Windows sample without treating a hung installer lookup as installed", async () => {
+    const version = "0.8.3-upgrade.194";
+    const bytes = windowsVersionResource(version);
+    const installed = await observeWindowsInstalledCandidate({
+      appBinaryPath: "C:\\Program Files\\BiBCode\\bibcode.exe",
+      candidateVersion: version,
+      readFile: async () => bytes,
+      listProcesses: async () => `"notepad.exe","11"\r\n`,
+    });
+    expect(installed.productVersion).toBe(version);
+    expect(installed.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(installed.error).toBeNull();
+    expect(windowsCandidateIsInstalled(installed, version)).toBe(true);
+
+    const previous = await observeWindowsInstalledCandidate({
+      appBinaryPath: installed.path,
+      candidateVersion: version,
+      readFile: async () => windowsVersionResource("0.8.2"),
+      listProcesses: async () => "",
+    });
+    expect(previous.productVersion).toBe("0.8.2");
+    expect(previous.sha256).toBeNull();
+    expect(windowsCandidateIsInstalled(previous, version)).toBe(false);
+
+    const missing = Object.assign(new Error("missing"), { code: "ENOENT" });
+    const absent = await observeWindowsInstalledCandidate({
+      appBinaryPath: installed.path,
+      candidateVersion: version,
+      readFile: async () => Promise.reject(missing),
+      listProcesses: async () => "",
+    });
+    expect(absent.exists).toBe(false);
+    expect(absent.error).toBe("executable read ENOENT");
+
+    const locked = await observeWindowsInstalledCandidate({
+      appBinaryPath: installed.path,
+      candidateVersion: version,
+      readFile: async () => Promise.reject(Object.assign(new Error("slow"), { code: "ABORT_ERR" })),
+      listProcesses: async () => Promise.reject(Object.assign(new Error("slow"), { killed: true })),
+    });
+    expect(locked.error).toBe("executable read timed out; installer lookup timed out");
+    expect(windowsCandidateIsInstalled(locked, version)).toBe(false);
+
+    const replacedDuringLookup = await observeWindowsInstalledCandidate({
+      appBinaryPath: installed.path,
+      candidateVersion: version,
+      readFile: async () => bytes,
+      listProcesses: async () => Promise.reject(Object.assign(new Error("slow"), { killed: true })),
+    });
+    expect(replacedDuringLookup.productVersion).toBe(version);
+    expect(replacedDuringLookup.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(replacedDuringLookup.error).toBe("installer lookup timed out");
+    expect(windowsCandidateIsInstalled(replacedDuringLookup, version)).toBe(false);
+
+    const running = await observeWindowsInstalledCandidate({
+      appBinaryPath: installed.path,
+      candidateVersion: version,
+      readFile: async () => bytes,
+      listProcesses: async () => {
+        const image = "BiBCode-0.8.3-upgrade.194-installer.exe".slice(0, 25);
+        return `"${image}","592"\r\n`;
+      },
+    });
+    expect(running.installers).toEqual([{ pid: 592, parentPid: null, path: null }]);
+    expect(windowsCandidateIsInstalled(running, version)).toBe(false);
+  });
+
+  it("writes every Windows sample and finishes only when the candidate is installed", async () => {
+    const root = await NodeFS.promises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "windows-handoff-"));
+    try {
+      const version = "0.8.3-upgrade.194";
+      const installer = "BiBCode-0.8.3-upgrade.194-installer.exe".slice(0, 25);
+      let reads = 0;
+      let now = 0;
+      await waitForWindowsInstalledCandidate({
+        appBinaryPath: "C:\\Program Files\\BiBCode\\bibcode.exe",
+        candidateVersion: version,
+        evidenceDirectory: root,
+        intervalMs: 10,
+        now: () => now,
+        readFile: async () => {
+          reads += 1;
+          return windowsVersionResource(reads === 1 ? "0.8.2" : version);
+        },
+        listProcesses: async () => (reads === 1 ? `"${installer}","592"\r\n` : ""),
+        sleep: async (milliseconds) => {
+          now += milliseconds;
+        },
+        timeoutMs: 50,
+      });
+      const rows = (
+        await NodeFS.promises.readFile(NodePath.join(root, "windows-install-handoff.log"), "utf8")
+      )
+        .trim()
+        .split("\n")
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              readonly exitCode: number | null;
+              readonly observation: {
+                readonly productVersion: string;
+                readonly installers: unknown;
+              };
+            },
+        );
+      expect(rows.map((row) => row.observation.productVersion)).toEqual(["0.8.2", version]);
+      expect(rows[0]?.observation.installers).toEqual([{ pid: 592, parentPid: null, path: null }]);
+      expect(rows[1]?.exitCode).toBe(0);
+      expect(now).toBe(10);
+
+      now = 0;
+      await expect(
+        waitForWindowsInstalledCandidate({
+          appBinaryPath: "C:\\Program Files\\BiBCode\\bibcode.exe",
+          candidateVersion: version,
+          evidenceDirectory: root,
+          intervalMs: 10,
+          now: () => now,
+          readFile: async () => windowsVersionResource("0.8.2"),
+          listProcesses: async () => "",
+          sleep: async (milliseconds) => {
+            now += milliseconds;
+          },
+          timeoutMs: 20,
+        }),
+      ).rejects.toThrow(
+        "Timed out waiting for Windows candidate 0.8.3-upgrade.194 at the installed application path after 20ms.",
+      );
+    } finally {
+      await NodeFS.promises.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the redacted remote trace when raw remote logs are withheld", async () => {
+    const root = await NodeFS.promises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "upgrade-evidence-"));
+    try {
+      const layout = createSeededUpgradeRunLayout(root, "copy-test");
+      const secret = "fixture-private-returned-token";
+      await NodeFS.promises.mkdir(layout.previousStable.evidenceDirectory, { recursive: true });
+      await NodeFS.promises.mkdir(layout.remoteInstall.evidenceDirectory, { recursive: true });
+      await NodeFS.promises.mkdir(NodePath.join(layout.remoteInstall.evidenceDirectory, "nested"), {
+        recursive: true,
+      });
+      await NodeFS.promises.mkdir(layout.remoteInstall.dataRoot, { recursive: true });
+      await NodeFS.promises.writeFile(
+        NodePath.join(layout.previousStable.evidenceDirectory, "result.json"),
+        '{"lane":"previous-stable"}\n',
+      );
+      await NodeFS.promises.writeFile(
+        NodePath.join(layout.remoteInstall.evidenceDirectory, "remote-credential-trace.log"),
+        `${JSON.stringify({ step: "credentials", message: `grant ${secret}` })}\n`,
+      );
+      await NodeFS.promises.writeFile(
+        NodePath.join(layout.remoteInstall.evidenceDirectory, "seed-and-install.log"),
+        "Remote WebDriver output was withheld because the private credential receipt was not published.\n",
+      );
+      await NodeFS.promises.writeFile(
+        NodePath.join(layout.remoteInstall.evidenceDirectory, "wdio-0-0.log"),
+        `RESULT ${secret}\n`,
+      );
+      await NodeFS.promises.writeFile(
+        NodePath.join(
+          layout.remoteInstall.evidenceDirectory,
+          "nested",
+          "remote-credential-trace.log",
+        ),
+        secret,
+      );
+      await NodeFS.promises.writeFile(
+        NodePath.join(layout.remoteInstall.dataRoot, "secret.txt"),
+        secret,
+      );
+      const artifactDirectory = NodePath.join(root, "artifact");
+      await copyBoundedEvidence({
+        artifactDirectory,
+        layout,
+        requestLogPath: NodePath.join(root, "missing-requests.jsonl"),
+        secrets: [secret],
+        withholdLanes: ["remote-install"],
+      });
+      const names = (await NodeFS.promises.readdir(artifactDirectory)).toSorted();
+      expect(names).toEqual([
+        "previous-stable-result.json",
+        "remote-install-remote-credential-trace.log",
+        "remote-install-seed-and-install.log",
+      ]);
+      const trace = await NodeFS.promises.readFile(
+        NodePath.join(artifactDirectory, "remote-install-remote-credential-trace.log"),
+        "utf8",
+      );
+      expect(trace).toContain("[REDACTED]");
+      expect(trace).not.toContain(secret);
+      const retained = (
+        await Promise.all(
+          names.map((name) =>
+            NodeFS.promises.readFile(NodePath.join(artifactDirectory, name), "utf8"),
+          ),
+        )
+      ).join("\n");
+      expect(retained).not.toContain(secret);
+    } finally {
+      await NodeFS.promises.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("generates a syntactically valid isolated remote-install phase", async () => {
     const directory = await NodeFS.promises.mkdtemp(
       NodePath.join(NodeOS.tmpdir(), "bibcode-remote-spec-"),
@@ -992,6 +1422,7 @@ describe("seeded packaged desktop upgrade harness", () => {
         remoteSecretPath: NodePath.join(directory, "private.json"),
         remoteUploadSecretPath: NodePath.join(directory, "upload-private.json"),
         remoteEvidencePath: NodePath.join(directory, "evidence.json"),
+        remoteTracePath: NodePath.join(directory, "remote-credential-trace.log"),
       });
       const path = NodePath.join(directory, "remote.e2e.mjs");
       await NodeFS.promises.writeFile(path, spec);
@@ -1000,6 +1431,10 @@ describe("seeded packaged desktop upgrade harness", () => {
         timeout: 10_000,
       });
       expect(result.status, result.stderr).toBe(0);
+      expect(spec).toContain("remote-credential-trace.log");
+      expect(spec).toContain('step: "share-ui"');
+      expect(spec).toContain('step: "credentials"');
+      expect(spec).toContain("[redacted]");
       expect(spec).not.toContain("bridge.installUpdate()");
     } finally {
       await NodeFS.promises.rm(directory, { recursive: true, force: true });
@@ -1609,6 +2044,18 @@ describe("seeded packaged desktop upgrade harness", () => {
     ).rejects.toThrow(/candidate restart.*20ms/);
   });
 
+  it("reports a missing remote evidence file without a filesystem crash", () => {
+    const missing = remoteEvidenceReadFailure(
+      Object.assign(new Error("ENOENT: no such file or directory, open 'remote-rpc.json'"), {
+        code: "ENOENT",
+      }),
+    );
+    expect(missing).toBeInstanceOf(Error);
+    expect(missing?.message).toBe("The remote-install lane finished without remote-rpc.json.");
+    expect(missing?.message.includes("no such file")).toBe(false);
+    expect(remoteEvidenceReadFailure(new Error("invalid"))).toBeUndefined();
+  });
+
   it("accepts a nonzero seed phase only after the updater install was issued", () => {
     expect(() =>
       assertWebDriverPhaseExit({
@@ -1832,6 +2279,27 @@ describe("seeded packaged desktop upgrade harness", () => {
     expect(combined).toContain("orchestration.dispatchCommand");
     expect(combined).toContain("project.create");
     expect(combined).toContain("orchestration.subscribeShell");
+    expect(combined).toContain("Load failed");
+    expect(verify).toContain('request("orchestration.subscribeShell", {}, true)');
+    const startupRetry =
+      /Load failed|environment descriptor request failed|Timed out opening RPC|RPC failed|Timed out waiting for orchestration\.subscribeShell/;
+    expect(verify).toContain(startupRetry.source);
+    expect(
+      startupRetry.test("WebDriverError: Load failed when running execute/sync with method POST"),
+    ).toBe(true);
+    expect(
+      startupRetry.test(
+        "WebDriverError: Timed out waiting for orchestration.subscribeShell. when running execute/sync",
+      ),
+    ).toBe(true);
+    expect(
+      startupRetry.test("The candidate application version was not running after update."),
+    ).toBe(false);
+    expect(seed).not.toContain("tasklist.exe");
+    expect(seed).not.toContain("Get-Process");
+    expect(seed).not.toContain("Get-CimInstance");
+    expect(seed).not.toContain('state?.phase === "protecting") finish');
+    expect(seed).not.toContain("setTimeout(resolve, 30000)");
     expect(combined).toContain("getProjectDataStatuses");
     expect(combined).toContain("getUpdateState");
     expect(seed).toContain("downloadUpdate");

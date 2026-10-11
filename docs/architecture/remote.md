@@ -690,11 +690,13 @@ failure attempts every local safeguard even if an earlier recovery step fails:
 persist local-only, restart with a local-only override, close the firewall, and
 stop an unverified backend. Narrowing persists local-only first, restarts and
 verifies local topology, then closes the firewall; it never restores durable
-wide state as compensation. On Windows, closing enumerates the persistent
-firewall store, removes only the named BiBCode rule, and re-enumerates to verify
-absence. Firewall commands run through the shared supervised process runner with
-a 15-second process timeout, a 64 KiB truncated-output bound, and kill/reap
-ownership for the process tree. A serialized firewall worker additionally gives
+wide state as compensation. On Windows, closing reads the persistent
+firewall store, removes only the named BiBCode rule, and reads it again to verify
+absence. A named `netsh` query that fails without returning that rule is absence
+in every display language only after `netsh advfirewall show allprofiles state`
+succeeds; a failed policy read stays incomplete cleanup. Firewall commands run
+through the shared supervised process runner with a 15-second process timeout, a
+64 KiB truncated-output bound, and kill/reap ownership for the process tree. A serialized firewall worker additionally gives
 each caller a five-second deadline that includes spawn. Its bounded desired-state
 coalescer retains at most one in-flight job and the latest pending state; a newer
 pending request releases the superseded caller with an explicit saturation
@@ -1151,6 +1153,45 @@ address)` gets its own listener on an ephemeral port, so two clients that
   reaches the upstream. Only after that exact match does the gateway rewrite
   `Origin` to `http://localhost:<port>` on these requests, so upstreams that
   compare `Origin` with `Host` accept them.
+- **Framing (browser mode).** The bootstrap accepts `ui=<origin>` and keeps it
+  only when it is a bare `http`/`https` origin on the gateway's own host,
+  canonicalized; the gateway session remembers it and the bootstrap page stores
+  it in the frame's `sessionStorage`. Every response for such a session (and its
+  bootstrap) carries `Content-Security-Policy: frame-ancestors 'self' <that origin>`
+  (`'self'` for frames nested in the preview),
+  and the upstream's `X-Frame-Options` and `frame-ancestors` directives are
+  dropped from each of its policies (its other directives stay, byte for byte),
+  so only that BiBCode UI can frame the preview. Browsers don't parse IPv6 host
+  sources, and an IPv6 UI frames no preview, so a session with an IPv6 UI
+  origin fails closed like one without a UI origin. Sessions without a UI
+  origin (desktop views, system-browser tabs) keep the upstream's framing rules
+  and add `frame-ancestors 'self'`, so a same-site sibling cannot frame them
+  with the gateway cookie. A bootstrap without `ui` keeps the UI origin of the
+  browser's current session for that target, so opening a framed preview in a
+  tab does not break the frame. The gateway's own pages (expired link, nothing
+  listening) carry no upstream content, so without a session origin they get no
+  framing restriction and still explain themselves inside a frame. Every
+  response varies by `Cookie`. Only
+  pages on the server's host may frame a preview, and a frame from another site
+  never carries the `Lax` gateway cookie. The UI's own policy, in turn, adds
+  `frame-src 'self' http://<request host>:*` (the `Host` it was loaded from,
+  letters, digits, dots, and hyphens only; no host source for IPv6), so the page
+  may frame its host's gateways on their per-target ports. `GET /__bibcode/frame.js` (no session needed) is a
+  navigation reporter: inside a frame with a stored UI origin it posts
+  `{ type: "bibcode-preview-frame", url, title, canGoBack, canGoForward }` to
+  that origin on load, `popstate`, `hashchange`, history changes, and title
+  changes, and obeys `bibcode-preview-command` back/forward/reload messages from
+  it only. Back and Forward use the Navigation API, which traverses only the
+  frame's own history; without it they are reported unavailable (the joint
+  `history` would move BiBCode's own tab). The gateway inserts the reporter right after the first `<head>` tag
+  of uncompressed `200` `text/html` responses found in the first 64 KiB
+  (outside comments, quoted attribute values, and script or style contents;
+  never in downloads or `Cache-Control: no-transform` responses, and a page
+  whose body starts before any `<head>`, or whose pre-head script uses HTML's
+  escaped script state, streams untouched)
+  (dropping `content-length`), and asks the upstream for `accept-encoding:
+identity` on page loads (document or iframe Fetch Metadata, or, on plain-HTTP
+  origins that send none, an `Accept` naming `text/html`).
 - **Forwarding.** `Host` becomes `localhost:<port>`. The gateway strips
   BiBCode's session cookie, every `bibcode-gw-*` cookie, `authorization`,
   `dpop`, and hop-by-hop headers, including `proxy-connection`. In responses
@@ -1196,7 +1237,12 @@ address)` gets its own listener on an ephemeral port, so two clients that
   forwards: a tab holds its forward until the tab closes, or 60 s after its
   view unmounts unless it mounts again; a system-browser open holds one for
   5 minutes. It calls `releaseSshForward` only when no lease remains, and when
-  the server replaces a target's listener. Only a typed gateway refusal that
+  the server replaces a target's listener. Every open asks for the canonical
+  port as the forward's local port, since later opens reuse that forward, but
+  only a preview tab loads on the canonical origin, because its profile is the
+  environment's own. A system-browser open always loads on
+  `http://127.0.0.1:<local port>`, so it never shares a `localhost` origin's
+  storage with other local apps. Only a typed gateway refusal that
   holds for every client (`https-unsupported`, `not-admitted`, `no-upstream`)
   becomes the shared tab's `LoadFailed`. A failure of the client's own reach
   (SSH forward, missing bridge or profile, transport, `unavailable`,
@@ -1267,6 +1313,39 @@ itself. It announces the request, and exactly one client claims it.
   window gains focus. A desktop therefore keeps automation even after the user
   last touched a browser tab, and the browser-mode host serves only when no
   desktop host is connected.
+
+## Profiler data
+
+Each environment has its own [Profiler](./overview.md#profiler): its toggle is
+that server's `enableProfiler` setting, and its data stays in that server's data
+root. WSL, SSH, and remote environments run their own `bibcode` process, so each
+has its own crash monitor and follows its own setting. The Diagnostics Profiler
+section switches between connected environments; **Open folder** works only for
+the desktop's primary environment and **Export bundle** covers the primary
+environment only. For any other environment, run `bibcode profiler` on its host,
+for example over SSH, or `ssh <host> bibcode profiler mcp` for an AI harness.
+
+A server older than the profiler does not advertise `capabilities.profiler`. The
+client then sends it no profiler RPC, ignores the `enableProfiler: true` it may
+echo back, and shows the switch disabled with "This server's BiBCode version has
+no profiler. Update the server to record." Such a server answers an unknown
+method by failing every request on the connection, so this gate keeps a newer
+client usable against it.
+
+A client connected to several environments measures its requests and its own
+responsiveness, and reports them only to environments whose profiler is on:
+
+- request records and per-method histograms go to the environment that served
+  the request, which joins them to its own timing by correlation ID;
+- client-wide metrics (main-thread stalls, slow interactions, and the
+  JavaScript heap) go to every connected environment whose profiler is on; and
+- the correlation header is sent only to environments whose profiler is on.
+
+The batch RPC needs `orchestration:operate`, so a read-only credential's batch is
+refused, and the client stops reporting to that environment for the session. In
+Remote Server mode, the joined record's slow part (`server`, `network`, or
+`render`) tells which side made the client wait. See
+[Profiler timing and client reports](./rpc-and-orchestration.md#profiler-timing-and-client-reports).
 
 ## Security boundaries
 

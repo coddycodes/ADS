@@ -463,6 +463,8 @@ describe("PreviewAutomationHosts wrapper", () => {
       recording: false,
       automation: false,
       imageClipboard: false,
+      screenshot: true,
+      pageTools: true,
     });
     mountHost();
     expect(h.automationHostInputs.at(-1)?.supportedOperations).toEqual([
@@ -809,6 +811,8 @@ describe("handleRequest: open", () => {
       recording: false,
       automation: false,
       imageClipboard: false,
+      screenshot: true,
+      pageTools: true,
     });
     const handle = mountHost();
     h.openTab = null;
@@ -980,6 +984,8 @@ describe("handleRequest: navigate + resize", () => {
       recording: false,
       automation: false,
       imageClipboard: false,
+      screenshot: true,
+      pageTools: true,
     });
     const evaluate = vi.fn(() => Promise.reject(new Error("not supported")));
     (bridge.automation as { evaluate: unknown }).evaluate = evaluate;

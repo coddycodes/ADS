@@ -549,11 +549,29 @@ describe("preview empty and menu surfaces", () => {
     }
   });
 
+  it("keeps only the device toolbar for a host without page tools", async () => {
+    h.menuItems = [];
+    const mounted = await mount(
+      <PreviewMoreMenu
+        tabId="tab-1"
+        pageTools={false}
+        zoomFactor={1}
+        deviceToolbarVisible={false}
+        onToggleDeviceToolbar={vi.fn()}
+        onOpenChange={vi.fn()}
+      />,
+    );
+    // The toolbar's Reload reloads a framed page; it needs no page script.
+    expect(h.menuItems.map((item) => item.children)).toEqual(["Show device toolbar"]);
+    expect(mounted.container.querySelector('[role="group"][aria-label="Zoom"]')).toBeNull();
+  });
+
   it("guards tab operations and invokes bridge/device/storage actions", async () => {
     const onToggleDeviceToolbar = vi.fn();
     const mounted = await mount(
       <PreviewMoreMenu
         tabId={null}
+        pageTools
         zoomFactor={1}
         deviceToolbarVisible={false}
         onToggleDeviceToolbar={onToggleDeviceToolbar}
@@ -572,6 +590,7 @@ describe("preview empty and menu surfaces", () => {
       mounted,
       <PreviewMoreMenu
         tabId="tab-1"
+        pageTools
         zoomFactor={1.25}
         deviceToolbarVisible
         onToggleDeviceToolbar={onToggleDeviceToolbar}

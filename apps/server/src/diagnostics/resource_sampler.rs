@@ -706,6 +706,7 @@ mod tests {
                     kind: AttributionKind::Provider,
                     label: "external/provider/codex".to_owned(),
                     source: RegistrationSource::Provider,
+                    driver: None,
                 },
             )
             .expect("registration should fit");
@@ -912,6 +913,7 @@ mod tests {
                     kind: AttributionKind::Provider,
                     label: "Codex".to_owned(),
                     source: RegistrationSource::Provider,
+                    driver: None,
                 },
             )
             .expect("external registration");
@@ -987,6 +989,7 @@ mod tests {
                     kind: AttributionKind::Provider,
                     label: "Codex".to_owned(),
                     source: RegistrationSource::Provider,
+                    driver: None,
                 },
             )
             .expect("stale registration");
@@ -1021,6 +1024,7 @@ mod tests {
                     kind: AttributionKind::Provider,
                     label: "Codex".to_owned(),
                     source: RegistrationSource::Provider,
+                    driver: None,
                 },
             )
             .expect("reparented registration");
@@ -1078,6 +1082,7 @@ mod tests {
                     kind: AttributionKind::Provider,
                     label: "Codex".to_owned(),
                     source: RegistrationSource::Provider,
+                    driver: None,
                 },
             )
             .expect("external registration");

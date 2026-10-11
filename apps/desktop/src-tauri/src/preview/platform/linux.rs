@@ -3,6 +3,7 @@ use std::thread::{self, ThreadId};
 use std::time::Duration;
 
 use cairo::ImageSurface;
+use gtk::prelude::*;
 use webkit2gtk::{
     SnapshotOptions, SnapshotRegion, WebViewExt, WebsiteDataManagerExtManual, WebsiteDataTypes,
 };
@@ -12,6 +13,101 @@ use super::{ClearDataKinds, PlatformWebviewOps, PreviewPlatformError, json_envel
 const PLATFORM_CALL_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct LinuxWebviewOps;
+
+/// Name of the overlay layer that holds preview webviews above the window's
+/// content box.
+const PREVIEW_LAYER: &str = "bibcode-preview-layer";
+
+/// Places a preview webview at `x`/`y` (relative to the main webview) with the
+/// given size. Tauri packs Linux child webviews into the window's content box,
+/// where `set_position`/`set_size` cannot move them (wry moves only children of
+/// a `GtkFixed`; tauri#10420), so the first placement moves the webview into a
+/// pass-through `GtkFixed` overlaid on the main webview. Runs on the GTK thread.
+pub fn place_child(webview: &tauri::Webview, x: f64, y: f64, width: f64, height: f64) {
+    let result = webview.with_webview(move |platform| {
+        let child: gtk::Widget = platform.inner().upcast();
+        if let Err(error) = place_in_preview_layer(&child, x, y, width, height) {
+            tracing::warn!("failed to place the preview webview: {error}");
+        }
+    });
+    if let Err(error) = result {
+        tracing::warn!("failed to reach the preview webview to place it: {error}");
+    }
+}
+
+pub(super) fn place_in_preview_layer(
+    child: &gtk::Widget,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let parent = child
+        .parent()
+        .ok_or_else(|| "the preview webview has no parent".to_string())?;
+    let layer = if parent.widget_name() == PREVIEW_LAYER {
+        parent
+            .downcast::<gtk::Fixed>()
+            .map_err(|_| "the preview layer is not a GtkFixed".to_string())?
+    } else {
+        // First placement: Tauri packed the webview into the content box.
+        let content = parent
+            .downcast::<gtk::Box>()
+            .map_err(|_| "the preview webview's parent is not the content box".to_string())?;
+        let layer = preview_layer(&content, child)?;
+        content.remove(child);
+        layer.put(child, 0, 0);
+        layer
+    };
+    // The layer covers exactly the main webview, so preview bounds (laid out
+    // by the main webview's page) need no offset.
+    layer.move_(child, x.round() as i32, y.round() as i32);
+    child.set_size_request(
+        (width.round() as i32).max(1),
+        (height.round() as i32).max(1),
+    );
+    Ok(())
+}
+
+/// The preview layer over the window's main webview. The first time, the main
+/// webview's slot in the content box becomes a `GtkOverlay` holding it, with a
+/// layer that passes input through except over its children.
+fn preview_layer(content: &gtk::Box, child: &gtk::Widget) -> Result<gtk::Fixed, String> {
+    let existing = content
+        .children()
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::Overlay>().ok())
+        .find_map(|overlay| {
+            overlay
+                .children()
+                .into_iter()
+                .find(|widget| widget.widget_name() == PREVIEW_LAYER)
+                .and_then(|widget| widget.downcast::<gtk::Fixed>().ok())
+        });
+    if let Some(layer) = existing {
+        return Ok(layer);
+    }
+    let main = content
+        .children()
+        .into_iter()
+        .find(|widget| widget != child && widget.is::<webkit2gtk::WebView>())
+        .ok_or_else(|| "the window has no main webview".to_string())?;
+    let slot = content.child_position(&main);
+    let (expand, fill, padding, pack_type) = content.query_child_packing(&main);
+    let overlay = gtk::Overlay::new();
+    content.remove(&main);
+    overlay.add(&main);
+    let layer = gtk::Fixed::new();
+    layer.set_widget_name(PREVIEW_LAYER);
+    overlay.add_overlay(&layer);
+    overlay.set_overlay_pass_through(&layer, true);
+    content.add(&overlay);
+    content.set_child_packing(&overlay, expand, fill, padding, pack_type);
+    content.reorder_child(&overlay, slot);
+    overlay.show();
+    layer.show();
+    Ok(layer)
+}
 
 fn unavailable(context: &str, error: impl std::fmt::Display) -> PreviewPlatformError {
     PreviewPlatformError::Unavailable(format!("{context}: {error}"))
@@ -231,6 +327,71 @@ impl PlatformWebviewOps for LinuxWebviewOps {
 
 #[cfg(test)]
 mod tests {
+    /// Runs GTK on this test's thread against the session's display. Ignored by
+    /// default: needs a display. Run on both backends:
+    /// `cargo test -p bibcode-desktop --lib preview_child_follows -- --ignored --test-threads=1`
+    /// with `GDK_BACKEND=wayland` and `GDK_BACKEND=x11`.
+    #[test]
+    #[ignore = "needs a Wayland or X11 display"]
+    fn preview_child_follows_its_bounds_in_the_overlay_layer() {
+        use gtk::prelude::*;
+
+        gtk::init().expect("GTK display");
+        let pump = || {
+            for _ in 0..50 {
+                while gtk::events_pending() {
+                    gtk::main_iteration_do(false);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        // The layout tao and Tauri build: window -> vbox -> [menu bar, main
+        // webview, child webviews packed after it].
+        let window = gtk::Window::new(gtk::WindowType::Toplevel);
+        window.set_default_size(900, 700);
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        window.add(&content);
+        let menu = gtk::MenuBar::new();
+        menu.append(&gtk::MenuItem::with_label("File"));
+        content.pack_start(&menu, false, false, 0);
+        let main = webkit2gtk::WebView::new();
+        content.pack_start(&main, true, true, 0);
+        let child = webkit2gtk::WebView::new();
+        content.pack_start(&child, true, true, 0);
+        window.show_all();
+        pump();
+
+        let position = |child: &webkit2gtk::WebView| {
+            child
+                .translate_coordinates(&main, 0, 0)
+                .expect("shared toplevel")
+        };
+        // Without placement the box lays the child out below the main webview,
+        // which is where `desktop_preview_set_bounds` leaves it on Linux.
+        assert_ne!(position(&child), (120, 80), "the bug this placement fixes");
+
+        super::place_in_preview_layer(child.upcast_ref(), 120.0, 80.0, 300.0, 200.0)
+            .expect("place");
+        pump();
+        assert_eq!(position(&child), (120, 80));
+        let allocation = child.allocation();
+        assert_eq!((allocation.width(), allocation.height()), (300, 200));
+
+        // Later bounds move it within the layer; the main webview keeps the window.
+        super::place_in_preview_layer(child.upcast_ref(), 10.0, 20.0, 50.0, 40.0).expect("move");
+        pump();
+        assert_eq!(position(&child), (10, 20));
+        let allocation = child.allocation();
+        assert_eq!((allocation.width(), allocation.height()), (50, 40));
+        // The main webview still fills the content box below the menu bar.
+        assert_eq!(
+            main.allocation().height() + menu.allocation().height(),
+            content.allocation().height()
+        );
+        assert_eq!(main.allocation().width(), content.allocation().width());
+        window.close();
+    }
+
     use std::sync::mpsc;
     use std::thread;
 

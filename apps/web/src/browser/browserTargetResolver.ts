@@ -5,6 +5,7 @@ import type {
 } from "@bibcode/contracts";
 import { normalizePreviewUrl } from "@bibcode/shared/preview";
 
+import { canFrameGatewayPreviews } from "~/components/preview/previewBridge";
 import { readPreparedConnection } from "~/state/session";
 
 const isPrivateNetworkHost = (host: string): boolean => {
@@ -70,10 +71,19 @@ export type PreviewTargetResolution =
   | { readonly kind: "reachable"; readonly url: string }
   /**
    * A server-loopback address reached through the environment's preview
-   * gateway. `url` is canonical (`http://localhost:<port>/…`): it is what shared
-   * preview state stores, and each client resolves it for its own webview.
+   * gateway. `url` is canonical (`http://localhost:<port>/…`; a same-host
+   * environment framed in browser mode keeps its loopback as a direct open
+   * would): it is what shared preview state stores, and each client resolves it
+   * for its own webview.
    */
-  | { readonly kind: "gateway"; readonly url: string; readonly via: "host"; readonly host: string }
+  | {
+      readonly kind: "gateway";
+      readonly url: string;
+      readonly via: "host";
+      readonly host: string;
+      /** A same-host page framed in browser mode: outside the frame it opens directly. */
+      readonly direct?: true;
+    }
   | { readonly kind: "gateway"; readonly url: string; readonly via: "ssh" }
   | {
       readonly kind: "unreachable";
@@ -94,7 +104,8 @@ export const UNREACHABLE_MESSAGES: Record<PreviewUnreachableReason, (label: stri
 };
 
 type EnvironmentReach =
-  | { readonly kind: "same-host" }
+  /** `host`: the address this client reaches the environment's server on. */
+  | { readonly kind: "same-host"; readonly host: string }
   | { readonly kind: "host"; readonly host: string }
   | { readonly kind: "ssh" }
   | {
@@ -120,7 +131,7 @@ function classifyEnvironmentReach(environmentId: EnvironmentId): EnvironmentReac
     return { kind: "unreachable", reason: "relay", label };
   }
   const host = unbracket(baseUrl.hostname);
-  if (isLoopbackHost(host)) return { kind: "same-host" };
+  if (isLoopbackHost(host)) return { kind: "same-host", host };
   // A host name (devbox, *.lan, *.internal) is the user's own name for the
   // machine; only a public IP literal is known to be off the private network.
   if (!isIpLiteral(host) || isPrivateNetworkHost(host)) return { kind: "host", host };
@@ -179,7 +190,16 @@ export function resolvePreviewTarget(
   if (reach.kind === "same-host") {
     // A wildcard bind is not a navigable address; loopback is.
     if (isWildcardHost(parsed.hostname)) parsed.hostname = "localhost";
-    return { kind: "reachable", url: parsed.toString() };
+    // Framed in a browser tab, an HTTP page goes through the environment's
+    // gateway (on the address that reaches its server), keeping the loopback a
+    // direct open would load. The gateway serves no HTTPS and admits only
+    // `localhost` or a loopback address; anything else opens directly.
+    const host = unbracket(parsed.hostname);
+    return canFrameGatewayPreviews() &&
+      parsed.protocol === "http:" &&
+      (host === "localhost" || isIpLiteral(host))
+      ? { kind: "gateway", via: "host", host: reach.host, direct: true, url: parsed.toString() }
+      : { kind: "reachable", url: parsed.toString() };
   }
   // Every loopback spelling names the same server port, so the canonical form
   // is one origin per port. The scheme is kept: the gateway refuses HTTPS itself.

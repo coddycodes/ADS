@@ -7,6 +7,7 @@ import {
   useOpenPromptStore,
 } from "~/browser/openPromptQueue";
 import { openLink } from "~/browser/openLink";
+import { getClientSettings } from "~/hooks/useSettings";
 import type { AppRouter } from "~/router";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -68,7 +69,8 @@ export function OpenPromptBanner(props: { readonly router: Pick<AppRouter, "navi
           const outcome = openLink({
             url: prompt.url,
             threadRef: prompt.threadRef,
-            invert: false,
+            // A blocked link asked for a new tab; Open keeps it there.
+            invert: prompt.source === "link" && getClientSettings().browserLinkTarget === "app",
             openPreview,
             onPopupBlocked: () => {
               blocked = true;

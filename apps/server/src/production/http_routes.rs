@@ -17,8 +17,24 @@ pub const MAX_MCP_BODY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OPEN_URL_BODY_BYTES: usize = 16 * 1024;
 
 const NO_STORE: &str = "no-store";
+const OPERATE_SCOPE: &str = "orchestration:operate";
 
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+
+/// The scopes of the one credential an authorized request presented. A route that learns
+/// from its body that it needs more checks them here instead of authenticating again: a DPoP
+/// proof is single-use, so a second check of the same request is refused as a replay.
+#[derive(Clone, Debug, Default)]
+pub struct Authorized {
+    pub scopes: Vec<String>,
+}
+
+impl Authorized {
+    #[must_use]
+    pub fn has_scope(&self, scope: &str) -> bool {
+        self.scopes.iter().any(|granted| granted == scope)
+    }
+}
 
 pub type AuthorizeHandler = Arc<
     dyn Fn(
@@ -27,7 +43,7 @@ pub type AuthorizeHandler = Arc<
             Uri,
             Option<&'static str>,
             CancellationToken,
-        ) -> BoxFuture<Result<(), Response>>
+        ) -> BoxFuture<Result<Authorized, Response>>
         + Send
         + Sync,
 >;
@@ -45,8 +61,13 @@ pub type AssetHandler = Arc<
         + Send
         + Sync,
 >;
+/// Takes the frontend log snapshot and whether the bundle may include crash dumps.
 pub type DiagnosticLogsHandler = Arc<
-    dyn Fn(String, RouteContext) -> BoxFuture<Result<DiagnosticLogsHttpResponse, HttpRouteError>>
+    dyn Fn(
+            String,
+            bool,
+            RouteContext,
+        ) -> BoxFuture<Result<DiagnosticLogsHttpResponse, HttpRouteError>>
         + Send
         + Sync,
 >;
@@ -405,7 +426,7 @@ async fn diagnostic_logs(State(state): State<HttpRoutesState>, request: Request)
     let cancellation = CancellationToken::new();
     let _guard = CancellationGuard(cancellation.clone());
     let (parts, body) = request.into_parts();
-    if let Err(response) = (state.authorize)(
+    let authorized = match (state.authorize)(
         parts.headers.clone(),
         parts.method.clone(),
         parts.uri.clone(),
@@ -414,8 +435,9 @@ async fn diagnostic_logs(State(state): State<HttpRoutesState>, request: Request)
     )
     .await
     {
-        return response;
-    }
+        Ok(authorized) => authorized,
+        Err(response) => return response,
+    };
     let payload = match bounded_json(body, MAX_DIAGNOSTIC_BODY_BYTES).await {
         Ok(payload) => payload,
         Err(response) => return response,
@@ -423,12 +445,25 @@ async fn diagnostic_logs(State(state): State<HttpRoutesState>, request: Request)
     let Some(frontend_log) = payload.get("frontendLog").and_then(Value::as_str) else {
         return bad_request("Request body must contain a frontendLog string.");
     };
+    // Crash dumps hold fragments of memory, so they come only from an explicit `true`.
+    let include_crash_dumps = match payload.get("includeCrashDumps") {
+        None => false,
+        Some(Value::Bool(include)) => *include,
+        Some(_) => return bad_request("includeCrashDumps must be a boolean."),
+    };
+    // Dumps are raw process memory, unlike the redacted logs `orchestration:read` covers,
+    // so asking for them takes the same scope as running commands, of the same credential.
+    if include_crash_dumps && !authorized.has_scope(OPERATE_SCOPE) {
+        return crate::auth::auth_error_response(crate::auth::AuthError::ScopeRequired(
+            OPERATE_SCOPE.to_owned(),
+        ));
+    }
     let context = RouteContext {
         headers: parts.headers,
         uri: parts.uri,
         cancellation,
     };
-    match (state.diagnostic_logs)(frontend_log.to_owned(), context).await {
+    match (state.diagnostic_logs)(frontend_log.to_owned(), include_crash_dumps, context).await {
         Ok(response) => diagnostic_logs_response(response),
         Err(error) => error.into_response(),
     }

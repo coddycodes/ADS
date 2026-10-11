@@ -1,7 +1,22 @@
 use std::process::ExitCode;
 
-#[tokio::main]
-async fn main() -> ExitCode {
+use bibcode_server::diagnostics::profiler::crash;
+
+fn main() -> ExitCode {
+    // The crash monitor is this binary re-executed: before the runtime, and before anything
+    // else installs signal handlers or starts threads.
+    if let Some(code) = crash::dispatch_crash_monitor() {
+        return ExitCode::from(u8::try_from(code).unwrap_or(u8::MAX));
+    }
+    crash::attach();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime")
+        .block_on(async_main())
+}
+
+async fn async_main() -> ExitCode {
     // The open-url shim, or the Windows `bibcode-open-url.exe` alias: before clap, whose
     // environment-backed options a session may carry, and before any data-root work.
     if let Some(url) = bibcode_server::open_url::current_open_url_invocation() {

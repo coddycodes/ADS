@@ -37,4 +37,18 @@ describe("PreviewUnreachable", () => {
     expect(markup).toContain("ERR_NAME_NOT_RESOLVED");
     expect(markup).toContain("Details");
   });
+
+  it("offers a new tab when given one", () => {
+    const markup = renderToStaticMarkup(
+      <PreviewUnreachable
+        url="https://example.com/"
+        code={0}
+        description="Can't frame it."
+        onReload={() => undefined}
+        onOpenInNewTab={() => undefined}
+      />,
+    );
+    expect(markup).toContain("Open in new tab");
+    expect(render(0, "Can't frame it.")).not.toContain("Open in new tab");
+  });
 });

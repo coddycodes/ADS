@@ -310,6 +310,10 @@
       "mode": "unary"
     },
     {
+      "name": "server.getProfilerStatus",
+      "mode": "unary"
+    },
+    {
       "name": "server.getProviderCapabilities",
       "mode": "unary"
     },
@@ -335,6 +339,10 @@
     },
     {
       "name": "server.removeKeybinding",
+      "mode": "unary"
+    },
+    {
+      "name": "server.reportProfilerClientBatch",
       "mode": "unary"
     },
     {
@@ -813,6 +821,8 @@
     "typed-failures/server__getProcessDiagnostics-01.json",
     "typed-failures/server__getProcessResourceHistory-00.json",
     "typed-failures/server__getProcessResourceHistory-01.json",
+    "typed-failures/server__getProfilerStatus-00.json",
+    "typed-failures/server__getProfilerStatus-01.json",
     "typed-failures/server__getProviderCapabilities-00.json",
     "typed-failures/server__getProviderCapabilities-01.json",
     "typed-failures/server__getProviderUsage-00.json",
@@ -827,6 +837,9 @@
     "typed-failures/server__refreshProviderUsage-01.json",
     "typed-failures/server__removeKeybinding-00.json",
     "typed-failures/server__removeKeybinding-01.json",
+    "typed-failures/server__reportProfilerClientBatch-00.json",
+    "typed-failures/server__reportProfilerClientBatch-01.json",
+    "typed-failures/server__reportProfilerClientBatch-02.json",
     "typed-failures/server__signalProcess-00.json",
     "typed-failures/server__signalProcess-01.json",
     "typed-failures/server__updateProvider-00.json",
@@ -1151,6 +1164,8 @@
     "typed-failures/server__getProcessDiagnostics-01.json": "67fe28f9afa4f2e8a20948477a9e72996dd013c6e33b3a768d31eb3a49061509",
     "typed-failures/server__getProcessResourceHistory-00.json": "458ab3eaa56c31ebe2775b1dc1c0a6ba8d32115336f2ed7acec1b53d272af365",
     "typed-failures/server__getProcessResourceHistory-01.json": "67fe28f9afa4f2e8a20948477a9e72996dd013c6e33b3a768d31eb3a49061509",
+    "typed-failures/server__getProfilerStatus-00.json": "458ab3eaa56c31ebe2775b1dc1c0a6ba8d32115336f2ed7acec1b53d272af365",
+    "typed-failures/server__getProfilerStatus-01.json": "67fe28f9afa4f2e8a20948477a9e72996dd013c6e33b3a768d31eb3a49061509",
     "typed-failures/server__getProviderCapabilities-00.json": "6694d90ed2f7bf04588ccc3d47db8d39081bd9f613d7b602168090f8342f5107",
     "typed-failures/server__getProviderCapabilities-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
     "typed-failures/server__getProviderUsage-00.json": "458ab3eaa56c31ebe2775b1dc1c0a6ba8d32115336f2ed7acec1b53d272af365",
@@ -1165,6 +1180,9 @@
     "typed-failures/server__refreshProviderUsage-01.json": "67fe28f9afa4f2e8a20948477a9e72996dd013c6e33b3a768d31eb3a49061509",
     "typed-failures/server__removeKeybinding-00.json": "bb59c7af911d73cbd0a290cc36007224fa459674d16cac234f116545295c7e5b",
     "typed-failures/server__removeKeybinding-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
+    "typed-failures/server__reportProfilerClientBatch-00.json": "7879e47327b3e718df578b97a5480bd08a321d6309355dee0f7671119020035a",
+    "typed-failures/server__reportProfilerClientBatch-01.json": "6148840eeb57e33cbf274c0d736cdcc3766bae68df1ed57058d04fad5cd9698f",
+    "typed-failures/server__reportProfilerClientBatch-02.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
     "typed-failures/server__signalProcess-00.json": "458ab3eaa56c31ebe2775b1dc1c0a6ba8d32115336f2ed7acec1b53d272af365",
     "typed-failures/server__signalProcess-01.json": "67fe28f9afa4f2e8a20948477a9e72996dd013c6e33b3a768d31eb3a49061509",
     "typed-failures/server__updateProvider-00.json": "31122e32f9d4c39cbb5de9dcbdf438de326cdbb6598cf8a3a364df7dd3fe82f9",
@@ -1206,12 +1224,12 @@
     "stream-shapes/subscribePreviewEvents-04.json": "f501cfce13136cfa7ae7bad4febe03c8c2f251deb39b95d89a955a1c39b449aa",
     "stream-shapes/subscribePreviewEvents-05.json": "89668c3852d503a2fe4466c71e7b0b6285ef3d74616c8779b8c4af43bfaafb5a",
     "stream-shapes/subscribeProjectEntries-00.json": "16f4733b371dc6218161dd4edea9bdd75720b67a9e18533b6bdf20d00e120db5",
-    "stream-shapes/subscribeServerConfig-00.json": "bd800613680e9bbeb7b40fe8c31ef53523c948333cbd039aeb7ade274ca12d19",
+    "stream-shapes/subscribeServerConfig-00.json": "e1327725eb4bee297a455986dd6473e6dd242c9be33ef4d360eec97cc2d176e3",
     "stream-shapes/subscribeServerConfig-01.json": "a1736b568373952030c3383ae56ebc777ff487d1732c6adfface416574e1dbf3",
     "stream-shapes/subscribeServerConfig-02.json": "ae146698c9d1a7fa8b20e6665efd2ef6300d7ecec411497f01271add5a3c32b4",
-    "stream-shapes/subscribeServerConfig-03.json": "170831fd420c93bb7028261110e84a506b90762a469d9d9de9fed374b1856967",
-    "stream-shapes/subscribeServerLifecycle-00.json": "2b590926534a66a1ce95144df1990014fb3d4a742928f0ada9cd262041cdd653",
-    "stream-shapes/subscribeServerLifecycle-01.json": "5c1c6af13ad4a3e9070fe46ef0977d59129b570c3461c98fc6ccccab40e6e2e0",
+    "stream-shapes/subscribeServerConfig-03.json": "1ab542bf5091262b9d30979b98fa35bb211313a2db751da2b1baeb53166b188b",
+    "stream-shapes/subscribeServerLifecycle-00.json": "42933ddff3c8038fc86ca4da09f298ca699044b0e17a989702f40e6cbe2c6573",
+    "stream-shapes/subscribeServerLifecycle-01.json": "dd67363205ad1aea1a684fe6989ca000d0cbec3f943e0a9a36ecca9d6b77f5eb",
     "stream-shapes/subscribeTerminalEvents-00.json": "cbd00577e4b1aee3d7026ea6efc0c135670a5af101a6ea0610ca7ecaa1385832",
     "stream-shapes/subscribeTerminalEvents-01.json": "8910c9265e5eb8ab0cdd98289a899d28b720c08decad2ec7d2967346570eaee6",
     "stream-shapes/subscribeTerminalEvents-02.json": "218d03fab79954845f38c1ed752082aab5340619a28c684920da1af6a7360fa8",
@@ -1632,6 +1650,8 @@
     "typed-failures/server__getProcessDiagnostics-01.json",
     "typed-failures/server__getProcessResourceHistory-00.json",
     "typed-failures/server__getProcessResourceHistory-01.json",
+    "typed-failures/server__getProfilerStatus-00.json",
+    "typed-failures/server__getProfilerStatus-01.json",
     "typed-failures/server__getProviderCapabilities-00.json",
     "typed-failures/server__getProviderCapabilities-01.json",
     "typed-failures/server__getProviderUsage-00.json",
@@ -1646,6 +1666,9 @@
     "typed-failures/server__refreshProviders-01.json",
     "typed-failures/server__removeKeybinding-00.json",
     "typed-failures/server__removeKeybinding-01.json",
+    "typed-failures/server__reportProfilerClientBatch-00.json",
+    "typed-failures/server__reportProfilerClientBatch-01.json",
+    "typed-failures/server__reportProfilerClientBatch-02.json",
     "typed-failures/server__signalProcess-00.json",
     "typed-failures/server__signalProcess-01.json",
     "typed-failures/server__updateProvider-00.json",

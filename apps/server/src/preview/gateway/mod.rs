@@ -2,6 +2,7 @@
 //! cookie, and `Location` rewriting the proxy applies in both directions.
 
 pub mod capability;
+pub mod frame;
 pub mod proxy;
 pub mod registry;
 pub mod rewrite;
@@ -22,6 +23,9 @@ pub struct GatewaySession {
     pub thread_id: String,
     pub principal_session_id: String,
     pub principal_expires_at_ms: u64,
+    /// The browser-mode BiBCode UI that frames this preview; only it may frame
+    /// the gateway's responses for this session (see `frame::apply_frame_policy`).
+    pub ui_origin: Option<String>,
 }
 
 /// In-memory gateway sessions keyed by the random id stored in the gateway cookie.
@@ -36,7 +40,12 @@ impl GatewaySessions {
     }
 
     /// Stores a session for redeemed capability `claims` and returns its cookie value.
-    pub fn create(&self, claims: &GatewayCapabilityClaims, principal_expires_at_ms: u64) -> String {
+    pub fn create(
+        &self,
+        claims: &GatewayCapabilityClaims,
+        principal_expires_at_ms: u64,
+        ui_origin: Option<String>,
+    ) -> String {
         let id = random_base64url(32);
         let session = GatewaySession {
             gateway_port: claims.gateway_port,
@@ -44,6 +53,7 @@ impl GatewaySessions {
             thread_id: claims.thread_id.clone(),
             principal_session_id: claims.session_id.clone(),
             principal_expires_at_ms,
+            ui_origin,
         };
         self.lock().insert(id.clone(), session);
         id
@@ -105,9 +115,9 @@ mod tests {
     #[test]
     fn sessions_create_get_and_remove() {
         let sessions = GatewaySessions::new();
-        let a = sessions.create(&claims(40001, "s1"), 9_000);
-        let b = sessions.create(&claims(40001, "s2"), 9_000);
-        let c = sessions.create(&claims(40002, "s1"), 9_000);
+        let a = sessions.create(&claims(40001, "s1"), 9_000, None);
+        let b = sessions.create(&claims(40001, "s2"), 9_000, None);
+        let c = sessions.create(&claims(40002, "s1"), 9_000, None);
         assert_ne!(a, b);
         assert_eq!(a.len(), 43, "32 random bytes, base64url without padding");
         assert_eq!(
@@ -118,6 +128,7 @@ mod tests {
                 thread_id: "t1".into(),
                 principal_session_id: "s1".into(),
                 principal_expires_at_ms: 9_000,
+                ui_origin: None,
             })
         );
         assert_eq!(sessions.get("missing", 1_000), None);
@@ -129,7 +140,7 @@ mod tests {
         );
         assert!(sessions.get(&b, 1_000).is_some());
 
-        let d = sessions.create(&claims(40002, "s3"), 9_000);
+        let d = sessions.create(&claims(40002, "s3"), 9_000, None);
         sessions.remove_for_port(40001);
         assert_eq!(sessions.get(&b, 1_000), None);
         assert!(sessions.get(&d, 1_000).is_some());
@@ -138,7 +149,7 @@ mod tests {
     #[test]
     fn expired_principal_session_is_ignored_and_evicted() {
         let sessions = GatewaySessions::new();
-        let id = sessions.create(&claims(40001, "s1"), 9_000);
+        let id = sessions.create(&claims(40001, "s1"), 9_000, None);
         assert!(sessions.get(&id, 8_999).is_some());
         assert_eq!(sessions.get(&id, 9_000), None);
         // Evicted: even a clock that moved backwards does not resurrect it.

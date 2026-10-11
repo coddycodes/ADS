@@ -868,6 +868,7 @@ mod tests {
                 jti: "j".into(),
             },
             u64::MAX,
+            None,
         );
 
         gateway.inner.draining.cancel();

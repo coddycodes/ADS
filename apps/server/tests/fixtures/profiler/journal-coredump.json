@@ -1,0 +1,10 @@
+{
+  "__REALTIME_TIMESTAMP": "1790707025243866",
+  "MESSAGE_ID": "fc2e22bc6ee647b6b90729ab34a250b1",
+  "COREDUMP_PID": "1732134",
+  "COREDUMP_SIGNAL": "6",
+  "COREDUMP_SIGNAL_NAME": "SIGABRT",
+  "COREDUMP_TIMESTAMP": "1790707009000000",
+  "COREDUMP_EXE": "/work/workspaces/orca/BibCode/main/target/debug/deps/bibcode_server-fe771ab9e6f4b1bc",
+  "MESSAGE": "Process 1732134 (bibcode_server-) of user 1000 dumped core.\n\nStack trace of thread 1732162:\n#0  0x000075a225a9a17c n/a (libc.so.6 + 0x9a17c)\n#1  0x000075a225a3e5d0 raise (libc.so.6 + 0x3e5d0)\n#2  0x000075a225a25685 abort (libc.so.6 + 0x25685)\n#3  0x000063e1cb1d4a3a _RNvNtNtNtCs6ZjlLoI6YmX_3std3sys3pal4unix14abort_internal (bibcode_server-fe771ab9e6f4b1bc + 0x98dda3a)\n#4  0x000063e1cb1cf539 _RNvNtCs6ZjlLoI6YmX_3std7process5abort (bibcode_server-fe771ab9e6f4b1bc + 0x98d8539)\n#5  0x000063e1c9d70abd _RNCNvNtNtNtCs7ioOi34rQqU_14bibcode_server8provider11attachments5testss_40attachment_final_publication_abort_child0B9_ (bibcode_server-fe771ab9e6f4b1bc + 0x8479abd)\n#6  0x000063e1c7f4193d _RNCINvMs2_NtNtCseXHGE4rwEqb_5tokio7runtime4parkNtB8_16CachedParkThread8block_onNCNvNtNtNtCs7ioOi34rQqU_14bibcode_server8provider11attachments5testss_40attachment_final_publication_abort_child0E0B1p_ (bibcode_server-fe771ab9e6f4b1bc + 0x664a93d)\n#7  0x000063e1c7f3d1c4 _RINvNtNtCseXHGE4rwEqb_5tokio4task4coop11with_budgetINtNtNtCsc36rpYXAlPq_4core4task4poll4PollzENCINvMs2_NtNtB6_7runtime4parkNtB1D_16CachedParkThread8block_onNCNvNtNtNtCs7ioOi34rQqU_14bibcode_server8provider11attachments5testss_40attachment_final_publication_abort_child0E0EB2E_ (bibcode_server-fe771ab9e6f4b1bc + 0x66461c4)\n\nStack trace of thread 1732163:\n#0  0x000075a225aa0952 n/a (libc.so.6 + 0xa0952)\n#1  0x000075a225b20cab epoll_wait (libc.so.6 + 0x120cab)\n#2  0x000063e1cb1702b3 _RNvMNtNtNtCs8E7twZyOqUx_3mio3sys4unix8selectorNtB2_8Selector6select (bibcode_server-fe771ab9e6f4b1bc + 0x98792b3)\n"
+}

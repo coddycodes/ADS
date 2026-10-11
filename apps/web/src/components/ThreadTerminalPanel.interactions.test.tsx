@@ -634,6 +634,7 @@ vi.mock("~/browser/openFileInPreview", () => ({ openFileInPreview: vi.fn() }));
 vi.mock("~/previewStateStore", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/previewStateStore")>()),
   isPreviewSupportedInRuntime: () => testState.previewSupported,
+  canPreviewAnyUrlInRuntime: () => testState.previewSupported,
 }));
 vi.mock("../state/session", () => ({
   readPreparedConnection: () => Option.getOrNull(testState.preparedConnection),

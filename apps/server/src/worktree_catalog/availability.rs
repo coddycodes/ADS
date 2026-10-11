@@ -3,6 +3,7 @@ use std::{
     io,
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex, MutexGuard},
+    time::{Duration, Instant},
 };
 
 use serde::Serialize;
@@ -156,6 +157,10 @@ struct RegistryState {
     next_admission_id: u64,
     next_removal_id: u64,
     reconciliation_active: bool,
+    /// Ages added to guards by `backdate_for_test`, so a test needs no clock arithmetic that a
+    /// freshly booted host could not do.
+    #[cfg(test)]
+    age_offsets: HashMap<String, Duration>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -171,6 +176,8 @@ struct GuardEntry {
     path_key: String,
     path: String,
     state: WorkspaceGuardState,
+    /// When the guard entered `state`.
+    entered_at: Instant,
     terminal_signal: WorkspaceTerminalSignalGate,
     pending_missing: Option<PendingMissing>,
     removal_ids: HashSet<u64>,
@@ -403,6 +410,34 @@ impl WorkspaceAvailabilityRegistry {
         canonical_worktree_path_key(path)
             .await
             .map_err(|error| WorkspaceIdentityError::new(path, &error))
+    }
+
+    /// Every guarded workspace and how long it has held its state. Changes nothing.
+    pub(crate) fn guarded(&self) -> Vec<(WorkspaceUnavailable, Duration)> {
+        let state = lock(&self.inner);
+        state
+            .entries
+            .values()
+            .map(|entry| {
+                let held = entry.entered_at.elapsed();
+                #[cfg(test)]
+                let held = held
+                    + state
+                        .age_offsets
+                        .get(&entry.thread_id)
+                        .copied()
+                        .unwrap_or_default();
+                (unavailable(entry), held)
+            })
+            .collect()
+    }
+
+    /// Ages a guard by `by`, so a test can make it look long held.
+    #[cfg(test)]
+    pub(crate) fn backdate_for_test(&self, thread_id: &str, by: Duration) {
+        lock(&self.inner)
+            .age_offsets
+            .insert(thread_id.to_owned(), by);
     }
 
     pub async fn guard_thread(&self, thread_id: &str) -> Result<(), WorkspaceUnavailable> {
@@ -1324,6 +1359,7 @@ impl WorkspaceAvailabilityReconciliation {
                                 path_key: path_key.clone(),
                                 path: path.clone(),
                                 state: guard_state,
+                                entered_at: Instant::now(),
                                 terminal_signal: WorkspaceTerminalSignalGate::default(),
                                 pending_missing: None,
                                 removal_ids: HashSet::new(),
@@ -1396,6 +1432,7 @@ impl WorkspaceAvailabilityReconciliation {
                                 path: path_key.clone(),
                                 path_key: path_key.clone(),
                                 state: WorkspaceGuardState::Removing,
+                                entered_at: Instant::now(),
                                 terminal_signal: WorkspaceTerminalSignalGate::default(),
                                 pending_missing,
                                 removal_ids: HashSet::from([removal_id]),
@@ -1588,6 +1625,7 @@ fn complete_released_removal(state: &mut RegistryState, thread_id: &str) {
         entry.path_key = pending.path_key;
         entry.path = pending.path;
         entry.state = pending.state;
+        entry.entered_at = Instant::now();
         entry.terminal_signal = WorkspaceTerminalSignalGate::default();
         entry.removal_ids.clear();
         state.entries.insert(thread_id.to_owned(), entry);
@@ -1926,6 +1964,28 @@ mod tests {
             .await
             .expect("physical identity resolves");
         assert_eq!(registry.guard_thread("thread-1").await, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn guarded_lists_each_guard_with_how_long_it_has_held_its_state() {
+        let registry = WorkspaceAvailabilityRegistry::new();
+        assert!(registry.guarded().is_empty());
+        let removal = registry
+            .mark_removing("thread-1", Path::new("/repo/worktrees/a"))
+            .await
+            .expect("physical identity resolves");
+        let guarded = registry.guarded();
+        let [(unavailable, held)] = guarded.as_slice() else {
+            panic!("one guard: {guarded:?}");
+        };
+        assert_eq!(unavailable.thread_id, "thread-1");
+        assert_eq!(
+            unavailable.availability,
+            AdoptedWorktreeAvailability::Removing
+        );
+        assert!(*held < std::time::Duration::from_secs(60));
+        removal.release();
+        assert!(registry.guarded().is_empty());
     }
 
     #[tokio::test]

@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, future::Future, path::PathBuf, pin::Pin, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    path::PathBuf,
+    pin::Pin,
+    sync::{Arc, Weak},
+};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -15,6 +21,7 @@ use crate::{
         ProcessResourceHistory, ProcessResourceTotals, ProcessRow, ProcessSignal,
         RuntimeProcessOwnership, SplitMetric, UiCoverage, UiCoverageStatus,
         bound_diagnostic_string, process_tree_metadata,
+        profiler::{client::ingest_client_batch, runtime::ProfilerRuntime},
     },
     persistence::Repositories,
     production::orchestration_effects::SetupScriptLaunch,
@@ -72,6 +79,12 @@ pub struct ServerTerminalServices {
     relay: RelayClientService,
     control: Arc<dyn ProductionServerControl>,
     workspace_admission: Option<WorkspaceAdmissionController>,
+    /// `None` when the host runs no profiler; its status RPC then reports it off. Weak: the
+    /// production runtime alone owns the profiler, so dropping it after a failed start tears
+    /// the profiler down even while detached tasks still hold clones of these services.
+    profiler: Option<Weak<ProfilerRuntime>>,
+    /// Tags client profiler reports; empty when the host sets none.
+    environment_id: Arc<str>,
 }
 
 impl ServerTerminalServices {
@@ -129,7 +142,21 @@ impl ServerTerminalServices {
             relay,
             control,
             workspace_admission: None,
+            profiler: None,
+            environment_id: Arc::from(""),
         }
+    }
+
+    #[must_use]
+    pub(crate) fn with_profiler(mut self, profiler: &Arc<ProfilerRuntime>) -> Self {
+        self.profiler = Some(Arc::downgrade(profiler));
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_environment_id(mut self, environment_id: &str) -> Self {
+        self.environment_id = Arc::from(environment_id);
+        self
     }
 
     #[must_use]
@@ -427,6 +454,50 @@ fn register_diagnostics_rpcs(registry: &mut RpcRegistry, services: &ServerTermin
                     monitor.read_history(input.window_ms, input.bucket_ms).await,
                 ))
             }
+        },
+    );
+
+    let profiler = services.profiler.clone();
+    registry.register_unary(
+        "server.getProfilerStatus",
+        move |_request, _cancellation| {
+            let profiler = profiler.as_ref().and_then(Weak::upgrade);
+            async move {
+                let Some(profiler) = profiler else {
+                    return Ok(json!({
+                        "enabled": false,
+                        "recordingSince": null,
+                        "diskBytes": 0,
+                        "eventCount": 0,
+                        "droppedEvents": 0,
+                        "lastCrashAt": null,
+                        "capabilities": {
+                            "nativeDumps": "unavailable",
+                            "osCrashRecords": "unavailable",
+                            "storage": "ok",
+                        },
+                        "findings": [],
+                    }));
+                };
+                // Status reads the profiler directory, which must not block an async worker. A
+                // panicking handler would fail the whole connection; this fails one request.
+                tokio::task::spawn_blocking(move || profiler.status())
+                    .await
+                    .map_err(|_| {
+                        json!({
+                            "_tag": "ProfilerStatusError",
+                            "message": "The profiler status could not be read.",
+                        })
+                    })
+            }
+        },
+    );
+    let environment_id = services.environment_id.clone();
+    registry.register_unary(
+        "server.reportProfilerClientBatch",
+        move |request, _cancellation| {
+            let environment_id = environment_id.clone();
+            async move { ingest_client_batch(request.payload, &environment_id) }
         },
     );
 

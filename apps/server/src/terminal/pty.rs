@@ -6,7 +6,7 @@ use std::{
     fmt,
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc},
+    sync::{Arc, Mutex, OnceLock, mpsc},
     thread,
     time::Duration,
 };
@@ -162,6 +162,12 @@ pub trait PtyProcess: fmt::Debug + Send + Sync {
     }
     fn subscribe_output(&self) -> broadcast::Receiver<String>;
     fn subscribe_exit(&self) -> watch::Receiver<Option<PtyExit>>;
+    /// The exit as `std` reports it, signal number included, once the root has exited. A
+    /// published [`PtyExit`] keeps the backend's own code. `None` while it runs, or when the
+    /// backend cannot tell.
+    fn exit_status(&self) -> Option<std::process::ExitStatus> {
+        None
+    }
 }
 
 pub trait PtyBackend: fmt::Debug + Send + Sync {
@@ -496,18 +502,30 @@ impl PortablePtyBackend {
         #[cfg(unix)]
         let waiter_process_group_ownership = Arc::clone(&process_group_ownership);
         let wait_child = child.handoff_child_to_waiter();
+        let exit_status = Arc::new(OnceLock::new());
+        let waiter_exit_status = Arc::clone(&exit_status);
         spawn_waiter(
             format!("bibcode-pty-wait-{pid}"),
             Box::new(move || {
                 let mut child = wait_child;
+                // portable-pty names a signal but not its number, so the exit record is read
+                // first, while reserving the root when it leads a process group.
+                #[cfg(unix)]
+                let mut exit_record = None;
+                // A root that died before its group was read has none to reserve.
+                #[cfg(unix)]
+                if process_group.is_none() {
+                    exit_record = wait_for_unix_child_exit_without_reaping(pid).ok().flatten();
+                }
                 #[cfg(unix)]
                 if let Some(process_group) = process_group {
                     let reservation = wait_for_unix_child_exit_without_reaping(pid);
                     if let Err(error) = &reservation {
                         tracing::warn!(%error, pid, "failed to reserve PTY root identity through group cleanup");
                     }
+                    exit_record = reservation.as_ref().ok().copied().flatten();
                     #[cfg(test)]
-                    observe_waiter_reservation(reservation);
+                    observe_waiter_reservation(reservation.map(|_| ()));
                     loop {
                         match kill_reserved_unix_process_group_after_root_exit(
                             process_group,
@@ -522,10 +540,23 @@ impl PortablePtyBackend {
                     }
                 }
                 let event = match child.wait() {
-                    Ok(status) => PtyExit {
-                        exit_code: i32::try_from(status.exit_code()).ok(),
-                        signal: None,
-                    },
+                    Ok(status) => {
+                        #[cfg(unix)]
+                        let precise = exit_record;
+                        #[cfg(windows)]
+                        let precise = {
+                            use std::os::windows::process::ExitStatusExt;
+                            Some(std::process::ExitStatus::from_raw(status.exit_code()))
+                        };
+                        // Set before the exit is published, so whoever sees the exit can read it.
+                        if let Some(precise) = precise {
+                            let _ = waiter_exit_status.set(precise);
+                        }
+                        PtyExit {
+                            exit_code: i32::try_from(status.exit_code()).ok(),
+                            signal: None,
+                        }
+                    }
                     Err(_) => PtyExit {
                         exit_code: None,
                         signal: None,
@@ -568,6 +599,7 @@ impl PortablePtyBackend {
             output,
             initial_output: Mutex::new(Some(initial_output)),
             exit,
+            exit_status,
             #[cfg(unix)]
             process_group,
             #[cfg(unix)]
@@ -893,6 +925,7 @@ struct PortablePtyProcess {
     output: broadcast::Sender<String>,
     initial_output: Mutex<Option<broadcast::Receiver<String>>>,
     exit: watch::Sender<Option<PtyExit>>,
+    exit_status: Arc<OnceLock<std::process::ExitStatus>>,
     #[cfg(unix)]
     process_group: Option<i32>,
     #[cfg(unix)]
@@ -1027,6 +1060,10 @@ impl PtyProcess for PortablePtyProcess {
     fn subscribe_exit(&self) -> watch::Receiver<Option<PtyExit>> {
         self.exit.subscribe()
     }
+
+    fn exit_status(&self) -> Option<std::process::ExitStatus> {
+        self.exit_status.get().copied()
+    }
 }
 
 #[cfg(unix)]
@@ -1095,44 +1132,18 @@ fn kill_reserved_unix_process_group_after_root_exit(
     })
 }
 
+/// Waits for the child to exit without reaping it, and returns its exit status.
 #[cfg(unix)]
-fn wait_for_unix_child_exit_without_reaping(process_id: u32) -> std::io::Result<()> {
-    unix_child_exit_without_reaping(process_id, 0).map(|_| ())
+fn wait_for_unix_child_exit_without_reaping(
+    process_id: u32,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
+    crate::process::child_exit_without_reaping(process_id, 0)
+        .map(|exit| exit.as_ref().and_then(crate::process::exit_status))
 }
 
 #[cfg(unix)]
 fn probe_unix_child_exit_without_reaping(process_id: u32) -> std::io::Result<bool> {
-    unix_child_exit_without_reaping(process_id, libc::WNOHANG)
-}
-
-#[cfg(unix)]
-fn unix_child_exit_without_reaping(process_id: u32, options: i32) -> std::io::Result<bool> {
-    let process_id = libc::id_t::try_from(process_id)
-        .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
-    loop {
-        let mut information = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
-        // SAFETY: information points to valid writable storage. WNOWAIT keeps
-        // the exited leader waitable so its PID/PGID cannot be reused before
-        // the owned group has been signalled.
-        let result = unsafe {
-            libc::waitid(
-                libc::P_PID,
-                process_id,
-                information.as_mut_ptr(),
-                libc::WEXITED | libc::WNOWAIT | options,
-            )
-        };
-        if result == 0 {
-            // SAFETY: waitid succeeded with a zero-initialized siginfo_t. A
-            // zero si_pid means WNOHANG found no exit; otherwise it names the
-            // exited child, which WNOWAIT has deliberately left waitable.
-            return Ok(unsafe { information.assume_init().si_pid() } != 0);
-        }
-        let error = std::io::Error::last_os_error();
-        if error.kind() != std::io::ErrorKind::Interrupted {
-            return Err(error);
-        }
-    }
+    crate::process::child_exit_without_reaping(process_id, libc::WNOHANG).map(|exit| exit.is_some())
 }
 
 #[cfg(unix)]
@@ -2528,6 +2539,40 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_root_killed_by_a_signal_keeps_the_signal_in_its_exit_status() {
+        let process = PortablePtyBackend
+            .spawn(&PtySpawnInput {
+                executable: "/bin/sh".to_owned(),
+                args: vec!["-c".to_owned(), "kill -USR1 $$".to_owned()],
+                cwd: std::env::temp_dir(),
+                cols: 80,
+                rows: 24,
+                env: BTreeMap::new(),
+            })
+            .unwrap();
+        let mut exit = process.subscribe_exit();
+        let observed = tokio::time::timeout(Duration::from_secs(3), exit.wait_for(Option::is_some))
+            .await
+            .expect("exit before the deadline")
+            .expect("exit published")
+            .clone();
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(
+            process.exit_status().and_then(|status| status.signal()),
+            Some(libc::SIGUSR1)
+        );
+        assert_eq!(
+            observed,
+            Some(PtyExit {
+                exit_code: Some(1),
+                signal: None,
+            }),
+            "the published exit keeps portable-pty's code"
+        );
+    }
+
     #[tokio::test]
     async fn portable_backend_streams_input_output_resize_and_exit() {
         let (executable, args, input, output_marker) = if cfg!(windows) {
@@ -2794,6 +2839,7 @@ mod tests {
             output,
             initial_output: Mutex::new(Some(initial_output)),
             exit,
+            exit_status: Arc::default(),
             #[cfg(unix)]
             process_group: None,
             #[cfg(unix)]
@@ -2827,6 +2873,7 @@ mod tests {
             output,
             initial_output: Mutex::new(Some(initial_output)),
             exit,
+            exit_status: Arc::default(),
             #[cfg(unix)]
             process_group: None,
             #[cfg(unix)]
@@ -2874,6 +2921,7 @@ mod tests {
             output,
             initial_output: Mutex::new(Some(initial_output)),
             exit,
+            exit_status: Arc::default(),
             #[cfg(unix)]
             process_group: None,
             #[cfg(unix)]

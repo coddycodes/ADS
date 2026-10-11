@@ -1,6 +1,6 @@
 [package]
 name = "bibcode-desktop"
-version = "0.8.2"
+version = "0.9.0"
 description = "BiBCode Tauri desktop shell"
 authors = ["BiBCode"]
 edition.workspace = true
@@ -53,6 +53,8 @@ windows-sys = { workspace = true, features = [
   "Win32_Security_Cryptography",
   "Win32_System_Console",
   "Win32_System_IO",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

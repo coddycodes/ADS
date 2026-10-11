@@ -15,6 +15,15 @@ import {
   startStatusBarUsageAutoRefresh,
 } from "./AppStatusBar";
 
+const profilerEnvironments = vi.hoisted(() => ({ list: [] as unknown[] }));
+
+vi.mock("../../state/environments", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/environments")>()),
+  useEnvironments: () => ({ environments: profilerEnvironments.list }),
+}));
+
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+
 vi.mock("../ui/popover", () => ({
   Popover: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   PopoverTrigger: ({
@@ -192,6 +201,38 @@ describe("AppStatusBarView", () => {
 
     expect(markup.indexOf("BiBCode Core")).toBeLessThan(markup.indexOf("Highest consumers"));
     expect(markup.indexOf("Highest consumers")).toBeLessThan(markup.indexOf("This device"));
+  });
+
+  it("shows the profiler marker only while an environment records", () => {
+    const view = (
+      <AppStatusBarView
+        usage={null}
+        diagnostics={{ diagnostics: null, queryError: null }}
+        localDiagnostics={null}
+        terminalCount={0}
+        onRefresh={() => {}}
+      />
+    );
+    expect(renderToStaticMarkup(view)).not.toContain("Profiler");
+
+    profilerEnvironments.list = [
+      {
+        environmentId: "primary",
+        label: "Local",
+        connection: { phase: "connected" },
+        serverConfig: {
+          environment: { capabilities: { profiler: true } },
+          settings: { enableProfiler: true },
+        },
+      },
+    ];
+    try {
+      expect(renderToStaticMarkup(view)).toContain(
+        'aria-label="Profiler recording, open diagnostics settings"',
+      );
+    } finally {
+      profilerEnvironments.list = [];
+    }
   });
 
   it("renders unavailable marks instead of healthy zeroes without a sample", () => {

@@ -43,6 +43,7 @@ vi.mock("../rightPanelStore", () => ({
 }));
 vi.mock("../previewStateStore", () => ({
   isPreviewSupportedInRuntime: () => mocks.previewSupported,
+  canPreviewAnyUrlInRuntime: () => mocks.previewSupported,
 }));
 vi.mock("../browser/openFileInPreview", () => ({
   BrowserPreviewUnavailableError: class BrowserPreviewUnavailableError extends Error {

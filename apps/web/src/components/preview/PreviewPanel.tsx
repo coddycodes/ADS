@@ -4,6 +4,7 @@ import type { ScopedThreadRef } from "@bibcode/contracts";
 
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 
+import { HTTPS_PREVIEW_NOTICE, isBrowserMode } from "./previewBridge";
 import { PreviewPanelShell, type PreviewPanelMode } from "./PreviewPanelShell";
 import { PreviewView } from "./PreviewView";
 
@@ -21,7 +22,9 @@ export function PreviewPanel({ mode, threadRef, tabId, configuredUrls, visible }
       <PreviewPanelShell mode={mode}>
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
           <p className="max-w-sm text-sm text-muted-foreground">
-            Preview is only available in the BiBCode desktop app.
+            {isBrowserMode()
+              ? HTTPS_PREVIEW_NOTICE
+              : "Preview is only available in the BiBCode desktop app."}
           </p>
         </div>
       </PreviewPanelShell>

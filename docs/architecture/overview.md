@@ -43,9 +43,32 @@ flowchart TB
   native view per environment's preview storage (the local environment keeps
   the original profile; each other environment gets its own), because
   recreating child webviews while switching tabs disconnected the app; logical
-  tabs rebind to their environment's view. In browser mode there is no child
-  webview: the client advertises only status and open, and open shows a prompt
-  and returns `pending-user` at once; the page opens only if the user clicks Open. The server prefers the host
+  tabs rebind to their environment's view. On Linux, Tauri packs child
+  webviews into the window's content box, where bounds cannot move them, so
+  the desktop wraps the main webview in a `GtkOverlay` with a pass-through
+  `GtkFixed` layer and places preview views there
+  (`apps/desktop/src-tauri/src/preview/platform/linux.rs`). Removing an environment deletes its preview storage with its other
+  environment-owned data (`EnvironmentOwnedDataCleanup`, through
+  `desktop_preview_forget_environment`); a profile one of its previews used in
+  this session stays on disk, since its native view lives until the app exits. In browser mode there is no child
+  webview. A page served over plain HTTP implements the same `DesktopPreviewBridge`
+  with sandboxed iframes mounted inside each tab's panel slot
+  (`apps/web/src/browser/framePreviewBridge.ts`, chosen in
+  `components/preview/previewBridge.ts`; the same `browserSurfaceSync` stream
+  drives their visibility and moves a frame into a remounted slot, reopening
+  the page it last reported). It frames only gateway bootstrap URLs on
+  the page's own host, the only host a gateway lets frame it, including a
+  same-host server's loopback, which `browserTargetResolver` routes
+  through the gateway on the environment's own address; the bootstrap's `ui=` parameter
+  names the page's origin so the gateway lets it frame the preview
+  ([Framing](remote.md#preview-gateway)). The gateway's injected `/__bibcode/frame.js` reports
+  each page's URL, title, and history by `postMessage`, and Back, Forward, and
+  Reload go back as messages. Its failures stay local to the client, and
+  `previewRuntimeCapabilities` turns off picking, recording, screenshots, page
+  tools, and automation. An HTTPS page has no preview bridge, so gateway links
+  open in new tabs. In browser mode the client advertises only status and open
+  for automation, and open shows a prompt and returns `pending-user` at once;
+  the page opens only if the user clicks Open. The server prefers the host
   with more operations, so a connected desktop serves automation first.
   Loopback dev servers on a remote environment load through the server's
   preview gateway. Typography and text-contrast
@@ -716,6 +739,10 @@ backends use `BackendLaunchTarget::ExternalProcess`, so not every desktop
 environment shares the host process. SSH forwarding is owned by the Tauri host;
 provider, terminal, and managed relay processes are supervised by the server.
 Neither path introduces a production Node server or packaged helper sidecar.
+The only extra BiBCode process is the [Profiler](#profiler)'s crash monitor:
+the same executable, relaunched only while the profiler is on. A Windows update
+also starts a detached `cmd.exe` restart waiter, which is not a BiBCode
+executable.
 
 The server can also open preview gateway listeners. Each one reverse-proxies
 one loopback dev server for one thread to a client that is not on the server's
@@ -796,7 +823,9 @@ maintenance owner admits status and other read traffic, rejects new mutating
 HTTP and WebSocket RPC operations, and keeps a permit until every admitted
 mutation has committed or failed. RPC mutability comes from the typed method
 inventory; long-lived read streams therefore never hold a mutation permit, and
-unknown methods fail closed as mutations. Each admitted mutation has a bounded,
+unknown methods fail closed as mutations. `previewAutomation.connect` is one of
+those read streams: the desktop shell holds it for the window lifetime to
+register an in-memory automation host. Each admitted mutation has a bounded,
 sanitized operation label and age for diagnostics, without arguments, query
 values, or payloads. Preparation then drains existing mutation permits with a
 bound, quiesces runtime-owned writers, queues, providers, terminals, and
@@ -840,7 +869,34 @@ backend exits cleanly; cancellation, preparation failure, and lease expiry also
 exit instead of resuming a partially quiesced runtime. The host marks those
 exits as expected, stops every backend from the captured running set, and does
 not invoke the platform installer until every included backend has committed
-and stopped. A prepare, cancel, commit, stop, or installer failure attempts to
+and stopped. On Windows the passive NSIS package then replaces
+`bibcode-desktop.exe` and relaunches it. Its preinstall hook, only for passive
+and silent installers and only when that installed executable is already
+present, ends a same-user `bibcode-desktop.exe` and retries deleting that file
+for up to 15 seconds, so a brief lock after the updater exits does not become
+the template's file-in-use dialog. Interactive installers skip the hook and keep
+the template prompt and Restart Manager shutdown, which runs the normal exit
+path. A file that is still locked after that retry reaches the template dialog
+unchanged. An elevated installer relaunches through `CreateProcessWithTokenW`
+with a null environment block, which does not keep the updating process's
+`BIBCODE_HOME` or `BIBCODE_PORT`. Before the installer starts, the host writes
+those two variables to a temp handoff that stays valid for ten minutes. The
+replacement applies whichever it does not already have, before it chooses a
+data root or port, so a remote client reconnects to the same endpoint. Once
+it holds the single instance it deletes the handoff, so a later ordinary
+launch keeps its own defaults, while a duplicate launch rejected meanwhile
+leaves it for the installer's replacement. A
+detached waiter, which receives the executable path in an environment variable
+so a non-ASCII install path survives the console code page, is stopped and the
+handoff deleted when the installer fails to start. It starts without inheriting
+any handle, so neither it nor the copy it starts keeps open a pipe that
+whatever launched BiBCode is still reading. Otherwise it starts the
+installed executable only after neither a
+`*-setup.exe` nor a `*-installer.exe` process is running and the installer has
+not relaunched it. The updater launches the downloaded NSIS bytes as
+`{package}-{version}-installer.exe`, so the published `*-setup.exe` basename is
+not the process name of a normal install. Linux and macOS still relaunch
+in-process after install, inheriting the process environment. A prepare, cancel, commit, stop, or installer failure attempts to
 restart the exact prior running set before update coordination is released.
 Any restart onto a port its stopped predecessor held (this update recovery, a
 project-data restart of the target it stopped, a crash restart, or an exposure
@@ -1262,6 +1318,467 @@ scrollers, including remaining menus, dialogs, popovers, the git manager lists,
 and file preview, render grayscale text on Linux until they adopt a wrapper.
 Any new scrollable reading surface must add one.
 
+## Profiler
+
+The opt-in Profiler records crashes, panics, memory and CPU trends, slow
+requests, client responsiveness, and worktree cleanup problems for one
+environment, on that environment's own disk. The server module
+[`apps/server/src/diagnostics/profiler/`](../../apps/server/src/diagnostics/profiler/)
+owns it. The desktop host adds the crash monitor for its own process and the
+webview exit watch through the permitted desktop → server dependency, and the
+React client adds a collector for what the user waits on. The approved design
+is the [profiler spec](../superpowers/specs/2026-10-09-profiler-design.md); where
+the two differ, this section describes the code. Exact event and finding shapes
+are listed in the
+[`bibcode-profiler` skill references](../skills/bibcode-profiler/references/events.md).
+
+### Toggle and lifecycle
+
+- Each server's `enableProfiler` setting (default `false`) is the toggle. The
+  ordinary settings update carries it; there is no profiler settings RPC.
+  `ProfilerRuntime` follows the committed setting live, with no restart. One
+  supervisor task starts the detectors when the setting turns on and awaits all
+  of them before any later start, so two detector sets never run at once. While
+  the profiler is on, the same task also runs maintenance and the crash-dump
+  scan (see [Crash capture](#crash-capture)).
+- The detectors are the process sampler, the RPC latency detector, and the
+  worktree audit. A standalone `bibcode` also runs the crash monitor detector.
+  The exit watches are not detectors: their call sites check `is_enabled()`
+  before building a report.
+- `ProductionRuntime::start` starts the runtime on a blocking thread, because it
+  replays `findings.ndjson`, before the orchestration engine starts.
+- **Global handle.** Hot paths reach the runtime through a process-global
+  `ProfilerHandle` behind an `RwLock<Option<Arc<_>>>`. `emit` never blocks, and
+  `emit` and `record_finding` do nothing while the toggle is off. The handle is
+  replaceable rather than set once, because the desktop host restarts
+  its in-process server: teardown uninstalls the old handle and the new runtime
+  installs its own.
+- **Single writer.** The runtime holds an exclusive lock on `profiler/.lock` for
+  its lifetime, retrying for up to half a second while an in-process predecessor
+  releases it. The writer cuts files back when it reopens them, so a second
+  writer would destroy data. A runtime that cannot take the lock is degraded
+  for the whole run: it records nothing, and `server.getProfilerStatus` reports
+  `enabled: false`. Its `storage` is `"locked"` when another process holds the
+  lock (another BiBCode app or server uses the same data root), and `"failing"`
+  for any other lock error, such as a filesystem that refuses locks.
+- **Writer thread.** One dedicated OS thread writes every file. Senders
+  `try_send` into a bounded channel of 2,048 messages. A full channel drops the
+  record and counts it; the writer reports drops as `telemetry.dropped` lines.
+  It buffers 64 KiB, flushes every 2 s while it holds unwritten lines or
+  unreported drops and otherwise sleeps until a message arrives, rotates the
+  events file at 10 MiB, and calls `sync_data` only on rotation and shutdown. A findings line
+  that a full disk or a crash cut short stays a line of its own: the next one
+  starts on a new line.
+- **Maintenance.** While the profiler is on, an hourly tick queues a rewrite of
+  `findings.ndjson` and then a retention pass to the writer thread, so neither
+  races the writer's appends. Otherwise retention runs when the store starts and
+  when an events file rotates.
+- **Teardown.** Server shutdown first marks the session `stopping`, before any
+  other service stops, and runs the profiler's teardown last in the quiesce
+  sequence, so the other services' shutdown is still recorded. Teardown stops
+  the detectors, then uninstalls the handle (so the sampler's last minute is
+  still written), waits for the previous-run classification (at most its 5 s
+  harvest) and for the panic consumer to drain, stops the writer, marks the
+  session clean on an orderly shutdown, and only then releases the lock. A
+  runtime dropped without a shutdown, such as one a failed start created, marks
+  its session `stopping` too.
+
+### Data layout
+
+Everything lives in `<state dir>/profiler/`: `<data root>/userdata/profiler`, or
+`<data root>/dev/profiler` with a development URL.
+
+| Path                   | Contents                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.lock`                | The single-writer lock.                                                                                                                                                                                                                                                                                                                           |
+| `events-NNNNNN.ndjson` | One event per line: `{ v: 1, seq, sid, eventId, ts, kind, source, …payload }`. `sid` (8 hex digits) names the writer session, so `"<sid>:<seq>"` locates an event across restarts. `eventId`, `"<sid>-<n>"`, is taken by the sender before the writer runs, so a finding can cite the event at once. `source` is `server` or `client:<clientId>`. |
+| `findings.ndjson`      | One line per persisted finding state; the last line for an id wins.                                                                                                                                                                                                                                                                               |
+| `session.json`         | The clean-shutdown sentinel: `state` is `running`, then `stopping` once shutdown begins, then `clean`.                                                                                                                                                                                                                                            |
+| `capabilities.json`    | `{ nativeDumps, osCrashRecords }`, written by the crash monitor detector.                                                                                                                                                                                                                                                                         |
+| `crashes/`             | Minidumps `<uuid>.dmp` and their `<uuid>.json` sidecars.                                                                                                                                                                                                                                                                                          |
+
+Retention keeps 7 days or 256 MB per profiler directory, dumps included. Anything
+older than 7 days goes first. Crash dumps then leave only when they alone exceed
+a 128 MB share, oldest dump (then its sidecar) first. Events never push a dump
+out: while the directory is still over budget, the oldest rotated events file
+goes, never the live one. The monitor also keeps at most 20 dumps.
+`findings.ndjson` counts toward the total but is bounded by its rewrite instead:
+at most 1,000 findings, and resolved findings older than 7 days are dropped.
+Readers skip a torn line. The symbolication cache,
+`<state dir>/profiler-symbols/`, sits beside the directory and is not part of
+it.
+
+### Findings
+
+- A finding is what the Diagnostics page, the CLI, the MCP server, and the skill
+  work on. It has `id`, `fingerprint`, `kind`, `severity`, `firstSeen`,
+  `lastSeen`, `count`, `source`, `title`, `summary`, `state`, and `evidence`,
+  and its `id` is `<kind>-<fingerprint>`. The fingerprint is the first 12 hex digits of SHA-256
+  over the kind and fields that never include paths or timestamps. A repeat
+  increments `count`, advances `lastSeen`, replaces title, summary, and evidence
+  with the latest occurrence's, and can only raise the severity.
+- `FindingsBook` holds the findings in memory and is authoritative while the
+  process runs. A change reaches the writer only when the finding is new, its
+  severity rose, it reopened, its `count` reached a power of two, or 60 s
+  passed since it was last queued, so a hot repeat cannot grow the file. A crash
+  can therefore lose up to a minute of `count` and `lastSeen` updates. The
+  findings raised at start (the previous run's, and the dumps no finding links)
+  and those of the running dump scan are the exception: every occurrence is
+  persisted at once, because the next start relies on the dumps they cite.
+  Every queued change also writes a `finding` cross-reference event. Findings are `open` today;
+  nothing marks one resolved yet.
+- `evidence.eventIds` lists the `eventId` of the event behind a finding, for
+  these pairs only: `rpc.slow` cites `rpc.timing` (the slowest call) or, from a
+  client, `client.request`; `subprocess.crash` cites `subprocess.exit`;
+  `worktree.removal-failed` cites `worktree.removal`; `client.stall` and
+  `client.interaction` cite `client.batch`; and `crash.panic` cites `panic`. An
+  event dropped by a full channel is never cited.
+- `server.getProfilerStatus` returns the 20 newest findings without evidence;
+  the CLI and MCP readers return the evidence too.
+
+### Crash capture
+
+- **Hook.** Both binaries' `main` first handles `--crash-monitor`, then attaches
+  the in-process `crash-handler` hook, before Tauri, the single-instance plugin,
+  a Tokio runtime, or WebKit installs anything. The hook is attached whatever the
+  toggle says and is never detached: on Linux a detach restores the signal
+  handlers present at attach time, which drops those JavaScriptCore installs
+  later. On Linux, linking the crate also interposes `pthread_create` to give
+  every thread an alternate signal stack; that is the hook's only cost while the
+  profiler is off.
+- **Monitor.** While the toggle is on, the crash monitor detector keeps one child
+  running: the same executable re-executed as
+  `--crash-monitor <socket> <profiler dir> <parent pid>`. This is the one
+  exception to the "no native helper sidecar" rule. The child ignores SIGINT and
+  SIGTERM, runs in its own process group (on Windows a new process group with no
+  window), exits within about 2 s of its parent's death, and keeps serving after
+  each dump, because the parent reconnects (a Linux client serves one dump).
+  Every 10 s the detector pings it on a separate connection and sends the newest
+  event lines (at most 50 lines; 64 KiB on Linux, 4 KiB on macOS and Windows). A
+  monitor that does not answer within 5 s is replaced, unless a crash is being
+  dumped: the callback sets a `CRASHING` flag around the dump request, and once
+  the heartbeat sees it, it leaves the monitor alone for a 15 s grace, checking
+  the flag again before any replacement. A hung dump is therefore abandoned 20
+  to 30 s after the crash, and a working one keeps its sidecar.
+- **Crash.** The hook's callback reads an atomic flag and only `try_lock`s the
+  connection; it never logs, allocates, or waits on a lock. With a monitor armed,
+  the child writes `crashes/<uuid>.dmp` from outside the crashed address space
+  and a `<uuid>.json` sidecar
+  `{ id, createdAt, bootId, version, os, arch, processKind, parentPid, lastEvents }`.
+  Without one, the callback declines the crash and the OS path (systemd-coredump,
+  ReportCrash, Windows Error Reporting) runs as before. Linux and macOS still
+  reach that OS record after a dump. On Windows the callback leaves the crash
+  unhandled even after a dump, so Windows Error Reporting keeps its record and may
+  show its dialog.
+- **Socket.** The monitor's socket lives in a new private directory,
+  `bibcode-<uid>-<random>`, under `$XDG_RUNTIME_DIR` on Linux or else the
+  temporary directory, whose base must not let other users rename entries. The
+  directory is created 0700 without following an existing path, the socket is
+  0600, and a pre-existing socket path is refused; Windows uses
+  `bibcode-<random>` in the per-user `%TEMP%`. Dumps hold raw process memory, so
+  `crashes/` is 0700 (a protected ACL on Windows) and every dump and sidecar is 0600.
+- **Capabilities.** `nativeDumps` is `available` once a monitor is armed for an
+  attached hook. It is `unavailable` when no hook is attached (no monitor is
+  started then), `crashes/` cannot be made private, the monitor cannot start, or
+  the Linux ptrace probe fails (Yama scope 3, or scope 2 without
+  `CAP_SYS_PTRACE`), and `disabled` on Windows arm64, where `minidump-writer` has
+  no implementation and no hook is attached. `osCrashRecords` is `unavailable`
+  on Linux without systemd-coredump. The status RPC adds `storage`: `"ok"`,
+  `"failing"` (writes fail, the findings file could not be read in full, or the
+  lock could not be taken for another reason),
+  or `"locked"` (another process records to this folder). The offline reader
+  never reports `"locked"`, because a running server holding the lock is its
+  normal case.
+- **Desktop.** The host owns its process's one hook and runs the monitor for
+  itself and its in-process server, which runs no monitor detector. Before Tauri
+  starts, the host reads the local environment's `enableProfiler` from that data
+  root's `settings.json` (`BIBCODE_HOME` or `~/.bibcode`), so a crash during
+  startup is captured once the toggle is on. Afterwards it follows the in-process
+  server's committed setting. WSL, SSH, and remote environments run their own
+  `bibcode` process, hook, and monitor under their own setting.
+- **Dumps become findings.** A dump is a `crash.native` finding (error) whose
+  evidence has `source: "minidump"`, `crashId`, `crashIds` (every dump the
+  finding counted, newest 64, carried over each repeat), the crash reason read
+  from the dump's exception stream, and the fault site: `faultModule`, the file
+  name of the module that holds the crashing thread's instruction pointer, and
+  `faultOffset` into it. Its fingerprint is
+  `[processKind, "minidump", reason, faultModule, faultOffset]`, or
+  `[processKind, "minidump", <reason or "dump">]` when the dump names no fault
+  site, so crashes at different places stay apart. When an OS crash record of
+  the same crash exists, the record's fingerprint (below) is used instead. Each
+  dump is parsed once, off the async workers, and a dump over 256 MiB is not
+  opened. On the next start, the previous run's crash is its newest dump whose
+  sidecar has the run's pid as `parentPid`, a `createdAt` at or after its
+  `startedAt`, and the same boot when both boot IDs are known, provided no
+  finding cites that dump yet: a cited newest dump is one the run survived, so it
+  ended some other way. That dump outranks every other evidence about the run,
+  and an OS record's frames are attached to it. After that classification, every
+  start also raises one finding for each dump that no finding cites, such as one
+  a desktop host wrote when it crashed during startup or between in-process
+  server restarts; a start that could not read `findings.ndjson` in full skips
+  this until a later start can. While the profiler is on, the supervisor also scans
+  `crashes/` when the profiler turns on and every 60 s, and raises one finding
+  for each new dump of this process since its runtime started on this boot,
+  such as a fault the process survived. The crash ids already cited are loaded
+  from the findings at start, so a dump is linked once, across restarts too. The
+  server never symbolicates; the CLI and MCP readers do.
+- **Crash test.** `BIBCODE_PROFILER_CRASH_TEST=1` at startup makes the process
+  fault on purpose 5 s after its monitor is armed, for the runbooks' crash smoke.
+  Child processes inherit the variable.
+
+### Panics and the previous run
+
+- **Panic hook.** `ProfilerRuntime::start` installs a hook that chains to the
+  previous one and never aborts, because BiBCode recovers panics at many
+  `catch_unwind` and `JoinError::is_panic` sites. It records a `panic` event
+  with the thread name, the location, a redacted first line of the message, and
+  up to 64 frames as `(module, debugId, offset)`, the addressing Breakpad uses,
+  so the release symbol files symbolicate panics too. It then waits up to 250 ms
+  for the writer to flush the record. The hook never takes the findings lock:
+  it hands a small record to a bounded queue of 32 (a full queue drops it, and
+  the event is still written), and a task that `ProfilerRuntime::start` runs
+  raises a `crash.panic` finding (error, titled "Panic at <file>:<line>") on the
+  findings book directly. The fingerprint is the thread class (digits removed,
+  `tokio-runtime-worker` as `tokio-worker`), the compile-time `file:line`, and
+  up to three own-module frame offsets. Both the event and the finding are
+  recorded with the toggle off, but nothing is recorded before a runtime starts
+  or while it is degraded.
+- **Sentinel.** At startup the runtime atomically writes `session.json`:
+  `{ state: "running", pid, bootId, exe, version, startedAt, oomKillBaseline }`.
+  Shutdown marks it `stopping` as it begins, and an orderly shutdown marks it
+  `clean` as teardown's last step before the lock is released. A `running` or
+  `stopping` record found at the next start is classified in the background,
+  and the finding goes straight into the book, so it is listed whether or not
+  the toggle is on. The first match decides:
+
+  | Evidence about the previous run                         | Finding                                                       |
+  | ------------------------------------------------------- | ------------------------------------------------------------- |
+  | The run's newest uncited monitor dump (above)           | `crash.native` (error), OS record frames attached             |
+  | An OS crash record for that pid                         | `crash.native` (error)                                        |
+  | The record is `stopping`: its shutdown began            | `shutdown.incomplete` (info), never a crash or the last crash |
+  | A different boot ID                                     | `crash.system` (info)                                         |
+  | The user session cgroup's `oom_kill` count rose (Linux) | `crash.oom` (error)                                           |
+  | None of these                                           | `crash.unclean-exit` (warn), naming the crash-record source   |
+
+- **OS crash records** are read read-only within 5 s. Linux runs
+  `coredumpctl --json=short list` and `journalctl -a -o json` for the coredump
+  record that matches the pid and executable name; when `coredumpctl --json`
+  fails or is missing (systemd before 250), it queries the journal for
+  systemd-coredump's `MESSAGE_ID` and the pid alone, and matches the
+  executable there. Windows reads Application log
+  Event 1000 through `wevtutil`, in both the named and positional event-data
+  forms. macOS reads `~/Library/Logs/DiagnosticReports/*.ips` crash reports
+  (`bug_type` 309) matched by process name and time. Frames and modules are
+  redacted, and the fingerprint prefers frames in BiBCode's own executable, so
+  aborts in different places do not collapse into one libc frame.
+
+### Detectors and watches
+
+- **Process sampler.** Every 5 s, on a blocking thread with one long-lived
+  `sysinfo::System`, it refreshes only BiBCode's processes: the server, the
+  processes registered in `ProcessAttributionRegistry` (providers, terminals,
+  the desktop webview, helpers), and up to 128 descendants rediscovered every
+  60 s. Leak rules read private memory (Linux `RssAnon + VmSwap`, Windows
+  `PrivateUsage`, macOS `phys_footprint`) and fall back to RSS. Samples become
+  1-minute medians that feed the rules in memory. Each process has a kind:
+  `server`, or `desktop-host` for a server inside the desktop app;
+  `provider:<driver>` for a registered provider; `terminal`; `webview`;
+  `helper` for registered helpers and the crash monitor (a descendant running
+  BiBCode's own executable); `git`; and `other`. On Windows and Linux,
+  `webview` also covers preview tabs' web content, which descends from the
+  desktop host like the main window's. Every kind is sampled, but
+  leak and CPU findings are raised only for BiBCode's own processes (`server`,
+  `desktop-host`, `webview`, `provider:*`, and `helper`): what runs under a
+  terminal, such as a build or a language server, is the user's. Once a minute
+  one `process.sample` event records each process's medians and maxima and the
+  sampler's own tick time, `selfCpuMs`, which is wall time and so an upper bound
+  on its CPU. A tick over 50 ms doubles the interval, up to 60 s; ten fast ticks
+  in a row halve it again.
+- **Leak and CPU rules** (`leak.rs`, after RESIN). After a 15-minute warm-up and
+  on a rolling 10-minute minimum, `memory.leak-suspect` (warn) needs a Theil–Sen
+  slope of at least max(10 MB/h, 2% of the baseline per hour) over 1 h with a
+  Mann–Kendall Z above 2.33. `memory.leak-likely` (error) needs 6 h of that
+  growth fitting a line (R² > 0.8), or growth of at least 50% and 200 MB since
+  the baseline that is still rising: Mann–Kendall Z above 2.33 over the hour and
+  a Theil–Sen slope at the suspect threshold over the last 15 minutes. A step
+  larger than max(3σ, 64 MB) resets the baseline, and a smaller one gives no
+  verdict while it dominates the hour: when the largest one-minute rise of the
+  floor is at least half of the hour's growth. A gap over 5 minutes restarts the
+  series. Two consecutive hits raise a finding, at most one per process per 6 h.
+  `cpu.sustained` fires when a process stays above 80% of one core for 5
+  minutes.
+- **RPC latency and client reports.** See
+  [Profiler timing and client reports](./rpc-and-orchestration.md#profiler-timing-and-client-reports).
+- **Subprocess exits.** The provider, terminal, and supervised-command exit
+  paths report a death BiBCode did not ask for as a `subprocess.exit` event and
+  a `subprocess.crash` finding with the signal or exit code, uptime, and the
+  sampler's last memory sample. On Linux, for a signal that dumps core, a
+  matching core dump record is looked up in the background for up to about 5 s
+  and attached when found. Providers count signals and non-zero exits,
+  supervised commands such as git only signals, and terminals only signals
+  people do not type (not `Ctrl-\` or `kill -9`). SIGTERM, SIGHUP, and SIGINT (on
+  Windows the Ctrl-C status), and a provider's exit codes 129, 130, and 143,
+  are deliberate and never count. A stop that BiBCode or the user requested in
+  the last minute is not reported, and once BiBCode has received a termination
+  signal, nothing that dies with it is. A SIGKILL BiBCode did not send is
+  labelled likely OOM.
+- **Webview.** On desktop, the end of the main window's web content process (on
+  Windows, any WebView2 process failure) is a `crash.webview` finding.
+  - Linux hooks WebKitGTK `web-process-terminated` (except `TerminatedByApi`).
+    The host remembers its `WebKitWebProcess` children only while the profiler
+    is on: it scans after each page load and when the profiler turns on, and
+    clears the list when it turns off. For a `Crashed` termination of exactly
+    one remembered child, it looks up that child's core dump record for up to
+    about 5 s and attaches it.
+  - macOS hooks the main window's `webViewWebContentProcessDidTerminate:` and
+    polls for the crash report of the remembered web content pid written within
+    the next minute. The host reads that pid only while the profiler is on: after
+    each page load and when the profiler turns on, and forgets it when it turns
+    off. That hook replaces Tauri's own, so BiBCode itself reloads every webview
+    whose content process ended, queued to the event loop.
+  - Windows hooks WebView2 `ProcessFailed` (except a deliberate termination)
+    with its kind, reason, and exit code, and looks once for the newest
+    minidump in WebView2's failure report folder or its `reports` subfolder.
+
+  Nothing is reported once BiBCode is terminating.
+
+- **Worktree audit.** See [Worktree catalog: Audit](./worktree-catalog.md#audit).
+
+### Profiler off
+
+With the toggle off, only the attached crash hook (with no monitor), the panic
+hook and its finding task, the sentinel, and the previous run's classification
+run, as does the start-up check for dumps no finding cites. No detector,
+monitor child, timer, dump scan, webview process scan, or web content pid read
+runs. `emit` and
+`record_finding` return at once, and request timing and exit watches check
+`is_enabled()` before allocating anything. The client collector holds no timer,
+listener, or observer and adds no correlation header. Startup still takes the
+lock and replays `findings.ndjson`.
+
+### Diagnostics page and status bar
+
+**Settings → About → View diagnostics**, in its **Profiler** section, controls
+any connected environment through an environment selector that defaults to the
+primary. Its switch reads and writes that environment's `enableProfiler`, not
+`status.enabled`, so a degraded runtime keeps the switch on and explains itself
+instead of snapping back off. A degraded runtime with `storage: "locked"` reads
+**Not recording.** with "Another BiBCode app or server is already recording to
+this profiler folder. Close it, then restart this one."; any other degraded
+runtime reads **Starting...**. With `storage: "failing"` the section also says
+"Could not write profiling data. Check free disk space and folder permissions.",
+under the recording line when the runtime still records. The
+status line refreshes every 5 s while the profiler is on and the page
+is visible: recording since, disk use, events, and dropped events. **Open
+folder** works only for the primary environment on desktop; **Export bundle**
+covers only the primary environment and adds crash dumps only with **Include
+crash dumps** (see [Observability](../operations/observability.md)). Both, and
+the checkbox, explain why when disabled. The 20 newest findings follow, each with
+its severity, title, count, and last seen. A server that does not advertise
+`capabilities.profiler` (one older than the profiler) is never asked for its
+status: the section shows only the disabled switch and "This server's BiBCode
+version has no profiler. Update the server to record." (see
+[Profiler timing and client reports](./rpc-and-orchestration.md#profiler-timing-and-client-reports)).
+While any connected environment's profiler is on, and its server advertises the
+profiler, the status bar shows a **Profiler** segment that lists those
+environments and opens Diagnostics on the first.
+
+### Privacy
+
+The collectors redact before anything is written, so every reader shares one
+policy:
+
+- prompt, message, and terminal content is never recorded;
+- command lines are reduced to the executable's file name;
+- the home directory becomes `~`, as `$HOME` spells it and as it resolves, only
+  at path-component boundaries; `redact_sensitive_text` removes secrets, control
+  characters are stripped, and text fields are capped at 2 KiB;
+- a panic message keeps its first line, with quoted text, `Err` and `Ok` values,
+  assertion operands, and `Debug` renderings replaced by `[redacted]`; and
+- fingerprints never contain paths or timestamps.
+
+Minidumps hold raw memory and leave the machine only in an export the user
+asks for. Two authenticated server routes serve profiler data to clients:
+`server.getProfilerStatus` (`orchestration:read`) returns the status and the
+20 newest findings without their evidence, and the diagnostics export bundle
+adds profiler files, with crash dumps only when the request also holds
+`orchestration:operate`. Events and evidence are otherwise read only on the
+host: the CLI and MCP readers rely on the user's filesystem permissions, and
+their only network access is an explicit download of the public symbol
+archives. Human CLI output escapes control and bidirectional-text characters,
+and JSON output, the CLI's `--json` and the MCP server's, escapes DEL, the C1
+controls, the Unicode format characters, and the Tag characters as `\uXXXX`.
+An MCP tool's `text` is JSON written the same way, so the escapes are still
+visible after the client parses the message; `structuredContent` and error text
+cannot carry escapes, so error text replaces those characters with `?` and
+clients decode `structuredContent` to the raw characters.
+
+### Readers
+
+[`reader.rs`](../../apps/server/src/diagnostics/profiler/reader.rs) is the
+read-only query layer. It never takes the lock or writes a file, tolerates the
+writer rotating and cutting files back underneath it, streams events with
+bounded memory, and works while the server is stopped.
+
+- **CLI.** `bibcode [--base-dir <root>] profiler <command>`, with `status`,
+  `findings`, `events`, `crashes`, `symbolicate`, and `mcp`. `status` takes
+  `--json`. `findings` and `events` take `--kind` (a trailing `*` matches a
+  prefix) and `--json`, plus either `--since` (`30s`, `10m`, `1h`, `2d`, or
+  RFC 3339) and `--limit`, or `--follow --duration` of at most 10 minutes, which
+  conflicts with both. `crashes` takes `--limit` and `--json`. Desktop installs ship no separate
+  `bibcode`, so the desktop executable handles `profiler …` before Tauri starts,
+  reading the desktop data root (`BIBCODE_HOME` or `~/.bibcode`). A Windows
+  release build is a GUI-subsystem program that borrows the calling console.
+- **Symbolication.**
+  `profiler symbolicate <crash id | sid:seq> [--symbols <dir>]... [--download] [--json]`
+  names the frames of a minidump (through `minidump-processor`) or of a panic
+  event from Breakpad symbol stores. It reads the `--symbols` stores, then the
+  cache `<state dir>/profiler-symbols/`. Only `--download` fetches the
+  record's release archive,
+  `bibcode-{desktop,server}-symbols-<version>-<os>-<arch>.zip`, from GitHub over
+  HTTPS, size-capped and refusing unsafe archive paths, into that cache.
+- **MCP.** `bibcode profiler mcp` serves newline-delimited JSON-RPC over stdio,
+  to clients of protocol 2026-07-28, 2025-11-25, or 2025-06-18, with five
+  read-only tools: `profiler_status`, `profiler_findings`,
+  `profiler_events`, `profiler_crash`, and `profiler_symbolicate`.
+  `profiler_status` skips the CLI's event count, which scans every events file,
+  and lists the newest crash ids instead. A result is capped at 80,000 characters (`truncated: true` marks a shortened list), and
+  each tool declares `_meta["anthropic/maxResultSizeChars"]` so Claude Code keeps
+  results inline. Only `profiler_symbolicate` with `download: true` uses the
+  network; `profiler_crash` never downloads. Tool descriptions mark the output
+  as untrusted application data. Authentication is filesystem permissions; a
+  remote host is reached as `ssh <host> bibcode profiler mcp`.
+- **Skill.** [`docs/skills/bibcode-profiler/`](../skills/bibcode-profiler/SKILL.md)
+  uses these readers to monitor, diagnose, and file deduplicated GitHub issues.
+
+### Known limits
+
+- macOS WebContent memory is not sampled: its content processes are XPC
+  services with no pid source, so a webview leak there is invisible. Its crashes
+  are still reported.
+- A panic payload of plain unquoted text, such as `panic!("{text}")`, is still
+  recorded, capped at 2 KiB with paths and secrets redacted.
+- Firefox on Windows (browser mode) counts sleep in its monotonic clock, so a
+  request in flight across a sleep can be kept and reported as slow, blaming
+  the network.
+- Windows arm64 writes no minidumps (`nativeDumps: "disabled"`); panics and OS
+  crash records still work.
+- An idle crash monitor costs about 0.2% of a core, from `minidumper`'s fixed
+  10 ms poll loop.
+- Each release carries about 440 MB of symbol archives, 28 to 45 MB each.
+- On Windows and Linux a preview tab's web content counts as `webview`, so a
+  previewed app that leaks or keeps a core busy can raise a `webview` finding.
+  Telling the two apart needs the preview host's process ids or command lines.
+- A browser-mode preview runs in a frame on the page's main thread, so a
+  stall the previewed app causes counts as the client's `client.stall`.
+  Neither the heartbeat nor Long Animation Frames can tell it apart: the
+  gateway's frame is cross-origin, and frames do not attribute cross-origin
+  scripts.
+- The restart waiter of a Windows update treats a `bibcode-desktop.exe` with a
+  window as the relaunched app, so the profiler's windowless `profiler mcp`
+  server and crash monitor do not count. The passive installer's preinstall
+  hook ends every same-user `bibcode-desktop.exe`, an MCP server included.
+
 ## Request and event flow
 
 1. The client runtime resolves a connection target and obtains any required
@@ -1441,6 +1958,9 @@ See [RPC and orchestration](./rpc-and-orchestration.md) and
 - Activity observation is bounded, authorized, and independent for structured
   provider chat and managed provider terminals. See
   [Activity observation](./activity-observation.md).
+- The Profiler writes only to its environment's own data root, redacts in the
+  collector before writing, and runs nothing but its crash hook, panic hook,
+  and sentinel while off. See [Profiler](#profiler).
 
 ## Performance
 
