@@ -1456,7 +1456,8 @@ it.
   and an OS record's frames are attached to it. After that classification, every
   start also raises one finding for each dump that no finding cites, such as one
   a desktop host wrote when it crashed during startup or between in-process
-  server restarts. While the profiler is on, the supervisor also scans
+  server restarts; a start that could not read `findings.ndjson` in full skips
+  this until a later start can. While the profiler is on, the supervisor also scans
   `crashes/` when the profiler turns on and every 60 s, and raises one finding
   for each new dump of this process since its runtime started on this boot,
   such as a fault the process survived. The crash ids already cited are loaded

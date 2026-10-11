@@ -346,6 +346,11 @@ async fn classify_earlier_runs(
     if let Some(previous) = previous {
         classify_previous_run(handle.clone(), previous, dir.clone()).await;
     }
+    // The findings file was not read in full, so a dump a finding cites may look unlinked;
+    // the next start, which retries the read, raises what is truly unlinked.
+    if lock(&handle.findings).is_partial() {
+        return;
+    }
     let _ = tokio::task::spawn_blocking(move || {
         let boot = sentinel::boot_id();
         // Oldest first, so the findings record the dumps in the order they happened.
