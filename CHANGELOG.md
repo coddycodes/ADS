@@ -1,6 +1,6 @@
 # Changelog
 
-## [v0.9.0] - 2026-10-09
+## [v0.9.0] - 2026-10-11
 
 BiBCode v0.9.0 opens clicked links in the in-app browser by default, reaches a development server on the server's localhost from SSH, LAN, tailnet, and WSL clients, keeps chat panels and provider conversations across clients and restarts, merges a branch without checking it out, and adds a Profiler that records crashes, leaks, CPU, and slow responses for diagnosis. This release includes the changes since v0.8.2. Database migrations 053 and 054 ship with this release.
 
