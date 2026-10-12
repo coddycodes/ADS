@@ -1070,9 +1070,12 @@ the archived snapshot only when a thread enters or leaves the live list
 (create, archive, unarchive, delete of a live thread, panel close) or no usable
 snapshot exists, at most once per change and never while a request is in
 flight; live sequence advances during a turn never refetch it. A change made
-elsewhere to an already archived thread, such as deleting it, is not observed
-until the next such change, a reconnect, or a local archive action; until
-then the reconciler retains, rather than drops, that thread's state.
+elsewhere to an already archived thread, such as deleting it, leaves the live
+list unchanged, so the reconciler does not observe it until the next such
+change, a reconnect, or a local archive action, and until then retains rather
+than drops that thread's state. The lists that show archived threads (Settings
+and the reopen-closed-chat menu) refetch once when they open, joining a request
+already in flight instead of starting a second one, so they show such changes.
 The reconciler reads the raw `subscribeTerminalMetadata` stream as whole
 delivered batches (an atom alone keeps only a batch's last event). Metadata
 `remove` events carry a `reason`: only `closed` (an explicit close) drops the

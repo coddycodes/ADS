@@ -33,6 +33,7 @@ const h = vi.hoisted(() => ({
   removeCenterThread: vi.fn<(ref: { environmentId: string; threadId: string }) => void>(),
   removeRightThread: vi.fn(),
   emptyDrafts: {},
+  archivedOptions: undefined as unknown,
 }));
 
 vi.mock("@effect/atom-react", () => ({
@@ -73,7 +74,10 @@ vi.mock("./composerDraftStore", () => ({
     select({ draftThreadsByThreadKey: h.emptyDrafts }),
 }));
 vi.mock("./lib/archivedThreadsState", () => ({
-  useArchivedThreadSnapshots: () => ({ ...h.archived, refresh: h.refresh }),
+  useArchivedThreadSnapshots: (_environmentIds: unknown, options: unknown) => {
+    h.archivedOptions = options;
+    return { ...h.archived, refresh: h.refresh };
+  },
 }));
 
 import { ThreadLifecycleReconciler } from "./ThreadLifecycleReconciler";
@@ -173,6 +177,8 @@ describe("ThreadLifecycleReconciler", () => {
 
     expect(h.refresh).not.toHaveBeenCalled();
     expect(h.maxInFlight).toBe(1);
+    // Mounted for the app's lifetime, it opts out of the lists' refetch on mount.
+    expect(h.archivedOptions).toEqual({ revalidateOnMount: false });
   });
 
   it("refetches once per lifecycle change and never overlaps archived requests", () => {

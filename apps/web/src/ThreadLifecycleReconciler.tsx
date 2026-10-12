@@ -77,12 +77,13 @@ function EnvironmentThreadLifecycleReconciler({
 }) {
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const archivedEnvironmentIds = useMemo(() => [environmentId], [environmentId]);
+  // Mounted for the app's lifetime, it refetches on lifecycle changes alone (below).
   const {
     error: archivedError,
     isLoading: archivedIsLoading,
     refresh: refreshArchived,
     snapshots: archivedSnapshots,
-  } = useArchivedThreadSnapshots(archivedEnvironmentIds);
+  } = useArchivedThreadSnapshots(archivedEnvironmentIds, { revalidateOnMount: false });
   const draftThreadsByThreadKey = useComposerDraftStore((state) => state.draftThreadsByThreadKey);
   const draftThreadIds = useMemo(
     () =>
