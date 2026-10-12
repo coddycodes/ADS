@@ -13,13 +13,13 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     },
     task::Poll,
     time::Duration,
 };
 
-use axum::extract::ws::{CloseFrame, Message};
+use axum::extract::ws::Message;
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use tokio::{
     sync::{Notify, mpsc},
@@ -32,6 +32,7 @@ use super::{
     message::ServerMessage,
     session::RpcOutboundFrame,
 };
+use crate::diagnostics::profiler::connections;
 
 /// WebSocket subprotocol a client offers to receive large plain `/ws`
 /// messages as records.
@@ -66,19 +67,32 @@ const HEARTBEAT_LATE_TOLERANCE: Duration = Duration::from_secs(10);
 /// Close code the client sends after its own liveness timeout.
 pub(crate) const LIVENESS_CLOSE_CODE: u16 = 4408;
 
-/// Activity shared by one connection's reader, writer and heartbeat.
+/// Activity shared by one connection's reader, writer and heartbeat. Times are
+/// milliseconds since the connection started.
 pub(crate) struct ConnectionLiveness {
     origin: Instant,
     last_activity_ms: AtomicU64,
+    last_inbound_ms: AtomicU64,
+    last_outbound_ms: AtomicU64,
+    outbound_wait_max_ms: AtomicU64,
+    /// The first end the reader, heartbeat or writer saw, packed by
+    /// [`ConnectionEnd::code`]; [`NO_END`] until then.
+    end: AtomicU32,
     ping_due: AtomicBool,
     wake_writer: Notify,
 }
+
+const NO_END: u32 = 0;
 
 impl ConnectionLiveness {
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
             origin: Instant::now(),
             last_activity_ms: AtomicU64::new(0),
+            last_inbound_ms: AtomicU64::new(0),
+            last_outbound_ms: AtomicU64::new(0),
+            outbound_wait_max_ms: AtomicU64::new(0),
+            end: AtomicU32::new(NO_END),
             ping_due: AtomicBool::new(false),
             wake_writer: Notify::new(),
         })
@@ -88,6 +102,8 @@ impl ConnectionLiveness {
     /// count frames through [`observe_inbound`].
     fn record_inbound(&self) {
         self.touch();
+        self.last_inbound_ms
+            .fetch_max(self.elapsed_ms(), Ordering::Relaxed);
     }
 
     /// Only data writes that waited on backpressure count: completing proves the peer
@@ -96,15 +112,53 @@ impl ConnectionLiveness {
         self.touch();
     }
 
+    /// An RPC message, data or control, finished leaving. Heartbeat Pings are not messages.
+    fn record_outbound(&self) {
+        self.last_outbound_ms
+            .fetch_max(self.elapsed_ms(), Ordering::Relaxed);
+    }
+
+    /// How long a data message waited in the queue before its write began.
+    fn record_outbound_wait(&self, wait: Duration) {
+        self.outbound_wait_max_ms
+            .fetch_max(millis(wait), Ordering::Relaxed);
+    }
+
+    /// The socket ended or failed without a close frame, seen by a reader the session loop does
+    /// not own (the E2EE pump).
+    pub(crate) fn record_client_gone(&self) {
+        self.set_end(ConnectionEnd::ClientGone);
+    }
+
+    /// Records why the connection ended; the first end wins and the session reports it.
+    fn set_end(&self, end: ConnectionEnd) {
+        let _ = self
+            .end
+            .compare_exchange(NO_END, end.code(), Ordering::AcqRel, Ordering::Acquire);
+    }
+
     fn touch(&self) {
-        let elapsed = u64::try_from(self.origin.elapsed().as_millis()).unwrap_or(u64::MAX);
-        self.last_activity_ms.fetch_max(elapsed, Ordering::Relaxed);
+        self.last_activity_ms
+            .fetch_max(self.elapsed_ms(), Ordering::Relaxed);
+    }
+
+    fn elapsed_ms(&self) -> u64 {
+        millis(self.origin.elapsed())
+    }
+
+    /// How long the connection has been open.
+    pub(crate) fn age(&self) -> Duration {
+        self.origin.elapsed()
+    }
+
+    fn since(&self, at_ms: &AtomicU64, now: Instant) -> Duration {
+        now.saturating_duration_since(
+            self.origin + Duration::from_millis(at_ms.load(Ordering::Relaxed)),
+        )
     }
 
     fn silent_for(&self, now: Instant) -> Duration {
-        let last =
-            self.origin + Duration::from_millis(self.last_activity_ms.load(Ordering::Relaxed));
-        now.saturating_duration_since(last)
+        self.since(&self.last_activity_ms, now)
     }
 
     fn request_ping(&self) {
@@ -115,10 +169,148 @@ impl ConnectionLiveness {
     fn take_ping(&self) -> bool {
         self.ping_due.swap(false, Ordering::AcqRel)
     }
+
+    /// Logs how the session ended, at info level when the end was abnormal, and records it
+    /// as `rpc.disconnect`. The first end the reader, heartbeat or writer recorded wins over
+    /// `loop_end`, what the session loop saw after it.
+    pub(crate) fn report_end(
+        &self,
+        loop_end: ConnectionEnd,
+        transport: &'static str,
+        queued_messages: usize,
+        in_flight: usize,
+        client_id: Option<&str>,
+    ) {
+        let end = ConnectionEnd::from_code(self.end.load(Ordering::Acquire)).unwrap_or(loop_end);
+        let now = Instant::now();
+        let disconnect = connections::Disconnect {
+            reason: end.reason(),
+            close_code: end.close_code(),
+            transport,
+            age: now.saturating_duration_since(self.origin),
+            since_inbound: self.since(&self.last_inbound_ms, now),
+            since_outbound: self.since(&self.last_outbound_ms, now),
+            outbound_wait_max: Duration::from_millis(
+                self.outbound_wait_max_ms.load(Ordering::Relaxed),
+            ),
+            queued_messages,
+            in_flight,
+            client_id,
+        };
+        if end.is_abnormal() {
+            tracing::info!(
+                reason = disconnect.reason,
+                close_code = disconnect.close_code,
+                transport,
+                age_ms = millis(disconnect.age),
+                since_inbound_ms = millis(disconnect.since_inbound),
+                since_outbound_ms = millis(disconnect.since_outbound),
+                outbound_wait_max_ms = millis(disconnect.outbound_wait_max),
+                queued_messages,
+                in_flight,
+                client_id,
+                "RPC connection ended"
+            );
+        } else {
+            tracing::debug!(reason = disconnect.reason, "RPC connection ended");
+        }
+        connections::record_disconnect(&disconnect);
+    }
+}
+
+/// Why a connection ended, from the server's side.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ConnectionEnd {
+    /// The client sent a close frame; code 4408 is its liveness timeout.
+    ClientClosed(Option<u16>),
+    /// The socket ended or failed without a close frame.
+    ClientGone,
+    /// The client sent `Eof` and its last request finished.
+    ClientEof,
+    /// No inbound frame and no data write that waited on the peer for 45 s.
+    HeartbeatTimeout,
+    /// A write missed its deadline.
+    WriterStalled,
+    /// The socket refused a write.
+    WriterClosed,
+    /// A message could not be encoded or encrypted.
+    WriterFailed,
+    /// The server ended the session: shutdown, expiry, or revocation.
+    Server,
+}
+
+impl ConnectionEnd {
+    fn reason(self) -> &'static str {
+        match self {
+            Self::ClientClosed(Some(LIVENESS_CLOSE_CODE)) => "client-liveness-timeout",
+            Self::ClientClosed(_) => "client-closed",
+            Self::ClientGone => "client-gone",
+            Self::ClientEof => "client-eof",
+            Self::HeartbeatTimeout => "heartbeat-timeout",
+            Self::WriterStalled => "writer-stalled",
+            Self::WriterClosed => "writer-closed",
+            Self::WriterFailed => "writer-failed",
+            Self::Server => "server",
+        }
+    }
+
+    fn close_code(self) -> Option<u16> {
+        match self {
+            Self::ClientClosed(code) => code,
+            _ => None,
+        }
+    }
+
+    /// Anything but an orderly close by either side: a normal (1000), going-away (1001) or
+    /// codeless close, an `Eof`, or the server's own end.
+    fn is_abnormal(self) -> bool {
+        !matches!(
+            self,
+            Self::ClientClosed(None | Some(1000 | 1001)) | Self::ClientEof | Self::Server
+        )
+    }
+
+    /// The end packed for [`ConnectionLiveness::set_end`]: a kind in the high half and a close
+    /// code in the low half.
+    fn code(self) -> u32 {
+        let (kind, close_code) = match self {
+            Self::ClientClosed(Some(code)) => (1, code),
+            Self::ClientClosed(None) => (2, 0),
+            Self::ClientGone => (3, 0),
+            Self::ClientEof => (4, 0),
+            Self::HeartbeatTimeout => (5, 0),
+            Self::WriterStalled => (6, 0),
+            Self::WriterClosed => (7, 0),
+            Self::WriterFailed => (8, 0),
+            Self::Server => (9, 0),
+        };
+        (kind << 16) | u32::from(close_code)
+    }
+
+    fn from_code(code: u32) -> Option<Self> {
+        let close_code = u16::try_from(code & 0xffff).unwrap_or_default();
+        Some(match code >> 16 {
+            1 => Self::ClientClosed(Some(close_code)),
+            2 => Self::ClientClosed(None),
+            3 => Self::ClientGone,
+            4 => Self::ClientEof,
+            5 => Self::HeartbeatTimeout,
+            6 => Self::WriterStalled,
+            7 => Self::WriterClosed,
+            8 => Self::WriterFailed,
+            9 => Self::Server,
+            _ => return None,
+        })
+    }
+}
+
+fn millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 /// Counts every frame read from the socket as inbound activity, including
-/// WebSocket Ping, Pong and Close; a read error is not activity. Plain and
+/// WebSocket Ping, Pong and Close; a read error is not activity. A Close frame
+/// also records the client's close code as the connection's end. Plain and
 /// E2EE readers both wrap their raw socket reader with it.
 pub(crate) fn observe_inbound<S>(
     liveness: Arc<ConnectionLiveness>,
@@ -128,8 +320,13 @@ where
     S: Stream<Item = Result<Message, axum::Error>> + Unpin,
 {
     reader.inspect(move |frame| {
-        if frame.is_ok() {
+        if let Ok(frame) = frame {
             liveness.record_inbound();
+            if let Message::Close(close) = frame {
+                liveness.set_end(ConnectionEnd::ClientClosed(
+                    close.as_ref().map(|close| close.code),
+                ));
+            }
         }
     })
 }
@@ -159,11 +356,12 @@ pub(crate) async fn run_heartbeat(liveness: Arc<ConnectionLiveness>, shutdown: C
         previous_check = now;
         let silent_for = liveness.silent_for(now);
         if silent_for >= HEARTBEAT_SILENCE_LIMIT {
-            tracing::info!(
+            tracing::debug!(
                 ?silent_for,
                 limit = ?HEARTBEAT_SILENCE_LIMIT,
                 "RPC peer silent past the heartbeat limit; ending the session"
             );
+            liveness.set_end(ConnectionEnd::HeartbeatTimeout);
             shutdown.cancel();
             return;
         }
@@ -172,26 +370,6 @@ pub(crate) async fn run_heartbeat(liveness: Arc<ConnectionLiveness>, shutdown: C
             // Small check delays must not shift every subsequent Ping.
             next_ping += HEARTBEAT_PING_INTERVAL;
         }
-    }
-}
-
-fn is_liveness_close(frame: Option<&CloseFrame>) -> bool {
-    frame.is_some_and(|frame| frame.code == LIVENESS_CLOSE_CODE)
-}
-
-/// Logs a close frame from the client. Code 4408 is the client's liveness
-/// timeout and is logged at info level so it stands apart from a clean close.
-pub(crate) fn log_peer_close(frame: Option<&CloseFrame>) {
-    if is_liveness_close(frame) {
-        tracing::info!(
-            close_code = LIVENESS_CLOSE_CODE,
-            "RPC client closed the connection after its liveness timeout"
-        );
-    } else {
-        tracing::debug!(
-            close_code = frame.map(|frame| frame.code),
-            "RPC client closed the connection"
-        );
     }
 }
 
@@ -212,6 +390,14 @@ pub(crate) enum OutboundFraming {
 }
 
 impl OutboundFraming {
+    /// `plain` or `e2ee`, as `rpc.disconnect` names the transport.
+    pub(crate) fn transport(&self) -> &'static str {
+        match self {
+            Self::Whole | Self::PlainRecords => "plain",
+            Self::Encrypted { .. } => "e2ee",
+        }
+    }
+
     /// The largest message the peer can reassemble; `None` for whole frames.
     pub(crate) fn max_message_bytes(&self) -> Option<usize> {
         match self {
@@ -342,6 +528,7 @@ pub(crate) async fn run_writer<S>(
                         .await
                     }
                     WriterStep::Data(frame) => {
+                        liveness.record_outbound_wait(frame.queued_at().elapsed());
                         let is_data = !frame.is_control();
                         let frame = frame.into_wire().map_err(|_| TransportError::Encode)?;
                         // Hold the byte permit until all records leave or this
@@ -363,6 +550,7 @@ pub(crate) async fn run_writer<S>(
                 () = shutdown.cancelled() => return Ok(()),
                 result = write => result?,
             }
+            liveness.record_outbound();
         }
     }
     .await;
@@ -371,7 +559,12 @@ pub(crate) async fn run_writer<S>(
             let _ = timeout(GRACEFUL_CLOSE_TIMEOUT, sink.close()).await;
         }
         Err(error) => {
-            tracing::info!(?error, "RPC writer gave up; ending the session");
+            tracing::debug!(?error, "RPC writer gave up; ending the session");
+            liveness.set_end(match error {
+                TransportError::Stalled => ConnectionEnd::WriterStalled,
+                TransportError::Closed => ConnectionEnd::WriterClosed,
+                TransportError::Encode | TransportError::Encrypt => ConnectionEnd::WriterFailed,
+            });
             shutdown.cancel();
         }
     }
@@ -482,6 +675,7 @@ where
                 break;
             };
             write_control(sink, framing, message, deadline, interleaved).await?;
+            liveness.record_outbound();
         }
     }
     Ok(())
@@ -567,7 +761,7 @@ mod tests {
     use futures_util::sink;
     use serde_json::{Value, json};
 
-    use axum::extract::ws::Utf8Bytes;
+    use axum::extract::ws::{CloseFrame, Utf8Bytes};
 
     use super::*;
     use crate::rpc::message::RequestId;
@@ -1360,16 +1554,124 @@ mod tests {
 
     #[test]
     fn a_4408_close_is_the_clients_liveness_timeout() {
-        let liveness = CloseFrame {
+        let liveness = ConnectionEnd::ClientClosed(Some(LIVENESS_CLOSE_CODE));
+        assert_eq!(liveness.reason(), "client-liveness-timeout");
+        assert_eq!(liveness.close_code(), Some(4408));
+        assert!(liveness.is_abnormal());
+        for orderly in [
+            ConnectionEnd::ClientClosed(Some(1000)),
+            ConnectionEnd::ClientClosed(Some(1001)),
+            ConnectionEnd::ClientClosed(None),
+            ConnectionEnd::ClientEof,
+            ConnectionEnd::Server,
+        ] {
+            assert!(!orderly.is_abnormal(), "{orderly:?} is orderly");
+        }
+        assert_eq!(
+            ConnectionEnd::ClientClosed(Some(1000)).reason(),
+            "client-closed"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_close_frame_records_the_clients_close_code() {
+        let liveness = ConnectionLiveness::new();
+        let frames = futures_util::stream::iter([Ok(Message::Close(Some(CloseFrame {
             code: LIVENESS_CLOSE_CODE,
             reason: Utf8Bytes::from_static("liveness timeout"),
-        };
-        let normal = CloseFrame {
-            code: 1000,
-            reason: Utf8Bytes::from_static(""),
-        };
-        assert!(is_liveness_close(Some(&liveness)));
-        assert!(!is_liveness_close(Some(&normal)));
-        assert!(!is_liveness_close(None));
+        })))]);
+        let mut reader = observe_inbound(Arc::clone(&liveness), frames);
+        reader.next().await;
+        assert_eq!(
+            ConnectionEnd::from_code(liveness.end.load(Ordering::Acquire)),
+            Some(ConnectionEnd::ClientClosed(Some(LIVENESS_CLOSE_CODE)))
+        );
+        for end in [
+            ConnectionEnd::ClientClosed(Some(1000)),
+            ConnectionEnd::ClientClosed(None),
+            ConnectionEnd::ClientGone,
+            ConnectionEnd::ClientEof,
+            ConnectionEnd::HeartbeatTimeout,
+            ConnectionEnd::WriterStalled,
+            ConnectionEnd::WriterClosed,
+            ConnectionEnd::WriterFailed,
+            ConnectionEnd::Server,
+        ] {
+            assert_eq!(ConnectionEnd::from_code(end.code()), Some(end));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_heartbeat_and_the_writer_name_the_end_they_cause() {
+        let liveness = ConnectionLiveness::new();
+        let shutdown = CancellationToken::new();
+        let heartbeat = tokio::spawn(run_heartbeat(Arc::clone(&liveness), shutdown.clone()));
+        shutdown.cancelled().await;
+        heartbeat.await.expect("heartbeat joins");
+        assert_eq!(
+            ConnectionEnd::from_code(liveness.end.load(Ordering::Acquire)),
+            Some(ConnectionEnd::HeartbeatTimeout)
+        );
+        // The first end wins: a writer failing during teardown does not rename it.
+        liveness.set_end(ConnectionEnd::WriterStalled);
+        assert_eq!(
+            ConnectionEnd::from_code(liveness.end.load(Ordering::Acquire)),
+            Some(ConnectionEnd::HeartbeatTimeout)
+        );
+
+        let liveness = ConnectionLiveness::new();
+        let (sink, _recorded) = recording_sink(Duration::from_secs(3_600));
+        let (data_sender, data) = mpsc::channel(8);
+        let (_control_sender, control) = mpsc::channel(CONTROL_LANE_CAPACITY);
+        data_sender
+            .try_send(response("1", 1024))
+            .expect("queue frame");
+        run_writer(
+            sink,
+            OutboundFraming::Whole,
+            Arc::clone(&liveness),
+            data,
+            control,
+            CancellationToken::new(),
+        )
+        .await;
+        assert_eq!(
+            ConnectionEnd::from_code(liveness.end.load(Ordering::Acquire)),
+            Some(ConnectionEnd::WriterStalled)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_writer_records_the_last_message_and_the_longest_queue_wait() {
+        let liveness = ConnectionLiveness::new();
+        let (sink, _recorded) = recording_sink(Duration::from_secs(1));
+        let (data_sender, data) = mpsc::channel(8);
+        let (control_sender, control) = mpsc::channel(CONTROL_LANE_CAPACITY);
+        // The second response waits behind the first one's 1 s write.
+        data_sender.try_send(response("1", 1024)).expect("first");
+        data_sender.try_send(response("2", 1024)).expect("second");
+        let writer = tokio::spawn(run_writer(
+            sink,
+            OutboundFraming::Whole,
+            Arc::clone(&liveness),
+            data,
+            control,
+            CancellationToken::new(),
+        ));
+        tokio::time::sleep(Duration::from_millis(2_500)).await;
+        assert_eq!(liveness.outbound_wait_max_ms.load(Ordering::Relaxed), 1_000);
+        assert_eq!(liveness.last_outbound_ms.load(Ordering::Relaxed), 2_000);
+        // A heartbeat Ping is not an RPC message.
+        liveness.request_ping();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert_eq!(liveness.last_outbound_ms.load(Ordering::Relaxed), 2_000);
+        // A Pong is.
+        control_sender
+            .try_send(ServerMessage::Pong)
+            .expect("queue pong");
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert_eq!(liveness.last_outbound_ms.load(Ordering::Relaxed), 5_500);
+        drop(data_sender);
+        writer.await.expect("writer joins");
     }
 }

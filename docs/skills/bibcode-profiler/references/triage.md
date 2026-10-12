@@ -201,6 +201,22 @@ Covers `rpc.slow`, `rpc.hang`, `rpc.saturation`, `client.stall` and
 6. **Remote servers:** request records live on the environment that served the
    request, so run `P` on that host (`ssh <host> bibcode profiler …`). Client
    stalls and interactions are copied to every enabled environment.
+7. **Dropped connections:** `P events --kind rpc.disconnect --json` lists every
+   connection end, and `--kind rpc.reconnect` the reconnects. Group them by
+   `clientId` before blaming the server: several browsers and apps can share one
+   server. For a `client-liveness-timeout`, the client heard nothing for about
+   30 s by its own clock; `sinceOutboundMs` says what the server did:
+   - well under 30 s: the server was writing to it, so look at the link or the
+     client;
+   - about 30 s, with a small `sinceInboundMs`: the client kept sending Pings
+     and the server stopped answering them;
+   - minutes, with a small `sinceInboundMs`: the client sent no RPC Ping for
+     minutes, so its page was suspended (only its browser answered WebSocket
+     Pings). Clients older than this event closed the moment such a page
+     resumed.
+
+   A missing `client.batch` proves nothing by itself: the collector sends no
+   batch for a quiet window.
 
 ## Worktrees
 

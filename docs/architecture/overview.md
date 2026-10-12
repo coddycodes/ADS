@@ -1621,6 +1621,12 @@ it.
   minutes.
 - **RPC latency and client reports.** See
   [Profiler timing and client reports](./rpc-and-orchestration.md#profiler-timing-and-client-reports).
+- **Connection ends.** Every RPC session that ends writes an `rpc.disconnect`
+  event with its reason and close code, its age, the time since its last
+  inbound frame and last outbound message, the longest outbound queue wait, and
+  the profiler `clientId` of its first correlated request. That client's next
+  connection writes `rpc.reconnect` with the gap. Neither raises a finding. See
+  [Connection ends](./rpc-and-orchestration.md#connection-ends).
 - **Subprocess exits.** The provider, terminal, and supervised-command exit
   paths report a death BiBCode did not ask for as a `subprocess.exit` event and
   a `subprocess.crash` finding with the signal or exit code, uptime, and the
