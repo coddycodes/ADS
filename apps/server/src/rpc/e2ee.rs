@@ -29,10 +29,7 @@ use super::{
         PUMP_JOIN_TIMEOUT, PairingConfirmationLatch, RpcInboundFrame, SOCKET_WRITE_TIMEOUT,
         run_session_split_budgeted,
     },
-    transport::{
-        ConnectionLiveness, E2EE_INTERLEAVE_FEATURE, OutboundFraming, log_peer_close,
-        observe_inbound,
-    },
+    transport::{ConnectionLiveness, E2EE_INTERLEAVE_FEATURE, OutboundFraming, observe_inbound},
 };
 use crate::{
     auth::{
@@ -1274,6 +1271,7 @@ async fn run_established_e2ee<W, R>(
     let inbound_channel = Arc::clone(&channel);
     let inbound_connection_permits =
         Arc::new(WeightedByteBudget::new(MAX_E2EE_LOGICAL_MESSAGE_BYTES));
+    let inbound_liveness = Arc::clone(&liveness);
     let inbound_pump = tokio::spawn(async move {
         // Each logical message gets one absolute, size-derived assembly
         // deadline, established at its first record and extended as records
@@ -1386,15 +1384,18 @@ async fn run_established_e2ee<W, R>(
                     }
                 }
                 Ok(Message::Ping(_) | Message::Pong(_)) => continue,
-                Ok(Message::Close(close)) => {
-                    log_peer_close(close.as_ref());
-                    break;
-                }
+                // `observe_inbound` recorded the close code for the session's report.
+                Ok(Message::Close(_)) => break,
                 Err(_) | Ok(Message::Text(_)) => break,
             };
             if inbound_tx.send(Ok(message)).await.is_err() {
                 break;
             }
+        }
+        // A pump that stopped on its own lost the client; an end recorded before (its Close
+        // frame, the heartbeat, the writer) still wins.
+        if !inbound_shutdown.is_cancelled() {
+            inbound_liveness.record_client_gone();
         }
         inbound_shutdown.cancel();
     });

@@ -121,7 +121,16 @@ from the schema-only `WsRpcGroup`. The Rust mirror is
 
 Schemas validate payloads at the client boundary. The Rust session validates
 request IDs, registered method names, authorization scopes, cancellation, and
-stream flow before invoking handlers.
+stream flow before invoking handlers. The read loop never waits on the
+database: it checks IDs, capacity and the method's declared scope at once, then
+starts the request's task, which authorizes the session against the auth store
+and takes the maintenance admission before the handler runs. A request that
+waits there is in flight, so `Interrupt` cancels it, and it keeps an E2EE
+message's inbound byte permits until it is admitted. A refusal (a missing scope,
+an invalid session, maintenance) that cannot be queued before its 5-second
+deadline goes through the control lane, and one that reaches neither ends the
+session. A periodic task that holds the single database worker therefore delays
+only the requests behind it, and the read loop keeps answering `Ping`.
 
 Each connection has one writer task that owns the socket sink. It drains a
 bounded control lane before every queued message: RPC `Pong`, interrupt exits,
@@ -149,8 +158,8 @@ protocol error) is data progress. The heartbeat checks every 5 seconds and ends 
 A check that fires more than 10 seconds late, because the process was suspended
 or starved, restarts the silence clock and Ping schedule with one immediate Ping
 instead of reaping or sending catch-up Pings.
-A client close with code 4408, the client's liveness timeout, is logged at info
-level; other client closes are logged at debug level.
+How a session ended, and the info log line an abnormal end writes, are described
+in [Connection ends](#connection-ends).
 Inbound activity counts per complete frame, so a single plain request that
 takes longer than 45 s to arrive on an otherwise idle connection is reaped (and
 the client's own 30 s monitor ends it first); E2EE requests travel in records.
@@ -2669,6 +2678,27 @@ under the source `client:<clientId>`. Findings from a batch use the source
 
 [Remote environments](./remote.md#profiler-data) describes where reports go when
 a client is connected to several environments.
+
+### Connection ends
+
+When a session ends, plain or E2EE, the session loop classifies why from its own
+side: a client close frame (`client-liveness-timeout` for code 4408,
+`client-closed` otherwise), a socket that ended without one (`client-gone`), a
+client `Eof` (`client-eof`), the heartbeat (`heartbeat-timeout`), a writer
+failure (`writer-stalled`, `writer-closed`, `writer-failed`), or the server
+(`server`). `ConnectionLiveness` keeps the connection's start, its last inbound
+frame, the end of its last outbound RPC message (heartbeat Pings excluded), and
+the longest wait of a queued data message before its write began. Every
+abnormal end writes one info log line, `RPC connection ended`, with those
+durations, the queue depth, the requests in flight and the client id; a
+1000 or 1001 close, an `Eof`, and a server-side end log at debug level.
+
+While the profiler is on, the same end is an `rpc.disconnect` event. The
+session also notes the client id of its first request that carries the
+correlation header; when that client's previous connection ended in this
+process, it writes `rpc.reconnect` with the gap between them. The last 256
+disconnected clients are remembered. The fields are in the
+[events reference](../skills/bibcode-profiler/references/events.md#rpcdisconnect).
 
 ## Invariants
 

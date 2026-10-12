@@ -26,14 +26,18 @@ use super::{
     message::{ClientMessage, RequestId, RpcRequest, ServerMessage},
     methods::{ACTIVE_RPC_METHODS, MethodMode},
     transport::{
-        self, CHUNKED_RPC_SUBPROTOCOL, CONTROL_LANE_CAPACITY, ConnectionLiveness, OutboundFraming,
+        self, CHUNKED_RPC_SUBPROTOCOL, CONTROL_LANE_CAPACITY, ConnectionEnd, ConnectionLiveness,
+        OutboundFraming,
     },
 };
 use crate::{
     auth::{AuthService, ClientMetadata, Principal, authorization_error, required_scope},
     diagnostics::{
         TraceDiagnosticsStore,
-        profiler::latency::{FIRST_ITEM, RequestTimer},
+        profiler::{
+            connections,
+            latency::{FIRST_ITEM, RequestTimer},
+        },
     },
     json_size::encoded_json_len,
     maintenance::{RpcAdmissionGate, RpcPermit, rpc_mutability},
@@ -78,6 +82,8 @@ pub(crate) trait RpcResponseEnqueueGuard: Send {
 pub(crate) struct RpcOutboundFrame {
     payload: RpcOutboundPayload,
     _budget: Option<RpcOutboundBytePermit>,
+    /// When the frame entered the queue; the writer records how long it waited.
+    queued_at: Instant,
 }
 
 enum RpcOutboundPayload {
@@ -99,7 +105,12 @@ impl RpcOutboundFrame {
         Ok(Self {
             payload,
             _budget: self._budget,
+            queued_at: self.queued_at,
         })
+    }
+
+    pub(super) fn queued_at(&self) -> Instant {
+        self.queued_at
     }
 
     pub(crate) fn into_parts(self) -> (Message, Option<RpcOutboundBytePermit>) {
@@ -120,6 +131,7 @@ impl RpcOutboundFrame {
         Self {
             payload: RpcOutboundPayload::Plain(message),
             _budget: None,
+            queued_at: Instant::now(),
         }
     }
 
@@ -129,6 +141,7 @@ impl RpcOutboundFrame {
         Ok(Self {
             payload: RpcOutboundPayload::Control(message),
             _budget: budget,
+            queued_at: Instant::now(),
         })
     }
 }
@@ -169,6 +182,7 @@ impl RpcResponseEnqueuePermit {
         self.permit.send(RpcOutboundFrame {
             payload: prepared.payload,
             _budget: self.budget,
+            queued_at: Instant::now(),
         });
     }
 }
@@ -230,6 +244,7 @@ impl RpcOutboundQueue {
             .try_send(RpcOutboundFrame {
                 payload,
                 _budget: budget,
+                queued_at: Instant::now(),
             })
             .map_err(|_| ())
     }
@@ -720,6 +735,7 @@ pub(crate) async fn run_session_split_budgeted<W, R>(
     let (outbound_sender, outbound_receiver) = mpsc::channel::<RpcOutboundFrame>(OUTBOUND_CAPACITY);
     let (control_sender, control_receiver) = mpsc::channel::<ServerMessage>(CONTROL_LANE_CAPACITY);
     let max_message_bytes = framing.max_message_bytes();
+    let transport = framing.transport();
     let outbound = RpcOutboundQueue {
         sender: outbound_sender,
         control: control_sender,
@@ -734,11 +750,19 @@ pub(crate) async fn run_session_split_budgeted<W, R>(
         control_receiver,
         session_shutdown.clone(),
     ));
-    let mut heartbeat = tokio::spawn(transport::run_heartbeat(liveness, session_shutdown.clone()));
+    let mut heartbeat = tokio::spawn(transport::run_heartbeat(
+        Arc::clone(&liveness),
+        session_shutdown.clone(),
+    ));
     let (completed_sender, mut completed_receiver) =
         mpsc::channel::<RequestId>(MAX_IN_FLIGHT_REQUESTS);
     let mut in_flight = HashMap::<RequestId, InFlight>::new();
     let mut received_eof = false;
+    // Why the loop ended, when the loop itself saw it; otherwise the server, the heartbeat
+    // or the writer cancelled the session.
+    let mut end = None;
+    // The profiler client id of the first request that names one.
+    let mut client_id: Option<String> = None;
     {
         let dispatch = DispatchContext {
             registry: &registry,
@@ -750,6 +774,7 @@ pub(crate) async fn run_session_split_budgeted<W, R>(
 
         loop {
             if received_eof && in_flight.is_empty() {
+                end.get_or_insert(ConnectionEnd::ClientEof);
                 break;
             }
 
@@ -764,10 +789,8 @@ pub(crate) async fn run_session_split_budgeted<W, R>(
                     }
                 }
                 frame = socket_reader.next() => {
-                    let Some(frame) = frame else {
-                        break;
-                    };
-                    let Ok(frame) = frame else {
+                    let Some(Ok(frame)) = frame else {
+                        end = Some(ConnectionEnd::ClientGone);
                         break;
                     };
                     let RpcInboundFrame { message: frame, guard } = frame;
@@ -775,7 +798,9 @@ pub(crate) async fn run_session_split_budgeted<W, R>(
                         Message::Text(text) => decode_client_messages(text.as_bytes()),
                         Message::Binary(bytes) => decode_client_messages(&bytes),
                         Message::Close(frame) => {
-                            transport::log_peer_close(frame.as_ref());
+                            end = Some(ConnectionEnd::ClientClosed(
+                                frame.map(|frame| frame.code),
+                            ));
                             break;
                         }
                         Message::Ping(_) | Message::Pong(_) => continue,
@@ -797,6 +822,13 @@ pub(crate) async fn run_session_split_budgeted<W, R>(
                         }
                     };
                     for message in messages {
+                        if client_id.is_none()
+                            && let ClientMessage::Request { headers, .. } = &message
+                            && let Some(id) = connections::request_client_id(headers)
+                        {
+                            connections::record_client_identified(&id, transport, liveness.age());
+                            client_id = Some(id);
+                        }
                         if process_client_message(
                             message,
                             &dispatch,
@@ -807,6 +839,8 @@ pub(crate) async fn run_session_split_budgeted<W, R>(
                         .await
                         .is_err()
                         {
+                            // The server could not queue an answer: wind down.
+                            end = Some(ConnectionEnd::Server);
                             received_eof = true;
                             break;
                         }
@@ -815,6 +849,13 @@ pub(crate) async fn run_session_split_budgeted<W, R>(
             }
         }
     }
+    liveness.report_end(
+        end.unwrap_or(ConnectionEnd::Server),
+        transport,
+        outbound.sender.max_capacity() - outbound.sender.capacity(),
+        in_flight.len(),
+        client_id.as_deref(),
+    );
 
     // Release the read half at once: after a writer failure both halves must go
     // so the connection closes promptly.
@@ -860,7 +901,7 @@ async fn process_client_message(
     dispatch: &DispatchContext<'_>,
     in_flight: &mut HashMap<RequestId, InFlight>,
     received_eof: &mut bool,
-    _inbound_guard: Option<SharedRpcInboundGuard>,
+    inbound_guard: Option<SharedRpcInboundGuard>,
 ) -> Result<(), SendFailure> {
     if *received_eof && matches!(message, ClientMessage::Request { .. }) {
         return Ok(());
@@ -953,87 +994,47 @@ async fn process_client_message(
                 )
                 .await;
             };
-            if let Some(principal) = dispatch.session.principal.as_ref() {
-                let Some(scope) = required_scope(&request.tag) else {
-                    return send_server_message(
-                        dispatch.outbound,
-                        dispatch.shutdown,
-                        ServerMessage::connection_defect(format!(
-                            "RPC method {} has no declared authorization scope",
-                            request.tag
-                        )),
-                    )
-                    .await;
-                };
-                if let Some(auth) = dispatch.session.auth.as_ref()
-                    && !dispatch
-                        .session
-                        .has_pending_pairing_capability_for(&request.tag)
-                {
-                    match auth.authorize_session(&principal.session_id, scope).await {
-                        Ok(()) => {}
-                        Err(crate::auth::AuthError::ScopeRequired(_)) => {
-                            return send_server_message(
-                                dispatch.outbound,
-                                dispatch.shutdown,
-                                ServerMessage::failure(
-                                    request.id.clone(),
-                                    authorization_error(scope),
-                                ),
-                            )
-                            .await;
-                        }
-                        Err(_) => {
-                            return send_server_message(
-                                dispatch.outbound,
-                                dispatch.shutdown,
-                                ServerMessage::connection_defect(
-                                    "Authenticated session is no longer valid",
-                                ),
-                            )
-                            .await;
-                        }
-                    }
+            let scope = match dispatch.session.principal {
+                Some(_) => {
+                    let Some(scope) = required_scope(&request.tag) else {
+                        return send_server_message(
+                            dispatch.outbound,
+                            dispatch.shutdown,
+                            ServerMessage::connection_defect(format!(
+                                "RPC method {} has no declared authorization scope",
+                                request.tag
+                            )),
+                        )
+                        .await;
+                    };
+                    Some(scope)
                 }
-            }
-            let admission = match dispatch
-                .registry
-                .admission_gate
-                .admit_named(rpc_mutability(&request.tag), request.tag.clone())
-            {
-                Ok(admission) => admission,
-                Err(error) => {
-                    return send_server_message(
-                        dispatch.outbound,
-                        dispatch.shutdown,
-                        ServerMessage::failure(
-                            request.id.clone(),
-                            json!({
-                                "_tag": "UpdateMaintenanceActiveError",
-                                "message": error.to_string(),
-                            }),
-                        ),
-                    )
-                    .await;
-                }
+                None => None,
             };
-            spawn_request(request, method, admission, dispatch, in_flight);
+            spawn_request(request, method, scope, inbound_guard, dispatch, in_flight);
             Ok(())
         }
     }
 }
 
+/// Starts the request's task, which authorizes it (`scope` is the method's declared scope on an
+/// authenticated session) and takes its maintenance admission before the handler runs. The
+/// read loop never waits on the auth store, so it keeps answering Pings while a periodic task
+/// holds the database worker. The inbound guard (E2EE byte permits) stays held until the
+/// request is admitted, as it was while the read loop authorized it.
 fn spawn_request(
     request: RpcRequest,
     method: RpcMethod,
-    admission: RpcPermit,
+    scope: Option<&'static str>,
+    inbound_guard: Option<SharedRpcInboundGuard>,
     dispatch: &DispatchContext<'_>,
     in_flight: &mut HashMap<RequestId, InFlight>,
 ) {
     let request_id = request.id.clone();
     let cancellation = CancellationToken::new();
     let request_cancellation = cancellation.clone();
-    let context = dispatch.session.clone().with_admission(admission.clone());
+    let context = dispatch.session.clone();
+    let admission_gate = dispatch.registry.admission_gate();
     let outbound = dispatch.outbound.clone();
     let completed = dispatch.completed.clone();
     let session_shutdown = dispatch.shutdown.clone();
@@ -1048,8 +1049,23 @@ fn spawn_request(
     let panic_outbound = outbound.clone();
     let request_shutdown = session_shutdown.clone();
     let task = tokio::spawn(async move {
-        let _admission = admission;
         let execution = AssertUnwindSafe(async move {
+            let admitted = admit_request(
+                &request,
+                scope,
+                &context,
+                &admission_gate,
+                &request_cancellation,
+                &request_shutdown,
+                &outbound,
+            )
+            .await;
+            drop(inbound_guard);
+            let Some(admission) = admitted else {
+                return;
+            };
+            let context = context.with_admission(admission.clone());
+            let _admission = admission;
             match method {
                 RpcMethod::Unary(handler) => {
                     run_unary(
@@ -1114,6 +1130,86 @@ fn spawn_request(
             task,
         },
     );
+}
+
+/// Authorizes `request` against the auth store, unless the session is unauthenticated or the
+/// method is the pending-pairing capability, then takes its maintenance admission. `None` once a
+/// refusal or, for an interrupted request, its interrupt exit is queued.
+async fn admit_request(
+    request: &RpcRequest,
+    scope: Option<&'static str>,
+    context: &RpcSessionContext,
+    admission_gate: &RpcAdmissionGate,
+    cancellation: &CancellationToken,
+    session_shutdown: &CancellationToken,
+    outbound: &RpcOutboundQueue,
+) -> Option<RpcPermit> {
+    if let (Some(scope), Some(principal), Some(auth)) = (scope, &context.principal, &context.auth)
+        && !context.has_pending_pairing_capability_for(&request.tag)
+    {
+        let authorized = tokio::select! {
+            biased;
+            () = cancellation.cancelled() => {
+                let _ = try_send_control_message(
+                    outbound,
+                    ServerMessage::interrupt(request.id.clone()),
+                );
+                return None;
+            }
+            authorized = auth.authorize_session(&principal.session_id, scope) => authorized,
+        };
+        let refusal = match authorized {
+            Ok(()) => None,
+            Err(crate::auth::AuthError::ScopeRequired(_)) => Some(ServerMessage::failure(
+                request.id.clone(),
+                authorization_error(scope),
+            )),
+            Err(_) => Some(ServerMessage::connection_defect(
+                "Authenticated session is no longer valid",
+            )),
+        };
+        if let Some(refusal) = refusal {
+            send_refusal(outbound, session_shutdown, refusal).await;
+            return None;
+        }
+    }
+    match admission_gate.admit_named(rpc_mutability(&request.tag), request.tag.clone()) {
+        Ok(admission) => Some(admission),
+        Err(error) => {
+            send_refusal(
+                outbound,
+                session_shutdown,
+                ServerMessage::failure(
+                    request.id.clone(),
+                    json!({
+                        "_tag": "UpdateMaintenanceActiveError",
+                        "message": error.to_string(),
+                    }),
+                ),
+            )
+            .await;
+            None
+        }
+    }
+}
+
+/// Queues a refusal like any response, then through the control lane past a full byte budget.
+/// A refusal that reaches neither ends the session: the client must never wait on a request
+/// the server has dropped.
+async fn send_refusal(
+    outbound: &RpcOutboundQueue,
+    session_shutdown: &CancellationToken,
+    refusal: ServerMessage,
+) {
+    if send_server_message(outbound, session_shutdown, refusal.clone())
+        .await
+        .is_err()
+        && send_unbudgeted_server_message(outbound, session_shutdown, refusal)
+            .await
+            .is_err()
+    {
+        session_shutdown.cancel();
+    }
 }
 
 fn panic_payload_message(payload: &(dyn Any + Send)) -> String {
@@ -1455,11 +1551,13 @@ async fn send_server_message(
         RpcOutboundFrame {
             payload: RpcOutboundPayload::Encoded(Message::Text(encoded.into())),
             _budget: budget,
+            queued_at: Instant::now(),
         }
     } else {
         RpcOutboundFrame {
             payload: RpcOutboundPayload::Plain(message),
             _budget: None,
+            queued_at: Instant::now(),
         }
     };
     admit_before(session_shutdown, deadline, outbound.sender.send(frame)).await
@@ -1531,6 +1629,7 @@ fn try_send_control_message(
         .try_send(RpcOutboundFrame {
             payload: RpcOutboundPayload::Control(Message::Text(encoded.into())),
             _budget: permit,
+            queued_at: Instant::now(),
         })
         .map_err(SendFailure::rejected)
 }
@@ -1555,6 +1654,7 @@ async fn send_unbudgeted_server_message(
         let frame = RpcOutboundFrame {
             payload: RpcOutboundPayload::Control(Message::Text(encoded.into())),
             _budget: budget,
+            queued_at: Instant::now(),
         };
         return admit_before(session_shutdown, deadline, outbound.sender.send(frame)).await;
     }
@@ -2480,10 +2580,7 @@ mod tests {
         let process_blocker = process.try_acquire(1024).expect("hold process capacity");
         let (sender, _receiver) = mpsc::channel(1);
         sender
-            .try_send(RpcOutboundFrame {
-                payload: RpcOutboundPayload::Plain(ServerMessage::Pong),
-                _budget: None,
-            })
+            .try_send(RpcOutboundFrame::plain(ServerMessage::Pong))
             .expect("fill response queue");
         let (control, _control_receiver) = mpsc::channel(CONTROL_LANE_CAPACITY);
         let outbound = RpcOutboundQueue {
@@ -2795,6 +2892,144 @@ mod tests {
             .await
             .expect("session cleanup deadline")
             .expect("session joins");
+    }
+
+    /// A periodic task that holds the single database worker must not stop the read loop:
+    /// request authorization reads the database, and a read loop waiting on it answers no
+    /// Ping, so a client closes a live connection after its 30 s liveness limit.
+    #[tokio::test]
+    async fn pings_are_answered_while_request_authorization_waits_on_the_database() {
+        use crate::{
+            auth::{SecretStore, SessionTransport},
+            config::ServerConfig,
+            persistence::{Database, Repositories, run_migrations},
+        };
+
+        let database = Database::open_in_memory().await.expect("database opens");
+        database
+            .call(|connection| {
+                run_migrations(connection, None)?;
+                Ok(())
+            })
+            .await
+            .expect("migrations apply");
+        let secrets = tempfile::tempdir().expect("secret store directory");
+        let config = ServerConfig::new(".")
+            .with_bind("127.0.0.1", 3773)
+            .with_desktop("liveness-test-seed")
+            .expect("desktop config");
+        let auth = AuthService::new_with_persistence(
+            &config,
+            vec![7_u8; 32],
+            SecretStore::new(secrets.path())
+                .await
+                .expect("secret store opens"),
+            Repositories::new(database.clone()),
+        )
+        .await
+        .expect("auth service starts");
+        let issued = auth
+            .exchange_bootstrap(
+                "liveness-test-seed",
+                None,
+                ClientMetadata::default(),
+                None,
+                SessionTransport::Plain,
+            )
+            .await
+            .expect("desktop session issues");
+        let mut registry = RpcRegistry::empty();
+        registry.register_unary("assets.createUrl", |_request, _cancellation| async {
+            Ok(json!({}))
+        });
+        let (outbound_sender, mut outbound) = mpsc::unbounded_channel::<Message>();
+        let sink = Box::pin(futures_util::sink::unfold(
+            outbound_sender,
+            |sender, message: Message| async move {
+                let _ = sender.send(message);
+                Ok::<_, Infallible>(sender)
+            },
+        ));
+        let (inbound_sender, inbound_receiver) = mpsc::channel(4);
+        let reader = stream::unfold(inbound_receiver, |mut receiver| async {
+            receiver.recv().await.map(|item| (Ok(item), receiver))
+        });
+        let shutdown = CancellationToken::new();
+        let session = tokio::spawn(run_session_split_budgeted(
+            sink,
+            OutboundFraming::Whole,
+            ConnectionLiveness::new(),
+            reader,
+            registry,
+            RpcSessionContext::authenticated(issued.principal, auth),
+            shutdown.clone(),
+            None,
+        ));
+
+        // A periodic task holds the database worker.
+        let (busy_sender, busy_receiver) = tokio::sync::oneshot::channel();
+        let (release_sender, release_receiver) = std::sync::mpsc::channel::<()>();
+        let busy_database = database.clone();
+        let busy = tokio::spawn(async move {
+            busy_database
+                .call(move |_connection| {
+                    let _ = busy_sender.send(());
+                    let _ = release_receiver.recv();
+                    Ok(())
+                })
+                .await
+        });
+        busy_receiver.await.expect("the worker is busy");
+        // The request's inbound budget is held until it is authorized.
+        let (guard_dropped_sender, mut guard_dropped) = tokio::sync::oneshot::channel();
+        inbound_sender
+            .send(RpcInboundFrame::guarded(
+                request_frame(&["1"], "assets.createUrl").message,
+                InboundDropNotification(Some(guard_dropped_sender)),
+            ))
+            .await
+            .expect("send request");
+        inbound_sender
+            .send(RpcInboundFrame::plain(Message::Text(
+                r#"{"_tag":"Ping"}"#.into(),
+            )))
+            .await
+            .expect("send ping");
+        let tag = |message: Message| {
+            let Message::Text(text) = message else {
+                panic!("legacy framing writes text frames");
+            };
+            let value: Value = serde_json::from_str(&text).expect("frame JSON");
+            value["_tag"].as_str().unwrap_or_default().to_owned()
+        };
+        let answer = timeout(Duration::from_secs(2), outbound.recv())
+            .await
+            .expect("the Ping is answered while the database is busy")
+            .expect("outbound frame");
+        assert_eq!(tag(answer), "Pong");
+        assert!(
+            guard_dropped.try_recv().is_err(),
+            "the inbound budget stays held while authorization waits"
+        );
+
+        release_sender.send(()).expect("release the worker");
+        busy.await.expect("busy task joins").expect("busy call");
+        let response = timeout(Duration::from_secs(2), outbound.recv())
+            .await
+            .expect("the request completes once the database is free")
+            .expect("outbound frame");
+        assert_eq!(tag(response), "Exit");
+        timeout(Duration::from_secs(1), guard_dropped)
+            .await
+            .expect("the inbound budget is released once the request is admitted")
+            .expect("guard drop signal");
+        shutdown.cancel();
+        drop(inbound_sender);
+        timeout(Duration::from_secs(2), session)
+            .await
+            .expect("session cleanup deadline")
+            .expect("session joins");
+        database.close().await;
     }
 
     #[tokio::test(start_paused = true)]
