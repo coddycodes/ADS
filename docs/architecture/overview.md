@@ -1988,3 +1988,16 @@ the blocking pool. Full discovery remains necessary to identify previously unkno
 descendants for attribution and cleanup; direct PID identity checks use the native
 targeted lookup independently of that table. CPU observations establish their
 baseline on the first requested sample and retain it for subsequent samples.
+
+On Linux the server and the desktop host allocate through glibc malloc, which
+keeps freed memory in the per-thread arena that served it and returns only the
+free space at the top of a heap. A large transient allocation, such as a
+full-store snapshot load or the startup validation snapshot, otherwise stays
+resident as free heap: 64 MB arena heaps, which the kernel reports as 128 MB
+mappings when two of them are adjacent. Both executables therefore start a
+`bibcode-heap-trim` thread (`allocator::start_heap_trimmer`) that calls
+`malloc_trim(0)` every 30 seconds, which releases the free pages inside every
+arena. The server starts it right after the crash hook; the desktop host starts
+it after the PATH hydration, which must run before any thread exists. Other
+platforms and C libraries do not start it. The thread holds no other resource
+and ends with the process.

@@ -9,6 +9,7 @@ fn main() -> ExitCode {
         return ExitCode::from(u8::try_from(code).unwrap_or(u8::MAX));
     }
     crash::attach();
+    bibcode_server::allocator::start_heap_trimmer();
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

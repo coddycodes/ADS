@@ -95,6 +95,7 @@ pub fn run() {
     let shell_path_hydration = shell_environment::hydrate_process_path();
     // After the PATH hydration, which must run before any thread exists, and before Tauri.
     crash_monitor::start();
+    bibcode_server::allocator::start_heap_trimmer();
     let builder = tauri::Builder::<bridge::DesktopRuntime>::new()
         .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}))
         .manage(backend::BackendSupervisor::new())
