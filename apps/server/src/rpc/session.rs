@@ -864,26 +864,13 @@ pub(crate) async fn run_session_split_budgeted<W, R>(
     for request in in_flight.values() {
         request.cancellation.cancel();
     }
-    // Cancelled handlers are expected to exit promptly; a handler that ignores
-    // cancellation must not pin the session (and every budget permit riding on
-    // it) forever, so the join is bounded and stragglers are aborted.
-    let mut request_tasks: Vec<JoinHandle<()>> = in_flight
-        .into_values()
-        .map(|request| request.task)
-        .collect();
-    let join_all = async {
-        for task in &mut request_tasks {
-            let _ = task.await;
-        }
-    };
-    if timeout(PUMP_JOIN_TIMEOUT, join_all).await.is_err() {
-        for task in &request_tasks {
-            task.abort();
-        }
-        for task in &mut request_tasks {
-            let _ = task.await;
-        }
-    }
+    join_request_tasks(
+        in_flight
+            .into_values()
+            .map(|request| request.task)
+            .collect(),
+    )
+    .await;
     drop(outbound);
     drop(completed_sender);
     if timeout(PUMP_JOIN_TIMEOUT, &mut writer).await.is_err() {
@@ -893,6 +880,27 @@ pub(crate) async fn run_session_split_budgeted<W, R>(
     if timeout(PUMP_JOIN_TIMEOUT, &mut heartbeat).await.is_err() {
         heartbeat.abort();
         let _ = heartbeat.await;
+    }
+}
+
+/// Joins the cancelled request tasks. Cancelled handlers are expected to exit promptly; a
+/// handler that ignores cancellation must not pin the session (and every budget permit riding
+/// on it) forever, so the join is bounded and stragglers are aborted. A joined task leaves the
+/// list at once, because awaiting a `JoinHandle` again after it returned panics (#84).
+async fn join_request_tasks(mut request_tasks: Vec<JoinHandle<()>>) {
+    let join_all = async {
+        while let Some(task) = request_tasks.last_mut() {
+            let _ = task.await;
+            request_tasks.pop();
+        }
+    };
+    if timeout(PUMP_JOIN_TIMEOUT, join_all).await.is_err() {
+        for task in &request_tasks {
+            task.abort();
+        }
+        for task in request_tasks {
+            let _ = task.await;
+        }
     }
 }
 
@@ -2239,6 +2247,30 @@ mod tests {
             .await
             .expect("teardown bounds in-flight joins and aborts stragglers")
             .expect("session task joins");
+    }
+
+    /// Issue #84: the bounded join awaited a handle that already returned when the timeout
+    /// fired after it, and tokio panics on a second await of a finished `JoinHandle`.
+    #[tokio::test(start_paused = true)]
+    async fn teardown_joins_each_finished_request_once_and_aborts_the_rest() {
+        let (aborted_sender, aborted) = tokio::sync::oneshot::channel();
+        // Ignores cancellation: only an abort ends it.
+        let stubborn = tokio::spawn(async move {
+            let _aborted = InboundDropNotification(Some(aborted_sender));
+            std::future::pending::<()>().await;
+        });
+        let first = tokio::spawn(async {});
+        let last = tokio::spawn(async {});
+        tokio::task::yield_now().await;
+        let started = Instant::now();
+
+        join_request_tasks(vec![first, stubborn, last]).await;
+
+        assert_eq!(started.elapsed(), PUMP_JOIN_TIMEOUT);
+        timeout(Duration::from_secs(1), aborted)
+            .await
+            .expect("the straggler is aborted")
+            .expect("abort signal");
     }
 
     #[tokio::test]
