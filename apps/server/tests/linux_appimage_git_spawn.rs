@@ -1,13 +1,13 @@
-//! Git children must not copy the server (#85). Inside the AppImage, every Git command
+//! Runner children must not copy the server (#85). Inside the AppImage, every Git command
 //! gets a PATH without the bundled directories. Rust then refuses `posix_spawn` for a
 //! bare program name and forks instead, which copies the page tables of the whole
 //! process: about 140 ms per command from a 6 GB host.
 #![cfg(target_os = "linux")]
 
 use std::{
+    collections::BTreeMap,
     ffi::OsString,
     fs,
-    os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::Command,
     time::{Duration, Instant},
@@ -16,46 +16,37 @@ use std::{
 use bibcode_server::git::{
     GitRepository, OutputPolicy, ProcessRequest, ProcessRunner, manager::refs::build_refs_snapshot,
 };
+use bibcode_server::process::ProcessRunInput;
 use tokio_util::sync::CancellationToken;
 
 #[path = "support/executable_fixture.rs"]
 mod executable_fixture;
+#[path = "support/fork_probe.rs"]
+mod fork_probe;
 #[path = "support/isolated_git_config.rs"]
 mod isolated_git_config;
 #[path = "support/reexec.rs"]
 mod reexec;
 
+use fork_probe::{NO_COPY_FAULTS, TouchedRegion};
 use isolated_git_config::IsolatedGitConfig;
 
-const SPAWN_TEST: &str = "git_runner_children_do_not_copy_the_server";
+const GIT_RUNNER_TEST: &str = "git_runner_children_do_not_copy_the_server";
+const GENERIC_RUNNER_TEST: &str = "generic_runner_children_do_not_copy_the_server";
 const BENCH_TEST: &str = "refs_snapshot_timing_by_host_size";
 const PROBE: &str = "bibcode-spawn-probe";
-const REGION: usize = 64 << 20;
 
-/// The base page size: 4 KiB on x86_64, up to 64 KiB on some ARM64 kernels.
-fn page() -> usize {
-    // SAFETY: sysconf has no preconditions.
-    usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).expect("page size")
-}
-
-/// Re-executes `test` with the environment an AppImage launch gives the server.
+/// Re-executes `test` with the environment an AppImage launch gives the server, and a
+/// bare-named probe executable on its `PATH`.
 fn run_as_appimage(test: &str, phase: &str, configure: impl FnOnce(&mut Command)) {
     let fixture = tempfile::tempdir().expect("fixture directory");
-    let appdir = fixture.path().join("AppDir");
     let probes = fixture.path().join("bin");
-    fs::create_dir_all(appdir.join("usr/bin")).expect("bundled bin directory");
     fs::create_dir_all(&probes).expect("probe directory");
     executable_fixture::write_executable(&probes.join(PROBE), "#!/bin/sh\nexit 0\n");
-    let mut path = vec![appdir.join("usr/bin"), probes];
-    path.extend(std::env::split_paths(
-        &std::env::var_os("PATH").expect("inherited PATH"),
-    ));
+    let environment = fork_probe::appimage_environment(fixture.path(), &[probes]);
     reexec::run(test, phase, None, |command| {
         configure(command);
-        command
-            .env("APPIMAGE", fixture.path().join("bibcode.AppImage"))
-            .env("APPDIR", &appdir)
-            .env("PATH", std::env::join_paths(path).expect("PATH"));
+        command.envs(environment);
     });
 }
 
@@ -75,107 +66,61 @@ fn request(command: &str, args: &[&str], cwd: &Path) -> ProcessRequest {
     }
 }
 
-/// A touched anonymous region in small pages. `fork` write-protects every page of the
-/// parent, so writing them again after a fork faults once per page; after `posix_spawn`
-/// (which shares nothing writable) it faults on none.
-struct Region(*mut u8);
-
-impl Region {
-    fn new() -> Self {
-        // SAFETY: an anonymous private mapping with no address hint; checked below.
-        let address = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                REGION,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1,
-                0,
-            )
-        };
-        assert_ne!(address, libc::MAP_FAILED, "test region");
-        // SAFETY: the range is the mapping just created. Small pages make one fault per page.
-        unsafe { libc::madvise(address, REGION, libc::MADV_NOHUGEPAGE) };
-        let region = Self(address.cast());
-        region.write_pages();
-        region
-    }
-
-    fn write_pages(&self) {
-        for offset in (0..REGION).step_by(page()) {
-            // SAFETY: the offset is inside the mapping, which this value owns.
-            unsafe { self.0.add(offset).write_volatile(offset as u8) };
-        }
-    }
-
-    /// Minor faults this thread takes to write every page again.
-    fn rewrite_faults(&self) -> i64 {
-        let before = minor_faults();
-        self.write_pages();
-        minor_faults() - before
-    }
-}
-
-impl Drop for Region {
-    fn drop(&mut self) {
-        // SAFETY: unmaps exactly the mapping created in `new`.
-        unsafe { libc::munmap(self.0.cast(), REGION) };
-    }
-}
-
-fn minor_faults() -> i64 {
-    // SAFETY: getrusage writes only into the zeroed struct passed by pointer.
-    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
-    assert_eq!(
-        unsafe { libc::getrusage(libc::RUSAGE_THREAD, &mut usage) },
-        0
-    );
-    usage.ru_minflt
-}
-
-#[test]
-fn git_runner_children_do_not_copy_the_server() {
-    let Some(child) = reexec::enter(SPAWN_TEST, "appimage") else {
-        run_as_appimage(SPAWN_TEST, "appimage", |_| {});
+/// In the AppImage re-execution of `test`, runs `spawn` and fails if it copied the process.
+fn assert_spawns_without_copying(test: &str, runner: &str, spawn: impl AsyncFnOnce()) {
+    let Some(child) = reexec::enter(test, "appimage") else {
+        run_as_appimage(test, "appimage", |_| {});
         return;
     };
-    let region = Region::new();
-    let pages = (REGION / page()) as i64;
-
-    // Control: a pre-exec hook forces fork, and the probe must see it.
-    let mut forked = Command::new("/bin/true");
-    // SAFETY: the hook only returns; it calls nothing that is unsafe after fork.
-    unsafe { forked.pre_exec(|| Ok(())) };
-    assert!(forked.status().expect("forked control").success());
-    let control = region.rewrite_faults();
-    assert!(
-        control > pages / 2,
-        "the fault probe must detect a fork: {control} faults for {pages} pages"
-    );
-
+    let region = TouchedRegion::new();
+    region.assert_detects_a_fork();
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("Tokio runtime")
-        .block_on(async {
-            let cancellation = CancellationToken::new();
-            let cwd = std::env::temp_dir();
-            // A bare name found through the isolated PATH, as every Git command is.
-            ProcessRunner
-                .run(request(PROBE, &[], &cwd), &cancellation)
-                .await
-                .expect("probe runs");
-            ProcessRunner
-                .run_bytes(request(PROBE, &[], &cwd), &cancellation)
-                .await
-                .expect("probe runs as bytes");
-        });
+        .block_on(spawn());
     let faults = region.rewrite_faults();
     assert!(
-        faults < 64,
-        "a Git runner child copied the server: {faults} write faults on {pages} pages"
+        faults < NO_COPY_FAULTS,
+        "a {runner} child copied the server: {faults} write faults on {} pages",
+        region.pages()
     );
     child.complete();
+}
+
+#[test]
+fn git_runner_children_do_not_copy_the_server() {
+    // A bare name found through the isolated PATH, as every Git command is.
+    assert_spawns_without_copying(GIT_RUNNER_TEST, "Git runner", async || {
+        let cancellation = CancellationToken::new();
+        let cwd = std::env::temp_dir();
+        ProcessRunner
+            .run(request(PROBE, &[], &cwd), &cancellation)
+            .await
+            .expect("probe runs");
+        ProcessRunner
+            .run_bytes(request(PROBE, &[], &cwd), &cancellation)
+            .await
+            .expect("probe runs as bytes");
+    });
+}
+
+#[test]
+fn generic_runner_children_do_not_copy_the_server() {
+    // A bare name with a PATH of the caller's own in a cleared environment.
+    assert_spawns_without_copying(GENERIC_RUNNER_TEST, "generic runner", async || {
+        let mut input = ProcessRunInput::new(PROBE.to_owned(), Vec::<String>::new());
+        input.cwd = Some(std::env::temp_dir());
+        input.env = Some(BTreeMap::from([(
+            "PATH".to_owned(),
+            std::env::var("PATH").expect("isolated PATH"),
+        )]));
+        let output = bibcode_server::process::ProcessRunner
+            .run(input)
+            .await
+            .expect("probe runs through the generic runner");
+        assert_eq!(output.code, Some(0));
+    });
 }
 
 /// `cargo test -p bibcode-server --test linux_appimage_git_spawn -- --ignored --nocapture`

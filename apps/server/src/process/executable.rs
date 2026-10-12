@@ -347,6 +347,54 @@ pub(crate) fn execvp_moves_past(_error: &std::io::Error) -> bool {
     false
 }
 
+/// A command named so that `posix_spawn` can start it (#85), with the bare-name command
+/// to fall back to.
+pub(crate) struct SpawnPlan {
+    command: tokio::process::Command,
+    fallback: Option<tokio::process::Command>,
+}
+
+impl SpawnPlan {
+    /// Builds the command for `program` with `build`, which sets everything else: arguments,
+    /// directory, environment and AppImage isolation. When that environment sets `PATH` for
+    /// a bare program, the plan names the program's path in that `PATH` instead
+    /// ([`spawn_program`]) and keeps the bare-name command as its fallback.
+    pub(crate) fn new(program: &Path, build: impl Fn(&Path) -> tokio::process::Command) -> Self {
+        let bare = build(program);
+        match spawn_program(bare.as_std()) {
+            Some(resolved) => Self {
+                command: build(&resolved),
+                fallback: Some(bare),
+            },
+            None => Self {
+                command: bare,
+                fallback: None,
+            },
+        }
+    }
+
+    /// Starts the plan with `start`: the command first, then the bare-name fallback when
+    /// `start` failed to spawn the command the way `execvp` moves past, so the search and
+    /// its error stay `execvp`'s. Those failures are immediate, so the fallback keeps the
+    /// caller's time budget. `spawn_error` picks the spawn failure out of `start`'s error.
+    pub(crate) async fn start<T, E, F>(
+        self,
+        mut start: impl FnMut(tokio::process::Command) -> F,
+        spawn_error: impl Fn(&E) -> Option<&std::io::Error>,
+    ) -> Result<T, E>
+    where
+        F: std::future::Future<Output = Result<T, E>>,
+    {
+        let result = start(self.command).await;
+        match (result, self.fallback) {
+            (Err(error), Some(fallback)) if spawn_error(&error).is_some_and(execvp_moves_past) => {
+                start(fallback).await
+            }
+            (result, _) => result,
+        }
+    }
+}
+
 #[cfg(all(test, unix))]
 mod spawn_program_tests {
     use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command};

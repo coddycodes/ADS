@@ -6,6 +6,9 @@ mod capability_probe;
 mod event;
 #[path = "../../tests/support/executable_fixture.rs"]
 pub(crate) mod executable_fixture;
+#[cfg(target_os = "linux")]
+#[path = "../../tests/support/fork_probe.rs"]
+pub(crate) mod fork_probe;
 #[path = "../../tests/support/hermetic_providers.rs"]
 pub(crate) mod hermetic_providers;
 #[path = "../../tests/support/isolated_git_config.rs"]
