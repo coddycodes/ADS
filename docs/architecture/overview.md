@@ -429,13 +429,16 @@ Stripping `PATH` sets it on the child command, and Rust's standard library then
 forks instead of using `posix_spawn` for a command that names a bare program,
 because `posix_spawnp` would search the parent's `PATH`. A fork copies the page
 tables of the whole process: about 140 ms per child from a desktop host holding
-6 GB. The Git runner (`git::ProcessRunner`) therefore resolves a bare program
-against the child's isolated `PATH` with `process::spawn_program`, the way
-`execvp` would, and names the resolved absolute path. A name that resolves to
-nothing, or a resolved program that fails to start (such as a shim whose
-interpreter is missing), runs by its bare name as before, so `execvp` still
-moves on to a later `PATH` entry and reports the same error. Other spawn sites
-that isolate a bare program and run often should do the same.
+6 GB. Spawn sites therefore build their command through `process::SpawnPlan`,
+which resolves a bare program against the `PATH` the command sets for its child,
+the way `execvp` would, and names the resolved absolute path. A name that
+resolves to nothing, or a resolved program that fails to start the way `execvp`
+moves past (such as a shim whose interpreter is missing), runs by its bare name
+as before, so `execvp` still moves on to a later `PATH` entry and reports the
+same error. The Git runner (`git::ProcessRunner`), the generic
+`process::ProcessRunner` and the review diff Git commands use it; provider
+launches already name a resolved executable. A new spawn site that sets `PATH`
+for a bare program and runs often should use it too.
 
 The policy also removes `APPDIR`, `APPIMAGE`, `ARGV0`, and `OWD`, plus the
 launcher's forced `GDK_BACKEND`, `PYTHONDONTWRITEBYTECODE`, and `GTK_PATH`, and

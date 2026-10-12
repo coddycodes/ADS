@@ -8,7 +8,7 @@ use crate::process::supervised::{
     SupervisedOverflow, SupervisedRunError, SupervisedRunOutput, SupervisedRunRequest,
     SupervisedStreamOutput, run_supervised,
 };
-use crate::process::{ChildCommand, EnvironmentInheritance};
+use crate::process::{ChildCommand, EnvironmentInheritance, SpawnPlan};
 
 const TRUNCATION_MARKER: &str = "\n\n[truncated]";
 
@@ -386,57 +386,57 @@ fn checked_guarded_request(
     Ok(request)
 }
 
-/// Runs the request with its bare program resolved against the child's own `PATH`, which
-/// AppImage isolation sets: naming a bare `git` there makes Rust fork the whole server
-/// instead of using `posix_spawn` (#85). A resolved program that fails to start the way
-/// `execvp` moves past (a shim with a missing interpreter, a script without one) runs once
-/// more by its bare name, so `execvp` still does and reports the error it always did. These
-/// failures are immediate, so the retry keeps the request's time budget.
+/// Runs the request with a bare `git` named by its path in the child's isolated `PATH`,
+/// so it starts with `posix_spawn` instead of forking the whole server (#85). The run is
+/// boxed: inline, the plan's two attempts make every Git caller's future large enough to
+/// overflow a test thread's stack.
 async fn run_request(
     request: &ProcessRequest,
     inheritance: EnvironmentInheritance,
     cancellation: &CancellationToken,
 ) -> Result<SupervisedRunOutput, SupervisedRunError> {
-    let bare = process_command(request, inheritance, &request.command);
-    if let Some(program) = crate::process::spawn_program(&bare) {
-        let resolved = process_command(request, inheritance, &program);
-        match run_supervised(supervised_request(request, resolved), cancellation).await {
-            Err(SupervisedRunError::Spawn(error)) if crate::process::execvp_moves_past(&error) => {}
-            output => return output,
-        }
-    }
-    run_supervised(supervised_request(request, bare), cancellation).await
+    SpawnPlan::new(&request.command, |program| {
+        process_command(request, inheritance, program)
+    })
+    .start(
+        |command| {
+            Box::pin(run_supervised(
+                supervised_request(request, command),
+                cancellation,
+            ))
+        },
+        |error| match error {
+            SupervisedRunError::Spawn(error) => Some(error),
+            _ => None,
+        },
+    )
+    .await
 }
 
 fn process_command(
     request: &ProcessRequest,
     inheritance: EnvironmentInheritance,
     program: &std::path::Path,
-) -> std::process::Command {
-    let mut command = std::process::Command::new(program);
+) -> Command {
+    let mut command = Command::new(program);
     if inheritance == EnvironmentInheritance::Cleared {
         command.env_clear();
     }
     command
         .args(&request.args)
         .current_dir(&request.cwd)
-        .envs(request.env.iter().cloned());
+        .envs(request.env.iter().cloned())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     crate::process::isolate_appimage_environment(ChildCommand::Process {
-        command: &mut command,
+        command: command.as_std_mut(),
         inheritance,
     });
     command
 }
 
-fn supervised_request(
-    request: &ProcessRequest,
-    command: std::process::Command,
-) -> SupervisedRunRequest {
-    let mut command = Command::from(command);
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+fn supervised_request(request: &ProcessRequest, command: Command) -> SupervisedRunRequest {
     SupervisedRunRequest {
         command,
         stdin: request.stdin.clone(),
