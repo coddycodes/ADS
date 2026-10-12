@@ -32,8 +32,9 @@ use crate::{
     },
     rpc::{RpcRegistry, RpcResult, RpcStreamChunk},
     terminal::{
-        TerminalAttachInput, TerminalError, TerminalInputAdmission, TerminalLaunchCommand,
-        TerminalManager, TerminalMetadataEvent, TerminalOpenInput, TerminalSessionIdentity,
+        InputReadmissionScope, TerminalAttachInput, TerminalError, TerminalInputAdmission,
+        TerminalLaunchCommand, TerminalManager, TerminalMetadataEvent, TerminalOpenInput,
+        TerminalSessionIdentity,
     },
     worktree_catalog::{
         WorkspaceAdmissionCancellation, WorkspaceAdmissionLease, WorkspaceAvailabilityRegistry,
@@ -331,17 +332,21 @@ impl ServerTerminalServices {
                     }
                     event = events.recv() => event,
                 };
-                let threads = match &event {
+                let scope = match &event {
                     Ok(event) => {
                         let payload = &event.event.payload;
                         match event.event.event_type.as_str() {
-                            "thread.created" => Some(Some(event.event.aggregate_id.as_str())),
-                            "thread.meta-updated" if payload.get("worktreePath").is_some() => {
-                                Some(Some(event.event.aggregate_id.as_str()))
+                            "thread.created" => {
+                                Some(InputReadmissionScope::Thread(&event.event.aggregate_id))
                             }
-                            // Moves the workspace of every thread without its own worktree.
+                            "thread.meta-updated" if payload.get("worktreePath").is_some() => {
+                                Some(InputReadmissionScope::Thread(&event.event.aggregate_id))
+                            }
+                            // Moves the workspace of the project's threads without a worktree.
                             "project.meta-updated" if payload.get("workspaceRoot").is_some() => {
-                                Some(None)
+                                Some(InputReadmissionScope::InheritedRootOf(
+                                    &event.event.aggregate_id,
+                                ))
                             }
                             _ => None,
                         }
@@ -351,14 +356,14 @@ impl ServerTerminalServices {
                             skipped,
                             "terminal input missed orchestration events; re-admitting every input session"
                         );
-                        Some(None)
+                        Some(InputReadmissionScope::All)
                     }
                     Err(broadcast::error::RecvError::Closed) => return,
                 };
-                let (Some(threads), Some(_)) = (threads, availability.as_ref()) else {
+                let (Some(scope), Some(_)) = (scope, availability.as_ref()) else {
                     continue;
                 };
-                let (revision, sessions) = terminal.start_input_readmission(threads);
+                let (revision, sessions) = terminal.start_input_readmission(scope);
                 for (input_id, thread_id) in sessions {
                     let resolving_now = latest.contains_key(&input_id);
                     latest.insert(input_id.clone(), (thread_id.clone(), revision));
@@ -983,10 +988,10 @@ fn register_ordered_input_rpcs(registry: &mut RpcRegistry, services: &ServerTerm
                 // it ends, workspace loss seals it, and a workspace change re-admits it (#82).
                 let epoch = terminal.input_readmission_epoch();
                 let admission =
-                    acquire_terminal_thread(availability.as_ref(), &input.thread_id).await?;
+                    acquire_terminal_input(availability.as_ref(), &input.thread_id).await?;
                 let loss = admission
                     .as_ref()
-                    .map(WorkspaceAdmissionLease::loss_cancellation);
+                    .map(|(admission, _)| admission.loss_cancellation());
                 let session_admission = admission.map(input_admission);
                 let lease = await_admission_loss(
                     loss,
@@ -1003,8 +1008,7 @@ fn register_ordered_input_rpcs(registry: &mut RpcRegistry, services: &ServerTerm
                 // A change that committed while this resolved re-admitted the sessions it found
                 // before this one registered; admit the current workspace here instead, and
                 // report it if it cannot be admitted rather than return a sealed session.
-                let current = terminal.input_readmission_epoch();
-                if current != epoch
+                if terminal.input_readmission_epoch() != epoch
                     && let Some(availability) = availability.as_ref()
                 {
                     // The client never learns this lease if the request ends here.
@@ -1015,12 +1019,15 @@ fn register_ordered_input_rpcs(registry: &mut RpcRegistry, services: &ServerTerm
                         terminal_id: &input.terminal_id,
                         input_id: Some(&lease.input_id),
                     };
+                    // A round of its own, so later rounds see it pending and cover or supersede it.
+                    let (revision, _) = terminal
+                        .start_input_readmission(InputReadmissionScope::Session(&lease.input_id));
                     let readmitted = readmit_input(
                         &terminal,
                         availability,
                         &input.thread_id,
                         &lease.input_id,
-                        current,
+                        revision,
                     )
                     .await;
                     // A concurrent round may have sealed it even when this result was ignored.
@@ -1150,10 +1157,29 @@ impl Drop for UnclaimedInputLease<'_> {
     }
 }
 
-fn input_admission(admission: WorkspaceAdmissionLease) -> TerminalInputAdmission {
+/// Admits the thread's persisted workspace for an input session, with the project whose root
+/// it is when the thread has no worktree of its own.
+async fn acquire_terminal_input(
+    admission: Option<&WorkspaceAdmissionController>,
+    thread_id: &str,
+) -> Result<Option<(WorkspaceAdmissionLease, Option<String>)>, Value> {
+    let Some(admission) = admission else {
+        return Ok(None);
+    };
+    admission
+        .acquire_thread_with_origin(thread_id, std::iter::empty())
+        .await
+        .map(Some)
+        .map_err(workspace_admission_error)
+}
+
+fn input_admission(
+    (admission, inherited_root_of): (WorkspaceAdmissionLease, Option<String>),
+) -> TerminalInputAdmission {
     TerminalInputAdmission::new(
         admission.loss_cancellation().cancellation_token(),
         admission,
+        inherited_root_of,
     )
 }
 
@@ -1168,7 +1194,7 @@ async fn readmit_input(
     input_id: &str,
     revision: u64,
 ) -> Result<(), Value> {
-    match acquire_terminal_thread(Some(availability), thread_id).await {
+    match acquire_terminal_input(Some(availability), thread_id).await {
         Ok(admission) => {
             terminal.readmit_input(input_id, revision, admission.map(input_admission));
             Ok(())

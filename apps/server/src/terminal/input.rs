@@ -57,13 +57,53 @@ pub(crate) struct TerminalInputLease {
 pub(crate) struct TerminalInputAdmission {
     lost: CancellationToken,
     hold: Arc<dyn Any + Send + Sync>,
+    /// The project whose root the admitted workspace is, when the thread has no worktree of
+    /// its own: a move of that root re-admits the session.
+    inherited_root_of: Option<String>,
 }
 
 impl TerminalInputAdmission {
-    pub(crate) fn new(lost: CancellationToken, hold: impl Any + Send + Sync) -> Self {
+    pub(crate) fn new(
+        lost: CancellationToken,
+        hold: impl Any + Send + Sync,
+        inherited_root_of: Option<String>,
+    ) -> Self {
         Self {
             lost,
             hold: Arc::new(hold),
+            inherited_root_of,
+        }
+    }
+}
+
+/// Which live input sessions a re-admission round covers.
+#[derive(Clone, Copy)]
+pub(crate) enum InputReadmissionScope<'a> {
+    /// The thread's sessions: its workspace may have changed.
+    Thread(&'a str),
+    /// Sessions admitted for this project's root: the root may have moved. Sessions whose
+    /// workspace is still being re-resolved are included, as their origin is not known yet.
+    InheritedRootOf(&'a str),
+    /// Every session: the change is unknown.
+    All,
+    /// One session, by input id: a begin catching up with a change that raced it.
+    Session(&'a str),
+}
+
+impl InputReadmissionScope<'_> {
+    fn covers(self, input_id: &str, thread_id: &str, admission: &LeaseAdmission) -> bool {
+        match self {
+            Self::Thread(thread) => thread == thread_id,
+            Self::Session(session) => session == input_id,
+            Self::InheritedRootOf(project) => {
+                admission.pending > admission.revision
+                    || admission
+                        .current
+                        .as_ref()
+                        .and_then(|admission| admission.inherited_root_of.as_deref())
+                        == Some(project)
+            }
+            Self::All => true,
         }
     }
 }
@@ -297,13 +337,13 @@ impl TerminalInputRegistry {
         self.0.lock().expect("terminal input registry").readmissions
     }
 
-    /// Starts re-admission round `revision` for the live sessions of `thread_id`, or of every
-    /// thread, and returns it with their `(input_id, thread_id)`. Their frames wait until the
-    /// round's result arrives. A begin that registers after this call sees the epoch move and
-    /// re-admits itself.
+    /// Starts re-admission round `revision` for the live sessions in `scope`, and returns it
+    /// with their `(input_id, thread_id)`. Their frames wait until the round's result arrives;
+    /// other sessions are untouched. A begin that registers after this call sees the epoch
+    /// move and re-admits itself.
     pub(super) fn start_readmission(
         &self,
-        thread_id: Option<&str>,
+        scope: InputReadmissionScope<'_>,
     ) -> (u64, Vec<(String, String)>) {
         let mut state = self.0.lock().expect("terminal input registry");
         state.readmissions += 1;
@@ -311,14 +351,12 @@ impl TerminalInputRegistry {
         let sessions = state
             .leases
             .iter()
-            .filter(|(_, lease)| thread_id.is_none_or(|thread_id| lease.key.0 == thread_id))
-            .map(|(input_id, lease)| {
-                lease
-                    .admission
-                    .lock()
-                    .expect("terminal input admission")
-                    .pending = revision;
-                (input_id.clone(), lease.key.0.clone())
+            .filter_map(|(input_id, lease)| {
+                let mut admission = lease.admission.lock().expect("terminal input admission");
+                scope.covers(input_id, &lease.key.0, &admission).then(|| {
+                    admission.pending = revision;
+                    (input_id.clone(), lease.key.0.clone())
+                })
             })
             .collect();
         (revision, sessions)

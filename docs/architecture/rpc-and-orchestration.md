@@ -2341,9 +2341,14 @@ A changed workspace re-admits the session in place: frames keep their
 `inputId` and order and the user sees nothing. The production runtime feeds
 orchestration events to `ServerTerminalServices::watch_workspace_changes`,
 which re-resolves and replaces the admission of the thread's leases on
-`thread.created` and on `thread.meta-updated` carrying `worktreePath`, and of
-every lease on `project.meta-updated` carrying `workspaceRoot` or when its
-subscription lags. While a round resolves, the session's frames wait for its
+`thread.created` and on `thread.meta-updated` carrying `worktreePath`. On
+`project.meta-updated` carrying `workspaceRoot` it re-admits only the leases
+admitted for that project's root, that is, of its threads without a worktree of
+their own; each admission records that origin when it resolves, so the filter
+reads no database. A session whose workspace is still being re-resolved is
+included, since its origin is not known yet. Other sessions, of other projects
+and of threads with their own worktree, are untouched. A lagged subscription re-admits every lease, since the
+missed changes are unknown. While a round resolves, the session's frames wait for its
 result, so none writes under an admission the round may replace or refuse; a
 frame that already holds its turn when a round starts writes under the
 admission current at that moment, as a frame admitted just before the change
@@ -2359,8 +2364,9 @@ resolution fails), the lease is sealed and the reconnecting
 `terminal.beginInput` reports `WorkspaceUnavailableError`. A begin reads the
 re-admission epoch before it resolves the workspace and again after its lease
 registers; if a round started in between, the begin re-admits its own lease
-before it returns, and fails with the admission error instead of returning a
-sealed lease, so a change committed during that read is not missed.
+in a round of its own before it returns, so later rounds see it pending, and
+fails with the admission error instead of returning a sealed lease, so a
+change committed during that read is not missed.
 
 The Rust terminal owner reserves each frame from a shared per-connection window
 of 16 frames and 256 KiB before the frame waits for its turn. Each frame is at

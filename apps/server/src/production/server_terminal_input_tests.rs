@@ -178,19 +178,7 @@ impl Fixture {
             .expect("migrations");
         let repositories = Repositories::new(database);
         repositories
-            .upsert_project(ProjectionProject {
-                project_id: "project-input".to_owned(),
-                title: "project".to_owned(),
-                workspace_root: project_root.to_string_lossy().into_owned(),
-                default_model_selection: None,
-                scripts: json!([]),
-                worktree_discovery: json!({}),
-                worktree_repository_key: None,
-                created_at: "2026-10-12T00:00:00Z".to_owned(),
-                updated_at: "2026-10-12T00:00:00Z".to_owned(),
-                deleted_at: None,
-                repository_identity: None,
-            })
+            .upsert_project(project_row("project-input", &project_root))
             .await
             .expect("project");
         let fixture_thread = thread_row(None);
@@ -313,10 +301,34 @@ impl Fixture {
     }
 }
 
+fn project_row(project_id: &str, workspace_root: &Path) -> ProjectionProject {
+    ProjectionProject {
+        project_id: project_id.to_owned(),
+        title: "project".to_owned(),
+        workspace_root: workspace_root.to_string_lossy().into_owned(),
+        default_model_selection: None,
+        scripts: json!([]),
+        worktree_discovery: json!({}),
+        worktree_repository_key: None,
+        created_at: "2026-10-12T00:00:00Z".to_owned(),
+        updated_at: "2026-10-12T00:00:00Z".to_owned(),
+        deleted_at: None,
+        repository_identity: None,
+    }
+}
+
 fn thread_row(worktree_path: Option<String>) -> ProjectionThread {
+    thread_row_in(THREAD, "project-input", worktree_path)
+}
+
+fn thread_row_in(
+    thread_id: &str,
+    project_id: &str,
+    worktree_path: Option<String>,
+) -> ProjectionThread {
     ProjectionThread {
-        thread_id: THREAD.to_owned(),
-        project_id: "project-input".to_owned(),
+        thread_id: thread_id.to_owned(),
+        project_id: project_id.to_owned(),
         title: "thread".to_owned(),
         kind: "workspace".to_owned(),
         model_selection: json!({}),
@@ -813,6 +825,124 @@ async fn a_begin_whose_changed_workspace_cannot_be_admitted_reports_why() {
     parked.await.expect("parked call finishes");
     moved.await.expect("thread moved");
     drop(removal);
+    fixture.shutdown().await;
+}
+
+/// Opens a terminal for `thread_id` in `cwd` and begins its input; returns the input id.
+async fn begin_thread_input(fixture: &mut Fixture, thread_id: &str, cwd: &Path) -> String {
+    success(
+        fixture
+            .request(
+                "terminal.open",
+                json!({"threadId": thread_id, "terminalId": TERMINAL, "cwd": cwd, "env": {}}),
+            )
+            .await,
+    );
+    success(
+        fixture
+            .request(
+                "terminal.beginInput",
+                json!({"threadId": thread_id, "terminalId": TERMINAL, "attachmentSequence": 0}),
+            )
+            .await,
+    )["inputId"]
+        .as_str()
+        .expect("input id")
+        .to_owned()
+}
+
+fn project_moved(project_id: &str, workspace_root: &Path) -> OrchestrationEvent {
+    let mut event = orchestration_event(
+        "project.meta-updated",
+        project_id,
+        json!({"projectId": project_id, "workspaceRoot": workspace_root}),
+    );
+    event.event.aggregate_kind = "project".to_owned();
+    event
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_moved_project_root_leaves_other_projects_and_own_worktrees_alone() {
+    let mut fixture = Fixture::start().await;
+    let (events, receiver) = broadcast::channel(16);
+    fixture.services.watch_workspace_changes(receiver);
+    let other_root = fixture._temp.path().join("other-project");
+    std::fs::create_dir_all(&other_root).expect("other project root");
+    let worktree = fixture.worktree.clone();
+    fixture
+        .repositories
+        .upsert_project(project_row("project-other", &other_root))
+        .await
+        .expect("other project");
+    for (thread_id, project_id, worktree_path) in [
+        ("thread-other-project", "project-other", None),
+        (
+            "thread-own-worktree",
+            "project-input",
+            Some(worktree.to_string_lossy().into_owned()),
+        ),
+    ] {
+        fixture
+            .repositories
+            .upsert_thread(thread_row_in(thread_id, project_id, worktree_path))
+            .await
+            .expect("thread");
+    }
+    let other = begin_thread_input(&mut fixture, "thread-other-project", &other_root).await;
+    let own = begin_thread_input(&mut fixture, "thread-own-worktree", &worktree).await;
+
+    // Re-admitting either session would wait for this busy worker.
+    let parked = park_database(&fixture.repositories, Duration::from_millis(800)).await;
+    let moved_root = fixture._temp.path().join("moved-project");
+    events
+        .send(project_moved("project-input", &moved_root))
+        .expect("event delivered");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    for (thread_id, input_id) in [
+        ("thread-other-project", &other),
+        ("thread-own-worktree", &own),
+    ] {
+        let reply = tokio::time::timeout(
+            Duration::from_millis(300),
+            fixture.request(
+                "terminal.writeInput",
+                json!({
+                    "threadId": thread_id, "terminalId": TERMINAL, "inputId": input_id,
+                    "sequence": 0, "data": "k",
+                }),
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("{thread_id} input waited for another project's root"));
+        success(reply);
+    }
+    parked.await.expect("parked call finishes");
+    fixture.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_moved_project_root_readmits_the_threads_that_inherit_it() {
+    let mut fixture = Fixture::start().await;
+    let (events, receiver) = broadcast::channel(16);
+    fixture.services.watch_workspace_changes(receiver);
+    let input = fixture.begin_input(0).await;
+    let moved_root = fixture._temp.path().join("moved-project");
+    std::fs::create_dir_all(&moved_root).expect("moved root");
+    fixture
+        .repositories
+        .upsert_project(project_row("project-input", &moved_root))
+        .await
+        .expect("project root moves");
+    events
+        .send(project_moved("project-input", &moved_root))
+        .expect("event delivered");
+    wait_for_admission_of(&fixture, &moved_root, &fixture.project_root).await;
+    success(
+        fixture
+            .request("terminal.writeInput", Fixture::frame(&input, 0, "a"))
+            .await,
+    );
+    assert_eq!(fixture.backend.writes(), ["a"]);
     fixture.shutdown().await;
 }
 

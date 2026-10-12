@@ -3042,14 +3042,13 @@ impl TerminalManager {
         self.inner.input.readmission_epoch()
     }
 
-    /// Starts a re-admission round for the input sessions of `thread_id`, or of every thread:
-    /// returns the round's revision and their `(input_id, thread_id)`. Their frames wait for
-    /// the round's result.
+    /// Starts a re-admission round for the input sessions in `scope`: returns the round's
+    /// revision and their `(input_id, thread_id)`. Their frames wait for the round's result.
     pub(crate) fn start_input_readmission(
         &self,
-        thread_id: Option<&str>,
+        scope: super::input::InputReadmissionScope<'_>,
     ) -> (u64, Vec<(String, String)>) {
-        self.inner.input.start_readmission(thread_id)
+        self.inner.input.start_readmission(scope)
     }
 
     /// Applies round `revision`'s result: replaces the session's admission without
@@ -5474,6 +5473,7 @@ mod tests {
             Some(super::super::input::TerminalInputAdmission::new(
                 lost.clone(),
                 (),
+                None,
             ))
         };
         let first_lost = CancellationToken::new();
@@ -5502,11 +5502,18 @@ mod tests {
         write(0, "a").await.expect("first frame");
 
         let epoch = manager.input_readmission_epoch();
-        let (older, sessions) = manager.start_input_readmission(Some("thread"));
+        let (older, sessions) = manager
+            .start_input_readmission(crate::terminal::InputReadmissionScope::Thread("thread"));
         assert_eq!(sessions, [(lease.input_id.clone(), "thread".to_owned())]);
         assert_ne!(manager.input_readmission_epoch(), epoch);
-        let (newer, _) = manager.start_input_readmission(Some("thread"));
-        assert!(manager.start_input_readmission(Some("other")).1.is_empty());
+        let (newer, _) = manager
+            .start_input_readmission(crate::terminal::InputReadmissionScope::Thread("thread"));
+        assert!(
+            manager
+                .start_input_readmission(crate::terminal::InputReadmissionScope::Thread("other"))
+                .1
+                .is_empty()
+        );
 
         // A frame waits while a round resolves the workspace it may be refused.
         let mut held = Box::pin(write(1, "b"));
@@ -5527,7 +5534,11 @@ mod tests {
 
         second_lost.cancel();
         tokio::time::timeout(Duration::from_secs(1), async {
-            while !manager.start_input_readmission(Some("thread")).1.is_empty() {
+            while !manager
+                .start_input_readmission(crate::terminal::InputReadmissionScope::Thread("thread"))
+                .1
+                .is_empty()
+            {
                 tokio::task::yield_now().await;
             }
         })
@@ -5538,6 +5549,74 @@ mod tests {
             Err(TerminalError::Input(error)) if error.code == "closed"
         ));
         assert_eq!(backend.latest().writes(), ["a", "b", "c"]);
+    }
+
+    #[tokio::test]
+    async fn ordered_input_project_root_rounds_cover_inheriting_and_resolving_sessions() {
+        use crate::terminal::InputReadmissionScope;
+
+        let (root, _backend, manager, connection, closed, _input_id) =
+            ordered_input_fixture().await;
+        let mut inputs = std::collections::BTreeMap::new();
+        for (thread_id, origin) in [
+            ("inherits", Some("project-a")),
+            ("other-project", Some("project-b")),
+            ("own-worktree", None),
+            ("resolving", None),
+        ] {
+            manager
+                .open(TerminalOpenInput::new(
+                    thread_id,
+                    "term",
+                    root.path().to_path_buf(),
+                    80,
+                    24,
+                ))
+                .await
+                .expect("open");
+            let lease = manager
+                .begin_input(
+                    connection,
+                    closed.clone(),
+                    thread_id,
+                    "term",
+                    0,
+                    Some(super::super::input::TerminalInputAdmission::new(
+                        CancellationToken::new(),
+                        (),
+                        origin.map(str::to_owned),
+                    )),
+                )
+                .await
+                .expect("admitted lease");
+            inputs.insert(thread_id, lease.input_id);
+        }
+        // This session's workspace is being resolved again, so its origin is not known yet.
+        manager.start_input_readmission(InputReadmissionScope::Thread("resolving"));
+
+        let (_, sessions) =
+            manager.start_input_readmission(InputReadmissionScope::InheritedRootOf("project-a"));
+        let mut covered = sessions
+            .into_iter()
+            .map(|(input_id, thread_id)| {
+                assert_eq!(inputs[thread_id.as_str()], input_id);
+                thread_id
+            })
+            .collect::<Vec<_>>();
+        covered.sort();
+        assert_eq!(covered, ["inherits", "resolving"]);
+
+        // A begin's catch-up is a round of its own session, which later project rounds cover.
+        let own = &inputs["own-worktree"];
+        assert_eq!(
+            manager
+                .start_input_readmission(InputReadmissionScope::Session(own))
+                .1,
+            [(own.clone(), "own-worktree".to_owned())]
+        );
+        let (_, sessions) =
+            manager.start_input_readmission(InputReadmissionScope::InheritedRootOf("project-a"));
+        assert!(sessions.iter().any(|(input_id, _)| input_id == own));
     }
 
     #[tokio::test]
@@ -5555,6 +5634,7 @@ mod tests {
                 Some(super::super::input::TerminalInputAdmission::new(
                     lost.clone(),
                     (),
+                    None,
                 )),
             )
             .await
