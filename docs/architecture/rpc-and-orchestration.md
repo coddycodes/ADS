@@ -2337,17 +2337,30 @@ lease like a closed connection: a frame in flight fails with
 the admission is released so the loss or removal does not wait for it. A new
 `terminal.beginInput` then fails with `WorkspaceUnavailableError`.
 
-A changed workspace seals the session too, and the next begin admits the new
-workspace. The runtime feeds orchestration events to
-`ServerTerminalServices::watch_workspace_changes`, which seals the thread's
-leases on `thread.created` and on `thread.meta-updated` carrying
-`worktreePath`, and every lease on `project.meta-updated` carrying
-`workspaceRoot` or when its subscription lags. A begin reads the invalidation
-epoch before it resolves the workspace and is refused with
-`TerminalInputError` when an invalidation landed meanwhile, so a change
-committed during that read is not missed. A sealed session shows **Reconnect
-input** in the renderer; the old per-frame admission followed such a change
-silently.
+A changed workspace re-admits the session in place: frames keep their
+`inputId` and order and the user sees nothing. The production runtime feeds
+orchestration events to `ServerTerminalServices::watch_workspace_changes`,
+which re-resolves and replaces the admission of the thread's leases on
+`thread.created` and on `thread.meta-updated` carrying `worktreePath`, and of
+every lease on `project.meta-updated` carrying `workspaceRoot` or when its
+subscription lags. While a round resolves, the session's frames wait for its
+result, so none writes under an admission the round may replace or refuse; a
+frame that already holds its turn when a round starts writes under the
+admission current at that moment, as a frame admitted just before the change
+did under per-frame admission. Sessions resolve independently, so one slow
+workspace holds only its own frames, with at most one resolution in flight per
+session: changes that arrive meanwhile coalesce into one more resolution at the
+latest round. A result older than one already applied, or than the latest round
+started for the session, is ignored, and the replaced admission is released. Only the loss of the session's
+current admission seals it, atomically with re-admission, and a frame checks
+for that loss itself before and while it writes. When the new workspace cannot
+be admitted (unavailable, or its
+resolution fails), the lease is sealed and the reconnecting
+`terminal.beginInput` reports `WorkspaceUnavailableError`. A begin reads the
+re-admission epoch before it resolves the workspace and again after its lease
+registers; if a round started in between, the begin re-admits its own lease
+before it returns, and fails with the admission error instead of returning a
+sealed lease, so a change committed during that read is not missed.
 
 The Rust terminal owner reserves each frame from a shared per-connection window
 of 16 frames and 256 KiB before the frame waits for its turn. Each frame is at

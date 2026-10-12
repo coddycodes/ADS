@@ -521,31 +521,49 @@ fn orchestration_event(event_type: &str, aggregate_id: &str, payload: Value) -> 
     }
 }
 
-/// Waits until no admission covers the thread or `path`: the input session was sealed and
-/// released the admission it took at `terminal.beginInput`.
-async fn wait_for_input_release(fixture: &Fixture, path: &Path) {
-    tokio::time::timeout(
-        Duration::from_secs(1),
-        fixture
-            .registry
-            .wait_for_transition_admissions(&fixture.loss(path)),
-    )
-    .await
-    .expect("the input session releases its workspace admission");
+/// Whether some admission covers `path` (an admission scope other than this thread).
+fn admits(fixture: &Fixture, path: &Path) -> bool {
+    fixture
+        .registry
+        .has_transition_admissions(&WorkspaceLossTransition {
+            thread_id: "thread-probe".to_owned(),
+            ..fixture.loss(path)
+        })
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_changed_workspace_is_admitted_when_input_begins_again() {
-    let mut fixture = Fixture::start().await;
-    let (events, receiver) = broadcast::channel(16);
-    fixture.services.watch_workspace_changes(receiver);
-    let input = fixture.begin_input(0).await;
+/// Waits until the input session holds an admission of `admitted` and none of `released`.
+async fn wait_for_admission_of(fixture: &Fixture, admitted: &Path, released: &Path) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !admits(fixture, admitted) || admits(fixture, released) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the input session follows the thread's workspace");
+}
+
+async fn move_thread_to_worktree(fixture: &Fixture) -> String {
     let worktree = fixture.worktree.to_string_lossy().into_owned();
     fixture
         .repositories
         .upsert_thread(thread_row(Some(worktree.clone())))
         .await
         .expect("thread moves to its worktree");
+    worktree
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_changed_workspace_is_readmitted_without_interrupting_input() {
+    let mut fixture = Fixture::start().await;
+    let (events, receiver) = broadcast::channel(16);
+    fixture.services.watch_workspace_changes(receiver);
+    let input = fixture.begin_input(0).await;
+    success(
+        fixture
+            .request("terminal.writeInput", Fixture::frame(&input, 0, "a"))
+            .await,
+    );
+    let worktree = move_thread_to_worktree(&fixture).await;
     events
         .send(orchestration_event(
             "thread.meta-updated",
@@ -553,16 +571,15 @@ async fn a_changed_workspace_is_admitted_when_input_begins_again() {
             json!({"threadId": THREAD, "worktreePath": worktree}),
         ))
         .expect("event delivered");
-    wait_for_input_release(&fixture, &fixture.project_root).await;
-    let stale = failure(
+    wait_for_admission_of(&fixture, &fixture.worktree, &fixture.project_root).await;
+    // The same session keeps typing, in order, with no new begin.
+    success(
         fixture
-            .request("terminal.writeInput", Fixture::frame(&input, 0, "stale"))
+            .request("terminal.writeInput", Fixture::frame(&input, 1, "b"))
             .await,
     );
-    assert_eq!(stale["_tag"], "TerminalInputError", "{stale}");
 
-    // A moved project root may change any thread's workspace.
-    let input = fixture.begin_input(1).await;
+    // A moved project root may change any thread's workspace; the session stays live.
     events
         .send(orchestration_event(
             "project.meta-updated",
@@ -570,20 +587,21 @@ async fn a_changed_workspace_is_admitted_when_input_begins_again() {
             json!({"projectId": "project-other", "workspaceRoot": "/elsewhere"}),
         ))
         .expect("event delivered");
-    wait_for_input_release(&fixture, &fixture.worktree).await;
-    failure(
-        fixture
-            .request("terminal.writeInput", Fixture::frame(&input, 0, "stale"))
-            .await,
-    );
-
-    let input = fixture.begin_input(2).await;
+    events
+        .send(orchestration_event(
+            "thread.meta-updated",
+            THREAD,
+            json!({"threadId": THREAD, "title": "renamed"}),
+        ))
+        .expect("event delivered");
     success(
         fixture
-            .request("terminal.writeInput", Fixture::frame(&input, 0, "a"))
+            .request("terminal.writeInput", Fixture::frame(&input, 2, "c"))
             .await,
     );
-    // Another thread's removal of the new workspace reaches this session through its path.
+    assert_eq!(fixture.backend.writes(), ["a", "b", "c"]);
+
+    // Another thread's removal of the new workspace reaches the session through its path.
     let removal = fixture
         .registry
         .mark_removing("thread-other", &fixture.worktree)
@@ -591,14 +609,14 @@ async fn a_changed_workspace_is_admitted_when_input_begins_again() {
         .expect("physical identity resolves");
     let removed = failure(
         fixture
-            .request("terminal.writeInput", Fixture::frame(&input, 1, "b"))
+            .request("terminal.writeInput", Fixture::frame(&input, 3, "d"))
             .await,
     );
     assert!(
         removed["_tag"] == "WorkspaceUnavailableError" || removed["_tag"] == "TerminalInputError",
         "{removed}"
     );
-    assert_eq!(fixture.backend.writes(), ["a"]);
+    assert_eq!(fixture.backend.writes(), ["a", "b", "c"]);
     tokio::time::timeout(
         Duration::from_secs(1),
         fixture
@@ -607,6 +625,193 @@ async fn a_changed_workspace_is_admitted_when_input_begins_again() {
     )
     .await
     .expect("the input session releases its admission for the removal");
+    drop(removal);
+    fixture.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_changed_workspace_that_cannot_be_admitted_seals_input() {
+    let mut fixture = Fixture::start().await;
+    let (events, receiver) = broadcast::channel(16);
+    fixture.services.watch_workspace_changes(receiver);
+    let input = fixture.begin_input(0).await;
+    let removal = fixture
+        .registry
+        .mark_removing("thread-other", &fixture.worktree)
+        .await
+        .expect("physical identity resolves");
+    let worktree = move_thread_to_worktree(&fixture).await;
+    events
+        .send(orchestration_event(
+            "thread.meta-updated",
+            THREAD,
+            json!({"threadId": THREAD, "worktreePath": worktree}),
+        ))
+        .expect("event delivered");
+    // The session is sealed and releases its admission of the old workspace.
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        fixture
+            .registry
+            .wait_for_transition_admissions(&fixture.loss(&fixture.project_root)),
+    )
+    .await
+    .expect("the sealed session releases its admission");
+    let sealed = failure(
+        fixture
+            .request("terminal.writeInput", Fixture::frame(&input, 0, "lost"))
+            .await,
+    );
+    assert_eq!(sealed["_tag"], "TerminalInputError", "{sealed}");
+    assert!(fixture.backend.writes().is_empty());
+    // Reconnecting reports why.
+    let unavailable = failure(
+        fixture
+            .request(
+                "terminal.beginInput",
+                json!({"threadId": THREAD, "terminalId": TERMINAL, "attachmentSequence": 1}),
+            )
+            .await,
+    );
+    assert_eq!(
+        unavailable["_tag"], "WorkspaceUnavailableError",
+        "{unavailable}"
+    );
+    drop(removal);
+    fixture.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_workspace_change_while_input_begins_is_readmitted() {
+    let mut fixture = Fixture::start().await;
+    let (events, receiver) = broadcast::channel(16);
+    fixture.services.watch_workspace_changes(receiver);
+    // Hold the worker so the begin reads the old workspace, then the change commits and is
+    // announced before the session registers.
+    let parked = park_database(&fixture.repositories, Duration::from_millis(600)).await;
+    let begin = fixture
+        .send(
+            "terminal.beginInput",
+            json!({"threadId": THREAD, "terminalId": TERMINAL, "attachmentSequence": 0}),
+        )
+        .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let moved = {
+        let repositories = fixture.repositories.clone();
+        let worktree = fixture.worktree.to_string_lossy().into_owned();
+        tokio::spawn(async move {
+            repositories
+                .upsert_thread(thread_row(Some(worktree)))
+                .await
+                .expect("thread moves to its worktree");
+        })
+    };
+    events
+        .send(orchestration_event(
+            "thread.meta-updated",
+            THREAD,
+            json!({"threadId": THREAD, "worktreePath": fixture.worktree}),
+        ))
+        .expect("event delivered");
+    let reply = fixture.reply().await;
+    let ServerMessage::Exit { request_id, .. } = &reply else {
+        panic!("expected the begin reply, got {reply:?}");
+    };
+    assert_eq!(request_id.as_str(), begin);
+    let input = success(reply)["inputId"]
+        .as_str()
+        .expect("input id")
+        .to_owned();
+    parked.await.expect("parked call finishes");
+    moved.await.expect("thread moved");
+    wait_for_admission_of(&fixture, &fixture.worktree, &fixture.project_root).await;
+    success(
+        fixture
+            .request("terminal.writeInput", Fixture::frame(&input, 0, "a"))
+            .await,
+    );
+    fixture.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn input_waits_for_a_pending_readmission_and_never_writes_to_a_refused_workspace() {
+    let mut fixture = Fixture::start().await;
+    let (events, receiver) = broadcast::channel(16);
+    fixture.services.watch_workspace_changes(receiver);
+    let input = fixture.begin_input(0).await;
+    let removal = fixture
+        .registry
+        .mark_removing("thread-other", &fixture.worktree)
+        .await
+        .expect("physical identity resolves");
+    let worktree = move_thread_to_worktree(&fixture).await;
+    // The re-admission resolves on a busy worker while the user keeps typing.
+    let parked = park_database(&fixture.repositories, Duration::from_millis(400)).await;
+    events
+        .send(orchestration_event(
+            "thread.meta-updated",
+            THREAD,
+            json!({"threadId": THREAD, "worktreePath": worktree}),
+        ))
+        .expect("event delivered");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let refused = failure(
+        fixture
+            .request("terminal.writeInput", Fixture::frame(&input, 0, "typed"))
+            .await,
+    );
+    assert!(
+        refused["_tag"] == "WorkspaceUnavailableError" || refused["_tag"] == "TerminalInputError",
+        "{refused}"
+    );
+    assert!(
+        fixture.backend.writes().is_empty(),
+        "nothing is written while the new workspace is being resolved and refused"
+    );
+    parked.await.expect("parked call finishes");
+    drop(removal);
+    fixture.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_begin_whose_changed_workspace_cannot_be_admitted_reports_why() {
+    let mut fixture = Fixture::start().await;
+    let (events, receiver) = broadcast::channel(16);
+    fixture.services.watch_workspace_changes(receiver);
+    let removal = fixture
+        .registry
+        .mark_removing("thread-other", &fixture.worktree)
+        .await
+        .expect("physical identity resolves");
+    let parked = park_database(&fixture.repositories, Duration::from_millis(600)).await;
+    fixture
+        .send(
+            "terminal.beginInput",
+            json!({"threadId": THREAD, "terminalId": TERMINAL, "attachmentSequence": 0}),
+        )
+        .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let moved = {
+        let repositories = fixture.repositories.clone();
+        let worktree = fixture.worktree.to_string_lossy().into_owned();
+        tokio::spawn(async move {
+            repositories
+                .upsert_thread(thread_row(Some(worktree)))
+                .await
+                .expect("thread moves to its worktree");
+        })
+    };
+    events
+        .send(orchestration_event(
+            "thread.meta-updated",
+            THREAD,
+            json!({"threadId": THREAD, "worktreePath": fixture.worktree}),
+        ))
+        .expect("event delivered");
+    let refused = failure(fixture.reply().await);
+    assert_eq!(refused["_tag"], "WorkspaceUnavailableError", "{refused}");
+    parked.await.expect("parked call finishes");
+    moved.await.expect("thread moved");
     drop(removal);
     fixture.shutdown().await;
 }

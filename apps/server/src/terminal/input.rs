@@ -51,26 +51,19 @@ pub(crate) struct TerminalInputLease {
     pub input_id: String,
 }
 
-/// Work admission an input session holds until the session ends, so its frames need no
-/// admission of their own. Cancelling `lost` seals the session like a closed connection.
+/// Work admission an input session holds until the session ends or a re-admission replaces
+/// it, so its frames need no admission of their own. Cancelling `lost` while the admission is
+/// current seals the session like a closed connection.
 pub(crate) struct TerminalInputAdmission {
     lost: CancellationToken,
-    hold: Box<dyn Any + Send + Sync>,
-    resolved_at: u64,
+    hold: Arc<dyn Any + Send + Sync>,
 }
 
 impl TerminalInputAdmission {
-    /// `resolved_at` is the [`TerminalInputRegistry::invalidation_epoch`] read before the
-    /// admission resolved its workspace.
-    pub(crate) fn new(
-        lost: CancellationToken,
-        hold: impl Any + Send + Sync,
-        resolved_at: u64,
-    ) -> Self {
+    pub(crate) fn new(lost: CancellationToken, hold: impl Any + Send + Sync) -> Self {
         Self {
             lost,
-            hold: Box::new(hold),
-            resolved_at,
+            hold: Arc::new(hold),
         }
     }
 }
@@ -86,8 +79,8 @@ pub(crate) struct TerminalInputAcknowledgement {
 struct RegistryState {
     leases: HashMap<String, Arc<InputLease>>,
     connections: HashMap<Uuid, Connection>,
-    /// Counts invalidations, so a begin can tell its admission was resolved before one.
-    invalidations: u64,
+    /// Counts re-admission rounds, so a begin can tell one started while it resolved.
+    readmissions: u64,
 }
 
 struct Connection {
@@ -125,15 +118,6 @@ impl TerminalInputRegistry {
             return Err(TerminalInputError::closed());
         }
         let mut state = self.0.lock().expect("terminal input registry");
-        if admission
-            .as_ref()
-            .is_some_and(|admission| admission.resolved_at != state.invalidations)
-        {
-            return Err(TerminalInputError::new(
-                "closed",
-                "The terminal's workspace changed while input was starting. Reconnect the terminal before typing again.",
-            ));
-        }
         if !state.connections.contains_key(&connection_id) {
             if state.connections.len() >= MAX_CONNECTIONS {
                 return Err(TerminalInputError::new(
@@ -197,9 +181,6 @@ impl TerminalInputRegistry {
                 "Too many attached terminal input leases.",
             ));
         }
-        let (admission_lost, admission) = admission.map_or_else(Default::default, |admission| {
-            (admission.lost, Some(admission.hold))
-        });
         let lease = Arc::new(InputLease {
             connection_id,
             attachment_sequence,
@@ -207,8 +188,13 @@ impl TerminalInputRegistry {
             identity,
             connection_closed,
             generation_closed,
-            admission_lost,
-            admission,
+            admission: Mutex::new(LeaseAdmission {
+                current: admission,
+                revision: 0,
+                pending: 0,
+                sealed_by: None,
+            }),
+            admission_changed: Notify::new(),
             closed: CancellationToken::new(),
             frames: connection.frames.clone(),
             bytes: connection.bytes.clone(),
@@ -231,12 +217,24 @@ impl TerminalInputRegistry {
         let registry = Arc::downgrade(&self.0);
         let cleanup_id = input_id.clone();
         tokio::spawn(async move {
-            tokio::select! {
-                () = lease.connection_closed.cancelled() => {},
-                () = lease.generation_closed.cancelled() => {},
-                () = lease.admission_lost.cancelled() => {},
-                () = lease.closed.cancelled() => {},
-                () = manager_closed.cancelled() => {},
+            loop {
+                let replaced = lease.admission_changed.notified();
+                tokio::pin!(replaced);
+                replaced.as_mut().enable();
+                let lost = lease.admission_lost();
+                tokio::select! {
+                    () = lease.connection_closed.cancelled() => break,
+                    () = lease.generation_closed.cancelled() => break,
+                    () = lease.closed.cancelled() => break,
+                    () = manager_closed.cancelled() => break,
+                    // A replaced admission's loss no longer concerns this session.
+                    () = async { if let Some(lost) = &lost { lost.cancelled().await } else { std::future::pending().await } } => {
+                        if lease.seal_on_current_admission_loss() {
+                            break;
+                        }
+                    }
+                    () = &mut replaced => {}
+                }
             }
             // Removing the lease drops its admission once in-flight frames settle.
             lease.fail(TerminalInputError::closed());
@@ -295,25 +293,90 @@ impl TerminalInputRegistry {
         Ok(())
     }
 
-    pub(super) fn invalidation_epoch(&self) -> u64 {
-        self.0
-            .lock()
-            .expect("terminal input registry")
-            .invalidations
+    pub(super) fn readmission_epoch(&self) -> u64 {
+        self.0.lock().expect("terminal input registry").readmissions
     }
 
-    /// Seals the input sessions of `thread_id`, or of every thread; their clients must begin
-    /// input again, and begins that resolved their admission before this call are refused.
-    pub(super) fn invalidate(&self, thread_id: Option<&str>) {
+    /// Starts re-admission round `revision` for the live sessions of `thread_id`, or of every
+    /// thread, and returns it with their `(input_id, thread_id)`. Their frames wait until the
+    /// round's result arrives. A begin that registers after this call sees the epoch move and
+    /// re-admits itself.
+    pub(super) fn start_readmission(
+        &self,
+        thread_id: Option<&str>,
+    ) -> (u64, Vec<(String, String)>) {
         let mut state = self.0.lock().expect("terminal input registry");
-        state.invalidations = state.invalidations.wrapping_add(1);
-        for lease in state
+        state.readmissions += 1;
+        let revision = state.readmissions;
+        let sessions = state
             .leases
-            .values()
-            .filter(|lease| thread_id.is_none_or(|thread_id| lease.key.0 == thread_id))
-        {
-            lease.fail(TerminalInputError::closed());
+            .iter()
+            .filter(|(_, lease)| thread_id.is_none_or(|thread_id| lease.key.0 == thread_id))
+            .map(|(input_id, lease)| {
+                lease
+                    .admission
+                    .lock()
+                    .expect("terminal input admission")
+                    .pending = revision;
+                (input_id.clone(), lease.key.0.clone())
+            })
+            .collect();
+        (revision, sessions)
+    }
+
+    /// Applies the result of re-admission round `revision`: replaces the session's admission,
+    /// keeping its frames and their order, or seals the session when no admission could be
+    /// taken (`None`). A result older than one already applied, or than the latest round
+    /// started for the session, is ignored. Returns whether the result applied.
+    pub(super) fn readmit(
+        &self,
+        input_id: &str,
+        revision: u64,
+        admission: Option<TerminalInputAdmission>,
+    ) -> bool {
+        let Some(lease) = self
+            .0
+            .lock()
+            .expect("terminal input registry")
+            .leases
+            .get(input_id)
+            .cloned()
+        else {
+            return false;
+        };
+        let mut current = lease.admission.lock().expect("terminal input admission");
+        // An applied result is newer, or a newer round is still resolving and decides.
+        if revision <= current.revision || revision < current.pending {
+            return false;
         }
+        current.revision = revision;
+        let previous = match admission {
+            Some(admission) => current.current.replace(admission),
+            None => {
+                // Sealed under the admission lock, so no newer result can interleave.
+                lease.fail(TerminalInputError::closed());
+                None
+            }
+        };
+        drop(current);
+        drop(previous);
+        lease.admission_changed.notify_waiters();
+        lease.changed.notify_waiters();
+        true
+    }
+
+    /// Whether the session is still registered and not sealed.
+    pub(super) fn check_open(&self, input_id: &str) -> Result<(), TerminalInputError> {
+        let lease = self
+            .0
+            .lock()
+            .expect("terminal input registry")
+            .leases
+            .get(input_id)
+            .cloned()
+            .ok_or_else(TerminalInputError::closed)?;
+        let state = lease.state.lock().expect("terminal input sequence");
+        lease.failure(&state).map_or(Ok(()), Err)
     }
 
     pub(super) fn prepare_write<'a>(
@@ -336,6 +399,20 @@ impl TerminalInputRegistry {
     }
 }
 
+pub(crate) struct TerminalInputSeal(Arc<InputLease>);
+
+impl TerminalInputSeal {
+    /// What the lost admission that sealed the session holds, if a loss sealed it.
+    pub(crate) fn lost_admission(&self) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.0
+            .admission
+            .lock()
+            .expect("terminal input admission")
+            .sealed_by
+            .clone()
+    }
+}
+
 pub(crate) struct PreparedTerminalInput<'a> {
     frame: InputFrame,
     input_id: &'a str,
@@ -344,9 +421,10 @@ pub(crate) struct PreparedTerminalInput<'a> {
 }
 
 impl PreparedTerminalInput<'_> {
-    /// What the session's [`TerminalInputAdmission`] holds, if it began with one.
-    pub(crate) fn admission(&self) -> Option<&(dyn Any + Send + Sync)> {
-        self.frame.lease.admission.as_deref()
+    /// Tells, once the write has failed, whether the session was sealed by the loss of its
+    /// current admission.
+    pub(crate) fn seal(&self) -> TerminalInputSeal {
+        TerminalInputSeal(self.frame.lease.clone())
     }
 
     pub(crate) async fn write(mut self) -> Result<TerminalInputAcknowledgement, TerminalError> {
@@ -354,11 +432,29 @@ impl PreparedTerminalInput<'_> {
         let sequence = self.sequence;
         let data = self.data;
         lease.wait_turn(sequence).await?;
-        if let Err(error) = lease
-            .identity
-            .write_input(data, &lease.closed, &lease.connection_closed)
-            .await
-        {
+        // Loss of the current admission stops the write at once, without waiting for the
+        // cleanup task; a replaced admission's loss does not.
+        let written = loop {
+            let replaced = lease.admission_changed.notified();
+            tokio::pin!(replaced);
+            replaced.as_mut().enable();
+            let lost = lease.admission_lost();
+            let write = lease
+                .identity
+                .write_input(data, &lease.closed, &lease.connection_closed);
+            tokio::select! {
+                biased;
+                () = async { if let Some(lost) = &lost { lost.cancelled().await } else { std::future::pending().await } } => {
+                    if lease.seal_on_current_admission_loss() {
+                        break Err(TerminalError::PublicationCancelled);
+                    }
+                }
+                // Watch the replacement's loss instead; nothing was published yet.
+                () = &mut replaced => {}
+                written = write => break written,
+            }
+        };
+        if let Err(error) = written {
             let failure = TerminalInputError::new(
                 "write",
                 &format!(
@@ -407,6 +503,16 @@ impl SequenceState {
     }
 }
 
+struct LeaseAdmission {
+    current: Option<TerminalInputAdmission>,
+    /// The re-admission round whose result `current` is, or 0 for the begin's own.
+    revision: u64,
+    /// The latest re-admission round started for this session.
+    pending: u64,
+    /// What the admission whose loss sealed the session holds.
+    sealed_by: Option<Arc<dyn Any + Send + Sync>>,
+}
+
 struct InputLease {
     connection_id: Uuid,
     attachment_sequence: u64,
@@ -414,8 +520,8 @@ struct InputLease {
     identity: TerminalSessionIdentity,
     connection_closed: CancellationToken,
     generation_closed: CancellationToken,
-    admission_lost: CancellationToken,
-    admission: Option<Box<dyn Any + Send + Sync>>,
+    admission: Mutex<LeaseAdmission>,
+    admission_changed: Notify,
     closed: CancellationToken,
     frames: Arc<Semaphore>,
     bytes: Arc<Semaphore>,
@@ -424,12 +530,40 @@ struct InputLease {
 }
 
 impl InputLease {
+    fn admission_lost(&self) -> Option<CancellationToken> {
+        self.admission
+            .lock()
+            .expect("terminal input admission")
+            .current
+            .as_ref()
+            .map(|admission| admission.lost.clone())
+    }
+
+    /// Seals the session if its current admission is lost, recording which, atomically with
+    /// re-admission. Returns whether it sealed.
+    fn seal_on_current_admission_loss(&self) -> bool {
+        let mut admission = self.admission.lock().expect("terminal input admission");
+        if admission.sealed_by.is_some() {
+            return true;
+        }
+        let Some(lost) = admission
+            .current
+            .as_ref()
+            .filter(|current| current.lost.is_cancelled())
+            .map(|current| current.hold.clone())
+        else {
+            return false;
+        };
+        admission.sealed_by = Some(lost);
+        self.fail(TerminalInputError::closed());
+        true
+    }
+
     fn failure(&self, state: &SequenceState) -> Option<TerminalInputError> {
         state.failure.clone().or_else(|| {
             (self.closed.is_cancelled()
                 || self.connection_closed.is_cancelled()
-                || self.generation_closed.is_cancelled()
-                || self.admission_lost.is_cancelled())
+                || self.generation_closed.is_cancelled())
             .then(TerminalInputError::closed)
         })
     }
@@ -515,12 +649,20 @@ impl InputLease {
             let notified = self.changed.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
+            // A lost current admission seals here, without waiting for the cleanup task.
+            self.seal_on_current_admission_loss();
             let deadline = {
+                // Admission before `state`, as sealing takes them; held across the claim so no
+                // re-admission round can start between its check and the turn.
+                let admission = self.admission.lock().expect("terminal input admission");
                 let mut state = self.state.lock().expect("terminal input sequence");
                 if let Some(error) = self.failure(&state) {
                     return Err(error);
                 }
-                if !state.writing && state.next == sequence {
+                if !state.writing
+                    && state.next == sequence
+                    && admission.pending <= admission.revision
+                {
                     state.writing = true;
                     state.gap_deadline = None;
                     return Ok(());

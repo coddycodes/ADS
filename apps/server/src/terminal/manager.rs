@@ -3036,20 +3036,40 @@ impl TerminalManager {
             .map_err(TerminalError::from)
     }
 
-    /// Ends the thread's input sessions, so the next begin re-admits its current workspace.
-    pub(crate) fn invalidate_thread_input(&self, thread_id: &str) {
-        self.inner.input.invalidate(Some(thread_id));
+    /// Read before resolving a [`super::input::TerminalInputAdmission`] and again once the
+    /// session is registered: a change means a re-admission round may have missed it.
+    pub(crate) fn input_readmission_epoch(&self) -> u64 {
+        self.inner.input.readmission_epoch()
     }
 
-    /// Ends every input session, as [`Self::invalidate_thread_input`] does for one thread.
-    pub(crate) fn invalidate_all_input(&self) {
-        self.inner.input.invalidate(None);
+    /// Starts a re-admission round for the input sessions of `thread_id`, or of every thread:
+    /// returns the round's revision and their `(input_id, thread_id)`. Their frames wait for
+    /// the round's result.
+    pub(crate) fn start_input_readmission(
+        &self,
+        thread_id: Option<&str>,
+    ) -> (u64, Vec<(String, String)>) {
+        self.inner.input.start_readmission(thread_id)
     }
 
-    /// Read before resolving a [`super::input::TerminalInputAdmission`]: a begin whose
-    /// admission predates a later invalidation is refused.
-    pub(crate) fn input_invalidation_epoch(&self) -> u64 {
-        self.inner.input.invalidation_epoch()
+    /// Applies round `revision`'s result: replaces the session's admission without
+    /// interrupting its input, or seals the session when the new admission could not be taken
+    /// (`None`). Results superseded by a newer round are ignored; returns whether it applied.
+    pub(crate) fn readmit_input(
+        &self,
+        input_id: &str,
+        revision: u64,
+        admission: Option<super::input::TerminalInputAdmission>,
+    ) -> bool {
+        self.inner.input.readmit(input_id, revision, admission)
+    }
+
+    /// Whether the input session is still registered and not sealed.
+    pub(crate) fn check_input_open(&self, input_id: &str) -> Result<(), TerminalError> {
+        self.inner
+            .input
+            .check_open(input_id)
+            .map_err(TerminalError::from)
     }
 
     pub(crate) fn prepare_input_write<'a>(
@@ -5447,39 +5467,105 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ordered_input_begin_rejects_an_admission_resolved_before_an_invalidation() {
-        let (_root, _backend, manager, connection, closed, _input_id) =
+    async fn ordered_input_readmission_keeps_the_session_and_follows_the_new_admission() {
+        let (_root, backend, manager, connection, closed, _input_id) =
             ordered_input_fixture().await;
-        let admission = |resolved_at| {
+        let admission = |lost: &CancellationToken| {
             Some(super::super::input::TerminalInputAdmission::new(
-                CancellationToken::new(),
+                lost.clone(),
                 (),
-                resolved_at,
             ))
         };
-        // The workspace changes while a begin is still resolving it.
-        let resolved_at = manager.input_invalidation_epoch();
-        manager.invalidate_thread_input("thread");
+        let first_lost = CancellationToken::new();
+        let lease = manager
+            .begin_input(
+                connection,
+                closed,
+                "thread",
+                "term",
+                1,
+                admission(&first_lost),
+            )
+            .await
+            .expect("admitted lease");
+        let write = |sequence, data| {
+            ordered_write(
+                &manager,
+                connection,
+                "thread",
+                "term",
+                &lease.input_id,
+                sequence,
+                data,
+            )
+        };
+        write(0, "a").await.expect("first frame");
+
+        let epoch = manager.input_readmission_epoch();
+        let (older, sessions) = manager.start_input_readmission(Some("thread"));
+        assert_eq!(sessions, [(lease.input_id.clone(), "thread".to_owned())]);
+        assert_ne!(manager.input_readmission_epoch(), epoch);
+        let (newer, _) = manager.start_input_readmission(Some("thread"));
+        assert!(manager.start_input_readmission(Some("other")).1.is_empty());
+
+        // A frame waits while a round resolves the workspace it may be refused.
+        let mut held = Box::pin(write(1, "b"));
+        assert!(futures_util::poll!(&mut held).is_pending());
+        let second_lost = CancellationToken::new();
+        manager.readmit_input(&lease.input_id, newer, admission(&second_lost));
+        held.await.expect("same session after re-admission");
+        // An older round's late result neither replaces the newer admission nor seals.
+        let stale_lost = CancellationToken::new();
+        manager.readmit_input(&lease.input_id, older, admission(&stale_lost));
+        manager.readmit_input(&lease.input_id, older, None);
+        // Neither the replaced admission's loss nor the stale one concerns the session.
+        first_lost.cancel();
+        stale_lost.cancel();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        write(2, "c").await.expect("still admitted");
+        assert_eq!(backend.latest().writes(), ["a", "b", "c"]);
+
+        second_lost.cancel();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !manager.start_input_readmission(Some("thread")).1.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("loss of the current admission seals the session");
         assert!(matches!(
-            manager
-                .begin_input(connection, closed.clone(), "thread", "term", 1, admission(resolved_at))
-                .await,
+            write(3, "d").await,
             Err(TerminalError::Input(error)) if error.code == "closed"
         ));
-        let resolved_at = manager.input_invalidation_epoch();
-        assert!(
-            manager
-                .begin_input(
-                    connection,
-                    closed,
-                    "thread",
-                    "term",
-                    2,
-                    admission(resolved_at)
-                )
-                .await
-                .is_ok()
-        );
+        assert_eq!(backend.latest().writes(), ["a", "b", "c"]);
+    }
+
+    #[tokio::test]
+    async fn ordered_input_admission_loss_stops_a_frame_before_the_cleanup_task_runs() {
+        let (_root, backend, manager, connection, closed, _input_id) =
+            ordered_input_fixture().await;
+        let lost = CancellationToken::new();
+        let lease = manager
+            .begin_input(
+                connection,
+                closed,
+                "thread",
+                "term",
+                1,
+                Some(super::super::input::TerminalInputAdmission::new(
+                    lost.clone(),
+                    (),
+                )),
+            )
+            .await
+            .expect("admitted lease");
+        // On this current-thread runtime the cleanup task cannot run before the write.
+        lost.cancel();
+        assert!(matches!(
+            ordered_write(&manager, connection, "thread", "term", &lease.input_id, 0, "late").await,
+            Err(TerminalError::Input(error)) if error.code == "closed"
+        ));
+        assert!(backend.latest().writes().is_empty());
     }
 
     #[tokio::test]
