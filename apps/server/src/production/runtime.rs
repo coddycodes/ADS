@@ -501,6 +501,7 @@ impl ProductionRuntime {
         .with_workspace_admission(workspace_availability.clone(), repositories.clone())
         .with_profiler(&profiler)
         .with_environment_id(&config.environment_id);
+        terminal_services.watch_workspace_changes(orchestration.subscribe_events());
         let worktree_runtime = WorktreeRuntime::start(
             orchestration.clone(),
             provider_runtime.clone(),
@@ -2081,6 +2082,86 @@ mod tests {
             } => value,
             other => panic!("unexpected settings response: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn workspace_changes_start_terminal_input_readmission() {
+        async fn readmission_after(terminal: &crate::terminal::TerminalManager, from: u64) -> u64 {
+            timeout(std::time::Duration::from_secs(2), async {
+                loop {
+                    let epoch = terminal.input_readmission_epoch();
+                    if epoch != from {
+                        return epoch;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("the runtime feeds workspace changes to terminal input")
+        }
+
+        let state = TempDir::new().expect("state");
+        let config = ServerConfig::new(state.path()).with_bind("127.0.0.1", 0);
+        hermetic_providers::write_hermetic_settings(&config.state_dir(), json!({}));
+        let database = Database::open_in_memory().await.expect("database");
+        database
+            .call(|connection| {
+                run_migrations(connection, None)?;
+                Ok(())
+            })
+            .await
+            .expect("migrations");
+        let runtime = ProductionRuntime::start(
+            &config,
+            database,
+            AuthService::new(&config, vec![7_u8; 32]),
+            vec![9_u8; 32],
+            Arc::new(crate::diagnostics::NotApplicableUiProcessObserver),
+        )
+        .await
+        .expect("runtime");
+        let terminal = runtime.terminal_services.terminal_manager_for_test();
+        let workspace_root = state.path().join("input-project");
+        let worktree = state.path().join("input-worktree");
+        std::fs::create_dir(&workspace_root).expect("workspace");
+        std::fs::create_dir(&worktree).expect("worktree");
+        let before = terminal.input_readmission_epoch();
+        // The project's default thread is created: `thread.created`.
+        runtime
+            .orchestration
+            .dispatch(
+                serde_json::from_value(json!({
+                    "type":"project.create","commandId":"input-project","projectId":"input-project",
+                    "title":"Project","workspaceRoot":workspace_root,"defaultModelSelection":null,
+                    "createdAt":"2026-08-01T00:00:00Z"
+                }))
+                .expect("project command"),
+            )
+            .await
+            .expect("project");
+        let created = readmission_after(&terminal, before).await;
+        let thread_id = load_snapshot(&runtime.orchestration.repositories())
+            .await
+            .expect("snapshot")
+            .threads
+            .into_iter()
+            .find(|thread| thread.kind == "default")
+            .expect("default thread")
+            .thread_id;
+        // The thread moves to a worktree: `thread.meta-updated` carrying `worktreePath`.
+        runtime
+            .orchestration
+            .dispatch(
+                serde_json::from_value(json!({
+                    "type":"thread.meta.update","commandId":"input-worktree",
+                    "threadId":thread_id,"worktreePath":worktree
+                }))
+                .expect("thread command"),
+            )
+            .await
+            .expect("thread moved");
+        readmission_after(&terminal, created).await;
+        runtime.shutdown().await;
     }
 
     #[tokio::test]

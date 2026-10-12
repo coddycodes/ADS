@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     future::Future,
     path::PathBuf,
     pin::Pin,
@@ -9,7 +9,7 @@ use std::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -23,7 +23,7 @@ use crate::{
         bound_diagnostic_string, process_tree_metadata,
         profiler::{client::ingest_client_batch, runtime::ProfilerRuntime},
     },
-    persistence::Repositories,
+    persistence::{OrchestrationEvent, Repositories},
     production::orchestration_effects::SetupScriptLaunch,
     provider_usage::{
         CodexRateLimitResetOutcome, ConsumeCodexRateLimitResetResult, ProviderUsageCommandError,
@@ -32,10 +32,12 @@ use crate::{
     },
     rpc::{RpcRegistry, RpcResult, RpcStreamChunk},
     terminal::{
-        TerminalAttachInput, TerminalError, TerminalLaunchCommand, TerminalManager,
-        TerminalMetadataEvent, TerminalOpenInput, TerminalSessionIdentity,
+        TerminalAttachInput, TerminalError, TerminalInputAdmission, TerminalLaunchCommand,
+        TerminalManager, TerminalMetadataEvent, TerminalOpenInput, TerminalSessionIdentity,
     },
-    worktree_catalog::{WorkspaceAdmissionLease, WorkspaceAvailabilityRegistry},
+    worktree_catalog::{
+        WorkspaceAdmissionCancellation, WorkspaceAdmissionLease, WorkspaceAvailabilityRegistry,
+    },
 };
 
 use super::{
@@ -79,6 +81,8 @@ pub struct ServerTerminalServices {
     relay: RelayClientService,
     control: Arc<dyn ProductionServerControl>,
     workspace_admission: Option<WorkspaceAdmissionController>,
+    /// Stops the [`Self::watch_workspace_changes`] task when terminals shut down.
+    workspace_watch: CancellationToken,
     /// `None` when the host runs no profiler; its status RPC then reports it off. Weak: the
     /// production runtime alone owns the profiler, so dropping it after a failed start tears
     /// the profiler down even while detached tasks still hold clones of these services.
@@ -142,6 +146,7 @@ impl ServerTerminalServices {
             relay,
             control,
             workspace_admission: None,
+            workspace_watch: CancellationToken::new(),
             profiler: None,
             environment_id: Arc::from(""),
         }
@@ -207,6 +212,7 @@ impl ServerTerminalServices {
     }
 
     pub(crate) async fn shutdown_with_process_ownership(&self, ownership: RuntimeProcessOwnership) {
+        self.workspace_watch.cancel();
         self.terminal.shutdown().await;
         match self
             .process_sampler
@@ -273,6 +279,95 @@ impl ServerTerminalServices {
 
     pub async fn close_thread_terminals(&self, thread_id: &str) {
         let _ = self.terminal.close(thread_id, None).await;
+    }
+
+    /// Re-admits the ordered-input sessions whose thread's persisted workspace may have
+    /// changed, without interrupting their input: each session otherwise keeps the admission it
+    /// resolved when it began. A session whose new workspace cannot be admitted is sealed.
+    /// Runs until terminals shut down.
+    pub fn watch_workspace_changes(&self, mut events: broadcast::Receiver<OrchestrationEvent>) {
+        let terminal = self.terminal.clone();
+        let availability = self.workspace_admission.clone();
+        let shutdown = self.workspace_watch.clone();
+        tokio::spawn(async move {
+            // One resolution in flight per session, each independent, while later events keep
+            // marking sessions pending; a session changed again meanwhile resolves once more,
+            // at its latest round. Dropping the set at shutdown aborts the resolutions.
+            let mut resolving = tokio::task::JoinSet::<(String, u64)>::new();
+            let mut latest = HashMap::<String, (String, u64)>::new();
+            let spawn = |resolving: &mut tokio::task::JoinSet<(String, u64)>,
+                         input_id: String,
+                         thread_id: String,
+                         revision: u64| {
+                let terminal = terminal.clone();
+                let availability = availability.clone();
+                resolving.spawn(async move {
+                    if let Some(availability) = availability {
+                        let _ = readmit_input(
+                            &terminal,
+                            &availability,
+                            &thread_id,
+                            &input_id,
+                            revision,
+                        )
+                        .await;
+                    }
+                    (input_id, revision)
+                });
+            };
+            loop {
+                let event = tokio::select! {
+                    () = shutdown.cancelled() => return,
+                    Some(resolved) = resolving.join_next(), if !resolving.is_empty() => {
+                        let Ok((input_id, revision)) = resolved else { continue };
+                        match latest.remove(&input_id) {
+                            Some((thread_id, wanted)) if wanted > revision => {
+                                latest.insert(input_id.clone(), (thread_id.clone(), wanted));
+                                spawn(&mut resolving, input_id, thread_id, wanted);
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+                    event = events.recv() => event,
+                };
+                let threads = match &event {
+                    Ok(event) => {
+                        let payload = &event.event.payload;
+                        match event.event.event_type.as_str() {
+                            "thread.created" => Some(Some(event.event.aggregate_id.as_str())),
+                            "thread.meta-updated" if payload.get("worktreePath").is_some() => {
+                                Some(Some(event.event.aggregate_id.as_str()))
+                            }
+                            // Moves the workspace of every thread without its own worktree.
+                            "project.meta-updated" if payload.get("workspaceRoot").is_some() => {
+                                Some(None)
+                            }
+                            _ => None,
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(
+                            skipped,
+                            "terminal input missed orchestration events; re-admitting every input session"
+                        );
+                        Some(None)
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return,
+                };
+                let (Some(threads), Some(_)) = (threads, availability.as_ref()) else {
+                    continue;
+                };
+                let (revision, sessions) = terminal.start_input_readmission(threads);
+                for (input_id, thread_id) in sessions {
+                    let resolving_now = latest.contains_key(&input_id);
+                    latest.insert(input_id.clone(), (thread_id.clone(), revision));
+                    if !resolving_now {
+                        spawn(&mut resolving, input_id, thread_id, revision);
+                    }
+                }
+            }
+        });
     }
 
     pub async fn quiesce_thread_terminals_for_workspace_loss(
@@ -884,31 +979,66 @@ fn register_ordered_input_rpcs(registry: &mut RpcRegistry, services: &ServerTerm
             let availability = availability.clone();
             async move {
                 let input: TerminalInputBeginPayload = decode_payload(&request.payload)?;
+                // The input session's workspace resolution: its lease keeps this admission until
+                // it ends, workspace loss seals it, and a workspace change re-admits it (#82).
+                let epoch = terminal.input_readmission_epoch();
                 let admission =
                     acquire_terminal_thread(availability.as_ref(), &input.thread_id).await?;
-                let lease = await_terminal_publication(
-                    admission,
+                let loss = admission
+                    .as_ref()
+                    .map(WorkspaceAdmissionLease::loss_cancellation);
+                let session_admission = admission.map(input_admission);
+                let lease = await_admission_loss(
+                    loss,
                     terminal.begin_input(
                         context.connection_id(),
                         context.connection_closed(),
                         &input.thread_id,
                         &input.terminal_id,
                         input.attachment_sequence,
+                        session_admission,
                     ),
                 )
                 .await?;
+                // A change that committed while this resolved re-admitted the sessions it found
+                // before this one registered; admit the current workspace here instead, and
+                // report it if it cannot be admitted rather than return a sealed session.
+                let current = terminal.input_readmission_epoch();
+                if current != epoch
+                    && let Some(availability) = availability.as_ref()
+                {
+                    // The client never learns this lease if the request ends here.
+                    let unclaimed = UnclaimedInputLease {
+                        terminal: &terminal,
+                        connection_id: context.connection_id(),
+                        thread_id: &input.thread_id,
+                        terminal_id: &input.terminal_id,
+                        input_id: Some(&lease.input_id),
+                    };
+                    let readmitted = readmit_input(
+                        &terminal,
+                        availability,
+                        &input.thread_id,
+                        &lease.input_id,
+                        current,
+                    )
+                    .await;
+                    // A concurrent round may have sealed it even when this result was ignored.
+                    if let Err(closed) = terminal.check_input_open(&lease.input_id) {
+                        return Err(readmitted.err().unwrap_or_else(|| terminal_error(closed)));
+                    }
+                    unclaimed.disarm();
+                }
                 Ok(serde_json::to_value(lease).expect("input lease serializes"))
             }
         },
     );
 
     let terminal = services.terminal.clone();
-    let availability = services.workspace_admission.clone();
     registry.register_unary_with_context(
         "terminal.writeInput",
         move |request, context, _cancellation| {
             let terminal = terminal.clone();
-            let availability = availability.clone();
             async move {
                 if let Some(data) = request.payload.get("data").and_then(Value::as_str)
                     && (data.is_empty() || data.len() > 16 * 1024)
@@ -923,27 +1053,25 @@ fn register_ordered_input_rpcs(registry: &mut RpcRegistry, services: &ServerTerm
                     return Err(json!({"_tag":"TerminalInputError", "code":"capacity", "message":"Terminal input exceeded its frame limit. Reconnect input before typing again."}));
                 }
                 let input: TerminalInputFramePayload = decode_payload(&request.payload)?;
-                // Reserve before filesystem/database admission so those waits cannot
-                // retain more than the connection's input count and byte budget.
+                // In memory only: the session's lease already holds the workspace admission
+                // `terminal.beginInput` took, so a keystroke never waits for the database.
                 let frame = terminal.prepare_input_write(context.connection_id(), &input.thread_id, &input.terminal_id, &input.input_id, input.sequence, &input.data).map_err(terminal_error)?;
-                let admission =
-                    match acquire_terminal_thread(availability.as_ref(), &input.thread_id).await {
-                        Ok(admission) => admission,
-                        Err(error) => {
-                            let _ = terminal.cancel_input(
-                                context.connection_id(),
-                                &input.thread_id,
-                                &input.terminal_id,
-                                &input.input_id,
-                            );
-                            return Err(error);
-                        }
-                    };
-                let result = await_terminal_publication(
-                    admission,
-                    frame.write(),
-                )
-                .await;
+                // Loss of the session's current admission seals it, which fails this frame
+                // wherever it waits; report that loss rather than the sealed session.
+                let seal = frame.seal();
+                let result = frame.write().await.map_err(|error| {
+                    seal.lost_admission()
+                        .as_deref()
+                        .and_then(|admission| admission.downcast_ref::<WorkspaceAdmissionLease>())
+                        .and_then(|admission| admission.loss_cancellation().unavailable())
+                        .map_or_else(
+                            || terminal_error(error),
+                            |unavailable| {
+                                serde_json::to_value(unavailable)
+                                    .expect("workspace unavailable error serializes")
+                            },
+                        )
+                });
                 if result.is_err() {
                     let _ = terminal.cancel_input(
                         context.connection_id(),
@@ -993,6 +1121,70 @@ async fn acquire_terminal_thread(
         .map_err(workspace_admission_error)
 }
 
+/// Cancels an input lease whose `inputId` never reached the client, when the begin request
+/// ends before it returns.
+struct UnclaimedInputLease<'a> {
+    terminal: &'a TerminalManager,
+    connection_id: uuid::Uuid,
+    thread_id: &'a str,
+    terminal_id: &'a str,
+    input_id: Option<&'a str>,
+}
+
+impl UnclaimedInputLease<'_> {
+    fn disarm(mut self) {
+        self.input_id = None;
+    }
+}
+
+impl Drop for UnclaimedInputLease<'_> {
+    fn drop(&mut self) {
+        if let Some(input_id) = self.input_id {
+            let _ = self.terminal.cancel_input(
+                self.connection_id,
+                self.thread_id,
+                self.terminal_id,
+                input_id,
+            );
+        }
+    }
+}
+
+fn input_admission(admission: WorkspaceAdmissionLease) -> TerminalInputAdmission {
+    TerminalInputAdmission::new(
+        admission.loss_cancellation().cancellation_token(),
+        admission,
+    )
+}
+
+/// Gives a live input session the thread's current workspace admission as the result of
+/// re-admission round `revision`, without interrupting its input. A workspace that cannot be
+/// admitted (unavailable, or unresolvable) seals the session and returns why, unless a newer
+/// round superseded this one.
+async fn readmit_input(
+    terminal: &TerminalManager,
+    availability: &WorkspaceAdmissionController,
+    thread_id: &str,
+    input_id: &str,
+    revision: u64,
+) -> Result<(), Value> {
+    match acquire_terminal_thread(Some(availability), thread_id).await {
+        Ok(admission) => {
+            terminal.readmit_input(input_id, revision, admission.map(input_admission));
+            Ok(())
+        }
+        // A newer round superseded this one; its result decides.
+        Err(_) if !terminal.readmit_input(input_id, revision, None) => Ok(()),
+        Err(error) => {
+            tracing::warn!(
+                thread_id,
+                "terminal input could not admit the thread's changed workspace; sealed the session"
+            );
+            Err(error)
+        }
+    }
+}
+
 async fn await_terminal_publication<T, F>(
     admission: Option<WorkspaceAdmissionLease>,
     operation: F,
@@ -1003,6 +1195,20 @@ where
     let loss = admission
         .as_ref()
         .map(WorkspaceAdmissionLease::loss_cancellation);
+    let result = await_admission_loss(loss, operation).await;
+    drop(admission);
+    result
+}
+
+/// Runs `operation` unless the workspace admission behind `loss` is lost first, in which case
+/// the structured loss is the result.
+async fn await_admission_loss<T, F>(
+    loss: Option<WorkspaceAdmissionCancellation>,
+    operation: F,
+) -> Result<T, Value>
+where
+    F: Future<Output = Result<T, TerminalError>>,
+{
     let result = if let Some(loss) = &loss {
         tokio::pin!(operation);
         tokio::select! {
@@ -3441,3 +3647,7 @@ mod tests {
         assert!(validate(Value::Object(many)).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "server_terminal_input_tests.rs"]
+mod input_admission_tests;

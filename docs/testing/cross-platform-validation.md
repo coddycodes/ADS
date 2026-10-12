@@ -183,6 +183,10 @@ old begin issuing after a newer attachment, dropped responses, and disconnect
 or process replacement while input is queued. Uncertain input must never replay.
 Also verify open-after-close and restart followed by immediate programmatic
 writes in both ordered and legacy modes, before a renderer has attached.
+`production::server_terminal::input_admission_tests` (inside the `terminal::`
+filter) proves that frames are acknowledged while the SQLite worker is busy,
+that workspace loss and removal seal the input session, and that a changed
+workspace re-admits it without interrupting input.
 
 On a disposable native terminal, verify **Reconnect input** after a controlled
 delivery failure preserves the running process and resumes only newly entered
