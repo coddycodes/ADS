@@ -5,6 +5,7 @@ mod model;
 mod osc;
 mod pty;
 
+pub(crate) use input::TerminalInputAdmission;
 pub use input::TerminalInputError;
 pub(crate) use manager::TerminalSessionIdentity;
 pub use manager::{

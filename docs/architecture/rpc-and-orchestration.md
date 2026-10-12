@@ -1611,7 +1611,10 @@ they have no override, is authoritative. File, browse, search, asset, transfer,
 review, and filesystem-mutation handlers retain that lease for the entire
 operation, not just an entry-point check. Mutations acquire its finalization
 permit before the filesystem/durable commit boundary. Turn and process handlers retain the
-lease through durable command admission or external-process publication. Guard
+lease through durable command admission or external-process publication. An
+ordered terminal input session retains the lease it took at
+`terminal.beginInput` for its whole life, so its frames need no admission of
+their own (see [Ordered terminal input](#ordered-terminal-input)). Guard
 installation and lease admission are serialized, so loss either waits for work
 owned by an earlier lease and finalization permit or rejects a later lease.
 Lease drop, including cancellation and error unwinding, releases every
@@ -1667,7 +1670,8 @@ invalidates every live catalog view sharing the repository entry, whereas
 detach-only and failed cleanup remain scoped to the initiating project.
 
 The guard rejects a new turn before durable admission; terminal open, restart,
-write, and restart-on-attach; client Git status and mutations; and project
+write, input begin, and restart-on-attach, and seals live input sessions;
+client Git status and mutations; and project
 file, search, mutation, editor, asset, and review operations. It intentionally
 allows catalog refresh, conversation/history reads, non-restarting terminal
 attach, terminal close, dedicated detach/removal, ordinary non-worktree thread
@@ -2322,8 +2326,31 @@ same bearer still creates a different connection identity. A newer attachment
 supersedes the previous lease; a delayed older begin cannot supersede the newer
 attachment. Cancellation and terminal generation changes invalidate leases.
 
-The Rust terminal owner reserves a shared per-connection window of 16 frames
-and 256 KiB before filesystem/database workspace admission. Each frame is at
+`terminal.beginInput` is the input session's only workspace resolution: it
+reads the thread's persisted workspace (its worktree path, or its project root)
+and takes the [workspace admission](#missing-workspace-runtime-guard) for the
+thread and that path, and the input lease holds that admission until the lease
+ends. Frames are therefore admitted in memory and a keystroke never waits for
+the database. Workspace loss or removal cancels the admission, which seals the
+lease like a closed connection: a frame in flight fails with
+`WorkspaceUnavailableError`, later frames fail with `TerminalInputError`, and
+the admission is released so the loss or removal does not wait for it. A new
+`terminal.beginInput` then fails with `WorkspaceUnavailableError`.
+
+A changed workspace seals the session too, and the next begin admits the new
+workspace. The runtime feeds orchestration events to
+`ServerTerminalServices::watch_workspace_changes`, which seals the thread's
+leases on `thread.created` and on `thread.meta-updated` carrying
+`worktreePath`, and every lease on `project.meta-updated` carrying
+`workspaceRoot` or when its subscription lags. A begin reads the invalidation
+epoch before it resolves the workspace and is refused with
+`TerminalInputError` when an invalidation landed meanwhile, so a change
+committed during that read is not missed. A sealed session shows **Reconnect
+input** in the renderer; the old per-frame admission followed such a change
+silently.
+
+The Rust terminal owner reserves each frame from a shared per-connection window
+of 16 frames and 256 KiB before the frame waits for its turn. Each frame is at
 most 16 KiB of UTF-8. Reordered arrivals wait for the missing sequence without
 writing a suffix early. A five-second gap deadline, duplicate/invalid sequence,
 overflow, dropped admitted work, or I/O failure seals the lease and wakes all

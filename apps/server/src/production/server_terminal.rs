@@ -9,7 +9,7 @@ use std::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -23,7 +23,7 @@ use crate::{
         bound_diagnostic_string, process_tree_metadata,
         profiler::{client::ingest_client_batch, runtime::ProfilerRuntime},
     },
-    persistence::Repositories,
+    persistence::{OrchestrationEvent, Repositories},
     production::orchestration_effects::SetupScriptLaunch,
     provider_usage::{
         CodexRateLimitResetOutcome, ConsumeCodexRateLimitResetResult, ProviderUsageCommandError,
@@ -32,10 +32,12 @@ use crate::{
     },
     rpc::{RpcRegistry, RpcResult, RpcStreamChunk},
     terminal::{
-        TerminalAttachInput, TerminalError, TerminalLaunchCommand, TerminalManager,
-        TerminalMetadataEvent, TerminalOpenInput, TerminalSessionIdentity,
+        TerminalAttachInput, TerminalError, TerminalInputAdmission, TerminalLaunchCommand,
+        TerminalManager, TerminalMetadataEvent, TerminalOpenInput, TerminalSessionIdentity,
     },
-    worktree_catalog::{WorkspaceAdmissionLease, WorkspaceAvailabilityRegistry},
+    worktree_catalog::{
+        WorkspaceAdmissionCancellation, WorkspaceAdmissionLease, WorkspaceAvailabilityRegistry,
+    },
 };
 
 use super::{
@@ -79,6 +81,8 @@ pub struct ServerTerminalServices {
     relay: RelayClientService,
     control: Arc<dyn ProductionServerControl>,
     workspace_admission: Option<WorkspaceAdmissionController>,
+    /// Stops the [`Self::watch_workspace_changes`] task when terminals shut down.
+    workspace_watch: CancellationToken,
     /// `None` when the host runs no profiler; its status RPC then reports it off. Weak: the
     /// production runtime alone owns the profiler, so dropping it after a failed start tears
     /// the profiler down even while detached tasks still hold clones of these services.
@@ -142,6 +146,7 @@ impl ServerTerminalServices {
             relay,
             control,
             workspace_admission: None,
+            workspace_watch: CancellationToken::new(),
             profiler: None,
             environment_id: Arc::from(""),
         }
@@ -207,6 +212,7 @@ impl ServerTerminalServices {
     }
 
     pub(crate) async fn shutdown_with_process_ownership(&self, ownership: RuntimeProcessOwnership) {
+        self.workspace_watch.cancel();
         self.terminal.shutdown().await;
         match self
             .process_sampler
@@ -273,6 +279,48 @@ impl ServerTerminalServices {
 
     pub async fn close_thread_terminals(&self, thread_id: &str) {
         let _ = self.terminal.close(thread_id, None).await;
+    }
+
+    /// Seals ordered-input sessions whose thread's persisted workspace may have changed, so the
+    /// next `terminal.beginInput` admits the current one: each session otherwise keeps the
+    /// admission it resolved when it began. Runs until terminals shut down.
+    pub fn watch_workspace_changes(&self, mut events: broadcast::Receiver<OrchestrationEvent>) {
+        let terminal = self.terminal.clone();
+        let shutdown = self.workspace_watch.clone();
+        tokio::spawn(async move {
+            loop {
+                let event = tokio::select! {
+                    () = shutdown.cancelled() => return,
+                    event = events.recv() => event,
+                };
+                match event {
+                    Ok(event) => {
+                        let payload = &event.event.payload;
+                        match event.event.event_type.as_str() {
+                            "thread.created" => {
+                                terminal.invalidate_thread_input(&event.event.aggregate_id);
+                            }
+                            "thread.meta-updated" if payload.get("worktreePath").is_some() => {
+                                terminal.invalidate_thread_input(&event.event.aggregate_id);
+                            }
+                            // Moves the workspace of every thread without its own worktree.
+                            "project.meta-updated" if payload.get("workspaceRoot").is_some() => {
+                                terminal.invalidate_all_input();
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(
+                            skipped,
+                            "terminal input missed orchestration events; sealing every input session"
+                        );
+                        terminal.invalidate_all_input();
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
     }
 
     pub async fn quiesce_thread_terminals_for_workspace_loss(
@@ -884,16 +932,31 @@ fn register_ordered_input_rpcs(registry: &mut RpcRegistry, services: &ServerTerm
             let availability = availability.clone();
             async move {
                 let input: TerminalInputBeginPayload = decode_payload(&request.payload)?;
+                // The only workspace resolution of the input session: its lease keeps this
+                // admission until it ends; workspace loss or change seals it (#82). Read the
+                // epoch first so a change committed while this resolves is not missed.
+                let resolved_at = terminal.input_invalidation_epoch();
                 let admission =
                     acquire_terminal_thread(availability.as_ref(), &input.thread_id).await?;
-                let lease = await_terminal_publication(
-                    admission,
+                let loss = admission
+                    .as_ref()
+                    .map(WorkspaceAdmissionLease::loss_cancellation);
+                let session_admission = admission.map(|admission| {
+                    TerminalInputAdmission::new(
+                        admission.loss_cancellation().cancellation_token(),
+                        admission,
+                        resolved_at,
+                    )
+                });
+                let lease = await_admission_loss(
+                    loss,
                     terminal.begin_input(
                         context.connection_id(),
                         context.connection_closed(),
                         &input.thread_id,
                         &input.terminal_id,
                         input.attachment_sequence,
+                        session_admission,
                     ),
                 )
                 .await?;
@@ -903,12 +966,10 @@ fn register_ordered_input_rpcs(registry: &mut RpcRegistry, services: &ServerTerm
     );
 
     let terminal = services.terminal.clone();
-    let availability = services.workspace_admission.clone();
     registry.register_unary_with_context(
         "terminal.writeInput",
         move |request, context, _cancellation| {
             let terminal = terminal.clone();
-            let availability = availability.clone();
             async move {
                 if let Some(data) = request.payload.get("data").and_then(Value::as_str)
                     && (data.is_empty() || data.len() > 16 * 1024)
@@ -923,27 +984,14 @@ fn register_ordered_input_rpcs(registry: &mut RpcRegistry, services: &ServerTerm
                     return Err(json!({"_tag":"TerminalInputError", "code":"capacity", "message":"Terminal input exceeded its frame limit. Reconnect input before typing again."}));
                 }
                 let input: TerminalInputFramePayload = decode_payload(&request.payload)?;
-                // Reserve before filesystem/database admission so those waits cannot
-                // retain more than the connection's input count and byte budget.
+                // In memory only: the session's lease already holds the workspace admission
+                // `terminal.beginInput` took, so a keystroke never waits for the database.
                 let frame = terminal.prepare_input_write(context.connection_id(), &input.thread_id, &input.terminal_id, &input.input_id, input.sequence, &input.data).map_err(terminal_error)?;
-                let admission =
-                    match acquire_terminal_thread(availability.as_ref(), &input.thread_id).await {
-                        Ok(admission) => admission,
-                        Err(error) => {
-                            let _ = terminal.cancel_input(
-                                context.connection_id(),
-                                &input.thread_id,
-                                &input.terminal_id,
-                                &input.input_id,
-                            );
-                            return Err(error);
-                        }
-                    };
-                let result = await_terminal_publication(
-                    admission,
-                    frame.write(),
-                )
-                .await;
+                let loss = frame
+                    .admission()
+                    .and_then(|admission| admission.downcast_ref::<WorkspaceAdmissionLease>())
+                    .map(WorkspaceAdmissionLease::loss_cancellation);
+                let result = await_admission_loss(loss, frame.write()).await;
                 if result.is_err() {
                     let _ = terminal.cancel_input(
                         context.connection_id(),
@@ -1003,6 +1051,20 @@ where
     let loss = admission
         .as_ref()
         .map(WorkspaceAdmissionLease::loss_cancellation);
+    let result = await_admission_loss(loss, operation).await;
+    drop(admission);
+    result
+}
+
+/// Runs `operation` unless the workspace admission behind `loss` is lost first, in which case
+/// the structured loss is the result.
+async fn await_admission_loss<T, F>(
+    loss: Option<WorkspaceAdmissionCancellation>,
+    operation: F,
+) -> Result<T, Value>
+where
+    F: Future<Output = Result<T, TerminalError>>,
+{
     let result = if let Some(loss) = &loss {
         tokio::pin!(operation);
         tokio::select! {
@@ -3441,3 +3503,7 @@ mod tests {
         assert!(validate(Value::Object(many)).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "server_terminal_input_tests.rs"]
+mod input_admission_tests;

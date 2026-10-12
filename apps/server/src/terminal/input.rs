@@ -1,4 +1,5 @@
 use std::{
+    any::Any,
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     time::Duration,
@@ -50,6 +51,30 @@ pub(crate) struct TerminalInputLease {
     pub input_id: String,
 }
 
+/// Work admission an input session holds until the session ends, so its frames need no
+/// admission of their own. Cancelling `lost` seals the session like a closed connection.
+pub(crate) struct TerminalInputAdmission {
+    lost: CancellationToken,
+    hold: Box<dyn Any + Send + Sync>,
+    resolved_at: u64,
+}
+
+impl TerminalInputAdmission {
+    /// `resolved_at` is the [`TerminalInputRegistry::invalidation_epoch`] read before the
+    /// admission resolved its workspace.
+    pub(crate) fn new(
+        lost: CancellationToken,
+        hold: impl Any + Send + Sync,
+        resolved_at: u64,
+    ) -> Self {
+        Self {
+            lost,
+            hold: Box::new(hold),
+            resolved_at,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TerminalInputAcknowledgement {
@@ -61,6 +86,8 @@ pub(crate) struct TerminalInputAcknowledgement {
 struct RegistryState {
     leases: HashMap<String, Arc<InputLease>>,
     connections: HashMap<Uuid, Connection>,
+    /// Counts invalidations, so a begin can tell its admission was resolved before one.
+    invalidations: u64,
 }
 
 struct Connection {
@@ -81,6 +108,7 @@ impl TerminalInputRegistry {
         manager_closed: CancellationToken,
         identity: TerminalSessionIdentity,
         attachment_sequence: u64,
+        admission: Option<TerminalInputAdmission>,
     ) -> Result<TerminalInputLease, TerminalInputError> {
         if connection_closed.is_cancelled() || manager_closed.is_cancelled() {
             return Err(TerminalInputError::closed());
@@ -97,6 +125,15 @@ impl TerminalInputRegistry {
             return Err(TerminalInputError::closed());
         }
         let mut state = self.0.lock().expect("terminal input registry");
+        if admission
+            .as_ref()
+            .is_some_and(|admission| admission.resolved_at != state.invalidations)
+        {
+            return Err(TerminalInputError::new(
+                "closed",
+                "The terminal's workspace changed while input was starting. Reconnect the terminal before typing again.",
+            ));
+        }
         if !state.connections.contains_key(&connection_id) {
             if state.connections.len() >= MAX_CONNECTIONS {
                 return Err(TerminalInputError::new(
@@ -160,6 +197,9 @@ impl TerminalInputRegistry {
                 "Too many attached terminal input leases.",
             ));
         }
+        let (admission_lost, admission) = admission.map_or_else(Default::default, |admission| {
+            (admission.lost, Some(admission.hold))
+        });
         let lease = Arc::new(InputLease {
             connection_id,
             attachment_sequence,
@@ -167,6 +207,8 @@ impl TerminalInputRegistry {
             identity,
             connection_closed,
             generation_closed,
+            admission_lost,
+            admission,
             closed: CancellationToken::new(),
             frames: connection.frames.clone(),
             bytes: connection.bytes.clone(),
@@ -192,9 +234,11 @@ impl TerminalInputRegistry {
             tokio::select! {
                 () = lease.connection_closed.cancelled() => {},
                 () = lease.generation_closed.cancelled() => {},
+                () = lease.admission_lost.cancelled() => {},
                 () = lease.closed.cancelled() => {},
                 () = manager_closed.cancelled() => {},
             }
+            // Removing the lease drops its admission once in-flight frames settle.
             lease.fail(TerminalInputError::closed());
             if let Some(registry) = registry.upgrade() {
                 let mut state = registry.lock().expect("terminal input registry");
@@ -251,6 +295,27 @@ impl TerminalInputRegistry {
         Ok(())
     }
 
+    pub(super) fn invalidation_epoch(&self) -> u64 {
+        self.0
+            .lock()
+            .expect("terminal input registry")
+            .invalidations
+    }
+
+    /// Seals the input sessions of `thread_id`, or of every thread; their clients must begin
+    /// input again, and begins that resolved their admission before this call are refused.
+    pub(super) fn invalidate(&self, thread_id: Option<&str>) {
+        let mut state = self.0.lock().expect("terminal input registry");
+        state.invalidations = state.invalidations.wrapping_add(1);
+        for lease in state
+            .leases
+            .values()
+            .filter(|lease| thread_id.is_none_or(|thread_id| lease.key.0 == thread_id))
+        {
+            lease.fail(TerminalInputError::closed());
+        }
+    }
+
     pub(super) fn prepare_write<'a>(
         &self,
         connection_id: Uuid,
@@ -279,6 +344,11 @@ pub(crate) struct PreparedTerminalInput<'a> {
 }
 
 impl PreparedTerminalInput<'_> {
+    /// What the session's [`TerminalInputAdmission`] holds, if it began with one.
+    pub(crate) fn admission(&self) -> Option<&(dyn Any + Send + Sync)> {
+        self.frame.lease.admission.as_deref()
+    }
+
     pub(crate) async fn write(mut self) -> Result<TerminalInputAcknowledgement, TerminalError> {
         let lease = self.frame.lease.clone();
         let sequence = self.sequence;
@@ -344,6 +414,8 @@ struct InputLease {
     identity: TerminalSessionIdentity,
     connection_closed: CancellationToken,
     generation_closed: CancellationToken,
+    admission_lost: CancellationToken,
+    admission: Option<Box<dyn Any + Send + Sync>>,
     closed: CancellationToken,
     frames: Arc<Semaphore>,
     bytes: Arc<Semaphore>,
@@ -356,7 +428,8 @@ impl InputLease {
         state.failure.clone().or_else(|| {
             (self.closed.is_cancelled()
                 || self.connection_closed.is_cancelled()
-                || self.generation_closed.is_cancelled())
+                || self.generation_closed.is_cancelled()
+                || self.admission_lost.is_cancelled())
             .then(TerminalInputError::closed)
         })
     }

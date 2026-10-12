@@ -2997,6 +2997,7 @@ impl TerminalManager {
         thread_id: &str,
         terminal_id: &str,
         attachment_sequence: u64,
+        admission: Option<super::input::TerminalInputAdmission>,
     ) -> Result<super::input::TerminalInputLease, TerminalError> {
         let session = self.require_session(thread_id, terminal_id).await?;
         let current = session.lock().await;
@@ -3030,8 +3031,25 @@ impl TerminalManager {
                 self.inner.cancellation.clone(),
                 identity,
                 attachment_sequence,
+                admission,
             )
             .map_err(TerminalError::from)
+    }
+
+    /// Ends the thread's input sessions, so the next begin re-admits its current workspace.
+    pub(crate) fn invalidate_thread_input(&self, thread_id: &str) {
+        self.inner.input.invalidate(Some(thread_id));
+    }
+
+    /// Ends every input session, as [`Self::invalidate_thread_input`] does for one thread.
+    pub(crate) fn invalidate_all_input(&self) {
+        self.inner.input.invalidate(None);
+    }
+
+    /// Read before resolving a [`super::input::TerminalInputAdmission`]: a begin whose
+    /// admission predates a later invalidation is refused.
+    pub(crate) fn input_invalidation_epoch(&self) -> u64 {
+        self.inner.input.invalidation_epoch()
     }
 
     pub(crate) fn prepare_input_write<'a>(
@@ -5422,19 +5440,55 @@ mod tests {
         let connection = uuid::Uuid::new_v4();
         let closed = CancellationToken::new();
         let lease = manager
-            .begin_input(connection, closed.clone(), "thread", "term", 0)
+            .begin_input(connection, closed.clone(), "thread", "term", 0, None)
             .await
             .expect("lease");
         (root, backend, manager, connection, closed, lease.input_id)
     }
 
     #[tokio::test]
+    async fn ordered_input_begin_rejects_an_admission_resolved_before_an_invalidation() {
+        let (_root, _backend, manager, connection, closed, _input_id) =
+            ordered_input_fixture().await;
+        let admission = |resolved_at| {
+            Some(super::super::input::TerminalInputAdmission::new(
+                CancellationToken::new(),
+                (),
+                resolved_at,
+            ))
+        };
+        // The workspace changes while a begin is still resolving it.
+        let resolved_at = manager.input_invalidation_epoch();
+        manager.invalidate_thread_input("thread");
+        assert!(matches!(
+            manager
+                .begin_input(connection, closed.clone(), "thread", "term", 1, admission(resolved_at))
+                .await,
+            Err(TerminalError::Input(error)) if error.code == "closed"
+        ));
+        let resolved_at = manager.input_invalidation_epoch();
+        assert!(
+            manager
+                .begin_input(
+                    connection,
+                    closed,
+                    "thread",
+                    "term",
+                    2,
+                    admission(resolved_at)
+                )
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
     async fn ordered_input_delayed_old_begin_cannot_replace_a_newer_attachment() {
         let (_root, backend, manager, connection, closed, _input_id) =
             ordered_input_fixture().await;
-        let old_begin = manager.begin_input(connection, closed.clone(), "thread", "term", 1);
+        let old_begin = manager.begin_input(connection, closed.clone(), "thread", "term", 1, None);
         let fresh = manager
-            .begin_input(connection, closed, "thread", "term", 2)
+            .begin_input(connection, closed, "thread", "term", 2, None)
             .await
             .expect("fresh attachment");
         assert!(
@@ -5546,7 +5600,14 @@ mod tests {
         );
         let connection = uuid::Uuid::new_v4();
         let lease = manager
-            .begin_input(connection, CancellationToken::new(), "thread", "term", 0)
+            .begin_input(
+                connection,
+                CancellationToken::new(),
+                "thread",
+                "term",
+                0,
+                None,
+            )
             .await
             .expect("new attachment");
         manager
@@ -5682,7 +5743,7 @@ mod tests {
             .await
             .expect("other terminal");
         let second = manager
-            .begin_input(connection, closed, "thread", "other", 0)
+            .begin_input(connection, closed, "thread", "other", 0, None)
             .await
             .expect("second lease");
         let payload = "x".repeat(16 * 1024);
@@ -5716,6 +5777,7 @@ mod tests {
                 "thread",
                 "term",
                 0,
+                None,
             )
             .await
             .expect("independent lease");
