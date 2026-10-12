@@ -586,7 +586,7 @@ fn hang_finding(method: &str, elapsed: Duration) -> FindingInput {
 
 /// The correlation header's value, when present and at most 64 bytes. A longer value is
 /// treated as absent: a truncated ID could join the wrong request.
-fn correlation_id(headers: &[(String, String)]) -> Option<String> {
+pub(super) fn correlation_id(headers: &[(String, String)]) -> Option<String> {
     headers
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case(CORRELATION_HEADER))

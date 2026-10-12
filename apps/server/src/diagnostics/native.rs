@@ -304,11 +304,14 @@ fn collect_rows(system: &Arc<Mutex<System>>) -> Result<Vec<ProcessRow>, Sampling
     system.refresh_processes_specifics(
         ProcessesToUpdate::All,
         true,
+        // Threads are filtered out below; listing them on Linux reads every
+        // /proc/<pid>/task entry, which dominated the cost of a sample.
         ProcessRefreshKind::nothing()
             .with_cpu()
             .with_memory()
             .with_cmd(UpdateKind::OnlyIfNotSet)
-            .with_exe(UpdateKind::OnlyIfNotSet),
+            .with_exe(UpdateKind::OnlyIfNotSet)
+            .without_tasks(),
     );
     let processors = std::thread::available_parallelism()
         .map(|count| count.get() as f32)
@@ -1434,24 +1437,37 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn native_sampler_excludes_linux_threads_from_process_rows() {
-        let sampler = NativeProcessSampler::default();
-        let rows = sampler.sample().await.expect("processes should sample");
-        let thread_pids = sampler
-            .system
-            .lock()
-            .expect("system should lock")
-            .processes()
-            .iter()
-            .filter_map(|(pid, process)| process.thread_kind().map(|_| pid.as_u32()))
+        // The sampler no longer lists tasks, so read this process's threads from
+        // procfs; a parked worker guarantees one besides the main thread.
+        let (stop, parked) = std::sync::mpsc::channel::<()>();
+        let worker = std::thread::spawn(move || {
+            let _ = parked.recv();
+        });
+        let pid = std::process::id();
+        let thread_ids = std::fs::read_dir("/proc/self/task")
+            .expect("threads should list")
+            .filter_map(|entry| entry.ok()?.file_name().to_str()?.parse::<u32>().ok())
+            .filter(|tid| *tid != pid)
             .collect::<Vec<_>>();
+        assert!(
+            !thread_ids.is_empty(),
+            "test process should have a thread besides its main thread"
+        );
+
+        let rows = NativeProcessSampler::default()
+            .sample()
+            .await
+            .expect("processes should sample");
 
         assert!(
-            !thread_pids.is_empty(),
-            "test process should expose threads"
+            rows.iter().any(|row| row.pid == pid),
+            "the test process itself must be sampled"
         );
         assert!(
-            rows.iter().all(|row| !thread_pids.contains(&row.pid)),
+            rows.iter().all(|row| !thread_ids.contains(&row.pid)),
             "sampled process rows must not contain Linux threads"
         );
+        drop(stop);
+        worker.join().expect("worker should exit");
     }
 }

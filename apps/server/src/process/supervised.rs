@@ -511,15 +511,43 @@ async fn terminate_and_wait_owned(
     log_cleanup_failures(operation, &report);
 }
 
+/// Kills the ownership unit, falling back to the root alone if that fails.
+///
+/// A process group that no longer exists (`ESRCH`) has nothing left to stop,
+/// so it counts as stopped, not as a failure. Its leader, the root, has
+/// normally exited with it and may already be reaped, so the root is killed
+/// only if it still runs, having left its group: a kill by the PID of a
+/// reaped root could reach an unrelated process. Windows needs no
+/// counterpart: terminating an empty job succeeds.
 fn request_termination(child: &mut dyn ChildWrapper, report: &mut ProcessCleanupReport) {
-    if let Err(error) = child.start_kill() {
-        report.record_failure(format!("kill ownership unit: {error}"));
-        match child.inner_mut().start_kill() {
-            Ok(()) => report.record_success(),
-            Err(error) => report.record_failure(format!("kill root child: {error}")),
+    match child.start_kill() {
+        Ok(()) => {
+            report.record_success();
+            return;
         }
-    } else {
-        report.record_success();
+        Err(error) if kill_target_is_gone(&error) => {
+            report.record_success();
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                return;
+            }
+        }
+        Err(error) => report.record_failure(format!("kill ownership unit: {error}")),
+    }
+    match child.inner_mut().start_kill() {
+        Ok(()) => report.record_success(),
+        Err(error) => report.record_failure(format!("kill root child: {error}")),
+    }
+}
+
+fn kill_target_is_gone(error: &io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        error.raw_os_error() == Some(libc::ESRCH)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = error;
+        false
     }
 }
 
@@ -673,7 +701,7 @@ mod tests {
         child: Child,
         kill_calls: Arc<AtomicUsize>,
         wait_calls: Arc<AtomicUsize>,
-        fail_kill: bool,
+        kill_error: Option<fn() -> io::Error>,
     }
 
     #[derive(Debug)]
@@ -715,10 +743,9 @@ mod tests {
 
         fn start_kill(&mut self) -> io::Result<()> {
             self.kill_calls.fetch_add(1, Ordering::SeqCst);
-            if self.fail_kill {
-                Err(io::Error::other("injected kill failure"))
-            } else {
-                self.child.start_kill()
+            match self.kill_error {
+                Some(error) => Err(error()),
+                None => self.child.start_kill(),
             }
         }
 
@@ -869,7 +896,11 @@ mod tests {
                 child,
                 kill_calls: Arc::clone(&kill_calls),
                 wait_calls: Arc::clone(&wait_calls),
-                fail_kill,
+                kill_error: if fail_kill {
+                    Some(|| io::Error::other("injected kill failure"))
+                } else {
+                    None
+                },
             }),
             kill_calls,
             wait_calls,
@@ -1151,6 +1182,154 @@ mod tests {
                 .iter()
                 .all(|failure| failure.chars().count() <= 160)
         );
+    }
+
+    /// A real child spawned the way the supervised runner and the provider
+    /// runtime spawn theirs, running a command that exits at once.
+    #[cfg(unix)]
+    fn spawn_completed_supervised_child() -> Box<dyn ChildWrapper> {
+        let mut command = completed_command();
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut command = CommandWrap::from(command);
+        configure_supervised_background_command_wrap(&mut command);
+        command.spawn().expect("supervised child should spawn")
+    }
+
+    /// Cleanup that finds the process group already gone has nothing left to
+    /// stop (#83). `wait` reaps the root and the rest of its group, as when a
+    /// run fails after its command exited; `try_wait` reaps the root behind
+    /// tokio's back, as provider admission does for a provider that exited
+    /// before it was attributed.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cleanup_of_an_already_reaped_process_group_reports_no_failure() {
+        let mut waited = spawn_completed_supervised_child();
+        waited
+            .wait()
+            .await
+            .expect("reap the root and its process group");
+        let mut polled = spawn_completed_supervised_child();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while polled.try_wait().expect("poll the root").is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the completed command exits");
+
+        for (shape, mut child) in [("polled", polled), ("waited", waited)] {
+            let report = terminate_and_wait(&mut *child).await;
+
+            assert_eq!(report.failure_count, 0, "{shape}: {:?}", report.failures);
+            assert_eq!(report.attempted, report.succeeded, "{shape}");
+        }
+    }
+
+    /// A root that moves itself into another process group leaves its own
+    /// group empty, so the group kill finds nothing (`ESRCH`) while the root
+    /// still runs: cleanup must still kill it directly.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cleanup_still_kills_a_root_that_left_its_process_group() {
+        let mut command = Command::new("sleep");
+        command
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        // SAFETY: getpgrp reads this process's group. The hook only calls the
+        // async-signal-safe setpgid, after the wrapper has made the child the
+        // leader of its own group, to join this test process's group.
+        let group = unsafe { libc::getpgrp() };
+        unsafe {
+            command.pre_exec(move || {
+                if libc::setpgid(0, group) == 0 {
+                    Ok(())
+                } else {
+                    Err(io::Error::last_os_error())
+                }
+            });
+        }
+        let mut command = CommandWrap::from(command);
+        configure_supervised_background_command_wrap(&mut command);
+        let mut child = command.spawn().expect("supervised child should spawn");
+
+        let report = terminate_and_wait(&mut *child).await;
+
+        assert_eq!(report.failure_count, 0, "{:?}", report.failures);
+        assert_eq!(report.attempted, report.succeeded);
+    }
+
+    #[cfg(unix)]
+    #[derive(Clone, Default)]
+    struct CapturedLog(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    #[cfg(unix)]
+    impl io::Write for CapturedLog {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .expect("captured log")
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The path that logged "supervised process cleanup was incomplete" for an
+    /// already-exited group: a failed run hands its child to owned cleanup.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn owned_cleanup_of_an_already_reaped_process_group_logs_no_warning() {
+        let log = CapturedLog::default();
+        let _logging = tracing::subscriber::set_default(
+            tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_writer({
+                    let log = log.clone();
+                    move || log.clone()
+                })
+                .finish(),
+        );
+        let mut child = spawn_completed_supervised_child();
+        child
+            .wait()
+            .await
+            .expect("reap the root and its process group");
+
+        terminate_and_wait_owned(child, PROCESS_CLEANUP_WAIT_TIMEOUT, "supervised process").await;
+
+        let log =
+            String::from_utf8(log.0.lock().expect("captured log").clone()).expect("UTF-8 log");
+        assert!(!log.contains("cleanup was incomplete"), "{log}");
+    }
+
+    /// Only a target that no longer exists is exempt: any other kill error is
+    /// still a cleanup failure, and the root is still killed directly.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_refused_ownership_unit_kill_is_still_a_cleanup_failure() {
+        let (mut child, kill_calls, _wait_calls) = tracking_child(false);
+        child.kill_error = Some(|| io::Error::from_raw_os_error(libc::EPERM));
+
+        let report = terminate_and_wait(&mut *child).await;
+
+        assert_eq!(kill_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            report.failures,
+            [format!(
+                "kill ownership unit: {}",
+                io::Error::from_raw_os_error(libc::EPERM)
+            )]
+        );
+        // The ownership unit failed; the root kill and the wait succeeded.
+        assert_eq!((report.attempted, report.succeeded), (3, 2));
     }
 
     #[tokio::test]

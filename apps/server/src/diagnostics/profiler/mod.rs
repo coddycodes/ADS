@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod client;
+pub mod connections;
 pub mod crash;
 pub mod event;
 pub mod exits;

@@ -16,6 +16,7 @@ use super::{
 };
 
 const UI_OBSERVATION_TIMEOUT: Duration = Duration::from_millis(250);
+const SLOW_SAMPLE: Duration = Duration::from_millis(500);
 const UI_IDENTITY_LIMIT: usize = 64;
 const UI_COVERAGE_MESSAGE_MAX_SCALARS: usize = 160;
 const UI_UNAVAILABLE_MESSAGE: &str =
@@ -297,6 +298,7 @@ impl ResourceSampler for NativeResourceSampler {
         Box::pin(async move {
             let sample_started_at = Instant::now();
             let rows: Arc<[ProcessRow]> = self.native.collect_rows().await?.into();
+            let enumerated_at = Instant::now();
             let server_identity = rows
                 .iter()
                 .find(|row| row.pid == std::process::id())
@@ -311,6 +313,7 @@ impl ResourceSampler for NativeResourceSampler {
                 })?;
             let observation =
                 observe_ui_processes(self.ui_observer.clone(), rows.clone(), server_identity).await;
+            let observed_at = Instant::now();
             let mut claims = self.registry.bind_and_snapshot(&rows, sample_started_at);
             append_ui_claims(&mut claims, &rows, &observation.identities);
             let attribution = ResourceAttributor::attribute(
@@ -319,6 +322,7 @@ impl ResourceSampler for NativeResourceSampler {
                 &claims,
                 observation.coverage,
             );
+            log_sample_stages(rows.len(), sample_started_at, enumerated_at, observed_at);
 
             Ok(AttributedProcessSnapshot {
                 sampled_at_ms: OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000,
@@ -329,6 +333,41 @@ impl ResourceSampler for NativeResourceSampler {
                 ui_coverage: attribution.ui_coverage,
             })
         })
+    }
+}
+
+/// Names the slow stage of a sample: enumeration includes waiting for the blocking pool and the
+/// native process-table lock, and the UI observer is capped at `UI_OBSERVATION_TIMEOUT`.
+fn log_sample_stages(
+    rows: usize,
+    started_at: Instant,
+    enumerated_at: Instant,
+    observed_at: Instant,
+) {
+    let total = started_at.elapsed();
+    let ms = |duration: Duration| duration.as_secs_f64() * 1_000.0;
+    let enumerate_ms = ms(enumerated_at.duration_since(started_at));
+    let ui_observer_ms = ms(observed_at.duration_since(enumerated_at));
+    let attribution_ms = ms(observed_at.elapsed());
+    let total_ms = ms(total);
+    if total >= SLOW_SAMPLE {
+        tracing::warn!(
+            rows,
+            total_ms,
+            enumerate_ms,
+            ui_observer_ms,
+            attribution_ms,
+            "slow process diagnostics sample"
+        );
+    } else {
+        tracing::debug!(
+            rows,
+            total_ms,
+            enumerate_ms,
+            ui_observer_ms,
+            attribution_ms,
+            "process diagnostics sample"
+        );
     }
 }
 

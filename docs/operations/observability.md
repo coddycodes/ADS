@@ -268,6 +268,17 @@ failure. Before the first successful sample it shows unavailable placeholders,
 not healthy-looking zeroes. Partial and unavailable UI coverage likewise remain
 explicit rather than being encoded as zero usage.
 
+The server samples in a background task while clients read diagnostics, and the
+diagnostics RPCs only return its latest sample (see
+[Performance](../architecture/overview.md#performance)). `readAt` is when the
+sample was taken, so the first read after an idle period shows the retained
+sample with its original time until the restarted task replaces it. Profiler
+`rpc.timing` for these methods therefore no longer includes sampling. A sample
+that takes 500 ms or more writes `slow process diagnostics sample` to
+`server.log` at `warn`, with the process enumeration, UI observer, and
+attribution durations; set `BIBCODE_LOG=info,bibcode_server::diagnostics=debug`
+to log them for every sample.
+
 Resource Manager never offers Interrupt or Kill for a Core row. For an eligible
 External row, client state is only a request: immediately before signaling, the
 server resamples and revalidates the PID/start identity, current ancestry, and

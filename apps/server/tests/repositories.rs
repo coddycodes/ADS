@@ -391,6 +391,7 @@ fn public_repository_api_inventory_is_explicit() {
         "thread_attachment_digests",
         "list_thread_sessions_by_status",
         "list_threads_by_project",
+        "load_shell_snapshot_rows",
         "load_worktree_catalog_projection",
         "list_turns_by_thread",
         "load_auth_authority_snapshot",

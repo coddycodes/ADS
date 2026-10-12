@@ -22,8 +22,8 @@ pub use background::{
 };
 pub(crate) use cleanup::ProcessCleanupReport;
 pub(crate) use executable::{
-    PreparedLaunch, launch_executable_extensions, locate_executable, wrap_launch_program,
-    wrap_windows_batch_command,
+    PreparedLaunch, SpawnPlan, launch_executable_extensions, locate_executable,
+    wrap_launch_program, wrap_windows_batch_command,
 };
 pub use runner::{
     OutputMode, ProcessError, ProcessRunInput, ProcessRunOutput, ProcessRunner, TimeoutBehavior,

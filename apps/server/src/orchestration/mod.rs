@@ -8,7 +8,7 @@ pub use delivery::{
 };
 pub use engine::{
     EngineOptions, OrchestrationCommand, OrchestrationEngine, OrchestrationError, Snapshot,
-    load_snapshot,
+    load_shell_snapshot, load_snapshot, load_thread_snapshot,
 };
 
 #[cfg(test)]
