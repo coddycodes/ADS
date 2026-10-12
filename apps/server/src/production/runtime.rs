@@ -127,6 +127,7 @@ pub struct ProductionRuntime {
     status_broadcaster: crate::git::StatusBroadcaster,
     workspace: WorkspaceRpc,
     _resource_sampler: Arc<NativeResourceSampler>,
+    process_monitor: Arc<DiagnosticsMonitor<NativeResourceSampler>>,
     profiler: Arc<ProfilerRuntime>,
     update_quiesced: tokio::sync::Mutex<bool>,
 }
@@ -491,7 +492,7 @@ impl ProductionRuntime {
             terminal_manager,
             process_sampler,
             resource_sampler.clone(),
-            process_monitor,
+            process_monitor.clone(),
             provider_usage,
             relay,
             control.clone(),
@@ -619,6 +620,7 @@ impl ProductionRuntime {
             status_broadcaster,
             workspace,
             _resource_sampler: resource_sampler,
+            process_monitor,
             profiler,
             update_quiesced: tokio::sync::Mutex::new(false),
         })
@@ -748,6 +750,8 @@ impl ProductionRuntime {
         // as an incomplete shutdown on the next start, not as a crash.
         let profiler = self.profiler.clone();
         let _ = tokio::task::spawn_blocking(move || profiler.begin_stopping()).await;
+        // Early, so diagnostics stop sampling before process ownership is frozen and cleaned up.
+        self.process_monitor.shutdown().await;
         self.server_control.shutdown_capability_discovery().await;
         self.preview_gateway.shutdown().await;
         let process_ownership = self.terminal_services.freeze_process_ownership().await;

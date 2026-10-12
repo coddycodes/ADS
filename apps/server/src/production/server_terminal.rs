@@ -439,7 +439,7 @@ fn register_diagnostics_rpcs(registry: &mut RpcRegistry, services: &ServerTermin
         "server.getProcessDiagnostics",
         move |_request, _cancellation| {
             let monitor = monitor.clone();
-            async move { Ok(process_diagnostics_to_wire(monitor.sample_current().await)) }
+            async move { Ok(process_diagnostics_to_wire(monitor.read_current().await)) }
         },
     );
 
