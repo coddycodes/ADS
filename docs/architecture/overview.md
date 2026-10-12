@@ -1988,12 +1988,28 @@ the repeatable capture commands are recorded in the
 [Desktop Performance Baseline](./desktop-performance-baseline.md).
 
 The native process sampler starts with an empty process table, so constructing
-the production runtime does not enumerate host processes. A requested diagnostics
-sample or non-empty process-ownership cleanup refreshes the host process table on
-the blocking pool. Full discovery remains necessary to identify previously unknown
+the production runtime does not enumerate host processes. A diagnostics sample
+or non-empty process-ownership cleanup refreshes the host process table on the
+blocking pool. Full discovery remains necessary to identify previously unknown
 descendants for attribution and cleanup; direct PID identity checks use the native
 targeted lookup independently of that table. CPU observations establish their
-baseline on the first requested sample and retain it for subsequent samples.
+baseline on the first sample and retain it for subsequent samples.
+
+`DiagnosticsMonitor` takes diagnostics samples in one background task, every
+2 seconds in production, and `server.getProcessDiagnostics` and
+`server.getProcessResourceHistory` only read its latest sample and retained
+history. A read never samples and never waits for a sample in progress, with one
+exception: before the first sample completes, a read waits for it for at most
+1 second, then returns the error `Measuring resource usage.` instead of empty
+totals that would read as an idle host. The first diagnostics read starts the
+task, and the task stops after three intervals without a read, so a server with
+no diagnostics reader enumerates nothing; the next read answers from the
+retained sample, with its original timestamp, and restarts the task. Runtime
+shutdown stops the task early in the quiesce sequence, before process ownership
+is frozen and long before the Profiler's teardown. Each sample logs its stage
+durations at `debug`, and a sample that takes 500 ms or more logs them at `warn`
+(`slow process diagnostics sample`): process enumeration, which includes waiting
+for the blocking pool, the desktop UI observer, and attribution.
 
 On Linux the server and the desktop host allocate through glibc malloc, which
 keeps freed memory in the per-thread arena that served it and returns only the
