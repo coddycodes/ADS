@@ -274,3 +274,183 @@ where
             })
         })
 }
+
+/// The path to name instead of a bare program, so that Rust can start the command with
+/// `posix_spawn`.
+///
+/// Rust forks whenever a command names a program without a directory and also sets `PATH`
+/// for its child, because `posix_spawnp` would search this process's `PATH` instead. A
+/// fork copies the page tables of the whole server: about 140 ms per child from a 6 GB
+/// host, paid by every Git command (#85). AppImage isolation sets that `PATH` for every
+/// user-facing child. This searches the child's `PATH` the way `execvp` would: relative
+/// entries against the child's directory, past candidates that fail the way `execvp`
+/// moves past. It returns an absolute path, or `None` when there is nothing to resolve,
+/// nothing is found, or a candidate fails the way `execvp` stops at; the bare name then
+/// spawns as before and reports the same error.
+#[cfg(unix)]
+pub(crate) fn spawn_program(command: &std::process::Command) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let program = Path::new(command.get_program());
+    if program.as_os_str().is_empty() || program.components().count() != 1 || program.is_absolute()
+    {
+        return None;
+    }
+    let (_, search_path) = command.get_envs().find(|(name, _)| *name == "PATH")?;
+    // The child changes directory before it executes, so a relative result would resolve twice.
+    let directory = std::env::current_dir()
+        .ok()?
+        .join(command.get_current_dir().unwrap_or(Path::new("")));
+    for entry in std::env::split_paths(search_path?) {
+        let candidate = directory.join(entry).join(program);
+        let path = std::ffi::CString::new(candidate.as_os_str().as_bytes()).ok()?;
+        // SAFETY: `path` is a NUL-terminated string that outlives the call.
+        if unsafe { libc::faccessat(libc::AT_FDCWD, path.as_ptr(), libc::X_OK, libc::AT_EACCESS) }
+            == 0
+        {
+            // execve refuses a directory with EACCES, which execvp moves past.
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        } else if !execvp_moves_past(&std::io::Error::last_os_error()) {
+            return None;
+        }
+    }
+    None
+}
+
+#[cfg(not(unix))]
+pub(crate) fn spawn_program(_command: &std::process::Command) -> Option<PathBuf> {
+    None
+}
+
+/// Whether `execvp` would go on after this launch error: to the next `PATH` entry, or for
+/// `ENOEXEC` to running the file through `/bin/sh`. Any other error ends its search.
+#[cfg(unix)]
+pub(crate) fn execvp_moves_past(error: &std::io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(
+            libc::ENOENT
+                | libc::EACCES
+                | libc::ENOTDIR
+                | libc::ESTALE
+                | libc::ENODEV
+                | libc::ETIMEDOUT
+                | libc::ENOEXEC
+        )
+    )
+}
+
+#[cfg(not(unix))]
+pub(crate) fn execvp_moves_past(_error: &std::io::Error) -> bool {
+    false
+}
+
+#[cfg(all(test, unix))]
+mod spawn_program_tests {
+    use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
+
+    use super::spawn_program;
+
+    fn file(path: &Path, mode: u32) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    #[test]
+    fn resolves_a_bare_name_against_the_childs_path_like_execvp() {
+        let root = tempfile::tempdir().unwrap();
+        file(&root.path().join("plain/tool"), 0o644);
+        file(&root.path().join("relative/tool"), 0o755);
+        file(&root.path().join("later/tool"), 0o755);
+        let mut command = Command::new("tool");
+        command
+            .current_dir(root.path())
+            .env("PATH", "plain:relative:later");
+
+        // A file without an execute bit is skipped; a relative entry follows the child's cwd.
+        assert_eq!(
+            spawn_program(&command),
+            Some(root.path().join("relative/tool"))
+        );
+    }
+
+    #[test]
+    fn skips_a_candidate_this_process_may_not_execute() {
+        // SAFETY: geteuid has no preconditions.
+        if unsafe { libc::geteuid() } == 0 {
+            return; // root may execute any file with an execute bit
+        }
+        let root = tempfile::tempdir().unwrap();
+        // Executable by group and others, but not by its owner: this process.
+        file(&root.path().join("denied/tool"), 0o011);
+        file(&root.path().join("allowed/tool"), 0o755);
+        let mut command = Command::new("tool");
+        command
+            .current_dir(root.path())
+            .env("PATH", "denied:allowed");
+
+        assert_eq!(
+            spawn_program(&command),
+            Some(root.path().join("allowed/tool"))
+        );
+    }
+
+    #[test]
+    fn leaves_the_search_to_execvp_after_an_error_it_would_stop_at() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("looping")).unwrap();
+        std::os::unix::fs::symlink("tool", root.path().join("looping/tool")).unwrap();
+        file(&root.path().join("later/tool"), 0o755);
+        let mut command = Command::new("tool");
+        command
+            .current_dir(root.path())
+            .env("PATH", "looping:later");
+
+        // execvp stops at ELOOP instead of running the later tool.
+        assert_eq!(spawn_program(&command), None);
+    }
+
+    #[test]
+    fn returns_an_absolute_path_for_a_relative_child_directory() {
+        let root = tempfile::tempdir().unwrap();
+        file(&root.path().join("repo/bin/tool"), 0o755);
+        // The same directory, spelled relative to this process's working directory.
+        let current = std::env::current_dir().unwrap();
+        let mut relative = std::path::PathBuf::new();
+        for _ in current.components().skip(1) {
+            relative.push("..");
+        }
+        relative.push(root.path().strip_prefix("/").unwrap().join("repo"));
+        let mut command = Command::new("tool");
+        command.current_dir(&relative).env("PATH", "bin");
+
+        let resolved = spawn_program(&command).expect("resolved tool");
+        assert!(resolved.is_absolute(), "{resolved:?}");
+        assert_eq!(
+            fs::canonicalize(resolved).unwrap(),
+            fs::canonicalize(root.path().join("repo/bin/tool")).unwrap()
+        );
+    }
+
+    #[test]
+    fn leaves_commands_that_need_no_resolution_or_resolve_to_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        file(&root.path().join("bin/tool"), 0o755);
+        let path = root.path().join("bin");
+
+        let inherited = Command::new("tool");
+        let mut with_directory = Command::new("bin/tool");
+        with_directory.current_dir(root.path()).env("PATH", &path);
+        let mut removed = Command::new("tool");
+        removed.env_remove("PATH");
+        let mut missing = Command::new("absent-tool");
+        missing.env("PATH", &path);
+
+        for command in [inherited, with_directory, removed, missing] {
+            assert_eq!(spawn_program(&command), None, "{command:?}");
+        }
+    }
+}
