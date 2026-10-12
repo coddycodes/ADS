@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [v0.9.1] - 2026-10-12
+
+BiBCode v0.9.1 fixes the slowdowns, memory growth, dropped connections, and crash that the Profiler recorded on v0.9.0. The desktop stops reloading every thread's history while an agent runs, returns freed memory on Linux, keeps terminal typing, Git panels, and process diagnostics responsive under load, and keeps remote clients connected after they wake. This release includes the changes since v0.9.0.
 
 ### Performance and reliability
 
