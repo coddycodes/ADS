@@ -25,6 +25,8 @@ struct Controls {
     key_pair_result: Arc<Mutex<Result<(String, String), String>>>,
     endpoint_result: Arc<Mutex<Option<Result<Value, String>>>>,
     endpoint_calls: Arc<Mutex<Vec<Value>>>,
+    /// Holds each endpoint apply open this long, to widen races.
+    endpoint_delay: Arc<std::sync::atomic::AtomicU64>,
     pairing_result: Arc<Mutex<Result<PairingCredential, String>>>,
     preview_results: Arc<Mutex<HashMap<String, Result<Value, String>>>>,
     preview_calls: Arc<Mutex<Vec<PreviewCall>>>,
@@ -43,6 +45,7 @@ impl Controls {
             )))),
             endpoint_result: Arc::default(),
             endpoint_calls: Arc::default(),
+            endpoint_delay: Arc::default(),
             pairing_result: Arc::new(Mutex::new(Ok(PairingCredential {
                 credential: "pairing-secret".into(),
                 expires_at: "2026-07-10T12:02:00Z".into(),
@@ -126,6 +129,10 @@ async fn harness(max_credentials: usize, max_sessions: usize) -> Harness {
     let endpoint = EndpointRuntime::new(move |config| {
         let controls = endpoint_controls.clone();
         async move {
+            let delay = controls.endpoint_delay.load(Ordering::SeqCst);
+            if delay > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
             controls.endpoint_calls.lock().await.push(config.clone());
             if let Some(result) = controls.endpoint_result.lock().await.clone() {
                 result
@@ -1623,6 +1630,7 @@ async fn sqlite_failures_map_to_route_specific_errors_without_partial_responses(
                 environment_credential: "credential".into(),
                 cloud_mint_public_key: "key".into(),
                 endpoint_runtime: json!({}),
+                origin_port: None,
             })
             .await
             .is_err()
@@ -1784,4 +1792,218 @@ fn database_initialization_reports_parent_directory_creation_failures() {
     std::fs::write(&blocker, b"file").expect("blocker should write");
 
     assert!(initialize_database(&blocker.join("connect.sqlite3")).is_err());
+}
+
+#[tokio::test]
+async fn link_state_reports_the_managed_endpoint_and_its_preview_hostnames() {
+    let harness = harness(4, 4).await;
+    let state = || async {
+        harness
+            .service
+            .json(
+                JsonOperation::ConnectLinkState,
+                None,
+                context(HeaderMap::new()),
+            )
+            .await
+            .expect("link state")
+            .body
+    };
+    let unlinked = state().await;
+    assert_eq!(unlinked["managedEndpoint"], false);
+    assert_eq!(unlinked["previewHostnames"], false);
+
+    link(&harness).await;
+    let linked = state().await;
+    assert_eq!(linked["managedEndpoint"], true);
+    assert_eq!(linked["previewHostnames"], false);
+
+    let mut config = relay_config("cloud-user");
+    config["endpointRuntime"]["hostname"] = json!("env.zone.test");
+    config["endpointRuntime"]["previewHostnames"] = json!(["env-p1.zone.test"]);
+    harness
+        .service
+        .json(
+            JsonOperation::ConnectRelayConfig,
+            Some(config),
+            context(HeaderMap::new()),
+        )
+        .await
+        .expect("relink");
+    assert_eq!(state().await["previewHostnames"], true);
+}
+
+#[tokio::test]
+async fn restore_reapplies_the_stored_endpoint_only_when_linked() {
+    let harness = harness(4, 4).await;
+    assert_eq!(
+        harness.service.restore_managed_endpoint().await.unwrap(),
+        None
+    );
+    assert!(harness.controls.endpoint_calls.lock().await.is_empty());
+
+    link(&harness).await;
+    harness.controls.endpoint_calls.lock().await.clear();
+    let restored = harness.service.restore_managed_endpoint().await.unwrap();
+    assert_eq!(restored, Some(json!({"status":"running"})));
+    assert_eq!(
+        *harness.controls.endpoint_calls.lock().await,
+        vec![json!({"providerKind":"cloudflare_tunnel","connectorToken":"token"})]
+    );
+
+    *harness.controls.endpoint_result.lock().await = Some(Err("offline".into()));
+    assert!(harness.service.restore_managed_endpoint().await.is_err());
+}
+
+#[tokio::test]
+async fn a_restore_racing_an_unlink_never_restarts_the_tunnel() {
+    let harness = harness(4, 4).await;
+    link(&harness).await;
+    harness.controls.endpoint_calls.lock().await.clear();
+    harness.controls.endpoint_delay.store(50, Ordering::SeqCst);
+
+    let restore = harness.service.restore_managed_endpoint();
+    let unlink = harness.service.json(
+        JsonOperation::ConnectUnlink,
+        None,
+        context(HeaderMap::new()),
+    );
+    let (restored, unlinked) = tokio::join!(restore, unlink);
+    restored.expect("restore");
+    unlinked.expect("unlink");
+
+    assert_eq!(
+        harness.controls.endpoint_calls.lock().await.last(),
+        Some(&Value::Null),
+        "the unlink's disable is the last word on the tunnel"
+    );
+}
+
+#[tokio::test]
+async fn a_tunnel_provisioned_for_another_port_is_not_restored_and_reports_stale() {
+    let harness = harness(4, 4).await;
+    link(&harness).await;
+    let state = || async {
+        harness
+            .service
+            .json(
+                JsonOperation::ConnectLinkState,
+                None,
+                context(HeaderMap::new()),
+            )
+            .await
+            .expect("link state")
+            .body
+    };
+    assert_eq!(state().await["managedEndpointStale"], false);
+
+    // The server now listens on another port than the one the tunnel was linked for.
+    open_database(&harness.database_path)
+        .unwrap()
+        .execute(
+            "UPDATE connect_native_secrets SET value = '50000' WHERE name = 'cloud-endpoint-origin-port'",
+            [],
+        )
+        .unwrap();
+    harness.controls.endpoint_calls.lock().await.clear();
+    assert_eq!(
+        harness.service.restore_managed_endpoint().await.unwrap(),
+        Some(json!({"status":"stale-origin"}))
+    );
+    assert!(
+        harness.controls.endpoint_calls.lock().await.is_empty(),
+        "no connector starts for a tunnel that reaches nothing"
+    );
+    assert_eq!(state().await["managedEndpointStale"], true);
+}
+
+#[tokio::test]
+async fn a_background_relink_never_undoes_a_changed_link() {
+    let harness = harness(4, 4).await;
+    let mut config = relay_config("cloud-user");
+    config["requireLinkGeneration"] = json!("not-a-link");
+    let refused = error(
+        harness
+            .service
+            .json(
+                JsonOperation::ConnectRelayConfig,
+                Some(config.clone()),
+                context(HeaderMap::new()),
+            )
+            .await,
+    );
+    assert_eq!(
+        refused.status,
+        StatusCode::CONFLICT,
+        "the link it named is gone"
+    );
+    assert!(
+        harness.controls.endpoint_calls.lock().await.is_empty(),
+        "a refused re-link starts nothing"
+    );
+
+    link(&harness).await;
+    let state = || async {
+        harness
+            .service
+            .json(
+                JsonOperation::ConnectLinkState,
+                None,
+                context(HeaderMap::new()),
+            )
+            .await
+            .expect("link state")
+            .body
+    };
+    let generation = state().await["linkGeneration"].clone();
+    assert!(generation.is_string());
+    // Another client unlinks and links again to the same account: a new link.
+    harness
+        .service
+        .json(
+            JsonOperation::ConnectUnlink,
+            None,
+            context(HeaderMap::new()),
+        )
+        .await
+        .expect("unlink");
+    let mut relinked = relay_config("cloud-user");
+    relinked["environmentCredential"] = json!("rotated-secret");
+    harness
+        .service
+        .json(
+            JsonOperation::ConnectRelayConfig,
+            Some(relinked),
+            context(HeaderMap::new()),
+        )
+        .await
+        .expect("relink");
+    assert_ne!(state().await["linkGeneration"], generation);
+
+    config["requireLinkGeneration"] = generation;
+    assert_eq!(
+        error(
+            harness
+                .service
+                .json(
+                    JsonOperation::ConnectRelayConfig,
+                    Some(config.clone()),
+                    context(HeaderMap::new()),
+                )
+                .await
+        )
+        .status,
+        StatusCode::CONFLICT,
+        "a refresh of the replaced link never overwrites the new one"
+    );
+    config["requireLinkGeneration"] = state().await["linkGeneration"].clone();
+    harness
+        .service
+        .json(
+            JsonOperation::ConnectRelayConfig,
+            Some(config),
+            context(HeaderMap::new()),
+        )
+        .await
+        .expect("a refresh of the current link applies");
 }

@@ -40,7 +40,7 @@ use crate::{
         MAINTENANCE_UPDATE_STATUS_PATH, MaintenanceError, RpcAdmissionGate, UpdateMaintenance,
         http_mutability,
     },
-    preview::gateway::registry::ClientReach,
+    preview::gateway::registry::{ClientReach, PreviewGateway},
     production::http_routes::{self, HttpRoutesState},
     remote_update::RemoteUpdateSupport,
     rpc::{
@@ -211,6 +211,8 @@ pub(crate) struct AppState {
     pub http_routes: HttpRoutesState,
     pub admission_gate: RpcAdmissionGate,
     pub update_maintenance: Option<Arc<UpdateMaintenance>>,
+    /// Serves BiBCode Connect preview hostnames; `None` without a production runtime.
+    pub preview_gateway: Option<PreviewGateway>,
 }
 
 impl FromRef<AppState> for HttpRoutesState {
@@ -238,7 +240,51 @@ pub(crate) fn build_router(state: AppState) -> Router {
         ))
         .layer(middleware::from_fn(trust_forwarded_headers))
         .layer(cors)
+        .layer(middleware::from_fn_with_state(
+            state.preview_gateway.clone(),
+            route_relay_previews,
+        ))
         .with_state(state)
+}
+
+/// BiBCode Connect preview hostnames reach this port through the tunnel. The preview
+/// gateway serves them, never BiBCode's own routes, CORS, or admission gate; the raw
+/// `Host` is matched before forwarded headers are applied.
+async fn route_relay_previews(
+    State(gateway): State<Option<PreviewGateway>>,
+    connection: ConnectionInfo,
+    request: Request,
+    next: Next,
+) -> Response {
+    let Some(gateway) = gateway else {
+        return next.run(request).await;
+    };
+    let local = connection
+        .ok()
+        .and_then(|ConnectInfo(addrs)| addrs.local)
+        .map(|addr| addr.ip());
+    let host = request
+        .headers()
+        .get(HOST)
+        .and_then(|value| value.to_str().ok());
+    let forwarded_proto = request
+        .headers()
+        .get(X_FORWARDED_PROTO)
+        .and_then(|value| value.to_str().ok());
+    let path = request
+        .uri()
+        .path_and_query()
+        .map_or("/", |path| path.as_str());
+    if let Some(location) = gateway.relay_https_redirect(local, host, forwarded_proto, path) {
+        return (StatusCode::PERMANENT_REDIRECT, [(LOCATION, location)]).into_response();
+    }
+    match gateway.relay_slot(local, host) {
+        Some(slot) => gateway
+            .serve_relay(slot, request)
+            .await
+            .map(axum::body::Body::new),
+        None => next.run(request).await,
+    }
 }
 
 async fn request_admission(
@@ -1006,6 +1052,103 @@ mod tests {
         ] {
             assert_eq!(if_none_match_matches(header, etag), expected, "{header:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn relay_preview_hosts_are_served_by_the_gateway_not_bibcode_routes() {
+        use crate::preview::{
+            PreviewManager,
+            gateway::{
+                proxy::PrincipalCheck,
+                registry::gateway_context,
+                relay::{RelayHosts, RelayPreviewHosts},
+            },
+        };
+
+        struct Live;
+        impl PrincipalCheck for Live {
+            fn session_expiry<'a>(
+                &'a self,
+                _: &'a str,
+            ) -> futures_util::future::BoxFuture<'a, Option<i64>> {
+                Box::pin(async { Some(i64::MAX) })
+            }
+        }
+
+        let relay = RelayHosts::default();
+        relay.publish(Some(RelayPreviewHosts {
+            hostname: "env.zone.test".into(),
+            previews: vec!["env-p1.zone.test".into()],
+        }));
+        let gateway = PreviewGateway::new(
+            "127.0.0.1",
+            "devbox",
+            gateway_context(Arc::new(Live), vec![1; 32], "session".into()),
+            PreviewManager::new(),
+            relay,
+        );
+        let app = Router::new().route("/api", get(|| async { "api" })).layer(
+            middleware::from_fn_with_state(Some(gateway.clone()), route_relay_previews),
+        );
+        let request = |host: &str| {
+            let mut request = Request::builder()
+                .uri("/api")
+                .header(HOST, host)
+                .body(Body::empty())
+                .unwrap();
+            request
+                .extensions_mut()
+                .insert(ConnectInfo(ConnectionAddrs {
+                    peer: "127.0.0.1:50000".parse().unwrap(),
+                    local: Some("127.0.0.1:3773".parse().unwrap()),
+                }));
+            request
+        };
+
+        let preview = app
+            .clone()
+            .oneshot(request("env-p1.zone.test"))
+            .await
+            .unwrap();
+        assert_eq!(
+            preview.status(),
+            StatusCode::UNAUTHORIZED,
+            "a preview hostname with no target gets the gateway's page, not /api"
+        );
+        let api = app.clone().oneshot(request("env.zone.test")).await.unwrap();
+        assert_eq!(
+            api.status(),
+            StatusCode::OK,
+            "the endpoint itself keeps its routes"
+        );
+
+        // Through the tunnel over plain HTTP, every relay hostname redirects to HTTPS.
+        for host in ["env.zone.test", "env-p1.zone.test"] {
+            let mut plain = request(host);
+            *plain.uri_mut() = "/api?x=1".parse().unwrap();
+            plain
+                .headers_mut()
+                .insert(X_FORWARDED_PROTO, HeaderValue::from_static("http"));
+            let redirected = app.clone().oneshot(plain).await.unwrap();
+            assert_eq!(
+                redirected.status(),
+                StatusCode::PERMANENT_REDIRECT,
+                "{host}"
+            );
+            assert_eq!(
+                redirected.headers()[LOCATION],
+                format!("https://{host}/api?x=1").as_str()
+            );
+        }
+        let mut lan = request("devbox.lan:3773");
+        lan.headers_mut()
+            .insert(X_FORWARDED_PROTO, HeaderValue::from_static("http"));
+        assert_eq!(
+            app.oneshot(lan).await.unwrap().status(),
+            StatusCode::OK,
+            "other hosts are never redirected"
+        );
+        gateway.shutdown().await;
     }
 
     async fn cors_response(

@@ -17,6 +17,7 @@ use crate::{
         ProcessRegistration, ProcessRegistrationError, ProcessRegistrationMetadata,
         RegistrationSource,
     },
+    preview::gateway::relay::{RELAY_PREVIEW_SLOTS, RelayHosts, RelayPreviewHosts},
     process::configure_supervised_background_command_wrap,
 };
 
@@ -29,6 +30,8 @@ pub struct ManagedEndpointRuntime {
     accepting: Arc<AtomicBool>,
     process_attribution: ProcessAttributionRegistry,
     executable_override: Option<PathBuf>,
+    /// The running tunnel's hostnames, shared with the preview gateway.
+    relay_hosts: RelayHosts,
     #[cfg(test)]
     admission_race: Option<Arc<EndpointAdmissionRace>>,
 }
@@ -53,6 +56,51 @@ struct ManagedEndpointConfig {
     connector_token: String,
     tunnel_id: Option<String>,
     tunnel_name: Option<String>,
+    #[serde(default)]
+    hostname: Option<String>,
+    #[serde(default)]
+    preview_hostnames: Vec<String>,
+}
+
+impl ManagedEndpointConfig {
+    /// The hostnames to publish, `None` without an endpoint hostname (an older relay).
+    /// Every name must be a lowercase DNS name; previews beyond [`RELAY_PREVIEW_SLOTS`] are
+    /// ignored so a newer relay that provisions more cannot break this server.
+    fn relay_hosts(&self) -> Result<Option<RelayPreviewHosts>, String> {
+        let Some(hostname) = &self.hostname else {
+            return Ok(None);
+        };
+        if let Some(invalid) = std::iter::once(hostname)
+            .chain(&self.preview_hostnames)
+            .find(|name| !is_dns_name(name))
+        {
+            return Err(format!("invalid managed endpoint hostname: {invalid}"));
+        }
+        Ok(Some(RelayPreviewHosts {
+            hostname: hostname.clone(),
+            previews: self
+                .preview_hostnames
+                .iter()
+                .take(RELAY_PREVIEW_SLOTS)
+                .cloned()
+                .collect(),
+        }))
+    }
+}
+
+/// A lowercase, multi-label DNS name.
+fn is_dns_name(name: &str) -> bool {
+    name.len() <= 253
+        && name.contains('.')
+        && name.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        })
 }
 
 #[cfg(test)]
@@ -79,9 +127,22 @@ impl ManagedEndpointRuntime {
             accepting: Arc::new(AtomicBool::new(true)),
             process_attribution,
             executable_override: None,
+            relay_hosts: RelayHosts::default(),
             #[cfg(test)]
             admission_race: None,
         }
+    }
+
+    /// Publishes the running tunnel's hostnames into `hosts` (shared with the preview gateway).
+    #[must_use]
+    pub fn with_relay_hosts(mut self, hosts: RelayHosts) -> Self {
+        self.relay_hosts = hosts;
+        self
+    }
+
+    #[must_use]
+    pub fn relay_hosts(&self) -> RelayHosts {
+        self.relay_hosts.clone()
     }
 
     #[must_use]
@@ -116,6 +177,7 @@ impl ManagedEndpointRuntime {
     pub async fn shutdown(&self) {
         self.accepting.store(false, Ordering::Release);
         let permit = self.admission.acquire().await;
+        self.relay_hosts.publish(None);
         let active = self.take_active();
         if let Some(active) = active {
             terminate_connector(active).await;
@@ -133,6 +195,7 @@ impl ManagedEndpointRuntime {
             return Err(ProcessRegistrationError::Shutdown.to_string());
         }
         if value.is_null() {
+            self.relay_hosts.publish(None);
             if let Some(active) = self.take_active() {
                 terminate_connector(active).await;
             }
@@ -141,6 +204,7 @@ impl ManagedEndpointRuntime {
         let config: ManagedEndpointConfig = serde_json::from_value(value)
             .map_err(|error| format!("invalid managed endpoint config: {error}"))?;
         if config.provider_kind != "cloudflare_tunnel" {
+            self.relay_hosts.publish(None);
             if let Some(active) = self.take_active() {
                 terminate_connector(active).await;
             }
@@ -152,6 +216,7 @@ impl ManagedEndpointRuntime {
         if config.connector_token.trim().is_empty() {
             return Err("connector token must not be empty".to_owned());
         }
+        let hosts = config.relay_hosts()?;
         let key = format!(
             "{}\0{}\0{}",
             config.connector_token,
@@ -163,6 +228,9 @@ impl ManagedEndpointRuntime {
             if active.key == key {
                 match connector_is_live(&mut *active.child) {
                     Ok(true) => {
+                        // Same connector: keep it running and only republish the hostnames.
+                        active.config = config;
+                        self.relay_hosts.publish(hosts);
                         let status = running_status(&active);
                         *self
                             .state
@@ -172,11 +240,13 @@ impl ManagedEndpointRuntime {
                     }
                     Ok(false) => {}
                     Err(error) => {
+                        self.relay_hosts.publish(None);
                         terminate_connector(active).await;
                         return Err(error);
                     }
                 }
             }
+            self.relay_hosts.publish(None);
             terminate_connector(active).await;
         }
         let executable = self.executable_override.clone().or_else(|| {
@@ -256,6 +326,7 @@ impl ManagedEndpointRuntime {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(active);
+        self.relay_hosts.publish(hosts);
         Ok(status)
     }
 }
@@ -338,6 +409,18 @@ mod tests {
     #[cfg(unix)]
     fn tunnel_config() -> Value {
         json!({"providerKind":"cloudflare_tunnel","connectorToken":"fixture-token"})
+    }
+
+    #[test]
+    fn hostnames_must_be_lowercase_multi_label_dns_names() {
+        for good in ["env-p1.zone.test", "a.b", "x1.example.com"] {
+            assert!(is_dns_name(good), "{good}");
+        }
+        for bad in [
+            "Env.zone", "env", "-a.zone", "a-.zone", "a..zone", "a_b.zone", "",
+        ] {
+            assert!(!is_dns_name(bad), "{bad:?}");
+        }
     }
 
     #[tokio::test]

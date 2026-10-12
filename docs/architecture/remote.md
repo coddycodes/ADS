@@ -863,6 +863,28 @@ environment links, provisions the managed endpoint, and brokers signed health
 and mint requests. It does not become the owner of environment sessions or
 provider state. See [BiBCode Connect auth flow](../cloud/bibcode-connect-auth-flow.md).
 
+The server starts the managed tunnel when a link applies its runtime config,
+and again at startup from the stored link, so a restarted server comes back
+online without a new link. The link records the local port the tunnel's
+ingress was provisioned for; when the server listens on another port at
+startup (the desktop picks a free port), it skips the restore and
+`connect.linkState` reports `managedEndpointStale`. The tunnel's runtime config also names the
+environment's preview hostnames (see [Preview gateway](#preview-gateway)). A
+primary client whose server's stored link has a managed tunnel that needs
+provisioning again (no preview hostnames, or `managedEndpointStale`) re-links
+once per app session in the background, without the relay-client install
+prompt. It does so only for the signed-in account the link belongs to, on the
+same serialized scheduler as manual link and unlink, re-reading the link state
+there. Its `connect.relayConfig` names the link it refreshes
+(`requireLinkGeneration`, the `linkGeneration` that `connect.linkState`
+reports: a digest of the environment credential, which every link rotates),
+and the server refuses it with a conflict when the stored link changed
+meanwhile (another client unlinked or linked again, even to the same account). The relay-side
+link the refused attempt made stays: removing it could delete a newer link
+another client made since, and the relay has no conditional unlink. On the server,
+link, unlink, and the startup restore hold one lock, so a restore never
+reapplies a config a newer change replaced.
+
 ### Desktop-managed SSH
 
 The Tauri host owns SSH, not the server or React app. It validates the SSH
@@ -1226,9 +1248,54 @@ identity` on page loads (document or iframe Fetch Metadata, or, on plain-HTTP
   `/api/assets`. A client whose environment address is a public IP literal
   shows the `public-host` notice instead of calling the gateway, and the server
   refuses any caller that reached it on a public address with `not-reachable`.
-- **Relay limitation.** A relay (BiBCode Connect) client cannot reach gateway
-  listeners. It shows "This address is on <label>, not this computer. Opening
-  its ports from here isn't supported yet."
+- **Gateway over BiBCode Connect.** Each relay environment has 4 preview
+  hostnames, `<environment label>-p1` … `-p4` in the tunnel zone, provisioned
+  with the environment (proxied CNAMEs to its tunnel, ingress rules to the
+  server's loopback origin before the catch-all) and returned in the tunnel's
+  runtime config as `hostname` and `previewHostnames`. The server publishes
+  them while the tunnel runs (`preview/gateway/relay.rs`). A `gatewayOpen`
+  caller on a loopback socket whose `Host` is the environment's own hostname is
+  a relay caller. Its target takes a slot: the one it holds, or one whose target
+  has closed. A live target never loses its slot, because a page left open on a
+  preview hostname also carries a newer target's cookie and would reach the
+  wrong app; with every slot's target alive the call fails `relay-busy`; without published preview hostnames it
+  fails `relay-not-provisioned`. The result carries
+  `origin: https://<preview hostname>`, which the client bootstraps on,
+  including a browser that opened BiBCode at the managed endpoint itself. On the
+  main port, an outermost layer hands every request on a loopback socket whose
+  `Host` is a published preview hostname to that slot's target, ahead of
+  BiBCode's routes, CORS, and admission gate; an empty slot answers the
+  expired-link page. These requests are HTTPS-facing (TLS ends at Cloudflare):
+  the Origin rule compares against `https://<Host>`, the bootstrap cookie adds
+  `Secure`, and `Location` is rewritten to the https origin. Every response on a
+  preview hostname carries `Cloudflare-CDN-Cache-Control: no-store`: Cloudflare
+  caches a proxied hostname's static assets by URL, ignoring the gateway cookie,
+  so a cached response would reach unauthenticated requests and outlive a slot's
+  reassignment; the browser's own cache is unaffected. Taking over a slot never
+  carries a session across targets, because gateway cookies are named per
+  gateway port; browser storage on that hostname is shared with whatever used
+  the slot before, and a page still open on a reassigned hostname reaches the
+  new target (reload it). No service worker script loads on a preview hostname
+  (a request with `Service-Worker` gets `403`): a worker registered by one
+  target would outlive it and intercept the next one's bootstrap. For the same
+  reason every response is sent `Cache-Control: no-store`: a cached asset, even
+  revalidated, could come back as another target's content (an older file's
+  `If-Modified-Since` answered `304`), so relay previews skip the browser
+  cache. A request that reached Cloudflare over plain
+  HTTP for the environment's hostname or a preview hostname is redirected
+  (`308`) to HTTPS. A refused open (`relay-busy`) removes the target it
+  created. The server starts the gateway's drain as soon as shutdown is
+  signaled, because the main port's graceful shutdown waits for preview
+  exchanges that only the drain ends.
+  On the client, each preview tab keeps the canonical origin it loaded on a
+  preview hostname, so a later open that reuses the hostname for another port
+  never changes what an open tab reports. Relay connections carry no E2EE, so preview traffic is
+  visible to Cloudflare like all relay traffic. A previewed page's script can
+  set cookies for the whole tunnel zone (the gateway drops `Domain=` only from
+  upstream `Set-Cookie`); adding the zone to the Public Suffix List is a
+  follow-up. Browser mode never frames these previews, because a BiBCode page on
+  another site does not get the `Lax` gateway cookie inside a frame: links open
+  in a new tab, and a navigation inside the panel explains why.
 - **Client side** (`apps/web/src/browser/previewGateway.ts`). Shared preview
   state keeps the canonical `http://localhost:<port>` URL; each client resolves
   it for its own webview. A client maps every gateway origin a tab has used

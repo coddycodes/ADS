@@ -47,9 +47,11 @@ import {
   collectCloudLinkTargets,
   linkPrimaryEnvironmentToCloud,
   listManagedCloudEnvironments,
+  needsManagedEndpointRelink,
   normalizeRelayBaseUrl,
   readPrimaryCloudLinkTarget,
   readPrimaryCloudLinkState,
+  relinkPrimaryManagedEndpoint,
   type CloudLinkTarget,
   unlinkPrimaryEnvironmentFromCloud,
 } from "./linkEnvironment";
@@ -354,6 +356,143 @@ describe("web cloud link environment client", () => {
       expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
         "http://127.0.0.1:3000/api/connect/link-state",
       );
+    }),
+  );
+
+  it("needs a preview-host re-link only for a linked managed tunnel without preview hostnames", () => {
+    const state = (overrides: Record<string, unknown>) =>
+      ({
+        linked: true,
+        cloudUserId: "user-1",
+        relayUrl: "https://relay.example.test",
+        relayIssuer: null,
+        managedEndpoint: true,
+        previewHostnames: false,
+        ...overrides,
+      }) as Parameters<typeof needsManagedEndpointRelink>[0];
+    expect(needsManagedEndpointRelink(state({}))).toBe(true);
+    // A tunnel provisioned for a port the server no longer listens on needs one too.
+    expect(
+      needsManagedEndpointRelink(state({ previewHostnames: true, managedEndpointStale: true })),
+    ).toBe(true);
+    expect(needsManagedEndpointRelink(state({ previewHostnames: true }))).toBe(false);
+    expect(needsManagedEndpointRelink(state({ managedEndpoint: false }))).toBe(false);
+    expect(needsManagedEndpointRelink(state({ linked: false }))).toBe(false);
+    // A server that predates the flags reports neither.
+    expect(
+      needsManagedEndpointRelink(
+        state({ managedEndpoint: undefined, previewHostnames: undefined }),
+      ),
+    ).toBe(false);
+    expect(needsManagedEndpointRelink(null)).toBe(false);
+  });
+
+  it.effect("re-links for preview hostnames only for the linked account while still needed", () =>
+    Effect.gen(function* () {
+      const serveLinkState = (overrides: Record<string, unknown>) =>
+        vi.stubGlobal(
+          "fetch",
+          vi.fn().mockResolvedValue(
+            Response.json({
+              linked: true,
+              cloudUserId: "user-1",
+              relayUrl: "https://relay.example.test",
+              relayIssuer: "https://relay.example.test",
+              managedEndpoint: true,
+              previewHostnames: false,
+              linkGeneration: "generation-1",
+              ...overrides,
+            }),
+          ),
+        );
+      const challenge = vi.fn(() =>
+        Effect.fail(
+          new ManagedRelay.ManagedRelayRequestTimeoutError({
+            activity: "Relay environment link challenge",
+            timeoutMs: 10_000,
+          }),
+        ),
+      );
+      const relink = (accountId: string) =>
+        withRelayService(
+          relinkPrimaryManagedEndpoint({
+            target: TARGET,
+            clerkToken: "clerk-token",
+            accountId,
+          }),
+          { createEnvironmentLinkChallenge: challenge },
+        );
+
+      // Re-read on the link scheduler: a link or unlink that ran first wins.
+      serveLinkState({ previewHostnames: true });
+      expect(yield* relink("user-1")).toBe(false);
+      serveLinkState({ linked: false, cloudUserId: null, managedEndpoint: false });
+      expect(yield* relink("user-1")).toBe(false);
+      // Another signed-in account never re-links someone else's environment.
+      serveLinkState({});
+      expect(yield* relink("user-2")).toBe(false);
+      // A server that names no link generation can't fence a re-link, so none runs.
+      serveLinkState({ linkGeneration: null });
+      expect(yield* relink("user-1")).toBe(false);
+      expect(challenge).not.toHaveBeenCalled();
+
+      serveLinkState({});
+      yield* relink("user-1").pipe(Effect.flip);
+      expect(challenge).toHaveBeenCalledOnce();
+    }),
+  );
+
+  it.effect("names its account so the server can refuse a re-link of a changed link", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({
+            linked: true,
+            cloudUserId: "user-1",
+            relayUrl: "https://relay.example.test",
+            relayIssuer: "https://relay.example.test",
+            managedEndpoint: true,
+            previewHostnames: true,
+            managedEndpointStale: true,
+            linkGeneration: "generation-1",
+          }),
+        )
+        .mockResolvedValueOnce(Response.json("signed-proof"))
+        .mockResolvedValueOnce(
+          Response.json(
+            {
+              _tag: "EnvironmentHttpConflictError",
+              message:
+                "This environment's BiBCode Connect link changed. Link it again from Settings.",
+            },
+            { status: 409 },
+          ),
+        );
+      vi.stubGlobal("fetch", fetchMock);
+      const unlinkEnvironment = vi.fn(() => Effect.succeed({ ok: true }));
+
+      const refused = yield* withRelayService(
+        relinkPrimaryManagedEndpoint({
+          target: TARGET,
+          clerkToken: "clerk-token",
+          accountId: "user-1",
+        }),
+        {
+          createEnvironmentLinkChallenge: () =>
+            Effect.succeed({ challenge: "challenge", expiresAt: "2026-06-06T00:05:00.000Z" }),
+          linkEnvironment: () => Effect.succeed(LINK_RESPONSE),
+          unlinkEnvironment,
+        },
+      ).pipe(Effect.flip);
+
+      expect(refused.message).toContain("link changed");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(bodyText(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({
+        requireLinkGeneration: "generation-1",
+      });
+      // Removing the relay link could delete a newer link another client made since.
+      expect(unlinkEnvironment).not.toHaveBeenCalled();
     }),
   );
 
@@ -697,6 +836,22 @@ describe("web cloud link environment client", () => {
       expect(relayClientInstallDialog.requestConfirmation).toHaveBeenCalledWith("2026.6.0");
       expect(relayClientInstallDialog.reportProgress).toHaveBeenCalledTimes(2);
       expect(relayClientInstallDialog.finish).toHaveBeenCalledOnce();
+    }),
+  );
+
+  it.effect("fails without prompting when a silent link finds no relay client", () =>
+    Effect.gen(function* () {
+      const error = yield* withServices(
+        linkPrimaryEnvironmentToCloud({
+          target: TARGET,
+          clerkToken: "clerk-token",
+          installRelayClient: false,
+        }),
+        { status: { status: "missing", version: "2026.6.0" } },
+      ).pipe(Effect.flip);
+
+      expect(error.message).toBe("The relay client is not installed.");
+      expect(relayClientInstallDialog.requestConfirmation).not.toHaveBeenCalled();
     }),
   );
 

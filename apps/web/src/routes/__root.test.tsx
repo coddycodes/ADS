@@ -173,6 +173,9 @@ vi.mock("../uiStateStore", () => ({
   },
 }));
 
+vi.mock("../cloud/managedEndpointRelink", () => ({
+  ManagedEndpointRelink: () => <div data-mock="endpoint-relink" />,
+}));
 vi.mock("../profiler/startClientCollector", () => ({
   startClientCollector: () => {
     s.collectorRuns += 1;
@@ -512,6 +515,8 @@ describe("RootRouteView", () => {
     expect(markup).toContain('data-mock="outlet"');
     expect(markup).not.toContain('data-mock="sidebar-layout"');
     expect(markup).not.toContain('data-mock="app-status-bar"');
+    // The Connect link state is read only once the primary environment authenticated.
+    expect(markup).not.toContain('data-mock="endpoint-relink"');
   });
 
   it("renders the full authenticated shell", () => {
@@ -524,6 +529,7 @@ describe("RootRouteView", () => {
     expect(markup).not.toContain('data-mock="slow-requests-status-bar"');
     expect(markup).toContain('data-mock="relay-install"');
     expect(markup).toContain('data-mock="provider-update"');
+    expect(markup).toContain('data-mock="endpoint-relink"');
     const cleanups = runEffects();
     expect(s.collectorRuns).toBe(1);
     for (const cleanup of cleanups) cleanup();

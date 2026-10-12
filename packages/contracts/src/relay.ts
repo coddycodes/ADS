@@ -39,6 +39,10 @@ export const RelayManagedEndpointRuntimeConfig = Schema.Struct({
   connectorToken: TrimmedNonEmptyString,
   tunnelId: Schema.optional(TrimmedNonEmptyString),
   tunnelName: Schema.optional(TrimmedNonEmptyString),
+  /** The managed endpoint's hostname; relay connections arrive under it. */
+  hostname: Schema.optional(TrimmedNonEmptyString),
+  /** The environment's fixed preview hostnames, in slot order. */
+  previewHostnames: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
 export type RelayManagedEndpointRuntimeConfig = typeof RelayManagedEndpointRuntimeConfig.Type;
 
@@ -57,6 +61,11 @@ export const RelayEnvironmentConfigRequest = Schema.Struct({
   environmentCredential: Schema.String,
   cloudMintPublicKey: Schema.String,
   endpointRuntime: Schema.NullOr(RelayManagedEndpointRuntimeConfig),
+  /**
+   * A background re-link: refused unless the server's stored link is still the one this
+   * value names (`linkGeneration` from the link state).
+   */
+  requireLinkGeneration: Schema.optional(Schema.String),
 });
 export type RelayEnvironmentConfigRequest = typeof RelayEnvironmentConfigRequest.Type;
 

@@ -66,7 +66,7 @@ const parsePreviewUrl = (raw: string): URL | null => {
   }
 };
 
-export type PreviewUnreachableReason = "disconnected" | "ssh" | "relay" | "public-host";
+export type PreviewUnreachableReason = "disconnected" | "ssh" | "public-host";
 export type PreviewTargetResolution =
   | { readonly kind: "reachable"; readonly url: string }
   /**
@@ -74,7 +74,8 @@ export type PreviewTargetResolution =
    * gateway. `url` is canonical (`http://localhost:<port>/…`; a same-host
    * environment framed in browser mode keeps its loopback as a direct open
    * would): it is what shared preview state stores, and each client resolves it
-   * for its own webview.
+   * for its own webview. Over BiBCode Connect the server names the preview
+   * hostname to bootstrap on.
    */
   | {
       readonly kind: "gateway";
@@ -84,7 +85,7 @@ export type PreviewTargetResolution =
       /** A same-host page framed in browser mode: outside the frame it opens directly. */
       readonly direct?: true;
     }
-  | { readonly kind: "gateway"; readonly url: string; readonly via: "ssh" }
+  | { readonly kind: "gateway"; readonly url: string; readonly via: "ssh" | "relay" }
   | {
       readonly kind: "unreachable";
       readonly reason: PreviewUnreachableReason;
@@ -99,7 +100,6 @@ const UNREACHABLE_REMOTE = (label: string) =>
 export const UNREACHABLE_MESSAGES: Record<PreviewUnreachableReason, (label: string) => string> = {
   disconnected: (label) => `${label} isn't connected. Reconnect it, then open the link again.`,
   ssh: UNREACHABLE_REMOTE,
-  relay: UNREACHABLE_REMOTE,
   "public-host": UNREACHABLE_REMOTE,
 };
 
@@ -108,6 +108,7 @@ type EnvironmentReach =
   | { readonly kind: "same-host"; readonly host: string }
   | { readonly kind: "host"; readonly host: string }
   | { readonly kind: "ssh" }
+  | { readonly kind: "relay" }
   | {
       readonly kind: "unreachable";
       readonly reason: PreviewUnreachableReason;
@@ -117,7 +118,8 @@ type EnvironmentReach =
 // The connection target alone never decides "same machine": a primary can be a
 // browser served by a remote host, and desktop-local WSL is a bearer target on
 // the VM address. SSH and relay endpoints are never the environment's own host;
-// SSH reaches the gateway through a desktop-managed forward.
+// SSH reaches the gateway through a desktop-managed forward, relay through a
+// preview hostname the server names.
 function classifyEnvironmentReach(environmentId: EnvironmentId): EnvironmentReach {
   const connection = readPreparedConnection(environmentId);
   if (!connection) {
@@ -127,9 +129,7 @@ function classifyEnvironmentReach(environmentId: EnvironmentId): EnvironmentReac
   const baseUrl = parseUrl(connection.httpBaseUrl);
   if (!baseUrl) return { kind: "unreachable", reason: "disconnected", label };
   if (connection.target._tag === "SshConnectionTarget") return { kind: "ssh" };
-  if (connection.target._tag === "RelayConnectionTarget") {
-    return { kind: "unreachable", reason: "relay", label };
-  }
+  if (connection.target._tag === "RelayConnectionTarget") return { kind: "relay" };
   const host = unbracket(baseUrl.hostname);
   if (isLoopbackHost(host)) return { kind: "same-host", host };
   // A host name (devbox, *.lan, *.internal) is the user's own name for the
@@ -207,5 +207,5 @@ export function resolvePreviewTarget(
   const url = parsed.toString();
   return reach.kind === "host"
     ? { kind: "gateway", via: "host", host: reach.host, url }
-    : { kind: "gateway", via: "ssh", url };
+    : { kind: "gateway", via: reach.kind, url };
 }

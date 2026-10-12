@@ -292,7 +292,7 @@ const currentStatus = async (
     // A detached native tab keeps its last overlay; its session is the truth then.
     if (status.available) {
       // The webview may sit on this client's gateway origin; agents see the canonical URL.
-      const url = status.url === null ? null : canonicalizePreviewUrl(status.url);
+      const url = status.url === null ? null : canonicalizePreviewUrl(status.url, tabId);
       return { ...status, url, visible, ...viewportStatus };
     }
   }

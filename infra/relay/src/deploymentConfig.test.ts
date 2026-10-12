@@ -5,6 +5,7 @@ import {
   managedEndpointDigestInput,
   managedEndpointForHostname,
   managedEndpointHostname,
+  managedEndpointPreviewHostnames,
   isManagedEndpointHostname,
   managedEndpointTunnelName,
   relayOwnsManagedEndpointZone,
@@ -119,5 +120,27 @@ describe("managed endpoint names", () => {
     expect(isManagedEndpointHostname("internal.example.net", "example.com")).toBe(false);
     expect(isManagedEndpointHostname("example.com.attacker.test", "example.com")).toBe(false);
     expect(isManagedEndpointHostname("dev-julius.example.com.", "example.com")).toBe(false);
+  });
+});
+
+describe("managedEndpointPreviewHostnames", () => {
+  it("appends -p1 … -p4 to the environment label in the same zone", () => {
+    expect(managedEndpointPreviewHostnames("dev-julius-0123456789abcdef.bibcode.test")).toEqual([
+      "dev-julius-0123456789abcdef-p1.bibcode.test",
+      "dev-julius-0123456789abcdef-p2.bibcode.test",
+      "dev-julius-0123456789abcdef-p3.bibcode.test",
+      "dev-julius-0123456789abcdef-p4.bibcode.test",
+    ]);
+  });
+
+  it("shortens a long stage prefix and keeps the hash within 63 characters", () => {
+    const hostname = managedEndpointHostname("s".repeat(80), "bibcode.test", "0123456789abcdef");
+    const previews = managedEndpointPreviewHostnames(hostname);
+    for (const [index, preview] of previews.entries()) {
+      const label = preview.split(".")[0]!;
+      expect(label.length).toBeLessThanOrEqual(63);
+      expect(label.endsWith(`-0123456789abcdef-p${index + 1}`)).toBe(true);
+      expect(preview.endsWith(".bibcode.test")).toBe(true);
+    }
   });
 });

@@ -18,7 +18,10 @@ export type GatewayOpenMutation = (input: {
   environmentId: EnvironmentId;
   input: { threadId: ThreadId; url: string };
 }) => Promise<
-  AtomCommandResult<{ gatewayPort: number; capability: string; expiresAtMs: number }, unknown>
+  AtomCommandResult<
+    { gatewayPort: number; capability: string; expiresAtMs: number; origin?: string | undefined },
+    unknown
+  >
 >;
 
 export type PreviewNavigationResolution =
@@ -48,6 +51,13 @@ const SSH_NOT_ACTIVE = "SSH connection is not active.";
 
 /** Client-facing gateway origin -> canonical origin (`http://localhost:<port>`). */
 const canonicalOrigins = new Map<string, string>();
+
+/**
+ * Per tab: BiBCode Connect preview origin -> the canonical origin that tab loaded on it.
+ * A relay preview hostname is a reusable slot, so a later open can point it at another
+ * port; a tab still showing the earlier page keeps its own mapping.
+ */
+const relayTabOrigins = new Map<string, Map<string, string>>();
 
 interface SshForward {
   readonly target: DesktopSshEnvironmentTarget;
@@ -165,6 +175,7 @@ function releaseHolder(environmentId: EnvironmentId, holder: string): void {
 export function releasePreviewTab(environmentId: EnvironmentId, tabId: string): void {
   retainPreviewTab(tabId);
   tabGenerations.set(tabId, (tabGenerations.get(tabId) ?? 0) + 1);
+  relayTabOrigins.delete(tabId);
   releaseHolder(environmentId, tabId);
 }
 
@@ -214,6 +225,11 @@ export async function resolveForNavigation(input: {
   if (resolution.via === "ssh" && isBrowserMode()) {
     return { kind: "unreachable", message: UNREACHABLE_MESSAGES.ssh(label) };
   }
+  // Another site's BiBCode page never sends the preview's Lax cookie inside a frame;
+  // a new tab (no tab id) loads it fine.
+  if (resolution.via === "relay" && isBrowserMode() && tabId !== undefined) {
+    return { kind: "unreachable", message: relayFrameMessage(label) };
+  }
   // Opened before any await so a close or a sibling's failure during this
   // resolution cannot release the forward it is about to use.
   const key = `${input.threadId} ${canonical.origin}`;
@@ -245,11 +261,30 @@ export async function resolveForNavigation(input: {
     environmentId,
     input: { threadId: input.threadId, url: resolution.url },
   });
-  if (result._tag === "Failure") return fail(gatewayFailure(result, label, canonical));
-  const { gatewayPort, capability } = result.value;
+  if (result._tag === "Failure") {
+    return fail(gatewayFailure(result, label, canonical, resolution.via === "relay"));
+  }
+  const { gatewayPort, capability, origin } = result.value;
 
   let clientOrigin: string;
-  if (resolution.via === "host") {
+  // The server names a BiBCode Connect preview hostname whenever this client reached it
+  // through the tunnel: a relay connection, or a page served from the managed endpoint.
+  if (origin !== undefined && resolution.via !== "ssh") {
+    // A BiBCode page on another site, or on plain HTTP, can't frame an HTTPS preview
+    // hostname with its Lax cookie; a new tab (no tab id) loads it fine.
+    if (isBrowserMode() && tabId !== undefined) {
+      return fail({ message: relayFrameMessage(label) });
+    }
+    clientOrigin = origin;
+    canonicalOrigins.set(clientOrigin, canonical.origin);
+    if (tabId !== undefined) {
+      const tabOrigins = relayTabOrigins.get(tabId) ?? new Map<string, string>();
+      tabOrigins.set(clientOrigin, canonical.origin);
+      relayTabOrigins.set(tabId, tabOrigins);
+    }
+  } else if (resolution.via === "relay") {
+    return fail({ message: relayNotReadyMessage(label) });
+  } else if (resolution.via === "host") {
     clientOrigin = `http://${formatHost(resolution.host)}:${gatewayPort}`;
     canonicalOrigins.set(clientOrigin, canonical.origin);
   } else {
@@ -312,7 +347,10 @@ export async function resolveForNavigation(input: {
 
   const to = `${canonical.pathname}${canonical.search}${canonical.hash}`;
   // Browser mode names this page so the gateway lets it frame the preview.
-  const ui = isBrowserMode() ? `&ui=${encodeURIComponent(location.origin)}` : "";
+  const ui =
+    isBrowserMode() && resolution.via !== "relay" && origin === undefined
+      ? `&ui=${encodeURIComponent(location.origin)}`
+      : "";
   return {
     kind: "ok",
     url: `${clientOrigin}${BOOTSTRAP_PATH}?cap=${encodeURIComponent(capability)}&to=${encodeURIComponent(to)}${ui}`,
@@ -349,10 +387,17 @@ type GatewayFailure = {
 const retryMessage = (label: string) =>
   `Couldn't open a preview connection to ${label}. Try again, or reconnect ${label} if it keeps failing.`;
 
+const relayNotReadyMessage = (label: string) =>
+  `Previews over BiBCode Connect aren't set up for ${label} yet. Open BiBCode on ${label} to finish setting them up.`;
+
+const relayFrameMessage = (label: string) =>
+  `${label} is reached through BiBCode Connect, so its previews can't show inside this page. Ctrl-click (⌘-click on Mac) the address in the chat or terminal to open it in a new tab.`;
+
 function gatewayFailure(
   result: Parameters<typeof squashAtomCommandFailure>[0],
   label: string,
   canonical: URL,
+  relay: boolean,
 ): GatewayFailure {
   const error = squashAtomCommandFailure(result) as {
     _tag?: unknown;
@@ -373,7 +418,16 @@ function gatewayFailure(
     case "no-upstream":
       // A stopped dev server is recoverable; say so instead of "unsupported".
       return refused(`Nothing is listening on port ${canonical.port || "80"} on ${label}.`);
+    case "relay-not-provisioned":
+      return { message: relayNotReadyMessage(label) };
+    case "relay-busy":
+      return {
+        message: `Too many previews of ${label} are open over BiBCode Connect. Close one, then try again; one closed in a web browser takes up to 10 minutes to free up.`,
+        retryable: true,
+      };
     case "not-reachable":
+      // A relay caller is refused this way only by a link that predates preview hostnames.
+      if (relay) return { message: relayNotReadyMessage(label) };
       // Depends on the address this client used (public or proxied), so it
       // stays local: a client on the LAN may load the same tab fine.
       return { message: `${error.message} Open it on ${label} directly.` };
@@ -404,15 +458,21 @@ export function isGatewayClientUrl(url: string): boolean {
   }
 }
 
-/** Map a client-side gateway URL back to its canonical http://localhost:<port> form; other URLs pass through. */
-export function canonicalizePreviewUrl(url: string): string {
+/**
+ * Map a client-side gateway URL back to its canonical http://localhost:<port> form; other
+ * URLs pass through. `tabId` names the preview tab showing it, whose own BiBCode Connect
+ * mappings win over a newer reuse of the same preview hostname.
+ */
+export function canonicalizePreviewUrl(url: string, tabId?: string): string {
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
     return url;
   }
-  const canonicalOrigin = canonicalOrigins.get(parsed.origin);
+  const canonicalOrigin =
+    (tabId === undefined ? undefined : relayTabOrigins.get(tabId)?.get(parsed.origin)) ??
+    canonicalOrigins.get(parsed.origin);
   if (canonicalOrigin === undefined) return url;
   if (parsed.pathname === BOOTSTRAP_PATH) {
     const to = parsed.searchParams.get("to");
@@ -427,6 +487,7 @@ export function resetPreviewGatewayForTests(): void {
   tabReleaseTimers.clear();
   leaseTimers.clear();
   canonicalOrigins.clear();
+  relayTabOrigins.clear();
   originOwners.clear();
   samePortNotices.clear();
   sshForwards.clear();

@@ -19,6 +19,7 @@ use bibcode_server::{
                 GatewayError, GatewayOpenResult, MAX_TARGETS, PreviewGateway,
                 SHUTDOWN_DRAIN_TIMEOUT, gateway_context,
             },
+            relay::RelayHosts,
         },
     },
     signed_token::now_millis,
@@ -63,6 +64,7 @@ fn gateway(preview: &PreviewManager) -> PreviewGateway {
             "bibcode_session".into(),
         ),
         preview.clone(),
+        RelayHosts::default(),
     )
 }
 

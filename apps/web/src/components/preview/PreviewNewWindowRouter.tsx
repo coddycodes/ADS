@@ -23,7 +23,10 @@ export function PreviewNewWindowRouter() {
       // still be resolved for the thread's environment first. A popup from a
       // gateway page names this client's gateway origin; the new tab's shared
       // state takes the canonical URL, which its native host resolves again.
-      const resolution = resolvePreviewTarget(threadRef.environmentId, canonicalizePreviewUrl(url));
+      const resolution = resolvePreviewTarget(
+        threadRef.environmentId,
+        canonicalizePreviewUrl(url, tabId),
+      );
       if (resolution.kind === "unreachable") {
         showPreviewUnreachableNotice(resolution);
         return;

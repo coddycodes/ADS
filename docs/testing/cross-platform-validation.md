@@ -2827,6 +2827,26 @@ browser tab), the environment's address, and each gateway port.
   `pending-user`. On a UI served over plain HTTP on the environment's own host,
   **Open** shows the page in the Browser surface.
 
+- **Relay preview (BiBCode Connect).** Needs a deployed relay stage with this
+  change and an environment linked to it (re-link an existing one, or open
+  BiBCode on it signed in so the background re-link runs; its **Share** tab's
+  link state then reports preview hostnames). From a relay-connected desktop
+  client, click `http://localhost:8123/` in the thread's chat: the BiBCode
+  browser shows the listing, its address bar shows `http://localhost:8123/`,
+  and the developer tools (or a `curl -sI` of the bootstrap URL) show the page
+  on `https://<environment hostname>-p1.<zone>` with a `bibcode-gw-<port>`
+  cookie that is `Secure`, `HttpOnly`, and `SameSite=Lax`. Serve a Vite app and
+  preview it: an edit hot-reloads (the WebSocket passes through the relay).
+  Reload re-bootstraps. Close the tab and reopen the link: it loads again. From
+  a browser-mode client connected through the relay, clicking the link opens a
+  new tab on the preview hostname; typing the address into the Browser panel
+  shows "<environment> is reached through BiBCode Connect, so its previews
+  can't show inside this page." Keep four previews open and open a fifth
+  port: "Too many previews of <environment> are open over
+  BiBCode Connect. Close one, then try again; one closed in a web browser takes up to 10 minutes to free up." Restart the environment's server
+  without re-linking: the relay connection comes back on its own. Record the
+  relay stage, environment, and preview hostnames, never cookie values.
+
 Pending native checks: Windows `bibcode-open-url.exe` started from `cmd` and
 PowerShell (the desktop build attaches to the parent console; record whether
 the prompt waits and the exit code is visible); whether a Codex agent's

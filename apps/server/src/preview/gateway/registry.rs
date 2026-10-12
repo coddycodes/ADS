@@ -15,6 +15,7 @@ use std::{
     time::Duration,
 };
 
+use hyper::{Request, Response};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::{Mutex, Semaphore, broadcast::error::RecvError},
@@ -26,9 +27,11 @@ use super::{
     GatewaySessions,
     capability::CapabilityIssuer,
     proxy::{
-        GLOBAL_CONNECTIONS, GatewayContext, GatewayLimits, GatewayTarget, PER_TARGET_CONNECTIONS,
-        PRINCIPAL_CHECK_INTERVAL, PrincipalCheck, RunningTarget, start_target,
+        GLOBAL_CONNECTIONS, GatewayBody, GatewayContext, GatewayLimits, GatewayTarget,
+        PER_TARGET_CONNECTIONS, PRINCIPAL_CHECK_INTERVAL, PrincipalCheck, ProxyBody, RunningTarget,
+        expired_response, start_target,
     },
+    relay::{self, RelayHosts, RelaySlots},
 };
 use crate::{
     preview::{InternalPreviewEvents, PreviewEvent, PreviewManager, PreviewNavStatus},
@@ -49,6 +52,9 @@ pub struct GatewayOpenResult {
     pub gateway_port: u16,
     pub capability: String,
     pub expires_at_ms: u64,
+    /// For a caller that came through BiBCode Connect: `https://<preview hostname>`, the
+    /// origin to bootstrap on instead of the server's address.
+    pub origin: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -61,6 +67,10 @@ pub enum GatewayError {
     NoUpstream,
     #[error("{0}")]
     NotReachable(Unreachable),
+    #[error("Previews over BiBCode Connect aren't set up for this environment yet.")]
+    RelayNotProvisioned,
+    #[error("Every BiBCode Connect preview address of this environment is in use.")]
+    RelayBusy,
     #[error("unavailable: {0}")]
     Unavailable(String),
 }
@@ -189,6 +199,9 @@ struct Inner {
     ctx: GatewayContext,
     preview: PreviewManager,
     targets: Mutex<HashMap<TargetKey, Target>>,
+    /// The Connect tunnel's published hostnames, and which target each preview hostname serves.
+    relay_hosts: RelayHosts,
+    relay_slots: RelaySlots,
     /// Cancelled when shutdown starts: listeners stop accepting and idle connections close.
     draining: CancellationToken,
     /// Cancelled once draining ends: every connection and background task stops.
@@ -223,6 +236,7 @@ impl PreviewGateway {
         environment_label: impl Into<String>,
         ctx: GatewayContext,
         preview: PreviewManager,
+        relay_hosts: RelayHosts,
     ) -> Self {
         let gateway = Self {
             inner: Arc::new(Inner {
@@ -231,6 +245,8 @@ impl PreviewGateway {
                 ctx,
                 preview: preview.clone(),
                 targets: Mutex::new(HashMap::new()),
+                relay_hosts,
+                relay_slots: RelaySlots::default(),
                 draining: CancellationToken::new(),
                 shutdown: CancellationToken::new(),
             }),
@@ -258,7 +274,12 @@ impl PreviewGateway {
     ) -> Result<GatewayOpenResult, GatewayError> {
         let admitted = admit(url)?;
         let upstream_port = admitted.port;
-        let bind_host = gateway_bind_host(reach, &self.inner.bind_host)?;
+        let relay_previews = self.relay_previews(reach)?;
+        let bind_host = match (&relay_previews, reach) {
+            // The tunnel connector reaches the target's handler through the main port.
+            (Some(_), Some(reach)) => reach.local_ip.to_canonical().to_string(),
+            _ => gateway_bind_host(reach, &self.inner.bind_host)?,
+        };
         let session_expiry = u64::try_from(session_expires_at_ms)
             .ok()
             .filter(|expiry| *expiry > now_millis())
@@ -274,7 +295,8 @@ impl PreviewGateway {
                 "the preview gateway is shut down".to_owned(),
             ));
         }
-        if !targets.contains_key(&key) {
+        let created = !targets.contains_key(&key);
+        if created {
             if targets.len() >= MAX_TARGETS {
                 return Err(GatewayError::Unavailable(
                     "too many previews are open through the gateway".to_owned(),
@@ -326,7 +348,92 @@ impl PreviewGateway {
                 .filter(|(_, port)| *port == Some(upstream_port))
                 .map(|(tab_id, _)| tab_id),
         );
-        Ok(self.mint(&target.running, &key, session_id, session_expiry))
+        let origin = match relay_previews {
+            Some(previews) => {
+                let Some(slot) = self
+                    .inner
+                    .relay_slots
+                    .assign(&target.running.route, previews.len())
+                else {
+                    tracing::warn!(
+                        upstream_port,
+                        "every BiBCode Connect preview hostname is in use"
+                    );
+                    // A target this refused open created serves no one; don't let it hold
+                    // capacity until the idle sweep.
+                    if created && let Some(target) = targets.remove(&key) {
+                        target.close();
+                    }
+                    return Err(GatewayError::RelayBusy);
+                };
+                Some(format!("https://{}", previews[slot]))
+            }
+            None => None,
+        };
+        let mut opened = self.mint(&target.running, &key, session_id, session_expiry);
+        opened.origin = origin;
+        Ok(opened)
+    }
+
+    /// The preview slot a request that reached the main port names: it arrived on a
+    /// loopback socket (the tunnel connector runs on this machine) under a published preview
+    /// hostname. `None` for every other request, which keeps BiBCode's own routes.
+    #[must_use]
+    pub fn relay_slot(&self, local_ip: Option<IpAddr>, host: Option<&str>) -> Option<usize> {
+        local_ip
+            .filter(|ip| ip.to_canonical().is_loopback())
+            .and(host)
+            .and_then(|host| self.inner.relay_hosts.preview_slot(host))
+    }
+
+    /// Where to send a request that reached Cloudflare over plain HTTP for a published relay
+    /// hostname: the same URL over `https`. BiBCode and its previews are served through the
+    /// tunnel over HTTPS only (a page there over HTTP would frame previews it can't load).
+    #[must_use]
+    pub fn relay_https_redirect(
+        &self,
+        local_ip: Option<IpAddr>,
+        host: Option<&str>,
+        forwarded_proto: Option<&str>,
+        path_and_query: &str,
+    ) -> Option<String> {
+        let host = host?;
+        let through_tunnel = local_ip.is_some_and(|ip| ip.to_canonical().is_loopback())
+            && forwarded_proto.is_some_and(|proto| proto.trim().eq_ignore_ascii_case("http"));
+        let hosts = self.inner.relay_hosts.current()?;
+        (through_tunnel && relay::is_relay_host(&hosts, host))
+            .then(|| format!("https://{host}{path_and_query}"))
+    }
+
+    /// Serves a request for preview `slot`: the slot's target handles it, and an empty slot
+    /// answers the expired-link page.
+    pub async fn serve_relay<B: GatewayBody>(
+        &self,
+        slot: usize,
+        request: Request<B>,
+    ) -> Response<ProxyBody> {
+        match self.inner.relay_slots.route(slot) {
+            Some(route) => route.serve_https(request).await,
+            None => expired_response(),
+        }
+    }
+
+    /// The preview hostnames for a caller that came through the Connect tunnel; `None` for
+    /// every other caller.
+    fn relay_previews(
+        &self,
+        reach: Option<&ClientReach>,
+    ) -> Result<Option<Vec<String>>, GatewayError> {
+        let (Some(reach), Some(hosts)) = (reach, self.inner.relay_hosts.current()) else {
+            return Ok(None);
+        };
+        if !relay::is_relay_reach(&hosts, reach.local_ip, reach.host.as_deref()) {
+            return Ok(None);
+        }
+        if hosts.previews.is_empty() {
+            return Err(GatewayError::RelayNotProvisioned);
+        }
+        Ok(Some(hosts.previews))
     }
 
     pub async fn close_thread(&self, thread_id: &str) {
@@ -360,14 +467,22 @@ impl PreviewGateway {
     /// Stops accepting, lets in-flight requests finish for up to [`SHUTDOWN_DRAIN_TIMEOUT`],
     /// then cuts whatever is left. Idle connections close at once, and WebSocket tunnels
     /// close when draining starts (they would otherwise always run out the deadline).
+    /// Concurrent callers share one drain: the server starts it when shutdown is signaled and
+    /// the runtime calls again later, and that later call must not cut the drain short.
     pub async fn shutdown(&self) {
-        let active: Vec<Arc<AtomicUsize>> = {
+        let active: Option<Vec<Arc<AtomicUsize>>> = {
             let mut targets = self.inner.targets.lock().await;
-            self.inner.draining.cancel();
-            targets
-                .drain()
-                .map(|(_, target)| target.running.active)
-                .collect()
+            (!self.inner.draining.is_cancelled()).then(|| {
+                self.inner.draining.cancel();
+                targets
+                    .drain()
+                    .map(|(_, target)| target.running.active)
+                    .collect()
+            })
+        };
+        let Some(active) = active else {
+            self.inner.shutdown.cancelled().await;
+            return;
         };
         let deadline = tokio::time::Instant::now() + SHUTDOWN_DRAIN_TIMEOUT;
         // ponytail: polls every 10 ms; a per-target notify if shutdown latency ever matters.
@@ -401,6 +516,7 @@ impl PreviewGateway {
             gateway_port: target.gateway_port,
             capability,
             expires_at_ms: expires_at_ms.min(session_expiry),
+            origin: None,
         }
     }
 
@@ -791,6 +907,123 @@ mod tests {
         );
     }
 
+    fn relay_gateway(hosts: Option<relay::RelayPreviewHosts>) -> PreviewGateway {
+        let relay = RelayHosts::default();
+        relay.publish(hosts);
+        PreviewGateway::new(
+            "127.0.0.1",
+            "devbox",
+            gateway_context(Arc::new(Live), vec![1; 32], "session".into()),
+            PreviewManager::new(),
+            relay,
+        )
+    }
+
+    fn published(previews: usize) -> Option<relay::RelayPreviewHosts> {
+        Some(relay::RelayPreviewHosts {
+            hostname: "env.zone.test".into(),
+            previews: (1..=previews)
+                .map(|slot| format!("env-p{slot}.zone.test"))
+                .collect(),
+        })
+    }
+
+    fn upstream_url(upstream: &std::net::TcpListener) -> String {
+        format!(
+            "http://localhost:{}/",
+            upstream.local_addr().unwrap().port()
+        )
+    }
+
+    #[tokio::test]
+    async fn a_relay_caller_gets_a_preview_hostname_origin() {
+        let upstream = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = upstream_url(&upstream);
+        let gateway = relay_gateway(published(4));
+        let relay = reach("127.0.0.1", Some("env.zone.test"));
+        let first = gateway
+            .open("t", &url, "s", i64::MAX, Some(&relay))
+            .await
+            .unwrap();
+        assert_eq!(first.origin.as_deref(), Some("https://env-p1.zone.test"));
+        let again = gateway
+            .open("t", &url, "s", i64::MAX, Some(&relay))
+            .await
+            .unwrap();
+        assert_eq!(again.origin, first.origin, "a target keeps its slot");
+        // An SSH client on the same thread and port shares the target but gets no origin.
+        let ssh = gateway
+            .open(
+                "t",
+                &url,
+                "s",
+                i64::MAX,
+                Some(&reach("127.0.0.1", Some("127.0.0.1:45123"))),
+            )
+            .await
+            .unwrap();
+        assert_eq!((ssh.gateway_port, ssh.origin), (first.gateway_port, None));
+        gateway.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn relay_admission_needs_published_preview_hostnames() {
+        let upstream = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = upstream_url(&upstream);
+        let relay = reach("127.0.0.1", Some("env.zone.test:443"));
+        assert!(matches!(
+            relay_gateway(published(0))
+                .open("t", &url, "s", i64::MAX, Some(&relay))
+                .await,
+            Err(GatewayError::RelayNotProvisioned)
+        ));
+        // Without published hosts, the relay `Host` is just a proxied name.
+        assert!(matches!(
+            relay_gateway(None)
+                .open("t", &url, "s", i64::MAX, Some(&relay))
+                .await,
+            Err(GatewayError::NotReachable(Unreachable::Proxied))
+        ));
+    }
+
+    #[tokio::test]
+    async fn relay_opens_fail_busy_when_every_slot_is_live() {
+        let gateway = relay_gateway(published(1));
+        let relay = reach("127.0.0.1", Some("env.zone.test"));
+        let upstreams: Vec<_> = (0..2)
+            .map(|_| std::net::TcpListener::bind("127.0.0.1:0").unwrap())
+            .collect();
+        // The first target is open, so its slot stays taken even with no connections.
+        gateway
+            .open(
+                "t",
+                &upstream_url(&upstreams[0]),
+                "s",
+                i64::MAX,
+                Some(&relay),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            gateway
+                .open(
+                    "t",
+                    &upstream_url(&upstreams[1]),
+                    "s",
+                    i64::MAX,
+                    Some(&relay)
+                )
+                .await,
+            Err(GatewayError::RelayBusy)
+        ));
+        assert_eq!(
+            gateway.inner.targets.lock().await.len(),
+            1,
+            "the refused open leaves no target behind"
+        );
+        gateway.shutdown().await;
+    }
+
     #[tokio::test]
     async fn idle_sweep_closes_only_targets_idle_for_ten_minutes() {
         let upstream = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -803,6 +1036,7 @@ mod tests {
             "devbox",
             gateway_context(Arc::new(Live), vec![1; 32], "session".into()),
             PreviewManager::new(),
+            RelayHosts::default(),
         );
         gateway.open("t", &url, "s", i64::MAX, None).await.unwrap();
         let now = now_millis();
@@ -826,6 +1060,7 @@ mod tests {
             "devbox",
             gateway_context(Arc::new(Live), vec![1; 32], "session".into()),
             preview.clone(),
+            RelayHosts::default(),
         );
         let tab = preview.open("t", Some(&url)).await.unwrap();
         gateway.open("t", &url, "s", i64::MAX, None).await.unwrap();
@@ -851,6 +1086,7 @@ mod tests {
             "devbox",
             gateway_context(Arc::new(Live), vec![1; 32], "session".into()),
             PreviewManager::new(),
+            RelayHosts::default(),
         );
         let port = gateway
             .open("t", &url, "s", i64::MAX, None)
@@ -900,6 +1136,7 @@ mod tests {
             "devbox",
             gateway_context(Arc::new(Live), vec![1; 32], "session".into()),
             PreviewManager::new(),
+            RelayHosts::default(),
         );
         let port = gateway
             .open("t", &url, "s", i64::MAX, None)

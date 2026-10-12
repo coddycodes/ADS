@@ -19,7 +19,7 @@ use futures_util::future::BoxFuture;
 use http_body_util::{BodyExt, Empty, Full, combinators::BoxBody};
 use hyper::{
     Method, Request, Response, StatusCode, Uri, Version,
-    body::{Body, Bytes, Incoming},
+    body::{Body, Bytes},
     header::{
         ACCEPT, ACCEPT_ENCODING, AUTHORIZATION, CACHE_CONTROL, CONNECTION, CONTENT_DISPOSITION,
         CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, HOST, HeaderMap, HeaderName,
@@ -111,6 +111,8 @@ pub struct RunningTarget {
     /// Open client connections plus in-flight upstream exchanges and WebSocket tunnels;
     /// zero means idle since `last_activity_ms`.
     pub active: Arc<AtomicUsize>,
+    /// The handler the main port serves for BiBCode Connect preview hostnames.
+    pub route: TargetRoute,
 }
 
 /// Serves `target` on `listener`. `draining` stops accepting and closes idle connections and
@@ -139,12 +141,92 @@ pub fn start_target(
         shutdown,
         last_activity_ms: state.last_activity_ms.clone(),
         active: state.active.clone(),
+        route: TargetRoute(state.clone()),
     };
     tokio::spawn(accept_loop(listener, state));
     Ok(running)
 }
 
-type ProxyBody = BoxBody<Bytes, hyper::Error>;
+pub type ProxyBody = BoxBody<Bytes, hyper::Error>;
+
+/// A request body the gateway forwards upstream: hyper's own, or axum's for requests the
+/// main port routes to a target.
+pub trait GatewayBody:
+    Body<Data = Bytes, Error: Into<Box<dyn std::error::Error + Send + Sync>>> + Send + 'static
+{
+}
+
+impl<B> GatewayBody for B where
+    B: Body<Data = Bytes, Error: Into<Box<dyn std::error::Error + Send + Sync>>> + Send + 'static
+{
+}
+
+/// One running target's handler, for requests the main port routes to it (BiBCode
+/// Connect preview hostnames). Closed once the target closes or drains.
+#[derive(Clone)]
+pub struct TargetRoute(Arc<Listener>);
+
+impl TargetRoute {
+    #[must_use]
+    pub fn same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.0.shutdown.is_cancelled() || self.0.draining.is_cancelled()
+    }
+
+    /// Serves a request that reached the main port under this target's BiBCode Connect
+    /// preview hostname. TLS ended at Cloudflare, so the client-facing origin is `https`.
+    pub async fn serve_https<B: GatewayBody>(&self, request: Request<B>) -> Response<ProxyBody> {
+        let _activity = self.0.activity();
+        // A preview hostname serves one target after another. A service worker registered by
+        // an earlier one would outlive it and intercept the next one's bootstrap (with its
+        // capability), so no service worker script loads on these hostnames.
+        let mut response = if request.headers().contains_key("service-worker") {
+            page(
+                StatusCode::FORBIDDEN,
+                "Service workers are off",
+                "Service workers don't run in previews over BiBCode Connect.",
+            )
+        } else {
+            handle(self.0.clone(), request, true).await
+        };
+        no_edge_cache(&mut response);
+        no_browser_cache(&mut response);
+        response
+    }
+}
+
+/// The gateway's expired-link page, for a preview hostname that serves no target.
+#[must_use]
+pub fn expired_response() -> Response<ProxyBody> {
+    let mut response = expired();
+    no_edge_cache(&mut response);
+    response
+}
+
+/// Cloudflare caches a proxied hostname's static assets by URL alone, ignoring the gateway
+/// cookie, so a cached authenticated response would reach anyone (and outlive a slot's
+/// reassignment). Every response on a preview hostname stays out of the edge cache; the
+/// browser's own cache, which dev servers rely on, is untouched.
+fn no_edge_cache(response: &mut Response<ProxyBody>) {
+    response.headers_mut().insert(
+        HeaderName::from_static("cloudflare-cdn-cache-control"),
+        HeaderValue::from_static("no-store"),
+    );
+}
+
+/// The browser's cache keys a preview hostname's responses by URL too, and the hostname
+/// serves one target after another, so nothing is stored: even a revalidated entry could
+/// come back as another app's content (an older file's `If-Modified-Since` answered `304`).
+// ponytail: no browser caching over relay; namespace validators per target if load times hurt.
+fn no_browser_cache(response: &mut Response<ProxyBody>) {
+    let headers = response.headers_mut();
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.remove(HeaderName::from_static("expires"));
+}
 
 struct Listener {
     target: GatewayTarget,
@@ -316,7 +398,7 @@ async fn serve_connection(stream: TcpStream, state: Arc<Listener>) {
         let state = state.clone();
         move |request| {
             let state = state.clone();
-            async move { Ok::<_, Infallible>(handle(state, request).await) }
+            async move { Ok::<_, Infallible>(handle(state, request, false).await) }
         }
     });
     let connection = server_http1::Builder::new()
@@ -342,9 +424,14 @@ async fn serve_connection(stream: TcpStream, state: Arc<Listener>) {
 /// included, may be framed by that UI only (see `frame::apply_frame_policy`). Other
 /// sessions (desktop views, system-browser tabs) keep the upstream's framing rules,
 /// and only the preview's own pages may frame them.
-async fn handle(state: Arc<Listener>, request: Request<Incoming>) -> Response<ProxyBody> {
+/// `https` marks a request the main port routed from a BiBCode Connect preview hostname.
+async fn handle<B: GatewayBody>(
+    state: Arc<Listener>,
+    request: Request<B>,
+    https: bool,
+) -> Response<ProxyBody> {
     let ui_origin = framing_ui_origin(&state, &request);
-    let mut response = handle_request(state, request).await;
+    let mut response = handle_request(state, request, https).await;
     let gateway_page = response.extensions().get::<GatewayPage>().is_some();
     let headers = response.headers_mut();
     match ui_origin {
@@ -367,7 +454,7 @@ struct GatewayPage;
 /// The BiBCode UI allowed to frame this request's preview: a bootstrap's validated
 /// `ui=`, or else the browser's current session's, so opening the same target in a
 /// tab (which replaces the shared cookie) keeps an open frame working.
-fn framing_ui_origin(state: &Listener, request: &Request<Incoming>) -> Option<String> {
+fn framing_ui_origin<B>(state: &Listener, request: &Request<B>) -> Option<String> {
     let current = state
         .session_for(request.headers())
         .and_then(|session| session.ui_origin);
@@ -394,7 +481,11 @@ fn bootstrap_ui_origin(query: &str, host: &str) -> Option<String> {
     })
 }
 
-async fn handle_request(state: Arc<Listener>, request: Request<Incoming>) -> Response<ProxyBody> {
+async fn handle_request<B: GatewayBody>(
+    state: Arc<Listener>,
+    request: Request<B>,
+    https: bool,
+) -> Response<ProxyBody> {
     state.touch();
     let Some(host) = request
         .headers()
@@ -407,7 +498,13 @@ async fn handle_request(state: Arc<Listener>, request: Request<Incoming>) -> Res
     };
     if request.uri().path() == BOOTSTRAP_PATH {
         let ui_origin = framing_ui_origin(&state, &request);
-        return bootstrap(&state, request.uri().query().unwrap_or_default(), ui_origin).await;
+        return bootstrap(
+            &state,
+            request.uri().query().unwrap_or_default(),
+            ui_origin,
+            https,
+        )
+        .await;
     }
     if request.uri().path() == frame::FRAME_SCRIPT_PATH {
         return frame_script();
@@ -421,7 +518,7 @@ async fn handle_request(state: Arc<Listener>, request: Request<Incoming>) -> Res
     {
         return expired();
     }
-    let client_origin = client_origin("http", &host);
+    let client_origin = client_origin(if https { "https" } else { "http" }, &host);
     let websocket = ws::is_websocket(request.headers());
     let safe_method = matches!(
         *request.method(),
@@ -464,6 +561,7 @@ async fn bootstrap(
     state: &Listener,
     query: &str,
     ui_origin: Option<String>,
+    https: bool,
 ) -> Response<ProxyBody> {
     let (mut cap, mut to) = (None, None);
     for pair in query.split('&') {
@@ -509,10 +607,11 @@ async fn bootstrap(
     let mut response = html(StatusCode::OK, bootstrap_page(&to, ui_origin.as_deref()));
     // Lax: an OAuth provider's top-level GET redirect back to the app carries
     // it; cross-site subrequests do not, and the Origin rule refuses cross-site
-    // writes and WebSocket upgrades.
+    // writes and WebSocket upgrades. An https-facing preview keeps it off plain HTTP.
     let cookie = format!(
-        "{}={id}; HttpOnly; SameSite=Lax; Path=/",
-        gateway_cookie_name(state.gateway_port)
+        "{}={id}; HttpOnly;{} SameSite=Lax; Path=/",
+        gateway_cookie_name(state.gateway_port),
+        if https { " Secure;" } else { "" },
     );
     insert(response.headers_mut(), SET_COOKIE, &cookie);
     response.headers_mut().insert(
@@ -522,9 +621,9 @@ async fn bootstrap(
     response
 }
 
-async fn forward(
+async fn forward<B: GatewayBody>(
     state: Arc<Listener>,
-    mut request: Request<Incoming>,
+    mut request: Request<B>,
     principal: String,
     client_origin: &str,
     websocket: bool,
@@ -559,7 +658,7 @@ async fn forward(
     };
     let _ = stream.set_nodelay(true);
     let Ok((mut sender, connection)) =
-        hyper::client::conn::http1::handshake(TokioIo::new(stream)).await
+        hyper::client::conn::http1::handshake::<_, B>(TokioIo::new(stream)).await
     else {
         return unreachable(&state);
     };

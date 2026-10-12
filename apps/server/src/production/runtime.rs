@@ -41,7 +41,10 @@ use crate::{
     persistence::{Database, Repositories, StatePaths},
     preview::{
         PreviewManager,
-        gateway::registry::{PreviewGateway, gateway_context},
+        gateway::{
+            registry::{PreviewGateway, gateway_context},
+            relay::RelayHosts,
+        },
     },
     process::configure_background_command,
     production::{
@@ -154,6 +157,11 @@ impl ProductionRuntime {
     #[must_use]
     pub fn managed_endpoint_runtime(&self) -> ManagedEndpointRuntime {
         self.managed_endpoint.clone()
+    }
+
+    #[must_use]
+    pub fn preview_gateway(&self) -> PreviewGateway {
+        self.preview_gateway.clone()
     }
 
     /// The handler that serves signed download URLs.
@@ -312,8 +320,11 @@ impl ProductionRuntime {
             Arc::new(tokio::time::Instant::now),
         );
         let upload_sweeper = attachment_uploads.start_sweeper();
+        // The Connect tunnel publishes its preview hostnames here; the preview gateway reads them.
+        let relay_hosts = RelayHosts::default();
         let managed_endpoint =
-            ManagedEndpointRuntime::with_process_attribution(process_attribution.clone());
+            ManagedEndpointRuntime::with_process_attribution(process_attribution.clone())
+                .with_relay_hosts(relay_hosts.clone());
         let provider_settings = ProviderSettingsStore::new(&state_paths.state_dir);
         let provider_terminal_preparer = ProviderTerminalActivitySupervisor::new_with_authority(
             Arc::new(ProviderSettingsInventoryAuthority::new(provider_settings)),
@@ -463,6 +474,7 @@ impl ProductionRuntime {
                 auth.cookie_name().to_owned(),
             ),
             preview.clone(),
+            relay_hosts,
         );
         let workspace_preview = WorkspacePreviewRpcServices::new(
             workspace.clone(),

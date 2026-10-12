@@ -2,7 +2,8 @@
 mod executable_fixture;
 
 use bibcode_server::{
-    cloud, production::managed_endpoint::ManagedEndpointRuntime, text_generation,
+    cloud, preview::gateway::relay::RelayPreviewHosts,
+    production::managed_endpoint::ManagedEndpointRuntime, text_generation,
 };
 
 use cloud::{RelayClientInstallEvent, RelayClientService, RelayClientStatus};
@@ -89,6 +90,8 @@ async fn managed_endpoint_runtime_handles_disabled_unsupported_and_missing_conne
                 "connectorToken":"fixture-token",
                 "tunnelId":"tunnel-1",
                 "tunnelName":"Fixture tunnel",
+                "hostname":"env.zone.test",
+                "previewHostnames":["env-p1.zone.test"],
             }))
             .await
             .unwrap(),
@@ -100,6 +103,8 @@ async fn managed_endpoint_runtime_handles_disabled_unsupported_and_missing_conne
             "tunnelName":"Fixture tunnel",
         })
     );
+    // A tunnel that is not running publishes no hostnames.
+    assert_eq!(runtime.relay_hosts().current(), None);
 
     runtime.shutdown().await;
 }
@@ -160,6 +165,51 @@ async fn managed_endpoint_runtime_reuses_replaces_and_stops_connectors() {
     assert_eq!(replacement["status"], "running");
     assert_eq!(replacement["tunnelId"], "tunnel-2");
     assert_ne!(replacement["pid"], first["pid"]);
+
+    let hosts = runtime.relay_hosts();
+    assert_eq!(
+        hosts.current(),
+        None,
+        "a config without hostnames publishes none"
+    );
+    let republished = runtime
+        .apply(json!({
+            "providerKind":"cloudflare_tunnel",
+            "connectorToken":"fixture-token-2",
+            "tunnelId":"tunnel-2",
+            "tunnelName":"Replacement tunnel",
+            "hostname":"env.zone.test",
+            "previewHostnames":[
+                "env-p1.zone.test","env-p2.zone.test","env-p3.zone.test",
+                "env-p4.zone.test","env-p5.zone.test",
+            ],
+        }))
+        .await
+        .unwrap();
+    // Same connector key: the running connector is kept, only the hostnames change.
+    assert_eq!(republished["pid"], replacement["pid"]);
+    assert_eq!(
+        hosts.current(),
+        Some(RelayPreviewHosts {
+            hostname: "env.zone.test".into(),
+            previews: (1..=4)
+                .map(|slot| format!("env-p{slot}.zone.test"))
+                .collect(),
+        })
+    );
+    assert!(
+        runtime
+            .apply(json!({
+                "providerKind":"cloudflare_tunnel",
+                "connectorToken":"fixture-token-2",
+                "hostname":"Bad_Host.zone.test",
+            }))
+            .await
+            .is_err(),
+        "a malformed hostname rejects the config"
+    );
+    runtime.apply(serde_json::Value::Null).await.unwrap();
+    assert_eq!(hosts.current(), None, "disabling withdraws the hostnames");
 
     runtime.shutdown().await;
     runtime.shutdown().await;

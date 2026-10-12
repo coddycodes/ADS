@@ -211,6 +211,32 @@ describe("openLink", () => {
     vi.unstubAllGlobals();
   });
 
+  it("in browser mode opens a relay preview in a new tab, never the panel", async () => {
+    anyUrlSupported = false;
+    vi.stubGlobal("location", { hostname: "10.0.0.2" });
+    const replace = vi.fn();
+    const open = vi.fn(() => ({ opener: {}, location: { replace }, close: vi.fn() }));
+    vi.stubGlobal("window", { open });
+    resolvePreviewTarget.mockReturnValue({
+      kind: "gateway",
+      via: "relay",
+      url: "http://localhost:5173/",
+    });
+    const bootstrapUrl = "https://env-p1.zone.test/__bibcode/bootstrap?cap=CAP&to=%2F";
+    resolveForNavigation.mockResolvedValue({ kind: "ok", url: bootstrapUrl });
+    const { openLink } = await import("./openLink");
+
+    expect(openLink({ url: "http://localhost:5173/", threadRef, invert: false, openPreview })).toBe(
+      "system",
+    );
+    expect(open).toHaveBeenCalledWith("about:blank", "_blank");
+    await vi.waitFor(() => expect(replace).toHaveBeenCalledWith(bootstrapUrl));
+    // No tab id: the page that frames a preview is the only caller that passes one.
+    expect(resolveForNavigation.mock.calls[0]![0]).not.toHaveProperty("tabId");
+    expect(openUrlInPreview).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
   it("opens a same-host page directly when it leaves the panel", async () => {
     anyUrlSupported = false;
     vi.stubGlobal("location", { hostname: "localhost" });
