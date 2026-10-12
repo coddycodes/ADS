@@ -19,7 +19,7 @@ use crate::{
         CommandAdmission, NewProviderTurnDelivery, OrchestrationCommand, OrchestrationEngine,
         OrchestrationError, canonical_command_digest,
         engine::{CommandLifetimeGuard, OptionalNullable, TurnDeliveryResolutionAction},
-        load_snapshot,
+        load_shell_snapshot, load_thread_snapshot,
     },
     persistence::{
         EVENT_PAGE_SIZE, OrchestrationEvent, PersistenceError, ProjectionThread, Repositories,
@@ -1005,9 +1005,14 @@ async fn send_snapshot(
 }
 
 pub async fn shell_snapshot(engine: &OrchestrationEngine, archived: bool) -> RpcResult {
-    let snapshot = load_snapshot(&engine.repositories())
+    let snapshot = load_shell_snapshot(&engine.repositories(), archived)
         .await
         .map_err(|error| orchestration_error("OrchestrationGetSnapshotError", error))?;
+    Ok(shell_snapshot_value(&snapshot, archived))
+}
+
+/// Builds the shell wire value from any snapshot that holds the shown threads' rows.
+fn shell_snapshot_value(snapshot: &crate::orchestration::Snapshot, archived: bool) -> Value {
     let sequence = snapshot
         .states
         .iter()
@@ -1020,25 +1025,30 @@ pub async fn shell_snapshot(engine: &OrchestrationEngine, archived: bool) -> Rpc
         .filter(|project| project.deleted_at.is_none())
         .map(project_shell)
         .collect::<Vec<_>>();
-    let previews = build_conversation_previews(&snapshot);
+    let previews = build_conversation_previews(snapshot);
     let threads = snapshot
         .threads
         .iter()
         .filter(|thread| thread.deleted_at.is_none() && (thread.archived_at.is_some()) == archived)
-        .map(|thread| thread_shell(thread, &snapshot, previews.get(thread.thread_id.as_str())))
+        .map(|thread| thread_shell(thread, snapshot, previews.get(thread.thread_id.as_str())))
         .collect::<Vec<_>>();
-    Ok(json!({
+    json!({
         "snapshotSequence": sequence,
         "projects": projects,
         "threads": threads,
         "updatedAt": now_iso(),
-    }))
+    })
 }
 
 async fn thread_snapshot(engine: &OrchestrationEngine, thread_id: &str) -> RpcResult {
-    let snapshot = load_snapshot(&engine.repositories())
+    let snapshot = load_thread_snapshot(&engine.repositories(), thread_id)
         .await
         .map_err(|error| orchestration_error("OrchestrationGetSnapshotError", error))?;
+    thread_snapshot_value(&snapshot, thread_id)
+}
+
+/// Builds the thread wire value from any snapshot that holds the thread's rows.
+fn thread_snapshot_value(snapshot: &crate::orchestration::Snapshot, thread_id: &str) -> RpcResult {
     let thread = snapshot
         .threads
         .iter()
@@ -1055,7 +1065,7 @@ async fn thread_snapshot(engine: &OrchestrationEngine, thread_id: &str) -> RpcRe
         .map(|state| state.last_applied_sequence)
         .max()
         .unwrap_or(0);
-    let rows = thread_detail_rows(&snapshot, thread);
+    let rows = thread_detail_rows(snapshot, thread);
     let detail = thread_detail(thread, &rows);
     Ok(json!({ "snapshotSequence": sequence, "thread": detail }))
 }
@@ -1711,6 +1721,7 @@ mod tests {
             AttachmentReference, NewProviderTurnDelivery, Snapshot, TurnDeliveryState,
             TurnDeliveryTransition,
             engine::{EngineOptions, TestHooks},
+            load_snapshot,
         },
         persistence::{
             Database, NewOrchestrationEvent, ProjectionThreadActivity, ProjectionThreadMessage,
@@ -1944,6 +1955,621 @@ mod tests {
         );
         let without = thread_shell(thread, &snapshot, None);
         assert!(without.get("conversationPreview").is_none());
+    }
+
+    fn store_thread(
+        thread_id: &str,
+        project_id: &str,
+        latest_turn_id: Option<&str>,
+    ) -> ProjectionThread {
+        let mut thread = preview_snapshot_fixture("running").threads.remove(0);
+        thread.thread_id = thread_id.to_owned();
+        thread.project_id = project_id.to_owned();
+        thread.title = thread_id.to_owned();
+        thread.latest_turn_id = latest_turn_id.map(str::to_owned);
+        thread
+    }
+
+    fn store_message(
+        message_id: &str,
+        thread_id: &str,
+        role: &str,
+        text: &str,
+        created_at: &str,
+    ) -> ProjectionThreadMessage {
+        ProjectionThreadMessage {
+            message_id: message_id.to_owned(),
+            thread_id: thread_id.to_owned(),
+            turn_id: None,
+            role: role.to_owned(),
+            text: text.to_owned(),
+            attachments: None,
+            is_streaming: false,
+            delivery_state: None,
+            delivery_provider: None,
+            delivery_provider_instance_id: None,
+            delivery_detail: None,
+            delivery_reason: None,
+            delivery_mode: None,
+            delivery_held: None,
+            created_at: created_at.to_owned(),
+            updated_at: created_at.to_owned(),
+        }
+    }
+
+    fn store_activity(
+        activity_id: &str,
+        thread_id: &str,
+        turn_id: &str,
+        tone: &str,
+        sequence: Option<i64>,
+        created_at: &str,
+    ) -> ProjectionThreadActivity {
+        ProjectionThreadActivity {
+            activity_id: activity_id.to_owned(),
+            thread_id: thread_id.to_owned(),
+            turn_id: Some(turn_id.to_owned()),
+            tone: tone.to_owned(),
+            kind: "tool.completed".to_owned(),
+            summary: format!("summary {activity_id}"),
+            payload: json!({ "activity": activity_id }),
+            sequence,
+            created_at: created_at.to_owned(),
+        }
+    }
+
+    fn store_turn(
+        thread_id: &str,
+        turn_id: &str,
+        state: &str,
+    ) -> crate::persistence::ProjectionTurnById {
+        crate::persistence::ProjectionTurnById {
+            thread_id: thread_id.to_owned(),
+            turn_id: turn_id.to_owned(),
+            pending_message_id: None,
+            source_proposed_plan_thread_id: None,
+            source_proposed_plan_id: None,
+            assistant_message_id: None,
+            state: state.to_owned(),
+            requested_at: "2026-07-11T00:00:01.000Z".to_owned(),
+            started_at: Some("2026-07-11T00:00:01.000Z".to_owned()),
+            completed_at: None,
+            checkpoint_turn_count: None,
+            checkpoint_ref: None,
+            checkpoint_status: None,
+            checkpoint_files: json!([]),
+        }
+    }
+
+    /// A store with every shape the shell and thread snapshots distinguish: live, archived,
+    /// deleted, panel and project-less threads, a deleted project, tied timestamps, queued
+    /// messages, a running turn with tool activities, and history the shell must not read.
+    async fn seeded_snapshot_store() -> Repositories {
+        let database = Database::open_in_memory().await.expect("database");
+        database
+            .call(|connection| {
+                run_migrations(connection, None)?;
+                Ok(())
+            })
+            .await
+            .expect("migrations");
+        let repositories = Repositories::new(database);
+        let mut fixture = http_read_model_fixture();
+        for project in fixture.projects.drain(..) {
+            repositories.upsert_project(project).await.unwrap();
+        }
+        let mut archived = store_thread("t-archived", "project-live", Some("turn-archived"));
+        archived.archived_at = Some(CREATED_AT.to_owned());
+        let mut deleted = store_thread("t-deleted", "project-live", None);
+        deleted.deleted_at = Some(CREATED_AT.to_owned());
+        let mut panel = store_thread("t-panel", "project-live", None);
+        panel.kind = "panel".to_owned();
+        panel.host_thread_id = Some("t-running".to_owned());
+        for thread in [
+            store_thread("t-running", "project-live", Some("turn-run")),
+            store_thread("t-ties", "project-live", Some("turn-done")),
+            store_thread("t-under-deleted-project", "project-deleted", None),
+            store_thread("t-orphan", "project-missing", None),
+            archived,
+            deleted,
+            panel,
+        ] {
+            repositories.upsert_thread(thread).await.unwrap();
+        }
+        let mut queued = store_message(
+            "m-queued",
+            "t-running",
+            "user",
+            "queued prompt",
+            "2026-07-11T00:00:05.000Z",
+        );
+        queued.delivery_state = Some("queued".to_owned());
+        let messages = [
+            store_message(
+                "m-old",
+                "t-running",
+                "user",
+                "older prompt",
+                "2026-07-11T00:00:02.000Z",
+            ),
+            store_message(
+                "m-tie-a",
+                "t-running",
+                "user",
+                "tied prompt",
+                "2026-07-11T00:00:05.000Z",
+            ),
+            queued,
+            store_message(
+                "m-reply",
+                "t-running",
+                "assistant",
+                "an answer",
+                "2026-07-11T00:00:03.000Z",
+            ),
+            store_message(
+                "m-blank",
+                "t-running",
+                "assistant",
+                "   ",
+                "2026-07-11T00:00:04.000Z",
+            ),
+            store_message("m-b", "t-ties", "user", "bravo", "2026-07-11T00:00:05.000Z"),
+            store_message("m-a", "t-ties", "user", "alpha", "2026-07-11T00:00:05.000Z"),
+            store_message(
+                "m-system",
+                "t-ties",
+                "system",
+                "ignored",
+                "2026-07-11T00:00:09.000Z",
+            ),
+            store_message(
+                "m-archived",
+                "t-archived",
+                "assistant",
+                "archived answer",
+                "2026-07-11T00:00:05.000Z",
+            ),
+            store_message(
+                "m-deleted",
+                "t-deleted",
+                "user",
+                "deleted prompt",
+                "2026-07-11T00:00:05.000Z",
+            ),
+        ];
+        for message in messages {
+            repositories.upsert_message(message).await.unwrap();
+        }
+        let mut activities = vec![
+            // Tied newest tool rows: the one later in sequence order wins.
+            store_activity(
+                "act-y",
+                "t-running",
+                "turn-run",
+                "tool",
+                Some(5),
+                "2026-07-11T00:00:09.000Z",
+            ),
+            store_activity(
+                "act-x",
+                "t-running",
+                "turn-run",
+                "tool",
+                Some(3),
+                "2026-07-11T00:00:09.000Z",
+            ),
+            store_activity(
+                "act-null",
+                "t-running",
+                "turn-run",
+                "tool",
+                None,
+                "2026-07-11T00:00:09.000Z",
+            ),
+            store_activity(
+                "act-info",
+                "t-running",
+                "turn-run",
+                "info",
+                Some(6),
+                "2026-07-11T00:00:10.000Z",
+            ),
+            store_activity(
+                "act-old-turn",
+                "t-running",
+                "turn-old",
+                "tool",
+                Some(7),
+                "2026-07-11T00:00:11.000Z",
+            ),
+            store_activity(
+                "act-done",
+                "t-ties",
+                "turn-done",
+                "tool",
+                Some(1),
+                "2026-07-11T00:00:09.000Z",
+            ),
+        ];
+        activities.extend((0..40).map(|index| {
+            store_activity(
+                &format!("history-{index:02}"),
+                if index % 2 == 0 {
+                    "t-running"
+                } else {
+                    "t-archived"
+                },
+                "turn-history",
+                "tool",
+                Some(100 + index),
+                "2026-07-11T00:00:01.000Z",
+            )
+        }));
+        for activity in activities {
+            repositories.upsert_activity(activity).await.unwrap();
+        }
+        for (thread_id, turn_id, state) in [
+            ("t-running", "turn-run", "running"),
+            ("t-running", "turn-old", "completed"),
+            ("t-ties", "turn-done", "completed"),
+            ("t-archived", "turn-archived", "running"),
+        ] {
+            repositories
+                .upsert_turn_by_id(store_turn(thread_id, turn_id, state))
+                .await
+                .unwrap();
+        }
+        repositories
+            .upsert_checkpoint(crate::persistence::ProjectionCheckpoint {
+                thread_id: "t-ties".to_owned(),
+                turn_id: "turn-done".to_owned(),
+                checkpoint_turn_count: 1,
+                checkpoint_ref: "refs/checkpoint/1".to_owned(),
+                status: "ready".to_owned(),
+                files: json!([]),
+                assistant_message_id: None,
+                completed_at: "2026-07-11T00:00:06.000Z".to_owned(),
+            })
+            .await
+            .unwrap();
+        repositories
+            .upsert_proposed_plan(crate::persistence::ProjectionThreadProposedPlan {
+                plan_id: "plan-1".to_owned(),
+                thread_id: "t-running".to_owned(),
+                turn_id: Some("turn-old".to_owned()),
+                plan_markdown: "# Plan".to_owned(),
+                implemented_at: None,
+                implementation_thread_id: None,
+                created_at: CREATED_AT.to_owned(),
+                updated_at: CREATED_AT.to_owned(),
+            })
+            .await
+            .unwrap();
+        for thread_id in ["t-running", "t-archived"] {
+            repositories
+                .upsert_thread_session(crate::persistence::ProjectionThreadSession {
+                    thread_id: thread_id.to_owned(),
+                    status: "running".to_owned(),
+                    provider_name: Some("codex".to_owned()),
+                    provider_instance_id: Some("codex".to_owned()),
+                    runtime_mode: "full-access".to_owned(),
+                    active_turn_id: Some("turn-run".to_owned()),
+                    last_error: None,
+                    last_error_class: None,
+                    updated_at: CREATED_AT.to_owned(),
+                })
+                .await
+                .unwrap();
+        }
+        for (projector, sequence) in [("projector-a", 7), ("projector-b", 9)] {
+            repositories
+                .upsert_projection_state(crate::persistence::ProjectionState {
+                    projector: projector.to_owned(),
+                    last_applied_sequence: sequence,
+                    updated_at: CREATED_AT.to_owned(),
+                })
+                .await
+                .unwrap();
+        }
+        repositories
+    }
+
+    fn without_updated_at(mut value: Value) -> Value {
+        value
+            .as_object_mut()
+            .expect("snapshot object")
+            .remove("updatedAt");
+        value
+    }
+
+    #[tokio::test]
+    async fn targeted_snapshots_match_the_full_store_load_without_reading_history() {
+        let repositories = seeded_snapshot_store().await;
+        let full = load_snapshot(&repositories).await.unwrap();
+        assert_eq!(full.activities.len(), 46, "fixture history is in the store");
+
+        for archived in [false, true] {
+            let targeted = load_shell_snapshot(&repositories, archived).await.unwrap();
+            assert_eq!(
+                without_updated_at(shell_snapshot_value(&targeted, archived)),
+                without_updated_at(shell_snapshot_value(&full, archived)),
+                "archived = {archived}"
+            );
+            // Only preview candidates are read: every row tied for the newest user and
+            // assistant message of a returned thread, and for the newest tool activity of
+            // a running latest turn. History, plans and checkpoints stay unread.
+            let mut message_ids = targeted
+                .messages
+                .iter()
+                .map(|row| row.message_id.as_str())
+                .collect::<Vec<_>>();
+            message_ids.sort_unstable();
+            let mut activity_ids = targeted
+                .activities
+                .iter()
+                .map(|row| row.activity_id.as_str())
+                .collect::<Vec<_>>();
+            activity_ids.sort_unstable();
+            let (expected_messages, expected_activities): (&[&str], &[&str]) = if archived {
+                (&["m-archived"], &[])
+            } else {
+                (
+                    &["m-a", "m-b", "m-blank", "m-queued", "m-tie-a"],
+                    &["act-null", "act-x", "act-y"],
+                )
+            };
+            assert_eq!(message_ids, expected_messages, "archived = {archived}");
+            assert_eq!(activity_ids, expected_activities, "archived = {archived}");
+            assert!(targeted.proposed_plans.is_empty() && targeted.checkpoints.is_empty());
+            assert!(targeted.approvals.is_empty() && targeted.receipts.is_empty());
+            assert!(targeted.diffs.is_empty());
+        }
+        let live = shell_snapshot_value(
+            &load_shell_snapshot(&repositories, false).await.unwrap(),
+            false,
+        );
+        let running = live["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|thread| thread["id"] == "t-running")
+            .unwrap();
+        assert_eq!(running["conversationPreview"]["prompt"], "queued prompt");
+        assert_eq!(running["conversationPreview"]["tool"], "summary act-y");
+        assert_eq!(
+            running["conversationPreview"]["assistantMessage"],
+            Value::Null
+        );
+        assert_eq!(live["snapshotSequence"], 9);
+
+        for thread_id in [
+            "t-running",
+            "t-ties",
+            "t-archived",
+            "t-deleted",
+            "t-panel",
+            "t-under-deleted-project",
+            "t-orphan",
+            "t-missing",
+        ] {
+            let targeted = load_thread_snapshot(&repositories, thread_id)
+                .await
+                .unwrap();
+            assert_eq!(
+                thread_snapshot_value(&targeted, thread_id),
+                thread_snapshot_value(&full, thread_id),
+                "thread {thread_id}"
+            );
+        }
+    }
+
+    /// Bytes this process has passed to `write(2)` so far: SQLite temporary files included.
+    fn written_bytes() -> u64 {
+        std::fs::read_to_string("/proc/self/io")
+            .ok()
+            .and_then(|io| {
+                io.lines()
+                    .find_map(|line| line.strip_prefix("wchar: ")?.trim().parse().ok())
+            })
+            .unwrap_or(0)
+    }
+
+    async fn timed<F: std::future::Future<Output = Value>>(
+        label: &str,
+        run: impl Fn() -> F,
+    ) -> Value {
+        let mut samples = Vec::new();
+        let mut written = 0;
+        let mut value = Value::Null;
+        for _ in 0..3 {
+            let before = written_bytes();
+            let started = std::time::Instant::now();
+            value = run().await;
+            samples.push(started.elapsed());
+            written = written.max(written_bytes().saturating_sub(before));
+        }
+        samples.sort();
+        println!(
+            "{label}: median {:?} (min {:?}, max {:?}), up to {:.1} MB written",
+            samples[1],
+            samples[0],
+            samples[2],
+            written as f64 / 1e6
+        );
+        value
+    }
+
+    /// #78 timings on a synthetic store shaped like the reporting machine's: 15 projects,
+    /// 50 threads (2 archived), 1,300 messages and 170,000 activities of about 1.5 KB.
+    /// `BIBCODE_ISSUE78_BENCH_DIR` sets where the database file goes; run with
+    /// `cargo test -p bibcode-server --lib shell_snapshot_timing -- --ignored --nocapture`.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "builds a store of about 300 MB; run by hand for timings"]
+    async fn shell_snapshot_timing_on_a_large_store() {
+        let directory = std::env::var_os("BIBCODE_ISSUE78_BENCH_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join(format!("issue-78-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let database = Database::create_new(directory.join("state.sqlite"))
+            .await
+            .unwrap();
+        database
+            .call(|connection| {
+                run_migrations(connection, None)?;
+                connection.execute_batch("PRAGMA synchronous = OFF; BEGIN")?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let repositories = Repositories::new(database.clone());
+        let mut fixture = http_read_model_fixture();
+        let template = fixture.projects.remove(0);
+        for project in 0..15 {
+            let mut row = template.clone();
+            row.project_id = format!("project-{project:02}");
+            row.workspace_root = format!("/bench/{project:02}");
+            repositories.upsert_project(row).await.unwrap();
+        }
+        let payload = "x".repeat(1_500);
+        let mut activity = 0_i64;
+        for thread in 0..50 {
+            let thread_id = format!("thread-{thread:02}");
+            let mut row = store_thread(
+                &thread_id,
+                &format!("project-{:02}", thread % 15),
+                Some("turn-12"),
+            );
+            if thread >= 48 {
+                row.archived_at = Some(CREATED_AT.to_owned());
+            }
+            repositories.upsert_thread(row).await.unwrap();
+            for turn in 0..13 {
+                let state = if thread == 0 && turn == 12 {
+                    "running"
+                } else {
+                    "completed"
+                };
+                repositories
+                    .upsert_turn_by_id(store_turn(&thread_id, &format!("turn-{turn:02}"), state))
+                    .await
+                    .unwrap();
+            }
+            for message in 0..26 {
+                let role = if message % 2 == 0 {
+                    "user"
+                } else {
+                    "assistant"
+                };
+                let created_at =
+                    format!("2026-07-11T00:{:02}:{:02}.000Z", message / 60, message % 60);
+                repositories
+                    .upsert_message(store_message(
+                        &format!("{thread_id}-message-{message:02}"),
+                        &thread_id,
+                        role,
+                        &format!("message {message} of {thread_id}"),
+                        &created_at,
+                    ))
+                    .await
+                    .unwrap();
+            }
+            for index in 0..3_400 {
+                activity += 1;
+                let mut row = store_activity(
+                    &format!("{thread_id}-activity-{index:04}"),
+                    &thread_id,
+                    &format!("turn-{:02}", index * 13 / 3_400),
+                    if index % 3 == 0 { "tool" } else { "info" },
+                    Some(activity),
+                    &format!(
+                        "2026-07-11T01:{:02}:{:02}.{:03}Z",
+                        index / 3_600,
+                        (index / 60) % 60,
+                        index % 1_000
+                    ),
+                );
+                row.payload = json!({ "detail": payload, "index": index });
+                repositories.upsert_activity(row).await.unwrap();
+            }
+            repositories
+                .upsert_thread_session(crate::persistence::ProjectionThreadSession {
+                    thread_id: thread_id.clone(),
+                    status: "ready".to_owned(),
+                    provider_name: Some("codex".to_owned()),
+                    provider_instance_id: Some("codex".to_owned()),
+                    runtime_mode: "full-access".to_owned(),
+                    active_turn_id: None,
+                    last_error: None,
+                    last_error_class: None,
+                    updated_at: CREATED_AT.to_owned(),
+                })
+                .await
+                .unwrap();
+        }
+        repositories
+            .upsert_projection_state(crate::persistence::ProjectionState {
+                projector: "bench".to_owned(),
+                last_applied_sequence: activity,
+                updated_at: CREATED_AT.to_owned(),
+            })
+            .await
+            .unwrap();
+        database
+            .call(|connection| {
+                connection.execute_batch(
+                    "COMMIT; PRAGMA synchronous = FULL; PRAGMA wal_checkpoint(TRUNCATE)",
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let size = std::fs::metadata(directory.join("state.sqlite"))
+            .unwrap()
+            .len();
+        println!(
+            "store: 50 threads, {activity} activities, {:.0} MB",
+            size as f64 / 1e6
+        );
+
+        for archived in [true, false] {
+            let label = if archived {
+                "getArchivedShellSnapshot"
+            } else {
+                "subscribeShell snapshot"
+            };
+            let legacy = timed(&format!("{label}, full load"), || async {
+                shell_snapshot_value(&load_snapshot(&repositories).await.unwrap(), archived)
+            })
+            .await;
+            let targeted = timed(&format!("{label}, targeted load"), || async {
+                shell_snapshot_value(
+                    &load_shell_snapshot(&repositories, archived).await.unwrap(),
+                    archived,
+                )
+            })
+            .await;
+            assert_eq!(without_updated_at(targeted), without_updated_at(legacy));
+        }
+        let legacy = timed("subscribeThread snapshot, full load", || async {
+            thread_snapshot_value(&load_snapshot(&repositories).await.unwrap(), "thread-00")
+                .unwrap()
+        })
+        .await;
+        let targeted = timed("subscribeThread snapshot, targeted load", || async {
+            thread_snapshot_value(
+                &load_thread_snapshot(&repositories, "thread-00")
+                    .await
+                    .unwrap(),
+                "thread-00",
+            )
+            .unwrap()
+        })
+        .await;
+        assert_eq!(targeted, legacy);
+        database.close().await;
+        std::fs::remove_dir_all(&directory).unwrap();
     }
 
     fn http_read_model_fixture() -> Snapshot {

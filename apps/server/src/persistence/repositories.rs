@@ -449,10 +449,104 @@ impl Repositories {
             .call(|connection| {
                 collect(
                     connection,
-                    &format!("{PROJECT_SELECT} ORDER BY created_at ASC, project_id ASC"),
+                    &format!("{PROJECT_SELECT}{PROJECT_LIST_ORDER}"),
                     [],
                     decode_project,
                 )
+            })
+            .await
+    }
+
+    /// Reads, in one SQLite job, the rows a live (`archived == false`) or archived shell
+    /// snapshot shows. Threads must be undeleted and have a project row. Previews need only
+    /// the newest rows, so for each thread this reads every message tied for the newest
+    /// `user` and `assistant` message, and, when the latest turn is running, every `tool`
+    /// activity tied for its newest; ties keep the per-thread list order.
+    pub async fn load_shell_snapshot_rows(&self, archived: bool) -> Result<ShellSnapshotRows> {
+        self.database
+            .call(move |connection| {
+                let archive_filter = if archived {
+                    "archived_at IS NOT NULL"
+                } else {
+                    "archived_at IS NULL"
+                };
+                let mut rows = ShellSnapshotRows {
+                    projects: collect(
+                        connection,
+                        &format!("{PROJECT_SELECT}{PROJECT_LIST_ORDER}"),
+                        [],
+                        decode_project,
+                    )?,
+                    threads: collect(
+                        connection,
+                        &format!(
+                            "{THREAD_SELECT} WHERE deleted_at IS NULL AND {archive_filter} \
+                             AND project_id IN (SELECT project_id FROM projection_projects) \
+                             ORDER BY thread_id ASC"
+                        ),
+                        [],
+                        decode_thread,
+                    )?,
+                    sessions: Vec::new(),
+                    latest_turns: Vec::new(),
+                    preview_messages: Vec::new(),
+                    preview_activities: Vec::new(),
+                    states: collect(
+                        connection,
+                        PROJECTION_STATE_LIST,
+                        [],
+                        decode_projection_state,
+                    )?,
+                };
+                let mut session =
+                    connection.prepare(&format!("{THREAD_SESSION_SELECT} WHERE thread_id = ?"))?;
+                let mut newest_messages = connection.prepare(&format!(
+                    "{MESSAGE_SELECT} WHERE thread_id = ?1 AND role = ?2 AND created_at = \
+                     (SELECT created_at FROM projection_thread_messages WHERE thread_id = ?1 \
+                      AND role = ?2 ORDER BY created_at DESC LIMIT 1){MESSAGE_LIST_ORDER}"
+                ))?;
+                // (thread_id, turn_id) is unique, so this is at most one row.
+                let mut latest_turn = connection.prepare(&format!(
+                    "{TURN_SELECT} WHERE thread_id = ? AND turn_id = ?"
+                ))?;
+                let mut newest_tools = connection.prepare(&format!(
+                    "{ACTIVITY_SELECT} WHERE thread_id = ?1 AND turn_id = ?2 AND tone = 'tool' \
+                     AND created_at = (SELECT created_at FROM projection_thread_activities \
+                      WHERE thread_id = ?1 AND turn_id = ?2 AND tone = 'tool' \
+                      ORDER BY created_at DESC LIMIT 1){ACTIVITY_LIST_ORDER}"
+                ))?;
+                for thread in &rows.threads {
+                    rows.sessions.extend(
+                        session
+                            .query_row([&thread.thread_id], decode_thread_session)
+                            .optional()?,
+                    );
+                    for role in ["user", "assistant"] {
+                        for message in newest_messages
+                            .query_map(params![thread.thread_id, role], decode_message)?
+                        {
+                            rows.preview_messages.push(message?);
+                        }
+                    }
+                    let Some(turn_id) = &thread.latest_turn_id else {
+                        continue;
+                    };
+                    let Some(turn) = latest_turn
+                        .query_row(params![thread.thread_id, turn_id], decode_turn)
+                        .optional()?
+                    else {
+                        continue;
+                    };
+                    if turn.state == "running" {
+                        for activity in newest_tools
+                            .query_map(params![thread.thread_id, turn_id], decode_activity)?
+                        {
+                            rows.preview_activities.push(activity?);
+                        }
+                    }
+                    rows.latest_turns.push(turn);
+                }
+                Ok(rows)
             })
             .await
     }
@@ -1099,8 +1193,7 @@ impl Repositories {
             .call(move |connection| {
                 collect(
                     connection,
-                    &(MESSAGE_SELECT.to_owned()
-                        + " WHERE thread_id = ? ORDER BY CASE WHEN delivery_state = 'queued' THEN (SELECT receipt.result_sequence FROM provider_turn_outbox AS queued JOIN orchestration_command_receipts AS receipt ON receipt.command_id = queued.command_id WHERE queued.message_id = projection_thread_messages.message_id) END ASC, created_at ASC, message_id ASC"),
+                    &format!("{MESSAGE_SELECT} WHERE thread_id = ?{MESSAGE_LIST_ORDER}"),
                     [thread_id],
                     decode_message,
                 )
@@ -1126,7 +1219,16 @@ impl Repositories {
         &self,
         thread_id: String,
     ) -> Result<Vec<ProjectionThreadActivity>> {
-        self.database.call(move |connection| collect(connection, "SELECT activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at FROM projection_thread_activities WHERE thread_id = ? ORDER BY CASE WHEN sequence IS NULL THEN 0 ELSE 1 END ASC, sequence ASC, created_at ASC, activity_id ASC", [thread_id], decode_activity)).await
+        self.database
+            .call(move |connection| {
+                collect(
+                    connection,
+                    &format!("{ACTIVITY_SELECT} WHERE thread_id = ?{ACTIVITY_LIST_ORDER}"),
+                    [thread_id],
+                    decode_activity,
+                )
+            })
+            .await
     }
     pub async fn delete_activities_by_thread(&self, thread_id: String) -> Result<()> {
         self.delete(
@@ -1146,7 +1248,18 @@ impl Repositories {
         &self,
         thread_id: String,
     ) -> Result<Option<ProjectionThreadSession>> {
-        self.database.call(move |connection| connection.query_row("SELECT thread_id, status, provider_name, provider_instance_id, runtime_mode, active_turn_id, last_error, last_error_class, updated_at FROM projection_thread_sessions WHERE thread_id = ?", [thread_id], decode_thread_session).optional().map_err(Into::into)).await
+        self.database
+            .call(move |connection| {
+                connection
+                    .query_row(
+                        &format!("{THREAD_SESSION_SELECT} WHERE thread_id = ?"),
+                        [thread_id],
+                        decode_thread_session,
+                    )
+                    .optional()
+                    .map_err(Into::into)
+            })
+            .await
     }
 
     /// Sessions that are running or starting, and queued messages, for the update confirmation.
@@ -1232,7 +1345,16 @@ impl Repositories {
         self.database.call(move |connection| connection.query_row("SELECT projector, last_applied_sequence, updated_at FROM projection_state WHERE projector = ?", [projector], decode_projection_state).optional().map_err(Into::into)).await
     }
     pub async fn list_projection_states(&self) -> Result<Vec<ProjectionState>> {
-        self.database.call(|connection| collect(connection, "SELECT projector, last_applied_sequence, updated_at FROM projection_state ORDER BY projector ASC", [], decode_projection_state)).await
+        self.database
+            .call(|connection| {
+                collect(
+                    connection,
+                    PROJECTION_STATE_LIST,
+                    [],
+                    decode_projection_state,
+                )
+            })
+            .await
     }
     pub async fn min_last_applied_sequence(&self) -> Result<Option<i64>> {
         self.database
@@ -2196,6 +2318,17 @@ pub struct ProjectionThreadMessage {
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
+/// The rows a shell snapshot shows; see [`Repositories::load_shell_snapshot_rows`].
+#[derive(Clone, Debug)]
+pub struct ShellSnapshotRows {
+    pub projects: Vec<ProjectionProject>,
+    pub threads: Vec<ProjectionThread>,
+    pub sessions: Vec<ProjectionThreadSession>,
+    pub latest_turns: Vec<ProjectionTurn>,
+    pub preview_messages: Vec<ProjectionThreadMessage>,
+    pub preview_activities: Vec<ProjectionThreadActivity>,
+    pub states: Vec<ProjectionState>,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProjectionThreadActivity {
     pub activity_id: String,
@@ -2419,7 +2552,18 @@ pub struct AuthSession {
 
 const PROJECT_SELECT: &str = "SELECT project_id, title, workspace_root, default_model_selection_json, scripts_json, worktree_discovery_json, (SELECT repository_key FROM project_worktree_repository_pins WHERE project_id = projection_projects.project_id), created_at, updated_at, deleted_at, repository_identity_json FROM projection_projects";
 const THREAD_SELECT: &str = "SELECT thread_id, project_id, title, kind, model_selection_json, runtime_mode, interaction_mode, branch, worktree_path, latest_turn_id, created_at, updated_at, archived_at, latest_user_message_at, pending_approval_count, pending_user_input_count, has_actionable_proposed_plan, unresolved_delivery_state, unresolved_delivery_detail, deleted_at, host_thread_id FROM projection_threads";
+const PROJECT_LIST_ORDER: &str = " ORDER BY created_at ASC, project_id ASC";
 const MESSAGE_SELECT: &str = "SELECT message_id, thread_id, turn_id, role, text, attachments_json, is_streaming, delivery_state, delivery_provider, delivery_detail, created_at, updated_at, delivery_mode, delivery_held, delivery_reason, delivery_provider_instance_id FROM projection_thread_messages";
+const MESSAGE_LIST_ORDER: &str = " ORDER BY CASE WHEN delivery_state = 'queued' THEN (SELECT receipt.result_sequence FROM provider_turn_outbox AS queued JOIN orchestration_command_receipts AS receipt ON receipt.command_id = queued.command_id WHERE queued.message_id = projection_thread_messages.message_id) END ASC, created_at ASC, message_id ASC";
+const ACTIVITY_SELECT: &str = "SELECT activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at FROM projection_thread_activities";
+/// Activities without a provider sequence come first: SQLite sorts NULL before any value in
+/// ascending order. Spelled this way, the order is that of
+/// `idx_projection_thread_activities_thread_sequence_created_id`, so a thread's activities
+/// stream from the index instead of going through a temporary sort, which spills their
+/// payloads to a temporary file once they outgrow the page cache.
+const ACTIVITY_LIST_ORDER: &str = " ORDER BY sequence ASC, created_at ASC, activity_id ASC";
+const THREAD_SESSION_SELECT: &str = "SELECT thread_id, status, provider_name, provider_instance_id, runtime_mode, active_turn_id, last_error, last_error_class, updated_at FROM projection_thread_sessions";
+const PROJECTION_STATE_LIST: &str = "SELECT projector, last_applied_sequence, updated_at FROM projection_state ORDER BY projector ASC";
 const PROVIDER_TURN_DELIVERY_SELECT: &str = "SELECT command_id, thread_id, message_id, provider_instance_id, provider_kind, provider_session_id, delivery_key, payload_json, state, attempts, last_error, created_at, updated_at, mode, held FROM provider_turn_outbox";
 const TURN_SELECT: &str = "SELECT thread_id, turn_id, pending_message_id, source_proposed_plan_thread_id, source_proposed_plan_id, assistant_message_id, state, requested_at, started_at, completed_at, checkpoint_turn_count, checkpoint_ref, checkpoint_status, checkpoint_files_json FROM projection_turns";
 const TURN_UPSERT_SQL: &str = "INSERT INTO projection_turns (thread_id, turn_id, pending_message_id, source_proposed_plan_thread_id, source_proposed_plan_id, assistant_message_id, state, requested_at, started_at, completed_at, checkpoint_turn_count, checkpoint_ref, checkpoint_status, checkpoint_files_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (thread_id, turn_id) DO UPDATE SET pending_message_id=excluded.pending_message_id, source_proposed_plan_thread_id=excluded.source_proposed_plan_thread_id, source_proposed_plan_id=excluded.source_proposed_plan_id, assistant_message_id=excluded.assistant_message_id, state=excluded.state, requested_at=excluded.requested_at, started_at=excluded.started_at, completed_at=excluded.completed_at, checkpoint_turn_count=excluded.checkpoint_turn_count, checkpoint_ref=excluded.checkpoint_ref, checkpoint_status=excluded.checkpoint_status, checkpoint_files_json=excluded.checkpoint_files_json";
@@ -3014,6 +3158,39 @@ fn decode_auth_session(row: &Row<'_>) -> rusqlite::Result<AuthSession> {
         off_host: row.get(15)?,
         delivery_state: row.get(16)?,
     })
+}
+
+#[cfg(test)]
+mod activity_order_tests {
+    use super::*;
+    use crate::persistence::run_migrations;
+
+    #[tokio::test]
+    async fn thread_activities_stream_from_the_sequence_index_without_a_temporary_sort() {
+        let database = Database::open_in_memory().await.unwrap();
+        let plan = database
+            .call(|connection| {
+                run_migrations(connection, None)?;
+                let mut statement = connection.prepare(&format!(
+                    "EXPLAIN QUERY PLAN {ACTIVITY_SELECT} WHERE thread_id = ?{ACTIVITY_LIST_ORDER}"
+                ))?;
+                let details = statement
+                    .query_map(["thread"], |row| row.get::<_, String>(3))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(details)
+            })
+            .await
+            .unwrap();
+        assert!(
+            plan.iter().any(|detail| detail
+                .contains("idx_projection_thread_activities_thread_sequence_created_id")),
+            "{plan:?}"
+        );
+        assert!(
+            !plan.iter().any(|detail| detail.contains("TEMP B-TREE")),
+            "{plan:?}"
+        );
+    }
 }
 
 #[cfg(test)]

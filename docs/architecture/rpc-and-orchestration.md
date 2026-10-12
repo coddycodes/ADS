@@ -9,7 +9,8 @@ desktop bridge is reserved for host-native capabilities.
 The existing `GET /api/orchestration/snapshot` endpoint requires
 `orchestration:read` and returns the declared `OrchestrationReadModel`.
 Its camel-case project/default-thread identities and full message, activity,
-plan, checkpoint and session records come from one repository snapshot load.
+plan, checkpoint and session records come from one full repository snapshot
+load, the only remaining reader of the whole store.
 The HTTP projection includes archived and deleted records with their markers;
 WS shell snapshots retain their existing active/archived filtering.
 Shared pure project/thread serializers keep the public field policy aligned,
@@ -1843,6 +1844,18 @@ subsequent durable orchestration events. Resync after reconnect is snapshot-firs
 `subscribeShell` register their durable-event receiver before reading the
 initial snapshot, so a commit concurrent with that read is queued and then
 projected instead of being lost between snapshot and live delivery.
+Every shell snapshot, live or from `orchestration.getArchivedShellSnapshot`,
+is read in one SQLite job: projects, the undeleted live or archived threads
+whose project row exists, and per thread only its session, latest turn, the
+messages tied for its newest user and assistant message, and, while the latest
+turn runs, the tool activities tied for that turn's newest. A thread snapshot
+reads that one thread's rows. Neither reads the rest of the store, so their
+cost follows the threads shown and the thread opened rather than the whole
+message and activity history; their wire output equals what the full-store
+load produces, and only the HTTP read model below loads the whole store. A
+thread's activities are read in the order of their
+`(thread_id, sequence, created_at, activity_id)` index, so the listing needs
+no temporary sort that would spill large payloads to a temporary file.
 `orchestration.replayEvents` with `paged: true` returns about 1 MiB pages
 `{ events, exhausted }`, keeping at least one event when any remain. Replay
 resumes from the last applied `sequence` with no server state; the cursor is

@@ -63,6 +63,13 @@ export function reconcileThreadPanelState(
   }
 }
 
+function liveThreadMembershipKey(threads: ReadonlyArray<{ readonly id: ThreadId }>): string {
+  return threads
+    .map((thread) => thread.id)
+    .toSorted()
+    .join("\u001f");
+}
+
 function EnvironmentThreadLifecycleReconciler({
   environmentId,
 }: {
@@ -70,7 +77,13 @@ function EnvironmentThreadLifecycleReconciler({
 }) {
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const archivedEnvironmentIds = useMemo(() => [environmentId], [environmentId]);
-  const archivedState = useArchivedThreadSnapshots(archivedEnvironmentIds);
+  // Mounted for the app's lifetime, it refetches on lifecycle changes alone (below).
+  const {
+    error: archivedError,
+    isLoading: archivedIsLoading,
+    refresh: refreshArchived,
+    snapshots: archivedSnapshots,
+  } = useArchivedThreadSnapshots(archivedEnvironmentIds, { revalidateOnMount: false });
   const draftThreadsByThreadKey = useComposerDraftStore((state) => state.draftThreadsByThreadKey);
   const draftThreadIds = useMemo(
     () =>
@@ -80,6 +93,10 @@ function EnvironmentThreadLifecycleReconciler({
         ),
       ),
     [draftThreadsByThreadKey, environmentId],
+  );
+  // The live thread ids and the live sequence at which they last changed.
+  const liveMembershipRef = useRef<{ readonly key: string; readonly sequence: number } | null>(
+    null,
   );
   const lastArchivedRefreshSequenceRef = useRef<number | null>(null);
   const [adoptionTracker] = useState(createCenterPanelAdoptionTracker);
@@ -103,19 +120,34 @@ function EnvironmentThreadLifecycleReconciler({
     applyPanelThreadAdoption(environmentId, adoptionTracker, shellState.snapshot.value.threads);
   }, [adoptionTracker, environmentId, shellState]);
 
+  // The archived snapshot is refetched only when a thread enters or leaves the live list
+  // (create, archive, unarchive, delete, panel close), never on every live sequence
+  // advance of a running turn. A change elsewhere to an already archived thread waits for
+  // the next such change; meanwhile its state is retained, never dropped.
   useEffect(() => {
     if (shellState.status !== "live" || Option.isNone(shellState.snapshot)) {
+      liveMembershipRef.current = null;
       lastArchivedRefreshSequenceRef.current = null;
       return;
     }
-    if (archivedState.isLoading) return;
-
     const liveSnapshot = shellState.snapshot.value;
-    const archivedSnapshot = archivedState.snapshots[0]?.snapshot;
+    const membershipKey = liveThreadMembershipKey(liveSnapshot.threads);
+    if (liveMembershipRef.current?.key !== membershipKey) {
+      liveMembershipRef.current = { key: membershipKey, sequence: liveSnapshot.snapshotSequence };
+    }
+    // The archived atom runs one request at a time; never start another while it runs.
+    if (archivedIsLoading) return;
+
+    const lifecycleSequence = liveMembershipRef.current.sequence;
+    const archivedSnapshot = archivedSnapshots[0]?.snapshot;
+    // Taken at or after the last membership change, the archived snapshot knows every
+    // thread that left the live list. A newer one may miss a thread unarchived after the
+    // live snapshot, so wait for the live shell to catch up instead.
     const snapshotsAreAuthoritative =
-      archivedState.error === null &&
+      archivedError === null &&
       archivedSnapshot !== undefined &&
-      archivedSnapshot.snapshotSequence === liveSnapshot.snapshotSequence;
+      archivedSnapshot.snapshotSequence >= lifecycleSequence &&
+      archivedSnapshot.snapshotSequence <= liveSnapshot.snapshotSequence;
     if (snapshotsAreAuthoritative) {
       lastArchivedRefreshSequenceRef.current = null;
       const retainedThreadIds = new Set<ThreadId>([
@@ -136,18 +168,19 @@ function EnvironmentThreadLifecycleReconciler({
     ) {
       return;
     }
-    if (lastArchivedRefreshSequenceRef.current === liveSnapshot.snapshotSequence) {
+    // One request per membership change, even when it fails.
+    if (lastArchivedRefreshSequenceRef.current === lifecycleSequence) {
       return;
     }
-    lastArchivedRefreshSequenceRef.current = liveSnapshot.snapshotSequence;
-    archivedState.refresh();
+    lastArchivedRefreshSequenceRef.current = lifecycleSequence;
+    refreshArchived();
   }, [
-    archivedState.error,
-    archivedState.isLoading,
-    archivedState.refresh,
-    archivedState.snapshots,
+    archivedError,
+    archivedIsLoading,
+    archivedSnapshots,
     draftThreadIds,
     environmentId,
+    refreshArchived,
     shellState,
   ]);
 
