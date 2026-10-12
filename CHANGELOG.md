@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Performance and reliability
+
+- While an agent runs, the desktop no longer reloads every thread's full history in a loop to refresh the archived thread list. The list is refetched only when a thread is created, archived, unarchived, deleted, or closed as a panel, and the Settings archived list and the **Reopen closed chat** menu refresh when they open. Shell and thread snapshots read only the rows they return, so reconnecting and opening a thread take milliseconds instead of seconds on large stores, and they no longer write temporary files to disk. (#78)
+- On Linux, BiBCode returns freed memory to the system every 30 seconds instead of keeping several gigabytes after large loads. (#79)
+- Process diagnostics in the status bar and Diagnostics answer from a sample taken in the background instead of sampling every process while you wait, and sampling skips per-thread data it never used. (#80)
+- A remote client whose window was suspended, such as a backgrounded macOS app, no longer drops its connection when it wakes, and the server keeps answering connection checks while a request waits for the database. The Profiler records connection ends and reconnects as `rpc.disconnect` and `rpc.reconnect`. (#81)
+- Typing in a terminal no longer queries the database on every keystroke, and a change of the thread's workspace, such as the worktree created by a thread's first message, no longer interrupts terminal input. (#82)
+- Process cleanup no longer reports a process group that had already exited as a failure, and never signals a process that was already reaped. (#83)
+- The server no longer panics when a connection closes while a request is still finishing. (#84)
+- Inside the Linux AppImage, Git commands and review diffs start without copying the app's memory, so branch lists, status refreshes, and review diffs stay fast while the app holds several gigabytes. (#85)
+
 ## [v0.9.0] - 2026-10-11
 
 BiBCode v0.9.0 opens clicked links in the in-app browser by default, reaches a development server on the server's localhost from SSH, LAN, tailnet, and WSL clients, keeps chat panels and provider conversations across clients and restarts, merges a branch without checking it out, and adds a Profiler that records crashes, leaks, CPU, and slow responses for diagnosis. This release includes the changes since v0.8.2. Database migrations 053 and 054 ship with this release.
