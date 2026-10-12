@@ -6937,16 +6937,7 @@ pub async fn load_snapshot(repositories: &Repositories) -> Result<Snapshot, Orch
                     .await
                     .map_err(wrap_persistence)?
                     .into_iter()
-                    .map(|checkpoint| ProjectionCheckpointRow {
-                        thread_id: checkpoint.thread_id,
-                        turn_id: checkpoint.turn_id,
-                        checkpoint_turn_count: checkpoint.checkpoint_turn_count,
-                        checkpoint_ref: checkpoint.checkpoint_ref,
-                        status: checkpoint.status,
-                        files: checkpoint.files,
-                        assistant_message_id: checkpoint.assistant_message_id,
-                        completed_at: checkpoint.completed_at,
-                    }),
+                    .map(ProjectionCheckpointRow::from),
             );
             threads.push(thread);
         }
@@ -6957,35 +6948,6 @@ pub async fn load_snapshot(repositories: &Repositories) -> Result<Snapshot, Orch
         .map_err(wrap_persistence)?;
     let receipts = list_receipts(repositories.database()).await?;
     let diffs = list_diffs(repositories.database()).await?;
-    threads.sort_by(|left, right| left.thread_id.cmp(&right.thread_id));
-    // Repository reads order queued messages by their durable admission sequence.
-    // Keep that per-thread order through this stable sort; ordinary messages retain
-    // the existing canonical order. The wire snapshot therefore identifies the same
-    // queue head as server promotion, even with tied or skewed client timestamps.
-    messages.sort_by(|left, right| {
-        match (
-            left.delivery_state.as_deref() == Some("queued"),
-            right.delivery_state.as_deref() == Some("queued"),
-        ) {
-            (true, true) => std::cmp::Ordering::Equal,
-            (true, false) => std::cmp::Ordering::Greater,
-            (false, true) => std::cmp::Ordering::Less,
-            (false, false) => left.message_id.cmp(&right.message_id),
-        }
-    });
-    sessions.sort_by(|left, right| left.thread_id.cmp(&right.thread_id));
-    approvals.sort_by(|left, right| left.request_id.cmp(&right.request_id));
-    proposed_plans.sort_by(|left, right| left.plan_id.cmp(&right.plan_id));
-    turns.sort_by(|left, right| {
-        left.thread_id
-            .cmp(&right.thread_id)
-            .then_with(|| left.turn_id.cmp(&right.turn_id))
-    });
-    checkpoints.sort_by(|left, right| {
-        left.thread_id
-            .cmp(&right.thread_id)
-            .then_with(|| left.checkpoint_turn_count.cmp(&right.checkpoint_turn_count))
-    });
     Ok(Snapshot {
         projects,
         threads,
@@ -6999,7 +6961,165 @@ pub async fn load_snapshot(repositories: &Repositories) -> Result<Snapshot, Orch
         states,
         receipts,
         diffs,
-    })
+    }
+    .in_canonical_order())
+}
+
+/// Loads only what a shell snapshot shows: projects, the live or archived threads and, for
+/// those threads, the latest turn, the session and the rows their conversation previews
+/// come from. It runs as one SQLite job, so the read is consistent and short, and it never
+/// reads the message and activity history. The shell builder gives the same wire output
+/// from it as from [`load_snapshot`].
+pub async fn load_shell_snapshot(
+    repositories: &Repositories,
+    archived: bool,
+) -> Result<Snapshot, OrchestrationError> {
+    let rows = repositories
+        .load_shell_snapshot_rows(archived)
+        .await
+        .map_err(wrap_persistence)?;
+    Ok(Snapshot {
+        projects: rows.projects,
+        threads: rows.threads,
+        messages: rows.preview_messages,
+        activities: rows.preview_activities,
+        sessions: rows.sessions,
+        approvals: Vec::new(),
+        proposed_plans: Vec::new(),
+        turns: rows.latest_turns,
+        checkpoints: Vec::new(),
+        states: rows.states,
+        receipts: Vec::new(),
+        diffs: Vec::new(),
+    }
+    .in_canonical_order())
+}
+
+/// Loads one thread and the rows its detail shows, ordered as [`load_snapshot`] orders
+/// them. Like [`load_snapshot`], it leaves out a thread whose project row is missing.
+pub async fn load_thread_snapshot(
+    repositories: &Repositories,
+    thread_id: &str,
+) -> Result<Snapshot, OrchestrationError> {
+    let mut snapshot = Snapshot {
+        projects: Vec::new(),
+        threads: Vec::new(),
+        messages: Vec::new(),
+        activities: Vec::new(),
+        sessions: Vec::new(),
+        approvals: Vec::new(),
+        proposed_plans: Vec::new(),
+        turns: Vec::new(),
+        checkpoints: Vec::new(),
+        states: repositories
+            .list_projection_states()
+            .await
+            .map_err(wrap_persistence)?,
+        receipts: Vec::new(),
+        diffs: Vec::new(),
+    };
+    let Some(thread) = repositories
+        .get_thread(thread_id.to_owned())
+        .await
+        .map_err(wrap_persistence)?
+    else {
+        return Ok(snapshot);
+    };
+    if repositories
+        .get_project(thread.project_id.clone())
+        .await
+        .map_err(wrap_persistence)?
+        .is_none()
+    {
+        return Ok(snapshot);
+    }
+    let thread_id = thread.thread_id.clone();
+    snapshot.messages = repositories
+        .list_messages_by_thread(thread_id.clone())
+        .await
+        .map_err(wrap_persistence)?;
+    snapshot.activities = repositories
+        .list_activities_by_thread(thread_id.clone())
+        .await
+        .map_err(wrap_persistence)?;
+    snapshot.sessions = repositories
+        .get_thread_session(thread_id.clone())
+        .await
+        .map_err(wrap_persistence)?
+        .into_iter()
+        .collect();
+    snapshot.proposed_plans = repositories
+        .list_proposed_plans_by_thread(thread_id.clone())
+        .await
+        .map_err(wrap_persistence)?;
+    snapshot.turns = repositories
+        .list_turns_by_thread(thread_id.clone())
+        .await
+        .map_err(wrap_persistence)?;
+    snapshot.checkpoints = repositories
+        .list_checkpoints_by_thread(thread_id)
+        .await
+        .map_err(wrap_persistence)?
+        .into_iter()
+        .map(ProjectionCheckpointRow::from)
+        .collect();
+    snapshot.threads.push(thread);
+    Ok(snapshot.in_canonical_order())
+}
+
+impl Snapshot {
+    /// The row order every snapshot loader returns, whichever rows it read.
+    fn in_canonical_order(mut self) -> Self {
+        self.threads
+            .sort_by(|left, right| left.thread_id.cmp(&right.thread_id));
+        // Repository reads order queued messages by their durable admission sequence.
+        // Keep that per-thread order through this stable sort; ordinary messages retain
+        // the existing canonical order. The wire snapshot therefore identifies the same
+        // queue head as server promotion, even with tied or skewed client timestamps.
+        self.messages.sort_by(|left, right| {
+            match (
+                left.delivery_state.as_deref() == Some("queued"),
+                right.delivery_state.as_deref() == Some("queued"),
+            ) {
+                (true, true) => std::cmp::Ordering::Equal,
+                (true, false) => std::cmp::Ordering::Greater,
+                (false, true) => std::cmp::Ordering::Less,
+                (false, false) => left.message_id.cmp(&right.message_id),
+            }
+        });
+        self.sessions
+            .sort_by(|left, right| left.thread_id.cmp(&right.thread_id));
+        self.approvals
+            .sort_by(|left, right| left.request_id.cmp(&right.request_id));
+        self.proposed_plans
+            .sort_by(|left, right| left.plan_id.cmp(&right.plan_id));
+        self.turns.sort_by(|left, right| {
+            left.thread_id
+                .cmp(&right.thread_id)
+                .then_with(|| left.turn_id.cmp(&right.turn_id))
+        });
+        self.checkpoints.sort_by(|left, right| {
+            left.thread_id
+                .cmp(&right.thread_id)
+                .then_with(|| left.checkpoint_turn_count.cmp(&right.checkpoint_turn_count))
+        });
+        self
+    }
+}
+
+impl From<crate::persistence::ProjectionCheckpoint> for ProjectionCheckpointRow {
+    fn from(checkpoint: crate::persistence::ProjectionCheckpoint) -> Self {
+        Self {
+            thread_id: checkpoint.thread_id,
+            turn_id: checkpoint.turn_id,
+            checkpoint_turn_count: checkpoint.checkpoint_turn_count,
+            checkpoint_ref: checkpoint.checkpoint_ref,
+            status: checkpoint.status,
+            files: checkpoint.files,
+            assistant_message_id: checkpoint.assistant_message_id,
+            completed_at: checkpoint.completed_at,
+        }
+    }
 }
 
 async fn list_receipts(database: &Database) -> Result<Vec<CommandReceipt>, OrchestrationError> {

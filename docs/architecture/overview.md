@@ -1063,7 +1063,16 @@ Closing a chat panel archives its thread; a tracked panel thread that leaves the
 live list (archived or deleted) loses its tab on every client unless it is
 still pending locally, and is adopted again if it is unarchived. Lifecycle
 reconciliation does not retain archived panel threads, so a tab persisted by a
-client that was away when the panel closed is dropped too.
+client that was away when the panel closed is dropped too. The reconciler drops
+state only with an archived snapshot taken no earlier than the last change to
+the set of live thread ids and no later than the live snapshot. It refetches
+the archived snapshot only when a thread enters or leaves the live list
+(create, archive, unarchive, delete of a live thread, panel close) or no usable
+snapshot exists, at most once per change and never while a request is in
+flight; live sequence advances during a turn never refetch it. A change made
+elsewhere to an already archived thread, such as deleting it, is not observed
+until the next such change, a reconnect, or a local archive action; until
+then the reconciler retains, rather than drops, that thread's state.
 The reconciler reads the raw `subscribeTerminalMetadata` stream as whole
 delivered batches (an atom alone keeps only a batch's last event). Metadata
 `remove` events carry a `reason`: only `closed` (an explicit close) drops the
