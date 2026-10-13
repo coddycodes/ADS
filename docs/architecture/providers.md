@@ -41,8 +41,9 @@ Discovery starts the provider CLI (about a second for Claude), so the server
 caches each successful catalog by instance and directory for the current
 provider settings. A catalog younger than 60 seconds is returned as is; an older
 one is returned at once while one background read refreshes it for the next
-call. Changed provider settings drop every cached catalog, and failures are
-never cached.
+call. Changed provider settings drop every cached catalog; failures and
+catalogs that report discovery issues are never cached, so a retry discovers
+again; and at most 64 catalogs are kept, the oldest leaving first.
 
 The result contains `slashCommands`, `skills`, `agents`, and `issues`. Codex
 initializes an App Server in the requested directory and calls `skills/list`

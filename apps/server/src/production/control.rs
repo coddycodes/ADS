@@ -1605,6 +1605,9 @@ fn agent_activity_enabled(settings: &Value, source: AgentActivitySource) -> bool
 /// How long a provider's skill and command catalog is answered without re-reading it.
 /// Older entries are still answered at once and refreshed in the background.
 const CAPABILITY_CACHE_FRESH: Duration = Duration::from_secs(60);
+/// Catalogs kept at most; the least recently stored goes first, so worktrees that are gone
+/// do not stay for the server's lifetime.
+const CAPABILITY_CACHE_ENTRIES: usize = 64;
 
 type CapabilityKey = (String, String);
 
@@ -1643,10 +1646,30 @@ impl CapabilityCache {
             })
     }
 
+    /// Keeps a complete catalog. One that reports discovery issues stays uncached, so the
+    /// composer's retry discovers again.
     fn store(&mut self, key: CapabilityKey, generation: u64, value: Value) {
         // Entries from older settings can never be answered again.
         self.entries
             .retain(|_, entry| entry.generation == generation);
+        if value
+            .get("issues")
+            .and_then(Value::as_array)
+            .is_some_and(|issues| !issues.is_empty())
+        {
+            self.entries.remove(&key);
+            return;
+        }
+        if !self.entries.contains_key(&key)
+            && self.entries.len() >= CAPABILITY_CACHE_ENTRIES
+            && let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.stored_at)
+                .map(|(key, _)| key.clone())
+        {
+            self.entries.remove(&oldest);
+        }
         self.entries.insert(
             key,
             CachedCapabilities {
@@ -1725,9 +1748,17 @@ impl NativeServerControl {
                     drop(cache);
                     let owner = self.clone();
                     tokio::spawn(async move {
-                        let _ = owner
+                        if let Err(error) = owner
                             .discover_provider_capabilities(payload, CancellationToken::new())
-                            .await;
+                            .await
+                        {
+                            let reason = error.get("reason").and_then(Value::as_str);
+                            tracing::warn!(
+                                instance_id = %key.0,
+                                reason = reason.unwrap_or_default(),
+                                "background provider capability refresh failed"
+                            );
+                        }
                         owner
                             .capability_cache
                             .lock()
@@ -2943,6 +2974,26 @@ mod tests {
         .await
         .expect("write settings");
         NativeServerControl::new(config, json!({"policy":"test"})).await
+    }
+
+    #[test]
+    fn capability_cache_skips_partial_catalogs_and_stays_bounded() {
+        let key = |index: usize| ("claude".to_owned(), format!("/w/{index}"));
+        let mut cache = CapabilityCache::default();
+        cache.store(key(0), 1, json!({"skills":[],"issues":["Retry to load"]}));
+        assert!(
+            cache.cached(&key(0), 1).is_none(),
+            "a partial catalog is rediscovered"
+        );
+        for index in 0..=CAPABILITY_CACHE_ENTRIES {
+            cache.store(key(index), 1, json!({"skills":[],"issues":[]}));
+        }
+        assert_eq!(cache.entries.len(), CAPABILITY_CACHE_ENTRIES);
+        assert!(cache.cached(&key(CAPABILITY_CACHE_ENTRIES), 1).is_some());
+        assert!(
+            cache.cached(&key(0), 2).is_none(),
+            "another generation never answers"
+        );
     }
 
     #[tokio::test]
