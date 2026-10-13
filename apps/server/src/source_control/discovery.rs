@@ -8,7 +8,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::git::{OutputPolicy, ProcessOutput, ProcessRequest, ProcessRunner};
 
-use super::{ProviderKind, parse_github_auth_status, parse_gitlab_auth_status};
+use super::{
+    ProviderKind, parse_github_auth_status, parse_gitlab_auth_status, provider_cli_environment,
+};
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const PROBE_OUTPUT_LIMIT: usize = 8_000;
@@ -230,7 +232,7 @@ impl SourceControlDiscovery {
         let mut version_control_systems = Vec::with_capacity(VCS_PROBES.len());
         for spec in VCS_PROBES {
             let result = self
-                .probe(&cwd, spec.executable, spec.version_args, cancellation)
+                .probe(&cwd, spec.executable, spec.version_args, None, cancellation)
                 .await;
             let available = result.as_ref().is_some_and(|output| output.exit_code == 0);
             version_control_systems.push(VcsDiscoveryItem {
@@ -256,12 +258,24 @@ impl SourceControlDiscovery {
         let mut source_control_providers = Vec::with_capacity(PROVIDER_PROBES.len() + 1);
         for spec in PROVIDER_PROBES {
             let version = self
-                .probe(&cwd, spec.executable, spec.version_args, cancellation)
+                .probe(
+                    &cwd,
+                    spec.executable,
+                    spec.version_args,
+                    Some(spec.kind),
+                    cancellation,
+                )
                 .await;
             let available = version.as_ref().is_some_and(|output| output.exit_code == 0);
             let auth = if available {
                 let output = self
-                    .probe(&cwd, spec.executable, spec.auth_args, cancellation)
+                    .probe(
+                        &cwd,
+                        spec.executable,
+                        spec.auth_args,
+                        Some(spec.kind),
+                        cancellation,
+                    )
                     .await;
                 parse_auth(spec.kind, output.as_ref())
             } else {
@@ -307,6 +321,7 @@ impl SourceControlDiscovery {
         cwd: &std::path::Path,
         executable: &str,
         args: &[&str],
+        provider: Option<ProviderKind>,
         cancellation: &CancellationToken,
     ) -> Option<ProcessOutput> {
         self.runner
@@ -316,7 +331,7 @@ impl SourceControlDiscovery {
                     command: self.command(executable),
                     args: args.iter().map(OsString::from).collect(),
                     cwd: cwd.to_path_buf(),
-                    env: vec![],
+                    env: provider.map(provider_cli_environment).unwrap_or_default(),
                     stdin: None,
                     timeout: PROBE_TIMEOUT,
                     max_output_bytes: PROBE_OUTPUT_LIMIT,
@@ -508,6 +523,29 @@ mod tests {
             .find(|item| item.executable == "jj")
             .expect("Jujutsu probe");
         assert_eq!(jj.status, DiscoveryStatus::Missing);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn discovery_runs_glab_with_telemetry_off() {
+        let sandbox = crate::test_support::TestSandbox::new("discovery-glab-telemetry");
+        let directory = sandbox.path("bin");
+        std::fs::create_dir(&directory).unwrap();
+        // Answers only when telemetry is off.
+        crate::test_support::TestSandbox::write_executable(
+            &directory.join("glab"),
+            "#!/bin/sh\n[ \"$GLAB_SEND_TELEMETRY\" = 0 ] || exit 3\necho 'glab 1.122.0'\n",
+        );
+        let discovery = SourceControlDiscovery::with_executable_dir_for_integration_test(directory);
+        let result = discovery
+            .discover(sandbox.root().to_path_buf(), &CancellationToken::new())
+            .await;
+        let gitlab = result
+            .source_control_providers
+            .iter()
+            .find(|item| item.kind == ProviderKind::Gitlab)
+            .expect("GitLab probe");
+        assert_eq!(gitlab.status, DiscoveryStatus::Available);
     }
 
     #[test]
