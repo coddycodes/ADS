@@ -419,6 +419,7 @@ describe("PullRequests schema round trips", () => {
     ["permissions", PullRequestsPermissions, permissions],
     ["host capabilities", PullRequests.PullRequestsHostCapabilities, capabilities],
     ["available context", PullRequestsContext, context],
+    ["stored context", PullRequestsContext, { ...context, stale: true }],
     [
       "vocabulary input",
       PullRequests.PullRequestsVocabularyInput,
@@ -530,6 +531,11 @@ describe("PullRequests schema round trips", () => {
       rescan: true,
     });
     expect(() => decodePullRequestsGetContextInput({ cwd: "/repo", rescan: "yes" })).toThrow();
+    expect(decodePullRequestsGetContextInput({ cwd: "/repo", allowStale: true })).toEqual({
+      cwd: "/repo",
+      allowStale: true,
+    });
+    expect(() => decodePullRequestsGetContextInput({ cwd: "/repo", allowStale: 1 })).toThrow();
     const list = {
       cwd: "/repo",
       state: "open",

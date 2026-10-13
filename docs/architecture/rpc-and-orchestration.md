@@ -700,7 +700,19 @@ optional
 `rescan`: without it the server reuses its bounded 30 s probe and host-context
 answers (the origin is still read); with it the server clears those caches and
 forgets the origin host's recorded provider before resolving. Only Rescan and
-authentication recovery set it. `pullRequests.list` accepts an optional
+authentication recovery set it. It also accepts an optional `allowStale`, which the
+panel sends on its first read of a checkout: when a stored context exists, the
+server answers from it with `stale: true` and no host call, and the panel then
+reads live at once and replaces it; a failed live read keeps the stored context
+on screen; each stored answer is followed by one live read. Each live
+`available` answer is stored as the display copy (kind `context`);
+`repository_unreachable`, `cli_missing` and `cli_too_old` answers replace it with
+an empty tombstone, and `not_authenticated`, or a Rescan answering
+`unknown_host`, deletes every row for the host. A context read that started
+before such an invalidation never writes its answer afterwards. On
+its first read after start the service records the provider of every host that
+has a stored context, so a self-hosted origin resolves without CLI discovery.
+Older clients never send `allowStale` and always read live. `pullRequests.list` accepts an optional
 `refreshTotals`, set only by an explicit list Refresh: GitLab's three
 repository-wide totals are otherwise reused for 30 s per host and repository
 across filters and pages, and cleared by Rescan, auth/permission failures, any

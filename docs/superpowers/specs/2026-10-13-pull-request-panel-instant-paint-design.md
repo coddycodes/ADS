@@ -105,8 +105,8 @@ any design that reads the host on open.
 
 1. **Keep `glab` and `gh`; serve the last context and stored copies first
    (recommended).** Persist the last available context with the other stored
-   copies and return it immediately when the in-memory answer has expired,
-   refreshing it in the background. Extend stored copies to GitHub. Turn off
+   copies, paint from it first, then replace it with the live answer. Extend
+   stored copies to GitHub. Turn off
    `glab` telemetry. Gets the user to the stored copy in one SQLite read and
    halves every remaining host read. No new credential handling, no new
    dependency, and only two optional contract fields.
@@ -123,59 +123,49 @@ any design that reads the host on open.
 
 ## Design (option 1)
 
-### 1. Context served stale, refreshed in the background
+### 1. Stored context first, then the live read
 
-- After a successful `getContext` that returns `status: "available"`, the server
-  writes the context to `pull_request_snapshots` with `kind = "context"`,
-  `key = ""`, under the same host and project as the other rows. Unavailable
-  answers are never stored.
-- `getContext` without `rescan`:
-  - in-memory answer under 30 s old: return it (unchanged);
-  - otherwise, an in-memory answer of any age, or the stored row, exists:
-    return it immediately and start one background refresh for that scope. The
-    refresh runs the existing authenticated read and replaces both copies on
-    success. Concurrent callers share the one refresh;
-  - nothing stored: the existing live read.
+Revised during implementation (2026-10-13): the client drives the refresh, so
+the server runs no background task and older clients keep today's behaviour.
+
+- After a live `getContext` returns `status: "available"`, the server writes it
+  to `pull_request_snapshots` with `kind = "context"`, `key = ""`, under the
+  same host and project as the other rows. Unavailable answers are never
+  stored. An unavailable live answer with `repository_unreachable`,
+  `cli_missing` or `cli_too_old` replaces the row with an empty tombstone, so
+  an older read cannot write over it; `not_authenticated`, and a Rescan that
+  answers `unknown_host`, delete every row for the host and raise an in-memory
+  per-host fence that drops any context read started before it.
+- Two optional, additive contract fields:
+  - input `allowStale: true`: the server may answer from the stored row;
+  - output `stale: true`: the answer came from the stored row.
+  Older servers ignore the input and never send the output. Older clients
+  never send the input, so they always read live.
+- `getContext` with `allowStale` and without `rescan`: when the stored row
+  exists it is returned with `stale: true` and no host call; otherwise the
+  live read runs as today.
+- The panel requests `allowStale` first. For each `stale` answer, it
+  immediately requests a normal `getContext` and shows that answer once it
+  arrives, including an unavailable one, which then shows the unavailable
+  state as today. Until then, and if that read fails, the stored context stays
+  on screen.
 - Resolving the scope for a stored answer must not run a CLI. Today
   `resolve_pending_scope` is CLI-free only for a named host (github.com,
   gitlab.com) or a host recorded in `ProviderHosts`. That record lives in
   memory, so after a restart a self-hosted origin is `Unidentified` and goes
   through `discover_hosts`, which runs both CLIs' authentication probes
   (`apps/server/src/pull_requests/context.rs:395`). The same applies to
-  `readSnapshot` today. New rule: before discovery, an `Unidentified` origin
-  whose host and repository have a stored context row is admitted with that
-  row's provider, as a recorded host is (`ScopeAuthentication::Recorded`, so
-  the background refresh still probes authentication). With no row, discovery
-  runs as today. A Rescan ignores the row.
-- A background refresh that returns `not_authenticated`,
-  `repository_unreachable`, `cli_missing` or `cli_too_old` takes the existing
-  invalidation path (clear the cached contexts; on `not_authenticated` also
-  forget the host and delete its stored rows). In all four cases it also
-  deletes the stored context row, so the next open reads live and shows the
-  unavailable state.
-- `rescan` and authentication recovery bypass both copies (unchanged).
+  `readSnapshot`. New rule: on its first read after start, the service
+  records the provider of every host that has a stored context row, as a
+  successful authentication would. A stored row exists only after an
+  authenticated live read, and `not_authenticated` deletes it. Live reads
+  still authenticate (`ScopeAuthentication::Recorded` probes the CLI).
+- `rescan` and authentication recovery ignore the stored row.
 - Action safety is unchanged. `runAction` and `checkout` re-read context and
   permissions from the host, and action controls bind only to a live detail
   read on this mount. A stale context can affect what the header shows, for
-  example the "New merge request" control or capability-dependent tabs, for at
-  most one open.
-
-The open panel must learn the refreshed answer, because `getContext` is a
-single request and response. Two optional, additive contract fields:
-
-- output: an available context answered from a stored or expired copy carries
-  `stale: true`. Older servers never send it.
-- input: `fresh: true` asks for a current answer without clearing caches
-  (unlike `rescan`). The server joins the background refresh already running
-  for that scope, or reads live, and never answers from a stale copy. Older
-  servers ignore the field, and the client sends it only after receiving
-  `stale: true`.
-
-When the panel paints from a context with `stale: true`, it issues one
-`getContext` with `fresh: true` and replaces the shown context with its
-answer, including an unavailable one, which then shows the unavailable state
-as today. A failure of the fresh read keeps the stale context and shows the
-existing failure banner.
+  example the "New merge request" control or capability-dependent tabs, until
+  the live read answers.
 
 ### 2. Stored copies for GitHub
 
@@ -212,44 +202,33 @@ error code only: no hostname, project path, payload or message text.
 
 ## Failure and concurrency
 
-- A stale context and a live read that fails afterwards: the existing failure
-  banner shows over the stored copies; the auth-recovery path runs as today.
-- Two windows opening the same scope while the context is stale share one
-  background refresh.
-- A background refresh started before a logout must not write its context back.
-  Stamp the write with the generation taken before the read, as `store_read`
-  already does, and drop the write when the host's rows were deleted since.
-- The server shutdown token cancels background refreshes.
+- A live context read that fails after the stored one painted keeps the stored
+  context on screen; the auth-recovery path runs as today.
+- A live read that started before a logout must not write its context back.
+  The write carries the generation taken before the read, as `store_read`
+  already does.
 
 ## Profiler, crash and trace coverage
 
-- RPC methods: none added. `getContext` keeps its timing, and its answer from a
-  stored copy is visible as a fast `rpc.timing`. The background refresh runs
-  outside an RPC, so it is not timed as one. It logs its failures with
-  `tracing::warn!`.
+- RPC methods: none added. `getContext` keeps its timing; an answer from the
+  stored row shows as a fast `rpc.timing`, followed by the live read's.
 - Child processes: no new spawn site. `glab` and `gh` still run through
   `ProcessRunner`, which uses `run_supervised` with attribution and exit
   reporting.
-- Shutdown: background refreshes are cancelled by the existing service
-  cancellation token before the profiler's teardown.
+- Shutdown: no new task; every read stays inside its RPC's cancellation.
 - Events: none added.
 
 ## Tests
 
 - Server:
-  - `getContext` returns the stored context with zero host calls after the
-    in-memory answer expires and after a restart, then runs exactly one
-    background refresh;
-  - concurrent stale calls share one refresh, and a `fresh: true` call joins
-    it instead of starting another;
+  - `getContext` with `allowStale` returns the stored context, marked `stale`,
+    with zero host calls; without `allowStale` it reads live;
   - after a restart, a self-hosted origin with a stored context row resolves
     with zero CLI calls (no `discover_hosts`), both for `getContext` and for
     `readSnapshot`; with no row, discovery runs;
-  - a refresh that fails with `not_authenticated` deletes the context and host
-    rows, and the next call reads live;
-  - `rescan` bypasses both copies;
-  - an unavailable context is never stored;
-  - a refresh that finishes after a logout does not write.
+  - a live answer is stored; an unavailable one is not, and
+    `repository_unreachable` deletes the stored row;
+  - `rescan` ignores the stored row.
 - GitHub: `readSnapshot` returns the stored list and detail with zero `gh`
   calls; successful live reads store them; logout deletes them; `subscribe`
   still refuses GitHub.
@@ -257,9 +236,10 @@ error code only: no hostname, project path, payload or message text.
   `glab mr` and the source-control invocations.
 - Approve: on the existing GitLab load harness, `action_detail` has five reads
   in flight at once.
-- Client: the panel renders from a stored context, then issues one
-  `fresh: true` read and replaces the context with its answer (available with
-  changed capabilities, and unavailable); a GitHub list and detail
+- Client: the panel renders from a stored context, then issues one live read
+  and replaces the context with its answer (available with changed
+  capabilities, and unavailable); a failed live read keeps the stored context;
+  a GitHub list and detail
   paint from `readSnapshot` before the live read finishes; action controls stay
   inactive until the live detail.
 - Re-measure on the LAN client with the Profiler: open the panel after a server
@@ -270,8 +250,8 @@ error code only: no hostname, project path, payload or message text.
 ## Living documents
 
 - `docs/architecture/rpc-and-orchestration.md`, Pull Requests flow: stored
-  context and its background refresh; stored copies for GitHub (no
-  subscription); `glab` telemetry off.
+  context and `allowStale`; stored copies for GitHub (no subscription); `glab`
+  telemetry off.
 - `docs/integrations/source-control-providers.md`: BiBCode runs `glab` with
   telemetry off.
 - Testing runbooks: reviewed; no command changes expected.

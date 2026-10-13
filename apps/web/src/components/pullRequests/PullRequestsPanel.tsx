@@ -3,7 +3,7 @@ import { projectKey } from "@bibcode/client-runtime/state/entities";
 import { environmentRpcKey } from "@bibcode/client-runtime/state/runtime";
 import type { ScopedProjectRef } from "@bibcode/contracts";
 import { RefreshCwIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useOpenPrLink } from "../../lib/openPullRequestLink";
@@ -260,6 +260,20 @@ export function PullRequestsPanel({ projectRef, number, tab }: PullRequestsPanel
   }, [environmentId, number, projectId]);
   const refreshContext = query.refresh;
   const revalidateContext = query.revalidate;
+  // A stored context paints at once and is read live right after; a failed live read
+  // keeps the stored context on screen instead of replacing the panel with an error.
+  const storedContext = query.data?.status === "available" && query.data.stale === true;
+  // Every stored answer is followed by one live read, including one that arrives
+  // again after a failed live read or for another checkout.
+  const storedAnswer = storedContext ? query.data : null;
+  const contextReading = query.isPending;
+  const readContextLive = useEffectEvent(() => {
+    // A panel remounted by a route change joins the read already running.
+    if (!contextReading) revalidateContext();
+  });
+  useEffect(() => {
+    if (storedAnswer !== null) readContextLive();
+  }, [storedAnswer]);
   // Rescan and auth recovery bypass the server's bounded context caches; opening the
   // panel and switching checkout reuse them.
   const requestContextRescan = useCallback(() => {
@@ -333,7 +347,7 @@ export function PullRequestsPanel({ projectRef, number, tab }: PullRequestsPanel
   }
   if (!project || cwd === null)
     return <PullRequestsUnavailableState reason="Waiting for project data." />;
-  if (query.error !== null || query.data?.status === "unavailable") {
+  if ((query.error !== null && !storedContext) || query.data?.status === "unavailable") {
     const unavailable = query.data?.status === "unavailable" ? query.data : null;
     return (
       <div className="flex h-full min-h-0 flex-1 flex-col">

@@ -1,6 +1,7 @@
 import {
   WS_METHODS,
   type EnvironmentId,
+  type PullRequestsContext,
   type PullRequestsGetContextInput,
   type PullRequestsListInput,
 } from "@bibcode/contracts";
@@ -69,11 +70,46 @@ export function createOneShotBypass<Field extends string>(field: Field) {
   };
 }
 
+/**
+ * A context's first read may answer from the server's stored copy (`stale`); the
+ * next read of that input, which the panel starts at once, goes to the host.
+ */
+export function createStoredContextFirst() {
+  const staleAnswered = new Set<string>();
+  return {
+    run<E, R>(
+      environmentId: EnvironmentId,
+      input: object,
+      send: (allowStale: boolean) => Effect.Effect<PullRequestsContext, E, R>,
+    ): Effect.Effect<PullRequestsContext, E, R> {
+      const key = environmentRpcKey({ environmentId, input });
+      return send(!staleAnswered.has(key)).pipe(
+        // Only a stale answer is remembered. After any other outcome, including a
+        // failed live read, the next read may paint the stored copy again.
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            if (
+              Exit.isSuccess(exit) &&
+              exit.value.status === "available" &&
+              exit.value.stale === true
+            ) {
+              staleAnswered.add(key);
+            } else {
+              staleAnswered.delete(key);
+            }
+          }),
+        ),
+      );
+    },
+  };
+}
+
 export function createPullRequestsEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   // Only Rescan and auth recovery bypass the server's bounded context caches.
   const contextRescans = createOneShotBypass("rescan");
+  const storedContexts = createStoredContextFirst();
   // Only an explicit list Refresh re-reads the repository-wide tab totals.
   const totalsRefreshes = createOneShotBypass("refreshTotals");
   return {
@@ -82,11 +118,17 @@ export function createPullRequestsEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       execute: (input: PullRequestsGetContextInput) =>
         EnvironmentSupervisor.pipe(
-          Effect.flatMap((supervisor) =>
-            contextRescans.run(supervisor.target.environmentId, input, (payload) =>
-              request(WS_METHODS.pullRequestsGetContext, payload),
-            ),
-          ),
+          Effect.flatMap((supervisor) => {
+            const environmentId = supervisor.target.environmentId;
+            return storedContexts.run(environmentId, input, (allowStale) =>
+              contextRescans.run(environmentId, input, (payload) =>
+                request(
+                  WS_METHODS.pullRequestsGetContext,
+                  allowStale ? { ...payload, allowStale: true } : payload,
+                ),
+              ),
+            );
+          }),
         ),
     }),
     /** The next `getContext` read of this input bypasses the server's context caches. */

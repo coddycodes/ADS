@@ -708,6 +708,7 @@ pub async fn build_context(
         merge_policy: context.merge_policy,
         capabilities: Box::new(capabilities),
         web_url: context.web_url,
+        stale: false,
     })
 }
 

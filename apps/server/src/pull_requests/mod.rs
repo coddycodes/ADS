@@ -60,7 +60,14 @@ pub struct PullRequestsService {
     action_gates: Arc<ActionGates>,
     database: Option<crate::persistence::Database>,
     pollers: Arc<gitlab::poll::Registry>,
+    hosts_restored: Arc<tokio::sync::OnceCell<()>>,
+    /// Per lowercased host, the generation of its last logout: a context read that
+    /// started before it is not stored, even for a repository with no row yet.
+    context_fences: Arc<Mutex<HashMap<String, i64>>>,
 }
+
+/// The stored context row's kind; its key is empty.
+const CONTEXT_KIND: &str = "context";
 
 impl PullRequestsService {
     /// A service with a private host observation (see `HostCommandRunner::new`);
@@ -98,6 +105,8 @@ impl PullRequestsService {
             action_gates: Arc::default(),
             database: None,
             pollers: Arc::default(),
+            hosts_restored: Arc::default(),
+            context_fences: Arc::default(),
         }
     }
 
@@ -126,6 +135,27 @@ impl PullRequestsService {
         read: ContextRead,
         c: &CancellationToken,
     ) -> Result<Context, PullRequestsOperationError> {
+        self.read_context(cwd, read, false, c).await
+    }
+
+    /// The panel's first read: the stored context when one exists, marked
+    /// `stale`, with no host call. The panel then reads live. Without a stored
+    /// copy this is the live read.
+    pub async fn context_allowing_stale(
+        &self,
+        cwd: &Path,
+        c: &CancellationToken,
+    ) -> Result<Context, PullRequestsOperationError> {
+        self.read_context(cwd, ContextRead::Open, true, c).await
+    }
+
+    async fn read_context(
+        &self,
+        cwd: &Path,
+        read: ContextRead,
+        allow_stale: bool,
+        c: &CancellationToken,
+    ) -> Result<Context, PullRequestsOperationError> {
         if read == ContextRead::Rescan {
             self.invalidate_contexts();
         }
@@ -134,6 +164,9 @@ impl PullRequestsService {
             Duration::from_secs(30),
             c,
             |c| async move {
+                if allow_stale {
+                    self.restore_recorded_hosts().await;
+                }
                 let pending = match context::resolve_pending_scope(
                     &self.runner,
                     cwd,
@@ -147,7 +180,11 @@ impl PullRequestsService {
                     Err(unavailable) => return unavailable.into_context(),
                 };
                 let scope = &pending.scope;
-                match pending
+                if allow_stale && let Some(context) = self.stored_context(scope).await {
+                    return Ok(context);
+                }
+                let generation = snapshot_store::next_generation();
+                let result = match pending
                     .read_authenticated(&self.runner, &c, |read_c| async move {
                         build_context(self.host(scope), &self.runner, scope, &read_c).await
                     })
@@ -155,7 +192,9 @@ impl PullRequestsService {
                 {
                     Ok(context) => context,
                     Err(unavailable) => unavailable.into_context(),
-                }
+                };
+                self.remember_context(scope, &result, generation).await;
+                result
             },
         )
         .await;
@@ -172,9 +211,11 @@ impl PullRequestsService {
             }
             // Scope resolution already forgets on `unknown_host` and on its own
             // login check; a 401 from the host's context read arrives only here.
-            if *code == model::UnavailableCode::NotAuthenticated
-                && let Some(host) = host
-            {
+            // A Rescan that can no longer place the host at all also drops its
+            // stored copies, so a restart cannot record the host from them again.
+            let rejected = *code == model::UnavailableCode::NotAuthenticated
+                || (*code == model::UnavailableCode::UnknownHost && read == ContextRead::Rescan);
+            if rejected && let Some(host) = host {
                 self.runner.provider_hosts().forget(host);
                 self.delete_host_snapshots(host).await;
             }
@@ -183,6 +224,154 @@ impl PullRequestsService {
             self.invalidate_failed_context(error, None).await;
         }
         result
+    }
+
+    async fn stored_context(&self, scope: &host::HostScope) -> Option<Context> {
+        let database = self.database.clone()?;
+        let host = scope.host.to_ascii_lowercase();
+        let project = scope.repository.clone();
+        let row = database
+            .call(move |connection| {
+                Ok(snapshot_store::SnapshotStore::new(connection).get(
+                    &host,
+                    &project,
+                    CONTEXT_KIND,
+                    "",
+                )?)
+            })
+            .await
+            .ok()??;
+        // An empty payload is an invalidation tombstone.
+        match serde_json::from_slice(&row.payload).ok()? {
+            Context::Available {
+                provider,
+                host,
+                host_version,
+                repository,
+                default_branch,
+                account,
+                repository_permission,
+                merge_policy,
+                capabilities,
+                web_url,
+                stale: _,
+            } => Some(Context::Available {
+                provider,
+                host,
+                host_version,
+                repository,
+                default_branch,
+                account,
+                repository_permission,
+                merge_policy,
+                capabilities,
+                web_url,
+                stale: true,
+            }),
+            Context::Unavailable { .. } => None,
+        }
+    }
+
+    /// A live answer replaces the stored context; an answer saying the scope is
+    /// unusable removes it. `not_authenticated` already removes every row for
+    /// the host.
+    async fn remember_context(
+        &self,
+        scope: &host::HostScope,
+        result: &Result<Context, PullRequestsOperationError>,
+        generation: i64,
+    ) {
+        let Some(database) = self.database.clone() else {
+            return;
+        };
+        match result {
+            Ok(context @ Context::Available { .. }) => {
+                let Ok(payload) = serde_json::to_vec(context) else {
+                    return;
+                };
+                let fences = self.context_fences.clone();
+                let host = scope.host.to_ascii_lowercase();
+                let project = scope.repository.clone();
+                let _ = database
+                    .call(move |connection| {
+                        // Checked on the database worker: a logout's delete queued
+                        // before this write has already raised the fence.
+                        if fences
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .get(&host)
+                            .is_some_and(|fence| generation <= *fence)
+                        {
+                            return Ok(());
+                        }
+                        Ok(snapshot_store::SnapshotStore::new(connection).put(
+                            snapshot_store::Snapshot {
+                                host,
+                                project,
+                                kind: CONTEXT_KIND.into(),
+                                key: String::new(),
+                                fingerprint: String::new(),
+                                payload,
+                                observed_at_ms: snapshot_store::now_ms(),
+                                generation,
+                            },
+                        )?)
+                    })
+                    .await;
+            }
+            Ok(Context::Unavailable {
+                code:
+                    model::UnavailableCode::RepositoryUnreachable
+                    | model::UnavailableCode::CliMissing
+                    | model::UnavailableCode::CliTooOld,
+                ..
+            }) => {
+                // A tombstone, not a delete: the store refuses older writes over it, and
+                // this failure cannot replace a success that started later.
+                gitlab::poll::store(
+                    &database,
+                    &scope.host,
+                    &scope.repository,
+                    CONTEXT_KIND,
+                    "",
+                    String::new(),
+                    Vec::new(),
+                    generation,
+                )
+                .await;
+            }
+            _ => {}
+        }
+    }
+
+    /// After a restart the recorded hosts are gone, so a self-hosted origin
+    /// would need CLI discovery before any stored copy could be read. A stored
+    /// context exists only after an authenticated read, so its host is
+    /// recorded again, as that authentication did.
+    async fn restore_recorded_hosts(&self) {
+        let Some(database) = self.database.clone() else {
+            return;
+        };
+        self.hosts_restored
+            .get_or_init(|| async {
+                let rows = database
+                    .call(|connection| {
+                        Ok(snapshot_store::SnapshotStore::new(connection)
+                            .list_kind(CONTEXT_KIND)?)
+                    })
+                    .await
+                    .unwrap_or_default();
+                for row in rows {
+                    if let Ok(Context::Available { provider, .. }) =
+                        serde_json::from_slice(&row.payload)
+                    {
+                        self.runner
+                            .provider_hosts()
+                            .record(&row.host, provider.kind());
+                    }
+                }
+            })
+            .await;
     }
 
     pub async fn vocabulary(
@@ -247,6 +436,7 @@ impl PullRequestsService {
         c: &CancellationToken,
     ) -> Result<Snapshot, PullRequestsOperationError> {
         let operation = "pullRequests.readSnapshot";
+        self.restore_recorded_hosts().await;
         bounded_read(operation, Duration::from_secs(30), c, |c| async move {
             // A database read needs the host's identity, not an authenticated
             // CLI: skip `pending.authenticate` so this stays glab-free.
@@ -809,6 +999,12 @@ impl PullRequestsService {
             return;
         };
         let host = host.to_ascii_lowercase();
+        // Fence first: a context read that started before this logout must not
+        // write its context back once the rows are gone.
+        self.context_fences
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(host.clone(), snapshot_store::next_generation());
         let _ = database
             .call(move |connection| {
                 Ok(snapshot_store::SnapshotStore::new(connection).delete_host(&host)?)
@@ -1122,6 +1318,8 @@ mod service_tests {
             action_gates: Arc::default(),
             database: None,
             pollers: Arc::default(),
+            hosts_restored: Arc::default(),
+            context_fences: Arc::default(),
         };
         let scope = host::HostScope {
             cwd: PathBuf::from("/repo"),
@@ -1243,6 +1441,8 @@ mod service_tests {
             action_gates: Arc::default(),
             database: None,
             pollers: Arc::default(),
+            hosts_restored: Arc::default(),
+            context_fences: Arc::default(),
         };
         let scope = host::HostScope {
             cwd: "/checkout-a".into(),
@@ -1698,6 +1898,293 @@ esac"#,
         database
     }
 
+    /// A self-hosted GitLab whose host name does not say "gitlab", so only a
+    /// recorded host or CLI discovery identifies it. It answers context reads
+    /// until `offline` exists; every glab call is logged to `calls`.
+    #[cfg(unix)]
+    fn stored_context_fixture(
+        name: &str,
+    ) -> (
+        crate::test_support::TestSandbox,
+        impl Fn(&crate::persistence::Database) -> PullRequestsService,
+    ) {
+        let s = crate::test_support::TestSandbox::new(name);
+        std::fs::write(
+            s.path("project.json"),
+            include_str!("../../tests/fixtures/pull_requests/gitlab_project.json"),
+        )
+        .unwrap();
+        let glab = s.executable_script(
+            "glab",
+            r#"printf '%s\n' "$*" >> calls
+if [ -e offline ]; then exit 64; fi
+case "$1 $2" in
+  '--version ') echo 'glab version 1.114.0' ;;
+  'auth status') if [ -e logged-out ]; then echo 'No GitLab instances have been authenticated with glab.' >&2; exit 1; fi
+    printf 'code.acme.example\n  ✓ Logged in to code.acme.example as alice\n' ;;
+  'api user') echo '{"id":8,"username":"viewer","name":null}' ;;
+  'api version') echo '{"version":"17.9.1"}' ;;
+  'api projects/team%2Frepo') if [ -e project-404 ]; then echo 'HTTP 404' >&2; exit 1; fi; cat project.json ;;
+  *) exit 64 ;;
+esac"#,
+            "",
+        );
+        let git = s.executable_script(
+            "git",
+            "printf '%s' 'git@code.acme.example:team/repo.git'",
+            "",
+        );
+        let state = s.path("state");
+        // Each call is a fresh process: a new runner has no recorded hosts.
+        let service =
+            move |database: &crate::persistence::Database| {
+                PullRequestsService::with_runner(
+                    HostCommandRunner::new(state.clone()).with_commands("missing-gh", &glab, &git),
+                )
+                .with_database(database.clone())
+            };
+        (s, service)
+    }
+
+    #[cfg(unix)]
+    fn without_stale_marker(context: &Context) -> serde_json::Value {
+        let mut value = serde_json::to_value(context).unwrap();
+        value.as_object_mut().unwrap().remove("stale");
+        value
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn allow_stale_answers_from_the_stored_context_without_cli_calls_even_after_restart() {
+        let (s, service) = stored_context_fixture("pr-stored-context");
+        let database = new_database().await;
+        let first = service(&database);
+        first.runner.provider_hosts().record(
+            "code.acme.example",
+            crate::source_control::ProviderKind::Gitlab,
+        );
+        let c = CancellationToken::new();
+        let live = first
+            .context(s.root(), ContextRead::Open, &c)
+            .await
+            .unwrap();
+        assert!(
+            matches!(live, Context::Available { stale: false, .. }),
+            "{live:?}"
+        );
+
+        std::fs::write(s.path("offline"), "").unwrap();
+        let calls = || {
+            std::fs::read_to_string(s.path("calls"))
+                .unwrap()
+                .lines()
+                .count()
+        };
+        let before = calls();
+        let stale = first.context_allowing_stale(s.root(), &c).await.unwrap();
+        assert!(matches!(stale, Context::Available { stale: true, .. }));
+        assert_eq!(without_stale_marker(&stale), without_stale_marker(&live));
+
+        // A restarted server has no recorded hosts: the stored row identifies
+        // this self-hosted origin, so no CLI discovery runs.
+        let restarted = service(&database);
+        let after_restart = restarted
+            .context_allowing_stale(s.root(), &c)
+            .await
+            .unwrap();
+        assert!(matches!(
+            after_restart,
+            Context::Available { stale: true, .. }
+        ));
+        // The same holds when a restarted server's first read is a snapshot.
+        let input: SubscribeInput = serde_json::from_value(serde_json::json!({"cwd":s.root(),"state":"open","search":null,"author":null,"assignee":null,"reviewer":null,"reviewStatus":null,"draft":null,"labels":[],"milestone":null,"targetBranch":null,"sort":"newest","cursor":null,"refreshTotals":false,"number":null,"tab":null})).unwrap();
+        service(&database)
+            .read_snapshot(input, &c)
+            .await
+            .expect("a snapshot read resolves the stored host");
+        assert_eq!(calls(), before, "stored answers start no CLI");
+    }
+
+    /// Invalidation is fenced by read order: a read that started earlier cannot
+    /// write back an invalidated context, and an older failure cannot erase a
+    /// newer success.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stored_context_writes_and_invalidations_respect_read_order() {
+        let (s, service) = stored_context_fixture("pr-stored-context-order");
+        let database = new_database().await;
+        let service = service(&database);
+        service.runner.provider_hosts().record(
+            "code.acme.example",
+            crate::source_control::ProviderKind::Gitlab,
+        );
+        let c = CancellationToken::new();
+        let live = Ok(service
+            .context(s.root(), ContextRead::Open, &c)
+            .await
+            .unwrap());
+        let unreachable = Ok(Context::Unavailable {
+            code: UnavailableCode::RepositoryUnreachable,
+            message: "unreachable".into(),
+            provider: None,
+            host: None,
+            install_hint: None,
+            auth_command: None,
+        });
+        let scope = host::HostScope {
+            cwd: s.root().into(),
+            host: "code.acme.example".into(),
+            repository: "team/repo".into(),
+            provider: model::PullRequestsProvider::Gitlab,
+        };
+        std::fs::write(s.path("offline"), "").unwrap();
+        let stored = || async {
+            matches!(
+                service.context_allowing_stale(s.root(), &c).await,
+                Ok(Context::Available { stale: true, .. })
+            )
+        };
+
+        // A success that started before the invalidation does not restore it.
+        let older = snapshot_store::next_generation();
+        service
+            .remember_context(&scope, &unreachable, snapshot_store::next_generation())
+            .await;
+        service.remember_context(&scope, &live, older).await;
+        assert!(!stored().await, "an invalidated context stays invalidated");
+
+        // A failure that started before a newer success does not erase it.
+        let older = snapshot_store::next_generation();
+        service
+            .remember_context(&scope, &live, snapshot_store::next_generation())
+            .await;
+        service.remember_context(&scope, &unreachable, older).await;
+        assert!(stored().await, "a newer success survives an older failure");
+
+        // A logout fences reads that started before it, too.
+        let older = snapshot_store::next_generation();
+        service.delete_host_snapshots("code.acme.example").await;
+        service.remember_context(&scope, &live, older).await;
+        assert!(!stored().await, "a logout is not undone by an earlier read");
+
+        // Including for a repository whose first read was still running.
+        let other = host::HostScope {
+            repository: "team/other".into(),
+            ..scope.clone()
+        };
+        let older = snapshot_store::next_generation();
+        service.delete_host_snapshots("code.acme.example").await;
+        service.remember_context(&other, &live, older).await;
+        let row = database
+            .call(|connection| {
+                Ok(snapshot_store::SnapshotStore::new(connection).get(
+                    "code.acme.example",
+                    "team/other",
+                    CONTEXT_KIND,
+                    "",
+                )?)
+            })
+            .await
+            .unwrap();
+        assert!(
+            row.is_none(),
+            "an earlier first read stores nothing after a logout"
+        );
+    }
+
+    /// After a full logout, a Rescan cannot place a self-hosted host at all
+    /// (`unknown_host`). Its stored copies go too, so a restart cannot record the
+    /// host again from them.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_rescan_that_rejects_the_host_removes_its_stored_copies() {
+        let (s, service) = stored_context_fixture("pr-stored-context-rejected");
+        let database = new_database().await;
+        let first = service(&database);
+        first.runner.provider_hosts().record(
+            "code.acme.example",
+            crate::source_control::ProviderKind::Gitlab,
+        );
+        let c = CancellationToken::new();
+        first
+            .context(s.root(), ContextRead::Open, &c)
+            .await
+            .unwrap();
+        std::fs::write(s.path("logged-out"), "").unwrap();
+
+        let rejected = first
+            .context(s.root(), ContextRead::Rescan, &c)
+            .await
+            .unwrap();
+        assert!(
+            matches!(
+                rejected,
+                Context::Unavailable {
+                    code: UnavailableCode::UnknownHost,
+                    ..
+                }
+            ),
+            "{rejected:?}"
+        );
+        let restarted = service(&database)
+            .context_allowing_stale(s.root(), &c)
+            .await;
+        assert!(
+            !matches!(restarted, Ok(Context::Available { .. })),
+            "{restarted:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_unreachable_repository_removes_the_stored_context() {
+        let (s, service) = stored_context_fixture("pr-stored-context-unreachable");
+        let database = new_database().await;
+        let service = service(&database);
+        service.runner.provider_hosts().record(
+            "code.acme.example",
+            crate::source_control::ProviderKind::Gitlab,
+        );
+        let c = CancellationToken::new();
+        service
+            .context(s.root(), ContextRead::Open, &c)
+            .await
+            .unwrap();
+        std::fs::write(s.path("project-404"), "").unwrap();
+
+        let unavailable = service
+            .context(s.root(), ContextRead::Rescan, &c)
+            .await
+            .unwrap();
+        assert!(
+            matches!(
+                unavailable,
+                Context::Unavailable {
+                    code: UnavailableCode::RepositoryUnreachable,
+                    ..
+                }
+            ),
+            "{unavailable:?}"
+        );
+        let row = database
+            .call(|connection| {
+                Ok(snapshot_store::SnapshotStore::new(connection).get(
+                    "code.acme.example",
+                    "team/repo",
+                    CONTEXT_KIND,
+                    "",
+                )?)
+            })
+            .await
+            .unwrap();
+        assert!(
+            row.is_none_or(|row| row.payload.is_empty()),
+            "an unusable scope keeps no stored context"
+        );
+        let next = service.context_allowing_stale(s.root(), &c).await.unwrap();
+        assert!(matches!(next, Context::Unavailable { .. }), "{next:?}");
+    }
+
     #[tokio::test]
     async fn gitlab_poller_read_snapshot_with_a_populated_row_performs_zero_glab_calls() {
         let s = crate::test_support::TestSandbox::new("pr-read-snapshot");
@@ -1841,6 +2328,8 @@ esac"#,
             action_gates: Arc::default(),
             database: Some(database.clone()),
             pollers: Arc::default(),
+            hosts_restored: Arc::default(),
+            context_fences: Arc::default(),
         };
         for (number, kind) in [
             (3941u64, "detail"),
@@ -1949,6 +2438,8 @@ esac"#,
             action_gates: Arc::default(),
             database: Some(database.clone()),
             pollers: Arc::default(),
+            hosts_restored: Arc::default(),
+            context_fences: Arc::default(),
         };
         let detail = service
             .get(s.root(), 14, &CancellationToken::new())
