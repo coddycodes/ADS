@@ -868,7 +868,10 @@ and again at startup from the stored link, so a restarted server comes back
 online without a new link. The link records the local port the tunnel's
 ingress was provisioned for; when the server listens on another port at
 startup (the desktop picks a free port), it skips the restore and
-`connect.linkState` reports `managedEndpointStale`. The tunnel's runtime config also names the
+`connect.linkState` reports `managedEndpointStale`. The running connector is
+checked every 5 s; if it exits without being asked to, its preview hostnames
+are withdrawn, the exit is logged, and with the Profiler on it is a
+`subprocess.crash` finding labelled by the connector's executable. The tunnel's runtime config also names the
 environment's preview hostnames (see [Preview gateway](#preview-gateway)). A
 primary client whose server's stored link has a managed tunnel that needs
 provisioning again (no preview hostnames, or `managedEndpointStale`) re-links

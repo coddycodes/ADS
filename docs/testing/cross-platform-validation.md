@@ -2851,7 +2851,7 @@ browser tab), the environment's address, and each gateway port.
   shows "<environment> is reached through BiBCode Connect, so its previews
   can't show inside this page." Keep four previews open and open a fifth
   port: "Too many previews of <environment> are open over
-  BiBCode Connect. Close one, then try again; one closed in a web browser takes up to 10 minutes to free up." Restart the environment's server
+  BiBCode Connect. Close one, then try again; one closed in a web browser takes up to 10 minutes to free up." With the Profiler on, end the `bibcode-connect` process with `kill -SEGV` (a plain `kill` is a deliberate stop and never counts): within 5 s a `subprocess.crash` finding labelled by the connector's executable appears, and a relay preview open fails with the "aren't set up" notice. Restart the environment's server
   without re-linking: the relay connection comes back on its own. Record the
   relay stage, environment, and preview hostnames, never cookie values.
 

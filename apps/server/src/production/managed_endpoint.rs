@@ -2,8 +2,9 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use process_wrap::tokio::{ChildWrapper, CommandWrap};
@@ -16,12 +17,16 @@ use crate::{
         AttributionKind, AttributionScope, NativeProcessSampler, ProcessAttributionRegistry,
         ProcessRegistration, ProcessRegistrationError, ProcessRegistrationMetadata,
         RegistrationSource,
+        profiler::exits::{self, Exited, Watch},
     },
     preview::gateway::relay::{RELAY_PREVIEW_SLOTS, RelayHosts, RelayPreviewHosts},
     process::configure_supervised_background_command_wrap,
 };
 
 use super::connect_mcp::EndpointRuntime;
+
+/// How often the running connector is checked for an exit nobody asked for.
+const CONNECTOR_WATCH_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 pub struct ManagedEndpointRuntime {
@@ -32,6 +37,9 @@ pub struct ManagedEndpointRuntime {
     executable_override: Option<PathBuf>,
     /// The running tunnel's hostnames, shared with the preview gateway.
     relay_hosts: RelayHosts,
+    /// Numbers each spawned connector, so its watcher knows when it is no longer the active one.
+    spawned: Arc<AtomicU64>,
+    watch_interval: Duration,
     #[cfg(test)]
     admission_race: Option<Arc<EndpointAdmissionRace>>,
 }
@@ -47,6 +55,11 @@ struct ActiveConnector {
     child: Box<dyn ChildWrapper>,
     _registration: ProcessRegistration,
     config: ManagedEndpointConfig,
+    /// Its number from `ManagedEndpointRuntime::spawned`.
+    generation: u64,
+    pid: u32,
+    exe: String,
+    started: Instant,
 }
 
 #[derive(Clone, Deserialize)]
@@ -128,6 +141,8 @@ impl ManagedEndpointRuntime {
             process_attribution,
             executable_override: None,
             relay_hosts: RelayHosts::default(),
+            spawned: Arc::default(),
+            watch_interval: CONNECTOR_WATCH_INTERVAL,
             #[cfg(test)]
             admission_race: None,
         }
@@ -180,7 +195,7 @@ impl ManagedEndpointRuntime {
         self.relay_hosts.publish(None);
         let active = self.take_active();
         if let Some(active) = active {
-            terminate_connector(active).await;
+            self.retire(active).await;
         }
         drop(permit);
     }
@@ -197,7 +212,7 @@ impl ManagedEndpointRuntime {
         if value.is_null() {
             self.relay_hosts.publish(None);
             if let Some(active) = self.take_active() {
-                terminate_connector(active).await;
+                self.retire(active).await;
             }
             return Ok(json!({ "status": "disabled" }));
         }
@@ -206,7 +221,7 @@ impl ManagedEndpointRuntime {
         if config.provider_kind != "cloudflare_tunnel" {
             self.relay_hosts.publish(None);
             if let Some(active) = self.take_active() {
-                terminate_connector(active).await;
+                self.retire(active).await;
             }
             return Ok(json!({
                 "status": "unsupported",
@@ -240,14 +255,12 @@ impl ManagedEndpointRuntime {
                     }
                     Ok(false) => {}
                     Err(error) => {
-                        self.relay_hosts.publish(None);
-                        terminate_connector(active).await;
+                        self.retire(active).await;
                         return Err(error);
                     }
                 }
             }
-            self.relay_hosts.publish(None);
-            terminate_connector(active).await;
+            self.retire(active).await;
         }
         let executable = self.executable_override.clone().or_else(|| {
             executable_on_path(if cfg!(windows) {
@@ -259,6 +272,7 @@ impl ManagedEndpointRuntime {
         let Some(executable) = executable else {
             return Ok(failed_status(&config, "The relay client is not installed."));
         };
+        let exe = executable.to_string_lossy().into_owned();
         let mut command = CommandWrap::with_new(executable, |command| {
             command
                 .args(["tunnel", "run"])
@@ -297,6 +311,7 @@ impl ManagedEndpointRuntime {
                 return Err(error);
             }
         }
+        let pid = identity.pid;
         let registration = match self.process_attribution.register_identity(
             identity,
             ProcessRegistrationMetadata {
@@ -315,11 +330,16 @@ impl ManagedEndpointRuntime {
                 return Err(error.to_string());
             }
         };
+        let generation = self.spawned.fetch_add(1, Ordering::Relaxed) + 1;
         let active = ActiveConnector {
             key,
             child,
             _registration: registration,
             config,
+            generation,
+            pid,
+            exe,
+            started: Instant::now(),
         };
         let status = running_status(&active);
         *self
@@ -327,7 +347,93 @@ impl ManagedEndpointRuntime {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(active);
         self.relay_hosts.publish(hosts);
+        self.watch_connector(generation);
         Ok(status)
+    }
+
+    /// Watches connector `generation` while it is the active one. An exit nobody asked for
+    /// (apply and shutdown take the connector out before stopping it) withdraws the
+    /// published hostnames, is reported (`report_connector_exit`), and ends the rest of the
+    /// connector's process group. The watcher holds the runtime weakly, so a runtime dropped
+    /// without shutdown still drops (and kills) its connector.
+    fn watch_connector(&self, generation: u64) {
+        let state = Arc::downgrade(&self.state);
+        let admission = Arc::downgrade(&self.admission);
+        let relay_hosts = self.relay_hosts.clone();
+        let interval = self.watch_interval;
+        tokio::spawn(async move {
+            let mut ticks = tokio::time::interval(interval);
+            ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            ticks.tick().await;
+            loop {
+                ticks.tick().await;
+                let (Some(state), Some(admission)) = (state.upgrade(), admission.upgrade()) else {
+                    return;
+                };
+                // Serialized with apply and shutdown, which take the connector out of the
+                // state before stopping it.
+                let Ok(_permit) = admission.acquire().await else {
+                    return;
+                };
+                let exited = {
+                    let mut guard = state
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    match guard.as_ref() {
+                        Some(active) if active.generation == generation => {
+                            // Observed without reaping, so the group stays ours to end.
+                            crate::process::exited_status(&*active.child)
+                                .and_then(|status| guard.take().map(|active| (active, status)))
+                        }
+                        _ => return,
+                    }
+                };
+                if let Some((active, status)) = exited {
+                    relay_hosts.publish(None);
+                    report_connector_exit(&active, &status);
+                    terminate_connector(active).await;
+                    return;
+                }
+            }
+        });
+    }
+
+    /// Stops a connector taken out of the state. One that already exited died on its own
+    /// since the last check, so it is reported first.
+    async fn retire(&self, active: ActiveConnector) {
+        if let Some(status) = crate::process::exited_status(&*active.child) {
+            report_connector_exit(&active, &status);
+        }
+        self.relay_hosts.publish(None);
+        terminate_connector(active).await;
+    }
+}
+
+/// An exit of the connector nobody asked for: logged, and with the Profiler on a
+/// `subprocess.exit` event and `subprocess.crash` finding.
+fn report_connector_exit(active: &ActiveConnector, status: &std::process::ExitStatus) {
+    tracing::warn!(
+        %status,
+        tunnel_id = active.config.tunnel_id.as_deref().unwrap_or_default(),
+        "BiBCode Connect tunnel connector exited"
+    );
+    if exits::watching() {
+        let label = std::path::Path::new(&active.exe).file_name().map_or_else(
+            || active.exe.clone(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        exits::report_exit(
+            Watch::Failures,
+            &Exited {
+                kind: "command",
+                label: &label,
+                exe: &active.exe,
+                pid: active.pid,
+                uptime: active.started.elapsed(),
+            },
+            status,
+            false,
+        );
     }
 }
 
@@ -356,11 +462,10 @@ fn connector_is_live(child: &mut dyn ChildWrapper) -> Result<bool, String> {
         // SAFETY: si_pid reads initialized siginfo.
         Ok(unsafe { information.si_pid() } == 0)
     }
+    // Never `try_wait`: it consumes the process handle, and `retire` must still read the
+    // status of a connector that died on its own to report it.
     #[cfg(not(unix))]
-    child
-        .try_wait()
-        .map(|status| status.is_none())
-        .map_err(|error| error.to_string())
+    Ok(crate::process::exited_status(child).is_none())
 }
 
 async fn terminate_connector(mut active: ActiveConnector) {
@@ -458,6 +563,157 @@ mod tests {
         assert_eq!(status["tunnelName"], "Fixture tunnel");
         assert_eq!(status["status"], "failed");
         assert_eq!(status["reason"], "The relay client is not installed.");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_unrequested_connector_exit_withdraws_hostnames_and_reports_a_crash() {
+        let captured = crate::diagnostics::profiler::exits::CapturedExits::start();
+        let config = json!({
+            "providerKind":"cloudflare_tunnel",
+            "connectorToken":"fixture-token",
+            "hostname":"env.zone.test",
+            "previewHostnames":["env-p1.zone.test"],
+        });
+
+        let sandbox = TestSandbox::new("managed-endpoint-exit");
+        let dying = sandbox.executable_script("bibcode-connect", "sleep 0.3; exit 3", "");
+        let mut runtime =
+            ManagedEndpointRuntime::with_fixture(dying, ProcessAttributionRegistry::new(), None);
+        runtime.watch_interval = std::time::Duration::from_millis(50);
+        let hosts = runtime.relay_hosts();
+        assert_eq!(
+            runtime.apply(config.clone()).await.unwrap()["status"],
+            "running"
+        );
+        assert!(hosts.current().is_some());
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while hosts.current().is_some() {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the connector's own exit withdraws the hostnames");
+        let findings = captured.take();
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(
+            findings[0]
+                .iter()
+                .any(|field| field.starts_with("bibcode-connect")),
+            "{findings:?}"
+        );
+
+        // A connector stopped on request is never reported.
+        let steady = sandbox.executable_script("bibcode-connect-steady", "exec sleep 30", "");
+        let mut runtime =
+            ManagedEndpointRuntime::with_fixture(steady, ProcessAttributionRegistry::new(), None);
+        runtime.watch_interval = std::time::Duration::from_millis(50);
+        assert_eq!(runtime.apply(config).await.unwrap()["status"], "running");
+        runtime.apply(Value::Null).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(captured.take().is_empty());
+        runtime.shutdown().await;
+    }
+
+    #[cfg(unix)]
+    async fn wait_for_pid(path: &std::path::Path) -> u32 {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Some(pid) = std::fs::read_to_string(path)
+                    .ok()
+                    .and_then(|pid| pid.trim().parse().ok())
+                {
+                    return pid;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the fixture writes its pid")
+    }
+
+    #[cfg(unix)]
+    async fn wait_until_gone(pid: u32) {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            // SAFETY: signal 0 only checks that the process exists.
+            while unsafe { libc::kill(pid as libc::pid_t, 0) } == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("process {pid} kept running"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_crash_found_by_the_next_apply_is_reported_and_its_group_ended() {
+        let captured = crate::diagnostics::profiler::exits::CapturedExits::start();
+        let sandbox = TestSandbox::new("managed-endpoint-apply-exit");
+        let child_pid = sandbox.path("child.pid");
+        // The leader leaves a child behind in its process group, then dies on its own.
+        let dying = sandbox.executable_script(
+            "bibcode-connect",
+            &format!(
+                "sleep 30 & echo $! > '{}'; sleep 0.3; exit 3",
+                child_pid.display()
+            ),
+            "",
+        );
+        let mut runtime =
+            ManagedEndpointRuntime::with_fixture(dying, ProcessAttributionRegistry::new(), None);
+        // The watcher never ticks in time: the next apply finds the crash.
+        runtime.watch_interval = std::time::Duration::from_secs(3600);
+        assert_eq!(
+            runtime.apply(tunnel_config()).await.unwrap()["status"],
+            "running"
+        );
+        let child = wait_for_pid(&child_pid).await;
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+        runtime.apply(tunnel_config()).await.unwrap();
+        assert_eq!(captured.take().len(), 1, "the earlier crash is reported");
+        wait_until_gone(child).await;
+        runtime.shutdown().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_watcher_ends_the_rest_of_a_crashed_connectors_group() {
+        let _captured = crate::diagnostics::profiler::exits::CapturedExits::start();
+        let sandbox = TestSandbox::new("managed-endpoint-group");
+        let child_pid = sandbox.path("child.pid");
+        let dying = sandbox.executable_script(
+            "bibcode-connect",
+            &format!(
+                "sleep 30 & echo $! > '{}'; sleep 0.3; exit 3",
+                child_pid.display()
+            ),
+            "",
+        );
+        let mut runtime =
+            ManagedEndpointRuntime::with_fixture(dying, ProcessAttributionRegistry::new(), None);
+        runtime.watch_interval = std::time::Duration::from_millis(50);
+        runtime.apply(tunnel_config()).await.unwrap();
+        wait_until_gone(wait_for_pid(&child_pid).await).await;
+        runtime.shutdown().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dropped_runtime_drops_its_connector_despite_the_watcher() {
+        let sandbox = TestSandbox::new("managed-endpoint-drop");
+        let pid_path = sandbox.path("connector.pid");
+        let steady = sandbox.executable_script(
+            "bibcode-connect",
+            &format!("echo $$ > '{}'; exec sleep 30", pid_path.display()),
+            "",
+        );
+        let mut runtime =
+            ManagedEndpointRuntime::with_fixture(steady, ProcessAttributionRegistry::new(), None);
+        runtime.watch_interval = std::time::Duration::from_millis(50);
+        runtime.apply(tunnel_config()).await.unwrap();
+        let pid = wait_for_pid(&pid_path).await;
+        drop(runtime);
+        wait_until_gone(pid).await;
     }
 
     #[cfg(unix)]

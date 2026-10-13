@@ -41,24 +41,44 @@ impl RelayHosts {
             .clone()
     }
 
-    /// The slot whose preview hostname `host` (a `Host` header value) names.
+    /// The slot whose preview hostname `host` (a `Host` header value) names. Every
+    /// main-port request asks, so it neither clones nor allocates.
     pub(crate) fn preview_slot(&self, host: &str) -> Option<usize> {
-        let name = host_name(host)?;
         self.0
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .as_ref()?
             .previews
             .iter()
-            .position(|preview| *preview == name)
+            .position(|preview| names(host, preview))
+    }
+
+    /// `host` (a `Host` value) is the managed endpoint's hostname or a preview hostname.
+    pub(crate) fn is_relay_host(&self, host: &str) -> bool {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|hosts| {
+                names(host, &hosts.hostname) || hosts.previews.iter().any(|name| names(host, name))
+            })
     }
 }
 
-/// The lowercase name in a `Host` value, without port or trailing dot. Addresses and
-/// malformed values never equal a published hostname.
-fn host_name(host: &str) -> Option<String> {
-    let authority = host.parse::<hyper::http::uri::Authority>().ok()?;
-    Some(authority.host().trim_end_matches('.').to_ascii_lowercase())
+/// Whether a `Host` value names `published` (a lowercase DNS name), ignoring case, a port,
+/// and a trailing dot. An address, userinfo, or a malformed port never matches.
+fn names(host: &str, published: &str) -> bool {
+    if host.starts_with('[') || host.contains('@') {
+        return false;
+    }
+    let name = match host.rsplit_once(':') {
+        Some((name, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => name,
+        Some(_) => return false,
+        None => host,
+    };
+    name.strip_suffix('.')
+        .unwrap_or(name)
+        .eq_ignore_ascii_case(published)
 }
 
 /// A caller that came through the Connect tunnel: its connector runs on this machine, so
@@ -68,15 +88,7 @@ pub(crate) fn is_relay_reach(
     local_ip: IpAddr,
     host: Option<&str>,
 ) -> bool {
-    local_ip.to_canonical().is_loopback()
-        && host
-            .and_then(host_name)
-            .is_some_and(|name| name == hosts.hostname)
-}
-
-/// The managed endpoint's hostname or one of its preview hostnames (a `Host` value).
-pub(crate) fn is_relay_host(hosts: &RelayPreviewHosts, host: &str) -> bool {
-    host_name(host).is_some_and(|name| name == hosts.hostname || hosts.previews.contains(&name))
+    local_ip.to_canonical().is_loopback() && host.is_some_and(|host| names(host, &hosts.hostname))
 }
 
 /// The target each preview hostname serves; a slot whose target closed is free.
@@ -145,19 +157,26 @@ mod tests {
     }
 
     #[test]
-    fn host_name_is_the_lowercase_name_without_port_or_trailing_dot() {
-        assert_eq!(
-            host_name("ENV-P1.Zone.Test:443").as_deref(),
-            Some("env-p1.zone.test")
-        );
-        assert_eq!(
-            host_name("env-p1.zone.test.").as_deref(),
-            Some("env-p1.zone.test")
-        );
-        // An address keeps its brackets, so it never equals a published hostname.
-        assert_eq!(host_name("[::1]:443").as_deref(), Some("[::1]"));
-        assert_eq!(host_name("not a host"), None);
-        assert_eq!(host_name(""), None);
+    fn a_host_value_names_a_hostname_ignoring_case_port_and_trailing_dot() {
+        for host in [
+            "env-p1.zone.test",
+            "ENV-P1.Zone.Test:443",
+            "env-p1.zone.test.",
+            "env-p1.zone.test.:8443",
+        ] {
+            assert!(names(host, "env-p1.zone.test"), "{host}");
+        }
+        for host in [
+            "",
+            "[::1]:443",
+            "user@env-p1.zone.test",
+            "env-p1.zone.test:port",
+            "env-p1.zone.test:",
+            "not a host",
+            "env-p2.zone.test",
+        ] {
+            assert!(!names(host, "env-p1.zone.test"), "{host:?}");
+        }
     }
 
     #[test]
@@ -183,6 +202,9 @@ mod tests {
         );
         assert_eq!(relay.preview_slot("[::1]:443"), None);
         assert_eq!(relay.preview_slot("not a host"), None);
+        assert!(relay.is_relay_host("ENV.zone.test:443"));
+        assert!(relay.is_relay_host("env-p4.zone.test"));
+        assert!(!relay.is_relay_host("other.zone.test"));
 
         relay.publish(None);
         assert_eq!(relay.current(), None);

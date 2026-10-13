@@ -397,11 +397,12 @@ impl PreviewGateway {
         forwarded_proto: Option<&str>,
         path_and_query: &str,
     ) -> Option<String> {
+        // Cheapest checks first: every main-port request asks.
         let host = host?;
-        let through_tunnel = local_ip.is_some_and(|ip| ip.to_canonical().is_loopback())
-            && forwarded_proto.is_some_and(|proto| proto.trim().eq_ignore_ascii_case("http"));
-        let hosts = self.inner.relay_hosts.current()?;
-        (through_tunnel && relay::is_relay_host(&hosts, host))
+        let through_tunnel = forwarded_proto
+            .is_some_and(|proto| proto.trim().eq_ignore_ascii_case("http"))
+            && local_ip.is_some_and(|ip| ip.to_canonical().is_loopback());
+        (through_tunnel && self.inner.relay_hosts.is_relay_host(host))
             .then(|| format!("https://{host}{path_and_query}"))
     }
 
