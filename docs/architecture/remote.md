@@ -231,7 +231,21 @@ predate the confirmation flow. A returning device sends
 `"features":["interleave-v1"]`; the server then confirms the same list in
 `e2ee_authenticated` and may send stand-alone `0x02` control records between
 the records of a large message. Without the confirmation, control messages
-overtake queued data only between whole messages. Invalid credentials receive
+overtake queued data only between whole messages. A client that can decompress
+raw deflate (`DecompressionStream("deflate-raw")`) also lists `deflate-v1`; when
+the server confirms it, a server message of at least 16 KiB leaves compressed
+whenever that makes it smaller: a 4-byte big-endian uncompressed length, then
+raw deflate data (level 3, compressed on a blocking thread), split into records
+that all carry `0x10` with the final or continuation value. The 64 MiB limit
+applies to the uncompressed message on both sides; the client refuses a
+declared length above it and output that differs from it, and delivers messages
+in arrival order while one inflates. Client messages and control records are
+never compressed. Compression before encryption lets message lengths depend on
+content, so only large server messages are compressed, each on its own;
+`BIBCODE_REMOTE_COMPRESSION=0` in the server environment stops the server from
+confirming `deflate-v1`
+([design](../superpowers/specs/2026-10-13-e2ee-message-compression-design.md)).
+Invalid credentials receive
 `e2ee_error/unauthorized`; malformed protocol receives `e2ee_error/protocol`;
 both paths close the socket.
 

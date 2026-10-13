@@ -177,7 +177,9 @@ whole text frames, individual requests are never split, and the limits are 64 Mi
 2,048 records per message. Without the echoed subprotocol the server keeps
 today's whole text frames. E2EE sockets always use records; `0x02` control
 records are used there only when the client lists `interleave-v1` in
-`e2ee_auth` and the server confirms it.
+`e2ee_auth` and the server confirms it. Likewise, `0x10` marks every record of a
+raw-deflate compressed server message only after the client lists `deflate-v1`
+and the server confirms it ([Remote environments](./remote.md#direct-connection-e2ee)).
 
 A response that does not fit the connection's message limit (64 MiB on E2EE and
 record-framed plain sockets) fails only its own request with a typed

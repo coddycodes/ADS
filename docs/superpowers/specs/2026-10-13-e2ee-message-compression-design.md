@@ -61,9 +61,11 @@ acceptable for remote use; otherwise choose alternative 2 or 3.
 
 ## Design (alternative 1)
 
-- **Negotiation.** The client's E2EE hello advertises `compression: ["deflate-raw"]`;
-  the server answers with the one it will use, or nothing. Older peers on
-  either side keep uncompressed records.
+- **Negotiation.** The client's `e2ee_auth` lists `deflate-v1` in its existing
+  `features`, and the server confirms it in `e2ee_authenticated` or leaves it
+  out (revised during implementation: the existing feature list instead of a
+  separate `compression` field). Older peers on either side keep uncompressed
+  records.
 - **Framing.** A new flag bit, `E2EE_RECORD_FLAG_DEFLATE = 0x10`, set on every
   record of a compressed message and combined with the existing final (`0x00`)
   and continuation (`0x01`) values; `0x02` stays the interleaved control

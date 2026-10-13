@@ -495,6 +495,7 @@ dependencies = [
  "crash-handler",
  "dirs",
  "ed25519-dalek",
+ "flate2",
  "futures-util",
  "getrandom 0.4.3",
  "hmac",
