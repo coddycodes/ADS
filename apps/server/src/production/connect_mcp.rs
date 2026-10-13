@@ -1453,13 +1453,23 @@ fn allowed_origin(origin: Option<&Value>, context: &RouteContext) -> bool {
         .trim_matches(['[', ']'])
         .to_ascii_lowercase();
     let port = origin.get("localHttpPort").and_then(Value::as_u64);
-    let request_host = context
-        .uri
+    // HTTP/1.1 requests carry an origin-form target, so the authority comes from Host.
+    let Some(authority) = context.uri.authority().cloned().or_else(|| {
+        context
+            .headers
+            .get(header::HOST)?
+            .to_str()
+            .ok()?
+            .parse::<axum::http::uri::Authority>()
+            .ok()
+    }) else {
+        return false;
+    };
+    let request_host = authority
         .host()
-        .unwrap_or_default()
         .trim_matches(['[', ']'])
         .to_ascii_lowercase();
-    let request_port = context.uri.port_u16().map(u64::from).unwrap_or(80);
+    let request_port = authority.port_u16().map(u64::from).unwrap_or(80);
     matches!(host.as_str(), "127.0.0.1" | "::1" | "localhost")
         && matches!(request_host.as_str(), "127.0.0.1" | "::1" | "localhost")
         && port == Some(request_port)

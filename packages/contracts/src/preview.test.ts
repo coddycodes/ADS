@@ -6,6 +6,8 @@ import {
   PreviewClaimOpenRequestInput,
   PreviewClaimOpenRequestResult,
   PreviewEvent,
+  PreviewGatewayError,
+  PreviewGatewayOpenResult,
   PreviewInvalidUrlError,
   PreviewNavStatus,
   PreviewSessionLookupError,
@@ -309,6 +311,23 @@ describe("preview.claimOpenRequest", () => {
     expect(Schema.decodeSync(PreviewClaimOpenRequestResult)({ claimed: false })).toEqual({
       claimed: false,
     });
+  });
+});
+
+describe("preview.gatewayOpen", () => {
+  it("decodes results from older servers and Connect origins with relay reasons", () => {
+    const decodeResult = Schema.decodeUnknownSync(PreviewGatewayOpenResult);
+    const legacy = { gatewayPort: 43_210, capability: "cap", expiresAtMs: 1 };
+    expect(decodeResult(legacy)).toEqual(legacy);
+    expect(decodeResult({ ...legacy, origin: "https://env-p1.zone.test" }).origin).toBe(
+      "https://env-p1.zone.test",
+    );
+    const decodeError = Schema.decodeUnknownSync(PreviewGatewayError);
+    for (const reason of ["relay-not-provisioned", "relay-busy"] as const) {
+      expect(decodeError({ _tag: "PreviewGatewayError", reason, message: "m" }).reason).toBe(
+        reason,
+      );
+    }
   });
 });
 

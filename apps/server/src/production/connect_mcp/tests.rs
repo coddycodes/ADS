@@ -410,6 +410,23 @@ fn origin_snapshot_and_tool_metadata_cover_wire_variants() {
         Some(&json!({"localHttpHost":"localhost","localHttpPort":99})),
         &context(HeaderMap::new())
     ));
+    // HTTP/1.1 requests carry an origin-form target; the authority is in Host.
+    let mut loopback_host = HeaderMap::new();
+    loopback_host.insert(header::HOST, HeaderValue::from_static("127.0.0.1:43123"));
+    let origin_form = |headers| RouteContext {
+        headers,
+        uri: Uri::from_static("/api/connect/link-proof"),
+        cancellation: CancellationToken::new(),
+    };
+    let loopback = json!({"localHttpHost":"127.0.0.1","localHttpPort":43123});
+    assert!(allowed_origin(Some(&loopback), &origin_form(loopback_host)));
+    let mut tunnel_host = HeaderMap::new();
+    tunnel_host.insert(header::HOST, HeaderValue::from_static("env.zone.test"));
+    assert!(!allowed_origin(Some(&loopback), &origin_form(tunnel_host)));
+    assert!(!allowed_origin(
+        Some(&loopback),
+        &origin_form(HeaderMap::new())
+    ));
     let mut forwarded = HeaderMap::new();
     forwarded.insert(
         "x-forwarded-host",

@@ -212,7 +212,7 @@ export type PreviewGatewayOpenInput = typeof PreviewGatewayOpenInput.Type;
 /**
  * `capability` bootstraps one gateway session on `gatewayPort` before `expiresAtMs`.
  * `origin` is set for a caller that came through BiBCode Connect: the preview
- * hostname to bootstrap on instead of the server's address.
+ * hostname's `https://` origin to bootstrap on instead of the server's address.
  */
 export const PreviewGatewayOpenResult = Schema.Struct({
   gatewayPort: PortSchema,

@@ -133,14 +133,23 @@ describe("managedEndpointPreviewHostnames", () => {
     ]);
   });
 
-  it("shortens a long stage prefix and keeps the hash within 63 characters", () => {
+  it("keeps a 60-character label whole and shortens the stage prefix of a 61-character one", () => {
+    const hash = "0123456789abcdef";
+    const sixty = `${"s".repeat(43)}-${hash}`;
+    const sixtyOne = `${"s".repeat(44)}-${hash}`;
+    expect(sixty).toHaveLength(60);
+    expect(sixtyOne).toHaveLength(61);
+    const whole = [1, 2, 3, 4].map((slot) => `${sixty}-p${slot}.bibcode.test`);
+    expect(managedEndpointPreviewHostnames(`${sixty}.bibcode.test`)).toEqual(whole);
+    expect(managedEndpointPreviewHostnames(`${sixtyOne}.bibcode.test`)).toEqual(whole);
+    expect(whole[0]!.split(".")[0]).toHaveLength(63);
+  });
+
+  it("shortens a full-length environment label to 63 characters", () => {
     const hostname = managedEndpointHostname("s".repeat(80), "bibcode.test", "0123456789abcdef");
-    const previews = managedEndpointPreviewHostnames(hostname);
-    for (const [index, preview] of previews.entries()) {
-      const label = preview.split(".")[0]!;
-      expect(label.length).toBeLessThanOrEqual(63);
-      expect(label.endsWith(`-0123456789abcdef-p${index + 1}`)).toBe(true);
-      expect(preview.endsWith(".bibcode.test")).toBe(true);
-    }
+    expect(hostname.split(".")[0]).toHaveLength(63);
+    expect(managedEndpointPreviewHostnames(hostname)).toEqual(
+      [1, 2, 3, 4].map((slot) => `${"s".repeat(43)}-0123456789abcdef-p${slot}.bibcode.test`),
+    );
   });
 });
