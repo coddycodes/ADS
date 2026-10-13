@@ -298,11 +298,16 @@ flowchart TB
   `git/watcher/pruned.rs` walks the tree itself and watches every directory
   non-recursively except the ones Git ignores (listed once per registration
   with `git ls-files --others --ignored --directory`, confirmed by
-  `git check-ignore`) and nested repositories or worktrees (a `.git` entry),
-  which have their own watches; directories created later are added the same
-  way, skipping the ignored directory names. A checkout with agent worktrees
-  and build output under it went from about 312,000 watched directories to
-  about 2,400. Events from the top-level `objects/`
+  `git check-ignore`) and nested repositories or linked worktrees (a `.git`
+  directory, or a `.git` file that does not point into `.git/modules/`), which
+  have their own watches; submodules stay watched because the parent's status
+  shows them. A worker thread watches directories created later (one
+  `git check-ignore` per new level, so an anchored rule such as `/build/` does
+  not skip `src/build/`), watches a removed and recreated directory again, and
+  re-reads the rules when a `.gitignore` or `.git/info/exclude` changes; a
+  watch it cannot add reaches the watcher as an error. Git runs through the
+  supervised process runner. A checkout with agent worktrees and build output
+  under it went from about 312,000 watched directories to about 2,400. Events from the top-level `objects/`
   and `lfs/` stores and from submodule object stores (`modules/<name>/objects/`)
   are filtered; the rest of a submodule's Git directory still refreshes status.
   Git metadata outside the worktree has non-recursive root watches and native

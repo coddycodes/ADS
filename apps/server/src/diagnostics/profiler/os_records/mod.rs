@@ -127,6 +127,24 @@ async fn query(program: &str, args: &[&str]) -> Option<String> {
     }
 }
 
+/// Like `query`, with the exit status and standard error, for callers that must tell an
+/// empty answer from a failed one.
+#[cfg(target_os = "linux")]
+async fn query_output(program: &str, args: &[&str]) -> Option<std::process::Output> {
+    let mut command = tokio::process::Command::new(program);
+    command
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    crate::process::configure_background_command(&mut command);
+    crate::process::isolate_appimage_environment(&mut command);
+    command
+        .output()
+        .await
+        .inspect_err(|error| tracing::debug!(program, %error, "OS crash record query did not run"))
+        .ok()
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 fn started_at(previous: &SessionRecord) -> Option<OffsetDateTime> {
     OffsetDateTime::parse(&previous.started_at, &Rfc3339).ok()

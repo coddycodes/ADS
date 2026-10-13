@@ -55,6 +55,23 @@ pub fn journal_record_for_exe(journal: &str, exe: &str) -> Option<OsCrashRecord>
         .and_then(|record| parse_journal_message(&record))
 }
 
+/// The entries a `coredumpctl --json list` run answered, or `None` when it failed. It exits
+/// 1 with "No coredumps found." when the window is empty, which is an answer; any other
+/// failure, or output that is not a JSON list, is not.
+pub fn coredumpctl_list_outcome(
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) -> Option<Vec<CoredumpEntry>> {
+    match exit_code {
+        Some(0) => coredumpctl_list(stdout),
+        Some(1) if stdout.trim().is_empty() && stderr.contains("No coredumps found") => {
+            Some(Vec::new())
+        }
+        _ => None,
+    }
+}
+
 /// The entries for processes running `exe` (by file name), other than `skip_pids`.
 pub fn unrecorded_entries(
     entries: Vec<CoredumpEntry>,
@@ -80,16 +97,17 @@ pub(super) async fn unrecorded_crashes(
     skip_pids: &[u32],
 ) -> Option<Vec<super::UnrecordedCrash>> {
     let since = format!("--since=@{}", since.unix_timestamp());
-    let list = super::query(
+    let output = super::query_output(
         "coredumpctl",
         &["--json=short", "--no-pager", "list", &since],
     )
     .await?;
-    // No output is no coredump in the window, not a failure.
-    if list.trim().is_empty() {
-        return Some(Vec::new());
-    }
-    coredumpctl_list(&list).map(|entries| unrecorded_entries(entries, exe, skip_pids))
+    let list = coredumpctl_list_outcome(
+        output.status.code(),
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+    )?;
+    Some(unrecorded_entries(list, exe, skip_pids))
 }
 
 /// The latest entry for `pid` whose executable has the same file name as `exe`.
@@ -253,6 +271,20 @@ mod tests {
 
     const LIST: &str = include_str!("../../../../tests/fixtures/profiler/coredumpctl-list.json");
     const JOURNAL: &str = include_str!("../../../../tests/fixtures/profiler/journal-coredump.json");
+
+    #[test]
+    fn a_failed_coredump_listing_is_not_an_empty_one() {
+        assert_eq!(
+            coredumpctl_list_outcome(Some(1), "", "No coredumps found.\n"),
+            Some(Vec::new())
+        );
+        assert_eq!(
+            coredumpctl_list_outcome(Some(1), "", "Failed to access journal: Permission denied"),
+            None
+        );
+        assert_eq!(coredumpctl_list_outcome(Some(0), "not json", ""), None);
+        assert_eq!(coredumpctl_list_outcome(None, "", ""), None);
+    }
 
     #[test]
     fn unrecorded_entries_keep_this_executable_other_than_skipped_pids() {

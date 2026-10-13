@@ -5,188 +5,241 @@
 //! thousands of watches. Registering them overflows the kernel's event queue (every walk
 //! opens each directory), the overflow requests a rescan, and the rescan walks again.
 //! Git status never reads those directories, so this tree watches every other directory
-//! non-recursively and skips them, and adds directories that appear later the same way.
+//! non-recursively and skips them. Directories that appear later, and changed ignore
+//! rules, are reconciled by a worker thread with the same Git answers.
 
 use std::{
     collections::{HashMap, HashSet},
     ffi::{OsStr, OsString},
     fs,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
     sync::{Arc, Mutex, Weak, mpsc},
     time::Duration,
 };
 
 use notify::{RecursiveMode, Watcher};
+use tokio_util::sync::CancellationToken;
 
-/// Directory names skipped when they appear after registration, and when Git cannot say
-/// what it ignores. Names Git reported as ignored anywhere in the tree are added to these.
-const HEAVY_DIRECTORY_NAMES: &[&str] = &["node_modules", "target"];
-const IGNORED_LIST_TIMEOUT: Duration = Duration::from_secs(10);
+use crate::git::{OutputPolicy, ProcessRequest, ProcessRunner, repository::git_read_environment};
+
+/// Skipped when Git cannot say what it ignores.
+const FALLBACK_SKIPPED_NAMES: &[&str] = &["node_modules", "target"];
+const GIT_TIMEOUT: Duration = Duration::from_secs(10);
+const GIT_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+
+type Callback = Arc<dyn Fn(notify::Result<notify::Event>) + Send + Sync>;
+
+/// Runs Git through the supervised process runner, on `runtime` or a short-lived one.
+#[derive(Clone)]
+struct Git {
+    runtime: Option<tokio::runtime::Handle>,
+}
+
+impl Git {
+    fn current() -> Self {
+        Self {
+            runtime: tokio::runtime::Handle::try_current().ok(),
+        }
+    }
+
+    /// Standard output of `git <args>` in `root`, or `None` when Git failed. `check-ignore`
+    /// exits 1 when nothing matched, which is an answer.
+    fn run(&self, root: &Path, args: &[&str], stdin: Option<Vec<u8>>) -> Option<Vec<u8>> {
+        let request = ProcessRequest {
+            operation: "GitWatch.ignoredDirectories".to_owned(),
+            command: PathBuf::from("git"),
+            args: args.iter().map(OsString::from).collect(),
+            cwd: root.to_path_buf(),
+            env: git_read_environment(),
+            stdin,
+            timeout: GIT_TIMEOUT,
+            max_output_bytes: GIT_OUTPUT_BYTES,
+            output_policy: OutputPolicy::Error,
+            append_truncation_marker: false,
+            allow_non_zero_exit: true,
+        };
+        let cancellation = CancellationToken::new();
+        let run = ProcessRunner.run_bytes(request, &cancellation);
+        let output = match &self.runtime {
+            Some(runtime) => runtime.block_on(run),
+            None => tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .ok()?
+                .block_on(run),
+        }
+        .ok()?;
+        matches!(output.exit_code, 0 | 1).then_some(output.stdout)
+    }
+
+    /// Which of `directories` (below `root`) an ignore rule names, by path, so a rule
+    /// anchored to one place does not skip a same-named directory elsewhere.
+    fn ignored(&self, root: &Path, directories: &[PathBuf]) -> Option<HashSet<PathBuf>> {
+        let input = directories
+            .iter()
+            .filter_map(|directory| directory.strip_prefix(root).ok())
+            .flat_map(|relative| {
+                use std::os::unix::ffi::OsStrExt as _;
+                relative
+                    .as_os_str()
+                    .as_bytes()
+                    .iter()
+                    .copied()
+                    .chain(*b"/\0")
+            })
+            .collect::<Vec<u8>>();
+        if input.is_empty() {
+            return Some(HashSet::new());
+        }
+        let matched = self.run(root, &["check-ignore", "-z", "--stdin"], Some(input))?;
+        Some(paths_below(root, &matched))
+    }
+}
+
+/// `root`-relative NUL-separated paths, each with a trailing slash, as absolute paths.
+fn paths_below(root: &Path, output: &[u8]) -> HashSet<PathBuf> {
+    output
+        .split(|byte| *byte == 0)
+        .filter_map(|entry| entry.strip_suffix(b"/"))
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            use std::os::unix::ffi::OsStrExt as _;
+            root.join(OsStr::from_bytes(entry))
+        })
+        .collect()
+}
 
 /// What a pruned tree leaves out.
 #[derive(Debug, Default)]
 pub(super) struct Skip {
-    /// Directories Git reported as ignored, as absolute paths.
+    /// Directories an ignore rule names, as absolute paths.
     ignored: HashSet<PathBuf>,
-    /// Their names, for directories created after registration.
-    ignored_names: HashSet<OsString>,
+    /// Git could not answer: common build directories are skipped by name instead.
+    by_name: bool,
 }
 
 impl Skip {
-    /// The Git-ignored directories of the worktree at `root`, or the heavy names alone when
-    /// Git cannot list them.
-    pub(super) fn of_worktree(root: &Path) -> Self {
-        let mut skip = Self {
-            ignored: HashSet::new(),
-            ignored_names: HEAVY_DIRECTORY_NAMES.iter().map(OsString::from).collect(),
-        };
-        match ignored_directories(root) {
-            Some(directories) => {
-                for directory in directories {
-                    if let Some(name) = directory.file_name() {
-                        skip.ignored_names.insert(name.to_owned());
-                    }
-                    skip.ignored.insert(directory);
+    /// The ignored directories of the worktree at `root`. `git ls-files --others --ignored
+    /// --directory` lists candidates without their contents, but also a directory whose
+    /// present contents all happen to be ignored, which may still get tracked files;
+    /// `git check-ignore` keeps the ones a rule names.
+    fn of_worktree(git: &Git, root: &Path) -> Self {
+        let listed = git.run(
+            root,
+            &[
+                "ls-files",
+                "-z",
+                "--others",
+                "--ignored",
+                "--exclude-standard",
+                "--directory",
+            ],
+            None,
+        );
+        let ignored = listed.and_then(|listed| {
+            let candidates = paths_below(root, &listed).into_iter().collect::<Vec<_>>();
+            git.ignored(root, &candidates)
+        });
+        match ignored {
+            Some(ignored) => Self {
+                ignored,
+                by_name: false,
+            },
+            None => {
+                tracing::warn!(
+                    "Git could not list ignored directories; the watch skips only common build directories"
+                );
+                Self {
+                    ignored: HashSet::new(),
+                    by_name: true,
                 }
             }
-            None => tracing::warn!(
-                "Git could not list ignored directories; the watch skips only common build directories"
-            ),
         }
-        skip
     }
 
-    /// Whether `directory` (below the root) is left out: ignored, or the root of another
-    /// repository or worktree, which has its own watch.
-    fn skips(&self, directory: &Path, created_later: bool) -> bool {
+    /// Whether `directory` (below the root) is left out of a walk.
+    fn skips(&self, directory: &Path) -> bool {
         self.ignored.contains(directory)
-            || (created_later
-                && directory
-                    .file_name()
-                    .is_some_and(|name| self.ignored_names.contains(name)))
-            || fs::symlink_metadata(directory.join(".git")).is_ok()
+            || (self.by_name
+                && directory.file_name().is_some_and(|name| {
+                    FALLBACK_SKIPPED_NAMES
+                        .iter()
+                        .any(|skipped| name == OsStr::new(skipped))
+                }))
+            || separately_watched(directory)
     }
 }
 
-/// The directories an ignore pattern names: `git ls-files --others --ignored
-/// --exclude-standard --directory` lists candidates without their contents, but it also
-/// lists a directory whose present contents all happen to be ignored, which may still
-/// receive tracked files; `git check-ignore` keeps the ones a pattern matches.
-fn ignored_directories(root: &Path) -> Option<Vec<PathBuf>> {
-    let listed = run_git(
-        root,
-        &[
-            "ls-files",
-            "-z",
-            "--others",
-            "--ignored",
-            "--exclude-standard",
-            "--directory",
-        ],
-        None,
-    )?;
-    let candidates = listed
-        .split(|byte| *byte == 0)
-        .filter(|entry| entry.ends_with(b"/") && entry.len() > 1)
-        .flat_map(|entry| entry.iter().copied().chain([0]))
-        .collect::<Vec<u8>>();
-    if candidates.is_empty() {
-        return Some(Vec::new());
+/// Another repository or a linked worktree, which has its own watch and whose files are not
+/// part of this worktree's status. A submodule (its `.git` file points into the parent's
+/// `.git/modules/`) stays watched: the parent's status shows its changes.
+fn separately_watched(directory: &Path) -> bool {
+    let marker = directory.join(".git");
+    match fs::symlink_metadata(&marker) {
+        Ok(metadata) if metadata.is_dir() => true,
+        Ok(_) => !fs::read_to_string(&marker).is_ok_and(|text| {
+            text.trim()
+                .strip_prefix("gitdir:")
+                .is_some_and(|gitdir| gitdir.contains("/modules/"))
+        }),
+        Err(_) => false,
     }
-    let matched = run_git(root, &["check-ignore", "-z", "--stdin"], Some(candidates))?;
-    Some(
-        matched
-            .split(|byte| *byte == 0)
-            .filter_map(|entry| entry.strip_suffix(b"/"))
-            .filter(|entry| !entry.is_empty())
-            .map(|entry| {
-                use std::os::unix::ffi::OsStrExt as _;
-                root.join(OsStr::from_bytes(entry))
-            })
-            .collect(),
-    )
 }
 
-/// Runs `git -C root <args>` with `input` on stdin and returns its stdout. `check-ignore`
-/// exits 1 when nothing matched, which is an answer, not a failure.
-fn run_git(root: &Path, args: &[&str], input: Option<Vec<u8>>) -> Option<Vec<u8>> {
-    let mut command = Command::new("git");
-    command
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .stdin(if input.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stderr(Stdio::null())
-        .stdout(Stdio::piped());
-    crate::process::isolate_appimage_environment(&mut command);
-    let mut child = command.spawn().ok()?;
-    if let Some(input) = input {
-        let mut stdin = child.stdin.take()?;
-        std::thread::spawn(move || {
-            use std::io::Write as _;
-            let _ = stdin.write_all(&input);
-        });
-    }
-    let output = wait_bounded(child, IGNORED_LIST_TIMEOUT)?;
-    matches!(output.status.code(), Some(0 | 1)).then_some(output.stdout)
-}
-
-/// Waits for `child` at most `timeout`, killing it after that.
-fn wait_bounded(mut child: std::process::Child, timeout: Duration) -> Option<std::process::Output> {
-    let stdout = child.stdout.take();
-    let reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        if let Some(mut stdout) = stdout {
-            use std::io::Read as _;
-            let _ = stdout.read_to_end(&mut bytes);
-        }
-        bytes
-    });
-    let deadline = std::time::Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
+fn subdirectories(directory: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return Vec::new();
     };
-    let stdout = reader.join().ok()?;
-    Some(std::process::Output {
-        status,
-        stdout,
-        stderr: Vec::new(),
-    })
+    // Symbolic links are not followed, as Git does not follow them.
+    entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| entry.path())
+        .collect()
 }
 
-/// `top` and every directory below it that `skip` keeps, parents before children. Symbolic
-/// links are not followed, as Git does not follow them.
-pub(super) fn kept_directories(top: &Path, skip: &Skip, created_later: bool) -> Vec<PathBuf> {
+/// `top` and every directory below it that `skip` keeps, parents before children.
+fn kept_directories(top: &Path, skip: &Skip) -> Vec<PathBuf> {
     let mut kept = vec![top.to_path_buf()];
     let mut next = 0;
     while let Some(directory) = kept.get(next).cloned() {
         next += 1;
-        let Ok(entries) = fs::read_dir(&directory) else {
-            continue;
+        kept.extend(
+            subdirectories(&directory)
+                .into_iter()
+                .filter(|child| !skip.skips(child)),
+        );
+    }
+    kept
+}
+
+/// The directories to watch in trees created after registration: one `check-ignore` per
+/// level decides which directories to enter.
+fn kept_new_directories(git: &Git, root: &Path, skip: &Skip, tops: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut kept = Vec::new();
+    let mut level = tops
+        .into_iter()
+        .filter(|top| !skip.skips(top))
+        .collect::<Vec<_>>();
+    while !level.is_empty() {
+        let ignored = if skip.by_name {
+            HashSet::new()
+        } else {
+            git.ignored(root, &level).unwrap_or_default()
         };
-        for entry in entries.flatten() {
-            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-                let child = entry.path();
-                if !skip.skips(&child, created_later) {
-                    kept.push(child);
-                }
+        let mut next = Vec::new();
+        for directory in level {
+            if ignored.contains(&directory) {
+                continue;
             }
+            next.extend(
+                subdirectories(&directory)
+                    .into_iter()
+                    .filter(|child| !skip.skips(child)),
+            );
+            kept.push(directory);
         }
+        level = next;
     }
     kept
 }
@@ -198,43 +251,62 @@ struct PrunedRoot {
 
 type Roots = Arc<Mutex<HashMap<PathBuf, PrunedRoot>>>;
 
+enum Change {
+    Created(PathBuf),
+    /// An ignore file changed: `.gitignore` anywhere or `.git/info/exclude`.
+    Rules(PathBuf),
+}
+
 /// A notify watcher whose recursive watches on worktree roots are pruned.
 pub(super) struct PrunedWatcher {
     watcher: Arc<Mutex<notify::RecommendedWatcher>>,
     roots: Roots,
+    git: Git,
 }
 
 impl PrunedWatcher {
-    /// `callback` receives every event; directories the events create are watched by a
-    /// worker thread, because notify's `watch` must not run on its own event thread.
+    /// `callback` receives every event and the failures of watches added later. Those are
+    /// added by a worker thread: notify's `watch` must not run on its own event thread.
     pub(super) fn new(
-        callback: impl Fn(notify::Result<notify::Event>) + Send + 'static,
+        callback: impl Fn(notify::Result<notify::Event>) + Send + Sync + 'static,
         config: notify::Config,
     ) -> notify::Result<Self> {
-        let (created, created_paths) = mpsc::channel::<PathBuf>();
+        let callback: Callback = Arc::new(callback);
+        let (changes, changed) = mpsc::channel::<Change>();
+        let event_callback = Arc::clone(&callback);
         let watcher = notify::RecommendedWatcher::new(
             move |event: notify::Result<notify::Event>| {
-                if let Ok(event) = &event
-                    && matches!(event.kind, notify::EventKind::Create(_))
-                {
+                if let Ok(event) = &event {
                     for path in &event.paths {
-                        let _ = created.send(path.clone());
+                        if is_ignore_file(path) {
+                            let _ = changes.send(Change::Rules(path.clone()));
+                        } else if matches!(event.kind, notify::EventKind::Create(_)) {
+                            let _ = changes.send(Change::Created(path.clone()));
+                        }
                     }
                 }
-                callback(event);
+                event_callback(event);
             },
             config,
         )?;
         let watcher = Arc::new(Mutex::new(watcher));
         let roots: Roots = Arc::default();
-        let (worker_watcher, worker_roots) = (Arc::downgrade(&watcher), Arc::downgrade(&roots));
+        let git = Git::current();
+        let worker = Worker {
+            watcher: Arc::downgrade(&watcher),
+            roots: Arc::downgrade(&roots),
+            git: git.clone(),
+            callback,
+        };
         std::thread::Builder::new()
             .name("git-watch-pruned".to_owned())
-            .spawn(move || {
-                watch_created_directories(&created_paths, &worker_watcher, &worker_roots)
-            })
-            .map_err(|error| notify::Error::io(error))?;
-        Ok(Self { watcher, roots })
+            .spawn(move || worker.run(&changed))
+            .map_err(notify::Error::io)?;
+        Ok(Self {
+            watcher,
+            roots,
+            git,
+        })
     }
 
     pub(super) fn watch(
@@ -247,11 +319,10 @@ impl PrunedWatcher {
         if !worktree {
             return lock(&self.watcher).watch(path, recursive_mode);
         }
-        let skip = Skip::of_worktree(path);
-        let directories = kept_directories(path, &skip, false);
+        let skip = Skip::of_worktree(&self.git, path);
+        let mut watched = HashSet::new();
         let mut watcher = lock(&self.watcher);
-        let mut watched = HashSet::with_capacity(directories.len());
-        for directory in directories {
+        for directory in kept_directories(path, &skip) {
             match watcher.watch(&directory, RecursiveMode::NonRecursive) {
                 Ok(()) => {
                     watched.insert(directory);
@@ -290,40 +361,108 @@ impl PrunedWatcher {
     }
 }
 
-/// Watches each created directory below a pruned root that its skip keeps, with the
-/// directories below it, until the watcher is gone.
-fn watch_created_directories(
-    created: &mpsc::Receiver<PathBuf>,
-    watcher: &Weak<Mutex<notify::RecommendedWatcher>>,
-    roots: &Weak<Mutex<HashMap<PathBuf, PrunedRoot>>>,
-) {
-    while let Ok(path) = created.recv() {
-        let (Some(watcher), Some(roots)) = (watcher.upgrade(), roots.upgrade()) else {
-            return;
-        };
-        if !fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_dir()) {
-            continue;
-        }
-        let mut roots = lock(&roots);
-        let Some(root) = roots
-            .iter_mut()
-            .filter(|(root, _)| path.starts_with(root) && path != **root)
-            .max_by_key(|(root, _)| root.as_os_str().len())
-            .map(|(_, root)| root)
-        else {
-            continue;
-        };
-        if root.directories.contains(&path) || root.skip.skips(&path, true) {
-            continue;
-        }
-        let mut watcher = lock(&watcher);
-        for directory in kept_directories(&path, &root.skip, true) {
-            if watcher
-                .watch(&directory, RecursiveMode::NonRecursive)
-                .is_ok()
-            {
-                root.directories.insert(directory);
+fn is_ignore_file(path: &Path) -> bool {
+    path.file_name() == Some(OsStr::new(".gitignore")) || path.ends_with(".git/info/exclude")
+}
+
+struct Worker {
+    watcher: Weak<Mutex<notify::RecommendedWatcher>>,
+    roots: Weak<Mutex<HashMap<PathBuf, PrunedRoot>>>,
+    git: Git,
+    callback: Callback,
+}
+
+impl Worker {
+    /// Handles changes in batches until the watcher is gone.
+    fn run(&self, changed: &mpsc::Receiver<Change>) {
+        while let Ok(first) = changed.recv() {
+            let mut created: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+            let mut rules = HashSet::new();
+            let (Some(watcher), Some(roots)) = (self.watcher.upgrade(), self.roots.upgrade())
+            else {
+                return;
+            };
+            for change in std::iter::once(first).chain(changed.try_iter()) {
+                let path = match &change {
+                    Change::Created(path) | Change::Rules(path) => path,
+                };
+                let Some(root) = lock(&roots)
+                    .keys()
+                    .filter(|root| path.starts_with(root))
+                    .max_by_key(|root| root.as_os_str().len())
+                    .cloned()
+                else {
+                    continue;
+                };
+                match change {
+                    Change::Rules(_) => {
+                        rules.insert(root);
+                    }
+                    Change::Created(path) => {
+                        if path != root
+                            && fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_dir())
+                        {
+                            created.entry(root).or_default().push(path);
+                        }
+                    }
+                }
             }
+            for root in rules {
+                self.reconcile_rules(&watcher, &roots, &root);
+            }
+            for (root, tops) in created {
+                let kept = {
+                    let roots = lock(&roots);
+                    let Some(pruned) = roots.get(&root) else {
+                        continue;
+                    };
+                    kept_new_directories(&self.git, &root, &pruned.skip, tops)
+                };
+                self.add(&watcher, &roots, &root, kept);
+            }
+        }
+    }
+
+    /// Ignore rules changed: recompute what the root skips and watch what it now keeps.
+    fn reconcile_rules(
+        &self,
+        watcher: &Mutex<notify::RecommendedWatcher>,
+        roots: &Mutex<HashMap<PathBuf, PrunedRoot>>,
+        root: &Path,
+    ) {
+        let skip = Skip::of_worktree(&self.git, root);
+        let kept = kept_directories(root, &skip);
+        if let Some(pruned) = lock(roots).get_mut(root) {
+            pruned.skip = skip;
+        }
+        self.add(watcher, roots, root, kept);
+    }
+
+    /// Watches `directories`, including ones watched before they were removed and created
+    /// again. A failure other than a vanished directory reaches the callback as an error.
+    fn add(
+        &self,
+        watcher: &Mutex<notify::RecommendedWatcher>,
+        roots: &Mutex<HashMap<PathBuf, PrunedRoot>>,
+        root: &Path,
+        directories: Vec<PathBuf>,
+    ) {
+        let mut added = Vec::with_capacity(directories.len());
+        {
+            let mut watcher = lock(watcher);
+            for directory in directories {
+                match watcher.watch(&directory, RecursiveMode::NonRecursive) {
+                    Ok(()) => added.push(directory),
+                    Err(error) if matches!(error.kind, notify::ErrorKind::PathNotFound) => {}
+                    Err(error) => {
+                        (self.callback)(Err(error));
+                        break;
+                    }
+                }
+            }
+        }
+        if let Some(pruned) = lock(roots).get_mut(root) {
+            pruned.directories.extend(added);
         }
     }
 }
@@ -337,6 +476,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::{Command, Stdio};
 
     fn git(root: &Path, args: &[&str]) {
         let status = Command::new("git")
@@ -354,31 +494,34 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         git(root, &["init", "-q"]);
-        fs::write(root.join(".gitignore"), "node_modules/\nbuild/\n").unwrap();
+        fs::write(root.join(".gitignore"), "node_modules/\n/build/\n").unwrap();
         for directory in [
             "src/lib",
             "node_modules/pkg/deep",
             "packages/app/node_modules/x",
             "build/out",
             ".claude/worktrees/agent/src",
+            "vendor/sub/src",
         ] {
             fs::create_dir_all(root.join(directory)).unwrap();
         }
-        // A nested worktree marks its root with a `.git` file.
+        // A linked worktree's `.git` file points into another repository's `worktrees/`.
         fs::write(
             root.join(".claude/worktrees/agent/.git"),
-            "gitdir: elsewhere\n",
+            "gitdir: /elsewhere/.git/worktrees/agent\n",
+        )
+        .unwrap();
+        // A submodule's points into this repository's `modules/`.
+        fs::write(
+            root.join("vendor/sub/.git"),
+            "gitdir: ../../.git/modules/vendor/sub\n",
         )
         .unwrap();
         temp
     }
 
-    #[test]
-    fn the_tree_keeps_tracked_directories_and_skips_ignored_and_nested_ones() {
-        let temp = worktree();
-        let root = temp.path();
-        let skip = Skip::of_worktree(root);
-        let kept = kept_directories(root, &skip, false)
+    fn relative(root: &Path, paths: Vec<PathBuf>) -> HashSet<String> {
+        paths
             .into_iter()
             .map(|path| {
                 path.strip_prefix(root)
@@ -386,7 +529,15 @@ mod tests {
                     .to_string_lossy()
                     .into_owned()
             })
-            .collect::<HashSet<_>>();
+            .collect()
+    }
+
+    #[test]
+    fn the_tree_keeps_tracked_and_submodule_directories_and_skips_ignored_and_linked_ones() {
+        let temp = worktree();
+        let root = temp.path();
+        let skip = Skip::of_worktree(&Git::current(), root);
+        let kept = relative(root, kept_directories(root, &skip));
         for expected in [
             "",
             "src",
@@ -395,6 +546,7 @@ mod tests {
             "packages",
             "packages/app",
             ".claude",
+            "vendor/sub/src",
         ] {
             assert!(kept.contains(expected), "{expected} is watched: {kept:?}");
         }
@@ -406,23 +558,38 @@ mod tests {
         ] {
             assert!(!kept.contains(skipped), "{skipped} is skipped: {kept:?}");
         }
-        assert!(!kept.iter().any(|path| path.starts_with("node_modules/")));
     }
 
     #[test]
-    fn a_directory_created_later_with_an_ignored_name_is_skipped() {
+    fn a_new_tree_is_checked_against_ignore_rules_by_path() {
         let temp = worktree();
         let root = temp.path();
-        let skip = Skip::of_worktree(root);
-        let fresh = root.join("packages/new/node_modules");
-        fs::create_dir_all(fresh.join("dep")).unwrap();
-        assert!(skip.skips(&fresh, true));
-        let kept = kept_directories(&root.join("packages/new"), &skip, true);
-        assert_eq!(kept, [root.join("packages/new")]);
+        let git = Git::current();
+        let skip = Skip::of_worktree(&git, root);
+        // `/build/` is anchored: a `build` directory elsewhere is source.
+        fs::create_dir_all(root.join("src/build/gen")).unwrap();
+        fs::create_dir_all(root.join("packages/new/node_modules/dep")).unwrap();
+        let kept = relative(
+            root,
+            kept_new_directories(
+                &git,
+                root,
+                &skip,
+                vec![root.join("src/build"), root.join("packages/new")],
+            ),
+        );
+        assert_eq!(
+            kept,
+            HashSet::from([
+                "src/build".to_owned(),
+                "src/build/gen".to_owned(),
+                "packages/new".to_owned(),
+            ])
+        );
     }
 
     #[test]
-    fn events_arrive_from_kept_and_new_directories_but_not_ignored_ones() {
+    fn events_follow_kept_new_and_recreated_directories_and_rule_changes() {
         let temp = worktree();
         let root = temp.path().canonicalize().unwrap();
         let (sender, events) = mpsc::channel();
@@ -451,6 +618,17 @@ mod tests {
             }
             None
         };
+        // Writes `file` until its event arrives: the worker adds new directories a moment
+        // after they appear.
+        let observed = |events: &mpsc::Receiver<PathBuf>, file: &Path| {
+            for _ in 0..20 {
+                fs::write(file, "x").unwrap();
+                if until(events, file).is_some() {
+                    return true;
+                }
+            }
+            false
+        };
 
         fs::write(root.join("node_modules/pkg/deep/file"), "x").unwrap();
         fs::write(root.join("src/lib/file.rs"), "x").unwrap();
@@ -463,10 +641,16 @@ mod tests {
         );
 
         fs::create_dir(root.join("src/fresh")).unwrap();
-        // The worker adds the new directory; give it a moment before writing inside.
-        std::thread::sleep(Duration::from_millis(200));
-        fs::write(root.join("src/fresh/file.rs"), "x").unwrap();
-        assert!(until(&events, &root.join("src/fresh/file.rs")).is_some());
+        assert!(observed(&events, &root.join("src/fresh/file.rs")));
+
+        // Removed and created again, as a branch switch does.
+        fs::remove_dir_all(root.join("src/lib")).unwrap();
+        fs::create_dir(root.join("src/lib")).unwrap();
+        assert!(observed(&events, &root.join("src/lib/again.rs")));
+
+        // Un-ignoring `build/` brings it into the watch.
+        fs::write(root.join(".gitignore"), "node_modules/\n").unwrap();
+        assert!(observed(&events, &root.join("build/out/file")));
 
         watcher.unwatch(&root).unwrap();
     }
