@@ -148,7 +148,12 @@ flowchart TB
   metadata signals collapse at a 125 ms trailing edge, with exactly one trailing
   read retained when signals arrive during a physical read. Overflow, watcher
   loss, and setup unavailability are sticky fallback states; they preserve the
-  subscription and cannot be cleared by a later ordinary event. Active
+  subscription and cannot be cleared by a later ordinary event. An overflow
+  re-registers every watch, but further overflows defer that re-registration:
+  30 seconds apart at first, doubling to 30 minutes, and reset after a quiet
+  stretch. On Linux, re-registering a tree larger than the kernel's event queue
+  overflows the queue again by itself, so without that spacing it would loop.
+  Active
   subscriptions also retain a completion-based safety read after the greater of
   60 seconds or four times the last completed read duration, capped at 300
   seconds. Explicit mutation, workspace, focus/menu catch-up, and structured
