@@ -112,13 +112,12 @@ fn paths_below(root: &Path, output: &[u8]) -> HashSet<PathBuf> {
 /// What a pruned tree leaves out.
 #[derive(Debug, Default)]
 pub(super) struct Skip {
-    /// Directories an ignore rule names, as absolute paths, the worktree's and its
-    /// submodules'.
+    /// Directories an ignore rule names, as absolute paths.
     ignored: HashSet<PathBuf>,
     /// Git could not answer: common build directories are skipped by name instead.
     by_name: bool,
-    /// Where this worktree's submodule repositories live (`<git dir>/modules`).
-    modules: Option<PathBuf>,
+    /// This worktree's Git directory, whose `modules/` holds its submodules' repositories.
+    git_dir: Option<PathBuf>,
 }
 
 impl Skip {
@@ -143,13 +142,12 @@ impl Skip {
             let candidates = paths_below(root, &listed).into_iter().collect::<Vec<_>>();
             git.ignored(root, &candidates)
         });
-        let modules =
-            git_dir(root).and_then(|git_dir| fs::canonicalize(git_dir.join("modules")).ok());
+        let git_dir = git_dir(root);
         match ignored {
             Some(ignored) => Self {
                 ignored,
                 by_name: false,
-                modules,
+                git_dir,
             },
             None => {
                 tracing::warn!(
@@ -158,17 +156,10 @@ impl Skip {
                 Self {
                     ignored: HashSet::new(),
                     by_name: true,
-                    modules,
+                    git_dir,
                 }
             }
         }
-    }
-
-    /// Adds a submodule's own ignore rules: the superproject's listing does not see inside it.
-    fn add_submodule(&mut self, git: &Git, submodule: &Path) {
-        let inner = Self::of_worktree(git, submodule);
-        self.ignored.extend(inner.ignored);
-        self.by_name |= inner.by_name;
     }
 
     fn skips_by_name(&self, directory: &Path) -> bool {
@@ -179,21 +170,27 @@ impl Skip {
         })
     }
 
-    /// Whether `directory` (below the root) is left out of a walk.
+    /// Whether `directory` (below the root) is left out of the pruned walk: ignored, or a
+    /// repository root, which is either watched separately or (a submodule) recursively.
     fn skips(&self, directory: &Path) -> bool {
         self.ignored.contains(directory)
             || (self.by_name && self.skips_by_name(directory))
-            || self.repository(directory) == Some(Repository::Separate)
+            || self.repository(directory).is_some()
     }
 
     /// What kind of repository root `directory` is, if any. A submodule's Git directory
-    /// lies in this worktree's `modules/`; anything else with a `.git` (another repository,
-    /// a linked worktree) has its own watch and is not part of this worktree's status.
+    /// lies in this worktree's `modules/`, read now so a submodule initialized after the
+    /// watch started is recognized; anything else with a `.git` (another repository, a
+    /// linked worktree) has its own watch and is not part of this worktree's status.
     fn repository(&self, directory: &Path) -> Option<Repository> {
         fs::symlink_metadata(directory.join(".git")).ok()?;
+        let modules = self
+            .git_dir
+            .as_deref()
+            .and_then(|git_dir| fs::canonicalize(git_dir.join("modules")).ok());
         let submodule = git_dir(directory)
             .and_then(|git_dir| fs::canonicalize(git_dir).ok())
-            .zip(self.modules.as_deref())
+            .zip(modules)
             .is_some_and(|(git_dir, modules)| git_dir.starts_with(modules));
         Some(if submodule {
             Repository::Submodule
@@ -234,33 +231,59 @@ fn subdirectories(directory: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// `top` and every directory below it that `skip` keeps, parents before children. A
-/// submodule's own ignore rules join `skip` as the walk enters it.
-fn kept_directories(git: &Git, top: &Path, skip: &mut Skip) -> Vec<PathBuf> {
-    let mut kept = vec![top.to_path_buf()];
-    let mut next = 0;
-    while let Some(directory) = kept.get(next).cloned() {
-        next += 1;
-        if next > 1 && skip.repository(&directory) == Some(Repository::Submodule) {
-            skip.add_submodule(git, &directory);
-        }
-        kept.extend(
-            subdirectories(&directory)
-                .into_iter()
-                .filter(|child| !skip.skips(child)),
-        );
-    }
-    kept
+/// What a walk watches: directories one by one, and submodules with notify's recursive
+/// watch. The parent's status shows a submodule's changes; its own ignore rules are not
+/// applied, as before the pruned watch.
+// ponytail: ignored directories inside a submodule stay watched; prune them with the
+// submodule as a nested root if that ever matters.
+#[derive(Debug, Default)]
+struct Walk {
+    directories: Vec<PathBuf>,
+    submodules: Vec<PathBuf>,
 }
 
-/// The directories to watch in trees created after registration: one `check-ignore` per
-/// level decides which directories to enter.
-fn kept_new_directories(git: &Git, root: &Path, skip: &Skip, tops: Vec<PathBuf>) -> Vec<PathBuf> {
-    let mut kept = Vec::new();
-    let mut level = tops
-        .into_iter()
-        .filter(|top| !skip.skips(top))
-        .collect::<Vec<_>>();
+impl Walk {
+    /// Sorts the children of a walked directory: submodules apart, kept ones returned.
+    fn children(&mut self, skip: &Skip, directory: &Path) -> Vec<PathBuf> {
+        let mut kept = Vec::new();
+        for child in subdirectories(directory) {
+            if skip.repository(&child) == Some(Repository::Submodule) {
+                self.submodules.push(child);
+            } else if !skip.skips(&child) {
+                kept.push(child);
+            }
+        }
+        kept
+    }
+}
+
+/// `top` and every directory below it that `skip` keeps, parents before children.
+fn kept_directories(top: &Path, skip: &Skip) -> Walk {
+    let mut walk = Walk {
+        directories: vec![top.to_path_buf()],
+        submodules: Vec::new(),
+    };
+    let mut next = 0;
+    while let Some(directory) = walk.directories.get(next).cloned() {
+        next += 1;
+        let kept = walk.children(skip, &directory);
+        walk.directories.extend(kept);
+    }
+    walk
+}
+
+/// What to watch in trees created after registration: one `check-ignore` per level decides
+/// which directories to enter.
+fn kept_new_directories(git: &Git, root: &Path, skip: &Skip, tops: Vec<PathBuf>) -> Walk {
+    let mut walk = Walk::default();
+    let mut level = Vec::new();
+    for top in tops {
+        if skip.repository(&top) == Some(Repository::Submodule) {
+            walk.submodules.push(top);
+        } else if !skip.skips(&top) {
+            level.push(top);
+        }
+    }
     while !level.is_empty() {
         // When Git cannot answer, common build directories are skipped by name.
         let ignored = if skip.by_name {
@@ -277,21 +300,19 @@ fn kept_new_directories(git: &Git, root: &Path, skip: &Skip, tops: Vec<PathBuf>)
             if skipped {
                 continue;
             }
-            next.extend(
-                subdirectories(&directory)
-                    .into_iter()
-                    .filter(|child| !skip.skips(child)),
-            );
-            kept.push(directory);
+            let kept = walk.children(skip, &directory);
+            next.extend(kept);
+            walk.directories.push(directory);
         }
         level = next;
     }
-    kept
+    walk
 }
 
 struct PrunedRoot {
     skip: Skip,
     directories: HashSet<PathBuf>,
+    submodules: HashSet<PathBuf>,
 }
 
 type Roots = Arc<Mutex<HashMap<PathBuf, PrunedRoot>>>;
@@ -367,19 +388,31 @@ impl PrunedWatcher {
         if !worktree {
             return lock(&self.watcher).watch(path, recursive_mode);
         }
-        let mut skip = Skip::of_worktree(&self.git, path);
-        let directories = kept_directories(&self.git, path, &mut skip);
-        let mut watched = HashSet::new();
+        let skip = Skip::of_worktree(&self.git, path);
+        let walk = kept_directories(path, &skip);
+        let (mut directories, mut submodules) = (HashSet::new(), HashSet::new());
         let mut watcher = lock(&self.watcher);
-        for directory in directories {
-            match watcher.watch(&directory, RecursiveMode::NonRecursive) {
+        let planned = walk
+            .directories
+            .into_iter()
+            .map(|directory| (directory, RecursiveMode::NonRecursive))
+            .chain(
+                walk.submodules
+                    .into_iter()
+                    .map(|submodule| (submodule, RecursiveMode::Recursive)),
+            );
+        for (directory, mode) in planned {
+            match watcher.watch(&directory, mode) {
+                Ok(()) if mode == RecursiveMode::Recursive => {
+                    submodules.insert(directory);
+                }
                 Ok(()) => {
-                    watched.insert(directory);
+                    directories.insert(directory);
                 }
                 // A directory removed during the walk.
                 Err(error) if matches!(error.kind, notify::ErrorKind::PathNotFound) => {}
                 Err(error) => {
-                    for directory in &watched {
+                    for directory in directories.iter().chain(&submodules) {
                         let _ = watcher.unwatch(directory);
                     }
                     return Err(error);
@@ -391,7 +424,8 @@ impl PrunedWatcher {
             path.to_path_buf(),
             PrunedRoot {
                 skip,
-                directories: watched,
+                directories,
+                submodules,
             },
         );
         Ok(())
@@ -403,7 +437,7 @@ impl PrunedWatcher {
         };
         let mut watcher = lock(&self.watcher);
         // A directory removed since is no longer watched; that is not an error here.
-        for directory in &root.directories {
+        for directory in root.directories.iter().chain(&root.submodules) {
             let _ = watcher.unwatch(directory);
         }
         Ok(())
@@ -492,29 +526,40 @@ impl Worker {
         roots: &Mutex<HashMap<PathBuf, PrunedRoot>>,
         root: &Path,
     ) {
-        let mut skip = Skip::of_worktree(&self.git, root);
-        let kept = kept_directories(&self.git, root, &mut skip);
+        let skip = Skip::of_worktree(&self.git, root);
+        let kept = kept_directories(root, &skip);
         if let Some(pruned) = lock(roots).get_mut(root) {
             pruned.skip = skip;
         }
         self.add(watcher, roots, root, kept);
     }
 
-    /// Watches `directories`, including ones watched before they were removed and created
-    /// again. A failure other than a vanished directory reaches the callback as an error.
+    /// Watches a walk's directories, including ones watched before they were removed and
+    /// created again, and its submodules recursively. A failure other than a vanished
+    /// directory reaches the callback as an error.
     fn add(
         &self,
         watcher: &Mutex<notify::RecommendedWatcher>,
         roots: &Mutex<HashMap<PathBuf, PrunedRoot>>,
         root: &Path,
-        directories: Vec<PathBuf>,
+        walk: Walk,
     ) {
-        let mut added = Vec::with_capacity(directories.len());
+        let (mut directories, mut submodules) = (Vec::new(), Vec::new());
         {
             let mut watcher = lock(watcher);
-            for directory in directories {
-                match watcher.watch(&directory, RecursiveMode::NonRecursive) {
-                    Ok(()) => added.push(directory),
+            let planned = walk
+                .directories
+                .into_iter()
+                .map(|directory| (directory, RecursiveMode::NonRecursive))
+                .chain(
+                    walk.submodules
+                        .into_iter()
+                        .map(|submodule| (submodule, RecursiveMode::Recursive)),
+                );
+            for (directory, mode) in planned {
+                match watcher.watch(&directory, mode) {
+                    Ok(()) if mode == RecursiveMode::Recursive => submodules.push(directory),
+                    Ok(()) => directories.push(directory),
                     Err(error) if matches!(error.kind, notify::ErrorKind::PathNotFound) => {}
                     Err(error) => {
                         (self.callback)(Err(error));
@@ -524,7 +569,8 @@ impl Worker {
             }
         }
         if let Some(pruned) = lock(roots).get_mut(root) {
-            pruned.directories.extend(added);
+            pruned.directories.extend(directories);
+            pruned.submodules.extend(submodules);
         }
     }
 }
@@ -574,8 +620,7 @@ mod tests {
             "gitdir: /home/dev/modules/project/.git/worktrees/agent\n",
         )
         .unwrap();
-        // A submodule's Git directory lives in this repository's `.git/modules/`, and it
-        // has ignore rules of its own.
+        // A submodule's Git directory lives in this repository's `.git/modules/`.
         let submodule = root.join("vendor/sub");
         let separate = root.join(".git/modules/vendor/sub");
         fs::create_dir_all(separate.parent().unwrap()).unwrap();
@@ -607,9 +652,10 @@ mod tests {
     fn the_tree_keeps_tracked_and_submodule_directories_and_skips_ignored_and_linked_ones() {
         let temp = worktree();
         let root = temp.path();
-        let git = Git::current();
-        let mut skip = Skip::of_worktree(&git, root);
-        let kept = relative(root, kept_directories(&git, root, &mut skip));
+        let skip = Skip::of_worktree(&Git::current(), root);
+        let walk = kept_directories(root, &skip);
+        assert_eq!(walk.submodules, [root.join("vendor/sub")]);
+        let kept = relative(root, walk.directories);
         for expected in [
             "",
             "src",
@@ -618,7 +664,7 @@ mod tests {
             "packages",
             "packages/app",
             ".claude",
-            "vendor/sub/src",
+            "vendor",
         ] {
             assert!(kept.contains(expected), "{expected} is watched: {kept:?}");
         }
@@ -627,7 +673,8 @@ mod tests {
             "packages/app/node_modules",
             "build",
             ".claude/worktrees/agent",
-            "vendor/sub/dist",
+            // Watched recursively, as a submodule.
+            "vendor/sub",
         ] {
             assert!(!kept.contains(skipped), "{skipped} is skipped: {kept:?}");
         }
@@ -667,7 +714,8 @@ mod tests {
                 root,
                 &skip,
                 vec![root.join("src/build"), root.join("packages/new")],
-            ),
+            )
+            .directories,
         );
         assert_eq!(
             kept,
