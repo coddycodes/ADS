@@ -572,13 +572,19 @@ impl PullRequestHost for GitLabHost {
             // Cached identity/version are reusable, but repository access and policy
             // must be fresh for this write, alongside the MR and permission answers.
             let path = format!("{}/merge_requests/{number}", project_path(scope));
-            let request = self.api(scope, &path, op, c).await?;
-            let approvals = self.api(scope, &format!("{path}/approvals"), op, c).await?;
-            let reviewers = self.api(scope, &format!("{path}/reviewers"), op, c).await?;
-            let metadata = self
-                .graphql(scope, number, graphql::DETAIL_METADATA_QUERY, op, c)
-                .await?;
-            let project = self.api(scope, &project_path(scope), op, c).await?;
+            let approvals_path = format!("{path}/approvals");
+            let reviewers_path = format!("{path}/reviewers");
+            let project_read = project_path(scope);
+            // Independent reads: one wave instead of five glab starts in a row.
+            let (request, approvals, reviewers, metadata, project) = tokio::join!(
+                self.api(scope, &path, op, c),
+                self.api(scope, &approvals_path, op, c),
+                self.api(scope, &reviewers_path, op, c),
+                self.graphql(scope, number, graphql::DETAIL_METADATA_QUERY, op, c),
+                self.api(scope, &project_read, op, c),
+            );
+            let (request, approvals, reviewers, metadata, project) =
+                (request?, approvals?, reviewers?, metadata?, project?);
             let user = json!({"username":context.account.login,"name":context.account.name,"bot":context.account.is_bot});
             let context =
                 parse::context(scope, &user, &project, context.raw_host_version.as_deref())?;

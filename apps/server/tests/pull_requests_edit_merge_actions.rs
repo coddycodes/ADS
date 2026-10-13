@@ -192,9 +192,7 @@ async fn pull_requests_gitlab_warm_actions_reuse_context_but_refresh_permissions
         if name == "assignee" {
             fresh_mr["assignees"] = json!([]);
         }
-        for value in [&fresh_mr, &approvals, &reviewers, &metadata, &project] {
-            f.response(value.clone());
-        }
+        f.gitlab_action_reads([&fresh_mr, &approvals, &reviewers, &metadata, &project]);
         if extra_reads > 0 {
             f.response(json!([{"id":20,"username":"new-user"}]));
         }
@@ -271,12 +269,9 @@ async fn pull_requests_gitlab_warm_actions_reuse_context_but_refresh_permissions
     // Cached Developer context must not grant a write after project access is revoked.
     let before = f.count();
     f.raw_response("https://gitlab.com/team/repo.git");
-    for value in [&mr, &approvals, &reviewers, &metadata] {
-        f.response(value.clone());
-    }
     let mut revoked = project.clone();
     revoked["permissions"] = json!({});
-    f.response(revoked);
+    f.gitlab_action_reads([&mr, &approvals, &reviewers, &metadata, &revoked]);
     let error = service
         .run_action(&f.request(action), &c)
         .await

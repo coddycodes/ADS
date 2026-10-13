@@ -654,6 +654,8 @@ impl PullRequestsService {
         })
         .await;
         if let Err(error) = &result {
+            // The code only: messages can carry host names and paths.
+            tracing::warn!(operation, code = error.code, "pull request action failed");
             self.invalidate_failed_context(error, host.get().as_deref())
                 .await;
         }
@@ -1746,6 +1748,54 @@ esac"#,
             .unwrap();
         assert!(snapshot.list.is_some());
         assert!(!s.path("calls").exists(), "zero glab calls");
+    }
+
+    #[derive(Clone, Default)]
+    struct CapturedLog(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for CapturedLog {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A failed action leaves its code in the server log, never its message:
+    /// messages can carry checkout paths and host names.
+    #[tokio::test]
+    async fn run_action_failure_logs_the_code_without_the_message() {
+        let log = CapturedLog::default();
+        let _logging = tracing::subscriber::set_default(
+            tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_writer({
+                    let log = log.clone();
+                    move || log.clone()
+                })
+                .finish(),
+        );
+        let s = crate::test_support::TestSandbox::new("pr-run-action-failure-log");
+        let service = PullRequestsService::new(s.path("state"));
+        let cwd = s.path("missing-checkout").to_string_lossy().into_owned();
+        let action: ActionRequest = serde_json::from_value(
+            serde_json::json!({"action":"comment","cwd":cwd,"number":7,"body":"hi"}),
+        )
+        .unwrap();
+
+        let error = service
+            .run_action(&action, &CancellationToken::new())
+            .await
+            .expect_err("a missing checkout cannot run an action");
+
+        let log = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+        assert!(log.contains("pull request action failed"), "{log}");
+        assert!(log.contains(&format!("code=\"{}\"", error.code)), "{log}");
+        assert!(error.message.contains("missing-checkout"));
+        assert!(!log.contains("missing-checkout"), "{log}");
     }
 
     #[tokio::test]
