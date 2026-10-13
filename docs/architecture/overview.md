@@ -407,7 +407,13 @@ stderr close-on-exec (`apps/desktop/src-tauri/src/relaunch.rs`), so the new
 process no longer inherits the old AppImage runtime's keep-alive pipe. The old
 FUSE mount, its daemon and the replaced AppImage therefore end with the old
 process; the relaunched app still inherits the old environment, including stale
-`.mount_*` entries behind the new mount's own paths.
+`.mount_*` entries behind the new mount's own paths. When the host runs directly
+in a systemd `.service` unit (a launcher such as `systemd-run --user`), the
+update relaunch starts the new AppImage through `systemd-run --user --scope`
+instead, at the last exit callback: the unit stops when its main process exits
+and kills its whole cgroup, which would otherwise take the relaunched app's
+FUSE mount down and kill it with SIGBUS. If `systemd-run` fails, Tauri's
+in-place relaunch runs as before.
 
 The gate checks a few variables before copying the full environment. A nonempty
 `APPIMAGE` and an absolute, non-root `APPDIR` activate isolation. For an

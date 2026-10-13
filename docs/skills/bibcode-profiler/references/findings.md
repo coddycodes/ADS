@@ -81,6 +81,14 @@ and `startedAt`.
     classification: one written while no profiler session ran, such as a
     desktop host that crashed during startup or between in-process server
     restarts. Its summary says no profiler session reported it.
+  - **an OS crash record no session covered** (Linux systemd-coredump only), at
+    every start: a coredump of this same executable since the last session
+    began, from a process other than this one and an unclean previous run, such
+    as an app relaunched by an update that died before its profiler started, or
+    a crash monitor. Fingerprint `unrecorded`, the executable's file name and
+    the signal, so repeats group; evidence `source: coredump`, `pid`, `signal`,
+    `exe`, `crashedAt`, `crashId`/`crashIds` (`coredump-<pid>-<time>`, which
+    keeps it from being raised again) and `rawRef` (`coredumpctl info <pid>`).
 - **Fingerprint:**
   - from a dump: `processKind`, `minidump`, the dump's crash reason (such as
     `SIGSEGV / SEGV_MAPERR`), the faulting module's file name and the offset in

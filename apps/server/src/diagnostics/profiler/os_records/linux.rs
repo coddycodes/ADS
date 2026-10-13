@@ -55,6 +55,41 @@ pub fn journal_record_for_exe(journal: &str, exe: &str) -> Option<OsCrashRecord>
         .and_then(|record| parse_journal_message(&record))
 }
 
+/// The entries for processes running `exe` (by file name), other than `skip_pids`.
+pub fn unrecorded_entries(
+    entries: Vec<CoredumpEntry>,
+    exe: &str,
+    skip_pids: &[u32],
+) -> Vec<super::UnrecordedCrash> {
+    entries
+        .into_iter()
+        .filter(|entry| !skip_pids.contains(&entry.pid) && same_executable(&entry.exe, exe))
+        .map(|entry| super::UnrecordedCrash {
+            pid: entry.pid,
+            signal: entry.sig,
+            time_micros: entry.time,
+            exe: entry.exe,
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+pub(super) async fn unrecorded_crashes(
+    since: time::OffsetDateTime,
+    exe: &str,
+    skip_pids: &[u32],
+) -> Vec<super::UnrecordedCrash> {
+    let since = format!("--since=@{}", since.unix_timestamp());
+    super::query(
+        "coredumpctl",
+        &["--json=short", "--no-pager", "list", &since],
+    )
+    .await
+    .and_then(|list| coredumpctl_list(&list))
+    .map(|entries| unrecorded_entries(entries, exe, skip_pids))
+    .unwrap_or_default()
+}
+
 /// The latest entry for `pid` whose executable has the same file name as `exe`.
 pub fn matching_entry(entries: Vec<CoredumpEntry>, pid: u32, exe: &str) -> Option<CoredumpEntry> {
     entries
@@ -216,6 +251,31 @@ mod tests {
 
     const LIST: &str = include_str!("../../../../tests/fixtures/profiler/coredumpctl-list.json");
     const JOURNAL: &str = include_str!("../../../../tests/fixtures/profiler/journal-coredump.json");
+
+    #[test]
+    fn unrecorded_entries_keep_this_executable_other_than_skipped_pids() {
+        let entry = |pid, exe: &str| CoredumpEntry {
+            time: 1_000 + u64::from(pid),
+            pid,
+            sig: 7,
+            exe: exe.to_owned(),
+        };
+        let crashes = unrecorded_entries(
+            vec![
+                entry(10, "/tmp/.mount_old/usr/bin/bibcode-desktop"),
+                entry(11, "/usr/bin/bibcode-desktop"),
+                entry(12, "/usr/bin/firefox"),
+                entry(13, "/usr/bin/bibcode-desktop"),
+            ],
+            "/tmp/.mount_new/usr/bin/bibcode-desktop",
+            &[13],
+        );
+        assert_eq!(
+            crashes.iter().map(|crash| crash.pid).collect::<Vec<_>>(),
+            [10, 11]
+        );
+        assert_eq!(crashes[0].signal, 7);
+    }
 
     #[test]
     fn coredumpctl_list_picks_the_entry_with_matching_pid_and_exe() {

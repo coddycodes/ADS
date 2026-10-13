@@ -564,6 +564,53 @@ pub fn oom_kill_count() -> Option<u64> {
     os_records::linux::read_oom_kill(&os_records::linux::user_service_events(&cgroup)?)
 }
 
+/// The last session record, whatever its state. Blocks on file I/O.
+pub fn last_session(dir: &Path) -> Option<SessionRecord> {
+    read(dir)
+}
+
+/// A crash of this executable the OS kept that no session reported. `crash_id` links it,
+/// so the next start does not raise it again.
+pub fn unrecorded_crash_finding(
+    crash: &super::os_records::UnrecordedCrash,
+    crash_id: String,
+) -> FindingInput {
+    let name = super::os_records::executable_name(&crash.exe).to_owned();
+    let crashed_at = i128::from(crash.time_micros)
+        .checked_mul(1_000)
+        .and_then(|nanos| OffsetDateTime::from_unix_timestamp_nanos(nanos).ok())
+        .and_then(|time| time.format(&Rfc3339).ok());
+    FindingInput {
+        kind: "crash.native",
+        severity: Severity::Error,
+        source: "server".into(),
+        fingerprint_fields: vec![
+            "unrecorded".to_owned(),
+            name.clone(),
+            format!("signal {}", crash.signal),
+        ],
+        title: format!(
+            "{name} crashed with signal {} outside a profiler session",
+            crash.signal
+        ),
+        summary: format!(
+            "systemd-coredump recorded signal {} for {name} (pid {}), a process no profiler \
+             session covered, such as an app relaunched by an update or a crash monitor.",
+            crash.signal, crash.pid
+        ),
+        evidence: json!({
+            "source": "coredump",
+            "pid": crash.pid,
+            "signal": crash.signal,
+            "exe": redact_path(&crash.exe),
+            "crashedAt": crashed_at,
+            "crashId": crash_id,
+            "crashIds": [crash_id],
+            "rawRef": format!("coredumpctl info {}", crash.pid),
+        }),
+    }
+}
+
 fn read(dir: &Path) -> Option<SessionRecord> {
     serde_json::from_slice(&fs::read(dir.join(SESSION_FILE)).ok()?).ok()
 }
@@ -583,6 +630,28 @@ fn write(dir: &Path, record: &SessionRecord) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unrecorded_crash_is_linked_by_its_coredump_and_grouped_by_signal() {
+        let crash = |pid| crate::diagnostics::profiler::os_records::UnrecordedCrash {
+            pid,
+            signal: 7,
+            time_micros: 1_791_000_000_000_000,
+            exe: "/tmp/.mount_abc/usr/bin/bibcode-desktop".to_owned(),
+        };
+        let first = unrecorded_crash_finding(&crash(10), "coredump-10-1".to_owned());
+        let second = unrecorded_crash_finding(&crash(11), "coredump-11-1".to_owned());
+        assert_eq!(first.kind, "crash.native");
+        assert_eq!(first.fingerprint_fields, second.fingerprint_fields);
+        assert_eq!(first.evidence["crashIds"], json!(["coredump-10-1"]));
+        assert_eq!(first.evidence["signal"], 7);
+        assert!(
+            first
+                .title
+                .starts_with("bibcode-desktop crashed with signal 7")
+        );
+        assert!(first.evidence["crashedAt"].as_str().is_some());
+    }
 
     fn previous() -> SessionRecord {
         SessionRecord {

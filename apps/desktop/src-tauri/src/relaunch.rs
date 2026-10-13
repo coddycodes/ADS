@@ -1,10 +1,60 @@
 //! Keeps an AppImage relaunch from inheriting the old runtime's keep-alive pipe.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// An installed update asked for a relaunch; read at the last exit callback.
+static RELAUNCH_REQUESTED: AtomicBool = AtomicBool::new(false);
+
 /// Marks every descriptor above stderr close-on-exec before relaunch.
 /// A no-op outside Linux; only exec'd children lose the descriptors.
 pub(crate) fn prepare_descriptors_for_relaunch() {
     #[cfg(target_os = "linux")]
     linux::mark_inherited_descriptors_close_on_exec();
+}
+
+/// Called just before `AppHandle::restart` after an update installs.
+pub(crate) fn note_relaunch_requested() {
+    RELAUNCH_REQUESTED.store(true, Ordering::Release);
+}
+
+/// The relaunch Tauri performs after the last exit callback spawns the new app as a child
+/// in this process's cgroup. When this process is a systemd service's main process (a
+/// launcher such as `systemd-run --user`), its exit stops the unit, which kills that whole
+/// cgroup: the new AppImage's mount goes away and the relaunched app dies with SIGBUS
+/// (#94). Here the new app starts in its own transient scope instead, and this process
+/// exits; when that is not needed or `systemd-run` fails, Tauri's relaunch runs as before.
+pub(crate) fn relaunch_outside_service_unit<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if !RELAUNCH_REQUESTED.load(Ordering::Acquire) {
+        return;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let cgroup = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+        if !linux::runs_in_service_unit(&cgroup) {
+            return;
+        }
+        let env = tauri::Manager::env(app);
+        let Ok(binary) = tauri::process::current_binary(&env) else {
+            return;
+        };
+        let mut command = std::process::Command::new("systemd-run");
+        command
+            .args(["--user", "--scope", "--collect", "--quiet", "--"])
+            .arg(binary)
+            .args(env.args_os.iter().skip(1));
+        bibcode_server::process::isolate_appimage_environment(&mut command);
+        match command.spawn() {
+            Ok(_) => {
+                tracing::info!("relaunching the updated app in its own systemd scope");
+                std::process::exit(0);
+            }
+            Err(error) => {
+                tracing::warn!(%error, "systemd-run is unavailable; relaunching in place");
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = app;
 }
 
 #[cfg(target_os = "linux")]
@@ -30,6 +80,15 @@ mod linux {
             tracing::warn!(%error, "close_range could not mark descriptors close-on-exec");
         }
         mark_through_proc();
+    }
+
+    /// Whether this process sits directly in a `.service` unit, whose stop kills its whole
+    /// cgroup. Scopes (terminals, desktop launchers) end only when empty.
+    pub(super) fn runs_in_service_unit(cgroup: &str) -> bool {
+        cgroup
+            .lines()
+            .filter_map(|line| line.rsplit('/').next())
+            .any(|unit| unit.trim().ends_with(".service"))
     }
 
     pub(super) fn mark_through_proc() {
@@ -71,6 +130,21 @@ mod linux {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
+    #[test]
+    fn only_a_service_unit_needs_its_own_relaunch_scope() {
+        use super::linux::runs_in_service_unit;
+        assert!(runs_in_service_unit(
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/bibcode-desktop.service\n"
+        ));
+        assert!(!runs_in_service_unit(
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-foot-1234.scope\n"
+        ));
+        assert!(!runs_in_service_unit(
+            "0::/user.slice/user-1000.slice/session-2.scope\n"
+        ));
+        assert!(!runs_in_service_unit(""));
+    }
+
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     use std::process::Command;
 

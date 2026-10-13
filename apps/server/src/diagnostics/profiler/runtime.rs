@@ -13,7 +13,7 @@ use std::{
 };
 
 use serde_json::Value;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
@@ -144,6 +144,9 @@ impl ProfilerRuntime {
         install(handle.clone());
         // The sentinel and the panic hook work with the profiler off too.
         let earlier_in_process = SESSION_BEGUN.swap(true, Ordering::Relaxed);
+        // Read before this run replaces it: crashes since it began that no session covered.
+        let last = sentinel::last_session(&dir)
+            .filter(|last| !(earlier_in_process && last.pid == std::process::id()));
         let previous = sentinel::begin_session(&dir)
             .filter(|previous| !(earlier_in_process && previous.pid == std::process::id()));
         install_panic_hook();
@@ -157,6 +160,7 @@ impl ProfilerRuntime {
         let classification = runtime.spawn(classify_earlier_runs(
             handle.clone(),
             previous,
+            last,
             dir.clone(),
             dumps.since,
         ));
@@ -340,11 +344,22 @@ fn lock_dir(dir: &Path) -> io::Result<File> {
 async fn classify_earlier_runs(
     handle: Arc<ProfilerHandle>,
     previous: Option<SessionRecord>,
+    last: Option<SessionRecord>,
     dir: PathBuf,
     since: OffsetDateTime,
 ) {
+    // The previous run's own crash is classified with its session below.
+    let mut skip_pids = vec![std::process::id()];
+    skip_pids.extend(previous.as_ref().map(|previous| previous.pid));
     if let Some(previous) = previous {
         classify_previous_run(handle.clone(), previous, dir.clone()).await;
+    }
+    if let Some(last_started) = last
+        .as_ref()
+        .and_then(|last| OffsetDateTime::parse(&last.started_at, &Rfc3339).ok())
+        && let Ok(exe) = std::env::current_exe()
+    {
+        raise_unrecorded_crashes(&handle, last_started, &exe.to_string_lossy(), &skip_pids).await;
     }
     // The findings file was not read in full, so a dump a finding cites may look unlinked;
     // the next start, which retries the read, raises what is truly unlinked.
@@ -366,6 +381,24 @@ async fn classify_earlier_runs(
         }
     })
     .await;
+}
+
+/// Raises the OS's crash records of this executable since `since` that no session reported
+/// and no finding links yet.
+async fn raise_unrecorded_crashes(
+    handle: &ProfilerHandle,
+    since: OffsetDateTime,
+    exe: &str,
+    skip_pids: &[u32],
+) {
+    for crash in os_records::harvest_unrecorded_crashes(since, exe, skip_pids).await {
+        let crash_id = format!("coredump-{}-{}", crash.pid, crash.time_micros);
+        if !lock(&handle.linked_dumps).insert(crash_id.clone()) {
+            continue;
+        }
+        let finding = sentinel::unrecorded_crash_finding(&crash, crash_id);
+        lock(&handle.findings).record_now(finding, OffsetDateTime::now_utc(), &handle.sender);
+    }
 }
 
 /// Reads the crash dump and the OS crash records for a run that never marked its session

@@ -35,6 +35,46 @@ pub async fn harvest_previous_crash(previous: &SessionRecord) -> Option<OsCrashR
     }
 }
 
+/// A crash of this executable the OS recorded for a process no profiler session covered,
+/// such as an app relaunched by an update that died before its profiler started (#94).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnrecordedCrash {
+    pub pid: u32,
+    pub signal: i32,
+    /// When the OS recorded it, in microseconds since the Unix epoch.
+    pub time_micros: u64,
+    pub exe: String,
+}
+
+/// The OS crash records since `since` of processes running `exe`, other than `skip_pids`.
+/// Only systemd-coredump keeps such a list; elsewhere, or on any failure, there are none.
+pub async fn harvest_unrecorded_crashes(
+    since: OffsetDateTime,
+    exe: &str,
+    skip_pids: &[u32],
+) -> Vec<UnrecordedCrash> {
+    #[cfg(target_os = "linux")]
+    {
+        match tokio::time::timeout(
+            HARVEST_TIMEOUT,
+            linux::unrecorded_crashes(since, exe, skip_pids),
+        )
+        .await
+        {
+            Ok(crashes) => crashes,
+            Err(_) => {
+                tracing::warn!("listing the OS crash records timed out");
+                Vec::new()
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (since, exe, skip_pids);
+        Vec::new()
+    }
+}
+
 #[cfg(target_os = "linux")]
 use linux::harvest;
 #[cfg(target_os = "macos")]
@@ -99,6 +139,11 @@ pub(super) fn frame_module(frame: &str) -> Option<&str> {
         .and_then(|frame| frame.rsplit_once(" ("))
         .map_or(frame, |(_, location)| location);
     location.split(" + ").next()
+}
+
+/// The executable's file name, as findings name it.
+pub fn executable_name(path: &str) -> &str {
+    file_name(path).trim_end_matches(" (deleted)")
 }
 
 /// The file name of a path from any OS, as the previous run recorded its executable.
