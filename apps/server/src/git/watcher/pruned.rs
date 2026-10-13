@@ -412,6 +412,8 @@ impl PrunedWatcher {
                 // A directory removed during the walk.
                 Err(error) if matches!(error.kind, notify::ErrorKind::PathNotFound) => {}
                 Err(error) => {
+                    // Including this one: a recursive watch can fail partway.
+                    let _ = watcher.unwatch(&directory);
                     for directory in directories.iter().chain(&submodules) {
                         let _ = watcher.unwatch(directory);
                     }
@@ -495,7 +497,15 @@ impl Worker {
                         rules.insert(root);
                     }
                     Change::Created(path) => {
+                        // Inside a submodule, notify's recursive watch already covers it.
+                        let in_submodule = lock(&roots).get(&root).is_some_and(|pruned| {
+                            pruned
+                                .submodules
+                                .iter()
+                                .any(|submodule| path.starts_with(submodule))
+                        });
                         if path != root
+                            && !in_submodule
                             && fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_dir())
                         {
                             created.entry(root).or_default().push(path);
@@ -562,6 +572,8 @@ impl Worker {
                     Ok(()) => directories.push(directory),
                     Err(error) if matches!(error.kind, notify::ErrorKind::PathNotFound) => {}
                     Err(error) => {
+                        // A recursive watch can fail partway, after watching part of the tree.
+                        let _ = watcher.unwatch(&directory);
                         (self.callback)(Err(error));
                         break;
                     }

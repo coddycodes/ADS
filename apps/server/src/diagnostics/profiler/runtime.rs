@@ -659,7 +659,10 @@ mod tests {
             .sender
             .send_finding(serde_json::from_str(&line).unwrap());
         eventually(|| line_count(&findings) == 2).await;
-        assert!(stale.exists());
+        // Only maintenance compacts findings, so two lines here show it has not run yet. The
+        // stale events file is not checked here: in a full test run this runtime can be the
+        // process-global one, and another test's event can open an events file, whose
+        // retention removes it early.
 
         tokio::time::advance(MAINTENANCE_EVERY).await;
         eventually(|| !stale.exists() && line_count(&findings) == 1).await;
