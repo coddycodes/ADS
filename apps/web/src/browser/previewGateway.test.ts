@@ -43,10 +43,19 @@ const lan = () =>
   connection({ _tag: "BearerConnectionTarget", connectionId: "b:1" }, "http://192.168.1.5:3773");
 const ssh = () =>
   connection({ _tag: "SshConnectionTarget", connectionId: "ssh:1" }, "http://127.0.0.1:45123");
+const relay = () =>
+  connection({ _tag: "RelayConnectionTarget", connectionId: "r:1" }, "https://env.zone.test/");
 
 type GatewayOpenResult = Awaited<ReturnType<GatewayOpenMutation>>;
 const opened = (gatewayPort: number, capability = "CAP"): GatewayOpenResult =>
   AsyncResult.success({ gatewayPort, capability, expiresAtMs: 0 });
+const relayOpened = (origin?: string): GatewayOpenResult =>
+  AsyncResult.success({
+    gatewayPort: 41000,
+    capability: "CAP",
+    expiresAtMs: 0,
+    ...(origin ? { origin } : {}),
+  });
 const refused = (reason: PreviewGatewayError["reason"]): GatewayOpenResult =>
   AsyncResult.failure(Cause.fail(new PreviewGatewayError({ reason, message: reason })));
 
@@ -396,27 +405,6 @@ describe("resolveForNavigation", () => {
         gatewayOpen,
       }),
     ).resolves.toEqual({ kind: "ok", url: "http://localhost:5173/x" });
-    expect(gatewayOpen).not.toHaveBeenCalled();
-  });
-
-  it("reports relay environments as unreachable", async () => {
-    readPreparedConnection.mockReturnValue(
-      connection({ _tag: "RelayConnectionTarget" }, "https://abc.connect.example.com"),
-    );
-    const gatewayOpen = vi.fn();
-
-    await expect(
-      resolveForNavigation({
-        environmentId,
-        threadId,
-        canonicalUrl: "http://localhost:5173/",
-        gatewayOpen,
-      }),
-    ).resolves.toEqual({
-      kind: "unreachable",
-      message:
-        "This address is on Build box, not this computer. Opening its ports from here isn't supported yet.",
-    });
     expect(gatewayOpen).not.toHaveBeenCalled();
   });
 });
@@ -897,5 +885,172 @@ describe("ssh forward bookkeeping", () => {
 
     expect(sshForward).toHaveBeenCalledTimes(1);
     expect(releaseSshForward.mock.calls).toEqual([[sshTarget, 41000]]);
+  });
+});
+
+describe("relay", () => {
+  it("bootstraps on the preview hostname and maps it back to localhost", async () => {
+    readPreparedConnection.mockReturnValue(relay());
+    const result = await resolveForNavigation({
+      environmentId,
+      threadId,
+      tabId: "tab-1",
+      canonicalUrl: "http://localhost:5173/app?x=1",
+      gatewayOpen: vi.fn(async () => relayOpened("https://env-p2.zone.test")),
+    });
+    expect(result).toEqual({
+      kind: "ok",
+      url: "https://env-p2.zone.test/__bibcode/bootstrap?cap=CAP&to=%2Fapp%3Fx%3D1",
+    });
+    expect(canonicalizePreviewUrl("https://env-p2.zone.test/next")).toBe(
+      "http://localhost:5173/next",
+    );
+    expect(sshForward).not.toHaveBeenCalled();
+  });
+
+  it("says previews aren't set up when the server returns no origin or refuses", async () => {
+    readPreparedConnection.mockReturnValue(relay());
+    const message =
+      "Previews over BiBCode Connect aren't set up for Build box yet. Open BiBCode on Build box to finish setting them up.";
+    for (const gatewayOpen of [
+      vi.fn(async () => relayOpened()),
+      vi.fn(async () => refused("relay-not-provisioned")),
+      vi.fn(async () => refused("not-reachable")),
+    ]) {
+      await expect(
+        resolveForNavigation({
+          environmentId,
+          threadId,
+          canonicalUrl: "http://localhost:5173/",
+          gatewayOpen,
+        }),
+      ).resolves.toEqual({ kind: "unreachable", message });
+    }
+  });
+
+  it("asks to close a preview when every preview hostname is busy", async () => {
+    readPreparedConnection.mockReturnValue(relay());
+    await expect(
+      resolveForNavigation({
+        environmentId,
+        threadId,
+        canonicalUrl: "http://localhost:5173/",
+        gatewayOpen: vi.fn(async () => refused("relay-busy")),
+      }),
+    ).resolves.toEqual({
+      kind: "unreachable",
+      message:
+        "Too many previews of Build box are open over BiBCode Connect. Close one, then try again; one closed in a web browser takes up to 10 minutes to free up.",
+      retryable: true,
+    });
+  });
+
+  it("bootstraps on the returned origin for a page served from the managed endpoint", async () => {
+    // A browser opened at the environment's BiBCode Connect hostname connects as a primary
+    // (host) environment; the server still recognizes the tunnel and names the origin.
+    readPreparedConnection.mockReturnValue(
+      connection(
+        { _tag: "PrimaryConnectionTarget", connectionId: "primary" },
+        "https://env.zone.test/",
+      ),
+    );
+    await expect(
+      resolveForNavigation({
+        environmentId,
+        threadId,
+        canonicalUrl: "http://localhost:5173/",
+        gatewayOpen: vi.fn(async () => relayOpened("https://env-p3.zone.test")),
+      }),
+    ).resolves.toEqual({
+      kind: "ok",
+      url: "https://env-p3.zone.test/__bibcode/bootstrap?cap=CAP&to=%2F",
+    });
+  });
+
+  it("never frames a returned preview origin in browser mode, whatever the connection", async () => {
+    // BiBCode opened over plain HTTP at the managed endpoint: a framed panel can't load HTTPS.
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("location", { origin: "http://env.zone.test", protocol: "http:" });
+    readPreparedConnection.mockReturnValue(
+      connection(
+        { _tag: "PrimaryConnectionTarget", connectionId: "primary" },
+        "http://env.zone.test/",
+      ),
+    );
+    await expect(
+      resolveForNavigation({
+        environmentId,
+        threadId,
+        tabId: "tab-1",
+        canonicalUrl: "http://localhost:5173/",
+        gatewayOpen: vi.fn(async () => relayOpened("https://env-p1.zone.test")),
+      }),
+    ).resolves.toEqual({
+      kind: "unreachable",
+      message:
+        "Build box is reached through BiBCode Connect, so its previews can't show inside this page. Ctrl-click (⌘-click on Mac) the address in the chat or terminal to open it in a new tab.",
+    });
+  });
+
+  it("keeps each tab's mapping when a later open reuses the preview hostname", async () => {
+    readPreparedConnection.mockReturnValue(relay());
+    const reused = vi.fn(async () => relayOpened("https://env-p1.zone.test"));
+    for (const [tabId, port] of [
+      ["tab-1", 3000],
+      ["tab-2", 4000],
+    ] as const) {
+      await resolveForNavigation({
+        environmentId,
+        threadId,
+        tabId,
+        canonicalUrl: `http://localhost:${port}/`,
+        gatewayOpen: reused,
+      });
+    }
+
+    expect(canonicalizePreviewUrl("https://env-p1.zone.test/a", "tab-1")).toBe(
+      "http://localhost:3000/a",
+    );
+    expect(canonicalizePreviewUrl("https://env-p1.zone.test/a", "tab-2")).toBe(
+      "http://localhost:4000/a",
+    );
+    // Without a tab (or once the tab is gone) the newest assignment applies.
+    expect(canonicalizePreviewUrl("https://env-p1.zone.test/a")).toBe("http://localhost:4000/a");
+    releasePreviewTab(environmentId, "tab-1");
+    expect(canonicalizePreviewUrl("https://env-p1.zone.test/a", "tab-1")).toBe(
+      "http://localhost:4000/a",
+    );
+  });
+
+  it("never frames a relay preview in browser mode, but opens it in a new tab", async () => {
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("location", { origin: "http://192.168.1.5:3773", protocol: "http:" });
+    readPreparedConnection.mockReturnValue(relay());
+    const gatewayOpen = vi.fn(async () => relayOpened("https://env-p1.zone.test"));
+    await expect(
+      resolveForNavigation({
+        environmentId,
+        threadId,
+        tabId: "tab-1",
+        canonicalUrl: "http://localhost:5173/",
+        gatewayOpen,
+      }),
+    ).resolves.toEqual({
+      kind: "unreachable",
+      message:
+        "Build box is reached through BiBCode Connect, so its previews can't show inside this page. Ctrl-click (⌘-click on Mac) the address in the chat or terminal to open it in a new tab.",
+    });
+    expect(gatewayOpen).not.toHaveBeenCalled();
+    await expect(
+      resolveForNavigation({
+        environmentId,
+        threadId,
+        canonicalUrl: "http://localhost:5173/",
+        gatewayOpen,
+      }),
+    ).resolves.toEqual({
+      kind: "ok",
+      url: "https://env-p1.zone.test/__bibcode/bootstrap?cap=CAP&to=%2F",
+    });
   });
 });

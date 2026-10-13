@@ -20,6 +20,7 @@ import {
   managedEndpointDigestInput,
   managedEndpointForHostname,
   managedEndpointHostname,
+  managedEndpointPreviewHostnames,
   managedEndpointTunnelName,
 } from "../deploymentConfig.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
@@ -48,6 +49,7 @@ const ManagedEndpointProvisioningStage = Schema.Literals([
   "configure-tunnel",
   "ensure-dns-record",
   "record-dns",
+  "ensure-preview-dns-record",
   "get-tunnel-token",
   "mark-allocation-ready",
 ]);
@@ -74,6 +76,7 @@ export class ManagedEndpointProvisioningFailed extends Schema.TaggedError<Manage
 
 const ManagedEndpointDeprovisioningStage = Schema.Literals([
   "load-allocation",
+  "delete-preview-dns-record",
   "delete-dns-record",
   "delete-tunnel",
   "remove-allocation",
@@ -526,6 +529,31 @@ export const make = Effect.gen(function* () {
       if (allocation === null) {
         return;
       }
+      yield* Effect.forEach(
+        managedEndpointPreviewHostnames(allocation.hostname),
+        (previewHostname) =>
+          withOperationFence(input.ownership, dns.listRecords(previewHostname)).pipe(
+            Effect.flatMap((records) =>
+              Effect.forEach(
+                records,
+                (record) =>
+                  withOperationFence(input.ownership, ignoreNotFound(dns.deleteRecord(record.id))),
+                { discard: true },
+              ),
+            ),
+          ),
+        { discard: true },
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ManagedEndpointDeprovisioningFailed({
+              userId: input.userId,
+              environmentId: input.environmentId,
+              stage: "delete-preview-dns-record",
+              cause,
+            }),
+        ),
+      );
       const dnsRecordId = allocation.dnsRecordId;
       if (dnsRecordId !== null) {
         yield* withOperationFence(
@@ -660,6 +688,7 @@ export const make = Effect.gen(function* () {
         ),
       );
     const { hostname, tunnelName } = allocation;
+    const previewHostnames = managedEndpointPreviewHostnames(hostname);
 
     const tunnelResponse = yield* ensureTunnel(input.ownership, tunnelName).pipe(
       Effect.mapError(
@@ -716,6 +745,10 @@ export const make = Effect.gen(function* () {
             hostname,
             service: formatOriginService(input.origin),
           },
+          ...previewHostnames.map((previewHostname) => ({
+            hostname: previewHostname,
+            service: formatOriginService(input.origin),
+          })),
           { service: "http_status:404" },
         ],
       }),
@@ -785,6 +818,32 @@ export const make = Effect.gen(function* () {
         ),
       );
 
+    // Found by name on every run, so a retried or older link gains missing records
+    // without duplicates and the allocation table stores nothing for them.
+    yield* Effect.forEach(
+      previewHostnames,
+      (previewHostname) =>
+        ensureDnsRecord(input.ownership, previewHostname, null, {
+          ...dnsRecord,
+          name: previewHostname,
+        }),
+      { discard: true },
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ManagedEndpointProvisioningFailed({
+            userId: input.userId,
+            environmentId: input.environmentId,
+            stage: "ensure-preview-dns-record",
+            hostname,
+            tunnelName,
+            tunnelId: tunnel.id,
+            dnsRecordId,
+            cause,
+          }),
+      ),
+    );
+
     const connectorToken = yield* withOperationFence(
       input.ownership,
       tunnels.getToken(tunnel.id),
@@ -832,6 +891,8 @@ export const make = Effect.gen(function* () {
         connectorToken,
         tunnelId: tunnel.id,
         tunnelName: tunnel.name,
+        hostname,
+        previewHostnames,
       },
       endpointDisposition:
         previousAllocation?.readyAt === null || previousAllocation === null ? "created" : "reused",

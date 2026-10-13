@@ -310,6 +310,12 @@ async fn cloud_config_is_persistent_atomic_and_replay_safe() {
         .unwrap();
     assert_eq!(state.body["cloudUserId"], "cloud-user");
     assert_eq!(state.body["relayUrl"], "https://relay.example/");
+    assert_eq!(state.body["managedEndpoint"], true);
+    // A restarted server brings the stored tunnel back.
+    assert_eq!(
+        reopened.restore_managed_endpoint().await.unwrap(),
+        Some(json!({"status":"running"}))
+    );
 }
 
 #[tokio::test]
@@ -852,6 +858,8 @@ async fn connect_dependencies_map_failures_without_partial_success() {
     )
     .await;
     link_service(&verification).await;
+    // A link without a managed endpoint has no tunnel to restore.
+    assert_eq!(verification.restore_managed_endpoint().await.unwrap(), None);
     for operation in [
         JsonOperation::ConnectHealth,
         JsonOperation::ConnectMintCredential,

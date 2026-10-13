@@ -98,6 +98,29 @@ export function managedEndpointHostname(stage: string, baseDomain: string, hash:
   return `${label}.${normalizeZoneName(baseDomain)}`;
 }
 
+/** Preview hostnames provisioned per managed endpoint. */
+export const MANAGED_ENDPOINT_PREVIEW_SLOTS = 4;
+
+/**
+ * The managed endpoint's fixed preview hostnames: its first label plus `-p1` …
+ * `-p4`, in the same zone. A label that would exceed the DNS limit shortens its
+ * stage prefix and keeps the hash. Environment labels end in the hex hash, so
+ * these never collide with another environment's hostname.
+ */
+export function managedEndpointPreviewHostnames(hostname: string): ReadonlyArray<string> {
+  const [label = "", ...zone] = hostname.split(".");
+  const hash = label.slice(-MANAGED_ENDPOINT_HASH_LENGTH);
+  const prefix = label.slice(0, -(MANAGED_ENDPOINT_HASH_LENGTH + 1));
+  return Array.from({ length: MANAGED_ENDPOINT_PREVIEW_SLOTS }, (_, index) => {
+    const slot = `-p${index + 1}`;
+    const previewLabel =
+      label.length + slot.length <= DNS_LABEL_MAX_LENGTH
+        ? `${label}${slot}`
+        : appendDnsSafeSuffix(prefix, `${hash}${slot}`);
+    return [previewLabel, ...zone].join(".");
+  });
+}
+
 export function isManagedEndpointHostname(hostname: string, baseDomain: string): boolean {
   const normalizedHostname = normalizeZoneName(hostname);
   const normalizedBaseDomain = normalizeZoneName(baseDomain);

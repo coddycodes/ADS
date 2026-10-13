@@ -5,6 +5,7 @@ pub mod capability;
 pub mod frame;
 pub mod proxy;
 pub mod registry;
+pub mod relay;
 pub mod rewrite;
 
 use std::collections::HashMap;

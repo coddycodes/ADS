@@ -786,11 +786,15 @@ async fn gateway_open(
         )
         .await
         .map_err(|error| gateway_error(&error))?;
-    Ok(json!({
+    let mut result = json!({
         "gatewayPort": opened.gateway_port,
         "capability": opened.capability,
         "expiresAtMs": opened.expires_at_ms,
-    }))
+    });
+    if let Some(origin) = opened.origin {
+        result["origin"] = json!(origin);
+    }
+    Ok(result)
 }
 
 fn gateway_error(error: &GatewayError) -> Value {
@@ -799,6 +803,8 @@ fn gateway_error(error: &GatewayError) -> Value {
         GatewayError::HttpsUnsupported => "https-unsupported",
         GatewayError::NoUpstream => "no-upstream",
         GatewayError::NotReachable(_) => "not-reachable",
+        GatewayError::RelayNotProvisioned => "relay-not-provisioned",
+        GatewayError::RelayBusy => "relay-busy",
         GatewayError::Unavailable(_) => "unavailable",
     };
     json!({

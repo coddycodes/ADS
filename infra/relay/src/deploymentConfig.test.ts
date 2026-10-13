@@ -5,6 +5,7 @@ import {
   managedEndpointDigestInput,
   managedEndpointForHostname,
   managedEndpointHostname,
+  managedEndpointPreviewHostnames,
   isManagedEndpointHostname,
   managedEndpointTunnelName,
   relayOwnsManagedEndpointZone,
@@ -119,5 +120,36 @@ describe("managed endpoint names", () => {
     expect(isManagedEndpointHostname("internal.example.net", "example.com")).toBe(false);
     expect(isManagedEndpointHostname("example.com.attacker.test", "example.com")).toBe(false);
     expect(isManagedEndpointHostname("dev-julius.example.com.", "example.com")).toBe(false);
+  });
+});
+
+describe("managedEndpointPreviewHostnames", () => {
+  it("appends -p1 … -p4 to the environment label in the same zone", () => {
+    expect(managedEndpointPreviewHostnames("dev-julius-0123456789abcdef.bibcode.test")).toEqual([
+      "dev-julius-0123456789abcdef-p1.bibcode.test",
+      "dev-julius-0123456789abcdef-p2.bibcode.test",
+      "dev-julius-0123456789abcdef-p3.bibcode.test",
+      "dev-julius-0123456789abcdef-p4.bibcode.test",
+    ]);
+  });
+
+  it("keeps a 60-character label whole and shortens the stage prefix of a 61-character one", () => {
+    const hash = "0123456789abcdef";
+    const sixty = `${"s".repeat(43)}-${hash}`;
+    const sixtyOne = `${"s".repeat(44)}-${hash}`;
+    expect(sixty).toHaveLength(60);
+    expect(sixtyOne).toHaveLength(61);
+    const whole = [1, 2, 3, 4].map((slot) => `${sixty}-p${slot}.bibcode.test`);
+    expect(managedEndpointPreviewHostnames(`${sixty}.bibcode.test`)).toEqual(whole);
+    expect(managedEndpointPreviewHostnames(`${sixtyOne}.bibcode.test`)).toEqual(whole);
+    expect(whole[0]!.split(".")[0]).toHaveLength(63);
+  });
+
+  it("shortens a full-length environment label to 63 characters", () => {
+    const hostname = managedEndpointHostname("s".repeat(80), "bibcode.test", "0123456789abcdef");
+    expect(hostname.split(".")[0]).toHaveLength(63);
+    expect(managedEndpointPreviewHostnames(hostname)).toEqual(
+      [1, 2, 3, 4].map((slot) => `${"s".repeat(43)}-0123456789abcdef-p${slot}.bibcode.test`),
+    );
   });
 });

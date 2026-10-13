@@ -8,7 +8,7 @@
         "_tag": "Fail",
         "error": {
           "_tag": "PreviewGatewayError",
-          "reason": "no-upstream",
+          "reason": "relay-not-provisioned",
           "message": "ica"
         }
       }

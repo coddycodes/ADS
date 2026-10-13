@@ -1673,11 +1673,13 @@ it.
   connection writes `rpc.reconnect` with the gap. Neither raises a finding. See
   [Connection ends](./rpc-and-orchestration.md#connection-ends).
 - **Subprocess exits.** The provider, terminal, and supervised-command exit
-  paths report a death BiBCode did not ask for as a `subprocess.exit` event and
+  paths, and the BiBCode Connect tunnel connector (checked every 5 s while it
+  is the active one), report a death BiBCode did not ask for as a
+  `subprocess.exit` event and
   a `subprocess.crash` finding with the signal or exit code, uptime, and the
   sampler's last memory sample. On Linux, for a signal that dumps core, a
   matching core dump record is looked up in the background for up to about 5 s
-  and attached when found. Providers count signals and non-zero exits,
+  and attached when found. Providers and the tunnel connector count signals and non-zero exits,
   supervised commands such as git only signals, and terminals only signals
   people do not type (not `Ctrl-\` or `kill -9`). SIGTERM, SIGHUP, and SIGINT (on
   Windows the Ctrl-C status), and a provider's exit codes 129, 130, and 143,

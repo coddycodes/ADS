@@ -297,6 +297,9 @@ pub struct ConnectMcpService {
     pairing: PairingIssuer,
     preview: PreviewInvoker,
     mcp: Arc<Mutex<McpState>>,
+    /// Serializes changes to the stored link and its managed endpoint (link, unlink, and the
+    /// startup restore), so a restore never reapplies a config a newer change replaced.
+    link_mutation: Arc<Mutex<()>>,
 }
 
 #[derive(Clone)]
@@ -356,6 +359,7 @@ impl ConnectMcpService {
             pairing,
             preview,
             mcp: Arc::new(Mutex::new(McpState::default())),
+            link_mutation: Arc::default(),
         })
     }
 
@@ -639,6 +643,7 @@ impl ConnectMcpService {
     }
 
     async fn relay_config(&self, payload: Value) -> Result<JsonRouteResponse, ConnectMcpError> {
+        let _link_mutation = self.link_mutation.lock().await;
         let object = object(&payload)?;
         let relay_url = string_field(object, "relayUrl")?;
         validate_secure_url(relay_url, "Relay URL")?;
@@ -660,7 +665,17 @@ impl ConnectMcpService {
                 "Cloud mint public key must be a valid Ed25519 public key.",
             ));
         }
-        if let Some(existing) = self.read_secret("cloud-linked-user-id").await?
+        let existing = self.read_secret("cloud-linked-user-id").await?;
+        // A background re-link names the link it set out to refresh; if another client
+        // unlinked or re-linked meanwhile (even to the same account), it must not undo that.
+        if let Some(required) = optional_string_field(object, "requireLinkGeneration")?
+            && self.link_generation().await?.as_deref() != Some(required)
+        {
+            return Err(ConnectMcpError::conflict(
+                "This environment's BiBCode Connect link changed. Link it again from Settings.",
+            ));
+        }
+        if let Some(existing) = existing
             && existing != cloud_user_id
         {
             return Err(ConnectMcpError::conflict(
@@ -694,6 +709,8 @@ impl ConnectMcpService {
             environment_credential: environment_credential.into(),
             cloud_mint_public_key: cloud_mint_public_key.into(),
             endpoint_runtime: endpoint_config,
+            // The relay just pointed the tunnel's ingress at this server's current port.
+            origin_port: self.current_origin_port(),
         })
         .await?;
         Ok(JsonRouteResponse::ok(json!({
@@ -704,15 +721,89 @@ impl ConnectMcpService {
 
     async fn link_state(&self) -> Result<JsonRouteResponse, ConnectMcpError> {
         let values = self.read_link_state().await?;
+        let endpoint = self.stored_endpoint_runtime().await?;
+        let preview_hostnames = endpoint
+            .as_ref()
+            .and_then(|config| config.get("previewHostnames"))
+            .and_then(Value::as_array)
+            .is_some_and(|names| !names.is_empty());
+        let stale = endpoint.is_some() && self.endpoint_origin_moved().await?;
+        let generation = self.link_generation().await?;
         Ok(JsonRouteResponse::ok(json!({
             "linked": values.0.is_some(),
             "cloudUserId": values.0,
             "relayUrl": values.1,
-            "relayIssuer": values.2
+            "relayIssuer": values.2,
+            "managedEndpoint": endpoint.is_some(),
+            "previewHostnames": preview_hostnames,
+            "managedEndpointStale": stale,
+            "linkGeneration": generation
         })))
     }
 
+    /// Restarts the managed tunnel from the stored link after a server restart. An unlinked
+    /// server, or a link without a managed endpoint, has nothing to restore.
+    pub async fn restore_managed_endpoint(&self) -> Result<Option<Value>, ConnectMcpError> {
+        let _link_mutation = self.link_mutation.lock().await;
+        if self.read_secret("cloud-linked-user-id").await?.is_none() {
+            return Ok(None);
+        }
+        let Some(config) = self.stored_endpoint_runtime().await? else {
+            return Ok(None);
+        };
+        // The tunnel's ingress still points at the port of the last link; a connector for it
+        // would report running while reaching nothing. The primary client re-links instead.
+        if self.endpoint_origin_moved().await? {
+            return Ok(Some(json!({ "status": "stale-origin" })));
+        }
+        (self.endpoint.0)(config).await.map(Some).map_err(|_| {
+            ConnectMcpError::internal("Managed endpoint runtime could not be started.")
+        })
+    }
+
+    /// Identifies the stored link: every link rotates the relay environment credential, so a
+    /// domain-separated digest of it changes with each link without revealing it.
+    async fn link_generation(&self) -> Result<Option<String>, ConnectMcpError> {
+        Ok(self
+            .read_secret("relay-environment-credential")
+            .await?
+            .map(|credential| {
+                let digest = Sha256::digest(format!("bibcode-link-generation:{credential}"));
+                URL_SAFE_NO_PAD.encode(&digest[..16])
+            }))
+    }
+
+    /// This server's own listening port (its MCP endpoint is on the same listener).
+    fn current_origin_port(&self) -> Option<u16> {
+        self.config
+            .mcp_endpoint
+            .parse::<axum::http::Uri>()
+            .ok()?
+            .port_u16()
+    }
+
+    /// The stored link's tunnel was provisioned for another port than this server now
+    /// listens on (the desktop picks a free port each launch). Links stored before the port
+    /// was recorded count as current.
+    async fn endpoint_origin_moved(&self) -> Result<bool, ConnectMcpError> {
+        let stored = self
+            .read_secret("cloud-endpoint-origin-port")
+            .await?
+            .and_then(|port| port.parse::<u16>().ok());
+        Ok(stored.is_some_and(|stored| Some(stored) != self.current_origin_port()))
+    }
+
+    /// The stored, non-null managed endpoint runtime config.
+    async fn stored_endpoint_runtime(&self) -> Result<Option<Value>, ConnectMcpError> {
+        Ok(self
+            .read_secret("cloud-endpoint-runtime-config")
+            .await?
+            .and_then(|stored| serde_json::from_str::<Value>(&stored).ok())
+            .filter(|config| !config.is_null()))
+    }
+
     async fn unlink(&self) -> Result<JsonRouteResponse, ConnectMcpError> {
+        let _link_mutation = self.link_mutation.lock().await;
         let endpoint_status = (self.endpoint.0)(Value::Null).await.map_err(|_| {
             ConnectMcpError::internal("Could not disable managed endpoint runtime.")
         })?;
@@ -1042,7 +1133,7 @@ impl ConnectMcpService {
             let transaction = connection.transaction().map_err(|error| error.to_string())?;
             transaction
                 .execute(
-                    "DELETE FROM connect_native_secrets WHERE name IN ('cloud-linked-user-id','relay-url','relay-issuer','relay-environment-credential','cloud-mint-public-key','cloud-endpoint-runtime-config')",
+                    "DELETE FROM connect_native_secrets WHERE name IN ('cloud-linked-user-id','relay-url','relay-issuer','relay-environment-credential','cloud-mint-public-key','cloud-endpoint-runtime-config','cloud-endpoint-origin-port')",
                     [],
                 )
                 .map_err(|error| error.to_string())?;
@@ -1173,6 +1264,8 @@ struct LinkConfig {
     environment_credential: String,
     cloud_mint_public_key: String,
     endpoint_runtime: Value,
+    /// The local port the tunnel's ingress was provisioned for.
+    origin_port: Option<u16>,
 }
 
 struct LinkMaterial {
@@ -1232,6 +1325,13 @@ fn write_link_config(path: &Path, config: LinkConfig) -> Result<(), String> {
         (
             "cloud-endpoint-runtime-config",
             config.endpoint_runtime.to_string(),
+        ),
+        (
+            "cloud-endpoint-origin-port",
+            config
+                .origin_port
+                .map(|port| port.to_string())
+                .unwrap_or_default(),
         ),
     ];
     for (name, value) in values {
@@ -1353,13 +1453,23 @@ fn allowed_origin(origin: Option<&Value>, context: &RouteContext) -> bool {
         .trim_matches(['[', ']'])
         .to_ascii_lowercase();
     let port = origin.get("localHttpPort").and_then(Value::as_u64);
-    let request_host = context
-        .uri
+    // HTTP/1.1 requests carry an origin-form target, so the authority comes from Host.
+    let Some(authority) = context.uri.authority().cloned().or_else(|| {
+        context
+            .headers
+            .get(header::HOST)?
+            .to_str()
+            .ok()?
+            .parse::<axum::http::uri::Authority>()
+            .ok()
+    }) else {
+        return false;
+    };
+    let request_host = authority
         .host()
-        .unwrap_or_default()
         .trim_matches(['[', ']'])
         .to_ascii_lowercase();
-    let request_port = context.uri.port_u16().map(u64::from).unwrap_or(80);
+    let request_port = authority.port_u16().map(u64::from).unwrap_or(80);
     matches!(host.as_str(), "127.0.0.1" | "::1" | "localhost")
         && matches!(request_host.as_str(), "127.0.0.1" | "::1" | "localhost")
         && port == Some(request_port)

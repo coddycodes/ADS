@@ -201,7 +201,11 @@ A panic that ended the process also leaves a `crash.unclean-exit` or
     codes for a caught `SIGHUP`, `SIGINT` or `SIGTERM`);
   - terminal sessions: crash signals only (`SIGQUIT` and `SIGKILL` are typed by
     users, `exit 1` is ordinary);
-  - commands such as `git`: signals only.
+  - commands such as `git`: signals only;
+  - the BiBCode Connect tunnel connector (`command`, labelled by its
+    executable, such as `bibcode-connect`): signals and non-zero exits, noticed
+    within 5 s; its relay preview hostnames are withdrawn until the next link
+    or restart.
 - **Fingerprint:** `processKind`, `label` and `outcome`.
 - **Evidence:**
   - `pid`, `outcome`, `uptimeMs`;

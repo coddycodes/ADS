@@ -1009,7 +1009,16 @@ thread's environment is:
   links to that address keep working. When that port is already in use on
   your computer, it loads from `http://127.0.0.1:<local port>` instead, and a
   note says the port is in use and that apps expecting it (OAuth sign-in, for
-  example) may not work until you free it.
+  example) may not work until you free it;
+- reached through BiBCode Connect; the preview loads from one of the
+  environment's 4 preview addresses, `https://<environment address>-p1` to
+  `-p4` in the same domain. Up to 4 previews of one environment can be open at
+  once; a preview's address frees when its BiBCode browser tab closes, or after
+  10 minutes without connections. In a browser tab, these
+  previews always open in a new tab, not in the Browser panel. Environments
+  linked before preview addresses existed get them the next time you open
+  BiBCode on that environment while signed in to BiBCode Connect. Service
+  workers don't run in these previews.
 
 The gateway opens one port per thread and dev-server port, so the client must
 be able to reach that host on ports other than BiBCode's own. The BiBCode
@@ -1033,17 +1042,20 @@ allowlists, and links or scripts that name `http://localhost:<port>`.
 These cases show "Can't open this address here" with the address and **Copy
 link**:
 
-| Situation                                                           | Message                                                                                                               |
-| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| BiBCode Connect, a public IP address, or SSH in a browser tab       | "This address is on <environment>, not this computer. Opening its ports from here isn't supported yet."               |
-| The environment isn't connected, or its SSH connection is down      | "<environment> isn't connected. Reconnect it, then open the link again."                                              |
-| An `https://` dev server                                            | "HTTPS dev servers can't be previewed through the gateway yet; serve over HTTP or open it on <environment> directly." |
-| Nothing listens on the port                                         | "Nothing is listening on port <port> on <environment>."                                                               |
-| The server refused the address                                      | "BiBCode can only preview plain HTTP addresses on <environment>'s own localhost."                                     |
-| You reached the server on a public address                          | "Previews aren't available on a public address. Open it on <environment> directly."                                   |
-| You reached the server through a reverse proxy or Tailscale Serve   | "Previews aren't available through a proxied address. Open it on <environment> directly."                             |
-| The gateway or SSH forward failed, or this client's session expired | "Couldn't open a preview connection to <environment>. Try again, or reconnect <environment> if it keeps failing."     |
-| A terminal with no thread                                           | "Open this address from a thread's chat or terminal to reach it from here."                                           |
+| Situation                                                           | Message                                                                                                                                                                                   |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A public IP address, or SSH in a browser tab                        | "This address is on <environment>, not this computer. Opening its ports from here isn't supported yet."                                                                                   |
+| BiBCode Connect before its previews are set up                      | "Previews over BiBCode Connect aren't set up for <environment> yet. Open BiBCode on <environment> to finish setting them up."                                                             |
+| BiBCode Connect with too many previews open                         | "Too many previews of <environment> are open over BiBCode Connect. Close one, then try again; one closed in a web browser takes up to 10 minutes to free up."                             |
+| BiBCode Connect inside a browser tab's panel                        | "<environment> is reached through BiBCode Connect, so its previews can't show inside this page. Ctrl-click (⌘-click on Mac) the address in the chat or terminal to open it in a new tab." |
+| The environment isn't connected, or its SSH connection is down      | "<environment> isn't connected. Reconnect it, then open the link again."                                                                                                                  |
+| An `https://` dev server                                            | "HTTPS dev servers can't be previewed through the gateway yet; serve over HTTP or open it on <environment> directly."                                                                     |
+| Nothing listens on the port                                         | "Nothing is listening on port <port> on <environment>."                                                                                                                                   |
+| The server refused the address                                      | "BiBCode can only preview plain HTTP addresses on <environment>'s own localhost."                                                                                                         |
+| You reached the server on a public address                          | "Previews aren't available on a public address. Open it on <environment> directly."                                                                                                       |
+| You reached the server through a reverse proxy or Tailscale Serve   | "Previews aren't available through a proxied address. Open it on <environment> directly."                                                                                                 |
+| The gateway or SSH forward failed, or this client's session expired | "Couldn't open a preview connection to <environment>. Try again, or reconnect <environment> if it keeps failing."                                                                         |
+| A terminal with no thread                                           | "Open this address from a thread's chat or terminal to reach it from here."                                                                                                               |
 
 When a BiBCode browser tab's address can't load, the tab shows the reason in
 place of the page, and **Reload** resolves the address again and reopens it.

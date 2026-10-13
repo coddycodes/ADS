@@ -118,19 +118,36 @@ function makePersistentTunnelClient(calls: TunnelCall[] = []) {
   });
 }
 
+const PREVIEW_HOSTNAME = /-p[1-4]\./u;
+
 function makeDnsClient(
   calls: DnsCall[] = [],
   records: ReadonlyArray<{ readonly id: string }> = [],
+  previewCalls: DnsCall[] = [],
 ) {
   let currentRecords = [...records];
+  const previewRecords = new Map<string, { readonly id: string }>();
+  const previewName = (dnsRecordId: string) =>
+    dnsRecordId.startsWith("preview:") ? dnsRecordId.slice("preview:".length) : null;
   return ManagedEndpointProvider.ManagedEndpointDnsClient.of({
     listRecords: (hostname) =>
       Effect.sync(() => {
+        if (PREVIEW_HOSTNAME.test(hostname)) {
+          previewCalls.push({ operation: "listRecords", input: hostname });
+          const record = previewRecords.get(hostname);
+          return record === undefined ? [] : [record];
+        }
         calls.push({ operation: "listRecords", input: hostname });
         return currentRecords;
       }),
     createRecord: (request) =>
       Effect.sync(() => {
+        if (PREVIEW_HOSTNAME.test(request.name)) {
+          previewCalls.push({ operation: "createRecord", input: request });
+          const record = { id: `preview:${request.name}` };
+          previewRecords.set(request.name, record);
+          return record;
+        }
         calls.push({ operation: "createRecord", input: request });
         const record = { id: "created-record-id" };
         currentRecords = [record];
@@ -138,6 +155,11 @@ function makeDnsClient(
       }),
     updateRecord: (dnsRecordId, request) =>
       Effect.gen(function* () {
+        const preview = previewName(dnsRecordId);
+        if (preview !== null) {
+          previewCalls.push({ operation: "updateRecord", input: { dnsRecordId, request } });
+          return;
+        }
         calls.push({ operation: "updateRecord", input: { dnsRecordId, request } });
         if (!currentRecords.some((record) => record.id === dnsRecordId)) {
           return yield* new ManagedEndpointProvider.ManagedEndpointDnsClientError({
@@ -150,6 +172,12 @@ function makeDnsClient(
       }),
     deleteRecord: (dnsRecordId) =>
       Effect.sync(() => {
+        const preview = previewName(dnsRecordId);
+        if (preview !== null) {
+          previewCalls.push({ operation: "deleteRecord", input: dnsRecordId });
+          previewRecords.delete(preview);
+          return;
+        }
         calls.push({ operation: "deleteRecord", input: dnsRecordId });
         currentRecords = currentRecords.filter((record) => record.id !== dnsRecordId);
       }),
@@ -272,6 +300,11 @@ function expectedManagedHostname(environmentId: string, userId = "user_ABC"): st
     .digest("hex")
     .slice(0, 16);
   return `dev-julius-${hash}.bibcode.test`;
+}
+
+function expectedPreviewHostnames(environmentId: string, userId = "user_ABC"): string[] {
+  const [label, ...zone] = expectedManagedHostname(environmentId, userId).split(".");
+  return [1, 2, 3, 4].map((slot) => [`${label}-p${slot}`, ...zone].join("."));
 }
 
 function expectedManagedTunnelName(environmentId: string, userId = "user_ABC"): string {
@@ -585,7 +618,7 @@ describe("ManagedEndpointProvider", () => {
     const tunnelCalls: string[] = [];
     const dnsCalls: string[] = [];
     let tunnel: { readonly id: string; readonly name: string } | null = null;
-    let dnsRecords: Array<{ readonly id: unknown; readonly name: string }> = [];
+    const dnsRecords = new Map<string, { readonly id: string; readonly name: string }>();
     const tunnelClient = {
       list: (_request: { readonly name: string }) =>
         Effect.sync(() => {
@@ -617,22 +650,23 @@ describe("ManagedEndpointProvider", () => {
       listDnsRecords: () =>
         Effect.sync(() => {
           dnsCalls.push("list-records");
-          return { result: dnsRecords };
+          return { result: [...dnsRecords.values()] };
         }),
       createDnsRecord: (request: { readonly name: string }) =>
         Effect.sync(() => {
           dnsCalls.push("create-record");
-          dnsRecords = [{ id: "dns-id", name: request.name }];
-          return { id: "dns-id" };
+          const record = { id: `dns-${request.name}`, name: request.name };
+          dnsRecords.set(record.id, record);
+          return { id: record.id };
         }),
       updateDnsRecord: () =>
         Effect.sync(() => {
           dnsCalls.push("update-record");
         }),
-      deleteDnsRecord: () =>
+      deleteDnsRecord: (id: string) =>
         Effect.sync(() => {
           dnsCalls.push("delete-record");
-          dnsRecords = [];
+          dnsRecords.delete(id);
         }),
     } as unknown as Cloudflare.DNS.ReadWriteDnsClient;
     const allocations = makeAllocations();
@@ -647,7 +681,13 @@ describe("ManagedEndpointProvider", () => {
       expect(provisioned.runtime.connectorToken).toBe("connector-token");
       yield* provider.deprovision({ userId: "user_ABC", environmentId: "env-bindings" });
       expect(tunnelCalls).toEqual(["list", "create", "put-configuration", "get-token", "delete"]);
-      expect(dnsCalls).toEqual(["list-records", "create-record", "delete-record"]);
+      expect(dnsCalls).toEqual([
+        "list-records",
+        "create-record",
+        ...Array.from({ length: 4 }, () => ["list-records", "create-record"]).flat(),
+        ...Array.from({ length: 4 }, () => ["list-records", "delete-record"]).flat(),
+        "delete-record",
+      ]);
     }).pipe(Effect.provide(cloudflareProviderLayer(tunnelClient, dnsClient, allocations)));
   });
 
@@ -665,14 +705,19 @@ describe("ManagedEndpointProvider", () => {
     const dnsClient = {
       listDnsRecords: (request: { readonly search: string }) =>
         Effect.succeed({
-          result: [
-            { id: 42, name: request.search },
-            { id: "wrong-host", name: "other.example.test" },
-            { id: "matching", name: ` ${request.search.toUpperCase()}. ` },
-            { id: "duplicate", name: request.search },
-          ],
+          result: PREVIEW_HOSTNAME.test(request.search)
+            ? []
+            : [
+                { id: 42, name: request.search },
+                { id: "wrong-host", name: "other.example.test" },
+                { id: "matching", name: ` ${request.search.toUpperCase()}. ` },
+                { id: "duplicate", name: request.search },
+              ],
         }),
-      createDnsRecord: () => Effect.die("create must not run"),
+      createDnsRecord: (request: { readonly name: string }) =>
+        PREVIEW_HOSTNAME.test(request.name)
+          ? Effect.succeed({ id: "preview-id" })
+          : Effect.die("create must not run"),
       updateDnsRecord: (id: string) =>
         Effect.sync(() => {
           updated.push(id);
@@ -730,7 +775,8 @@ describe("ManagedEndpointProvider", () => {
         origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
       });
       expect(result.runtime.connectorToken).toBe("connector-token");
-      expect(listCalls).toBe(2);
+      // main lookup + retry lookup, then one lookup per preview hostname that finds the winner
+      expect(listCalls).toBe(2 + 4);
     }).pipe(Effect.provide(cloudflareProviderLayer(tunnelClient, dnsClient)));
   });
 
@@ -1005,10 +1051,11 @@ describe("ManagedEndpointProvider", () => {
       hostname: "env.bibcode.test",
       cause: "ambiguous create",
     });
+    // Only the environment record collides; preview records are created normally.
     const dnsClient = ManagedEndpointProvider.ManagedEndpointDnsClient.of({
-      listRecords: () =>
+      listRecords: (hostname) =>
         Effect.sync(() => {
-          if (!createFailed) return [];
+          if (!createFailed || PREVIEW_HOSTNAME.test(hostname)) return [];
           retryLists++;
           if (retryLists === 1) {
             resolveRetryStarted?.();
@@ -1016,11 +1063,13 @@ describe("ManagedEndpointProvider", () => {
           }
           return [{ id: "dns-after-delay" }];
         }),
-      createRecord: () =>
-        Effect.gen(function* () {
-          createFailed = true;
-          return yield* failure;
-        }),
+      createRecord: (request) =>
+        PREVIEW_HOSTNAME.test(request.name)
+          ? Effect.succeed({ id: `preview:${request.name}` })
+          : Effect.gen(function* () {
+              createFailed = true;
+              return yield* failure;
+            }),
       updateRecord: () => Effect.void,
       deleteRecord: () => Effect.void,
     });
@@ -1251,7 +1300,8 @@ describe("ManagedEndpointProvider", () => {
       const providerEvents = events
         .map((event, index) => ({ event, index }))
         .filter(({ event }) => event.startsWith("provider:"));
-      expect(providerEvents).toHaveLength(6);
+      // Six environment calls, then a lookup and a create per preview hostname.
+      expect(providerEvents).toHaveLength(6 + 4 * 2);
       for (const { index } of providerEvents) {
         expect(events[index - 1]).toBe("renew");
         expect(events[index + 1]).toBe("renew");
@@ -1443,6 +1493,8 @@ describe("ManagedEndpointProvider", () => {
           connectorToken: "connector-token",
           tunnelId: "tunnel-id",
           tunnelName: expectedManagedTunnelName("env_ABC"),
+          hostname,
+          previewHostnames: expectedPreviewHostnames("env_ABC"),
         },
         endpointDisposition: "created",
       });
@@ -1472,6 +1524,10 @@ describe("ManagedEndpointProvider", () => {
               hostname,
               service: "http://127.0.0.1:3773",
             },
+            ...expectedPreviewHostnames("env_ABC").map((previewHostname) => ({
+              hostname: previewHostname,
+              service: "http://127.0.0.1:3773",
+            })),
             { service: "http_status:404" },
           ],
         },
@@ -1494,6 +1550,142 @@ describe("ManagedEndpointProvider", () => {
         ),
       ),
     );
+  });
+
+  it.effect("provisions preview hostnames with ingress before the catch-all", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const previewCalls: DnsCall[] = [];
+    return Effect.gen(function* () {
+      const hostname = expectedManagedHostname("env_ABC");
+      const previews = expectedPreviewHostnames("env_ABC");
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const result = yield* provider.provision({
+        userId: "user_ABC",
+        environmentId: "env_ABC",
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+
+      expect(result.runtime).toMatchObject({ hostname, previewHostnames: previews });
+      expect(tunnelCalls[2]?.input).toMatchObject({
+        tunnelConfig: {
+          ingress: [
+            { hostname, service: "http://127.0.0.1:3773" },
+            ...previews.map((preview) => ({ hostname: preview, service: "http://127.0.0.1:3773" })),
+            { service: "http_status:404" },
+          ],
+        },
+      });
+      expect(previewCalls.map((call) => [call.operation, call.input])).toEqual(
+        previews.flatMap((preview) => [
+          ["listRecords", preview],
+          [
+            "createRecord",
+            {
+              type: "CNAME",
+              name: preview,
+              content: "tunnel-id.cfargotunnel.com",
+              ttl: 1,
+              proxied: true,
+            },
+          ],
+        ]),
+      );
+    }).pipe(
+      Effect.provide(
+        providerLayer(makeTunnelClient(tunnelCalls), makeDnsClient([], [], previewCalls)),
+      ),
+    );
+  });
+
+  it.effect("re-provisioning updates preview records instead of duplicating them", () => {
+    const previewCalls: DnsCall[] = [];
+    const layer = providerLayer(makePersistentTunnelClient(), makeDnsClient([], [], previewCalls));
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const request = {
+        userId: "user_ABC",
+        environmentId: "env_ABC",
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      } as const;
+      yield* provider.provision(request);
+      previewCalls.length = 0;
+      yield* provider.provision(request);
+      expect(previewCalls.map((call) => call.operation)).toEqual(
+        Array.from({ length: 4 }, () => ["listRecords", "updateRecord"]).flat(),
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("deprovisions preview records before the environment record and tunnel", () => {
+    const previewCalls: DnsCall[] = [];
+    const dnsCalls: DnsCall[] = [];
+    const tunnelCalls: TunnelCall[] = [];
+    const layer = providerLayer(
+      makePersistentTunnelClient(tunnelCalls),
+      makeDnsClient(dnsCalls, [], previewCalls),
+    );
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+      yield* provider.provision({
+        ...key,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+      previewCalls.length = 0;
+      dnsCalls.length = 0;
+      yield* provider.deprovision(key);
+      expect(previewCalls.filter((call) => call.operation === "deleteRecord")).toHaveLength(4);
+      expect(dnsCalls.map((call) => call.operation)).toEqual(["deleteRecord"]);
+      expect(tunnelCalls.at(-1)?.operation).toBe("delete");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("maps preview record failures to their own stages", () => {
+    const failure = new ManagedEndpointProvider.ManagedEndpointDnsClientError({
+      operation: "list-records",
+      cause: new Error("preview list failed"),
+    });
+    const failingPreviews = (
+      base: ManagedEndpointProvider.ManagedEndpointDnsClient["Service"],
+    ): ManagedEndpointProvider.ManagedEndpointDnsClient["Service"] => ({
+      ...base,
+      listRecords: (hostname: string) =>
+        PREVIEW_HOSTNAME.test(hostname) ? Effect.fail(failure) : base.listRecords(hostname),
+    });
+    const allocation: ManagedEndpointAllocations.ManagedEndpointAllocation = {
+      userId: "user_ABC",
+      environmentId: "env_ABC",
+      hostname: expectedManagedHostname("env_ABC"),
+      tunnelId: "tunnel-id",
+      tunnelName: "tunnel-name",
+      dnsRecordId: "dns-id",
+      readyAt: "2026-01-01T00:00:00.000Z",
+    };
+    return Effect.gen(function* () {
+      const provisionError = yield* Effect.flip(
+        Effect.flatMap(ManagedEndpointProvider.ManagedEndpointProvider, (provider) =>
+          provider.provision({
+            userId: "user_ABC",
+            environmentId: "env_ABC",
+            origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+          }),
+        ).pipe(Effect.provide(providerLayer(makeTunnelClient(), failingPreviews(makeDnsClient())))),
+      );
+      const deprovisionError = yield* Effect.flip(
+        Effect.flatMap(ManagedEndpointProvider.ManagedEndpointProvider, (provider) =>
+          provider.deprovision({ userId: "user_ABC", environmentId: "env_ABC" }),
+        ).pipe(
+          Effect.provide(
+            providerLayer(makeTunnelClient(), failingPreviews(makeDnsClient()), {
+              ...makeAllocations(),
+              claimForOperation: () => Effect.succeed(allocation),
+            }),
+          ),
+        ),
+      );
+      expect(provisionError).toMatchObject({ stage: "ensure-preview-dns-record" });
+      expect(deprovisionError).toMatchObject({ stage: "delete-preview-dns-record" });
+    });
   });
 
   it.effect("uses stage-scoped stable names without leaking unusual environment ids", () => {
@@ -1524,6 +1716,11 @@ describe("ManagedEndpointProvider", () => {
           {
             hostname: expect.stringMatching(/^dev-julius-[a-f0-9]{16}\.bibcode\.test$/),
           },
+          ...[1, 2, 3, 4].map((slot) => ({
+            hostname: expect.stringMatching(
+              new RegExp(`^dev-julius-[a-f0-9]{16}-p${slot}\\.bibcode\\.test$`, "u"),
+            ),
+          })),
           { service: "http_status:404" },
         ],
       });
@@ -1559,10 +1756,9 @@ describe("ManagedEndpointProvider", () => {
         tunnelCalls.find((call) => call.operation === "putConfiguration")?.input,
       ).toMatchObject({
         tunnelConfig: {
+          // The environment rule and every preview rule share the origin service.
           ingress: [
-            {
-              service: "http://[::1]:3773",
-            },
+            ...Array.from({ length: 5 }, () => ({ service: "http://[::1]:3773" })),
             { service: "http_status:404" },
           ],
         },
@@ -1730,14 +1926,18 @@ describe("ManagedEndpointProvider", () => {
       cause: new Error("Cloudflare DNS unavailable"),
     });
     let records: ReadonlyArray<{ readonly id: string }> = [];
+    // Preview records are always created fresh here; only the checkpointed
+    // environment record exercises the failing update.
     const dnsClient = ManagedEndpointProvider.ManagedEndpointDnsClient.of({
       listRecords: (hostname) =>
         Effect.sync(() => {
+          if (PREVIEW_HOSTNAME.test(hostname)) return [];
           dnsCalls.push({ operation: "listRecords", input: hostname });
           return records;
         }),
       createRecord: (request) =>
         Effect.sync(() => {
+          if (PREVIEW_HOSTNAME.test(request.name)) return { id: `preview:${request.name}` };
           dnsCalls.push({ operation: "createRecord", input: request });
           const record = { id: "created-record-id" };
           records = [record];
@@ -1972,18 +2172,22 @@ describe("ManagedEndpointProvider", () => {
       cause: "ambiguous Cloudflare DNS response",
     });
     let records: ReadonlyArray<{ readonly id: string }> = [];
+    // Only the environment record's create is ambiguous; preview records are created normally.
     const dnsClient = ManagedEndpointProvider.ManagedEndpointDnsClient.of({
       listRecords: (hostname) =>
         Effect.sync(() => {
+          if (PREVIEW_HOSTNAME.test(hostname)) return [];
           dnsCalls.push({ operation: "listRecords", input: hostname });
           return records;
         }),
       createRecord: (request) =>
-        Effect.gen(function* () {
-          dnsCalls.push({ operation: "createRecord", input: request });
-          records = [{ id: "created-record-id" }];
-          return yield* failure;
-        }),
+        PREVIEW_HOSTNAME.test(request.name)
+          ? Effect.succeed({ id: `preview:${request.name}` })
+          : Effect.gen(function* () {
+              dnsCalls.push({ operation: "createRecord", input: request });
+              records = [{ id: "created-record-id" }];
+              return yield* failure;
+            }),
       updateRecord: (dnsRecordId, request) =>
         Effect.sync(() => {
           dnsCalls.push({ operation: "updateRecord", input: { dnsRecordId, request } });

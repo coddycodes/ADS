@@ -231,7 +231,9 @@ Written with every [`subprocess.crash`](findings.md#subprocesscrash) finding,
 which cites it.
 
 - `processKind`: `provider`, `terminal` or `command`;
-- `label`: the provider driver, `shell`, or the command's executable;
+- `label`: the provider driver, `shell`, or the command's executable (the
+  BiBCode Connect tunnel connector reports as `command` with its executable's
+  file name);
 - `pid`;
 - `outcome`: a signal name (`SIGSEGV`), a Windows exception code
   (`0xC0000005`), or `exit <code>`;

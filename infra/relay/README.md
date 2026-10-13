@@ -21,6 +21,14 @@ The relay currently owns:
 - Listing linked environments for an account.
 - Persisting relay state.
 
+Each managed endpoint is one Cloudflare tunnel with one hostname,
+`<stage>-<hash>.<tunnel zone>`, plus 4 preview hostnames (`<stage>-<hash>-p1` to `-p4`) that
+serve the preview gateway over BiBCode Connect. Provisioning creates a proxied CNAME and an
+ingress rule for each, so an environment uses 5 DNS records in the tunnel zone. Preview records
+are found by name rather than stored, so re-linking an environment adds any that are missing and
+deprovisioning removes them before the tunnel. See
+[Preview gateway](../../docs/architecture/remote.md#preview-gateway).
+
 The environment server and relay have separate credentials and trust boundaries. Read
 [Environment Authentication Profile](../../docs/cloud/environment-auth.md) before changing token,
 credential, or authorization behavior.

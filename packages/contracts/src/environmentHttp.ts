@@ -333,6 +333,17 @@ export const EnvironmentCloudLinkStateResult = Schema.Struct({
   cloudUserId: Schema.NullOr(Schema.String),
   relayUrl: Schema.NullOr(Schema.String),
   relayIssuer: Schema.NullOr(Schema.String),
+  /** The stored link runs a managed tunnel. Absent from servers that predate it. */
+  managedEndpoint: Schema.optional(Schema.Boolean),
+  /** That tunnel's config names preview hostnames. Absent from servers that predate it. */
+  previewHostnames: Schema.optional(Schema.Boolean),
+  /**
+   * That tunnel was provisioned for another local port than the server now listens on, so
+   * a link must provision it again. Absent from servers that predate it.
+   */
+  managedEndpointStale: Schema.optional(Schema.Boolean),
+  /** Identifies the stored link; each link has a new one. Null while unlinked. */
+  linkGeneration: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type EnvironmentCloudLinkStateResult = typeof EnvironmentCloudLinkStateResult.Type;
 
