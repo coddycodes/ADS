@@ -211,7 +211,9 @@ result or an interrupt), because Claude replays a steer when it consumes it,
 which can follow a long tool call. An expired write keeps its place in the
 acknowledgement order until its replay arrives or the session is retired, so a
 late replay is consumed by it and cannot confirm a later identical retry; that
-retry is acknowledged only by its own replay. Dropping a delivery releases only its own waiter.
+retry is acknowledged only by its own replay. A late replay also marks its own
+delivery delivered when that delivery is still uncertain (not retried or
+dismissed since), because Claude did read the message. Dropping a delivery releases only its own waiter.
 Rejected or unavailable steering returns to queued/start for normal promotion,
 with the reason in `delivery.detail`; transport
 ambiguity retains the existing uncertain-delivery behavior and never triggers
