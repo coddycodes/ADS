@@ -2820,6 +2820,63 @@ mod workspace_loss_tests {
 
         super::confirm_late_delivery(&f.engine, "t1", "late-key").await;
 
+        // A replay that beats the timeout's own write waits for the row to settle.
+        let command = turn("racing", false);
+        let admission = CommandAdmission {
+            payload_digest: canonical_command_digest(&command).unwrap(),
+            attachment_refs: Vec::new(),
+            provider_turn: Some(NewProviderTurnDelivery {
+                command_id: "racing".into(),
+                thread_id: "t1".into(),
+                message_id: "racing".into(),
+                provider_instance_id: "claudeAgent".into(),
+                provider_kind: "claudeAgent".into(),
+                provider_session_id: None,
+                delivery_key: "racing-key".into(),
+                payload: serde_json::to_value(&command).unwrap(),
+                state: TurnDeliveryState::Pending,
+                mode: TurnDeliveryMode::Start,
+                created_at: BEFORE_LOSS.into(),
+            }),
+        };
+        f.engine
+            .dispatch_with_admission(command, admission, || {})
+            .await
+            .unwrap();
+        let transition = |from, to| TurnDeliveryTransition {
+            turn_id: None,
+            command_id: "racing".into(),
+            expected_states: vec![from],
+            expected_attempt: 0,
+            next_state: to,
+            detail: None,
+            updated_at: BEFORE_LOSS.into(),
+        };
+        assert!(
+            f.engine
+                .transition_turn_delivery(transition(
+                    TurnDeliveryState::Pending,
+                    TurnDeliveryState::Sending
+                ))
+                .await
+                .unwrap()
+        );
+        let confirmation = tokio::spawn({
+            let engine = f.engine.clone();
+            async move { super::confirm_late_delivery(&engine, "t1", "racing-key").await }
+        });
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        assert!(
+            f.engine
+                .transition_turn_delivery(transition(
+                    TurnDeliveryState::Sending,
+                    TurnDeliveryState::Uncertain
+                ))
+                .await
+                .unwrap()
+        );
+        confirmation.await.unwrap();
+
         let repositories = f.engine.repositories();
         let state = |id: &'static str| {
             let repositories = repositories.clone();
@@ -2834,6 +2891,7 @@ mod workspace_loss_tests {
         };
         assert_eq!(state("late").await, TurnDeliveryState::Delivered);
         assert_eq!(state("other").await, TurnDeliveryState::Uncertain);
+        assert_eq!(state("racing").await, TurnDeliveryState::Delivered);
     }
 
     #[tokio::test]
@@ -6486,45 +6544,61 @@ mod context_handoff_tests {
 }
 
 /// The provider read a message whose delivery had been marked uncertain, so that delivery
-/// arrived after all. A retry or dismissal since then leaves the row as it is.
+/// arrived after all. A retry or dismissal since then leaves the row as it is. The replay
+/// can beat the timeout's own `sending -> uncertain` write by a moment, so a matching row
+/// still sending is given a second to settle.
 async fn confirm_late_delivery(engine: &OrchestrationEngine, thread_id: &str, delivery_key: &str) {
-    let uncertain = match engine
-        .repositories()
-        .list_provider_turn_deliveries(vec![TurnDeliveryState::Uncertain])
-        .await
-    {
-        Ok(rows) => rows,
-        Err(error) => {
-            tracing::warn!(%error, thread_id, "could not read uncertain deliveries for a late replay");
+    const SETTLE_POLL: Duration = Duration::from_millis(50);
+    const SETTLE_ATTEMPTS: usize = 20;
+    for _ in 0..SETTLE_ATTEMPTS {
+        let rows = match engine
+            .repositories()
+            .list_provider_turn_deliveries(vec![
+                TurnDeliveryState::Uncertain,
+                TurnDeliveryState::Sending,
+            ])
+            .await
+        {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(%error, thread_id, "could not read deliveries for a late replay");
+                return;
+            }
+        };
+        let Some(row) = rows
+            .into_iter()
+            .find(|row| row.thread_id == thread_id && row.delivery_key == delivery_key)
+        else {
             return;
+        };
+        if row.state == TurnDeliveryState::Sending {
+            tokio::time::sleep(SETTLE_POLL).await;
+            continue;
         }
-    };
-    let Some(row) = uncertain
-        .into_iter()
-        .find(|row| row.thread_id == thread_id && row.delivery_key == delivery_key)
-    else {
+        let transition = TurnDeliveryTransition {
+            turn_id: None,
+            command_id: row.command_id,
+            expected_states: vec![TurnDeliveryState::Uncertain],
+            expected_attempt: row.attempts,
+            next_state: TurnDeliveryState::Delivered,
+            detail: None,
+            updated_at: OffsetDateTime::now_utc()
+                .format(&Rfc3339)
+                .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned()),
+        };
+        match engine.transition_turn_delivery(transition).await {
+            Ok(true) => {
+                tracing::info!(
+                    thread_id,
+                    "a late provider replay confirmed an uncertain delivery"
+                );
+            }
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(%error, thread_id, "could not confirm a late-replayed delivery");
+            }
+        }
         return;
-    };
-    let transition = TurnDeliveryTransition {
-        turn_id: None,
-        command_id: row.command_id,
-        expected_states: vec![TurnDeliveryState::Uncertain],
-        expected_attempt: row.attempts,
-        next_state: TurnDeliveryState::Delivered,
-        detail: None,
-        updated_at: OffsetDateTime::now_utc()
-            .format(&Rfc3339)
-            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned()),
-    };
-    match engine.transition_turn_delivery(transition).await {
-        Ok(true) => tracing::info!(
-            thread_id,
-            "a late provider replay confirmed an uncertain delivery"
-        ),
-        Ok(false) => {}
-        Err(error) => {
-            tracing::warn!(%error, thread_id, "could not confirm a late-replayed delivery");
-        }
     }
 }
 
@@ -7963,7 +8037,12 @@ fn spawn_event_pump(
                     }
                     if event.event_type == LATE_DELIVERY_PROVIDER_EVENT_TYPE {
                         if let Some(key) = event.payload.get("deliveryKey").and_then(Value::as_str) {
-                            confirm_late_delivery(&engine, &launch.thread_id, key).await;
+                            // Off the pump: it may wait for the timeout's own write to land.
+                            let (engine, thread_id, key) =
+                                (engine.clone(), launch.thread_id.clone(), key.to_owned());
+                            tokio::spawn(async move {
+                                confirm_late_delivery(&engine, &thread_id, &key).await;
+                            });
                         }
                         continue;
                     }
