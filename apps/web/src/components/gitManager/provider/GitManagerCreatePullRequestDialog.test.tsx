@@ -1196,6 +1196,46 @@ describe("GitManagerCreatePullRequestDialog", () => {
     expect(onSettled).not.toHaveBeenCalled();
   });
 
+  it("locks every field once the merge request is created and offers only Done", async () => {
+    h.status = status({
+      sourceControlProvider: {
+        kind: "gitlab",
+        name: "GitLab",
+        baseUrl: "https://gitlab.example.test",
+      },
+    });
+    const { onOpenChange } = await renderDialog();
+    await chooseTarget("release/next");
+    h.script = [{ outcome: "success", events: [finished("created")] }];
+
+    await act(async () => button("Publish and create merge request").click());
+
+    expect(text("create-pr-status")).toContain("Merge request !7 created.");
+    const dialog = document.querySelector('[data-testid="git-manager-create-pr-dialog"]')!;
+    const editors = [
+      ...dialog.querySelectorAll<HTMLElement>(
+        '[data-slot="dialog-panel"] :is(input, textarea, button, [role="checkbox"])',
+      ),
+    ];
+    expect(editors.length).toBeGreaterThan(0);
+    expect(
+      editors.filter(
+        (editor) =>
+          !(editor as HTMLInputElement).disabled &&
+          editor.getAttribute("aria-disabled") !== "true" &&
+          !editor.hasAttribute("data-disabled"),
+      ),
+    ).toEqual([]);
+    expect(
+      [...dialog.querySelectorAll('[data-slot="dialog-footer"] button')].map((footerButton) =>
+        footerButton.textContent?.trim(),
+      ),
+    ).toEqual(["Done"]);
+
+    await act(async () => button("Done").click());
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it("cancels freely before starting and refuses to close while publishing", async () => {
     const { onOpenChange } = await renderDialog();
     await act(async () => button("Cancel").click());
