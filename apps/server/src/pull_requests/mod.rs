@@ -110,8 +110,8 @@ impl PullRequestsService {
         }
     }
 
-    /// Snapshot reads and the poller are GitLab-only (Task 4); without a
-    /// database, `readSnapshot` and `subscribe` answer `unavailable`.
+    /// Display copies serve both hosts; only GitLab polls. Without a database,
+    /// `readSnapshot` and `subscribe` answer `unavailable`.
     #[must_use]
     pub fn with_database(mut self, database: crate::persistence::Database) -> Self {
         self.database = Some(database);
@@ -450,7 +450,7 @@ impl PullRequestsService {
             .await
             .map_err(|u| u.operation_error(operation))?;
             let scope = pending.scope;
-            let Some(database) = self.gitlab_snapshot_database(&scope) else {
+            let Some(database) = self.database.clone() else {
                 return Err(snapshot_unavailable(operation));
             };
             let host = scope.host.to_ascii_lowercase();
@@ -502,7 +502,7 @@ impl PullRequestsService {
         .await
         .map_err(|u| u.operation_error(operation))?;
         let scope = pending.scope;
-        let Some(database) = self.gitlab_snapshot_database(&scope) else {
+        let Some(database) = self.gitlab_poller_database(&scope) else {
             return Err(snapshot_unavailable(operation));
         };
         let tab = gitlab::poll::ActiveTab {
@@ -526,8 +526,8 @@ impl PullRequestsService {
         Ok(())
     }
 
-    /// Snapshot reads and the poller are only wired for GitLab (Task 4).
-    fn gitlab_snapshot_database(
+    /// Only GitLab routes poll; both hosts store and read display copies.
+    fn gitlab_poller_database(
         &self,
         scope: &host::HostScope,
     ) -> Option<crate::persistence::Database> {
@@ -550,7 +550,7 @@ impl PullRequestsService {
         value: &T,
         generation: i64,
     ) {
-        let Some(database) = self.gitlab_snapshot_database(scope) else {
+        let Some(database) = self.database.clone() else {
             return;
         };
         let Ok(payload) = serde_json::to_vec(value) else {
@@ -827,9 +827,7 @@ impl PullRequestsService {
             let result = self.run_scoped_action(&scope, action, &c).await?;
             // Merges, state changes, reverts and deletions can change the tab totals.
             self.host(&scope).invalidate_totals(&scope);
-            if scope.provider == model::PullRequestsProvider::Gitlab
-                && let Some(database) = self.database.clone()
-            {
+            if let Some(database) = self.database.clone() {
                 let host = scope.host.to_ascii_lowercase();
                 let project = scope.repository.clone();
                 let number = action.target().number;
@@ -992,8 +990,7 @@ impl PullRequestsService {
         }
     }
 
-    /// GitLab-only snapshots key on the lowercased host; a GitHub host simply
-    /// has no rows to delete.
+    /// Display copies key on the lowercased host.
     async fn delete_host_snapshots(&self, host: &str) {
         let Some(database) = self.database.clone() else {
             return;
@@ -1089,7 +1086,7 @@ fn action_permissions<'a>(action: &ActionRequest, p: &'a Permissions) -> Vec<&'a
 
 fn snapshot_unavailable(operation: &str) -> PullRequestsOperationError {
     let mut error = PullRequestsOperationError::new(operation, "unavailable");
-    error.message = "Merge request snapshots are not available for this host.".into();
+    error.message = "Pull request snapshots are not available for this host.".into();
     error
 }
 
@@ -2393,6 +2390,64 @@ esac"#,
             .await
             .unwrap();
         assert!(other.is_some(), "other numbers remain");
+    }
+
+    /// GitHub keeps display copies too, without a poller: a live read stores
+    /// what the next `readSnapshot` paints.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn github_unary_get_stores_the_detail_snapshot_read_snapshot_paints() {
+        let s = crate::test_support::TestSandbox::new("pr-github-get-stores-snapshot");
+        let git = s.executable_script("git", "printf '%s' 'git@github.com:team/repo.git'", "");
+        let gh = s.executable_script(
+            "gh",
+            r#"case "$1 $2" in
+  '--version ') echo 'gh version 2.97.0' ;;
+  'auth status') echo '{"hosts":{"github.com":[{"state":"success","active":true,"host":"github.com","login":"alice"}]}}' ;;
+  *) exit 64 ;;
+esac"#,
+            "",
+        );
+        let database = new_database().await;
+        let fake = Arc::new(ActionHost {
+            inputs: permissions::tests::github_inputs(),
+            calls: Arc::new(AtomicUsize::new(0)),
+            context_calls: None,
+            block_first: None,
+        });
+        let service = PullRequestsService {
+            runner: Arc::new(HostCommandRunner::new(s.path("state")).with_commands(
+                &gh,
+                "missing-glab",
+                &git,
+            )),
+            github: fake.clone(),
+            gitlab: fake,
+            gitlab_host: Arc::new(gitlab::GitLabHost::new(Arc::new(HostCommandRunner::new(
+                PathBuf::new(),
+            )))),
+            action_gates: Arc::default(),
+            database: Some(database.clone()),
+            pollers: Arc::default(),
+            hosts_restored: Arc::default(),
+            context_fences: Arc::default(),
+        };
+        let detail = service
+            .get(s.root(), 14, &CancellationToken::new())
+            .await
+            .unwrap();
+
+        let input: SubscribeInput = serde_json::from_value(serde_json::json!({"cwd":s.root(),"state":"open","search":null,"author":null,"assignee":null,"reviewer":null,"reviewStatus":null,"draft":null,"labels":[],"milestone":null,"targetBranch":null,"sort":"newest","cursor":null,"refreshTotals":false,"number":14,"tab":null})).unwrap();
+        let snapshot = service
+            .read_snapshot(input.clone(), &CancellationToken::new())
+            .await
+            .expect("GitHub reads its display copies");
+        assert_eq!(snapshot.detail.map(|row| row.payload), Some(detail));
+        let refused = service
+            .subscribe(input, &|_| {}, &CancellationToken::new())
+            .await
+            .expect_err("GitHub routes do not poll");
+        assert_eq!(refused.code, "unavailable");
     }
 
     #[tokio::test]

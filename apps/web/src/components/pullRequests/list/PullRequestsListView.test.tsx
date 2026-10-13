@@ -569,6 +569,29 @@ it("shows an exhausted cached failure on remount without issuing another request
   expect(h.refresh).not.toHaveBeenCalled();
 });
 
+describe("PullRequestsListView GitHub snapshots", () => {
+  it("paints the stored list until the live first page answers", async () => {
+    h.snapshot = storedList("Stored copy", 1_000);
+    h.autoCompleteRefresh = false;
+    await render();
+    expect(container.textContent).toContain("Stored copy");
+    h.first = { ...h.first!, rows: [{ ...row, title: "Live copy" }] };
+    await render();
+    expect(container.textContent).toContain("Live copy");
+    expect(container.textContent).not.toContain("Stored copy");
+  });
+  it("keeps the live page when the stored copy answers after it", async () => {
+    // A server clock ahead of the browser must not let a late stored page win.
+    h.first = { ...h.first!, rows: [{ ...row, title: "Live copy" }] };
+    await render();
+    expect(container.textContent).toContain("Live copy");
+    h.snapshot = storedList("Stored copy", Number.MAX_SAFE_INTEGER);
+    await render();
+    expect(container.textContent).toContain("Live copy");
+    expect(container.textContent).not.toContain("Stored copy");
+  });
+});
+
 describe("PullRequestsListView GitLab snapshots", () => {
   it("paints the stored list until the live first page answers", async () => {
     h.snapshot = storedList("Stored copy", 1_000);

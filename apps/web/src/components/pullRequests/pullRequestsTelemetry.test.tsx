@@ -34,6 +34,8 @@ vi.mock("../../state/pullRequests", () => ({
         "getChecks",
         "getFiles",
         "getVocabulary",
+        // A display-copy read from the BiBCode server, never the host.
+        "readSnapshot",
       ]
         .map((kind) => [kind, (args: unknown) => h.atom(kind, args)])
         .concat([

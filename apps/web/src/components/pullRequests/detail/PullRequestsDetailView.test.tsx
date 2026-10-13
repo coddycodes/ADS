@@ -300,7 +300,8 @@ describe("PullRequestsDetailView", () => {
     ]);
     // A finished action re-reads automatically; it never clears a cut-off latch.
     expect(h.revalidated).toEqual(["get"]);
-    expect([...h.subscribed]).toEqual(["get", "getTimeline", "catalog"]);
+    // The stored copy is read for every host; inactive tabs stay unsubscribed.
+    expect([...h.subscribed]).toEqual(["get", "getTimeline", "readSnapshot", "catalog"]);
   });
   it.each(["delete", "revert"] as const)(
     "routes the successful %s receipt within the initiating project",

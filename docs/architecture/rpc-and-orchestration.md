@@ -672,10 +672,11 @@ Browser and desktop clients use these same typed unary RPCs; native actions such
 as opening a host URL retain the existing DesktopBridge/local API boundary.
 Reads begin on route/tab/picker open, user filters/pagination, Refresh, Rescan,
 or successful-action invalidation. No timer, window focus, constructor, or idle
-worker initiates provider traffic. A mounted GitLab merge request list or
-detail route opens `pullRequests.subscribe` only while the document is
-visible, paints from `pullRequests.readSnapshot` (display copies in SQLite;
-zero host calls), and keeps the client's 20 s mounted-query refresh timer
+worker initiates provider traffic. Mounted list and detail routes of both
+hosts paint from `pullRequests.readSnapshot` (display copies in SQLite; zero
+host calls) while their live reads run. A mounted GitLab merge request list or
+detail route also opens `pullRequests.subscribe` only while the document is
+visible, and keeps the client's 20 s mounted-query refresh timer
 paused from the subscription's first, all-false event until the subscription
 ends. Successful unary `list` (first page), `get`, `getTimeline`, `getCommits`,
 `getChecks`, and `getFiles` reads store those display copies. One server poller
@@ -694,7 +695,8 @@ subscriber remains. The route still prefetches `get` plus `getTimeline` for a
 row hovered 150 ms, at most two per environment, and an open within 5 s of that
 prefetch shows it without reading again. `pullRequests.runAction` and
 `pullRequests.checkout` re-read the host and do not use snapshots; a successful
-`runAction` deletes that number's rows. GitHub routes do not subscribe. The
+`runAction` deletes that number's rows. GitHub routes store and paint display
+copies but do not subscribe or poll. The
 explicit Refresh action is unchanged. `pullRequests.getContext` accepts an
 optional
 `rescan`: without it the server reuses its bounded 30 s probe and host-context

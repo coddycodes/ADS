@@ -152,9 +152,10 @@ export function PullRequestsDetailView({
     () => ({ environmentId: scope.environmentId, input: { ...listInput, number, tab } }),
     [listInput, number, scope.environmentId, tab],
   );
+  // Both hosts paint stored copies; only GitLab subscribes to changes.
   const snapshotAtom = useMemo(
-    () => (isGitlab ? pullRequestsEnvironment.readSnapshot(snapshotTarget) : null),
-    [isGitlab, snapshotTarget],
+    () => pullRequestsEnvironment.readSnapshot(snapshotTarget),
+    [snapshotTarget],
   );
   const snapshotQuery = useEnvironmentQuery(snapshotAtom);
   const visible = useDocumentVisible();
