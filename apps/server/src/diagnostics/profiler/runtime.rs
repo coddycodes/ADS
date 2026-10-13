@@ -354,12 +354,19 @@ async fn classify_earlier_runs(
     if let Some(previous) = previous {
         classify_previous_run(handle.clone(), previous, dir.clone()).await;
     }
-    if let Some(last_started) = last
-        .as_ref()
-        .and_then(|last| OffsetDateTime::parse(&last.started_at, &Rfc3339).ok())
+    // From the last successful query, or the last session's start the first time.
+    let crash_query_since = sentinel::crash_query_cursor(&dir).or_else(|| {
+        last.as_ref()
+            .and_then(|last| OffsetDateTime::parse(&last.started_at, &Rfc3339).ok())
+    });
+    if let Some(crash_query_since) = crash_query_since
         && let Ok(exe) = std::env::current_exe()
     {
-        raise_unrecorded_crashes(&handle, last_started, &exe.to_string_lossy(), &skip_pids).await;
+        let queried_at = OffsetDateTime::now_utc();
+        let exe = exe.to_string_lossy();
+        if raise_unrecorded_crashes(&handle, crash_query_since, &exe, &skip_pids).await {
+            sentinel::advance_crash_query_cursor(&dir, queried_at);
+        }
     }
     // The findings file was not read in full, so a dump a finding cites may look unlinked;
     // the next start, which retries the read, raises what is truly unlinked.
@@ -384,14 +391,17 @@ async fn classify_earlier_runs(
 }
 
 /// Raises the OS's crash records of this executable since `since` that no session reported
-/// and no finding links yet.
+/// and no finding links yet. False when the records could not be read.
 async fn raise_unrecorded_crashes(
     handle: &ProfilerHandle,
     since: OffsetDateTime,
     exe: &str,
     skip_pids: &[u32],
-) {
-    for crash in os_records::harvest_unrecorded_crashes(since, exe, skip_pids).await {
+) -> bool {
+    let Some(crashes) = os_records::harvest_unrecorded_crashes(since, exe, skip_pids).await else {
+        return false;
+    };
+    for crash in crashes {
         let crash_id = format!("coredump-{}-{}", crash.pid, crash.time_micros);
         if !lock(&handle.linked_dumps).insert(crash_id.clone()) {
             continue;
@@ -399,6 +409,7 @@ async fn raise_unrecorded_crashes(
         let finding = sentinel::unrecorded_crash_finding(&crash, crash_id);
         lock(&handle.findings).record_now(finding, OffsetDateTime::now_utc(), &handle.sender);
     }
+    true
 }
 
 /// Reads the crash dump and the OS crash records for a run that never marked its session

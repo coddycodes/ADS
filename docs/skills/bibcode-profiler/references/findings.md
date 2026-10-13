@@ -82,8 +82,9 @@ and `startedAt`.
     desktop host that crashed during startup or between in-process server
     restarts. Its summary says no profiler session reported it.
   - **an OS crash record no session covered** (Linux systemd-coredump only), at
-    every start: a coredump of this same executable since the last session
-    began, from a process other than this one and an unclean previous run, such
+    every start: a coredump of this same executable since the last successful
+    query (the `crash-query-cursor` file; the last session's start the first
+    time), from a process other than this one and an unclean previous run, such
     as an app relaunched by an update that died before its profiler started, or
     a crash monitor. Fingerprint `unrecorded`, the executable's file name and
     the signal, so repeats group; evidence `source: coredump`, `pid`, `signal`,

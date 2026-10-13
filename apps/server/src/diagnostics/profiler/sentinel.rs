@@ -569,6 +569,23 @@ pub fn last_session(dir: &Path) -> Option<SessionRecord> {
     read(dir)
 }
 
+const CRASH_QUERY_CURSOR_FILE: &str = "crash-query-cursor";
+
+/// When the OS crash records were last read in full, so a failed read is retried from there.
+pub fn crash_query_cursor(dir: &Path) -> Option<OffsetDateTime> {
+    let text = fs::read_to_string(dir.join(CRASH_QUERY_CURSOR_FILE)).ok()?;
+    OffsetDateTime::parse(text.trim(), &Rfc3339).ok()
+}
+
+pub fn advance_crash_query_cursor(dir: &Path, queried_at: OffsetDateTime) {
+    let Ok(text) = queried_at.format(&Rfc3339) else {
+        return;
+    };
+    if let Err(error) = fs::write(dir.join(CRASH_QUERY_CURSOR_FILE), text) {
+        tracing::warn!(%error, "profiler crash query cursor was not written");
+    }
+}
+
 /// A crash of this executable the OS kept that no session reported. `crash_id` links it,
 /// so the next start does not raise it again.
 pub fn unrecorded_crash_finding(
@@ -630,6 +647,15 @@ fn write(dir: &Path, record: &SessionRecord) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_crash_query_cursor_reads_back_what_was_advanced() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(crash_query_cursor(dir.path()), None);
+        let at = OffsetDateTime::from_unix_timestamp(1_791_890_000).unwrap();
+        advance_crash_query_cursor(dir.path(), at);
+        assert_eq!(crash_query_cursor(dir.path()), Some(at));
+    }
 
     #[test]
     fn an_unrecorded_crash_is_linked_by_its_coredump_and_grouped_by_signal() {

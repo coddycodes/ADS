@@ -46,13 +46,14 @@ pub struct UnrecordedCrash {
     pub exe: String,
 }
 
-/// The OS crash records since `since` of processes running `exe`, other than `skip_pids`.
-/// Only systemd-coredump keeps such a list; elsewhere, or on any failure, there are none.
+/// The OS crash records since `since` of processes running `exe`, other than `skip_pids`,
+/// or `None` when they could not be read. Only systemd-coredump keeps such a list;
+/// elsewhere there are none.
 pub async fn harvest_unrecorded_crashes(
     since: OffsetDateTime,
     exe: &str,
     skip_pids: &[u32],
-) -> Vec<UnrecordedCrash> {
+) -> Option<Vec<UnrecordedCrash>> {
     #[cfg(target_os = "linux")]
     {
         match tokio::time::timeout(
@@ -64,14 +65,14 @@ pub async fn harvest_unrecorded_crashes(
             Ok(crashes) => crashes,
             Err(_) => {
                 tracing::warn!("listing the OS crash records timed out");
-                Vec::new()
+                None
             }
         }
     }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (since, exe, skip_pids);
-        Vec::new()
+        Some(Vec::new())
     }
 }
 

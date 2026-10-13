@@ -43,14 +43,36 @@ pub(crate) fn relaunch_outside_service_unit<R: tauri::Runtime>(app: &tauri::AppH
             .arg(binary)
             .args(env.args_os.iter().skip(1));
         bibcode_server::process::isolate_appimage_environment(&mut command);
-        match command.spawn() {
-            Ok(_) => {
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                tracing::warn!(%error, "systemd-run is unavailable; relaunching in place");
+                return;
+            }
+        };
+        // Exit only once the new process has left this unit's cgroup: exiting earlier stops
+        // the unit and could kill systemd-run before it moved into its scope.
+        let cgroup_path = format!("/proc/{}/cgroup", child.id());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Ok(Some(status)) = child.try_wait() {
+                tracing::warn!(%status, "systemd-run did not start the update's relaunch scope; relaunching in place");
+                return;
+            }
+            let cgroup = std::fs::read_to_string(&cgroup_path).unwrap_or_default();
+            if !cgroup.is_empty() && !linux::runs_in_service_unit(&cgroup) {
                 tracing::info!("relaunching the updated app in its own systemd scope");
                 std::process::exit(0);
             }
-            Err(error) => {
-                tracing::warn!(%error, "systemd-run is unavailable; relaunching in place");
+            if std::time::Instant::now() >= deadline {
+                tracing::warn!(
+                    "systemd-run did not leave the service unit in time; relaunching in place"
+                );
+                let _ = child.kill();
+                let _ = child.wait();
+                return;
             }
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
     }
     #[cfg(not(target_os = "linux"))]

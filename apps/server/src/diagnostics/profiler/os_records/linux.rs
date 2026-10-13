@@ -78,16 +78,18 @@ pub(super) async fn unrecorded_crashes(
     since: time::OffsetDateTime,
     exe: &str,
     skip_pids: &[u32],
-) -> Vec<super::UnrecordedCrash> {
+) -> Option<Vec<super::UnrecordedCrash>> {
     let since = format!("--since=@{}", since.unix_timestamp());
-    super::query(
+    let list = super::query(
         "coredumpctl",
         &["--json=short", "--no-pager", "list", &since],
     )
-    .await
-    .and_then(|list| coredumpctl_list(&list))
-    .map(|entries| unrecorded_entries(entries, exe, skip_pids))
-    .unwrap_or_default()
+    .await?;
+    // No output is no coredump in the window, not a failure.
+    if list.trim().is_empty() {
+        return Some(Vec::new());
+    }
+    coredumpctl_list(&list).map(|entries| unrecorded_entries(entries, exe, skip_pids))
 }
 
 /// The latest entry for `pid` whose executable has the same file name as `exe`.
