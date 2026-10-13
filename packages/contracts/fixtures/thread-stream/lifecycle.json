@@ -1,0 +1,629 @@
+{
+  "final": {
+    "snapshotSequence": 21,
+    "thread": {
+      "activities": [
+        {
+          "createdAt": "2026-07-10T10:01:05.000Z",
+          "id": "a1",
+          "kind": "command",
+          "payload": {
+            "step": 1
+          },
+          "sequence": 10,
+          "summary": "ran",
+          "tone": "tool",
+          "turnId": "turn-1"
+        },
+        {
+          "createdAt": "2026-07-10T10:01:08.000Z",
+          "id": "a2",
+          "kind": "status",
+          "payload": {
+            "step": 2
+          },
+          "sequence": 13,
+          "summary": "working",
+          "tone": "info",
+          "turnId": "turn-1"
+        }
+      ],
+      "archivedAt": null,
+      "branch": "main",
+      "checkpoints": [
+        {
+          "assistantMessageId": "m-assistant",
+          "checkpointRef": "ref-1",
+          "checkpointTurnCount": 1,
+          "completedAt": "2026-07-10T10:01:14.000Z",
+          "files": [
+            {
+              "additions": 2,
+              "deletions": 1,
+              "kind": "modified",
+              "path": "a.rs"
+            }
+          ],
+          "status": "ready",
+          "turnId": "turn-1"
+        }
+      ],
+      "createdAt": "2026-07-10T10:00:00.000Z",
+      "deletedAt": null,
+      "hasActionableProposedPlan": true,
+      "hasPendingApprovals": false,
+      "hasPendingUserInput": false,
+      "id": "t1",
+      "interactionMode": "plan",
+      "kind": "workspace",
+      "latestTurn": {
+        "assistantMessageId": "m-assistant",
+        "completedAt": "2026-07-10T10:01:14.000Z",
+        "requestedAt": "2026-07-10T10:01:03.000Z",
+        "sourceProposedPlan": null,
+        "startedAt": "2026-07-10T10:01:04.000Z",
+        "state": "completed",
+        "turnId": "turn-1"
+      },
+      "latestUserMessageAt": "2026-07-10T10:01:12.000Z",
+      "messages": [
+        {
+          "attachments": [],
+          "createdAt": "2026-07-10T10:01:06.000Z",
+          "id": "m-assistant",
+          "role": "assistant",
+          "streaming": false,
+          "text": "hello",
+          "turnId": "turn-1",
+          "updatedAt": "2026-07-10T10:01:09.000Z"
+        },
+        {
+          "attachments": [],
+          "createdAt": "2026-07-10T10:01:12.000Z",
+          "id": "m-queued",
+          "role": "user",
+          "streaming": false,
+          "text": "next",
+          "turnId": null,
+          "updatedAt": "2026-07-10T10:01:12.000Z"
+        },
+        {
+          "attachments": [],
+          "createdAt": "2026-07-10T10:01:03.000Z",
+          "id": "m-user",
+          "role": "user",
+          "streaming": false,
+          "text": "hello",
+          "turnId": null,
+          "updatedAt": "2026-07-10T10:01:03.000Z"
+        }
+      ],
+      "modelSelection": {
+        "instanceId": "codex",
+        "model": "gpt-5"
+      },
+      "projectId": "p1",
+      "proposedPlans": [
+        {
+          "createdAt": "2026-07-10T10:01:10.000Z",
+          "id": "plan-1",
+          "implementationThreadId": null,
+          "implementedAt": null,
+          "planMarkdown": "Do it",
+          "turnId": "turn-1",
+          "updatedAt": "2026-07-10T10:01:10.000Z"
+        }
+      ],
+      "runtimeMode": "approval-required",
+      "session": {
+        "activeTurnId": null,
+        "lastError": null,
+        "lastErrorClass": null,
+        "providerInstanceId": "codex",
+        "providerName": "codex",
+        "runtimeMode": "approval-required",
+        "status": "ready",
+        "threadId": "t1",
+        "updatedAt": "2026-07-10T10:01:14.000Z"
+      },
+      "title": "Renamed",
+      "unresolvedDelivery": null,
+      "updatedAt": "2026-07-10T10:01:14.000Z",
+      "worktreePath": null
+    }
+  },
+  "initial": {
+    "snapshotSequence": 3,
+    "thread": {
+      "activities": [],
+      "archivedAt": null,
+      "branch": null,
+      "checkpoints": [],
+      "createdAt": "2026-07-10T10:00:00.000Z",
+      "deletedAt": null,
+      "hasActionableProposedPlan": false,
+      "hasPendingApprovals": false,
+      "hasPendingUserInput": false,
+      "id": "t1",
+      "interactionMode": "default",
+      "kind": "workspace",
+      "latestTurn": null,
+      "latestUserMessageAt": null,
+      "messages": [],
+      "modelSelection": {
+        "instanceId": "codex",
+        "model": "gpt-5"
+      },
+      "projectId": "p1",
+      "proposedPlans": [],
+      "runtimeMode": "full-access",
+      "session": null,
+      "title": "Thread",
+      "unresolvedDelivery": null,
+      "updatedAt": "2026-07-10T10:00:00.000Z",
+      "worktreePath": null
+    }
+  },
+  "patches": [
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {},
+        "set": {
+          "branch": "main",
+          "title": "Renamed",
+          "updatedAt": "2026-07-11T00:00:00.000Z"
+        },
+        "unset": []
+      },
+      "snapshotSequence": 4
+    },
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {},
+        "set": {
+          "runtimeMode": "approval-required",
+          "updatedAt": "2026-07-10T10:01:01.000Z"
+        },
+        "unset": []
+      },
+      "snapshotSequence": 5
+    },
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {},
+        "set": {
+          "interactionMode": "plan",
+          "updatedAt": "2026-07-10T10:01:02.000Z"
+        },
+        "unset": []
+      },
+      "snapshotSequence": 6
+    },
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {
+          "messages": {
+            "changes": [
+              [
+                0,
+                {
+                  "attachments": [],
+                  "createdAt": "2026-07-10T10:01:03.000Z",
+                  "id": "m-user",
+                  "role": "user",
+                  "streaming": false,
+                  "text": "hello",
+                  "turnId": null,
+                  "updatedAt": "2026-07-10T10:01:03.000Z"
+                }
+              ]
+            ],
+            "length": 1
+          }
+        },
+        "set": {
+          "latestUserMessageAt": "2026-07-10T10:01:03.000Z",
+          "updatedAt": "2026-07-10T10:01:03.000Z"
+        },
+        "unset": []
+      },
+      "snapshotSequence": 8
+    },
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {},
+        "set": {
+          "latestTurn": {
+            "assistantMessageId": null,
+            "completedAt": null,
+            "requestedAt": "2026-07-10T10:01:03.000Z",
+            "sourceProposedPlan": null,
+            "startedAt": "2026-07-10T10:01:04.000Z",
+            "state": "running",
+            "turnId": "turn-1"
+          },
+          "session": {
+            "activeTurnId": "turn-1",
+            "lastError": null,
+            "lastErrorClass": null,
+            "providerInstanceId": "codex",
+            "providerName": "codex",
+            "runtimeMode": "approval-required",
+            "status": "running",
+            "threadId": "t1",
+            "updatedAt": "2026-07-10T10:01:04.000Z"
+          },
+          "updatedAt": "2026-07-10T10:01:04.000Z"
+        },
+        "unset": []
+      },
+      "snapshotSequence": 9
+    },
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {
+          "activities": {
+            "changes": [
+              [
+                0,
+                {
+                  "createdAt": "2026-07-10T10:01:05.000Z",
+                  "id": "a1",
+                  "kind": "command",
+                  "payload": {
+                    "step": 1
+                  },
+                  "sequence": 10,
+                  "summary": "ran",
+                  "tone": "tool",
+                  "turnId": "turn-1"
+                }
+              ]
+            ],
+            "length": 1
+          }
+        },
+        "set": {},
+        "unset": []
+      },
+      "snapshotSequence": 10
+    },
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {
+          "messages": {
+            "changes": [
+              [
+                0,
+                {
+                  "attachments": [],
+                  "createdAt": "2026-07-10T10:01:06.000Z",
+                  "id": "m-assistant",
+                  "role": "assistant",
+                  "streaming": true,
+                  "text": "hel",
+                  "turnId": "turn-1",
+                  "updatedAt": "2026-07-10T10:01:06.000Z"
+                }
+              ],
+              [
+                1,
+                {
+                  "attachments": [],
+                  "createdAt": "2026-07-10T10:01:03.000Z",
+                  "id": "m-user",
+                  "role": "user",
+                  "streaming": false,
+                  "text": "hello",
+                  "turnId": null,
+                  "updatedAt": "2026-07-10T10:01:03.000Z"
+                }
+              ]
+            ],
+            "length": 2
+          }
+        },
+        "set": {
+          "latestTurn": {
+            "assistantMessageId": "m-assistant",
+            "completedAt": null,
+            "requestedAt": "2026-07-10T10:01:03.000Z",
+            "sourceProposedPlan": null,
+            "startedAt": "2026-07-10T10:01:04.000Z",
+            "state": "running",
+            "turnId": "turn-1"
+          }
+        },
+        "unset": []
+      },
+      "snapshotSequence": 11
+    },
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {
+          "messages": {
+            "changes": [
+              [
+                0,
+                {
+                  "attachments": [],
+                  "createdAt": "2026-07-10T10:01:06.000Z",
+                  "id": "m-assistant",
+                  "role": "assistant",
+                  "streaming": true,
+                  "text": "hello",
+                  "turnId": "turn-1",
+                  "updatedAt": "2026-07-10T10:01:07.000Z"
+                }
+              ]
+            ],
+            "length": 2
+          }
+        },
+        "set": {},
+        "unset": []
+      },
+      "snapshotSequence": 12
+    },
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {
+          "activities": {
+            "changes": [
+              [
+                1,
+                {
+                  "createdAt": "2026-07-10T10:01:08.000Z",
+                  "id": "a2",
+                  "kind": "status",
+                  "payload": {
+                    "step": 2
+                  },
+                  "sequence": 13,
+                  "summary": "working",
+                  "tone": "info",
+                  "turnId": "turn-1"
+                }
+              ]
+            ],
+            "length": 2
+          }
+        },
+        "set": {},
+        "unset": []
+      },
+      "snapshotSequence": 13
+    },
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {
+          "messages": {
+            "changes": [
+              [
+                0,
+                {
+                  "attachments": [],
+                  "createdAt": "2026-07-10T10:01:06.000Z",
+                  "id": "m-assistant",
+                  "role": "assistant",
+                  "streaming": false,
+                  "text": "hello",
+                  "turnId": "turn-1",
+                  "updatedAt": "2026-07-10T10:01:09.000Z"
+                }
+              ]
+            ],
+            "length": 2
+          }
+        },
+        "set": {},
+        "unset": []
+      },
+      "snapshotSequence": 14
+    },
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {
+          "proposedPlans": {
+            "changes": [
+              [
+                0,
+                {
+                  "createdAt": "2026-07-10T10:01:10.000Z",
+                  "id": "plan-1",
+                  "implementationThreadId": null,
+                  "implementedAt": null,
+                  "planMarkdown": "Do it",
+                  "turnId": "turn-1",
+                  "updatedAt": "2026-07-10T10:01:10.000Z"
+                }
+              ]
+            ],
+            "length": 1
+          }
+        },
+        "set": {
+          "hasActionableProposedPlan": true
+        },
+        "unset": []
+      },
+      "snapshotSequence": 15
+    },
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {
+          "checkpoints": {
+            "changes": [
+              [
+                0,
+                {
+                  "assistantMessageId": "m-assistant",
+                  "checkpointRef": "ref-1",
+                  "checkpointTurnCount": 1,
+                  "completedAt": "2026-07-10T10:01:11.000Z",
+                  "files": [
+                    {
+                      "additions": 2,
+                      "deletions": 1,
+                      "kind": "modified",
+                      "path": "a.rs"
+                    }
+                  ],
+                  "status": "ready",
+                  "turnId": "turn-1"
+                }
+              ]
+            ],
+            "length": 1
+          }
+        },
+        "set": {
+          "latestTurn": {
+            "assistantMessageId": "m-assistant",
+            "completedAt": "2026-07-10T10:01:11.000Z",
+            "requestedAt": "2026-07-10T10:01:03.000Z",
+            "sourceProposedPlan": null,
+            "startedAt": "2026-07-10T10:01:04.000Z",
+            "state": "running",
+            "turnId": "turn-1"
+          }
+        },
+        "unset": []
+      },
+      "snapshotSequence": 16
+    },
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {
+          "messages": {
+            "changes": [
+              [
+                1,
+                {
+                  "attachments": [],
+                  "createdAt": "2026-07-10T10:01:12.000Z",
+                  "id": "m-queued",
+                  "role": "user",
+                  "streaming": false,
+                  "text": "next",
+                  "turnId": null,
+                  "updatedAt": "2026-07-10T10:01:12.000Z"
+                }
+              ],
+              [
+                2,
+                {
+                  "attachments": [],
+                  "createdAt": "2026-07-10T10:01:03.000Z",
+                  "id": "m-user",
+                  "role": "user",
+                  "streaming": false,
+                  "text": "hello",
+                  "turnId": null,
+                  "updatedAt": "2026-07-10T10:01:03.000Z"
+                }
+              ]
+            ],
+            "length": 3
+          }
+        },
+        "set": {
+          "latestUserMessageAt": "2026-07-10T10:01:12.000Z"
+        },
+        "unset": []
+      },
+      "snapshotSequence": 17
+    },
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {
+          "checkpoints": {
+            "changes": [
+              [
+                0,
+                {
+                  "assistantMessageId": "m-assistant",
+                  "checkpointRef": "ref-1",
+                  "checkpointTurnCount": 1,
+                  "completedAt": "2026-07-10T10:01:14.000Z",
+                  "files": [
+                    {
+                      "additions": 2,
+                      "deletions": 1,
+                      "kind": "modified",
+                      "path": "a.rs"
+                    }
+                  ],
+                  "status": "ready",
+                  "turnId": "turn-1"
+                }
+              ]
+            ],
+            "length": 1
+          }
+        },
+        "set": {
+          "latestTurn": {
+            "assistantMessageId": "m-assistant",
+            "completedAt": "2026-07-10T10:01:14.000Z",
+            "requestedAt": "2026-07-10T10:01:03.000Z",
+            "sourceProposedPlan": null,
+            "startedAt": "2026-07-10T10:01:04.000Z",
+            "state": "completed",
+            "turnId": "turn-1"
+          },
+          "session": {
+            "activeTurnId": null,
+            "lastError": null,
+            "lastErrorClass": null,
+            "providerInstanceId": "codex",
+            "providerName": "codex",
+            "runtimeMode": "approval-required",
+            "status": "ready",
+            "threadId": "t1",
+            "updatedAt": "2026-07-10T10:01:14.000Z"
+          },
+          "updatedAt": "2026-07-10T10:01:14.000Z"
+        },
+        "unset": []
+      },
+      "snapshotSequence": 18
+    },
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {},
+        "set": {
+          "archivedAt": "2026-07-11T00:00:01.000Z"
+        },
+        "unset": []
+      },
+      "snapshotSequence": 19
+    },
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {},
+        "set": {
+          "archivedAt": null
+        },
+        "unset": []
+      },
+      "snapshotSequence": 20
+    }
+  ]
+}

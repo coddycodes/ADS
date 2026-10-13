@@ -19,6 +19,7 @@ import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribe } from "../rpc/client.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
+import { applyThreadPatch } from "./threadPatch.ts";
 import { applyThreadDetailEvent } from "./threadReducer.ts";
 import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
@@ -159,6 +160,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       yield* setThread(item.snapshot.thread);
       return;
     }
+    if (item.kind === "patch") {
+      // Computed against the snapshot this subscription holds, so it always applies.
+      const current = yield* SubscriptionRef.get(state);
+      if (Option.isNone(current.data)) return;
+      yield* SubscriptionRef.set(lastSequence, item.snapshotSequence);
+      yield* setThread(applyThreadPatch(current.data.value, item.patch));
+      return;
+    }
 
     const sequence = yield* SubscriptionRef.get(lastSequence);
     if (item.event.sequence <= sequence) {
@@ -198,7 +207,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   yield* setSynchronizing;
   yield* subscribe(
     ORCHESTRATION_WS_METHODS.subscribeThread,
-    { threadId },
+    // Updates arrive as patches against the snapshot this subscription holds.
+    { threadId, patches: true },
     {
       onExpectedFailure: setStreamError,
       retryExpectedFailureAfter: "250 millis",

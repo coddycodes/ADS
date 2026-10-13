@@ -1870,7 +1870,18 @@ subsequent durable orchestration events. Resync after reconnect is snapshot-firs
 `subscribeShell` and `subscribeThread` send a whole snapshot. `subscribeThread` and
 `subscribeShell` register their durable-event receiver before reading the
 initial snapshot, so a commit concurrent with that read is queued and then
-projected instead of being lost between snapshot and live delivery.
+projected instead of being lost between snapshot and live delivery. Live
+updates are coalesced: a thread stream re-reads its thread 100 ms after the
+first of a burst of its events, and the shell stream re-reads the shell
+500 ms after the first event of a burst. A thread subscriber that sends
+`patches: true` then receives a `patch` item against the snapshot it holds:
+changed fields are replaced, removed fields listed, and each changed array
+sends its new length and only the entries that differ, by index, so an
+appended activity or a message updated in place costs one entry instead of
+the whole thread. The client decodes only the changed fields with the thread's field
+schemas, and `packages/contracts/fixtures/thread-stream/lifecycle.json` pins
+that patches rebuild the server's snapshot exactly. Older clients omit
+`patches` and keep receiving whole snapshots; older servers ignore it.
 Every shell snapshot, live or from `orchestration.getArchivedShellSnapshot`,
 is read in one SQLite job: projects, the undeleted live or archived threads
 whose project row exists, and per thread only its session, latest turn, the

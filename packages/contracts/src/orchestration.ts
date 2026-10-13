@@ -637,6 +637,8 @@ export type OrchestrationShellStreamItem = typeof OrchestrationShellStreamItem.T
 
 export const OrchestrationSubscribeThreadInput = Schema.Struct({
   threadId: ThreadId,
+  /** The client applies `patch` items; older servers ignore this and send snapshots. */
+  patches: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationSubscribeThreadInput = typeof OrchestrationSubscribeThreadInput.Type;
 
@@ -1452,6 +1454,26 @@ export const OrchestrationEvent = Schema.Union([
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
 
+/**
+ * The change from the snapshot a subscriber holds to the next one, on the
+ * thread's wire (JSON) shape: `set` replaces fields, `unset` removes them, and
+ * each `arrays` entry gives the array's new `length` and the `[index, item]`
+ * entries that differ. Values stay undecoded here; the client decodes them with
+ * the thread's field schemas.
+ */
+export const OrchestrationThreadPatch = Schema.Struct({
+  set: Schema.Record(Schema.String, Schema.Unknown),
+  unset: Schema.Array(Schema.String),
+  arrays: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      length: NonNegativeInt,
+      changes: Schema.Array(Schema.Tuple([NonNegativeInt, Schema.Unknown])),
+    }),
+  ),
+});
+export type OrchestrationThreadPatch = typeof OrchestrationThreadPatch.Type;
+
 export const OrchestrationThreadStreamItem = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("snapshot"),
@@ -1460,6 +1482,11 @@ export const OrchestrationThreadStreamItem = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("event"),
     event: OrchestrationEvent,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("patch"),
+    snapshotSequence: NonNegativeInt,
+    patch: OrchestrationThreadPatch,
   }),
 ]);
 export type OrchestrationThreadStreamItem = typeof OrchestrationThreadStreamItem.Type;
