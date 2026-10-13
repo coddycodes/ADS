@@ -1269,12 +1269,9 @@ async fn run_unary(
             0
         };
         match reserve_server_message(&outbound, &session_shutdown, encoded_len_bound).await {
-            Ok(permit) => {
-                if encoded_len_bound > 0 {
-                    latency::record_outbound_bytes(&method, encoded_len_bound);
-                }
-                enqueue_guard.enqueue(permit, response);
-            }
+            // Not counted: the guard picks the reply it sends after this, so only a bound
+            // is known here.
+            Ok(permit) => enqueue_guard.enqueue(permit, response),
             Err(failure) => {
                 let _ = send_unbudgeted_server_message(
                     &outbound,

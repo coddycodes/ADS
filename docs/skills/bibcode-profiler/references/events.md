@@ -131,7 +131,8 @@ a slow link.
 - `method`;
 - `slotSecs`: 300; `slotStartSecs`: the slot's start in seconds since the Unix
   epoch;
-- `messages`: replies and stream items admitted to the outbound queue;
+- `messages`: replies and stream items admitted to the outbound queue (agent
+  activity replies, which pick their final form after admission, are left out);
 - `bytes`, `maxBytes`: their total and largest encoded size, before any
   compression or encryption.
 
