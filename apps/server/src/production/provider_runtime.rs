@@ -6450,10 +6450,16 @@ async fn publish_running_session(
     let publication = entry.publication.lock().await;
     if publication.closed
         || entry.event_cancellation.is_cancelled()
-        || publication.terminal_revision != terminal_revision
         // Exhaustion is absorbing: a saturated witness can never reopen publication.
         || publication.terminal_revision == u64::MAX
     {
+        return Ok(());
+    }
+    if publication.terminal_revision != terminal_revision {
+        tracing::info!(
+            thread_id = %entry.launch.thread_id,
+            "a turn ended before this delivery was accepted; the session is not marked running"
+        );
         return Ok(());
     }
     let runtime = persist_entry(&engine.repositories(), entry, "running").await;
@@ -11355,23 +11361,25 @@ impl ClaudeAcknowledgements {
         }
     }
 
-    fn acknowledge(&self, text: &str, turn_id: Option<String>) {
+    /// The live write the replay belongs to, if any.
+    fn acknowledge(&self, text: &str, turn_id: Option<String>) -> Option<u64> {
         let text = claude_acknowledgement_key(text);
         let text = text.as_ref();
         let mut state = self.state.lock().expect("Claude acknowledgement lock");
-        let Some(pending) = state.pending.get_mut(text) else {
-            return;
-        };
+        let pending = state.pending.get_mut(text)?;
         // The oldest live write owns the replay, even one whose wait expired.
+        let mut matched = None;
         while let Some(entry) = pending.pop_front() {
             if !entry.session_cancellation.is_cancelled() {
                 let _ = entry.sender.send(turn_id.clone());
+                matched = Some(entry.id);
                 break;
             }
         }
         if pending.is_empty() {
             state.pending.remove(text);
         }
+        matched
     }
 }
 
@@ -13680,14 +13688,17 @@ impl ClaudeDriver {
             acknowledgement_tx,
             acknowledgement_cancellation.clone(),
         );
-        if expected_turn_id.is_none() {
-            self.runtime
-                .lock()
-                .await
-                .start_turn(crate::provider::claude::TurnInput {
-                    turn_id: turn_id.clone(),
-                    input: text,
-                });
+        // A new turn begins when Claude replays this write.
+        let turn_input = expected_turn_id
+            .is_none()
+            .then_some(acknowledgement_registration.id);
+        if let Some(write) = turn_input {
+            let mut runtime = self.runtime.lock().await;
+            runtime.start_turn(crate::provider::claude::TurnInput {
+                turn_id: turn_id.clone(),
+                input: text,
+            });
+            runtime.await_turn_input(write);
         }
         if let Err(outcome) = self
             .write_delivery_bytes(
@@ -13698,6 +13709,7 @@ impl ClaudeDriver {
             )
             .await
         {
+            self.stop_awaiting_turn_input(turn_input).await;
             return outcome;
         }
         drop(writer);
@@ -13738,7 +13750,18 @@ impl ClaudeDriver {
         } else {
             drop(acknowledgement_registration);
         }
+        // Without its replay, results stop waiting for this write; an accepted write's
+        // replay already ended the wait.
+        if !matches!(outcome, ProviderDeliveryOutcome::Accepted { .. }) {
+            self.stop_awaiting_turn_input(turn_input).await;
+        }
         outcome
+    }
+
+    async fn stop_awaiting_turn_input(&self, write: Option<u64>) {
+        if let Some(write) = write {
+            self.runtime.lock().await.stop_awaiting_turn_input(write);
+        }
     }
 }
 
@@ -14626,8 +14649,12 @@ async fn emit_claude_value(
     .unwrap_or_default();
     let mut output = {
         let mut runtime = runtime.lock().await;
-        if !authenticated_hook && let Some(text) = claude_replayed_user_text(&value) {
-            pending_acknowledgement.acknowledge(text, runtime.current_turn_id().map(str::to_owned));
+        if !authenticated_hook
+            && let Some(text) = claude_replayed_user_text(&value)
+            && let Some(write) = pending_acknowledgement
+                .acknowledge(text, runtime.current_turn_id().map(str::to_owned))
+        {
+            runtime.stop_awaiting_turn_input(write);
         }
         if authenticated_hook {
             runtime.handle_authenticated_hook_value(&value, emitted_at_ms)
@@ -16678,6 +16705,21 @@ done
     #[cfg(windows)]
     const CLAUDE_REPLAY_FIXTURE: &str = "claude-replay";
 
+    // Reports a result for earlier work before replaying each message, then ends the turn.
+    #[cfg(unix)]
+    const CLAUDE_EARLY_RESULT_FIXTURE: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$BIBCODE_TEST_REQUEST_CAPTURE"
+  case "$line" in
+    *'"type":"user"'*)
+      printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":null,"session_id":"s","uuid":"before-replay"}'
+      printf '%s\n' "$line"
+      printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s","uuid":"after-replay"}'
+      ;;
+  esac
+done
+"#;
+
     #[cfg(unix)]
     const CLAUDE_DISCONNECT_FIXTURE: &str = r#"#!/bin/sh
 IFS= read -r line
@@ -17503,6 +17545,53 @@ done
         })
         .await
         .unwrap();
+        // Nor does it hold back the turn's results once it gave up on the replay.
+        let result = driver.runtime.lock().await.handle_raw_value(
+            &json!({"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s","uuid":"late"}),
+            0,
+        );
+        assert!(
+            result
+                .events
+                .iter()
+                .any(|event| event.event_type == "turn.completed")
+        );
+        driver.shutdown().await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_result_before_the_replay_does_not_end_the_new_turn() {
+        // Issue #93: after a suspended thread resumed, Claude reported a result before it
+        // replayed the new message; that result ended the new turn and the thread read
+        // ready while Claude worked on it.
+        let temp = TempDir::new().unwrap();
+        let capture = temp.path().join("early-result.jsonl");
+        let driver = claude_delivery_fixture(
+            &temp,
+            "claude-early-result",
+            CLAUDE_EARLY_RESULT_FIXTURE,
+            &capture,
+            None,
+            None,
+        )
+        .await;
+        driver.start().await.unwrap();
+        let outcome = timeout(
+            Duration::from_secs(5),
+            driver.deliver("hello".into(), vec![], "default".into(), "key".into()),
+        )
+        .await
+        .expect("the replay acknowledges the delivery");
+        let super::ProviderDeliveryOutcome::Accepted {
+            turn_id: Some(turn_id),
+        } = outcome
+        else {
+            panic!("{outcome:?}");
+        };
+        let completed = claude_fixture_output(&driver, "turn.completed").await;
+        assert_eq!(completed.turn_id.as_deref(), Some(turn_id.as_str()));
+        assert_eq!(completed.payload["stopReason"], "end_turn");
         driver.shutdown().await.unwrap();
     }
 

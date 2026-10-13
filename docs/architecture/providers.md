@@ -188,7 +188,14 @@ acknowledges the write, while a different command or different arguments do
 not. Text with any other first character, including whitespace before the
 slash, is matched exactly. An outstanding steer does
 not prevent a normal delivery from registering its own waiter. Acceptance uses
-the runtime turn ID current when the matching echo arrives.
+the runtime turn ID current when the matching echo arrives. A new turn begins
+when Claude replays its input: a successful `result` that arrives between a
+normal delivery's write and the replay of that write belongs to work Claude
+was still finishing (seen right after a suspended session resumes) and does
+not end the new turn, so the session is still published `running` on
+acceptance. An error `result` in that window still ends it, and so does any
+`result` once that write's acknowledgement wait ends without its replay. Only
+the replay of that write opens the turn; another write's replay does not.
 
 The expected-turn cancellation fence applies through the first byte: input that
 has not begun writing when the expected turn ends, changes, or is interrupted

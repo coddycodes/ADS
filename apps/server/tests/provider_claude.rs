@@ -2384,6 +2384,73 @@ fn a_failed_result_without_errors_reports_claude_terminal_reason() {
     assert_eq!(completed.payload["errorClass"], "provider_error");
 }
 
+fn claude_result(is_error: bool, uuid: &str) -> ClaudeMessage {
+    serde_json::from_value(json!({
+        "type": "result",
+        "subtype": if is_error { "error_max_turns" } else { "success" },
+        "is_error": is_error,
+        "stop_reason": Value::Null,
+        "session_id": "sdk-session-replay",
+        "uuid": uuid,
+    }))
+    .expect("result frame decodes")
+}
+
+fn completes_turn(events: &[CanonicalEvent], turn_id: &str) -> bool {
+    events.iter().any(|event| {
+        event.event_type == "turn.completed" && event.turn_id.as_deref() == Some(turn_id)
+    })
+}
+
+#[test]
+fn a_result_before_the_turn_input_replay_does_not_end_the_turn() {
+    let mut runtime = ClaudeProviderRuntime::new(
+        "provider-thread-1".to_owned(),
+        "sdk-session-replay".to_owned(),
+    );
+    runtime.start_session(RuntimeMode::FullAccess, None);
+    runtime.start_turn(TurnInput {
+        turn_id: "turn-1".to_owned(),
+        input: "hello".to_owned(),
+    });
+    runtime.await_turn_input(7);
+
+    assert!(!completes_turn(
+        &runtime.handle_message(claude_result(false, "earlier-work")),
+        "turn-1"
+    ));
+    // Another write's replay does not begin this turn.
+    runtime.stop_awaiting_turn_input(6);
+    assert!(!completes_turn(
+        &runtime.handle_message(claude_result(false, "older-write")),
+        "turn-1"
+    ));
+    runtime.stop_awaiting_turn_input(7);
+    assert!(completes_turn(
+        &runtime.handle_message(claude_result(false, "this-turn")),
+        "turn-1"
+    ));
+}
+
+#[test]
+fn an_error_result_before_the_turn_input_replay_still_ends_the_turn() {
+    let mut runtime = ClaudeProviderRuntime::new(
+        "provider-thread-1".to_owned(),
+        "sdk-session-replay".to_owned(),
+    );
+    runtime.start_session(RuntimeMode::FullAccess, None);
+    runtime.start_turn(TurnInput {
+        turn_id: "turn-1".to_owned(),
+        input: "hello".to_owned(),
+    });
+    runtime.await_turn_input(7);
+
+    assert!(completes_turn(
+        &runtime.handle_message(claude_result(true, "failed-before-reading")),
+        "turn-1"
+    ));
+}
+
 #[test]
 fn permission_requests_round_trip_through_open_and_resolved_events() {
     let fixture: PermissionFixture = load_fixture("permission-flow.json");
