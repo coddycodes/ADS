@@ -1375,6 +1375,10 @@ are listed in the
   scan (see [Crash capture](#crash-capture)).
 - The detectors are the process sampler, the RPC latency detector, and the
   worktree audit. A standalone `bibcode` also runs the crash monitor detector.
+  Every 5 minutes the latency detector also emits `rpc.histogram` per method
+  and outcome, and `rpc.bytes` per method: the encoded reply bytes that left on
+  connections that encode before queueing (E2EE and record-framed), counted in
+  `rpc/session.rs` only while the profiler is on.
   The exit watches are not detectors: their call sites check `is_enabled()`
   before building a report.
 - `ProductionRuntime::start` starts the runtime on a blocking thread, because it

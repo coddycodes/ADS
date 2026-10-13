@@ -326,6 +326,30 @@ pub struct LatencyBook {
     /// Absolute-tier results parked for the detector's next tick.
     slow: Mutex<HashMap<MethodKey, Slow>>,
     pub(crate) joins: Mutex<JoinLog>,
+    /// Outbound reply bytes by method and 5-minute slot, drained into `rpc.bytes`.
+    bytes: Mutex<HashMap<(String, u64), ByteCounts>>,
+}
+
+#[derive(Default)]
+struct ByteCounts {
+    messages: u64,
+    bytes: u64,
+    max_bytes: u64,
+}
+
+/// Counts one reply of `method` that left with `bytes` encoded bytes (#89: which methods
+/// fill a slow remote link).
+pub fn record_outbound_bytes(method: &str, bytes: usize) {
+    if !profiling() {
+        return;
+    }
+    let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+    let key = (method.to_owned(), now_secs() / SLOT_SECS);
+    let mut counts = lock(&global_latency().bytes);
+    let counts = counts.entry(key).or_default();
+    counts.messages += 1;
+    counts.bytes = counts.bytes.saturating_add(bytes);
+    counts.max_bytes = counts.max_bytes.max(bytes);
 }
 
 impl LatencyBook {
@@ -408,6 +432,33 @@ impl LatencyBook {
                 })
             })
             .collect()
+    }
+}
+
+impl LatencyBook {
+    #[cfg(test)]
+    pub(crate) fn outbound_bytes_for_test(&self, key: u64) -> Vec<Value> {
+        self.outbound_bytes(key)
+    }
+
+    /// One `rpc.bytes` payload per method for each slot before `key`, removed as returned.
+    fn outbound_bytes(&self, key: u64) -> Vec<Value> {
+        let mut finished = Vec::new();
+        lock(&self.bytes).retain(|(method, slot), counts| {
+            if *slot >= key {
+                return true;
+            }
+            finished.push(json!({
+                "method": method,
+                "slotSecs": SLOT_SECS,
+                "slotStartSecs": slot * SLOT_SECS,
+                "messages": counts.messages,
+                "bytes": counts.bytes,
+                "maxBytes": counts.max_bytes,
+            }));
+            false
+        });
+        finished
     }
 }
 
@@ -683,6 +734,7 @@ impl Detector for LatencyDetector {
         let book = global_latency();
         // Results parked before the profiler was last switched off are stale.
         lock(&book.slow).clear();
+        lock(&book.bytes).clear();
         tokio::spawn(async move {
             let mut summarized = now_secs() / SLOT_SECS;
             let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + TICK, TICK);
@@ -717,6 +769,9 @@ impl Detector for LatencyDetector {
                     for payload in book.histograms(slot) {
                         emit("rpc.histogram", payload);
                     }
+                }
+                for payload in book.outbound_bytes(key) {
+                    emit("rpc.bytes", payload);
                 }
                 summarized = key;
             }
