@@ -299,12 +299,14 @@ flowchart TB
   non-recursively except the ones Git ignores (listed once per registration
   with `git ls-files --others --ignored --directory`, confirmed by
   `git check-ignore`) and nested repositories or linked worktrees (a `.git`
-  directory, or a `.git` file that does not point into `.git/modules/`), which
-  have their own watches; submodules stay watched because the parent's status
-  shows them. A worker thread watches directories created later (one
+  directory, or a `.git` file whose Git directory is not in this worktree's
+  `modules/`), which have their own watches; submodules stay watched, with
+  their own ignore rules applied, because the parent's status shows them. A worker thread watches directories created later (one
   `git check-ignore` per new level, so an anchored rule such as `/build/` does
   not skip `src/build/`), watches a removed and recreated directory again, and
-  re-reads the rules when a `.gitignore` or `.git/info/exclude` changes; a
+  re-reads the rules when a `.gitignore` or `.git/info/exclude` is written (a
+read, such as Git's own, does not count); when Git cannot answer, it skips
+`node_modules` and `target` by name; a
   watch it cannot add reaches the watcher as an error. Git runs through the
   supervised process runner. A checkout with agent worktrees and build output
   under it went from about 312,000 watched directories to about 2,400. Events from the top-level `objects/`

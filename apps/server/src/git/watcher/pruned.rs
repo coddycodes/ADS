@@ -112,10 +112,13 @@ fn paths_below(root: &Path, output: &[u8]) -> HashSet<PathBuf> {
 /// What a pruned tree leaves out.
 #[derive(Debug, Default)]
 pub(super) struct Skip {
-    /// Directories an ignore rule names, as absolute paths.
+    /// Directories an ignore rule names, as absolute paths, the worktree's and its
+    /// submodules'.
     ignored: HashSet<PathBuf>,
     /// Git could not answer: common build directories are skipped by name instead.
     by_name: bool,
+    /// Where this worktree's submodule repositories live (`<git dir>/modules`).
+    modules: Option<PathBuf>,
 }
 
 impl Skip {
@@ -140,10 +143,13 @@ impl Skip {
             let candidates = paths_below(root, &listed).into_iter().collect::<Vec<_>>();
             git.ignored(root, &candidates)
         });
+        let modules =
+            git_dir(root).and_then(|git_dir| fs::canonicalize(git_dir.join("modules")).ok());
         match ignored {
             Some(ignored) => Self {
                 ignored,
                 by_name: false,
+                modules,
             },
             None => {
                 tracing::warn!(
@@ -152,38 +158,68 @@ impl Skip {
                 Self {
                     ignored: HashSet::new(),
                     by_name: true,
+                    modules,
                 }
             }
         }
     }
 
+    /// Adds a submodule's own ignore rules: the superproject's listing does not see inside it.
+    fn add_submodule(&mut self, git: &Git, submodule: &Path) {
+        let inner = Self::of_worktree(git, submodule);
+        self.ignored.extend(inner.ignored);
+        self.by_name |= inner.by_name;
+    }
+
+    fn skips_by_name(&self, directory: &Path) -> bool {
+        directory.file_name().is_some_and(|name| {
+            FALLBACK_SKIPPED_NAMES
+                .iter()
+                .any(|skipped| name == OsStr::new(skipped))
+        })
+    }
+
     /// Whether `directory` (below the root) is left out of a walk.
     fn skips(&self, directory: &Path) -> bool {
         self.ignored.contains(directory)
-            || (self.by_name
-                && directory.file_name().is_some_and(|name| {
-                    FALLBACK_SKIPPED_NAMES
-                        .iter()
-                        .any(|skipped| name == OsStr::new(skipped))
-                }))
-            || separately_watched(directory)
+            || (self.by_name && self.skips_by_name(directory))
+            || self.repository(directory) == Some(Repository::Separate)
+    }
+
+    /// What kind of repository root `directory` is, if any. A submodule's Git directory
+    /// lies in this worktree's `modules/`; anything else with a `.git` (another repository,
+    /// a linked worktree) has its own watch and is not part of this worktree's status.
+    fn repository(&self, directory: &Path) -> Option<Repository> {
+        fs::symlink_metadata(directory.join(".git")).ok()?;
+        let submodule = git_dir(directory)
+            .and_then(|git_dir| fs::canonicalize(git_dir).ok())
+            .zip(self.modules.as_deref())
+            .is_some_and(|(git_dir, modules)| git_dir.starts_with(modules));
+        Some(if submodule {
+            Repository::Submodule
+        } else {
+            Repository::Separate
+        })
     }
 }
 
-/// Another repository or a linked worktree, which has its own watch and whose files are not
-/// part of this worktree's status. A submodule (its `.git` file points into the parent's
-/// `.git/modules/`) stays watched: the parent's status shows its changes.
-fn separately_watched(directory: &Path) -> bool {
-    let marker = directory.join(".git");
-    match fs::symlink_metadata(&marker) {
-        Ok(metadata) if metadata.is_dir() => true,
-        Ok(_) => !fs::read_to_string(&marker).is_ok_and(|text| {
-            text.trim()
-                .strip_prefix("gitdir:")
-                .is_some_and(|gitdir| gitdir.contains("/modules/"))
-        }),
-        Err(_) => false,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Repository {
+    Submodule,
+    Separate,
+}
+
+/// The Git directory of the worktree at `root`: `.git` itself, or where a `.git` file's
+/// `gitdir:` points, relative to `root` when it is not absolute.
+fn git_dir(root: &Path) -> Option<PathBuf> {
+    let marker = root.join(".git");
+    let metadata = fs::symlink_metadata(&marker).ok()?;
+    if metadata.is_dir() {
+        return Some(marker);
     }
+    let text = fs::read_to_string(&marker).ok()?;
+    let gitdir = Path::new(text.trim().strip_prefix("gitdir:")?.trim());
+    Some(root.join(gitdir))
 }
 
 fn subdirectories(directory: &Path) -> Vec<PathBuf> {
@@ -198,12 +234,16 @@ fn subdirectories(directory: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// `top` and every directory below it that `skip` keeps, parents before children.
-fn kept_directories(top: &Path, skip: &Skip) -> Vec<PathBuf> {
+/// `top` and every directory below it that `skip` keeps, parents before children. A
+/// submodule's own ignore rules join `skip` as the walk enters it.
+fn kept_directories(git: &Git, top: &Path, skip: &mut Skip) -> Vec<PathBuf> {
     let mut kept = vec![top.to_path_buf()];
     let mut next = 0;
     while let Some(directory) = kept.get(next).cloned() {
         next += 1;
+        if next > 1 && skip.repository(&directory) == Some(Repository::Submodule) {
+            skip.add_submodule(git, &directory);
+        }
         kept.extend(
             subdirectories(&directory)
                 .into_iter()
@@ -222,14 +262,19 @@ fn kept_new_directories(git: &Git, root: &Path, skip: &Skip, tops: Vec<PathBuf>)
         .filter(|top| !skip.skips(top))
         .collect::<Vec<_>>();
     while !level.is_empty() {
+        // When Git cannot answer, common build directories are skipped by name.
         let ignored = if skip.by_name {
-            HashSet::new()
+            None
         } else {
-            git.ignored(root, &level).unwrap_or_default()
+            git.ignored(root, &level)
         };
         let mut next = Vec::new();
         for directory in level {
-            if ignored.contains(&directory) {
+            let skipped = match &ignored {
+                Some(ignored) => ignored.contains(&directory),
+                None => skip.skips_by_name(&directory),
+            };
+            if skipped {
                 continue;
             }
             next.extend(
@@ -279,7 +324,10 @@ impl PrunedWatcher {
                 if let Ok(event) = &event {
                     for path in &event.paths {
                         if is_ignore_file(path) {
-                            let _ = changes.send(Change::Rules(path.clone()));
+                            // Reading the rules (Git does, to answer) must not re-read them.
+                            if changes_contents(event.kind) {
+                                let _ = changes.send(Change::Rules(path.clone()));
+                            }
                         } else if matches!(event.kind, notify::EventKind::Create(_)) {
                             let _ = changes.send(Change::Created(path.clone()));
                         }
@@ -319,10 +367,11 @@ impl PrunedWatcher {
         if !worktree {
             return lock(&self.watcher).watch(path, recursive_mode);
         }
-        let skip = Skip::of_worktree(&self.git, path);
+        let mut skip = Skip::of_worktree(&self.git, path);
+        let directories = kept_directories(&self.git, path, &mut skip);
         let mut watched = HashSet::new();
         let mut watcher = lock(&self.watcher);
-        for directory in kept_directories(path, &skip) {
+        for directory in directories {
             match watcher.watch(&directory, RecursiveMode::NonRecursive) {
                 Ok(()) => {
                     watched.insert(directory);
@@ -359,6 +408,19 @@ impl PrunedWatcher {
         }
         Ok(())
     }
+}
+
+fn changes_contents(kind: notify::EventKind) -> bool {
+    use notify::event::{AccessKind, AccessMode, ModifyKind};
+    matches!(
+        kind,
+        notify::EventKind::Create(_)
+            | notify::EventKind::Remove(_)
+            | notify::EventKind::Modify(
+                ModifyKind::Data(_) | ModifyKind::Name(_) | ModifyKind::Any
+            )
+            | notify::EventKind::Access(AccessKind::Close(AccessMode::Write))
+    )
 }
 
 fn is_ignore_file(path: &Path) -> bool {
@@ -430,8 +492,8 @@ impl Worker {
         roots: &Mutex<HashMap<PathBuf, PrunedRoot>>,
         root: &Path,
     ) {
-        let skip = Skip::of_worktree(&self.git, root);
-        let kept = kept_directories(root, &skip);
+        let mut skip = Skip::of_worktree(&self.git, root);
+        let kept = kept_directories(&self.git, root, &mut skip);
         if let Some(pruned) = lock(roots).get_mut(root) {
             pruned.skip = skip;
         }
@@ -505,18 +567,27 @@ mod tests {
         ] {
             fs::create_dir_all(root.join(directory)).unwrap();
         }
-        // A linked worktree's `.git` file points into another repository's `worktrees/`.
+        // A linked worktree's `.git` file points into another repository's `worktrees/`,
+        // here one that lives under an ordinary `modules` directory.
         fs::write(
             root.join(".claude/worktrees/agent/.git"),
-            "gitdir: /elsewhere/.git/worktrees/agent\n",
+            "gitdir: /home/dev/modules/project/.git/worktrees/agent\n",
         )
         .unwrap();
-        // A submodule's points into this repository's `modules/`.
-        fs::write(
-            root.join("vendor/sub/.git"),
-            "gitdir: ../../.git/modules/vendor/sub\n",
-        )
-        .unwrap();
+        // A submodule's Git directory lives in this repository's `.git/modules/`, and it
+        // has ignore rules of its own.
+        let submodule = root.join("vendor/sub");
+        let separate = root.join(".git/modules/vendor/sub");
+        fs::create_dir_all(separate.parent().unwrap()).unwrap();
+        let status = Command::new("git")
+            .args(["init", "-q", "--separate-git-dir"])
+            .arg(&separate)
+            .arg(&submodule)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        fs::write(submodule.join(".gitignore"), "dist/\n").unwrap();
+        fs::create_dir_all(submodule.join("dist/bundle")).unwrap();
         temp
     }
 
@@ -536,8 +607,9 @@ mod tests {
     fn the_tree_keeps_tracked_and_submodule_directories_and_skips_ignored_and_linked_ones() {
         let temp = worktree();
         let root = temp.path();
-        let skip = Skip::of_worktree(&Git::current(), root);
-        let kept = relative(root, kept_directories(root, &skip));
+        let git = Git::current();
+        let mut skip = Skip::of_worktree(&git, root);
+        let kept = relative(root, kept_directories(&git, root, &mut skip));
         for expected in [
             "",
             "src",
@@ -555,9 +627,28 @@ mod tests {
             "packages/app/node_modules",
             "build",
             ".claude/worktrees/agent",
+            "vendor/sub/dist",
         ] {
             assert!(!kept.contains(skipped), "{skipped} is skipped: {kept:?}");
         }
+    }
+
+    #[test]
+    fn only_writes_to_an_ignore_file_reread_the_rules() {
+        use notify::event::{AccessKind, AccessMode, DataChange, ModifyKind};
+        // Git opens `.gitignore` to answer; that read must not start another reconcile.
+        assert!(!changes_contents(notify::EventKind::Access(
+            AccessKind::Open(AccessMode::Any)
+        )));
+        assert!(!changes_contents(notify::EventKind::Access(
+            AccessKind::Close(AccessMode::Read)
+        )));
+        assert!(changes_contents(notify::EventKind::Access(
+            AccessKind::Close(AccessMode::Write)
+        )));
+        assert!(changes_contents(notify::EventKind::Modify(
+            ModifyKind::Data(DataChange::Any)
+        )));
     }
 
     #[test]
