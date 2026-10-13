@@ -1,4 +1,6 @@
 mod layout;
+#[cfg(target_os = "linux")]
+mod pruned;
 mod registration;
 
 use layout::{component_matches, metadata_layout};
@@ -19,8 +21,10 @@ use std::{
     time::Duration,
 };
 
+#[cfg(not(target_os = "linux"))]
+use notify::Watcher;
 use notify::{
-    Config, Event, EventKind, RecursiveMode, Watcher,
+    Config, Event, EventKind, RecursiveMode,
     event::{AccessKind, AccessMode, MetadataKind, ModifyKind},
 };
 use tokio::sync::{Notify, watch};
@@ -424,6 +428,11 @@ impl GitWatcherBackend for GatedWatcherBackend {
 struct NativeWatcherBackendFactory;
 
 struct NativeWatcherBackend {
+    // Linux prunes Git-ignored directories from the worktree's recursive watch (#88);
+    // macOS and Windows watch a whole tree with one native handle.
+    #[cfg(target_os = "linux")]
+    watcher: pruned::PrunedWatcher,
+    #[cfg(not(target_os = "linux"))]
     watcher: notify::RecommendedWatcher,
 }
 
@@ -433,8 +442,11 @@ impl GitWatcherBackendFactory for NativeWatcherBackendFactory {
         callback: BackendCallback,
         config: Config,
     ) -> notify::Result<Box<dyn GitWatcherBackend>> {
-        notify::RecommendedWatcher::new(move |event| callback(event), config)
-            .map(|watcher| Box::new(NativeWatcherBackend { watcher }) as Box<dyn GitWatcherBackend>)
+        #[cfg(target_os = "linux")]
+        let watcher = pruned::PrunedWatcher::new(move |event| callback(event), config)?;
+        #[cfg(not(target_os = "linux"))]
+        let watcher = notify::RecommendedWatcher::new(move |event| callback(event), config)?;
+        Ok(Box::new(NativeWatcherBackend { watcher }))
     }
 }
 

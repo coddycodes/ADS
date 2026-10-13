@@ -292,9 +292,17 @@ flowchart TB
   count serialized JSON including escaping.
 
   Git Manager signals reuse the status watcher's lifecycle. The worktree root
-  retains one native recursive watch, including its `.git` tree. The notify
-  backend owns recursion: inotify directory watches on Linux, FSEvents on
-  macOS, and subtree watching on Windows. Events from the top-level `objects/`
+  retains one native recursive watch, including its `.git` tree. FSEvents on
+  macOS and subtree watching on Windows cover the tree with one handle. On
+  Linux, where each directory costs an inotify watch,
+  `git/watcher/pruned.rs` walks the tree itself and watches every directory
+  non-recursively except the ones Git ignores (listed once per registration
+  with `git ls-files --others --ignored --directory`, confirmed by
+  `git check-ignore`) and nested repositories or worktrees (a `.git` entry),
+  which have their own watches; directories created later are added the same
+  way, skipping the ignored directory names. A checkout with agent worktrees
+  and build output under it went from about 312,000 watched directories to
+  about 2,400. Events from the top-level `objects/`
   and `lfs/` stores and from submodule object stores (`modules/<name>/objects/`)
   are filtered; the rest of a submodule's Git directory still refreshes status.
   Git metadata outside the worktree has non-recursive root watches and native
