@@ -364,8 +364,9 @@ mod tests {
         use super::*;
         use crate::preview::{
             PreviewManager,
-            gateway::registry::{ClientReach, GatewayOpenResult, PreviewGateway},
+            gateway::registry::{ClientReach, GatewayOpenResult, IDLE_TIMEOUT_MS, PreviewGateway},
         };
+        use crate::signed_token::now_millis;
 
         /// Redirects `/` to an absolute `localhost` URL, answers `POST /echo`, and echoes
         /// WebSocket text only when `Origin` is `http://` plus `Host`, as the brainstorming
@@ -486,6 +487,10 @@ mod tests {
         }
 
         fn gateway(previews: usize) -> PreviewGateway {
+            gateway_with(previews, context())
+        }
+
+        fn gateway_with(previews: usize, ctx: GatewayContext) -> PreviewGateway {
             let relay = RelayHosts::default();
             relay.publish(Some(RelayPreviewHosts {
                 hostname: "env.zone.test".into(),
@@ -493,13 +498,7 @@ mod tests {
                     .map(|slot| format!("env-p{slot}.zone.test"))
                     .collect(),
             }));
-            PreviewGateway::new(
-                "127.0.0.1",
-                "devbox",
-                context(),
-                PreviewManager::new(),
-                relay,
-            )
+            PreviewGateway::new("127.0.0.1", "devbox", ctx, PreviewManager::new(), relay)
         }
 
         async fn open(gateway: &PreviewGateway, upstream_port: u16) -> GatewayOpenResult {
@@ -760,6 +759,121 @@ mod tests {
                 ),
                 Some(0)
             );
+        }
+
+        #[tokio::test]
+        async fn only_authenticated_requests_keep_a_slot_from_going_idle() {
+            let ports = [upstream().await, upstream().await, upstream().await];
+            let gateway = gateway(1);
+            let front = front(gateway.clone()).await;
+            let first = open(&gateway, ports[0]).await;
+            let opened_at = now_millis();
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            // A tab without a session (say, a dev server's reload client) polls the hostname.
+            let stale = http()
+                .get(format!("http://{front}/"))
+                .header(header::HOST, "env-p1.zone.test")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
+            gateway.close_idle(opened_at + IDLE_TIMEOUT_MS).await;
+            let second = open(&gateway, ports[1]).await;
+            assert_eq!(
+                second.origin, first.origin,
+                "the idle target gave up its slot"
+            );
+
+            let opened_at = now_millis();
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let cookie = pair(&bootstrap(front, "env-p1.zone.test", &second.capability).await);
+            let response = http()
+                .get(format!("http://{front}/echo"))
+                .header(header::HOST, "env-p1.zone.test")
+                .header(header::COOKIE, &cookie)
+                .send()
+                .await
+                .unwrap();
+            assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
+            gateway.close_idle(opened_at + IDLE_TIMEOUT_MS).await;
+            let reach = ClientReach {
+                local_ip: Ipv4Addr::LOCALHOST.into(),
+                host: Some("env.zone.test".into()),
+            };
+            let third_url = format!("http://localhost:{}/", ports[2]);
+            assert!(
+                matches!(
+                    gateway
+                        .open("t", &third_url, "s", i64::MAX, Some(&reach))
+                        .await,
+                    Err(crate::preview::gateway::registry::GatewayError::RelayBusy)
+                ),
+                "an authenticated request is activity"
+            );
+            gateway.shutdown().await;
+        }
+
+        /// Answers the bootstrap's principal check at once and holds every later one until
+        /// released.
+        #[derive(Default)]
+        struct Held {
+            calls: std::sync::atomic::AtomicUsize,
+            entered: tokio::sync::Notify,
+            release: tokio::sync::Notify,
+        }
+
+        impl PrincipalCheck for Held {
+            fn session_expiry<'a>(&'a self, _: &'a str) -> BoxFuture<'a, Option<i64>> {
+                Box::pin(async move {
+                    if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0 {
+                        self.entered.notify_one();
+                        self.release.notified().await;
+                    }
+                    Some(i64::MAX)
+                })
+            }
+        }
+
+        #[tokio::test]
+        async fn a_session_request_awaiting_its_principal_check_keeps_the_slot() {
+            let ports = [upstream().await, upstream().await];
+            let principal = Arc::new(Held::default());
+            let mut ctx = gateway_context(principal.clone(), vec![1; 32], "session".into());
+            ctx.principal_check_interval = Duration::from_millis(500);
+            let gateway = gateway_with(1, ctx);
+            let front = front(gateway.clone()).await;
+            let opened = open(&gateway, ports[0]).await;
+            let cookie = pair(&bootstrap(front, "env-p1.zone.test", &opened.capability).await);
+            // Past the check interval, the next request checks its principal again.
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            let request = tokio::spawn(
+                http()
+                    .post(format!("http://{front}/echo"))
+                    .header(header::HOST, "env-p1.zone.test")
+                    .header(header::ORIGIN, "https://env-p1.zone.test")
+                    .header(header::COOKIE, &cookie)
+                    .send(),
+            );
+            principal.entered.notified().await;
+            gateway.close_idle(now_millis() + IDLE_TIMEOUT_MS + 1).await;
+            let reach = ClientReach {
+                local_ip: Ipv4Addr::LOCALHOST.into(),
+                host: Some("env.zone.test".into()),
+            };
+            let second_url = format!("http://localhost:{}/", ports[1]);
+            let second = gateway
+                .open("t", &second_url, "s", i64::MAX, Some(&reach))
+                .await;
+            principal.release.notify_one();
+            assert!(
+                matches!(
+                    second,
+                    Err(crate::preview::gateway::registry::GatewayError::RelayBusy)
+                ),
+                "the request in its principal check keeps the target open"
+            );
+            assert_eq!(request.await.unwrap().unwrap().status(), StatusCode::OK);
+            gateway.shutdown().await;
         }
 
         #[tokio::test]

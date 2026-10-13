@@ -179,8 +179,9 @@ impl TargetRoute {
 
     /// Serves a request that reached the main port under this target's BiBCode Connect
     /// preview hostname. TLS ended at Cloudflare, so the client-facing origin is `https`.
+    /// Only an authenticated exchange counts as activity: anyone may request a public
+    /// hostname, and that must not keep the target (and its slot) from going idle.
     pub async fn serve_https<B: GatewayBody>(&self, request: Request<B>) -> Response<ProxyBody> {
-        let _activity = self.0.activity();
         // A preview hostname serves one target after another. A service worker registered by
         // an earlier one would outlive it and intercept the next one's bootstrap (with its
         // capability), so no service worker script loads on these hostnames.
@@ -486,7 +487,6 @@ async fn handle_request<B: GatewayBody>(
     request: Request<B>,
     https: bool,
 ) -> Response<ProxyBody> {
-    state.touch();
     let Some(host) = request
         .headers()
         .get(HOST)
@@ -512,6 +512,9 @@ async fn handle_request<B: GatewayBody>(
     let Some(session) = state.session_for(request.headers()) else {
         return expired();
     };
+    // A gateway session (only a bootstrap mints one) counts as activity, and holds the
+    // target open through the principal check, before the exchange's lease takes over.
+    let _activity = state.activity();
     if !state
         .principal_active(&session.principal_session_id, false)
         .await
@@ -601,6 +604,8 @@ async fn bootstrap(
         .ctx
         .sessions
         .create(&claims, expiry, ui_origin.clone());
+    // Forwarded exchanges count as activity through their lease; so does a bootstrap.
+    state.touch();
     state
         .checked()
         .insert(claims.session_id.clone(), now_millis());

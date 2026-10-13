@@ -40,7 +40,7 @@ use crate::{
 
 const UPSTREAM_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 const IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
-const IDLE_TIMEOUT_MS: u64 = 10 * 60 * 1000;
+pub(super) const IDLE_TIMEOUT_MS: u64 = 10 * 60 * 1000;
 /// Running targets across every thread; more opens answer `unavailable`.
 pub const MAX_TARGETS: usize = 64;
 /// How long shutdown lets in-flight exchanges finish before cutting them. The server has no
@@ -522,7 +522,7 @@ impl PreviewGateway {
     }
 
     /// Closes targets with no connections and no activity for [`IDLE_TIMEOUT_MS`].
-    async fn close_idle(&self, now_ms: u64) {
+    pub(super) async fn close_idle(&self, now_ms: u64) {
         self.inner.targets.lock().await.retain(|_, target| {
             let running = &target.running;
             let idle = running.active.load(Ordering::Relaxed) == 0

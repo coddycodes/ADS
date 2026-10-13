@@ -1262,7 +1262,10 @@ identity` on page loads (document or iframe Fetch Metadata, or, on plain-HTTP
   has closed. A live target never loses its slot, because a page left open on a
   preview hostname also carries a newer target's cookie and would reach the
   wrong app; with every slot's target alive the call fails `relay-busy`; without published preview hostnames it
-  fails `relay-not-provisioned`. The result carries
+  fails `relay-not-provisioned`. Only a bootstrap or a request carrying one of
+  its gateway sessions counts as a target's activity: anyone can request a
+  public hostname, and requests without a session must not keep a target, or
+  its slot, from closing after 10 idle minutes. The result carries
   `origin: https://<preview hostname>`, which the client bootstraps on,
   including a browser that opened BiBCode at the managed endpoint itself. On the
   main port, an outermost layer hands every request on a loopback socket whose
