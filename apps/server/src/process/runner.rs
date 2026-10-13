@@ -4,6 +4,7 @@ use thiserror::Error;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
+use super::SpawnPlan;
 use super::supervised::{
     SupervisedOverflow, SupervisedRunError, SupervisedRunRequest, SupervisedStreamOutput,
     run_supervised_with_spawn_observer,
@@ -204,39 +205,64 @@ impl ProcessRunner {
         let resolved = resolve_command(&input);
         // This generic runner may launch BiBCode's own binaries, which need the
         // AppImage environment. Isolation belongs at user-facing spawn sites.
-        let mut command = Command::new(&resolved.command);
-        command
-            .args(&resolved.args)
-            .stdin(if input.stdin.is_some() {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if let Some(cwd) = input.spawn_cwd.as_ref().or(input.cwd.as_ref()) {
-            command.current_dir(cwd);
-        }
-        if let Some(env) = &input.env {
-            command.env_clear().envs(env);
-        }
-
-        let result = run_supervised_with_spawn_observer(
-            SupervisedRunRequest {
-                command,
-                stdin: input.stdin.as_ref().map(|stdin| stdin.as_bytes().to_vec()),
-                timeout: input.timeout,
-                cleanup_timeout: Duration::from_secs(2),
-                max_output_bytes: input.max_output_bytes,
-                overflow: match input.output_mode {
-                    OutputMode::Error => SupervisedOverflow::Error,
-                    OutputMode::Truncate => SupervisedOverflow::Truncate,
+        let build = |program: &std::path::Path| {
+            let mut command = Command::new(program);
+            command
+                .args(&resolved.args)
+                .stdin(if input.stdin.is_some() {
+                    Stdio::piped()
+                } else {
+                    Stdio::null()
+                })
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            if let Some(cwd) = input.spawn_cwd.as_ref().or(input.cwd.as_ref()) {
+                command.current_dir(cwd);
+            }
+            if let Some(env) = &input.env {
+                command.env_clear().envs(env);
+            }
+            command
+        };
+        // A bare program with the input's own PATH would fork the whole server (#85).
+        // Only a spawned child reaches the observer, so one attempt at most takes it.
+        let observer = std::sync::Mutex::new(Some(observer));
+        let observe = |pid| {
+            let observer = observer
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+            if let Some(observer) = observer {
+                observer(pid);
+            }
+        };
+        let result = SpawnPlan::new(std::path::Path::new(&resolved.command), build)
+            .start(
+                |command| {
+                    let request = SupervisedRunRequest {
+                        command,
+                        stdin: input.stdin.as_ref().map(|stdin| stdin.as_bytes().to_vec()),
+                        timeout: input.timeout,
+                        cleanup_timeout: Duration::from_secs(2),
+                        max_output_bytes: input.max_output_bytes,
+                        overflow: match input.output_mode {
+                            OutputMode::Error => SupervisedOverflow::Error,
+                            OutputMode::Truncate => SupervisedOverflow::Truncate,
+                        },
+                    };
+                    // Boxed, as in the Git runner: two inline attempts make large futures.
+                    Box::pin(run_supervised_with_spawn_observer(
+                        request,
+                        &cancellation,
+                        &observe,
+                    ))
                 },
-            },
-            &cancellation,
-            observer,
-        )
-        .await;
+                |error| match error {
+                    SupervisedRunError::Spawn(error) => Some(error),
+                    _ => None,
+                },
+            )
+            .await;
 
         match result {
             Ok(output) => {

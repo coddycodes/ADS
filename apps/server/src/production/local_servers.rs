@@ -166,7 +166,12 @@ fn process_parents() -> HashMap<u32, u32> {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 
     let mut system = System::new();
-    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
+    // Threads are filtered out below; skip listing every /proc/<pid>/task entry.
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().without_tasks(),
+    );
     system
         .processes()
         .iter()

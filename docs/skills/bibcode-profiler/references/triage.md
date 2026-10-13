@@ -142,7 +142,15 @@ Covers `memory.leak-suspect`, `memory.leak-likely`, `cpu.sustained`,
 3. **Owning code by process kind:**
    - `server`: the standalone server or the desktop host with its in-process
      server. Look at long-lived maps, caches, subscriptions and queues in
-     `apps/server/src/`, and at `apps/desktop/src-tauri/src/` on desktop.
+     `apps/server/src/`, and at `apps/desktop/src-tauri/src/` on desktop. On
+     Linux, anonymous mappings of 64 MB, or 128 MB for two adjacent ones, at
+     64 MB-aligned addresses in `/proc/<pid>/smaps` are glibc arena heaps.
+     Builds newer than v0.9.0 trim free heap every 30 seconds, so a large step
+     that returns within a minute is transient work, such as a full-store load.
+     Memory that stays is live data or pages that live data shares with freed
+     chunks (fragmentation), not free heap the allocator kept. On v0.9.0 and
+     earlier nothing trims, and arena heaps that stay after a burst are usually
+     free memory glibc kept.
    - `provider`: the provider CLI named by `label` is third-party. Check what
      BiBCode feeds it and how long it keeps sessions:
      `apps/server/src/provider/<driver>/`, `apps/server/src/provider_terminal/`.
@@ -193,6 +201,22 @@ Covers `rpc.slow`, `rpc.hang`, `rpc.saturation`, `client.stall` and
 6. **Remote servers:** request records live on the environment that served the
    request, so run `P` on that host (`ssh <host> bibcode profiler …`). Client
    stalls and interactions are copied to every enabled environment.
+7. **Dropped connections:** `P events --kind rpc.disconnect --json` lists every
+   connection end, and `--kind rpc.reconnect` the reconnects. Group them by
+   `clientId` before blaming the server: several browsers and apps can share one
+   server. For a `client-liveness-timeout`, the client heard nothing for about
+   30 s by its own clock; `sinceOutboundMs` says what the server did:
+   - well under 30 s: the server was writing to it, so look at the link or the
+     client;
+   - about 30 s, with a small `sinceInboundMs`: the client kept sending Pings
+     and the server stopped answering them;
+   - minutes, with a small `sinceInboundMs`: the client sent no RPC Ping for
+     minutes, so its page was suspended (only its browser answered WebSocket
+     Pings). Clients older than this event closed the moment such a page
+     resumed.
+
+   A missing `client.batch` proves nothing by itself: the collector sends no
+   batch for a quiet window.
 
 ## Worktrees
 

@@ -130,6 +130,7 @@ pub struct ProductionRuntime {
     status_broadcaster: crate::git::StatusBroadcaster,
     workspace: WorkspaceRpc,
     _resource_sampler: Arc<NativeResourceSampler>,
+    process_monitor: Arc<DiagnosticsMonitor<NativeResourceSampler>>,
     profiler: Arc<ProfilerRuntime>,
     update_quiesced: tokio::sync::Mutex<bool>,
 }
@@ -503,7 +504,7 @@ impl ProductionRuntime {
             terminal_manager,
             process_sampler,
             resource_sampler.clone(),
-            process_monitor,
+            process_monitor.clone(),
             provider_usage,
             relay,
             control.clone(),
@@ -512,6 +513,7 @@ impl ProductionRuntime {
         .with_workspace_admission(workspace_availability.clone(), repositories.clone())
         .with_profiler(&profiler)
         .with_environment_id(&config.environment_id);
+        terminal_services.watch_workspace_changes(orchestration.subscribe_events());
         let worktree_runtime = WorktreeRuntime::start(
             orchestration.clone(),
             provider_runtime.clone(),
@@ -631,6 +633,7 @@ impl ProductionRuntime {
             status_broadcaster,
             workspace,
             _resource_sampler: resource_sampler,
+            process_monitor,
             profiler,
             update_quiesced: tokio::sync::Mutex::new(false),
         })
@@ -760,6 +763,8 @@ impl ProductionRuntime {
         // as an incomplete shutdown on the next start, not as a crash.
         let profiler = self.profiler.clone();
         let _ = tokio::task::spawn_blocking(move || profiler.begin_stopping()).await;
+        // Early, so diagnostics stop sampling before process ownership is frozen and cleaned up.
+        self.process_monitor.shutdown().await;
         self.server_control.shutdown_capability_discovery().await;
         self.preview_gateway.shutdown().await;
         let process_ownership = self.terminal_services.freeze_process_ownership().await;
@@ -1111,20 +1116,41 @@ fn review_diff_args(ignore_whitespace: bool, target: Option<&str>, three_dot: bo
     args
 }
 
+/// A review Git command that `posix_spawn` can start: a bare `git` with the isolated PATH
+/// would fork the whole server for every review diff (#85).
+fn review_git(build: impl Fn(&mut Command)) -> crate::process::SpawnPlan {
+    crate::process::SpawnPlan::new(Path::new("git"), |program| {
+        let mut command = Command::new(program);
+        configure_background_command(&mut command);
+        build(&mut command);
+        crate::process::isolate_appimage_environment(&mut command);
+        command
+    })
+}
+
+async fn spawn_review_git(
+    plan: crate::process::SpawnPlan,
+) -> std::io::Result<tokio::process::Child> {
+    plan.start(
+        |mut command| std::future::ready(command.spawn()),
+        |error| Some(error),
+    )
+    .await
+}
+
 async fn run_review_diff(cwd: &str, args: Vec<String>) -> Result<BoundedReviewDiff, ReviewError> {
-    let mut command = Command::new("git");
-    configure_background_command(&mut command);
-    crate::process::isolate_appimage_environment(&mut command);
-    let mut child = command
-        .args(["-C", cwd])
-        .args(crate::git::CANONICAL_DIFF_CONFIG)
-        .args(args)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|error| ReviewError::Backend(error.to_string()))?;
+    let mut child = spawn_review_git(review_git(|command| {
+        command
+            .args(["-C", cwd])
+            .args(crate::git::CANONICAL_DIFF_CONFIG)
+            .args(&args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true);
+    }))
+    .await
+    .map_err(|error| ReviewError::Backend(error.to_string()))?;
     let stdout = child.stdout.take().expect("piped git stdout");
     let captured = capture_review_diff(stdout, MAX_REVIEW_SOURCE_DIFF_BYTES).await;
     if !matches!(&captured, Ok((_, false))) {
@@ -1177,22 +1203,26 @@ fn review_source(
 }
 
 async fn untracked_review_diff(cwd: &str, limit: usize) -> Result<BoundedReviewDiff, ReviewError> {
-    let mut command = Command::new("git");
-    configure_background_command(&mut command);
-    crate::process::isolate_appimage_environment(&mut command);
-    let output = command
-        .args(["-C", cwd])
-        .args([
-            "-c",
-            "core.quotePath=false",
-            "ls-files",
-            "-z",
-            "--others",
-            "--exclude-standard",
-        ])
-        .output()
-        .await
-        .map_err(|error| ReviewError::Backend(error.to_string()))?;
+    let output = spawn_review_git(review_git(|command| {
+        command
+            .args(["-C", cwd])
+            .args([
+                "-c",
+                "core.quotePath=false",
+                "ls-files",
+                "-z",
+                "--others",
+                "--exclude-standard",
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+    }))
+    .await
+    .map_err(|error| ReviewError::Backend(error.to_string()))?
+    .wait_with_output()
+    .await
+    .map_err(|error| ReviewError::Backend(error.to_string()))?;
     if !output.status.success() {
         return Err(ReviewError::Backend(
             String::from_utf8_lossy(&output.stderr).trim().to_owned(),
@@ -2064,6 +2094,86 @@ mod tests {
             } => value,
             other => panic!("unexpected settings response: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn workspace_changes_start_terminal_input_readmission() {
+        async fn readmission_after(terminal: &crate::terminal::TerminalManager, from: u64) -> u64 {
+            timeout(std::time::Duration::from_secs(2), async {
+                loop {
+                    let epoch = terminal.input_readmission_epoch();
+                    if epoch != from {
+                        return epoch;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("the runtime feeds workspace changes to terminal input")
+        }
+
+        let state = TempDir::new().expect("state");
+        let config = ServerConfig::new(state.path()).with_bind("127.0.0.1", 0);
+        hermetic_providers::write_hermetic_settings(&config.state_dir(), json!({}));
+        let database = Database::open_in_memory().await.expect("database");
+        database
+            .call(|connection| {
+                run_migrations(connection, None)?;
+                Ok(())
+            })
+            .await
+            .expect("migrations");
+        let runtime = ProductionRuntime::start(
+            &config,
+            database,
+            AuthService::new(&config, vec![7_u8; 32]),
+            vec![9_u8; 32],
+            Arc::new(crate::diagnostics::NotApplicableUiProcessObserver),
+        )
+        .await
+        .expect("runtime");
+        let terminal = runtime.terminal_services.terminal_manager_for_test();
+        let workspace_root = state.path().join("input-project");
+        let worktree = state.path().join("input-worktree");
+        std::fs::create_dir(&workspace_root).expect("workspace");
+        std::fs::create_dir(&worktree).expect("worktree");
+        let before = terminal.input_readmission_epoch();
+        // The project's default thread is created: `thread.created`.
+        runtime
+            .orchestration
+            .dispatch(
+                serde_json::from_value(json!({
+                    "type":"project.create","commandId":"input-project","projectId":"input-project",
+                    "title":"Project","workspaceRoot":workspace_root,"defaultModelSelection":null,
+                    "createdAt":"2026-08-01T00:00:00Z"
+                }))
+                .expect("project command"),
+            )
+            .await
+            .expect("project");
+        let created = readmission_after(&terminal, before).await;
+        let thread_id = load_snapshot(&runtime.orchestration.repositories())
+            .await
+            .expect("snapshot")
+            .threads
+            .into_iter()
+            .find(|thread| thread.kind == "default")
+            .expect("default thread")
+            .thread_id;
+        // The thread moves to a worktree: `thread.meta-updated` carrying `worktreePath`.
+        runtime
+            .orchestration
+            .dispatch(
+                serde_json::from_value(json!({
+                    "type":"thread.meta.update","commandId":"input-worktree",
+                    "threadId":thread_id,"worktreePath":worktree
+                }))
+                .expect("thread command"),
+            )
+            .await
+            .expect("thread moved");
+        readmission_after(&terminal, created).await;
+        runtime.shutdown().await;
     }
 
     #[tokio::test]
@@ -3225,6 +3335,167 @@ mod tests {
         assert!(diff.diff.contains("binary.dat"));
         assert!(diff.diff.contains("oversized.dat"));
         assert!(diff.truncated);
+    }
+
+    #[cfg(target_os = "linux")]
+    const REVIEW_SPAWN_TEST: &str =
+        "production::runtime::tests::review_diffs_spawn_git_without_copying_the_server";
+    #[cfg(target_os = "linux")]
+    const REVIEW_BENCH_TEST: &str = "production::runtime::tests::review_diff_timing_by_host_size";
+
+    /// A repository with a modified tracked file and an untracked one, and an AppImage
+    /// launch environment for re-executing `test` against it.
+    #[cfg(target_os = "linux")]
+    fn run_review_case_as_appimage(
+        test: &str,
+        phase: &str,
+        configure: impl FnOnce(&mut std::process::Command),
+    ) {
+        use crate::test_support::{fork_probe, isolated_git_config::IsolatedGitConfig, reexec};
+
+        let config = IsolatedGitConfig::new();
+        let root = TempDir::new().expect("fixture root");
+        let repository = root.path().join("repository");
+        std::fs::create_dir_all(&repository).expect("repository directory");
+        let git = |args: &[&str]| {
+            let mut command = std::process::Command::new("git");
+            config.apply_to_command(&mut command);
+            let status = command
+                .args(args)
+                .current_dir(&repository)
+                .status()
+                .expect("git starts");
+            assert!(status.success(), "git {args:?}");
+        };
+        git(&["init", "--quiet"]);
+        std::fs::write(repository.join("tracked.txt"), "one\n").expect("tracked file");
+        git(&["add", "tracked.txt"]);
+        git(&[
+            "-c",
+            "user.name=Review",
+            "-c",
+            "user.email=review@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "fixture",
+        ]);
+        std::fs::write(repository.join("tracked.txt"), "one\ntwo\n").expect("modified file");
+        std::fs::write(repository.join("untracked.txt"), "new\n").expect("untracked file");
+        let environment = fork_probe::appimage_environment(root.path(), &[]);
+        reexec::run(test, phase, None, |command| {
+            config.apply_to_command(command);
+            configure(command);
+            command
+                .envs(environment)
+                .env("BIBCODE_TEST_REVIEW_REPOSITORY", &repository);
+        });
+    }
+
+    #[cfg(target_os = "linux")]
+    fn review_repository() -> String {
+        std::env::var("BIBCODE_TEST_REVIEW_REPOSITORY").expect("review repository")
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn review_both_diffs(repository: &str) {
+        let tracked = run_review_diff(repository, review_diff_args(false, None, false))
+            .await
+            .expect("tracked review diff");
+        assert!(tracked.diff.contains("+two"), "{}", tracked.diff);
+        let untracked = untracked_review_diff(repository, MAX_REVIEW_SOURCE_DIFF_BYTES)
+            .await
+            .expect("untracked review diff");
+        assert!(
+            untracked.diff.contains("untracked.txt"),
+            "{}",
+            untracked.diff
+        );
+    }
+
+    /// Review Git commands must not copy the server (#85): inside the AppImage they get a
+    /// PATH of their own, which made Rust fork for the bare `git`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn review_diffs_spawn_git_without_copying_the_server() {
+        use crate::test_support::{fork_probe, reexec};
+
+        let Some(child) = reexec::enter(REVIEW_SPAWN_TEST, "appimage") else {
+            run_review_case_as_appimage(REVIEW_SPAWN_TEST, "appimage", |_| {});
+            return;
+        };
+        let region = fork_probe::TouchedRegion::new();
+        region.assert_detects_a_fork();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("Tokio runtime")
+            .block_on(review_both_diffs(&review_repository()));
+        let faults = region.rewrite_faults();
+        assert!(
+            faults < fork_probe::NO_COPY_FAULTS,
+            "a review Git child copied the server: {faults} write faults on {} pages",
+            region.pages()
+        );
+        child.complete();
+    }
+
+    /// `cargo test -p bibcode-server --lib -- --ignored --nocapture review_diff_timing`
+    /// prints the median time of one tracked and one untracked review diff with an idle
+    /// host and with a host that holds 4 GiB of touched heap.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "benchmark"]
+    fn review_diff_timing_by_host_size() {
+        use crate::test_support::reexec;
+
+        for (phase, heap_gib) in [("small", 0), ("large", 4)] {
+            if let Some(child) = reexec::enter(REVIEW_BENCH_TEST, phase) {
+                let heap = (0..heap_gib * 1024)
+                    .map(|_| vec![1_u8; 1 << 20])
+                    .collect::<Vec<_>>();
+                let repository = review_repository();
+                let mut samples = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .expect("Tokio runtime")
+                    .block_on(async {
+                        let mut samples = Vec::new();
+                        for _ in 0..15 {
+                            let started = std::time::Instant::now();
+                            review_both_diffs(&repository).await;
+                            samples.push(started.elapsed());
+                        }
+                        samples
+                    });
+                samples.sort();
+                let results = std::env::var_os("BIBCODE_BENCH_RESULTS").expect("results path");
+                let mut existing = std::fs::read_to_string(&results).unwrap_or_default();
+                existing.push_str(&format!(
+                    "heap={heap_gib}GiB review diffs median={:?} min={:?} max={:?}\n",
+                    samples[samples.len() / 2],
+                    samples[0],
+                    samples[samples.len() - 1],
+                ));
+                std::fs::write(results, existing).expect("benchmark results");
+                std::hint::black_box(&heap);
+                child.complete();
+                return;
+            }
+        }
+        let results = TempDir::new().expect("results directory");
+        let path = results.path().join("results");
+        for phase in ["small", "large"] {
+            run_review_case_as_appimage(REVIEW_BENCH_TEST, phase, |command| {
+                command
+                    .arg("--include-ignored")
+                    .env("BIBCODE_BENCH_RESULTS", &path);
+            });
+        }
+        print!(
+            "{}",
+            std::fs::read_to_string(path).expect("benchmark results")
+        );
     }
 
     #[tokio::test]

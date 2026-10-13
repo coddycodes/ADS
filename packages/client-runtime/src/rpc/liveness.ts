@@ -88,7 +88,9 @@ export const makeInboundActivity: Effect.Effect<InboundActivity> = Effect.gen(fu
  * intervals and returns how long it was silent. After each silent interval
  * before that it sends an RPC Ping, which every live server answers. Inbound
  * messages never wake this loop: it re-reads the activity clock only when its
- * current deadline passes, so a busy socket costs one timer per interval.
+ * current deadline passes, so a busy socket costs one timer per interval. A
+ * wake that comes late counts as one interval, never several, so a suspended
+ * client cannot close a live connection the moment it resumes.
  */
 export const runLivenessMonitor = <E, R>(options: {
   readonly activity: InboundActivity;
@@ -122,6 +124,9 @@ export const runLivenessMonitor = <E, R>(options: {
       silentIntervals += 1;
       if (silentIntervals >= timings.deadAfterIntervals) return now - silentSince;
       yield* options.sendPing.pipe(Effect.ignore);
-      deadline += nextInterval();
+      // One wake counts at most one silent interval. A client that slept through several
+      // (a frozen or throttled tab, a blocked main thread) gives the server a full
+      // interval to answer this Ping instead of charging it the time it did not run.
+      deadline = Math.max(deadline, now) + nextInterval();
     }
   });

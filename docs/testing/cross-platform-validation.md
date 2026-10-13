@@ -42,14 +42,18 @@ sampling, attribution, and ownership checks:
 ```sh
 cargo test -p bibcode-server --lib diagnostics::native::tests:: -j 2
 cargo test -p bibcode-server --lib diagnostics::resource_sampler::tests:: -j 2
+cargo test -p bibcode-server --lib diagnostics::monitor::tests:: -j 2
 cargo test -p bibcode-server --lib production::server_terminal::tests::embedded_host_cleanup_preserves_unmanaged_host_descendants -j 2 -- --exact
 ```
 
-Construction must leave the native process table empty. The first requested
-sample must discover the current process and previously unknown descendants with
-their names, creation identities, and parents; subsequent samples must refresh
-resource observations. Attribution must retain its core/UI/external scopes, and
-cleanup must preserve unrelated host processes. Direct PID identity lookup and
+Construction must leave the native process table empty. The first diagnostics
+read starts the background sampler; its first sample must discover the current
+process and previously unknown descendants with their names, creation
+identities, and parents; subsequent samples must refresh resource observations.
+Reads must never take a sample or wait for one in progress after the first, the
+sampler must stop once reads stop, and shutdown must stop it for good.
+Attribution must retain its core/UI/external scopes, and cleanup must preserve
+unrelated host processes. Direct PID identity lookup and
 empty ownership cleanup must not require a host-wide sample.
 
 For a boot-sampling performance change, compare eager and lazy construction on
@@ -179,6 +183,10 @@ old begin issuing after a newer attachment, dropped responses, and disconnect
 or process replacement while input is queued. Uncertain input must never replay.
 Also verify open-after-close and restart followed by immediate programmatic
 writes in both ordered and legacy modes, before a renderer has attached.
+`production::server_terminal::input_admission_tests` (inside the `terminal::`
+filter) proves that frames are acknowledged while the SQLite worker is busy,
+that workspace loss and removal seal the input session, and that a changed
+workspace re-admits it without interrupting input.
 
 On a disposable native terminal, verify **Reconnect input** after a controlled
 delivery failure preserves the running process and resumes only newly entered

@@ -2997,6 +2997,7 @@ impl TerminalManager {
         thread_id: &str,
         terminal_id: &str,
         attachment_sequence: u64,
+        admission: Option<super::input::TerminalInputAdmission>,
     ) -> Result<super::input::TerminalInputLease, TerminalError> {
         let session = self.require_session(thread_id, terminal_id).await?;
         let current = session.lock().await;
@@ -3030,7 +3031,43 @@ impl TerminalManager {
                 self.inner.cancellation.clone(),
                 identity,
                 attachment_sequence,
+                admission,
             )
+            .map_err(TerminalError::from)
+    }
+
+    /// Read before resolving a [`super::input::TerminalInputAdmission`] and again once the
+    /// session is registered: a change means a re-admission round may have missed it.
+    pub(crate) fn input_readmission_epoch(&self) -> u64 {
+        self.inner.input.readmission_epoch()
+    }
+
+    /// Starts a re-admission round for the input sessions in `scope`: returns the round's
+    /// revision and their `(input_id, thread_id)`. Their frames wait for the round's result.
+    pub(crate) fn start_input_readmission(
+        &self,
+        scope: super::input::InputReadmissionScope<'_>,
+    ) -> (u64, Vec<(String, String)>) {
+        self.inner.input.start_readmission(scope)
+    }
+
+    /// Applies round `revision`'s result: replaces the session's admission without
+    /// interrupting its input, or seals the session when the new admission could not be taken
+    /// (`None`). Results superseded by a newer round are ignored; returns whether it applied.
+    pub(crate) fn readmit_input(
+        &self,
+        input_id: &str,
+        revision: u64,
+        admission: Option<super::input::TerminalInputAdmission>,
+    ) -> bool {
+        self.inner.input.readmit(input_id, revision, admission)
+    }
+
+    /// Whether the input session is still registered and not sealed.
+    pub(crate) fn check_input_open(&self, input_id: &str) -> Result<(), TerminalError> {
+        self.inner
+            .input
+            .check_open(input_id)
             .map_err(TerminalError::from)
     }
 
@@ -5422,19 +5459,202 @@ mod tests {
         let connection = uuid::Uuid::new_v4();
         let closed = CancellationToken::new();
         let lease = manager
-            .begin_input(connection, closed.clone(), "thread", "term", 0)
+            .begin_input(connection, closed.clone(), "thread", "term", 0, None)
             .await
             .expect("lease");
         (root, backend, manager, connection, closed, lease.input_id)
     }
 
     #[tokio::test]
+    async fn ordered_input_readmission_keeps_the_session_and_follows_the_new_admission() {
+        let (_root, backend, manager, connection, closed, _input_id) =
+            ordered_input_fixture().await;
+        let admission = |lost: &CancellationToken| {
+            Some(super::super::input::TerminalInputAdmission::new(
+                lost.clone(),
+                (),
+                None,
+            ))
+        };
+        let first_lost = CancellationToken::new();
+        let lease = manager
+            .begin_input(
+                connection,
+                closed,
+                "thread",
+                "term",
+                1,
+                admission(&first_lost),
+            )
+            .await
+            .expect("admitted lease");
+        let write = |sequence, data| {
+            ordered_write(
+                &manager,
+                connection,
+                "thread",
+                "term",
+                &lease.input_id,
+                sequence,
+                data,
+            )
+        };
+        write(0, "a").await.expect("first frame");
+
+        let epoch = manager.input_readmission_epoch();
+        let (older, sessions) = manager
+            .start_input_readmission(crate::terminal::InputReadmissionScope::Thread("thread"));
+        assert_eq!(sessions, [(lease.input_id.clone(), "thread".to_owned())]);
+        assert_ne!(manager.input_readmission_epoch(), epoch);
+        let (newer, _) = manager
+            .start_input_readmission(crate::terminal::InputReadmissionScope::Thread("thread"));
+        assert!(
+            manager
+                .start_input_readmission(crate::terminal::InputReadmissionScope::Thread("other"))
+                .1
+                .is_empty()
+        );
+
+        // A frame waits while a round resolves the workspace it may be refused.
+        let mut held = Box::pin(write(1, "b"));
+        assert!(futures_util::poll!(&mut held).is_pending());
+        let second_lost = CancellationToken::new();
+        manager.readmit_input(&lease.input_id, newer, admission(&second_lost));
+        held.await.expect("same session after re-admission");
+        // An older round's late result neither replaces the newer admission nor seals.
+        let stale_lost = CancellationToken::new();
+        manager.readmit_input(&lease.input_id, older, admission(&stale_lost));
+        manager.readmit_input(&lease.input_id, older, None);
+        // Neither the replaced admission's loss nor the stale one concerns the session.
+        first_lost.cancel();
+        stale_lost.cancel();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        write(2, "c").await.expect("still admitted");
+        assert_eq!(backend.latest().writes(), ["a", "b", "c"]);
+
+        second_lost.cancel();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !manager
+                .start_input_readmission(crate::terminal::InputReadmissionScope::Thread("thread"))
+                .1
+                .is_empty()
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("loss of the current admission seals the session");
+        assert!(matches!(
+            write(3, "d").await,
+            Err(TerminalError::Input(error)) if error.code == "closed"
+        ));
+        assert_eq!(backend.latest().writes(), ["a", "b", "c"]);
+    }
+
+    #[tokio::test]
+    async fn ordered_input_project_root_rounds_cover_inheriting_and_resolving_sessions() {
+        use crate::terminal::InputReadmissionScope;
+
+        let (root, _backend, manager, connection, closed, _input_id) =
+            ordered_input_fixture().await;
+        let mut inputs = std::collections::BTreeMap::new();
+        for (thread_id, origin) in [
+            ("inherits", Some("project-a")),
+            ("other-project", Some("project-b")),
+            ("own-worktree", None),
+            ("resolving", None),
+        ] {
+            manager
+                .open(TerminalOpenInput::new(
+                    thread_id,
+                    "term",
+                    root.path().to_path_buf(),
+                    80,
+                    24,
+                ))
+                .await
+                .expect("open");
+            let lease = manager
+                .begin_input(
+                    connection,
+                    closed.clone(),
+                    thread_id,
+                    "term",
+                    0,
+                    Some(super::super::input::TerminalInputAdmission::new(
+                        CancellationToken::new(),
+                        (),
+                        origin.map(str::to_owned),
+                    )),
+                )
+                .await
+                .expect("admitted lease");
+            inputs.insert(thread_id, lease.input_id);
+        }
+        // This session's workspace is being resolved again, so its origin is not known yet.
+        manager.start_input_readmission(InputReadmissionScope::Thread("resolving"));
+
+        let (_, sessions) =
+            manager.start_input_readmission(InputReadmissionScope::InheritedRootOf("project-a"));
+        let mut covered = sessions
+            .into_iter()
+            .map(|(input_id, thread_id)| {
+                assert_eq!(inputs[thread_id.as_str()], input_id);
+                thread_id
+            })
+            .collect::<Vec<_>>();
+        covered.sort();
+        assert_eq!(covered, ["inherits", "resolving"]);
+
+        // A begin's catch-up is a round of its own session, which later project rounds cover.
+        let own = &inputs["own-worktree"];
+        assert_eq!(
+            manager
+                .start_input_readmission(InputReadmissionScope::Session(own))
+                .1,
+            [(own.clone(), "own-worktree".to_owned())]
+        );
+        let (_, sessions) =
+            manager.start_input_readmission(InputReadmissionScope::InheritedRootOf("project-a"));
+        assert!(sessions.iter().any(|(input_id, _)| input_id == own));
+    }
+
+    #[tokio::test]
+    async fn ordered_input_admission_loss_stops_a_frame_before_the_cleanup_task_runs() {
+        let (_root, backend, manager, connection, closed, _input_id) =
+            ordered_input_fixture().await;
+        let lost = CancellationToken::new();
+        let lease = manager
+            .begin_input(
+                connection,
+                closed,
+                "thread",
+                "term",
+                1,
+                Some(super::super::input::TerminalInputAdmission::new(
+                    lost.clone(),
+                    (),
+                    None,
+                )),
+            )
+            .await
+            .expect("admitted lease");
+        // On this current-thread runtime the cleanup task cannot run before the write.
+        lost.cancel();
+        assert!(matches!(
+            ordered_write(&manager, connection, "thread", "term", &lease.input_id, 0, "late").await,
+            Err(TerminalError::Input(error)) if error.code == "closed"
+        ));
+        assert!(backend.latest().writes().is_empty());
+    }
+
+    #[tokio::test]
     async fn ordered_input_delayed_old_begin_cannot_replace_a_newer_attachment() {
         let (_root, backend, manager, connection, closed, _input_id) =
             ordered_input_fixture().await;
-        let old_begin = manager.begin_input(connection, closed.clone(), "thread", "term", 1);
+        let old_begin = manager.begin_input(connection, closed.clone(), "thread", "term", 1, None);
         let fresh = manager
-            .begin_input(connection, closed, "thread", "term", 2)
+            .begin_input(connection, closed, "thread", "term", 2, None)
             .await
             .expect("fresh attachment");
         assert!(
@@ -5546,7 +5766,14 @@ mod tests {
         );
         let connection = uuid::Uuid::new_v4();
         let lease = manager
-            .begin_input(connection, CancellationToken::new(), "thread", "term", 0)
+            .begin_input(
+                connection,
+                CancellationToken::new(),
+                "thread",
+                "term",
+                0,
+                None,
+            )
             .await
             .expect("new attachment");
         manager
@@ -5682,7 +5909,7 @@ mod tests {
             .await
             .expect("other terminal");
         let second = manager
-            .begin_input(connection, closed, "thread", "other", 0)
+            .begin_input(connection, closed, "thread", "other", 0, None)
             .await
             .expect("second lease");
         let payload = "x".repeat(16 * 1024);
@@ -5716,6 +5943,7 @@ mod tests {
                 "thread",
                 "term",
                 0,
+                None,
             )
             .await
             .expect("independent lease");

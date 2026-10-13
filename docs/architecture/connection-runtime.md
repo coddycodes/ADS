@@ -527,7 +527,12 @@ connection alive. After 10 seconds without inbound data the client sends the
 RPC `Ping`; after three such intervals (30 seconds, each ±10 % jitter) it closes
 the socket with code 4408 and reason `liveness timeout`, logs `liveness-timeout`
 with the silent time, and fails the session with a `ConnectionTransientError`
-whose reason is `liveness-timeout`. A close frame from the server reports
+whose reason is `liveness-timeout`. Each wake of the monitor counts at most one
+interval. A timer that fires late, because the page was frozen or throttled in
+the background or its main thread was blocked, sends its Ping and gives the
+server a full interval to answer, so a page that resumes after minutes does not
+close a live connection at once. In a throttled page the limit stretches to
+three wakes. A close frame from the server reports
 `connection-closed`, and an abnormal closure (1006) or socket error reports
 `connection-lost`. The protocol is a local copy of Effect's
 `makeProtocolSocket` in `rpc/livenessProtocol.ts`; re-check it against upstream

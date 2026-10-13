@@ -5,10 +5,10 @@ use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 use crate::process::supervised::{
-    SupervisedOverflow, SupervisedRunError, SupervisedRunRequest, SupervisedStreamOutput,
-    run_supervised,
+    SupervisedOverflow, SupervisedRunError, SupervisedRunOutput, SupervisedRunRequest,
+    SupervisedStreamOutput, run_supervised,
 };
-use crate::process::{ChildCommand, EnvironmentInheritance};
+use crate::process::{ChildCommand, EnvironmentInheritance, SpawnPlan};
 
 const TRUNCATION_MARKER: &str = "\n\n[truncated]";
 
@@ -252,23 +252,9 @@ impl ProcessRunner {
         #[cfg(feature = "hermetic-test-guard")]
         let request = checked_guarded_request(request, EnvironmentInheritance::Inherit)?;
         let command_label = request.command.to_string_lossy().into_owned();
-        let command = process_command(&request, EnvironmentInheritance::Inherit);
-        let output = run_supervised(
-            SupervisedRunRequest {
-                command,
-                stdin: request.stdin.clone(),
-                timeout: request.timeout,
-                cleanup_timeout: Duration::from_secs(2),
-                max_output_bytes: request.max_output_bytes,
-                overflow: match request.output_policy {
-                    OutputPolicy::Truncate => SupervisedOverflow::Truncate,
-                    OutputPolicy::Error => SupervisedOverflow::Error,
-                },
-            },
-            cancellation,
-        )
-        .await
-        .map_err(|error| map_supervised_error(error, &request, command_label))?;
+        let output = run_request(&request, EnvironmentInheritance::Inherit, cancellation)
+            .await
+            .map_err(|error| map_supervised_error(error, &request, command_label))?;
 
         let exit_code = output
             .status
@@ -320,23 +306,9 @@ impl ProcessRunner {
         #[cfg(feature = "hermetic-test-guard")]
         let request = checked_guarded_request(request, inheritance)?;
         let command_label = request.command.to_string_lossy().into_owned();
-        let command = process_command(&request, inheritance);
-        let output = run_supervised(
-            SupervisedRunRequest {
-                command,
-                stdin: request.stdin.clone(),
-                timeout: request.timeout,
-                cleanup_timeout: Duration::from_secs(2),
-                max_output_bytes: request.max_output_bytes,
-                overflow: match request.output_policy {
-                    OutputPolicy::Truncate => SupervisedOverflow::Truncate,
-                    OutputPolicy::Error => SupervisedOverflow::Error,
-                },
-            },
-            cancellation,
-        )
-        .await
-        .map_err(|error| map_supervised_error(error, &request, command_label))?;
+        let output = run_request(&request, inheritance, cancellation)
+            .await
+            .map_err(|error| map_supervised_error(error, &request, command_label))?;
 
         let exit_code = match output.status.code() {
             Some(exit_code) => exit_code,
@@ -414,8 +386,39 @@ fn checked_guarded_request(
     Ok(request)
 }
 
-fn process_command(request: &ProcessRequest, inheritance: EnvironmentInheritance) -> Command {
-    let mut command = Command::new(&request.command);
+/// Runs the request with a bare `git` named by its path in the child's isolated `PATH`,
+/// so it starts with `posix_spawn` instead of forking the whole server (#85). The run is
+/// boxed: inline, the plan's two attempts make every Git caller's future large enough to
+/// overflow a test thread's stack.
+async fn run_request(
+    request: &ProcessRequest,
+    inheritance: EnvironmentInheritance,
+    cancellation: &CancellationToken,
+) -> Result<SupervisedRunOutput, SupervisedRunError> {
+    SpawnPlan::new(&request.command, |program| {
+        process_command(request, inheritance, program)
+    })
+    .start(
+        |command| {
+            Box::pin(run_supervised(
+                supervised_request(request, command),
+                cancellation,
+            ))
+        },
+        |error| match error {
+            SupervisedRunError::Spawn(error) => Some(error),
+            _ => None,
+        },
+    )
+    .await
+}
+
+fn process_command(
+    request: &ProcessRequest,
+    inheritance: EnvironmentInheritance,
+    program: &std::path::Path,
+) -> Command {
+    let mut command = Command::new(program);
     if inheritance == EnvironmentInheritance::Cleared {
         command.env_clear();
     }
@@ -431,6 +434,20 @@ fn process_command(request: &ProcessRequest, inheritance: EnvironmentInheritance
         inheritance,
     });
     command
+}
+
+fn supervised_request(request: &ProcessRequest, command: Command) -> SupervisedRunRequest {
+    SupervisedRunRequest {
+        command,
+        stdin: request.stdin.clone(),
+        timeout: request.timeout,
+        cleanup_timeout: Duration::from_secs(2),
+        max_output_bytes: request.max_output_bytes,
+        overflow: match request.output_policy {
+            OutputPolicy::Truncate => SupervisedOverflow::Truncate,
+            OutputPolicy::Error => SupervisedOverflow::Error,
+        },
+    }
 }
 
 fn map_supervised_error(
@@ -660,5 +677,41 @@ mod tests {
         let (left, right) = tokio::join!(run("left"), run("right"));
         assert_eq!(left.stdout, "left");
         assert_eq!(right.stdout, "right");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_program_that_fails_to_start_still_falls_through_the_path_search() {
+        let sandbox = TestSandbox::new("git-spawn-fallback");
+        let broken = sandbox.path("broken");
+        let working = sandbox.path("working");
+        std::fs::create_dir_all(&broken).unwrap();
+        std::fs::create_dir_all(&working).unwrap();
+        // Executable, but its interpreter is missing: execve fails with ENOENT, and execvp
+        // goes on to the next PATH entry, as a bare name always did.
+        TestSandbox::write_executable(&broken.join("fixture-tool"), "#!/nonexistent/interpreter\n");
+        TestSandbox::write_executable(&working.join("fixture-tool"), "#!/bin/sh\nprintf found\n");
+        let mut request =
+            fixture_request(&sandbox, "fixture-fallback", PathBuf::from("fixture-tool"));
+        request.env.push((
+            "PATH".into(),
+            std::env::join_paths([&broken, &working]).unwrap(),
+        ));
+
+        for output in [
+            ProcessRunner
+                .run(request.clone(), &CancellationToken::new())
+                .await
+                .map(|output| output.stdout.into_bytes()),
+            ProcessRunner
+                .run_bytes(request, &CancellationToken::new())
+                .await
+                .map(|output| output.stdout),
+        ] {
+            assert_eq!(
+                output.expect("the PATH search finds the working tool"),
+                b"found"
+            );
+        }
     }
 }

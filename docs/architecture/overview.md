@@ -425,6 +425,21 @@ Empty entries alongside real host entries, including an explicitly configured
 `.`, remain unchanged. The host library search path is never replaced with
 distribution-specific directories.
 
+Stripping `PATH` sets it on the child command, and Rust's standard library then
+forks instead of using `posix_spawn` for a command that names a bare program,
+because `posix_spawnp` would search the parent's `PATH`. A fork copies the page
+tables of the whole process: about 140 ms per child from a desktop host holding
+6 GB. Spawn sites therefore build their command through `process::SpawnPlan`,
+which resolves a bare program against the `PATH` the command sets for its child,
+the way `execvp` would, and names the resolved absolute path. A name that
+resolves to nothing, or a resolved program that fails to start the way `execvp`
+moves past (such as a shim whose interpreter is missing), runs by its bare name
+as before, so `execvp` still moves on to a later `PATH` entry and reports the
+same error. The Git runner (`git::ProcessRunner`), the generic
+`process::ProcessRunner` and the review diff Git commands use it; provider
+launches already name a resolved executable. A new spawn site that sets `PATH`
+for a bare program and runs often should use it too.
+
 The policy also removes `APPDIR`, `APPIMAGE`, `ARGV0`, and `OWD`, plus the
 launcher's forced `GDK_BACKEND`, `PYTHONDONTWRITEBYTECODE`, and `GTK_PATH`, and
 the user-only `GTK_THEME` override (inherited or supplied through
@@ -1063,7 +1078,19 @@ Closing a chat panel archives its thread; a tracked panel thread that leaves the
 live list (archived or deleted) loses its tab on every client unless it is
 still pending locally, and is adopted again if it is unarchived. Lifecycle
 reconciliation does not retain archived panel threads, so a tab persisted by a
-client that was away when the panel closed is dropped too.
+client that was away when the panel closed is dropped too. The reconciler drops
+state only with an archived snapshot taken no earlier than the last change to
+the set of live thread ids and no later than the live snapshot. It refetches
+the archived snapshot only when a thread enters or leaves the live list
+(create, archive, unarchive, delete of a live thread, panel close) or no usable
+snapshot exists, at most once per change and never while a request is in
+flight; live sequence advances during a turn never refetch it. A change made
+elsewhere to an already archived thread, such as deleting it, leaves the live
+list unchanged, so the reconciler does not observe it until the next such
+change, a reconnect, or a local archive action, and until then retains rather
+than drops that thread's state. The lists that show archived threads (Settings
+and the reopen-closed-chat menu) refetch once when they open, joining a request
+already in flight instead of starting a second one, so they show such changes.
 The reconciler reads the raw `subscribeTerminalMetadata` stream as whole
 delivered batches (an atom alone keeps only a batch's last event). Metadata
 `remove` events carry a `reason`: only `closed` (an explicit close) drops the
@@ -1609,6 +1636,12 @@ it.
   minutes.
 - **RPC latency and client reports.** See
   [Profiler timing and client reports](./rpc-and-orchestration.md#profiler-timing-and-client-reports).
+- **Connection ends.** Every RPC session that ends writes an `rpc.disconnect`
+  event with its reason and close code, its age, the time since its last
+  inbound frame and last outbound message, the longest outbound queue wait, and
+  the profiler `clientId` of its first correlated request. That client's next
+  connection writes `rpc.reconnect` with the gap. Neither raises a finding. See
+  [Connection ends](./rpc-and-orchestration.md#connection-ends).
 - **Subprocess exits.** The provider, terminal, and supervised-command exit
   paths report a death BiBCode did not ask for as a `subprocess.exit` event and
   a `subprocess.crash` finding with the signal or exit code, uptime, and the
@@ -1970,9 +2003,38 @@ the repeatable capture commands are recorded in the
 [Desktop Performance Baseline](./desktop-performance-baseline.md).
 
 The native process sampler starts with an empty process table, so constructing
-the production runtime does not enumerate host processes. A requested diagnostics
-sample or non-empty process-ownership cleanup refreshes the host process table on
-the blocking pool. Full discovery remains necessary to identify previously unknown
+the production runtime does not enumerate host processes. A diagnostics sample
+or non-empty process-ownership cleanup refreshes the host process table on the
+blocking pool. Full discovery remains necessary to identify previously unknown
 descendants for attribution and cleanup; direct PID identity checks use the native
 targeted lookup independently of that table. CPU observations establish their
-baseline on the first requested sample and retain it for subsequent samples.
+baseline on the first sample and retain it for subsequent samples.
+
+`DiagnosticsMonitor` takes diagnostics samples in one background task, every
+2 seconds in production, and `server.getProcessDiagnostics` and
+`server.getProcessResourceHistory` only read its latest sample and retained
+history. A read never samples and never waits for a sample in progress, with one
+exception: before the first sample completes, a read waits for it for at most
+1 second, then returns the error `Measuring resource usage.` instead of empty
+totals that would read as an idle host. The first diagnostics read starts the
+task, and the task stops after three intervals without a read, so a server with
+no diagnostics reader enumerates nothing; the next read answers from the
+retained sample, with its original timestamp, and restarts the task. Runtime
+shutdown stops the task early in the quiesce sequence, before process ownership
+is frozen and long before the Profiler's teardown. Each sample logs its stage
+durations at `debug`, and a sample that takes 500 ms or more logs them at `warn`
+(`slow process diagnostics sample`): process enumeration, which includes waiting
+for the blocking pool, the desktop UI observer, and attribution.
+
+On Linux the server and the desktop host allocate through glibc malloc, which
+keeps freed memory in the per-thread arena that served it and returns only the
+free space at the top of a heap. A large transient allocation, such as a
+full-store snapshot load or the startup validation snapshot, otherwise stays
+resident as free heap: 64 MB arena heaps, which the kernel reports as 128 MB
+mappings when two of them are adjacent. Both executables therefore start a
+`bibcode-heap-trim` thread (`allocator::start_heap_trimmer`) that calls
+`malloc_trim(0)` every 30 seconds, which releases the free pages inside every
+arena. The server starts it right after the crash hook; the desktop host starts
+it after the PATH hydration, which must run before any thread exists. Other
+platforms and C libraries do not start it. The thread holds no other resource
+and ends with the process.

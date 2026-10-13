@@ -2,19 +2,31 @@ use std::{
     collections::VecDeque,
     future::Future,
     pin::Pin,
-    sync::Arc,
-    time::{Duration, Instant},
+    sync::{Arc, Mutex as SyncMutex, MutexGuard, PoisonError},
+    time::Duration,
 };
 
 use thiserror::Error;
 use time::OffsetDateTime;
-use tokio::sync::{Mutex, RwLock};
+use tokio::{
+    sync::{RwLock, watch},
+    task::JoinHandle,
+    time::Instant,
+};
+use tokio_util::sync::CancellationToken;
 
 use super::{
     AttributedProcessSample, AttributedProcessSnapshot, ProcessResourceHistory, ProcessRow,
     ResourceSampler,
     history::{aggregate_history, trim_samples},
 };
+
+/// The sampler keeps running for this many intervals after the last read, so a client polling
+/// at the interval never finds it stopped, and a server nobody reads samples nothing.
+const READ_INTERVALS_KEPT_ALIVE: u32 = 3;
+/// How long a read waits for the first sample when none has completed yet.
+const FIRST_SAMPLE_WAIT: Duration = Duration::from_secs(1);
+const NOT_SAMPLED_YET: &str = "Measuring resource usage.";
 
 #[derive(Debug, Error)]
 pub enum SamplingError {
@@ -33,26 +45,28 @@ struct MonitorState {
     current: Option<Arc<AttributedProcessSnapshot>>,
     samples: VecDeque<Arc<AttributedProcessSample>>,
     last_error: Option<String>,
-    last_attempt: Option<Instant>,
+}
+
+impl MonitorState {
+    /// Without the fallback, a read before the first sample would show a healthy, idle host.
+    fn error(&self) -> Option<String> {
+        self.last_error
+            .clone()
+            .or_else(|| self.current.is_none().then(|| NOT_SAMPLED_YET.to_owned()))
+    }
+}
+
+#[derive(Debug, Default)]
+struct SamplerTask {
+    last_read: Option<Instant>,
+    /// `None` once the task stopped for lack of reads; a finished handle means it ended early.
+    handle: Option<JoinHandle<()>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct CurrentProcessDiagnostics {
     pub snapshot: Option<Arc<AttributedProcessSnapshot>>,
     pub error: Option<String>,
-}
-
-trait MonitorClock: std::fmt::Debug + Send + Sync + 'static {
-    fn now(&self) -> Instant;
-}
-
-#[derive(Clone, Copy, Debug)]
-struct SystemMonitorClock;
-
-impl MonitorClock for SystemMonitorClock {
-    fn now(&self) -> Instant {
-        Instant::now()
-    }
 }
 
 trait HistoryAggregator: std::fmt::Debug + Send + Sync + 'static {
@@ -84,68 +98,72 @@ impl HistoryAggregator for DefaultHistoryAggregator {
     }
 }
 
+/// Samples processes in one background task while clients read diagnostics. Reads return the
+/// latest sample and never sample themselves, so a slow sample delays no request.
 #[derive(Debug)]
 pub struct DiagnosticsMonitor<S: ResourceSampler> {
-    state: Arc<RwLock<MonitorState>>,
-    refresh: Arc<Mutex<()>>,
-    interval: Duration,
-    sampler: Arc<S>,
-    clock: Arc<dyn MonitorClock>,
+    shared: Arc<Shared<S>>,
     history_aggregator: Arc<dyn HistoryAggregator>,
+}
+
+#[derive(Debug)]
+struct Shared<S: ResourceSampler> {
+    state: RwLock<MonitorState>,
+    sampler: Arc<S>,
+    interval: Duration,
+    task: SyncMutex<SamplerTask>,
+    /// Becomes `true` when the first sample attempt completes.
+    sampled: watch::Sender<bool>,
+    shutdown: CancellationToken,
 }
 
 impl<S: ResourceSampler> DiagnosticsMonitor<S> {
     pub fn new(sampler: Arc<S>, interval: Duration) -> Self {
-        Self::with_clock(sampler, interval, Arc::new(SystemMonitorClock))
+        Self::with_aggregator(sampler, interval, Arc::new(DefaultHistoryAggregator))
     }
 
-    fn with_clock(sampler: Arc<S>, interval: Duration, clock: Arc<dyn MonitorClock>) -> Self {
-        Self::with_clock_and_aggregator(
-            sampler,
-            interval,
-            clock,
-            Arc::new(DefaultHistoryAggregator),
-        )
-    }
-
-    fn with_clock_and_aggregator(
+    fn with_aggregator(
         sampler: Arc<S>,
         interval: Duration,
-        clock: Arc<dyn MonitorClock>,
         history_aggregator: Arc<dyn HistoryAggregator>,
     ) -> Self {
         Self {
-            state: Arc::new(RwLock::new(MonitorState::default())),
-            refresh: Arc::new(Mutex::new(())),
-            interval,
-            sampler,
-            clock,
+            shared: Arc::new(Shared {
+                state: RwLock::new(MonitorState::default()),
+                sampler,
+                interval,
+                task: SyncMutex::new(SamplerTask::default()),
+                sampled: watch::Sender::new(false),
+                shutdown: CancellationToken::new(),
+            }),
             history_aggregator,
         }
     }
 
-    pub async fn sample_current(&self) -> CurrentProcessDiagnostics {
-        self.refresh_if_needed().await;
-        let state = self.state.read().await;
+    pub async fn read_current(&self) -> CurrentProcessDiagnostics {
+        self.shared.keep_sampling();
+        self.shared.wait_for_first_sample().await;
+        let state = self.shared.state.read().await;
         CurrentProcessDiagnostics {
             snapshot: state.current.clone(),
-            error: state.last_error.clone(),
+            error: state.error(),
         }
     }
 
     pub async fn read_history(&self, window_ms: u64, bucket_ms: u64) -> ProcessResourceHistory {
-        self.refresh_if_needed().await;
+        self.shared.keep_sampling();
+        self.shared.wait_for_first_sample().await;
         let now_ms = OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000;
         let (retained, error) = {
-            let state = self.state.read().await;
+            let state = self.shared.state.read().await;
             (
                 state.samples.iter().cloned().collect::<Vec<_>>(),
-                state.last_error.clone(),
+                state.error(),
             )
         };
         let window_ms = window_ms.max(1_000);
         let bucket_ms = bucket_ms.max(1_000);
-        let interval = self.interval;
+        let interval = self.shared.interval;
         let aggregator = self.history_aggregator.clone();
         tokio::task::spawn_blocking(move || {
             aggregator.aggregate(&retained, error, now_ms, window_ms, bucket_ms, interval)
@@ -163,42 +181,109 @@ impl<S: ResourceSampler> DiagnosticsMonitor<S> {
         })
     }
 
-    async fn refresh_if_needed(&self) {
-        let now = self.clock.now();
-        if self.is_fresh(now).await {
-            return;
+    /// Stops the sampler and waits for it; later reads return the retained sample.
+    pub async fn shutdown(&self) {
+        let handle = {
+            let mut task = self.shared.lock_task();
+            self.shared.shutdown.cancel();
+            task.handle.take()
+        };
+        if let Some(handle) = handle
+            && let Err(error) = handle.await
+            && error.is_panic()
+        {
+            tracing::warn!("the process diagnostics sampler panicked before shutdown");
         }
+    }
+}
 
-        let _refresh = self.refresh.lock().await;
-        let now = self.clock.now();
-        if self.is_fresh(now).await {
-            return;
-        }
-
-        let sampled = self.sampler.sample().await;
-        let attempted_at = self.clock.now();
-        let mut state = self.state.write().await;
-        match sampled {
-            Ok(snapshot) => {
-                let snapshot = Arc::new(snapshot);
-                state
-                    .samples
-                    .push_back(Arc::new(AttributedProcessSample::from(snapshot.as_ref())));
-                trim_samples(&mut state.samples, snapshot.sampled_at_ms);
-                state.current = Some(snapshot);
-                state.last_error = None;
-            }
-            Err(error) => state.last_error = Some(error.to_string()),
-        }
-        state.last_attempt = Some(attempted_at);
+impl<S: ResourceSampler> Shared<S> {
+    fn lock_task(&self) -> MutexGuard<'_, SamplerTask> {
+        self.task.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    async fn is_fresh(&self, now: Instant) -> bool {
-        self.state
-            .read()
-            .await
-            .last_attempt
-            .is_some_and(|last_attempt| now.duration_since(last_attempt) < self.interval)
+    /// Records a read and starts the sampler if it is not running. The read itself never samples.
+    fn keep_sampling(self: &Arc<Self>) {
+        let mut task = self.lock_task();
+        task.last_read = Some(Instant::now());
+        if self.shutdown.is_cancelled()
+            || task
+                .handle
+                .as_ref()
+                .is_some_and(|handle| !handle.is_finished())
+        {
+            return;
+        }
+        if task.handle.is_some() {
+            tracing::warn!("the process diagnostics sampler stopped unexpectedly; restarting it");
+        }
+        task.handle = Some(tokio::spawn(self.clone().run()));
+    }
+
+    async fn wait_for_first_sample(&self) {
+        if *self.sampled.borrow() {
+            return;
+        }
+        let mut sampled = self.sampled.subscribe();
+        tokio::select! {
+            _ = sampled.wait_for(|sampled| *sampled) => {}
+            () = self.shutdown.cancelled() => {}
+            () = tokio::time::sleep(FIRST_SAMPLE_WAIT) => {}
+        }
+    }
+
+    async fn run(self: Arc<Self>) {
+        loop {
+            let sampled = tokio::select! {
+                () = self.shutdown.cancelled() => return,
+                sampled = self.sampler.sample() => sampled,
+            };
+            self.publish(sampled).await;
+            tokio::select! {
+                () = self.shutdown.cancelled() => return,
+                () = tokio::time::sleep(self.interval) => {}
+            }
+            if self.stop_if_unread() {
+                return;
+            }
+        }
+    }
+
+    async fn publish(&self, sampled: Result<AttributedProcessSnapshot, SamplingError>) {
+        {
+            let mut state = self.state.write().await;
+            match sampled {
+                Ok(snapshot) => {
+                    let snapshot = Arc::new(snapshot);
+                    state
+                        .samples
+                        .push_back(Arc::new(AttributedProcessSample::from(snapshot.as_ref())));
+                    trim_samples(&mut state.samples, snapshot.sampled_at_ms);
+                    state.current = Some(snapshot);
+                    state.last_error = None;
+                }
+                Err(error) => {
+                    let error = error.to_string();
+                    if state.last_error.as_ref() != Some(&error) {
+                        tracing::warn!(%error, "process diagnostics sample failed");
+                    }
+                    state.last_error = Some(error);
+                }
+            }
+        }
+        self.sampled.send_replace(true);
+    }
+
+    /// Decides under the task lock, so a read either sees the task running or starts a new one.
+    fn stop_if_unread(&self) -> bool {
+        let mut task = self.lock_task();
+        let unread = task.last_read.is_none_or(|last_read| {
+            last_read.elapsed() >= self.interval * READ_INTERVALS_KEPT_ALIVE
+        });
+        if unread {
+            task.handle = None;
+        }
+        unread
     }
 }
 
@@ -218,31 +303,11 @@ mod tests {
 
     use super::*;
 
-    #[derive(Debug)]
-    struct TestClock {
-        now: SyncMutex<Instant>,
-    }
+    const INTERVAL: Duration = Duration::from_secs(2);
+    /// Long enough for a paused-clock read to fail if it waited on a sample.
+    const NO_WAIT: Duration = Duration::from_millis(10);
 
-    impl TestClock {
-        fn new() -> Self {
-            Self {
-                now: SyncMutex::new(Instant::now()),
-            }
-        }
-
-        fn advance(&self, duration: Duration) {
-            let mut now = self.now.lock().expect("test clock lock");
-            *now += duration;
-        }
-    }
-
-    impl MonitorClock for TestClock {
-        fn now(&self) -> Instant {
-            *self.now.lock().expect("test clock lock")
-        }
-    }
-
-    #[derive(Debug)]
+    #[derive(Clone, Debug)]
     enum FakeResponse {
         Snapshot(AttributedProcessSnapshot),
         Failure(&'static str),
@@ -285,13 +350,17 @@ mod tests {
                     self.started.notify_one();
                     self.release.notified().await;
                 }
-                match self
-                    .responses
-                    .lock()
-                    .expect("fake responses lock")
-                    .pop_front()
+                // The last response repeats, so a background sampler never runs out.
+                let response = {
+                    let mut responses = self.responses.lock().expect("fake responses lock");
+                    if responses.len() > 1 {
+                        responses.pop_front()
+                    } else {
+                        responses.front().cloned()
+                    }
                     .expect("fake response")
-                {
+                };
+                match response {
                     FakeResponse::Snapshot(snapshot) => Ok(snapshot),
                     FakeResponse::Failure(message) => {
                         Err(SamplingError::Failed(message.to_owned()))
@@ -337,58 +406,69 @@ mod tests {
         }
     }
 
-    fn monitor(
-        sampler: Arc<FakeResourceSampler>,
-    ) -> (DiagnosticsMonitor<FakeResourceSampler>, Arc<TestClock>) {
-        let clock = Arc::new(TestClock::new());
-        (
-            DiagnosticsMonitor::with_clock(sampler, Duration::from_secs(2), clock.clone()),
-            clock,
-        )
+    fn monitor(sampler: Arc<FakeResourceSampler>) -> DiagnosticsMonitor<FakeResourceSampler> {
+        DiagnosticsMonitor::new(sampler, INTERVAL)
     }
 
-    #[tokio::test]
+    fn sampled_at(current: &CurrentProcessDiagnostics) -> Option<i128> {
+        current
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.sampled_at_ms)
+    }
+
+    /// Lets the paused clock run one interval, so the background sampler takes its next sample.
+    async fn next_interval() {
+        tokio::time::sleep(INTERVAL + Duration::from_millis(1)).await;
+    }
+
+    async fn wait_for_sample(monitor: &DiagnosticsMonitor<FakeResourceSampler>, at: i128) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while sampled_at(&monitor.read_current().await) != Some(at) {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the background sample is published");
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn construction_performs_zero_samples() {
         let sampler = Arc::new(FakeResourceSampler::new([FakeResponse::Snapshot(
             snapshot(1_000),
         )]));
 
-        let (_monitor, _clock) = monitor(sampler.clone());
+        let _monitor = monitor(sampler.clone());
+        tokio::time::sleep(INTERVAL * 10).await;
 
         assert_eq!(sampler.calls(), 0);
     }
 
     #[tokio::test]
-    async fn first_current_read_samples_once() {
+    async fn first_current_read_waits_for_the_first_sample() {
         let sampler = Arc::new(FakeResourceSampler::new([FakeResponse::Snapshot(
             snapshot(1_000),
         )]));
-        let (monitor, _clock) = monitor(sampler.clone());
+        let monitor = monitor(sampler.clone());
 
-        let current = monitor.sample_current().await;
+        let current = monitor.read_current().await;
 
         assert_eq!(sampler.calls(), 1);
-        assert_eq!(
-            current
-                .snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.sampled_at_ms),
-            Some(1_000)
-        );
+        assert_eq!(sampled_at(&current), Some(1_000));
+        assert_eq!(current.error, None);
     }
 
     #[tokio::test]
-    async fn concurrent_current_and_history_reads_share_one_in_flight_sample() {
+    async fn concurrent_first_current_and_history_reads_share_one_sample() {
         let sampler = Arc::new(FakeResourceSampler::new([FakeResponse::Snapshot(
             snapshot(1_000),
         )]));
         sampler.block_next.store(true, Ordering::Release);
-        let (monitor, _clock) = monitor(sampler.clone());
-        let monitor = Arc::new(monitor);
+        let monitor = Arc::new(monitor(sampler.clone()));
 
         let current_task = tokio::spawn({
             let monitor = monitor.clone();
-            async move { monitor.sample_current().await }
+            async move { monitor.read_current().await }
         });
         sampler.started.notified().await;
         let history_task = tokio::spawn({
@@ -411,76 +491,198 @@ mod tests {
         let sampler = Arc::new(FakeResourceSampler::new([FakeResponse::Snapshot(
             snapshot(1_000),
         )]));
-        let (monitor, _clock) = monitor(sampler.clone());
+        let monitor = monitor(sampler.clone());
 
-        let _ = monitor.sample_current().await;
+        let _ = monitor.read_current().await;
         let _ = monitor.read_history(60_000, 1_000).await;
-        let _ = monitor.sample_current().await;
+        let _ = monitor.read_current().await;
 
         assert_eq!(sampler.calls(), 1);
     }
 
-    #[tokio::test]
-    async fn read_at_the_interval_samples_again() {
+    #[tokio::test(start_paused = true)]
+    async fn each_interval_samples_again_without_a_request() {
         let sampler = Arc::new(FakeResourceSampler::new([
             FakeResponse::Snapshot(snapshot(1_000)),
             FakeResponse::Snapshot(snapshot(3_000)),
         ]));
-        let (monitor, clock) = monitor(sampler.clone());
+        let monitor = monitor(sampler.clone());
+        let _ = monitor.read_current().await;
 
-        let _ = monitor.sample_current().await;
-        clock.advance(Duration::from_secs(2));
-        let current = monitor.sample_current().await;
+        next_interval().await;
 
         assert_eq!(sampler.calls(), 2);
-        assert_eq!(
-            current
-                .snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.sampled_at_ms),
-            Some(3_000)
-        );
+        assert_eq!(sampled_at(&monitor.read_current().await), Some(3_000));
+        assert_eq!(sampler.calls(), 2);
     }
 
-    #[tokio::test]
-    async fn no_timer_samples_after_reads_stop() {
+    #[tokio::test(start_paused = true)]
+    async fn reads_during_a_background_sample_return_the_cached_snapshot_without_waiting() {
+        let sampler = Arc::new(FakeResourceSampler::new([
+            FakeResponse::Snapshot(snapshot(1_000)),
+            FakeResponse::Snapshot(snapshot(3_000)),
+        ]));
+        let monitor = monitor(sampler.clone());
+        assert_eq!(sampled_at(&monitor.read_current().await), Some(1_000));
+
+        sampler.block_next.store(true, Ordering::Release);
+        tokio::time::timeout(INTERVAL * 2, sampler.started.notified())
+            .await
+            .expect("the next sample starts on the interval without a request");
+        for _ in 0..4 {
+            let current = tokio::time::timeout(NO_WAIT, monitor.read_current())
+                .await
+                .expect("a current read never waits for an in-flight sample");
+            assert_eq!(sampled_at(&current), Some(1_000));
+            let history = tokio::time::timeout(NO_WAIT, monitor.read_history(60_000, 1_000))
+                .await
+                .expect("a history read never waits for an in-flight sample");
+            assert_eq!(history.retained_sample_count, 1);
+        }
+        assert_eq!(sampler.calls(), 2);
+
+        sampler.release.notify_one();
+        wait_for_sample(&monitor, 3_000).await;
+        assert_eq!(sampler.calls(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sampling_stops_once_reads_stop_and_resumes_on_the_next_read() {
         let sampler = Arc::new(FakeResourceSampler::new([FakeResponse::Snapshot(
             snapshot(1_000),
         )]));
-        let (monitor, clock) = monitor(sampler.clone());
+        let monitor = monitor(sampler.clone());
+        let _ = monitor.read_current().await;
 
-        let _ = monitor.sample_current().await;
-        clock.advance(Duration::from_secs(60));
-        tokio::task::yield_now().await;
+        tokio::time::sleep(INTERVAL * 10).await;
+        let idle_calls = sampler.calls();
+        assert!(
+            idle_calls <= 4,
+            "sampling continued without readers: {idle_calls} samples"
+        );
+        tokio::time::sleep(INTERVAL * 10).await;
+        assert_eq!(sampler.calls(), idle_calls);
 
+        let current = tokio::time::timeout(NO_WAIT, monitor.read_current())
+            .await
+            .expect("a read after an idle period answers from the cache");
+        assert_eq!(sampled_at(&current), Some(1_000));
+        tokio::time::sleep(INTERVAL / 2).await;
+        assert_eq!(sampler.calls(), idle_calls + 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_first_sample_bounds_the_first_read_without_reporting_zeroes() {
+        let sampler = Arc::new(FakeResourceSampler::new([FakeResponse::Snapshot(
+            snapshot(1_000),
+        )]));
+        sampler.block_next.store(true, Ordering::Release);
+        let monitor = monitor(sampler.clone());
+
+        let current = tokio::time::timeout(Duration::from_secs(5), monitor.read_current())
+            .await
+            .expect("the first read is bounded");
+
+        assert!(current.snapshot.is_none());
+        assert_eq!(current.error.as_deref(), Some(NOT_SAMPLED_YET));
+        sampler.release.notify_one();
+        wait_for_sample(&monitor, 1_000).await;
         assert_eq!(sampler.calls(), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_first_sample_bounds_the_first_history_read_and_says_why_it_is_empty() {
+        let sampler = Arc::new(FakeResourceSampler::new([FakeResponse::Snapshot(
+            snapshot(1_000),
+        )]));
+        sampler.block_next.store(true, Ordering::Release);
+        let monitor = monitor(sampler.clone());
+
+        let history =
+            tokio::time::timeout(Duration::from_secs(5), monitor.read_history(60_000, 1_000))
+                .await
+                .expect("the first history read is bounded");
+
+        assert_eq!(history.retained_sample_count, 0);
+        assert_eq!(history.error.as_deref(), Some(NOT_SAMPLED_YET));
+        sampler.release.notify_one();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_stops_sampling_and_reads_keep_the_last_sample() {
+        let sampler = Arc::new(FakeResourceSampler::new([FakeResponse::Snapshot(
+            snapshot(1_000),
+        )]));
+        let monitor = monitor(sampler.clone());
+        let _ = monitor.read_current().await;
+
+        monitor.shutdown().await;
+        let current = tokio::time::timeout(NO_WAIT, monitor.read_current())
+            .await
+            .expect("a read after shutdown answers from the cache");
+        tokio::time::sleep(INTERVAL * 10).await;
+
+        assert_eq!(sampled_at(&current), Some(1_000));
+        assert_eq!(sampler.calls(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_does_not_wait_for_an_in_flight_sample() {
+        let sampler = Arc::new(FakeResourceSampler::new([
+            FakeResponse::Snapshot(snapshot(1_000)),
+            FakeResponse::Snapshot(snapshot(3_000)),
+        ]));
+        let monitor = monitor(sampler.clone());
+        let _ = monitor.read_current().await;
+        sampler.block_next.store(true, Ordering::Release);
+        tokio::time::timeout(INTERVAL * 2, sampler.started.notified())
+            .await
+            .expect("the next sample starts on the interval");
+
+        tokio::time::timeout(NO_WAIT, monitor.shutdown())
+            .await
+            .expect("shutdown abandons the in-flight sample");
+        sampler.release.notify_one();
+        tokio::time::sleep(INTERVAL * 10).await;
+
+        assert_eq!(sampled_at(&monitor.read_current().await), Some(1_000));
+        assert_eq!(sampler.calls(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reads_after_shutdown_never_start_the_sampler() {
+        let sampler = Arc::new(FakeResourceSampler::new([FakeResponse::Snapshot(
+            snapshot(1_000),
+        )]));
+        let monitor = monitor(sampler.clone());
+
+        monitor.shutdown().await;
+        let current = tokio::time::timeout(NO_WAIT, monitor.read_current())
+            .await
+            .expect("a read after shutdown does not wait for a first sample");
+        tokio::time::sleep(INTERVAL * 10).await;
+
+        assert!(current.snapshot.is_none());
+        assert_eq!(current.error.as_deref(), Some(NOT_SAMPLED_YET));
+        assert_eq!(sampler.calls(), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn failed_refresh_retains_the_last_good_snapshot_and_history() {
         let sampler = Arc::new(FakeResourceSampler::new([
             FakeResponse::Snapshot(snapshot(1_000)),
             FakeResponse::Failure("refresh failed"),
         ]));
-        let (monitor, clock) = monitor(sampler.clone());
-        let first = monitor.sample_current().await;
-        let retained_before = monitor.state.read().await.samples.clone();
-        clock.advance(Duration::from_secs(2));
+        let monitor = monitor(sampler.clone());
+        let first = monitor.read_current().await;
+        let retained_before = monitor.shared.state.read().await.samples.clone();
 
-        let failed = monitor.sample_current().await;
-        let retained_after = monitor.state.read().await.samples.clone();
+        next_interval().await;
+        let failed = monitor.read_current().await;
+        let retained_after = monitor.shared.state.read().await.samples.clone();
 
         assert_eq!(sampler.calls(), 2);
-        assert_eq!(
-            failed
-                .snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.sampled_at_ms),
-            first
-                .snapshot
-                .as_ref()
-                .map(|snapshot| snapshot.sampled_at_ms)
-        );
+        assert_eq!(sampled_at(&failed), sampled_at(&first));
         assert_eq!(
             failed.error.as_deref(),
             Some("process diagnostics sampling failed: refresh failed")
@@ -493,19 +695,17 @@ mod tests {
         let sampler = Arc::new(FakeResourceSampler::new([FakeResponse::Snapshot(
             snapshot(1_000),
         )]));
-        let clock = Arc::new(TestClock::new());
         let entered = Arc::new(Barrier::new(2));
         let release = Arc::new(Barrier::new(2));
-        let monitor = Arc::new(DiagnosticsMonitor::with_clock_and_aggregator(
+        let monitor = Arc::new(DiagnosticsMonitor::with_aggregator(
             sampler.clone(),
-            Duration::from_secs(2),
-            clock,
+            INTERVAL,
             Arc::new(BlockingHistoryAggregator {
                 entered: entered.clone(),
                 release: release.clone(),
             }),
         ));
-        let current = monitor.sample_current().await;
+        let current = monitor.read_current().await;
         assert!(current.snapshot.is_some());
 
         let history_task = tokio::spawn({
@@ -516,7 +716,7 @@ mod tests {
             .await
             .expect("aggregation entry waiter");
 
-        let cached = tokio::time::timeout(Duration::from_millis(100), monitor.sample_current())
+        let cached = tokio::time::timeout(Duration::from_millis(100), monitor.read_current())
             .await
             .expect("cached current read should not wait for history aggregation");
         assert!(cached.snapshot.is_some());
@@ -533,9 +733,9 @@ mod tests {
         let sampler = Arc::new(FakeResourceSampler::new([FakeResponse::Failure(
             "initial failure",
         )]));
-        let (monitor, _clock) = monitor(sampler.clone());
+        let monitor = monitor(sampler.clone());
 
-        let current = monitor.sample_current().await;
+        let current = monitor.read_current().await;
 
         assert_eq!(sampler.calls(), 1);
         assert!(current.snapshot.is_none());
@@ -550,7 +750,7 @@ mod tests {
         let sampler = Arc::new(FakeResourceSampler::new([FakeResponse::Failure(
             "initial failure",
         )]));
-        let (monitor, _clock) = monitor(sampler.clone());
+        let monitor = monitor(sampler.clone());
 
         let history = monitor.read_history(60_000, 1_000).await;
 
@@ -564,16 +764,16 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn history_read_failure_retains_prior_successful_measurements() {
         let sampler = Arc::new(FakeResourceSampler::new([
             FakeResponse::Snapshot(snapshot(1_000)),
             FakeResponse::Failure("refresh failed"),
         ]));
-        let (monitor, clock) = monitor(sampler.clone());
+        let monitor = monitor(sampler.clone());
         let first = monitor.read_history(60_000, 1_000).await;
-        clock.advance(Duration::from_secs(2));
 
+        next_interval().await;
         let stale = monitor.read_history(60_000, 1_000).await;
 
         assert_eq!(sampler.calls(), 2);

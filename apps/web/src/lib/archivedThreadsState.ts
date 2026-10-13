@@ -3,9 +3,10 @@ import {
   type ArchivedSnapshotEntry,
   createArchivedThreadSnapshotsAtomFamily,
   makeArchivedThreadsEnvironmentKey,
+  parseArchivedThreadsEnvironmentKey,
 } from "@bibcode/client-runtime/state/threads";
 import type { EnvironmentId } from "@bibcode/contracts";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import { orchestrationEnvironment } from "../state/orchestration";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -26,7 +27,17 @@ export function refreshArchivedThreadsForEnvironment(environmentId: EnvironmentI
   appAtomRegistry.refresh(archivedSnapshotAtom(environmentId));
 }
 
-export function useArchivedThreadSnapshots(environmentIds: ReadonlyArray<EnvironmentId>): {
+export function useArchivedThreadSnapshots(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+  options?: {
+    /**
+     * Refetch once when the consumer mounts (default). The lifecycle reconciler keeps
+     * the snapshot loaded for the app's lifetime, so a list that opens later would
+     * otherwise show a snapshot that misses changes made elsewhere to archived threads.
+     */
+    readonly revalidateOnMount?: boolean;
+  },
+): {
   readonly snapshots: ReadonlyArray<ArchivedSnapshotEntry>;
   readonly error: string | null;
   readonly isLoading: boolean;
@@ -42,6 +53,17 @@ export function useArchivedThreadSnapshots(environmentIds: ReadonlyArray<Environ
       appAtomRegistry.refresh(archivedSnapshotAtom(environmentId));
     }
   }, [environmentIds]);
+  const revalidateOnMount = options?.revalidateOnMount ?? true;
+  useEffect(() => {
+    if (!revalidateOnMount) return;
+    for (const environmentId of parseArchivedThreadsEnvironmentKey(environmentKey)) {
+      const atom = archivedSnapshotAtom(environmentId);
+      // A request already in flight answers this mount; never start a second one.
+      if (!appAtomRegistry.get(atom).waiting) {
+        appAtomRegistry.refresh(atom);
+      }
+    }
+  }, [environmentKey, revalidateOnMount]);
 
   return {
     ...result,

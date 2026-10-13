@@ -9,7 +9,8 @@ desktop bridge is reserved for host-native capabilities.
 The existing `GET /api/orchestration/snapshot` endpoint requires
 `orchestration:read` and returns the declared `OrchestrationReadModel`.
 Its camel-case project/default-thread identities and full message, activity,
-plan, checkpoint and session records come from one repository snapshot load.
+plan, checkpoint and session records come from one full repository snapshot
+load, the only remaining reader of the whole store.
 The HTTP projection includes archived and deleted records with their markers;
 WS shell snapshots retain their existing active/archived filtering.
 Shared pure project/thread serializers keep the public field policy aligned,
@@ -121,7 +122,16 @@ from the schema-only `WsRpcGroup`. The Rust mirror is
 
 Schemas validate payloads at the client boundary. The Rust session validates
 request IDs, registered method names, authorization scopes, cancellation, and
-stream flow before invoking handlers.
+stream flow before invoking handlers. The read loop never waits on the
+database: it checks IDs, capacity and the method's declared scope at once, then
+starts the request's task, which authorizes the session against the auth store
+and takes the maintenance admission before the handler runs. A request that
+waits there is in flight, so `Interrupt` cancels it, and it keeps an E2EE
+message's inbound byte permits until it is admitted. A refusal (a missing scope,
+an invalid session, maintenance) that cannot be queued before its 5-second
+deadline goes through the control lane, and one that reaches neither ends the
+session. A periodic task that holds the single database worker therefore delays
+only the requests behind it, and the read loop keeps answering `Ping`.
 
 Each connection has one writer task that owns the socket sink. It drains a
 bounded control lane before every queued message: RPC `Pong`, interrupt exits,
@@ -149,8 +159,8 @@ protocol error) is data progress. The heartbeat checks every 5 seconds and ends 
 A check that fires more than 10 seconds late, because the process was suspended
 or starved, restarts the silence clock and Ping schedule with one immediate Ping
 instead of reaping or sending catch-up Pings.
-A client close with code 4408, the client's liveness timeout, is logged at info
-level; other client closes are logged at debug level.
+How a session ended, and the info log line an abnormal end writes, are described
+in [Connection ends](#connection-ends).
 Inbound activity counts per complete frame, so a single plain request that
 takes longer than 45 s to arrive on an otherwise idle connection is reaped (and
 the client's own 30 s monitor ends it first); E2EE requests travel in records.
@@ -1601,7 +1611,10 @@ they have no override, is authoritative. File, browse, search, asset, transfer,
 review, and filesystem-mutation handlers retain that lease for the entire
 operation, not just an entry-point check. Mutations acquire its finalization
 permit before the filesystem/durable commit boundary. Turn and process handlers retain the
-lease through durable command admission or external-process publication. Guard
+lease through durable command admission or external-process publication. An
+ordered terminal input session retains the lease it took at
+`terminal.beginInput` for its whole life, so its frames need no admission of
+their own (see [Ordered terminal input](#ordered-terminal-input)). Guard
 installation and lease admission are serialized, so loss either waits for work
 owned by an earlier lease and finalization permit or rejects a later lease.
 Lease drop, including cancellation and error unwinding, releases every
@@ -1657,7 +1670,8 @@ invalidates every live catalog view sharing the repository entry, whereas
 detach-only and failed cleanup remain scoped to the initiating project.
 
 The guard rejects a new turn before durable admission; terminal open, restart,
-write, and restart-on-attach; client Git status and mutations; and project
+write, input begin, and restart-on-attach, and seals live input sessions;
+client Git status and mutations; and project
 file, search, mutation, editor, asset, and review operations. It intentionally
 allows catalog refresh, conversation/history reads, non-restarting terminal
 attach, terminal close, dedicated detach/removal, ordinary non-worktree thread
@@ -1843,6 +1857,18 @@ subsequent durable orchestration events. Resync after reconnect is snapshot-firs
 `subscribeShell` register their durable-event receiver before reading the
 initial snapshot, so a commit concurrent with that read is queued and then
 projected instead of being lost between snapshot and live delivery.
+Every shell snapshot, live or from `orchestration.getArchivedShellSnapshot`,
+is read in one SQLite job: projects, the undeleted live or archived threads
+whose project row exists, and per thread only its session, latest turn, the
+messages tied for its newest user and assistant message, and, while the latest
+turn runs, the tool activities tied for that turn's newest. A thread snapshot
+reads that one thread's rows. Neither reads the rest of the store, so their
+cost follows the threads shown and the thread opened rather than the whole
+message and activity history; their wire output equals what the full-store
+load produces, and only the HTTP read model below loads the whole store. A
+thread's activities are read in the order of their
+`(thread_id, sequence, created_at, activity_id)` index, so the listing needs
+no temporary sort that would spill large payloads to a temporary file.
 `orchestration.replayEvents` with `paged: true` returns about 1 MiB pages
 `{ events, exhausted }`, keeping at least one event when any remain. Replay
 resumes from the last applied `sequence` with no server state; the cursor is
@@ -2300,8 +2326,50 @@ same bearer still creates a different connection identity. A newer attachment
 supersedes the previous lease; a delayed older begin cannot supersede the newer
 attachment. Cancellation and terminal generation changes invalidate leases.
 
-The Rust terminal owner reserves a shared per-connection window of 16 frames
-and 256 KiB before filesystem/database workspace admission. Each frame is at
+`terminal.beginInput` is the input session's only workspace resolution: it
+reads the thread's persisted workspace (its worktree path, or its project root)
+and takes the [workspace admission](#missing-workspace-runtime-guard) for the
+thread and that path, and the input lease holds that admission until the lease
+ends. Frames are therefore admitted in memory and a keystroke never waits for
+the database. Workspace loss or removal cancels the admission, which seals the
+lease like a closed connection: a frame in flight fails with
+`WorkspaceUnavailableError`, later frames fail with `TerminalInputError`, and
+the admission is released so the loss or removal does not wait for it. A new
+`terminal.beginInput` then fails with `WorkspaceUnavailableError`.
+
+A changed workspace re-admits the session in place: frames keep their
+`inputId` and order and the user sees nothing. The production runtime feeds
+orchestration events to `ServerTerminalServices::watch_workspace_changes`,
+which re-resolves and replaces the admission of the thread's leases on
+`thread.created` and on `thread.meta-updated` carrying `worktreePath`. On
+`project.meta-updated` carrying `workspaceRoot` it re-admits only the leases
+admitted for that project's root, that is, of its threads without a worktree of
+their own; each admission records that origin when it resolves, so the filter
+reads no database. A session whose workspace is still being re-resolved is
+included, since its origin is not known yet. Other sessions, of other projects
+and of threads with their own worktree, are untouched. A lagged subscription re-admits every lease, since the
+missed changes are unknown. While a round resolves, the session's frames wait for its
+result, so none writes under an admission the round may replace or refuse; a
+frame that already holds its turn when a round starts writes under the
+admission current at that moment, as a frame admitted just before the change
+did under per-frame admission. Sessions resolve independently, so one slow
+workspace holds only its own frames, with at most one resolution in flight per
+session: changes that arrive meanwhile coalesce into one more resolution at the
+latest round. A result older than one already applied, or than the latest round
+started for the session, is ignored, and the replaced admission is released. Only the loss of the session's
+current admission seals it, atomically with re-admission, and a frame checks
+for that loss itself before and while it writes. When the new workspace cannot
+be admitted (unavailable, or its
+resolution fails), the lease is sealed and the reconnecting
+`terminal.beginInput` reports `WorkspaceUnavailableError`. A begin reads the
+re-admission epoch before it resolves the workspace and again after its lease
+registers; if a round started in between, the begin re-admits its own lease
+in a round of its own before it returns, so later rounds see it pending, and
+fails with the admission error instead of returning a sealed lease, so a
+change committed during that read is not missed.
+
+The Rust terminal owner reserves each frame from a shared per-connection window
+of 16 frames and 256 KiB before the frame waits for its turn. Each frame is at
 most 16 KiB of UTF-8. Reordered arrivals wait for the missing sequence without
 writing a suffix early. A five-second gap deadline, duplicate/invalid sequence,
 overflow, dropped admitted work, or I/O failure seals the lease and wakes all
@@ -2669,6 +2737,27 @@ under the source `client:<clientId>`. Findings from a batch use the source
 
 [Remote environments](./remote.md#profiler-data) describes where reports go when
 a client is connected to several environments.
+
+### Connection ends
+
+When a session ends, plain or E2EE, the session loop classifies why from its own
+side: a client close frame (`client-liveness-timeout` for code 4408,
+`client-closed` otherwise), a socket that ended without one (`client-gone`), a
+client `Eof` (`client-eof`), the heartbeat (`heartbeat-timeout`), a writer
+failure (`writer-stalled`, `writer-closed`, `writer-failed`), or the server
+(`server`). `ConnectionLiveness` keeps the connection's start, its last inbound
+frame, the end of its last outbound RPC message (heartbeat Pings excluded), and
+the longest wait of a queued data message before its write began. Every
+abnormal end writes one info log line, `RPC connection ended`, with those
+durations, the queue depth, the requests in flight and the client id; a
+1000 or 1001 close, an `Eof`, and a server-side end log at debug level.
+
+While the profiler is on, the same end is an `rpc.disconnect` event. The
+session also notes the client id of its first request that carries the
+correlation header; when that client's previous connection ended in this
+process, it writes `rpc.reconnect` with the gap between them. The last 256
+disconnected clients are remembered. The fields are in the
+[events reference](../skills/bibcode-profiler/references/events.md#rpcdisconnect).
 
 ## Invariants
 
