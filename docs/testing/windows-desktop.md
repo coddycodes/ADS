@@ -453,6 +453,11 @@ file read and installer lookup has its own short bound. The probe hashes the
 executable only after its product version is already the candidate. A read or
 lookup that hits its bound is an unavailable sample: the log keeps the timings
 and any version already read, and that sample does not satisfy the predicate.
+After the candidate is installed, the harness also requires the relaunched app:
+`tasklist.exe /V` must list the installed executable with a window (helpers such
+as the crash monitor have none) within the restart bound, so an update that
+closes BiBCode without starting the new version fails the lane instead of
+passing a cleanup that found nothing to stop.
 The protected-baseline install command stays open until the host exits into that
 installer. Ending the command on the first `protecting` event stops the host
 before NSIS starts. Inspect that artifact on timeout; the later public

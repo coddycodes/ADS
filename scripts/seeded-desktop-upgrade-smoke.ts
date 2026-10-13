@@ -1275,6 +1275,60 @@ export async function waitForWindowsInstalledCandidate(input: {
   });
 }
 
+/**
+ * Whether `tasklist /V /FO CSV /NH` lists `imageName` with a window: the relaunched app,
+ * not a crash monitor or an installer helper (their window title is `N/A`).
+ */
+export function windowedApplicationRunning(csv: string, imageName: string): boolean {
+  const expected = imageName.toLowerCase();
+  return csv.split(/\r?\n/).some((row) => {
+    const columns = [...row.matchAll(/"([^"]*)"/g)].map((match) => match[1]!);
+    return (
+      columns.length >= 9 &&
+      columns[0]!.toLowerCase() === expected &&
+      columns.at(-1) !== "N/A" &&
+      columns.at(-1) !== ""
+    );
+  });
+}
+
+/**
+ * Waits for the installed candidate to relaunch with a window. Cleanup otherwise passes when
+ * nothing runs, which hid updates that closed the app without starting it again (#95).
+ */
+export async function waitForWindowsRelaunchedApplication(input: {
+  readonly appBinaryPath: string;
+  readonly timeoutMs: number;
+  readonly intervalMs?: number;
+  readonly now?: () => number;
+  readonly sleep?: (milliseconds: number) => Promise<void>;
+  readonly listProcesses?: () => Promise<string>;
+}): Promise<void> {
+  const imageName = NodePath.win32.basename(input.appBinaryPath);
+  const listProcesses =
+    input.listProcesses ??
+    (() =>
+      new Promise<string>((resolve, reject) => {
+        NodeChildProcess.execFile(
+          "tasklist.exe",
+          ["/V", "/FO", "CSV", "/NH", "/FI", `IMAGENAME eq ${imageName}`],
+          { timeout: windowsProbeStepMs, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+          (error, stdout) => {
+            if (error) reject(error);
+            else resolve(stdout);
+          },
+        );
+      }));
+  await waitForUpgradeCondition({
+    description: `the updated ${imageName} relaunched with a window`,
+    intervalMs: input.intervalMs ?? 1_000,
+    now: input.now,
+    sleep: input.sleep,
+    timeoutMs: input.timeoutMs,
+    probe: async () => windowedApplicationRunning(await listProcesses(), imageName),
+  });
+}
+
 export class ManagedProcessRegistry {
   readonly #entries: Array<{ readonly name: string; readonly cleanup: () => Promise<void> }> = [];
   #cleaned = false;
@@ -2355,6 +2409,10 @@ const runUpgradeLane = async (input: {
       appBinaryPath: input.appBinaryPath,
       candidateVersion: input.candidateVersion,
       evidenceDirectory: input.layout.evidenceDirectory,
+      timeoutMs: input.restartTimeoutMs,
+    });
+    await waitForWindowsRelaunchedApplication({
+      appBinaryPath: input.appBinaryPath,
       timeoutMs: input.restartTimeoutMs,
     });
   }

@@ -27,6 +27,7 @@ import {
   remoteEvidenceReadFailure,
   windowsCandidateIsInstalled,
   productVersionFromExecutableBytes,
+  windowedApplicationRunning,
   windowsInstallerProcesses,
   observeWindowsInstalledCandidate,
   waitForWindowsInstalledCandidate,
@@ -2340,5 +2341,31 @@ describe("seeded packaged desktop upgrade harness", () => {
     expect(config).toContain("transformRequest");
     expect(config).toContain('headers.delete("content-length")');
     expect(config).toContain("captureBackendLogs: true");
+  });
+});
+
+describe("windowedApplicationRunning", () => {
+  const row = (image: string, title: string) =>
+    `"${image}","4242","Console","1","120,000 K","Running","host\\runner","0:00:03","${title}"`;
+
+  it("finds the relaunched app by its window and ignores windowless helpers", () => {
+    expect(
+      windowedApplicationRunning(
+        [row("bibcode-desktop.exe", "N/A"), row("bibcode-desktop.exe", "BiBCode")].join("\r\n"),
+        "bibcode-desktop.exe",
+      ),
+    ).toBe(true);
+    expect(
+      windowedApplicationRunning(row("bibcode-desktop.exe", "N/A"), "bibcode-desktop.exe"),
+    ).toBe(false);
+    expect(windowedApplicationRunning(row("other.exe", "BiBCode"), "bibcode-desktop.exe")).toBe(
+      false,
+    );
+    expect(
+      windowedApplicationRunning(
+        "INFO: No tasks are running which match the specified criteria.",
+        "bibcode-desktop.exe",
+      ),
+    ).toBe(false);
   });
 });
