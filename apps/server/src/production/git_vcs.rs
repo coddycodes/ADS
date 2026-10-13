@@ -4643,6 +4643,13 @@ mod tests {
         let sandbox = crate::test_support::TestSandbox::new("passive-summary-join");
         let cwd = sandbox.root().to_path_buf();
         git(&sandbox, &cwd, &["init", "-b", "main"]).await;
+        git(&sandbox, &cwd, &["config", "user.name", "Summary Test"]).await;
+        git(
+            &sandbox,
+            &cwd,
+            &["config", "user.email", "summary@example.test"],
+        )
+        .await;
         git(
             &sandbox,
             &cwd,
