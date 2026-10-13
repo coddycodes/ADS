@@ -954,6 +954,95 @@ async fn policy_rejects_stale_acknowledgement_and_persists_hidden_and_shown_cont
     fixture.shutdown().await;
 }
 
+/// A slow client still holds generation G (its stream ack has not round-tripped) when an
+/// unrelated refresh publishes G+1 with the same candidates. Hiding must acknowledge what the
+/// user saw instead of failing with "Catalog generation G is no longer authoritative".
+#[tokio::test]
+async fn policy_acknowledges_a_generation_whose_candidates_are_unchanged() {
+    let mut fixture = CatalogRpcFixture::new(true).await;
+    request(
+        fixture.socket(),
+        "30",
+        "subscribeWorktreeCatalog",
+        json!({ "projectId": "project-1" }),
+    )
+    .await;
+    let seen = next_chunk(fixture.socket(), "30").await;
+    let seen_generation = seen["generation"].as_u64().expect("generation");
+    let candidate_path = eligible_candidate(&seen)["path"]
+        .as_str()
+        .expect("eligible path")
+        .to_owned();
+
+    request(
+        fixture.socket(),
+        "31",
+        "vcs.refreshWorktreeCatalog",
+        json!({ "projectId": "project-1" }),
+    )
+    .await;
+    let refreshed = success_value(fixture.socket(), "31").await;
+    assert_eq!(refreshed["generation"].as_u64(), Some(seen_generation + 1));
+    assert_eq!(refreshed["worktrees"], seen["worktrees"]);
+
+    request(
+        fixture.socket(),
+        "32",
+        "worktree.updateDiscoveryPolicy",
+        json!({
+            "commandId": "policy-unchanged-candidates",
+            "projectId": "project-1",
+            "acknowledgeGeneration": seen_generation,
+            "dismissInitialPrompt": true
+        }),
+    )
+    .await;
+    let hidden = success_value(fixture.socket(), "32").await;
+    assert_eq!(hidden["baselinePaths"], json!([candidate_path]));
+    assert!(hidden["initialPromptDismissedAt"].as_str().is_some());
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn policy_rejects_a_generation_that_predates_a_new_candidate() {
+    let mut fixture = CatalogRpcFixture::new(true).await;
+    request(
+        fixture.socket(),
+        "33",
+        "subscribeWorktreeCatalog",
+        json!({ "projectId": "project-1" }),
+    )
+    .await;
+    let seen = next_chunk(fixture.socket(), "33").await;
+    let seen_generation = seen["generation"].as_u64().expect("generation");
+
+    fixture.create_named_external_worktree("unseen", "feature/unseen");
+    request(
+        fixture.socket(),
+        "34",
+        "vcs.refreshWorktreeCatalog",
+        json!({ "projectId": "project-1" }),
+    )
+    .await;
+    let refreshed = success_value(fixture.socket(), "34").await;
+    assert_eq!(refreshed["generation"].as_u64(), Some(seen_generation + 1));
+
+    request(
+        fixture.socket(),
+        "35",
+        "worktree.updateDiscoveryPolicy",
+        json!({
+            "commandId": "policy-new-candidate",
+            "projectId": "project-1",
+            "acknowledgeGeneration": seen_generation,
+            "dismissInitialPrompt": true
+        }),
+    )
+    .await;
+    assert_typed_catalog_failure(fixture.socket(), "35", "stale-generation").await;
+    fixture.shutdown().await;
+}
+
 #[tokio::test]
 async fn concurrent_policy_controls_merge_without_losing_a_sibling_update() {
     let mut fixture = CatalogRpcFixture::new(false).await;

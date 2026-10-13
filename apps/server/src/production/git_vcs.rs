@@ -1434,6 +1434,8 @@ impl GitVcsRpcServices {
                     return;
                 }
             };
+            // A joining subscriber starts with the producer's value already marked seen.
+            subscription.mark_changed();
             loop {
                 let item = tokio::select! {
                     biased;
@@ -4632,6 +4634,51 @@ mod tests {
         )
         .await;
         assert!(!refreshed.stale);
+    }
+
+    /// A second window (or a reconnecting remote client) joins a producer that already
+    /// published. It must get the current summary now, not after the next 30-second cycle.
+    #[tokio::test]
+    async fn joining_summary_stream_receives_the_current_summary_immediately() {
+        let sandbox = crate::test_support::TestSandbox::new("passive-summary-join");
+        let cwd = sandbox.root().to_path_buf();
+        git(&sandbox, &cwd, &["init", "-b", "main"]).await;
+        git(
+            &sandbox,
+            &cwd,
+            &["commit", "--allow-empty", "-q", "-m", "base"],
+        )
+        .await;
+        let repository = Arc::new(GitRepository::with_runner_for_test(Arc::new(
+            CapturedGitRunner::new(&sandbox),
+        )));
+        let services = GitVcsRpcServices::with_repository(repository, Arc::default())
+            .with_hosting_executable_dir_for_integration_test(
+                crate::test_support::hermetic_providers::missing_hosting_executable_dir(&cwd),
+            );
+        let mut first = services
+            .summary
+            .subscribe(cwd.clone())
+            .await
+            .expect("summary subscription");
+        named_summary(&mut first, "main", "first subscriber sees main").await;
+
+        let mut joined = services.summary_stream(
+            rpc_request("subscribeVcsStatusSummary", json!({ "cwd": cwd })),
+            CancellationToken::new(),
+        );
+        let chunk = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(chunk) = joined.borrow_and_update().clone() {
+                    return chunk;
+                }
+                joined.changed().await.expect("summary stream stays open");
+            }
+        })
+        .await
+        .expect("a joining subscriber gets the current summary before the next 30-second cycle")
+        .expect("summary chunk");
+        assert_eq!(chunk[0]["refName"], "main");
     }
 
     #[cfg(unix)]

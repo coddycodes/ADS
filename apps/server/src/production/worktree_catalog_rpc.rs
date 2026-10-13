@@ -3205,15 +3205,16 @@ async fn update_discovery_policy_locked(
     if let Some(expected_generation) = input.acknowledge_generation {
         let snapshot = services
             .catalog
-            .latest(&input.project_id)
+            .acknowledgeable(&input.project_id, expected_generation)
             .await
-            .ok_or_else(|| encode(stale_generation(expected_generation, None)))?;
-        if !snapshot.authoritative || snapshot.generation != expected_generation {
-            return Err(encode(stale_generation(
-                expected_generation,
-                Some(snapshot.generation),
-            )));
-        }
+            .map_err(|current| {
+                tracing::warn!(
+                    expected_generation,
+                    current_generation = ?current,
+                    "worktree discovery policy refused a stale catalog generation"
+                );
+                encode(stale_generation(expected_generation, current))
+            })?;
         policy.baseline_paths = compact_eligible_baseline(&snapshot)?;
     }
 

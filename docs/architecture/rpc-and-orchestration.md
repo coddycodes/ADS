@@ -230,8 +230,9 @@ cancels that load. Subscription bootstrap, delayed local fallback, workspace
 invalidation, and explicit full refresh all use this owner.
 
 `subscribeVcsStatusSummary` is the read-scoped passive counterpart. Its
-latest-value stream shares one 30-second producer per canonical cwd and emits
-only repository identity, dirty, provider, matching named-branch PR,
+latest-value stream shares one 30-second producer per canonical cwd; a
+subscriber that joins a running producer receives its current value at once
+instead of waiting for the next publication. It emits only repository identity, dirty, provider, matching named-branch PR,
 observation time, and stale state. It performs no numstat, full-file storage,
 or fetch. After a failed status read, the shared repository probe and bounded
 classifier decide the same optional `repositoryUnavailableReason` as the status
@@ -1150,7 +1151,7 @@ The catalog protocol is server-resolved and capability gated:
 | -------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------- |
 | `subscribeWorktreeCatalog`       | `orchestration:read`    | Stream the latest project snapshot; the request contains only `projectId`.                  |
 | `vcs.refreshWorktreeCatalog`     | `orchestration:read`    | Request one bounded observation and return its snapshot.                                    |
-| `worktree.updateDiscoveryPolicy` | `orchestration:operate` | Persist a complete policy derived from an exact authoritative generation.                   |
+| `worktree.updateDiscoveryPolicy` | `orchestration:operate` | Persist a policy derived from an authoritative generation with unchanged candidates.        |
 | `worktree.createManaged`         | `orchestration:operate` | Resolve the project root and checkout path, create Git state, then persist one owner.       |
 | `worktree.createPanel`           | `orchestration:operate` | Derive panel project, kind, branch, and path from a persisted host thread.                  |
 | `worktree.retarget`              | `orchestration:operate` | Resolve an opaque catalog key/generation before changing a workspace owner path.            |
@@ -1203,8 +1204,10 @@ pointer-checked eviction after 60 seconds; reuse cancels the old timer, and
 cancellation cannot evict a newly installed entry or repository observation.
 
 `worktree.updateDiscoveryPolicy` requires `orchestration:operate`. An
-acknowledgement must name the exact latest authoritative generation. The
-server derives the baseline from eligible normalized paths in that snapshot,
+acknowledgement must name a generation whose eligible candidate paths still
+match the last authoritative snapshot; a refresh that changed nothing does not
+invalidate it. The server derives the baseline from eligible normalized paths
+in that snapshot,
 deduplicates it, caps it at 512, and persists the complete policy through the
 durable `project.meta.update` command. The policy handler digests the decoded
 public payload, acquires its cancellation-aware command claim, and transfers

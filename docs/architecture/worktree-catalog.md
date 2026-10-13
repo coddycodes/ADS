@@ -205,7 +205,12 @@ authoritative observation.
 
 New projects default to hidden discovery. An authoritative generation may be
 acknowledged as hidden, switched to shown, or compacted after adoption. The
-server derives and caps the baseline from that exact snapshot; clients do not
+acknowledgement proves which candidates the user saw, not that no refresh ran
+since: Focus reuse, the shallow poller, and Git Manager revalidation advance
+the generation without changing candidates. The server accepts generation G
+when the eligible candidate paths have not changed from G through its last
+authoritative snapshot, and derives and caps the baseline from that snapshot.
+A candidate set that changed after G is `stale-generation`. Clients do not
 submit paths. Incremental project metadata events omit the policy when it did
 not change, so unrelated updates and event replay preserve the complete stored
 policy.
