@@ -497,12 +497,13 @@ impl Worker {
                         rules.insert(root);
                     }
                     Change::Created(path) => {
-                        // Inside a submodule, notify's recursive watch already covers it.
+                        // Inside a submodule, notify's recursive watch already covers it. A
+                        // recreated submodule root itself needs a new recursive watch.
                         let in_submodule = lock(&roots).get(&root).is_some_and(|pruned| {
                             pruned
                                 .submodules
                                 .iter()
-                                .any(|submodule| path.starts_with(submodule))
+                                .any(|submodule| path.starts_with(submodule) && path != *submodule)
                         });
                         if path != root
                             && !in_submodule
