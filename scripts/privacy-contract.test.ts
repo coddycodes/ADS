@@ -225,6 +225,7 @@ describe("zero-telemetry privacy contract", () => {
       "crash-handler",
       "dirs",
       "ed25519-dalek",
+      "flate2",
       "futures-util",
       "getrandom",
       "hmac",
