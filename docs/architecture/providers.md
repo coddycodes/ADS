@@ -37,6 +37,13 @@ existing absolute directory, and owns executable, environment, credential, and
 home resolution. Effective runtime environment values are materialized from the
 secret store; persisted and client-visible settings stay redacted.
 
+Discovery starts the provider CLI (about a second for Claude), so the server
+caches each successful catalog by instance and directory for the current
+provider settings. A catalog younger than 60 seconds is returned as is; an older
+one is returned at once while one background read refreshes it for the next
+call. Changed provider settings drop every cached catalog, and failures are
+never cached.
+
 The result contains `slashCommands`, `skills`, `agents`, and `issues`. Codex
 initializes an App Server in the requested directory and calls `skills/list`
 without an account/model query, using the session launch's configured Codex

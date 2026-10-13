@@ -26,6 +26,8 @@ the existing WS shell/thread output remains unchanged.
 selected provider's commands, skills,
 agents, and partial-discovery issues for that directory and its user configuration.
 Invalid contexts and failed discovery use `ServerProviderCapabilitiesError`.
+Successful catalogs are served from a server cache and refreshed in the
+background ([providers](./providers.md#workspace-capability-discovery)).
 The request cannot override server-owned provider settings or credentials. It
 uses the same authenticated environment RPC path in browser and desktop clients.
 See [provider capability ownership and lifecycle](./providers.md#workspace-capability-discovery).
