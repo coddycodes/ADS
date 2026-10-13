@@ -1325,7 +1325,17 @@ export async function waitForWindowsRelaunchedApplication(input: {
     now: input.now,
     sleep: input.sleep,
     timeoutMs: input.timeoutMs,
-    probe: async () => windowedApplicationRunning(await listProcesses(), imageName),
+    probe: async () => {
+      try {
+        return windowedApplicationRunning(await listProcesses(), imageName);
+      } catch (cause) {
+        // A listing that hit its bound on a busy runner is a sample, not a verdict.
+        if (typeof cause === "object" && cause !== null && "killed" in cause && cause.killed) {
+          return false;
+        }
+        throw cause;
+      }
+    },
   });
 }
 
