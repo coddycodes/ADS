@@ -1,4 +1,8 @@
 //! Server-hosted Android device previews; see docs/architecture/overview.md#device-previews.
+pub mod catalog;
+// Discovery is consumed by the DeviceManager task that follows.
+#[allow(dead_code)]
+pub(crate) mod sdk;
 // The client is consumed by the lifecycle, frame, and input tasks that follow.
 #[allow(dead_code)]
 pub(crate) mod grpc;

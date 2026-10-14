@@ -1,6 +1,7 @@
 //! In-process fake of the emulator gRPC controller for hermetic tests.
 
 use std::{
+    path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, Mutex},
 };
@@ -460,5 +461,94 @@ impl EmulatorController for FakeController {
         _request: Request<()>,
     ) -> Result<Response<proto::CameraList>, Status> {
         Err(Status::unimplemented("get_host_cameras"))
+    }
+}
+
+/// Builder for a fake Android SDK tree of shell-script `emulator` and `adb` tools.
+#[cfg(unix)]
+pub(crate) struct FakeSdk {
+    dir: tempfile::TempDir,
+    avds: Vec<String>,
+    accel_ok: bool,
+    with_adb: bool,
+    launch: PathBuf,
+}
+
+#[cfg(unix)]
+impl FakeSdk {
+    pub(crate) fn new() -> Self {
+        Self {
+            dir: tempfile::tempdir().expect("fake sdk dir"),
+            avds: Vec::new(),
+            accel_ok: true,
+            with_adb: true,
+            launch: PathBuf::from("/bin/false"),
+        }
+    }
+
+    pub(crate) fn avds(mut self, names: &[&str]) -> Self {
+        self.avds = names.iter().map(|name| (*name).to_owned()).collect();
+        self
+    }
+
+    pub(crate) fn accel_ok(mut self, ok: bool) -> Self {
+        self.accel_ok = ok;
+        self
+    }
+
+    pub(crate) fn without_adb(mut self) -> Self {
+        self.with_adb = false;
+        self
+    }
+
+    /// Program the emulator script execs for any non-query invocation.
+    pub(crate) fn launch_stub(mut self, path: impl Into<PathBuf>) -> Self {
+        self.launch = path.into();
+        self
+    }
+
+    pub(crate) fn write(self) -> Self {
+        use std::{fs, os::unix::fs::PermissionsExt};
+        let avds = self
+            .avds
+            .iter()
+            .map(|name| format!("\"{name}\""))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let (code, text) = if self.accel_ok {
+            (0, "HAXM/KVM is installed and usable.")
+        } else {
+            (1, "KVM is not available.")
+        };
+        let emulator = format!(
+            "#!/bin/sh\ncase \"$1\" in\n  -list-avds) printf '%s\\n' {avds} ;;\n  -accel-check) echo \"accel:\"; echo \"{code}\"; echo \"{text}\"; echo \"accel\"; exit {code} ;;\n  *) exec \"{launch}\" \"$@\" ;;\nesac\n",
+            launch = self.launch.display()
+        );
+        let write_script = |relative: &str, body: &str| {
+            let path = self.dir.path().join(relative);
+            fs::create_dir_all(path.parent().expect("script parent")).expect("script dir");
+            fs::write(&path, body).expect("write script");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod script");
+        };
+        write_script("emulator/emulator", &emulator);
+        if self.with_adb {
+            write_script("platform-tools/adb", "#!/bin/sh\nexit 0\n");
+        }
+        self
+    }
+
+    pub(crate) fn root(&self) -> &Path {
+        self.dir.path()
+    }
+
+    pub(crate) fn env(&self) -> crate::device::sdk::SdkEnv {
+        crate::device::sdk::SdkEnv {
+            vars: std::collections::HashMap::from([(
+                "ANDROID_HOME".to_owned(),
+                self.root().into(),
+            )]),
+            home: Some(self.root().join("home")),
+            os: "linux",
+        }
     }
 }
