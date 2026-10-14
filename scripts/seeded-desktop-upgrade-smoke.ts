@@ -1177,7 +1177,12 @@ export async function observeWindowsInstalledCandidate(input: {
   readonly tasklistMs: number | null;
 }> {
   const productName = input.productName ?? "BiBCode";
-  const expectedExe = `${productName}-${input.candidateVersion}-installer.exe`;
+  // tauri-plugin-updater writes the downloaded NSIS bytes as
+  // `{package}-{version}-installer.exe`, the package being `bibcode-desktop`.
+  const expectedExes = [
+    `bibcode-desktop-${input.candidateVersion}-installer.exe`,
+    `${productName}-${input.candidateVersion}-installer.exe`,
+  ];
   const readFile =
     input.readFile ??
     ((path: string) =>
@@ -1222,7 +1227,10 @@ export async function observeWindowsInstalledCandidate(input: {
   let tasklistMs: number | null = null;
   const listStarted = Date.now();
   try {
-    installers = windowsInstallerProcesses(await listProcesses(), expectedExe);
+    const listing = await listProcesses();
+    installers = expectedExes.flatMap((expectedExe) =>
+      windowsInstallerProcesses(listing, expectedExe),
+    );
     tasklistMs = Date.now() - listStarted;
   } catch (cause) {
     tasklistMs = Date.now() - listStarted;
@@ -1337,6 +1345,52 @@ export async function waitForWindowsRelaunchedApplication(input: {
       }
     },
   });
+}
+
+/**
+ * What Windows showed when a wait timed out: every process with its window title, and the
+ * text of each top-level window (an NSIS file-in-use dialog shows its message here). Written
+ * as text so the bounded evidence copy keeps it. Failures are recorded, never thrown.
+ */
+export async function captureWindowsTimeoutEvidence(evidenceDirectory: string): Promise<void> {
+  const run = (command: string, args: ReadonlyArray<string>) =>
+    new Promise<string>((resolve) => {
+      NodeChildProcess.execFile(
+        command,
+        [...args],
+        { timeout: 30_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+        (error, stdout, stderr) =>
+          resolve(error ? `${stdout}\n[${String(error)}] ${stderr}` : stdout),
+      );
+    });
+  const windows = String.raw`Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$all = [System.Windows.Automation.Condition]::TrueCondition
+foreach ($window in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $all)) {
+  $processId = $window.Current.ProcessId
+  $name = (Get-Process -Id $processId -ErrorAction SilentlyContinue).ProcessName
+  "WINDOW pid=$processId process=$name title=$($window.Current.Name)"
+  try {
+    $shown = 0
+    foreach ($child in $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $all)) {
+      if ($shown -ge 40) { break }
+      if ($child.Current.Name) {
+        "  $($child.Current.ControlType.ProgrammaticName): $($child.Current.Name)"
+        $shown++
+      }
+    }
+  } catch { "  [descendants unavailable: $($_.Exception.Message)]" }
+}`;
+  await NodeFS.promises.writeFile(
+    NodePath.join(evidenceDirectory, "windows-processes-at-timeout.txt"),
+    await run("tasklist.exe", ["/V", "/FO", "CSV", "/NH"]),
+    { mode: 0o600 },
+  );
+  await NodeFS.promises.writeFile(
+    NodePath.join(evidenceDirectory, "windows-ui-at-timeout.txt"),
+    await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windows]),
+    { mode: 0o600 },
+  );
 }
 
 export class ManagedProcessRegistry {
@@ -2415,16 +2469,21 @@ const runUpgradeLane = async (input: {
   } as const;
   await runWebDriverPhase({ ...shared, phase: "seed-and-install", resultPath: beforePath });
   if (input.platform === "win") {
-    await waitForWindowsInstalledCandidate({
-      appBinaryPath: input.appBinaryPath,
-      candidateVersion: input.candidateVersion,
-      evidenceDirectory: input.layout.evidenceDirectory,
-      timeoutMs: input.restartTimeoutMs,
-    });
-    await waitForWindowsRelaunchedApplication({
-      appBinaryPath: input.appBinaryPath,
-      timeoutMs: input.restartTimeoutMs,
-    });
+    try {
+      await waitForWindowsInstalledCandidate({
+        appBinaryPath: input.appBinaryPath,
+        candidateVersion: input.candidateVersion,
+        evidenceDirectory: input.layout.evidenceDirectory,
+        timeoutMs: input.restartTimeoutMs,
+      });
+      await waitForWindowsRelaunchedApplication({
+        appBinaryPath: input.appBinaryPath,
+        timeoutMs: input.restartTimeoutMs,
+      });
+    } catch (error) {
+      await captureWindowsTimeoutEvidence(input.layout.evidenceDirectory);
+      throw error;
+    }
   }
   if (input.lane === "remote-install") {
     const remotePath = NodePath.join(input.layout.evidenceDirectory, "remote-rpc.json");
