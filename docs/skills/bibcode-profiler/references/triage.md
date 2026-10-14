@@ -172,6 +172,8 @@ Covers `memory.leak-suspect`, `memory.leak-likely`, `cpu.sustained`,
      `apps/server/src/provider_terminal/`.
    - `terminal`: shell sessions; `apps/server/src/terminal/`.
    - `webview`: the UI in `apps/web/src/` running in the system webview. On
+     macOS it is the WebKit WebContent process the desktop observes, sampled
+     only from builds after v0.9.2 (#104). On
      Windows and Linux it also includes preview tabs' web content, which runs
      the previewed app's code: before filing, check whether the growth or CPU
      follows a preview tab rather than BiBCode's own window.

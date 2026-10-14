@@ -218,6 +218,30 @@ pub struct NativeResourceSampler {
 }
 
 impl NativeResourceSampler {
+    /// Tells the Profiler's sampler which UI processes exist. A failed or timed-out
+    /// observation keeps the last ones, and a partial one adds to them, so a live webview it
+    /// missed keeps its history; only a complete observation replaces them.
+    fn publish_observed_ui(&self, observation: &DesktopUiObservation) {
+        match observation.coverage.status {
+            UiCoverageStatus::Unavailable => {}
+            UiCoverageStatus::Partial => {
+                // What this observation confirmed first, then the ones it may have missed.
+                let mut identities = observation.identities.clone();
+                for identity in self.registry.observed_ui() {
+                    if !identities.contains(&identity) {
+                        identities.push(identity);
+                    }
+                }
+                identities.truncate(UI_IDENTITY_LIMIT);
+                self.registry.set_observed_ui(identities);
+            }
+            UiCoverageStatus::Available | UiCoverageStatus::NotApplicable => {
+                self.registry
+                    .set_observed_ui(observation.identities.clone());
+            }
+        }
+    }
+
     #[must_use]
     pub fn new(
         native: Arc<NativeProcessSampler>,
@@ -263,6 +287,7 @@ impl NativeResourceSampler {
             })?;
         let observation =
             observe_ui_processes(self.ui_observer.clone(), rows.clone(), server_identity).await;
+        self.publish_observed_ui(&observation);
         let mut claims = self.registry.bind_and_snapshot(&rows, sample_started_at);
         append_ui_claims(&mut claims, &rows, &observation.identities);
         let attribution =
@@ -313,6 +338,7 @@ impl ResourceSampler for NativeResourceSampler {
                 })?;
             let observation =
                 observe_ui_processes(self.ui_observer.clone(), rows.clone(), server_identity).await;
+            self.publish_observed_ui(&observation);
             let observed_at = Instant::now();
             let mut claims = self.registry.bind_and_snapshot(&rows, sample_started_at);
             append_ui_claims(&mut claims, &rows, &observation.identities);
@@ -691,6 +717,52 @@ mod tests {
             observer(observation),
         );
         (sampler, native)
+    }
+
+    /// #104: the UI processes an observation finds reach the Profiler's sampler through the
+    /// shared registry; a failed observation keeps the last ones.
+    #[tokio::test]
+    async fn observed_ui_processes_are_published_for_the_profiler() {
+        let server_pid = std::process::id();
+        let registry = ProcessAttributionRegistry::new();
+        let webcontent = identity(server_pid + 1, 200);
+        let (sampler, _) = sampler_with_registry(
+            vec![row(server_pid, 1, 100)],
+            FakeObservation::Return(DesktopUiObservation {
+                identities: vec![webcontent],
+                coverage: UiCoverage {
+                    status: UiCoverageStatus::Available,
+                    message: None,
+                },
+            }),
+            registry.clone(),
+        );
+        sampler.sample().await.expect("sample");
+        assert_eq!(registry.observed_ui(), vec![webcontent]);
+
+        let (failing, _) = sampler_with_registry(
+            vec![row(server_pid, 1, 100)],
+            FakeObservation::Panic,
+            registry.clone(),
+        );
+        failing.sample().await.expect("sample");
+        assert_eq!(registry.observed_ui(), vec![webcontent]);
+
+        // A partial observation that missed it adds what it found.
+        let gpu = identity(server_pid + 2, 300);
+        let (partial, _) = sampler_with_registry(
+            vec![row(server_pid, 1, 100)],
+            FakeObservation::Return(DesktopUiObservation {
+                identities: vec![gpu],
+                coverage: UiCoverage {
+                    status: UiCoverageStatus::Partial,
+                    message: None,
+                },
+            }),
+            registry.clone(),
+        );
+        partial.sample().await.expect("sample");
+        assert_eq!(registry.observed_ui(), vec![gpu, webcontent]);
     }
 
     #[tokio::test]

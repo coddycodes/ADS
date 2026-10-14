@@ -88,7 +88,10 @@ up to 128 descendants.
     desktop app running the profiler for its in-process server),
     `provider:<driver>` (such as `provider:codex`; `provider` from older
     builds), `terminal`, `helper` (provider app-server helpers and the crash
-    monitor), `webview`, `git` or `other`;
+    monitor), `webview`, `git` or `other`. `webview` includes the UI processes
+    the desktop observes outside its own process tree, such as macOS's WebKit
+    WebContent service under launchd, while process diagnostics run (the status
+    bar keeps them running); builds through v0.9.2 never sampled those;
   - `label`: the executable name;
   - `metric`: `private` (Linux `RssAnon + VmSwap`, Windows `PrivateUsage`,
     macOS `phys_footprint`) or `rss` where private memory cannot be read;
