@@ -967,6 +967,9 @@ const THREAD_UPDATE_COALESCE: std::time::Duration = std::time::Duration::from_mi
 /// thread itself (#101). A long session's thread is megabytes of JSON, and every open
 /// subscription held its own copy for as long as it stayed open.
 struct HeldThread {
+    /// This subscription's own random key: thread content comes from agents and tools, and a
+    /// fixed key would let crafted content collide on purpose to hide an update.
+    keys: std::hash::RandomState,
     fields: HashMap<String, HeldField>,
 }
 
@@ -977,31 +980,35 @@ enum HeldField {
 
 impl HeldThread {
     /// `None` for a snapshot without a thread, after which the next update is a snapshot.
-    fn of(snapshot: &Value) -> Option<Self> {
+    fn of(snapshot: &Value, keys: std::hash::RandomState) -> Option<Self> {
         let thread = snapshot.get("thread")?.as_object()?;
         let fields = thread
             .iter()
             .map(|(key, value)| {
                 let held = match value {
-                    Value::Array(entries) => {
-                        HeldField::Array(entries.iter().map(fingerprint).collect())
-                    }
-                    other => HeldField::Value(fingerprint(other)),
+                    Value::Array(entries) => HeldField::Array(
+                        entries
+                            .iter()
+                            .map(|entry| fingerprint(&keys, entry))
+                            .collect(),
+                    ),
+                    other => HeldField::Value(fingerprint(&keys, other)),
                 };
                 (key.clone(), held)
             })
             .collect();
-        Some(Self { fields })
+        Some(Self { keys, fields })
     }
 }
 
-/// A 64-bit fingerprint of `value`, walked like an equality check: no serializing.
-// ponytail: a collision (about 1 in 2^64 per entry) leaves that entry out of one patch, so
-// the client shows it stale until it changes again; keep entries if that ever matters.
-fn fingerprint(value: &Value) -> u64 {
-    use std::hash::{DefaultHasher, Hasher};
+/// A 64-bit fingerprint of `value` under `keys`, walked like an equality check: no
+/// serializing.
+// ponytail: a chance collision (about 1 in 2^64 per entry) leaves that entry out of one
+// patch, so the client shows it stale until it changes again; keep entries if that matters.
+fn fingerprint(keys: &std::hash::RandomState, value: &Value) -> u64 {
+    use std::hash::{BuildHasher, Hasher};
 
-    fn walk(value: &Value, hasher: &mut DefaultHasher) {
+    fn walk(value: &Value, hasher: &mut impl Hasher) {
         match value {
             Value::Null => hasher.write_u8(0),
             Value::Bool(flag) => hasher.write_u8(1 + u8::from(*flag)),
@@ -1042,7 +1049,7 @@ fn fingerprint(value: &Value) -> u64 {
             }
         }
     }
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = keys.build_hasher();
     walk(value, &mut hasher);
     hasher.finish()
 }
@@ -1065,7 +1072,9 @@ fn thread_patch(held: &HeldThread, next: &Value) -> Option<Value> {
                 let changes = after
                     .iter()
                     .enumerate()
-                    .filter(|(index, entry)| before.get(*index) != Some(&fingerprint(entry)))
+                    .filter(|(index, entry)| {
+                        before.get(*index) != Some(&fingerprint(&held.keys, entry))
+                    })
                     .map(|(index, entry)| json!([index, entry]))
                     .collect::<Vec<_>>();
                 if changes.is_empty() && before.len() == after.len() {
@@ -1077,7 +1086,7 @@ fn thread_patch(held: &HeldThread, next: &Value) -> Option<Value> {
                 );
             }
             (Some(HeldField::Value(before)), value)
-                if !value.is_array() && *before == fingerprint(value) => {}
+                if !value.is_array() && *before == fingerprint(&held.keys, value) => {}
             _ => {
                 set.insert(key.clone(), value.clone());
             }
@@ -1123,12 +1132,13 @@ fn thread_stream(
     tokio::spawn(async move {
         let first = thread_snapshot(&engine, &input.thread_id).await;
         // What the subscriber holds of the last snapshot, for a client that applies patches.
+        let keys = std::hash::RandomState::new();
         let hold = |snapshot: &RpcResult| {
             snapshot
                 .as_ref()
                 .ok()
                 .filter(|_| input.patches)
-                .and_then(HeldThread::of)
+                .and_then(|snapshot| HeldThread::of(snapshot, keys.clone()))
         };
         let mut held = hold(&first);
         if send_snapshot(&sender, first).await.is_err() {
@@ -1902,14 +1912,20 @@ mod tests {
         let next = json!({ "snapshotSequence": 2, "thread": { "activities": [
             { "id": "a", "payload": { "n": 1.5 } },
         ] } });
-        let patch = thread_patch(&HeldThread::of(&held).expect("a thread"), &next)
-            .expect("the number changed");
+        let patch = thread_patch(
+            &HeldThread::of(&held, std::hash::RandomState::new()).expect("a thread"),
+            &next,
+        )
+        .expect("the number changed");
         assert_eq!(
             patch["patch"]["arrays"]["activities"]["changes"],
             json!([[0, next["thread"]["activities"][0]]])
         );
         assert_eq!(
-            thread_patch(&HeldThread::of(&next).expect("a thread"), &next),
+            thread_patch(
+                &HeldThread::of(&next, std::hash::RandomState::new()).expect("a thread"),
+                &next
+            ),
             None
         );
     }
@@ -6531,7 +6547,10 @@ mod tests {
             // A command the thread's state refuses still exercises the stream.
             let _ = engine.dispatch(decode_command(command)).await;
             let next = thread_snapshot(&engine, "t1").await.expect("snapshot");
-            if let Some(patch) = thread_patch(&HeldThread::of(&held).expect("a thread"), &next) {
+            if let Some(patch) = thread_patch(
+                &HeldThread::of(&held, std::hash::RandomState::new()).expect("a thread"),
+                &next,
+            ) {
                 patches.push(patch);
             }
             held = next;
