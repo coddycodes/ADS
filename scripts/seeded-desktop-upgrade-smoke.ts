@@ -1381,6 +1381,39 @@ foreach ($window in $root.FindAll([System.Windows.Automation.TreeScope]::Childre
     }
   } catch { "  [descendants unavailable: $($_.Exception.Message)]" }
 }`;
+  // The updater's temporary directories, the BiBCode uninstall entries, then process starts
+  // and exits from the Security log, newest first and capped, so the 64 KiB evidence bound
+  // keeps the installer handoff. The workflow turns this auditing on. Processes are matched
+  // by file name; command lines are kept only for BiBCode's own executables.
+  const audit = String.raw`"--- updater temp directories"
+Get-ChildItem $env:TEMP -Directory -Filter '*-updater-*' -ErrorAction SilentlyContinue | ForEach-Object {
+  $_.FullName
+  Get-ChildItem $_.FullName -ErrorAction SilentlyContinue | ForEach-Object { "  $($_.Name) $($_.Length)" }
+}
+"--- uninstall entries"
+Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+  Where-Object { $_.DisplayName -like '*BiBCode*' } |
+  ForEach-Object { "$($_.PSChildName) version=$($_.DisplayVersion) location=$($_.InstallLocation)" }
+"--- process starts and exits, newest first"
+$events = Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4688, 4689; StartTime = (Get-Date).AddMinutes(-45) } -ErrorAction SilentlyContinue
+if (-not $events) { "[no process audit events: auditing is off or the log is unreadable]" }
+$shown = 0
+foreach ($event in $events) {
+  if ($shown -ge 300) { "[older events omitted]"; break }
+  $data = @{}
+  foreach ($field in ([xml]$event.ToXml()).Event.EventData.Data) { $data[$field.Name] = $field.'#text' }
+  if ($event.Id -eq 4688) { $name = $data.NewProcessName; $processId = $data.NewProcessId } else { $name = $data.ProcessName; $processId = $data.ProcessId }
+  $leaf = Split-Path $name -Leaf
+  if ($leaf -notmatch '^(bibcode|msedgedriver\.exe$|tauri-driver\.exe$)') { continue }
+  $shown++
+  $time = $event.TimeCreated.ToUniversalTime().ToString('o')
+  $processId = [Convert]::ToInt64($processId, 16)
+  if ($event.Id -eq 4688) {
+    $line = "$time START pid=$processId parent=$([Convert]::ToInt64($data.ProcessId, 16)) $leaf"
+    if ($leaf -match '^bibcode-desktop(-.+-installer)?\.exe$') { $line += " | $($data.CommandLine)" }
+    $line
+  } else { "$time EXIT pid=$processId status=$($data.Status) $leaf" }
+}`;
   await NodeFS.promises.writeFile(
     NodePath.join(evidenceDirectory, "windows-processes-at-timeout.txt"),
     await run("tasklist.exe", ["/V", "/FO", "CSV", "/NH"]),
@@ -1389,6 +1422,11 @@ foreach ($window in $root.FindAll([System.Windows.Automation.TreeScope]::Childre
   await NodeFS.promises.writeFile(
     NodePath.join(evidenceDirectory, "windows-ui-at-timeout.txt"),
     await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windows]),
+    { mode: 0o600 },
+  );
+  await NodeFS.promises.writeFile(
+    NodePath.join(evidenceDirectory, "windows-process-audit-at-timeout.txt"),
+    await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", audit]),
     { mode: 0o600 },
   );
 }

@@ -458,6 +458,17 @@ After the candidate is installed, the harness also requires the relaunched app:
 as the crash monitor have none) within the restart bound, so an update that
 closes BiBCode without starting the new version fails the lane instead of
 passing a cleanup that found nothing to stop.
+When either wait times out, the harness saves `windows-processes-at-timeout.txt`
+(`tasklist.exe /V`), `windows-ui-at-timeout.txt` (top-level windows and their
+UI Automation names, which shows a waiting installer dialog), and
+`windows-process-audit-at-timeout.txt`: the updater's temporary directories,
+the BiBCode uninstall entries, then process starts and exits from the Security
+log for BiBCode executables (including the updater's installer) and the
+WebDriver processes, newest first and capped, with command lines only for
+`bibcode-desktop.exe` and its updater installer. The workflow turns on
+process-creation and process-termination auditing before the lane runs; a local
+run without it still records the directories and uninstall entries and notes
+that no audit events were found.
 The protected-baseline install command stays open until the host exits into that
 installer. Ending the command on the first `protecting` event stops the host
 before NSIS starts. Inspect that artifact on timeout; the later public
