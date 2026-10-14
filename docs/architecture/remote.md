@@ -1354,8 +1354,9 @@ preview webview -> SOCKS (desktop, 127.0.0.1) -> DesktopBridge -> web client
   -> preview.tunnel* RPC on the environment's connection -> server -> 127.0.0.1:<port>
 ```
 
-- **Routing.** A `CONNECT` to `localhost`, `*.localhost`, `127.0.0.0/8` or
-  `::1` becomes a tunnel; any other destination is connected from this
+- **Routing.** A `CONNECT` to `localhost`, `*.localhost`, `127.0.0.0/8`,
+  `::1` or a wildcard address (`0.0.0.0`, `::`) becomes a tunnel; any other
+  destination is connected from this
   computer, as an unproxied browser would. Only `CONNECT` with no
   authentication is served, at most 64 page connections per environment.
   Every account on the computer reaches `127.0.0.1`, so the server first

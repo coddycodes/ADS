@@ -404,14 +404,18 @@ async fn reply(stream: &mut (impl AsyncWriteExt + Unpin), code: u8) -> std::io::
         .await
 }
 
-/// `localhost`, `*.localhost`, `127.0.0.0/8` and `::1`: the environment's own loopback.
+/// `localhost`, `*.localhost`, `127.0.0.0/8`, `::1`, and the wildcard binds `0.0.0.0` and
+/// `::`, which dev servers print and browsers reach as loopback: the environment's own
+/// loopback, as the preview's target resolver treats them.
 pub fn is_loopback(host: &str) -> bool {
     let host = host.trim_matches(['[', ']']).trim_end_matches('.');
     if host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost") {
         return true;
     }
-    host.parse::<IpAddr>()
-        .is_ok_and(|ip| ip.to_canonical().is_loopback())
+    host.parse::<IpAddr>().is_ok_and(|ip| {
+        let ip = ip.to_canonical();
+        ip.is_loopback() || ip.is_unspecified()
+    })
 }
 
 /// Connects a page connection answered `direct` to its destination on this computer.
@@ -572,10 +576,13 @@ mod tests {
             "127.9.9.9",
             "::1",
             "[::1]",
+            "0.0.0.0",
+            "::",
+            "[::]",
         ] {
             assert!(is_loopback(host), "{host}");
         }
-        for host in ["example.com", "localhost.example.com", "10.0.0.1", "::"] {
+        for host in ["example.com", "localhost.example.com", "10.0.0.1", "::2"] {
             assert!(!is_loopback(host), "{host}");
         }
     }
