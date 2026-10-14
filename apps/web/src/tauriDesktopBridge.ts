@@ -41,6 +41,13 @@ const SSH_PASSWORD_PROMPT_EVENT = "desktop:ssh-password-prompt";
 const UPDATE_STATE_EVENT = "desktop:update-state";
 const LOCAL_ENVIRONMENT_BOOTSTRAP_TIMEOUT_MS = 15_000;
 const LOCAL_ENVIRONMENT_BOOTSTRAP_RETRY_MS = 50;
+/**
+ * Once the primary is known, a read refreshes the cached topology in the background at most
+ * this often; `desktop:backend-ready` replaces it at once. Renderer code polls the topology
+ * every few seconds, and WebKitGTK keeps some native memory for every IPC request, so a
+ * refresh per read grew the desktop web view without bound (#96).
+ */
+const LOCAL_ENVIRONMENT_BOOTSTRAP_REFRESH_MS = 30_000;
 const PROTECTED_CONNECTION_CATALOG_BRIDGE_VERSION = 3;
 
 type ConnectionCatalogProtectionCapability = "protected" | "unprotected" | "unknown";
@@ -48,6 +55,7 @@ type ConnectionCatalogProtectionCapability = "protected" | "unprotected" | "unkn
 let cachedLocalEnvironmentBootstraps: readonly DesktopEnvironmentBootstrap[] = [];
 let localEnvironmentBootstrapsRefresh: Promise<readonly DesktopEnvironmentBootstrap[]> | null =
   null;
+let localEnvironmentBootstrapsRefreshedAt = Number.NEGATIVE_INFINITY;
 let localEnvironmentBearerToken: Promise<string> | null = null;
 
 interface TauriDesktopBackendReadyPayload {
@@ -172,7 +180,15 @@ function refreshLocalEnvironmentBootstraps(): Promise<readonly DesktopEnvironmen
 }
 
 function getCachedLocalEnvironmentBootstraps(): readonly DesktopEnvironmentBootstrap[] {
-  void refreshLocalEnvironmentBootstraps().catch(() => undefined);
+  // Until the primary is known (startup, a missed ready event), every read keeps asking.
+  const now = Date.now();
+  if (
+    primaryBootstrapFrom(cachedLocalEnvironmentBootstraps) === null ||
+    now - localEnvironmentBootstrapsRefreshedAt >= LOCAL_ENVIRONMENT_BOOTSTRAP_REFRESH_MS
+  ) {
+    localEnvironmentBootstrapsRefreshedAt = now;
+    void refreshLocalEnvironmentBootstraps().catch(() => undefined);
+  }
   return cachedLocalEnvironmentBootstraps;
 }
 
