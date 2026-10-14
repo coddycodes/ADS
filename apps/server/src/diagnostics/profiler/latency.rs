@@ -107,6 +107,9 @@ pub fn is_long_running(method: &str) -> bool {
     matches!(
         method,
         "vcs.clone"
+            // A preview tunnel lives as long as its page; a write waits on the dev server.
+            | "preview.tunnelOpen"
+            | "preview.tunnelWrite"
             | "sourceControl.cloneRepository"
             | "sourceControl.publishRepository"
             | "sourceControl.lookupRepository"

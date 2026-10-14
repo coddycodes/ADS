@@ -76,6 +76,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   vcsCloneReattach: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** `server.getProfilerStatus` and `server.reportProfilerClientBatch`, and `enableProfiler`. */
   profiler: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** `preview.tunnelOpen`, `preview.tunnelWrite` and `preview.tunnelClose` (#69). */
+  previewTunnels: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

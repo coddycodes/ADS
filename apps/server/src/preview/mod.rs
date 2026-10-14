@@ -18,6 +18,7 @@ use url::Url;
 use uuid::Uuid;
 
 pub mod gateway;
+pub mod tunnel;
 
 /// How long an `openRequested` event stays claimable.
 const OPEN_REQUEST_TTL: Duration = Duration::from_secs(60);

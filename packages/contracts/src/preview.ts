@@ -222,6 +222,35 @@ export const PreviewGatewayOpenResult = Schema.Struct({
 });
 export type PreviewGatewayOpenResult = typeof PreviewGatewayOpenResult.Type;
 
+/** Opens a preview tunnel to `port` on the server's loopback (#69). */
+export const PreviewTunnelOpenInput = Schema.Struct({
+  port: PortSchema,
+});
+export type PreviewTunnelOpenInput = typeof PreviewTunnelOpenInput.Type;
+
+/**
+ * A preview tunnel's stream: `Opened` first, with the id `preview.tunnelWrite` and
+ * `preview.tunnelClose` name, then `Data` (base64) as the upstream sends. The stream ends
+ * when the upstream closes.
+ */
+export const PreviewTunnelEvent = Schema.Union([
+  Schema.TaggedStruct("Opened", { tunnelId: TrimmedNonEmptyString }),
+  Schema.TaggedStruct("Data", { data: Schema.String }),
+]);
+export type PreviewTunnelEvent = typeof PreviewTunnelEvent.Type;
+
+/** One base64 chunk for the upstream; the call returns once it is written. */
+export const PreviewTunnelWriteInput = Schema.Struct({
+  tunnelId: TrimmedNonEmptyString,
+  data: Schema.String,
+});
+export type PreviewTunnelWriteInput = typeof PreviewTunnelWriteInput.Type;
+
+export const PreviewTunnelCloseInput = Schema.Struct({
+  tunnelId: TrimmedNonEmptyString,
+});
+export type PreviewTunnelCloseInput = typeof PreviewTunnelCloseInput.Type;
+
 export const PreviewListResult = Schema.Struct({
   sessions: Schema.Array(PreviewSessionSnapshot),
 });
@@ -358,6 +387,28 @@ export class PreviewGatewayError extends Schema.TaggedError<PreviewGatewayError>
       "not-reachable",
       "relay-not-provisioned",
       "relay-busy",
+      "unavailable",
+    ]),
+    message: Schema.String,
+  },
+) {}
+
+/**
+ * Why a preview tunnel was refused or ended: `not-admitted` (port 0, or the server's own
+ * port), `no-upstream` (nothing listens on the port), `busy` (too many open tunnels),
+ * `closed` (the tunnel is gone), `invalid-data` (not base64, or too large),
+ * `revoked` (the session that opened it ended), or `unavailable`.
+ */
+export class PreviewTunnelError extends Schema.TaggedError<PreviewTunnelError>()(
+  "PreviewTunnelError",
+  {
+    reason: Schema.Literals([
+      "not-admitted",
+      "no-upstream",
+      "busy",
+      "closed",
+      "invalid-data",
+      "revoked",
       "unavailable",
     ]),
     message: Schema.String,

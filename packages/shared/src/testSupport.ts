@@ -32,6 +32,7 @@ export function makeTestExecutionEnvironmentCapabilities(
     vcsCloneReattach: false,
     attachmentStaging: false,
     profiler: false,
+    previewTunnels: false,
     ...overrides,
   };
 }

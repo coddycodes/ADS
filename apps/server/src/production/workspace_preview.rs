@@ -19,6 +19,7 @@ use crate::{
     preview::{
         PreviewError, PreviewManager, PreviewNavStatus, PreviewViewportSetting,
         gateway::registry::{GatewayError, PreviewGateway},
+        tunnel::{PreviewTunnels, TunnelError},
     },
     rpc::RpcSessionContext,
     workspace::WorkspaceRpc,
@@ -61,6 +62,7 @@ pub struct WorkspacePreviewRpcServices {
     automation: PreviewAutomationBroker,
     automation_state: Arc<Mutex<AutomationRpcState>>,
     gateway: Option<PreviewGateway>,
+    tunnels: Option<PreviewTunnels>,
 }
 
 #[derive(Default)]
@@ -93,6 +95,7 @@ impl WorkspacePreviewRpcServices {
             automation,
             automation_state: Arc::new(Mutex::new(AutomationRpcState::default())),
             gateway: None,
+            tunnels: None,
         }
     }
 
@@ -100,6 +103,14 @@ impl WorkspacePreviewRpcServices {
     #[must_use]
     pub fn with_gateway(mut self, gateway: PreviewGateway) -> Self {
         self.gateway = Some(gateway);
+        self
+    }
+
+    /// Serves `preview.tunnelOpen`, `preview.tunnelWrite` and `preview.tunnelClose` from
+    /// `tunnels`; without them the methods are not registered.
+    #[must_use]
+    pub fn with_tunnels(mut self, tunnels: PreviewTunnels) -> Self {
+        self.tunnels = Some(tunnels);
         self
     }
 }
@@ -127,6 +138,9 @@ pub fn register_workspace_preview_rpc(
             "preview.gatewayOpen",
             move |request, context, _cancellation| gateway_open(gateway.clone(), request, context),
         );
+    }
+    if let Some(tunnels) = services.tunnels.clone() {
+        register_tunnel_rpc(registry, tunnels);
     }
     let preview = services.preview.clone();
     let workspace = services.workspace.clone();
@@ -795,6 +809,84 @@ async fn gateway_open(
         result["origin"] = json!(origin);
     }
     Ok(result)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewTunnelOpenInput {
+    port: u16,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewTunnelWriteInput {
+    tunnel_id: String,
+    data: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewTunnelCloseInput {
+    tunnel_id: String,
+}
+
+/// The preview tunnel methods (#69). Each is bound to the caller's own BiBCode session: a
+/// tunnel is written to and closed only by the session that opened it.
+fn register_tunnel_rpc(registry: &mut RpcRegistry, tunnels: PreviewTunnels) {
+    let open = tunnels.clone();
+    registry.register_stream_with_context(
+        "preview.tunnelOpen",
+        move |request, context, cancellation| {
+            let input = decode::<PreviewTunnelOpenInput>(request.payload, "preview.tunnelOpen");
+            match (input, context.principal()) {
+                (Ok(input), Some(principal)) => {
+                    open.open(input.port, principal.session_id.clone(), cancellation)
+                }
+                (Err(error), _) => failed_stream(error),
+                (_, None) => failed_stream(TunnelError::Revoked.to_value()),
+            }
+        },
+    );
+    let write = tunnels.clone();
+    registry.register_unary_with_context(
+        "preview.tunnelWrite",
+        move |request, context, _cancellation| {
+            let tunnels = write.clone();
+            async move {
+                let input: PreviewTunnelWriteInput =
+                    decode(request.payload, "preview.tunnelWrite")?;
+                let principal = context
+                    .principal()
+                    .ok_or_else(|| TunnelError::Revoked.to_value())?;
+                tunnels
+                    .write(&input.tunnel_id, &principal.session_id, &input.data)
+                    .await
+                    .map_err(TunnelError::to_value)?;
+                Ok(Value::Null)
+            }
+        },
+    );
+    registry.register_unary_with_context(
+        "preview.tunnelClose",
+        move |request, context, _cancellation| {
+            let tunnels = tunnels.clone();
+            async move {
+                let input: PreviewTunnelCloseInput =
+                    decode(request.payload, "preview.tunnelClose")?;
+                if let Some(principal) = context.principal() {
+                    tunnels.close(&input.tunnel_id, &principal.session_id);
+                }
+                Ok(Value::Null)
+            }
+        },
+    );
+}
+
+/// A stream that fails at once with `error`.
+fn failed_stream(error: Value) -> mpsc::Receiver<RpcStreamChunk> {
+    let (sender, receiver) = mpsc::channel(1);
+    let _ = sender.try_send(Err(error));
+    receiver
 }
 
 fn gateway_error(error: &GatewayError) -> Value {

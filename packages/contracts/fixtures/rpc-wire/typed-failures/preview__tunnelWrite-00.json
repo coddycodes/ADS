@@ -1,0 +1,17 @@
+{
+  "_tag": "Exit",
+  "requestId": "900719925474099312345",
+  "exit": {
+    "_tag": "Failure",
+    "cause": [
+      {
+        "_tag": "Fail",
+        "error": {
+          "_tag": "PreviewTunnelError",
+          "reason": "not-admitted",
+          "message": "i"
+        }
+      }
+    ]
+  }
+}
