@@ -117,7 +117,10 @@ impl DeviceManager {
                 return Err(DeviceOpError::NotReady(slot.snapshot.state));
             }
             match &slot.frames {
-                Some(hub) if !hub.cancel.is_cancelled() => hub.clone(),
+                // A producer that ended on its own dropped its sender: start a new one.
+                Some(hub) if !hub.cancel.is_cancelled() && hub.frames.has_changed().is_ok() => {
+                    hub.clone()
+                }
                 _ => {
                     let (sender, frames) = watch::channel(None);
                     let hub = Arc::new(FrameHub {
@@ -159,7 +162,7 @@ async fn produce(
         device_id,
         frames,
         seq: 0,
-        orientation: None,
+        warned_malformed: false,
     };
     loop {
         let Some((client, native)) = producer.client() else {
@@ -169,6 +172,7 @@ async fn produce(
             () = cancel.cancelled() => return,
             stream = client.stream_screenshot(JPEG_MAX_WIDTH) => stream,
         };
+        producer.warned_malformed = false;
         let ended = match stream {
             Ok(stream) => producer.pump(stream, native, &cancel).await,
             Err(error) => Err(error),
@@ -192,16 +196,16 @@ struct Producer {
     device_id: String,
     frames: watch::Sender<Option<JpegFrame>>,
     seq: u64,
-    /// The orientation last published to the catalog.
-    orientation: Option<Orientation>,
+    /// Whether this stream already warned about a frame it could not encode; the rest are
+    /// logged at debug.
+    warned_malformed: bool,
 }
 
 impl Producer {
     /// The client and native display size, while the device is `Ready`.
-    fn client(&mut self) -> Option<(super::grpc::EmulatorClient, (u32, u32))> {
+    fn client(&self) -> Option<(super::grpc::EmulatorClient, (u32, u32))> {
         let inner = self.inner.upgrade()?;
-        let (client, _, native, orientation) = inner.client(&self.device_id).ok()?;
-        self.orientation.get_or_insert(orientation);
+        let (client, _, native, _) = inner.client(&self.device_id).ok()?;
         Some((client, native))
     }
 
@@ -242,7 +246,7 @@ impl Producer {
 
     /// Encodes `image` off the runtime; `None` (logged) when it cannot be encoded.
     async fn encode(
-        &self,
+        &mut self,
         image: proto::Image,
         cancel: &CancellationToken,
     ) -> Option<(u32, u32, Option<Orientation>, Vec<u8>)> {
@@ -260,7 +264,12 @@ impl Producer {
         match encoded {
             Ok(Ok(jpeg)) => Some((width, height, reported, jpeg)),
             Ok(Err(error)) => {
-                tracing::warn!(%error, width, height, "device frame could not be encoded");
+                if self.warned_malformed {
+                    tracing::debug!(%error, width, height, "device frame could not be encoded");
+                } else {
+                    self.warned_malformed = true;
+                    tracing::warn!(%error, width, height, "device frame could not be encoded");
+                }
                 None
             }
             Err(error) => {
@@ -275,21 +284,23 @@ impl Producer {
         (width, height, reported, jpeg): (u32, u32, Option<Orientation>, Vec<u8>),
         native: (u32, u32),
     ) {
-        let orientation = reported
-            .or(self.orientation)
-            .unwrap_or(Orientation::Portrait);
-        if self.orientation != Some(orientation)
-            && let Some(inner) = self.inner.upgrade()
+        let inner = self.inner.upgrade();
+        // A frame without a rotation keeps the catalog's, which `rotate` may have changed.
+        let current = inner
+            .as_ref()
+            .and_then(|inner| inner.reported_orientation(&self.device_id));
+        let orientation = reported.or(current).unwrap_or(Orientation::Portrait);
+        if let (Some(inner), Some(reported)) = (inner, reported)
+            && current != Some(reported)
         {
-            let (display_width, display_height) = oriented_size(native.0, native.1, orientation);
+            let (display_width, display_height) = oriented_size(native.0, native.1, reported);
             inner.set_reported_orientation(
                 &self.device_id,
-                orientation,
+                reported,
                 display_width,
                 display_height,
             );
         }
-        self.orientation = Some(orientation);
         self.seq += 1;
         self.frames.send_replace(Some(JpegFrame {
             seq: self.seq,

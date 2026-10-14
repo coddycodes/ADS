@@ -25,7 +25,7 @@ const INPUT_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 const ROTATION_POLLS: usize = 5;
 const ROTATION_POLL_INTERVAL: Duration = Duration::from_millis(300);
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -46,6 +46,35 @@ pub enum DeviceInputEvent {
     Text {
         text: String,
     },
+}
+
+/// Never prints text content, only its length.
+impl std::fmt::Debug for DeviceInputEvent {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Touch {
+                action,
+                pointer_id,
+                x,
+                y,
+            } => formatter
+                .debug_struct("Touch")
+                .field("action", action)
+                .field("pointer_id", pointer_id)
+                .field("x", x)
+                .field("y", y)
+                .finish(),
+            Self::Key { key, action } => formatter
+                .debug_struct("Key")
+                .field("key", key)
+                .field("action", action)
+                .finish(),
+            Self::Text { text } => formatter
+                .debug_struct("Text")
+                .field("len", &text.chars().count())
+                .finish(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -234,25 +263,43 @@ async fn send(
         },
         _ => event,
     };
-    let previous = state.take();
     let sink = client.input_sink(tasks)?;
+    let pressed = state
+        .take()
+        .map(|previous| previous.pressed)
+        .unwrap_or_default();
+    let (reopened, sent) = reopen(sink, pressed, event).await;
+    *state = Some(reopened);
+    sent
+}
+
+/// Releases every pointer in `pressed` on a fresh `sink`, then sends `event`. Pointers whose
+/// release was not delivered stay in the returned state, so the next reopen releases them.
+async fn reopen(
+    sink: mpsc::Sender<proto::InputEvent>,
+    pressed: BTreeMap<u32, (i32, i32)>,
+    event: proto::InputEvent,
+) -> (InputState, Result<(), DeviceError>) {
     let undelivered = |failure: Undelivered| match failure {
         Undelivered::Closed(_) => DeviceError::Grpc("the input stream closed".into()),
         Undelivered::Failed(error) => error,
     };
-    if let Some(previous) = previous {
-        for (pointer_id, (x, y)) in previous.pressed {
-            deliver(&sink, touch_event(x, y, pointer_id, 0))
-                .await
-                .map_err(undelivered)?;
+    let mut pending = pressed.into_iter();
+    while let Some((pointer_id, (x, y))) = pending.next() {
+        if let Err(failure) = deliver(&sink, touch_event(x, y, pointer_id, 0)).await {
+            let mut pressed: BTreeMap<_, _> = pending.collect();
+            pressed.insert(pointer_id, (x, y));
+            return (InputState { sink, pressed }, Err(undelivered(failure)));
         }
     }
-    deliver(&sink, event).await.map_err(undelivered)?;
-    *state = Some(InputState {
-        sink,
-        pressed: BTreeMap::new(),
-    });
-    Ok(())
+    let sent = deliver(&sink, event).await.map_err(undelivered);
+    (
+        InputState {
+            sink,
+            pressed: BTreeMap::new(),
+        },
+        sent,
+    )
 }
 
 enum Undelivered {
@@ -434,6 +481,41 @@ mod tests {
             }
         ));
         assert!(matches!(&events[2], DeviceInputEvent::Text { text } if text == "hi"));
+    }
+
+    #[test]
+    fn debug_output_never_contains_text() {
+        let event = DeviceInputEvent::Text {
+            text: "hunter2 secret".into(),
+        };
+        let printed = format!("{event:?}");
+        assert!(!printed.contains("hunter2"), "{printed}");
+        assert!(printed.contains("len: 14"), "{printed}");
+    }
+
+    #[tokio::test]
+    async fn pointers_whose_release_failed_are_released_by_the_next_reopen() {
+        let pressed = BTreeMap::from([(0, (540, 1200)), (1, (10, 20))]);
+        // First reopen: the stream breaks before any release is delivered.
+        let (broken, closed) = mpsc::channel(8);
+        drop(closed);
+        let (state, sent) = reopen(broken, pressed, touch_event(1, 1, 2, 1)).await;
+        assert!(sent.is_err());
+        assert_eq!(state.pressed.len(), 2);
+        // Second reopen: both pointers are released before the new event.
+        let (sink, mut received) = mpsc::channel(8);
+        let (state, sent) = reopen(sink, state.pressed, touch_event(1, 1, 2, 1)).await;
+        sent.unwrap();
+        assert!(state.pressed.is_empty());
+        let mut released = Vec::new();
+        for _ in 0..3 {
+            let event = received.recv().await.unwrap();
+            let Some(proto::input_event::Type::TouchEvent(touch)) = event.r#type else {
+                panic!("not a touch");
+            };
+            released.push((touch.touches[0].identifier, touch.touches[0].pressure));
+        }
+        assert_eq!(released, vec![(0, 0), (1, 0), (2, 1)]);
     }
 
     #[test]

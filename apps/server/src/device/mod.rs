@@ -455,6 +455,15 @@ impl Inner {
         }
     }
 
+    /// The orientation the catalog shows for `device_id`.
+    fn reported_orientation(&self, device_id: &str) -> Option<Orientation> {
+        let table = self.table();
+        table
+            .slots
+            .get(device_id)
+            .map(|slot| slot.snapshot.orientation)
+    }
+
     fn set_reported_orientation(
         &self,
         device_id: &str,
