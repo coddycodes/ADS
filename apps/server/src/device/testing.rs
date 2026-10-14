@@ -518,6 +518,8 @@ pub(crate) struct FakeSdk {
     boot_completed_after: Option<u32>,
     /// Which of `discovery_dirs()` the launch stub publishes in.
     discovery_index: usize,
+    /// Seconds `-list-avds` sleeps after counting its call.
+    list_avds_delay_secs: u32,
 }
 
 #[cfg(unix)]
@@ -531,6 +533,7 @@ impl FakeSdk {
             launch: None,
             boot_completed_after: Some(1),
             discovery_index: 0,
+            list_avds_delay_secs: 0,
         }
     }
 
@@ -566,6 +569,11 @@ impl FakeSdk {
         self
     }
 
+    pub(crate) fn list_avds_delay_secs(mut self, secs: u32) -> Self {
+        self.list_avds_delay_secs = secs;
+        self
+    }
+
     pub(crate) fn never_boots(mut self) -> Self {
         self.boot_completed_after = None;
         self
@@ -586,9 +594,10 @@ impl FakeSdk {
         };
         let launch = self.dir.path().join("launch-stub");
         let emulator = format!(
-            "#!/bin/sh\ncase \"$1\" in\n  -list-avds) echo >> \"{calls}\"; printf '%s\\n' {avds} ;;\n  -accel-check) echo \"accel:\"; echo \"{code}\"; echo \"{text}\"; echo \"accel\"; exit {code} ;;\n  *) exec \"{launch}\" \"$@\" ;;\nesac\n",
+            "#!/bin/sh\ncase \"$1\" in\n  -list-avds) echo >> \"{calls}\"; sleep {delay}; printf '%s\\n' {avds} ;;\n  -accel-check) echo \"accel:\"; echo \"{code}\"; echo \"{text}\"; echo \"accel\"; exit {code} ;;\n  *) exec \"{launch}\" \"$@\" ;;\nesac\n",
             launch = launch.display(),
-            calls = self.list_avds_calls_file().display()
+            calls = self.list_avds_calls_file().display(),
+            delay = self.list_avds_delay_secs
         );
         let write_script = |path: &Path, body: &str| {
             fs::create_dir_all(path.parent().expect("script parent")).expect("script dir");

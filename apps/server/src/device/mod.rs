@@ -11,7 +11,7 @@ pub(crate) mod testing;
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    sync::{Arc, Mutex, MutexGuard, PoisonError, Weak},
     time::{Duration, Instant},
 };
 
@@ -201,7 +201,11 @@ impl DeviceManager {
             shutdown: CancellationToken::new(),
             tasks: TaskTracker::new(),
         });
-        inner.tasks.spawn(inner.clone().follow_setting());
+        inner.tasks.spawn(Inner::follow_setting(
+            Arc::downgrade(&inner),
+            inner.enabled.clone(),
+            inner.shutdown.clone(),
+        ));
         Self { inner }
     }
 
@@ -559,19 +563,19 @@ impl Inner {
                     continue;
                 };
                 let running = slot.running.take().expect("checked above");
-                (running, status, slot.started)
+                // Published before the cleanup below, so nobody sees a dead device as Ready.
+                slot.snapshot.state = DeviceState::Failed;
+                slot.snapshot.failure = Some(format!("exited: {status}"));
+                let started = slot.started;
+                self.publish(&mut table);
+                (running, status, started)
             };
             // Before `stop`, which marks the exit as requested.
             running
                 .helper
                 .report_unrequested_exit(emulator::HELPER_LABEL, &status);
-            emulator::stop(running).await;
-            self.finish(
-                &device_id,
-                DeviceState::Failed,
-                Some(format!("exited: {status}")),
-            );
             record_lifecycle("fail", started, Some("exited"));
+            emulator::stop(running).await;
             return;
         }
     }
@@ -640,21 +644,43 @@ impl Inner {
         .await;
     }
 
-    async fn follow_setting(self: Arc<Self>) {
-        let mut enabled = self.enabled.clone();
+    /// Holds the manager only while it acts, so dropping every handle (a failed runtime
+    /// start) cancels `shutdown` through `Inner::drop` and ends the follower.
+    async fn follow_setting(
+        inner: Weak<Self>,
+        mut enabled: watch::Receiver<bool>,
+        shutdown: CancellationToken,
+    ) {
         loop {
-            if *enabled.borrow_and_update() {
-                self.discover(false).await;
-            } else {
-                self.close_all().await;
+            let on = *enabled.borrow_and_update();
+            {
+                let Some(this) = inner.upgrade() else {
+                    return;
+                };
+                if on {
+                    // Dropping the discovery kills its tool's process group
+                    // (`SupervisedChildGuard`), so shutdown never waits for a slow SDK.
+                    tokio::select! {
+                        () = shutdown.cancelled() => return,
+                        _ = this.discover(false) => {}
+                    }
+                } else {
+                    this.close_all().await;
+                }
             }
             tokio::select! {
-                () = self.shutdown.cancelled() => return,
+                () = shutdown.cancelled() => return,
                 changed = enabled.changed() => if changed.is_err() {
                     return;
                 },
             }
         }
+    }
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        self.shutdown.cancel();
     }
 }
 
@@ -733,9 +759,27 @@ mod tests {
         fixture.wait_state(&id, DeviceState::Ready).await;
         let pid = fixture.pid_of(&id);
         kill_process(pid);
+        // The moment the manager stops serving the device, the catalog already says Failed.
+        crate::device::testing::wait_until(|| fixture.manager.client(&id).is_err()).await;
+        assert!(matches!(
+            fixture.manager.client(&id),
+            Err(DeviceOpError::NotReady(DeviceState::Failed))
+        ));
+        let state = |catalog: &DeviceCatalog| {
+            catalog
+                .devices
+                .iter()
+                .find(|device| device.device_id == id)
+                .map(|device| device.state)
+        };
+        assert_eq!(
+            state(&fixture.manager.catalog().borrow()),
+            Some(DeviceState::Failed)
+        );
         let snapshot = fixture.wait_state(&id, DeviceState::Failed).await;
         assert!(snapshot.failure.unwrap().contains("exited"));
-        assert!(!process_alive(pid));
+        // Cleanup runs after the Failed publish and reaps the process.
+        crate::device::testing::wait_until(|| !process_alive(pid)).await;
         assert!(fixture.manager.open("Pixel").await.is_ok());
         fixture.manager.shutdown().await;
     }
@@ -851,6 +895,39 @@ mod tests {
             Err(DeviceOpError::NotFound)
         ));
         fixture.manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_does_not_wait_for_a_slow_sdk_listing() {
+        let fixture =
+            ManagerFixture::with_sdk(|sdk| sdk.avds(&["Pixel"]).list_avds_delay_secs(60)).await;
+        // The setting is on, so the follower is already listing AVDs.
+        crate::device::testing::wait_until(|| fixture.sdk.list_avds_calls() == 1).await;
+        let started = Instant::now();
+        fixture.manager.shutdown().await;
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_the_manager_ends_the_setting_follower() {
+        let fixture = ManagerFixture::ready(&["Pixel"]).await;
+        fixture.manager.refresh().await;
+        let inner = Arc::downgrade(&fixture.manager.inner);
+        let tasks = fixture.manager.inner.tasks.clone();
+        drop(fixture.manager);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            tasks.close();
+            tasks.wait().await;
+        })
+        .await
+        .expect("the follower ends once the manager is dropped");
+        assert!(inner.upgrade().is_none());
+        // The setting sender is still alive, so only the dropped manager ended the follower.
+        drop(fixture.enabled);
     }
 
     #[test]
