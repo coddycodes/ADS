@@ -468,7 +468,10 @@ WebDriver processes, newest first and capped, with command lines only for
 `bibcode-desktop.exe` and its updater installer. The workflow turns on
 process-creation and process-termination auditing before the lane runs; a local
 run without it still records the directories and uninstall entries and notes
-that no audit events were found.
+that no audit events were found. The workflow also turns on Windows Error
+Reporting minidumps for `bibcode-desktop.exe` and uploads any it writes as the
+`seeded-upgrade-crash-dumps-<arch>` artifact: an exit status of `0xc00000fd`
+in the audit is a stack overflow, and its dump holds the crash site.
 The protected-baseline install command stays open until the host exits into that
 installer. Ending the command on the first `protecting` event stops the host
 before NSIS starts. Inspect that artifact on timeout; the later public

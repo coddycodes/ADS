@@ -1353,12 +1353,12 @@ export async function waitForWindowsRelaunchedApplication(input: {
  * as text so the bounded evidence copy keeps it. Failures are recorded, never thrown.
  */
 export async function captureWindowsTimeoutEvidence(evidenceDirectory: string): Promise<void> {
-  const run = (command: string, args: ReadonlyArray<string>) =>
+  const run = (command: string, args: ReadonlyArray<string>, timeout = 30_000) =>
     new Promise<string>((resolve) => {
       NodeChildProcess.execFile(
         command,
         [...args],
-        { timeout: 30_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+        { timeout, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
         (error, stdout, stderr) =>
           resolve(error ? `${stdout}\n[${String(error)}] ${stderr}` : stdout),
       );
@@ -1382,9 +1382,10 @@ foreach ($window in $root.FindAll([System.Windows.Automation.TreeScope]::Childre
   } catch { "  [descendants unavailable: $($_.Exception.Message)]" }
 }`;
   // The updater's temporary directories, the BiBCode uninstall entries, then process starts
-  // and exits from the Security log, newest first and capped, so the 64 KiB evidence bound
-  // keeps the installer handoff. The workflow turns this auditing on. Processes are matched
-  // by file name; command lines are kept only for BiBCode's own executables.
+  // and exits from the Security log of the last 20 minutes, newest first and capped (5000
+  // read, 300 shown), so the 64 KiB evidence bound keeps the installer handoff. The workflow
+  // turns this auditing on. Processes are matched by file name; command lines are kept only
+  // for BiBCode's own executables.
   const audit = String.raw`"--- updater temp directories"
 Get-ChildItem $env:TEMP -Directory -Filter '*-updater-*' -ErrorAction SilentlyContinue | ForEach-Object {
   $_.FullName
@@ -1395,7 +1396,7 @@ Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 
   Where-Object { $_.DisplayName -like '*BiBCode*' } |
   ForEach-Object { "$($_.PSChildName) version=$($_.DisplayVersion) location=$($_.InstallLocation)" }
 "--- process starts and exits, newest first"
-$events = Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4688, 4689; StartTime = (Get-Date).AddMinutes(-45) } -ErrorAction SilentlyContinue
+$events = Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4688, 4689; StartTime = (Get-Date).AddMinutes(-20) } -MaxEvents 5000 -ErrorAction SilentlyContinue
 if (-not $events) { "[no process audit events: auditing is off or the log is unreadable]" }
 $shown = 0
 foreach ($event in $events) {
@@ -1426,7 +1427,8 @@ foreach ($event in $events) {
   );
   await NodeFS.promises.writeFile(
     NodePath.join(evidenceDirectory, "windows-process-audit-at-timeout.txt"),
-    await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", audit]),
+    // The Security log also holds the build's processes: reading recent events takes a while.
+    await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", audit], 180_000),
     { mode: 0o600 },
   );
 }

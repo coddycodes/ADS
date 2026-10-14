@@ -157,7 +157,7 @@ jobs:
             echo "BIBCODE_UPGRADE_PUBLIC_KEY_FILE=$key_path.pub"
           } >> "$GITHUB_ENV"
 
-      - name: Audit Windows process starts and exits
+      - name: Audit Windows processes and keep crash dumps
         if: matrix.platform == 'win'
         shell: pwsh
         run: |
@@ -166,6 +166,15 @@ jobs:
           auditpol /set /subcategory:"{0CCE922B-69AE-11D9-BED3-505054503030}" /success:enable
           auditpol /set /subcategory:"{0CCE922C-69AE-11D9-BED3-505054503030}" /success:enable
           reg add HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System\Audit /v ProcessCreationIncludeCmdLine_Enabled /t REG_DWORD /d 1 /f
+          # A seeded client that crashes (v0.7.2 overflows its stack when it installs, #95) leaves
+          # a minidump of the test's own synthetic data for the crash site.
+          $dumps = Join-Path $env:RUNNER_TEMP "bibcode-crash-dumps"
+          New-Item -ItemType Directory -Force -Path $dumps | Out-Null
+          $key = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\bibcode-desktop.exe"
+          New-Item -Force -Path $key | Out-Null
+          New-ItemProperty -Force -Path $key -Name DumpFolder -PropertyType ExpandString -Value $dumps | Out-Null
+          New-ItemProperty -Force -Path $key -Name DumpType -PropertyType DWord -Value 1 | Out-Null
+          New-ItemProperty -Force -Path $key -Name DumpCount -PropertyType DWord -Value 4 | Out-Null
 
       - name: Run previous-stable, protected-baseline, and remote-install upgrades
         shell: bash
@@ -197,6 +206,15 @@ jobs:
           name: seeded-upgrade-${{ matrix.platform }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/bibcode-seeded-upgrade/evidence/*
           if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Windows crash dumps
+        if: always() && matrix.platform == 'win'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: seeded-upgrade-crash-dumps-${{ matrix.arch }}
+          path: ${{ runner.temp }}/bibcode-crash-dumps/*
+          if-no-files-found: ignore
           retention-days: 7
 
   windows_wsl_upgrade_smoke:
