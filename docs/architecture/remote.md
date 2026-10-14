@@ -1358,6 +1358,16 @@ preview webview -> SOCKS (desktop, 127.0.0.1) -> DesktopBridge -> web client
   `::1` becomes a tunnel; any other destination is connected from this
   computer, as an unproxied browser would. Only `CONNECT` with no
   authentication is served, at most 64 page connections per environment.
+  Every account on the computer reaches `127.0.0.1`, so the server first
+  checks the kernel's socket table (`/proc/net/tcp`, `/proc/net/tcp6`) and
+  drops a connection whose socket another user owns; otherwise another account
+  could reach the environment's loopback through this user's connection.
+  Tauri passes the proxy as host and port only, which rules out SOCKS
+  username and password authentication.
+- **Same access as the gateway.** A tunnel reaches any loopback port on the
+  server except the two listed below, as the preview gateway's targets do, under the
+  same `orchestration:operate` scope, which can already run agent commands
+  there.
 - **Desktop to renderer.** The SOCKS server emits `preview://tunnel-request`
   with a connection id and the destination host and port; the renderer answers it
   (`desktop_preview_tunnel_answer`, which writes the SOCKS reply), then pulls

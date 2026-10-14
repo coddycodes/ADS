@@ -9,7 +9,7 @@
 
 use std::{
     collections::HashMap,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::{
         Arc, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicBool, Ordering},
@@ -267,9 +267,21 @@ impl PreviewTunnels {
     async fn serve(self, listener: TcpListener, environment_id: String) {
         let slots = Arc::new(Semaphore::new(MAX_CONNECTIONS_PER_SERVER));
         loop {
-            let Ok((stream, _)) = listener.accept().await else {
+            let Ok((stream, peer)) = listener.accept().await else {
                 continue;
             };
+            // Every account on this computer reaches loopback; only this user's own sockets
+            // (the preview host's network process) may use this user's environment connection.
+            let Ok(local) = stream.local_addr() else {
+                continue;
+            };
+            if !tokio::task::spawn_blocking(move || peer_is_ours(peer, local))
+                .await
+                .unwrap_or(false)
+            {
+                tracing::warn!("refused a preview SOCKS connection from another account");
+                continue;
+            }
             // Over the limit, the page's connection waits for a slot instead of failing.
             let Ok(slot) = slots.clone().acquire_owned().await else {
                 return;
@@ -448,7 +460,69 @@ async fn direct(mut stream: TcpStream, host: &str, port: u16) -> std::io::Result
     Ok(())
 }
 
-#[cfg(test)]
+/// Whether the socket that connected from `peer` to `local` belongs to this process's user,
+/// as the kernel's socket tables say. A dual-stack socket shows up in `tcp6` under its
+/// IPv4-mapped address.
+#[cfg(target_os = "linux")]
+fn peer_is_ours(peer: SocketAddr, local: SocketAddr) -> bool {
+    // SAFETY: `geteuid` cannot fail and touches no memory.
+    let own = unsafe { libc::geteuid() };
+    let mapped = |address: SocketAddr| match address {
+        SocketAddr::V4(v4) => SocketAddr::new(IpAddr::V6(v4.ip().to_ipv6_mapped()), v4.port()),
+        v6 => v6,
+    };
+    [
+        ("/proc/net/tcp", peer, local),
+        ("/proc/net/tcp6", mapped(peer), mapped(local)),
+    ]
+    .into_iter()
+    .find_map(|(path, peer, local)| socket_uid(&std::fs::read_to_string(path).ok()?, peer, local))
+        == Some(own)
+}
+
+/// The server runs on Linux only (see `host.rs`); a port elsewhere needs its own check.
+#[cfg(not(target_os = "linux"))]
+fn peer_is_ours(_peer: SocketAddr, _local: SocketAddr) -> bool {
+    false
+}
+
+/// The owner of the socket bound to `local_address` and connected to `remote_address` in a
+/// `/proc/net/tcp{,6}` table.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn socket_uid(table: &str, local_address: SocketAddr, remote_address: SocketAddr) -> Option<u32> {
+    let (local_address, remote_address) = (
+        proc_net_address(local_address),
+        proc_net_address(remote_address),
+    );
+    table.lines().skip(1).find_map(|line| {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.get(1) == Some(&local_address.as_str())
+            && fields.get(2) == Some(&remote_address.as_str())
+        {
+            fields.get(7)?.parse().ok()
+        } else {
+            None
+        }
+    })
+}
+
+/// An address as the kernel prints it there: each 32-bit word of the address as stored, in
+/// hex, then the port.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn proc_net_address(address: SocketAddr) -> String {
+    let octets = match address.ip() {
+        IpAddr::V4(ip) => ip.octets().to_vec(),
+        IpAddr::V6(ip) => ip.octets().to_vec(),
+    };
+    let (words, _) = octets.as_chunks::<4>();
+    let words: String = words
+        .iter()
+        .map(|word| format!("{:08X}", u32::from_ne_bytes(*word)))
+        .collect();
+    format!("{words}:{:04X}", address.port())
+}
+
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use std::sync::mpsc;
 
@@ -636,5 +710,29 @@ mod tests {
         let mut page = socks_connect(port, "bibcode-preview-test.invalid", 80).await;
         assert_eq!(reply_code(&mut page).await, REPLY_HOST_UNREACHABLE);
         assert!(requests.try_recv().is_err(), "no tunnel was asked for");
+    }
+
+    #[tokio::test]
+    async fn only_this_accounts_sockets_may_use_the_socks_server() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let local = listener.local_addr().unwrap();
+        for client in [
+            TcpStream::connect(local).await.unwrap(),
+            // A dual-stack socket, listed in `tcp6` under its mapped address.
+            TcpStream::connect((Ipv4Addr::LOCALHOST.to_ipv6_mapped(), local.port()))
+                .await
+                .unwrap(),
+        ] {
+            let (_accepted, peer) = listener.accept().await.unwrap();
+            assert!(peer_is_ours(peer, local), "{:?}", client.local_addr());
+        }
+
+        // Another account's socket, as the kernel lists it.
+        let peer: SocketAddr = "127.0.0.1:40000".parse().unwrap();
+        let local: SocketAddr = "127.0.0.1:5173".parse().unwrap();
+        let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n   \
+            0: 0100007F:9C40 0100007F:1435 01 00000000:00000000 00:00000000 00000000  1001        0 12345 1\n";
+        assert_eq!(socket_uid(table, peer, local), Some(1001));
+        assert_eq!(socket_uid(table, local, peer), None, "the server's own end");
     }
 }
