@@ -4,7 +4,10 @@
 use std::path::{Path, PathBuf};
 use std::{
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use tokio::{net::TcpListener, sync::watch};
@@ -18,6 +21,7 @@ use super::grpc::proto::{
     self,
     emulator_controller_server::{EmulatorController, EmulatorControllerServer},
     image_format::ImgFormat,
+    rotation::SkinRotation,
 };
 
 /// Token the fake requires as `authorization: Bearer test-token`.
@@ -39,11 +43,42 @@ pub(crate) struct FakeHandle {
     pub(crate) inputs: Arc<Mutex<Vec<proto::InputEvent>>>,
     pub(crate) rotations: Arc<Mutex<Vec<[f32; 3]>>>,
     /// Native display `(width, height, gray)`; every change emits one streamed frame.
+    /// A `(0, 0, gray)` frame keeps the initial 1080x2400 display.
     pub(crate) frame_tx: watch::Sender<(u32, u32, u8)>,
     pub(crate) vm_state: Arc<Mutex<Option<i32>>>,
+    /// The rotation every served image reports; `None` derives it from the frame's shape.
+    rotation: watch::Sender<Option<SkinRotation>>,
+    screenshot_streams: Arc<AtomicUsize>,
+    input_streams: Arc<AtomicUsize>,
+    input_resets: watch::Sender<u64>,
 }
 
 impl FakeHandle {
+    /// Reports `rotation` on every served image from now on, with the display's width and
+    /// height swapped to match it, and streams one frame.
+    pub(crate) fn report_rotation(&self, rotation: SkinRotation) {
+        self.rotation.send_replace(Some(rotation));
+    }
+
+    /// Open `streamScreenshot` calls.
+    pub(crate) fn active_screenshot_streams(&self) -> usize {
+        self.screenshot_streams.load(Ordering::SeqCst)
+    }
+
+    /// Ends every open input stream with an error, waits until they have ended, and forgets
+    /// the inputs they recorded.
+    pub(crate) async fn break_input_stream(&self) {
+        self.input_resets.send_modify(|resets| *resets += 1);
+        wait_until(|| self.input_streams.load(Ordering::SeqCst) == 0).await;
+        self.inputs.lock().expect("fake inputs lock").clear();
+    }
+
+    /// Waits up to ten seconds for at least `count` recorded inputs and returns them all.
+    pub(crate) async fn wait_inputs(&self, count: usize) -> Vec<proto::InputEvent> {
+        wait_until(|| self.inputs.lock().expect("fake inputs lock").len() >= count).await;
+        self.inputs.lock().expect("fake inputs lock").clone()
+    }
+
     /// Sends `pid` `SIGTERM` once the VM is asked to shut down, as a real emulator exits
     /// after `setVmState(SHUTDOWN)`.
     #[cfg(unix)]
@@ -72,6 +107,26 @@ pub(crate) struct FakeController {
     rotations: Arc<Mutex<Vec<[f32; 3]>>>,
     frames: watch::Receiver<(u32, u32, u8)>,
     vm_state: Arc<Mutex<Option<i32>>>,
+    rotation: watch::Receiver<Option<SkinRotation>>,
+    screenshot_streams: Arc<AtomicUsize>,
+    input_streams: Arc<AtomicUsize>,
+    input_resets: watch::Receiver<u64>,
+}
+
+/// Counts one open stream until dropped.
+struct OpenStream(Arc<AtomicUsize>);
+
+impl OpenStream {
+    fn new(count: &Arc<AtomicUsize>) -> Self {
+        count.fetch_add(1, Ordering::SeqCst);
+        Self(count.clone())
+    }
+}
+
+impl Drop for OpenStream {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl FakeController {
@@ -81,12 +136,18 @@ impl FakeController {
             .expect("bind fake emulator");
         let port = listener.local_addr().expect("fake emulator address").port();
         let (frame_tx, frames) = watch::channel(INITIAL_FRAME);
+        let (rotation_tx, rotation) = watch::channel(None);
+        let (input_resets_tx, input_resets) = watch::channel(0);
         let handle = FakeHandle {
             port,
             inputs: Arc::default(),
             rotations: Arc::default(),
             frame_tx,
             vm_state: Arc::default(),
+            rotation: rotation_tx,
+            screenshot_streams: Arc::default(),
+            input_streams: Arc::default(),
+            input_resets: input_resets_tx,
         };
         let service = EmulatorControllerServer::with_interceptor(
             Self {
@@ -94,6 +155,10 @@ impl FakeController {
                 rotations: handle.rotations.clone(),
                 frames,
                 vm_state: handle.vm_state.clone(),
+                rotation,
+                screenshot_streams: handle.screenshot_streams.clone(),
+                input_streams: handle.input_streams.clone(),
+                input_resets,
             },
             require_token,
         );
@@ -127,7 +192,26 @@ fn scaled_size(
     (requested_width, height as u32)
 }
 
-fn frame_image(frame: (u32, u32, u8), request: &proto::ImageFormat, seq: u32) -> proto::Image {
+fn frame_image(
+    frame: (u32, u32, u8),
+    reported: Option<SkinRotation>,
+    request: &proto::ImageFormat,
+    seq: u32,
+) -> proto::Image {
+    let (mut native_width, mut native_height, gray) = frame;
+    if native_width == 0 || native_height == 0 {
+        (native_width, native_height) = (INITIAL_FRAME.0, INITIAL_FRAME.1);
+    }
+    if let Some(reported) = reported {
+        let landscape = matches!(
+            reported,
+            SkinRotation::Landscape | SkinRotation::ReverseLandscape
+        );
+        if landscape != (native_width > native_height) {
+            (native_width, native_height) = (native_height, native_width);
+        }
+    }
+    let frame = (native_width, native_height, gray);
     let (width, height) = scaled_size(frame, request.width);
     let png = request.format == ImgFormat::Png as i32;
     let bytes = if png {
@@ -140,11 +224,11 @@ fn frame_image(frame: (u32, u32, u8), request: &proto::ImageFormat, seq: u32) ->
         };
         vec![frame.2; width as usize * height as usize * channels]
     };
-    let rotation = if width > height {
-        proto::rotation::SkinRotation::Landscape
+    let rotation = reported.unwrap_or(if width > height {
+        SkinRotation::Landscape
     } else {
-        proto::rotation::SkinRotation::Portrait
-    };
+        SkinRotation::Portrait
+    });
     proto::Image {
         format: Some(proto::ImageFormat {
             format: request.format,
@@ -189,7 +273,13 @@ impl EmulatorController for FakeController {
         request: Request<proto::ImageFormat>,
     ) -> Result<Response<proto::Image>, Status> {
         let frame = *self.frames.borrow();
-        Ok(Response::new(frame_image(frame, request.get_ref(), 0)))
+        let rotation = *self.rotation.borrow();
+        Ok(Response::new(frame_image(
+            frame,
+            rotation,
+            request.get_ref(),
+            0,
+        )))
     }
 
     async fn stream_screenshot(
@@ -198,8 +288,15 @@ impl EmulatorController for FakeController {
     ) -> Result<Response<Self::streamScreenshotStream>, Status> {
         let format = request.into_inner();
         let mut seq = 0;
-        let stream = WatchStream::new(self.frames.clone()).map(move |frame| {
-            let image = frame_image(frame, &format, seq);
+        let open = OpenStream::new(&self.screenshot_streams);
+        let (frames, rotation) = (self.frames.clone(), self.rotation.clone());
+        let changes = WatchStream::new(self.frames.clone())
+            .map(|_| ())
+            .merge(WatchStream::from_changes(self.rotation.clone()).map(|_| ()));
+        let stream = changes.map(move |()| {
+            // Held by the stream, so the count drops when the client goes away.
+            let _open = &open;
+            let image = frame_image(*frames.borrow(), *rotation.borrow(), &format, seq);
             seq += 1;
             Ok(image)
         });
@@ -211,10 +308,18 @@ impl EmulatorController for FakeController {
         request: Request<Streaming<proto::InputEvent>>,
     ) -> Result<Response<()>, Status> {
         let mut events = request.into_inner();
-        while let Some(event) = events.message().await? {
-            self.inputs.lock().expect("fake inputs lock").push(event);
+        let _open = OpenStream::new(&self.input_streams);
+        let mut resets = self.input_resets.clone();
+        resets.mark_unchanged();
+        loop {
+            tokio::select! {
+                event = events.message() => match event? {
+                    Some(event) => self.inputs.lock().expect("fake inputs lock").push(event),
+                    None => return Ok(Response::new(())),
+                },
+                Ok(()) = resets.changed() => return Err(Status::aborted("input stream reset")),
+            }
         }
-        Ok(Response::new(()))
     }
 
     async fn set_physical_model(
@@ -843,6 +948,67 @@ impl ManagerFixture {
         self.manager
             .pid(device_id)
             .expect("device has a running emulator")
+    }
+}
+
+/// A [`ManagerFixture`] with one `Ready` device.
+#[cfg(unix)]
+pub(crate) struct DeviceFixture {
+    fixture: ManagerFixture,
+    pub(crate) id: String,
+}
+
+#[cfg(unix)]
+impl std::ops::Deref for DeviceFixture {
+    type Target = ManagerFixture;
+
+    fn deref(&self) -> &ManagerFixture {
+        &self.fixture
+    }
+}
+
+#[cfg(unix)]
+impl ManagerFixture {
+    /// A manager whose only AVD, `Pixel`, is open and `Ready`.
+    pub(crate) async fn ready_device() -> DeviceFixture {
+        let fixture = Self::ready(&["Pixel"]).await;
+        let id = fixture.manager.open("Pixel").await.expect("open Pixel");
+        fixture
+            .wait_state(&id, super::catalog::DeviceState::Ready)
+            .await;
+        DeviceFixture { fixture, id }
+    }
+}
+
+#[cfg(unix)]
+impl DeviceFixture {
+    /// The device's catalog entry.
+    pub(crate) fn snapshot(&self) -> super::catalog::DeviceSnapshot {
+        self.manager
+            .catalog()
+            .borrow()
+            .devices
+            .iter()
+            .find(|device| device.device_id == self.id)
+            .cloned()
+            .expect("device in catalog")
+    }
+
+    /// Waits up to ten seconds for the catalog to report `orientation`.
+    pub(crate) async fn wait_orientation(&self, orientation: super::catalog::Orientation) {
+        let mut catalog = self.manager.catalog();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            catalog.wait_for(|catalog| {
+                catalog
+                    .devices
+                    .iter()
+                    .any(|device| device.device_id == self.id && device.orientation == orientation)
+            }),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("never reported {orientation:?}: {:?}", self.snapshot()))
+        .expect("catalog open");
     }
 }
 

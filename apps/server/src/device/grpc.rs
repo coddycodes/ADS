@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use proto::{emulator_controller_client::EmulatorControllerClient, image_format::ImgFormat};
 use tokio::sync::mpsc;
+use tokio_util::task::TaskTracker;
 use tonic::{
     metadata::MetadataValue,
     service::interceptor::InterceptedService,
@@ -40,8 +41,6 @@ pub(crate) struct EmulatorClient {
 
 const MAX_MESSAGE_BYTES: usize = 32 * 1024 * 1024; // a full-size RGB888 frame is ~7.8 MB
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-// Consumed with `input_sink` by the input task that follows.
-#[allow(dead_code)]
 const INPUT_QUEUE_DEPTH: usize = 256;
 /// Bound on each unary call; the streams run for the device's lifetime and have none.
 const UNARY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -86,8 +85,6 @@ impl EmulatorClient {
             .into_inner())
     }
 
-    // Consumed by the frame and input tasks that follow.
-    #[allow(dead_code)]
     pub(crate) async fn stream_screenshot(
         &self,
         width: u32,
@@ -106,12 +103,15 @@ impl EmulatorClient {
             .into_inner())
     }
 
-    // Consumed by the frame and input tasks that follow.
-    #[allow(dead_code)]
-    pub(crate) fn input_sink(&self) -> Result<mpsc::Sender<proto::InputEvent>, DeviceError> {
+    /// Opens a `streamInputEvent` call on a task in `tasks`; it ends when every sender is
+    /// dropped or the emulator ends the stream, which closes the sender.
+    pub(crate) fn input_sink(
+        &self,
+        tasks: &TaskTracker,
+    ) -> Result<mpsc::Sender<proto::InputEvent>, DeviceError> {
         let (sender, receiver) = mpsc::channel(INPUT_QUEUE_DEPTH);
         let mut inner = self.inner.clone();
-        tokio::spawn(async move {
+        tasks.spawn(async move {
             if let Err(status) = inner
                 .stream_input_event(tokio_stream::wrappers::ReceiverStream::new(receiver))
                 .await
@@ -122,8 +122,6 @@ impl EmulatorClient {
         Ok(sender)
     }
 
-    // Consumed by the frame and input tasks that follow.
-    #[allow(dead_code)]
     pub(crate) async fn set_rotation(&self, data: [f32; 3]) -> Result<(), DeviceError> {
         let request = proto::PhysicalModelValue {
             target: proto::physical_model_value::PhysicalType::Rotation as i32,
@@ -209,7 +207,7 @@ mod tests {
         let second = frames.message().await.unwrap().unwrap();
         assert_eq!((second.image[0], second.seq), (0x20, 1));
 
-        let sink = client.input_sink().unwrap();
+        let sink = client.input_sink(&TaskTracker::new()).unwrap();
         sink.send(proto::InputEvent::default()).await.unwrap();
         client.set_rotation([0.0, 0.0, 90.0]).await.unwrap();
         client.shutdown_vm().await.unwrap();

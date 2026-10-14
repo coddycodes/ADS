@@ -165,8 +165,6 @@ pub(crate) fn parse_discovery(contents: &str) -> Option<(u16, Option<String>)> {
 pub(crate) struct RunningEmulator {
     pub helper: RegisteredHelper,
     /// The adb serial, `emulator-<console port>`.
-    // Read through `DeviceManager::client`, consumed by the scrcpy source.
-    #[allow(dead_code)]
     pub serial: String,
     pub client: EmulatorClient,
     pub width: u32,

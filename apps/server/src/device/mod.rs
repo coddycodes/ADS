@@ -1,11 +1,11 @@
 //! Server-hosted Android device previews; see docs/architecture/overview.md#device-previews.
 pub mod catalog;
 pub(crate) mod emulator;
+pub mod frames;
 pub(crate) mod grpc;
+pub mod input;
 pub(crate) mod sdk;
-// Handle fields are consumed by the lifecycle, frame, and input tests that follow.
 #[cfg(test)]
-#[allow(dead_code)]
 pub(crate) mod testing;
 
 use std::{
@@ -24,7 +24,9 @@ use self::{
         Orientation,
     },
     emulator::{EmulatorLauncher, LaunchError, RunningEmulator},
+    frames::FrameHub,
     grpc::EmulatorClient,
+    input::InputState,
     sdk::{AndroidSdk, SdkEnv},
 };
 use crate::diagnostics::ProcessAttributionRegistry;
@@ -63,6 +65,8 @@ pub enum DeviceOpError {
         "No virtual device named \"{0}\" exists on the server. Choose one from the device list, or create it in Android Studio's Device Manager."
     )]
     UnknownAvd(String),
+    #[error("{0}")]
+    InvalidInput(String),
 }
 
 fn not_ready_message(state: DeviceState) -> &'static str {
@@ -106,6 +110,10 @@ impl DeviceOpError {
             Self::NotReady(state) => serde_json::json!({
                 "_tag": "DeviceNotReadyError",
                 "state": state,
+                "message": message,
+            }),
+            Self::InvalidInput(_) => serde_json::json!({
+                "_tag": "DeviceInputError",
                 "message": message,
             }),
         }
@@ -160,6 +168,21 @@ struct Slot {
     started: Instant,
     /// Open order, which decides which ended devices the catalog keeps.
     seq: u64,
+    /// The JPEG frame producer while anyone subscribes.
+    frames: Option<Arc<FrameHub>>,
+    /// The input stream, opened by the first `input` call.
+    input: Arc<tokio::sync::Mutex<Option<InputState>>>,
+}
+
+impl Slot {
+    /// Stops the frame producer and drops the input stream of a device that stops running.
+    fn end_streams(&mut self) {
+        if let Some(frames) = self.frames.take() {
+            frames.stop();
+        }
+        // An `input` call still holding the old state finishes its batch, then drops it.
+        self.input = Arc::default();
+    }
 }
 
 #[derive(Clone)]
@@ -277,6 +300,8 @@ impl DeviceManager {
                     cancel: cancel.clone(),
                     started,
                     seq,
+                    frames: None,
+                    input: Arc::default(),
                 },
             );
             self.inner.publish(&mut table);
@@ -335,41 +360,26 @@ impl DeviceManager {
         self.inner.close(device_id).await
     }
 
-    /// The gRPC client, adb serial, display size, and orientation of a `Ready` device.
-    // Consumed by the frame and input producers (Task 6).
-    #[allow(dead_code)]
+    /// The gRPC client, adb serial, native (portrait) display size, and current orientation
+    /// of a `Ready` device; `input::oriented_size` gives the current display size.
     pub(crate) fn client(
         &self,
         device_id: &str,
     ) -> Result<(EmulatorClient, String, (u32, u32), Orientation), DeviceOpError> {
-        let table = self.inner.table();
-        let slot = table.slots.get(device_id).ok_or(DeviceOpError::NotFound)?;
-        match (&slot.running, slot.snapshot.state) {
-            (Some(running), DeviceState::Ready) => Ok((
-                running.client.clone(),
-                running.serial.clone(),
-                (
-                    slot.snapshot.width.unwrap_or(running.width),
-                    slot.snapshot.height.unwrap_or(running.height),
-                ),
-                slot.snapshot.orientation,
-            )),
-            (_, state) => Err(DeviceOpError::NotReady(state)),
-        }
+        self.inner.client(device_id)
     }
 
-    /// Records the orientation the emulator reported; never what a rotate command asked for.
-    // Consumed by the frame and input producers (Task 6).
-    #[allow(dead_code)]
-    pub(crate) fn set_orientation(&self, device_id: &str, orientation: Orientation) {
-        let mut table = self.inner.table();
-        let Some(slot) = table.slots.get_mut(device_id) else {
-            return;
-        };
-        if slot.snapshot.orientation != orientation {
-            slot.snapshot.orientation = orientation;
-            self.inner.publish(&mut table);
-        }
+    /// Records the orientation the emulator reported and the display size in it; never what
+    /// a rotate command asked for.
+    pub(crate) fn set_reported_orientation(
+        &self,
+        device_id: &str,
+        orientation: Orientation,
+        width: u32,
+        height: u32,
+    ) {
+        self.inner
+            .set_reported_orientation(device_id, orientation, width, height);
     }
 
     /// Refuses new devices, stops every device, and waits for the manager's tasks.
@@ -378,6 +388,22 @@ impl DeviceManager {
         self.inner.close_all().await;
         self.inner.tasks.close();
         self.inner.tasks.wait().await;
+    }
+
+    /// Whether the device has no open input stream.
+    #[cfg(all(test, unix))]
+    pub(crate) fn input_stream_closed(&self, device_id: &str) -> bool {
+        let input = self
+            .inner
+            .table()
+            .slots
+            .get(device_id)
+            .map(|slot| slot.input.clone());
+        input.is_none_or(|input| {
+            input
+                .try_lock()
+                .is_ok_and(|state| state.as_ref().is_none_or(InputState::closed))
+        })
     }
 
     #[cfg(all(test, unix))]
@@ -397,6 +423,62 @@ impl Discovery {
 impl Inner {
     fn table(&self) -> MutexGuard<'_, DeviceTable> {
         self.devices.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn client(
+        &self,
+        device_id: &str,
+    ) -> Result<(EmulatorClient, String, (u32, u32), Orientation), DeviceOpError> {
+        let table = self.table();
+        let slot = table.slots.get(device_id).ok_or(DeviceOpError::NotFound)?;
+        match (&slot.running, slot.snapshot.state) {
+            (Some(running), DeviceState::Ready) => Ok((
+                running.client.clone(),
+                running.serial.clone(),
+                (running.width, running.height),
+                slot.snapshot.orientation,
+            )),
+            (_, state) => Err(DeviceOpError::NotReady(state)),
+        }
+    }
+
+    /// The input state of a `Ready` device.
+    fn input_state(
+        &self,
+        device_id: &str,
+    ) -> Result<Arc<tokio::sync::Mutex<Option<InputState>>>, DeviceOpError> {
+        let table = self.table();
+        let slot = table.slots.get(device_id).ok_or(DeviceOpError::NotFound)?;
+        match (&slot.running, slot.snapshot.state) {
+            (Some(_), DeviceState::Ready) => Ok(slot.input.clone()),
+            (_, state) => Err(DeviceOpError::NotReady(state)),
+        }
+    }
+
+    fn set_reported_orientation(
+        &self,
+        device_id: &str,
+        orientation: Orientation,
+        width: u32,
+        height: u32,
+    ) {
+        let mut table = self.table();
+        let Some(slot) = table.slots.get_mut(device_id) else {
+            return;
+        };
+        // A late report must not touch a device that already stopped.
+        if slot.snapshot.state != DeviceState::Ready {
+            return;
+        }
+        let snapshot = &mut slot.snapshot;
+        if (snapshot.orientation, snapshot.width, snapshot.height)
+            != (orientation, Some(width), Some(height))
+        {
+            snapshot.orientation = orientation;
+            snapshot.width = Some(width);
+            snapshot.height = Some(height);
+            self.publish(&mut table);
+        }
     }
 
     fn accepting(&self) -> bool {
@@ -563,6 +645,7 @@ impl Inner {
                     continue;
                 };
                 let running = slot.running.take().expect("checked above");
+                slot.end_streams();
                 // Published before the cleanup below, so nobody sees a dead device as Ready.
                 slot.snapshot.state = DeviceState::Failed;
                 slot.snapshot.failure = Some(format!("exited: {status}"));
@@ -600,6 +683,7 @@ impl Inner {
                 DeviceState::Starting | DeviceState::Booting | DeviceState::Ready => {
                     slot.snapshot.state = DeviceState::Stopping;
                     slot.cancel.cancel();
+                    slot.end_streams();
                     let taken = (slot.running.take(), slot.started);
                     self.publish(&mut table);
                     taken
@@ -699,6 +783,13 @@ fn launch_failure(error: &LaunchError) -> (&'static str, String) {
         ),
         LaunchError::Cancelled => ("cancelled", "cancelled".to_owned()),
     }
+}
+
+/// The error for an emulator call that failed on a `Ready` device: it is logged, and the
+/// caller is told to try again.
+fn emulator_failure(operation: &'static str, error: &DeviceError) -> DeviceOpError {
+    tracing::warn!(operation, %error, "device emulator call failed");
+    DeviceOpError::NotReady(DeviceState::Ready)
 }
 
 /// A `device.lifecycle` profiler event; it never names the AVD or its paths.
@@ -885,11 +976,17 @@ mod tests {
         assert!(serial.starts_with("emulator-"));
         assert_eq!(size, (1080, 2400));
         assert_eq!(orientation, Orientation::Portrait);
-        fixture.manager.set_orientation(&id, Orientation::Landscape);
+        fixture
+            .manager
+            .set_reported_orientation(&id, Orientation::Landscape, 2400, 1080);
+        let device = fixture.manager.catalog().borrow().devices[0].clone();
         assert_eq!(
-            fixture.manager.catalog().borrow().devices[0].orientation,
-            Orientation::Landscape
+            (device.orientation, device.width, device.height),
+            (Orientation::Landscape, Some(2400), Some(1080))
         );
+        // The native size stays what input maps against.
+        let (_, _, size, orientation) = fixture.manager.client(&id).unwrap();
+        assert_eq!((size, orientation), ((1080, 2400), Orientation::Landscape));
         assert!(matches!(
             fixture.manager.client("missing"),
             Err(DeviceOpError::NotFound)
@@ -964,6 +1061,13 @@ mod tests {
         assert_eq!(
             DeviceOpError::NotFound.to_rpc_error()["_tag"],
             "DeviceNotFoundError"
+        );
+        assert_eq!(
+            DeviceOpError::InvalidInput("Send at least one input event.".into()).to_rpc_error(),
+            serde_json::json!({
+                "_tag": "DeviceInputError",
+                "message": "Send at least one input event.",
+            })
         );
     }
 
