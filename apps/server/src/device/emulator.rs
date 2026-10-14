@@ -17,12 +17,13 @@ use tokio_util::sync::CancellationToken;
 use super::{
     catalog::DeviceState,
     grpc::{EmulatorClient, proto::image_format::ImgFormat},
-    sdk::AndroidSdk,
+    sdk::{AndroidSdk, SdkEnv},
 };
 use crate::{
     diagnostics::{ProcessAttributionRegistry, profiler::exits},
     process::{
-        RegisteredHelper, configure_supervised_background_command_wrap, spawn_registered_helper,
+        HelperSpawnError, RegisteredHelper, configure_supervised_background_command_wrap,
+        spawn_registered_helper,
         supervised::{SupervisedOverflow, SupervisedRunRequest, run_supervised},
     },
 };
@@ -81,6 +82,72 @@ pub(crate) fn discovery_file_path(discovery_dir: &Path, pid: u32) -> PathBuf {
     discovery_dir.join(format!("pid_{pid}.ini"))
 }
 
+/// Where emulators publish discovery files, most specific first: the OS runtime directory
+/// current emulators use, then the legacy `<emulator home>/avd/running` (native verification
+/// item 1).
+pub(crate) fn default_discovery_dirs(env: &SdkEnv) -> Vec<PathBuf> {
+    let var = |key: &str| {
+        env.vars
+            .get(key)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
+    let mut dirs = Vec::new();
+    match env.os {
+        "linux" => dirs.extend(var("XDG_RUNTIME_DIR").map(|dir| dir.join("avd/running"))),
+        "macos" => dirs.extend(
+            env.home
+                .as_ref()
+                .map(|home| home.join("Library/Caches/TemporaryItems/avd/running")),
+        ),
+        "windows" => {
+            dirs.extend(var("LOCALAPPDATA").map(|dir| dir.join("Temp").join("avd").join("running")))
+        }
+        _ => {}
+    }
+    let emulator_home = var("ANDROID_EMULATOR_HOME")
+        .or_else(|| env.home.as_ref().map(|home| home.join(".android")));
+    dirs.extend(emulator_home.map(|home| home.join("avd").join("running")));
+    dirs
+}
+
+/// The discovery file of the emulator serving gRPC on `grpc_port`, with its token. In each
+/// directory in order, `pid_<pid>.ini` is tried before any other `pid_*.ini` (qemu may run as
+/// a child of the launched process); only a file naming `grpc_port` is accepted, which also
+/// skips files a dead emulator left behind under a reused PID.
+pub(crate) fn find_discovery(
+    discovery_dirs: &[PathBuf],
+    pid: u32,
+    grpc_port: u16,
+) -> Option<(PathBuf, Option<String>)> {
+    let matching = |path: &Path| {
+        let (port, token) = parse_discovery(&std::fs::read_to_string(path).ok()?)?;
+        (port == grpc_port).then_some(token)
+    };
+    for dir in discovery_dirs {
+        let own = discovery_file_path(dir, pid);
+        if let Some(token) = matching(&own) {
+            return Some((own, token));
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for path in entries.filter_map(|entry| Some(entry.ok()?.path())) {
+            let is_discovery = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("pid_") && name.ends_with(".ini"));
+            if is_discovery
+                && path != own
+                && let Some(token) = matching(&path)
+            {
+                return Some((path, token));
+            }
+        }
+    }
+    None
+}
+
 /// `grpc.port` and `grpc.token` from a discovery file; `None` without a port.
 pub(crate) fn parse_discovery(contents: &str) -> Option<(u16, Option<String>)> {
     let mut port = None;
@@ -102,7 +169,8 @@ pub(crate) struct RunningEmulator {
     pub client: EmulatorClient,
     pub width: u32,
     pub height: u32,
-    /// Removed on stop: a killed emulator leaves it behind.
+    /// The discovery file that was found; removed on stop, since a killed emulator leaves
+    /// it behind.
     pub discovery_file: PathBuf,
 }
 
@@ -123,11 +191,14 @@ pub(crate) enum LaunchError {
 
 pub(crate) struct EmulatorLauncher {
     pub sdk: AndroidSdk,
-    /// The emulator's `<ANDROID_EMULATOR_HOME>/avd/running` directory.
-    pub discovery_dir: PathBuf,
+    /// Directories searched, in order, for the emulator's discovery file
+    /// (`default_discovery_dirs`). The emulator creates them; the launcher only reads.
+    pub discovery_dirs: Vec<PathBuf>,
     pub registry: ProcessAttributionRegistry,
     pub software_gpu: bool,
     pub boot_timeout: Duration,
+    /// A fixed gRPC port; `None` picks a free one. Tests pin the fake controller's port.
+    pub grpc_port: Option<u16>,
 }
 
 /// Why waiting for a boot ended without a running emulator.
@@ -139,16 +210,17 @@ enum BootFailure {
 impl EmulatorLauncher {
     pub(crate) fn new(
         sdk: AndroidSdk,
-        discovery_dir: PathBuf,
+        discovery_dirs: Vec<PathBuf>,
         registry: ProcessAttributionRegistry,
         software_gpu: bool,
     ) -> Self {
         Self {
             sdk,
-            discovery_dir,
+            discovery_dirs,
             registry,
             software_gpu,
             boot_timeout: BOOT_TIMEOUT,
+            grpc_port: None,
         }
     }
 
@@ -160,35 +232,52 @@ impl EmulatorLauncher {
         on_phase: impl Fn(DeviceState) + Send,
         cancel: &CancellationToken,
     ) -> Result<RunningEmulator, LaunchError> {
-        let ports = pick_ports().map_err(LaunchError::Spawn)?;
-        std::fs::create_dir_all(&self.discovery_dir).map_err(|error| {
-            LaunchError::Spawn(format!("{}: {error}", self.discovery_dir.display()))
-        })?;
-        let emulator_home = self.discovery_dir.parent().and_then(Path::parent);
+        let ports = pick_ports(self.grpc_port).map_err(LaunchError::Spawn)?;
         let mut command = CommandWrap::with_new(&self.sdk.emulator, |command| {
             command
                 .args(spawn_args(avd, &ports, self.software_gpu))
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::piped());
-            if let Some(home) = emulator_home {
-                command.env("ANDROID_EMULATOR_HOME", home);
-            }
         });
         configure_supervised_background_command_wrap(&mut command);
         let exe = self.sdk.emulator.to_string_lossy().into_owned();
-        let mut helper = spawn_registered_helper(command, exe, HELPER_LABEL, &self.registry)
-            .await
-            .map_err(|error| {
-                tracing::warn!(%error, "android emulator failed to start");
-                LaunchError::Spawn(error)
-            })?;
+        let mut helper =
+            match spawn_registered_helper(command, exe, HELPER_LABEL, &self.registry).await {
+                Ok(helper) => helper,
+                Err(error) => {
+                    tracing::warn!(%error, "android emulator failed to start");
+                    return Err(match error {
+                        HelperSpawnError::Failed(message) => LaunchError::Spawn(message),
+                        HelperSpawnError::ExitedEarly { status, stderr, .. } => {
+                            let tail = StderrTail::default();
+                            if let Some(pipe) = stderr {
+                                let _ = tokio::time::timeout(STDERR_DRAIN_GRACE, tail.drain(pipe))
+                                    .await;
+                            }
+                            LaunchError::Exited(tail.text().unwrap_or_else(|| {
+                                status.map_or_else(
+                                    || "exited immediately".to_owned(),
+                                    |status| status.to_string(),
+                                )
+                            }))
+                        }
+                    });
+                }
+            };
         let stderr = StderrTail::default();
         let drain = helper.child.stderr().take().map(|pipe| stderr.drain(pipe));
         let serial = format!("emulator-{}", ports.console);
-        let discovery_file = discovery_file_path(&self.discovery_dir, helper.pid);
+        let mut discovery_file = None;
 
-        let boot = self.wait_for_boot(&helper, &serial, &discovery_file, on_phase, cancel);
+        let boot = self.wait_for_boot(
+            &helper,
+            &serial,
+            ports.grpc,
+            &mut discovery_file,
+            on_phase,
+            cancel,
+        );
         let outcome = tokio::select! {
             biased;
             () = cancel.cancelled() => Err(None),
@@ -206,7 +295,7 @@ impl EmulatorLauncher {
                     client,
                     width,
                     height,
-                    discovery_file,
+                    discovery_file: discovery_file.expect("a booted emulator was discovered"),
                 });
             }
             Err(Some(BootFailure::Exited(status))) => {
@@ -225,7 +314,9 @@ impl EmulatorLauncher {
         }
         tracing::warn!(%error, "android emulator launch failed");
         helper.terminate().await;
-        remove_discovery_file(&discovery_file);
+        if let Some(discovery_file) = &discovery_file {
+            remove_discovery_file(discovery_file);
+        }
         Err(error)
     }
 
@@ -235,7 +326,8 @@ impl EmulatorLauncher {
         &self,
         helper: &RegisteredHelper,
         serial: &str,
-        discovery_file: &Path,
+        grpc_port: u16,
+        discovery_file: &mut Option<PathBuf>,
         on_phase: impl Fn(DeviceState) + Send,
         cancel: &CancellationToken,
     ) -> Result<(EmulatorClient, u32, u32), BootFailure> {
@@ -246,10 +338,10 @@ impl EmulatorLauncher {
                 return Err(BootFailure::Exited(status));
             }
             if client.is_none()
-                && let Ok(contents) = tokio::fs::read_to_string(discovery_file).await
-                && let Some((port, token)) = parse_discovery(&contents)
+                && let Some((path, token)) = self.discover(helper.pid, grpc_port).await
             {
-                client = EmulatorClient::connect(port, token)
+                *discovery_file = Some(path);
+                client = EmulatorClient::connect(grpc_port, token)
                     .await
                     .inspect_err(|error| tracing::debug!(%error, "emulator gRPC not ready"))
                     .ok();
@@ -270,14 +362,20 @@ impl EmulatorLauncher {
                 }
                 if booting && self.boot_completed(serial, cancel).await {
                     let connected = client.take().expect("a booted emulator has a client");
-                    let (width, height) = display_size(&connected)
-                        .await
-                        .map_err(BootFailure::Unresponsive)?;
+                    let (width, height) = display_size(helper, &connected).await?;
                     return Ok((connected, width, height));
                 }
             }
             tokio::time::sleep(POLL_INTERVAL).await;
         }
+    }
+
+    async fn discover(&self, pid: u32, grpc_port: u16) -> Option<(PathBuf, Option<String>)> {
+        let dirs = self.discovery_dirs.clone();
+        tokio::task::spawn_blocking(move || find_discovery(&dirs, pid, grpc_port))
+            .await
+            .ok()
+            .flatten()
     }
 
     async fn boot_completed(&self, serial: &str, cancel: &CancellationToken) -> bool {
@@ -328,28 +426,38 @@ pub(crate) async fn stop(running: RunningEmulator) {
     remove_discovery_file(&discovery_file);
 }
 
-/// The first even console port whose adb neighbour is also free on loopback, and an
-/// OS-assigned gRPC port.
-fn pick_ports() -> Result<EmulatorPorts, String> {
+/// The first even console port whose adb neighbour is also free on loopback, and `grpc`
+/// or else an OS-assigned gRPC port.
+fn pick_ports(grpc: Option<u16>) -> Result<EmulatorPorts, String> {
     let free = |port: u16| TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok();
     let console = CONSOLE_PORTS
         .step_by(2)
         .find(|port| free(*port) && free(port + 1))
         .ok_or_else(|| "every emulator console port is in use".to_owned())?;
-    let grpc = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .and_then(|listener| listener.local_addr())
-        .map_err(|error| format!("no free gRPC port: {error}"))?
-        .port();
+    let grpc = match grpc {
+        Some(port) => port,
+        None => TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .and_then(|listener| listener.local_addr())
+            .map_err(|error| format!("no free gRPC port: {error}"))?
+            .port(),
+    };
     Ok(EmulatorPorts { console, grpc })
 }
 
 /// The native display size. PNG avoids the `FAILED_PRECONDITION` other formats return
-/// before the guest posts its first frame; any error is still retried.
-async fn display_size(client: &EmulatorClient) -> Result<(u32, u32), String> {
+/// before the guest posts its first frame; any error is still retried while the emulator
+/// runs.
+async fn display_size(
+    helper: &RegisteredHelper,
+    client: &EmulatorClient,
+) -> Result<(u32, u32), BootFailure> {
     let mut last_error = String::new();
     for attempt in 0..SIZE_ATTEMPTS {
         if attempt > 0 {
             tokio::time::sleep(SIZE_RETRY_DELAY).await;
+            if let Some(status) = helper.exited() {
+                return Err(BootFailure::Exited(status));
+            }
         }
         match client.screenshot(ImgFormat::Png, 0).await {
             Ok(image) => match image.format {
@@ -361,7 +469,7 @@ async fn display_size(client: &EmulatorClient) -> Result<(u32, u32), String> {
             Err(error) => last_error = error.to_string(),
         }
     }
-    Err(last_error)
+    Err(BootFailure::Unresponsive(last_error))
 }
 
 fn remove_discovery_file(path: &Path) {
@@ -618,6 +726,11 @@ mod tests {
             .await
             .unwrap();
         let child_pid = sdk.wait_forked_child_pid().await;
+        // Published under the child's PID, not the launched process's.
+        assert_eq!(
+            running.discovery_file,
+            discovery_file_path(&sdk.discovery_dirs()[0], child_pid)
+        );
         // The launcher exits on the VM shutdown and leaves its child behind.
         controller.exit_on_shutdown(running.helper.pid);
         stop(running).await;
@@ -644,6 +757,126 @@ mod tests {
         let stopping = stop(running);
         require_send(&stopping);
         stopping.await;
+    }
+
+    fn env(os: &'static str, vars: &[(&str, &str)]) -> SdkEnv {
+        SdkEnv {
+            vars: vars
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), OsString::from(value)))
+                .collect(),
+            home: Some(PathBuf::from("/home/me")),
+            os,
+        }
+    }
+
+    #[test]
+    fn default_discovery_dirs_put_the_runtime_directory_first() {
+        assert_eq!(
+            default_discovery_dirs(&env("linux", &[("XDG_RUNTIME_DIR", "/run/user/1000")])),
+            [
+                PathBuf::from("/run/user/1000/avd/running"),
+                PathBuf::from("/home/me/.android/avd/running"),
+            ]
+        );
+        assert_eq!(
+            default_discovery_dirs(&env(
+                "linux",
+                &[("XDG_RUNTIME_DIR", ""), ("ANDROID_EMULATOR_HOME", "/emu")]
+            )),
+            [PathBuf::from("/emu/avd/running")]
+        );
+        assert_eq!(
+            default_discovery_dirs(&env("macos", &[])),
+            [
+                PathBuf::from("/home/me/Library/Caches/TemporaryItems/avd/running"),
+                PathBuf::from("/home/me/.android/avd/running"),
+            ]
+        );
+        assert_eq!(
+            default_discovery_dirs(&env(
+                "windows",
+                &[("LOCALAPPDATA", "/appdata"), ("ANDROID_EMULATOR_HOME", "")]
+            )),
+            [
+                PathBuf::from("/appdata")
+                    .join("Temp")
+                    .join("avd")
+                    .join("running"),
+                PathBuf::from("/home/me/.android")
+                    .join("avd")
+                    .join("running"),
+            ]
+        );
+    }
+
+    fn write_discovery(dir: &Path, name: &str, port: u16) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join(name),
+            format!("grpc.port={port}\ngrpc.token=t-{port}\n"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn discovery_accepts_another_pids_file_naming_our_port() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("running");
+        write_discovery(&dir, "pid_999.ini", 8554);
+        assert_eq!(
+            find_discovery(std::slice::from_ref(&dir), 42, 8554),
+            Some((dir.join("pid_999.ini"), Some("t-8554".into())))
+        );
+    }
+
+    #[test]
+    fn discovery_ignores_files_naming_another_port() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("running");
+        // Our own PID, but a stale file from a previous emulator on another port.
+        write_discovery(&dir, "pid_42.ini", 8600);
+        write_discovery(&dir, "pid_7.ini", 8601);
+        assert_eq!(find_discovery(std::slice::from_ref(&dir), 42, 8554), None);
+        write_discovery(&dir, "pid_8.ini", 8554);
+        assert_eq!(
+            find_discovery(std::slice::from_ref(&dir), 42, 8554).map(|found| found.0),
+            Some(dir.join("pid_8.ini"))
+        );
+    }
+
+    #[test]
+    fn discovery_searches_later_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let dirs = [root.path().join("missing"), root.path().join("second")];
+        write_discovery(&dirs[1], "pid_42.ini", 8554);
+        assert_eq!(
+            find_discovery(&dirs, 42, 8554).map(|found| found.0),
+            Some(dirs[1].join("pid_42.ini"))
+        );
+    }
+
+    #[tokio::test]
+    async fn launch_finds_the_discovery_file_in_a_later_directory() {
+        let controller = FakeController::spawn().await;
+        let sdk = FakeSdk::new()
+            .avds(&["Pixel"])
+            .launch_stub(LaunchStub::Runs {
+                grpc_port: controller.port,
+                token: "test-token",
+            })
+            .discovery_in(1)
+            .write();
+        let running = sdk
+            .launcher()
+            .launch("Pixel", |_| {}, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(running.discovery_file.starts_with(&sdk.discovery_dirs()[1]));
+        let pid = running.helper.pid;
+        controller.exit_on_shutdown(pid);
+        stop(running).await;
+        assert!(!process_alive(pid));
     }
 
     #[test]

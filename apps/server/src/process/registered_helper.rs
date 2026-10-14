@@ -3,6 +3,7 @@
 use std::{process::ExitStatus, time::Instant};
 
 use process_wrap::tokio::{ChildWrapper, CommandWrap};
+use tokio::process::ChildStderr;
 
 use crate::diagnostics::{
     AttributionKind, AttributionScope, NativeProcessSampler, ProcessAttributionRegistry,
@@ -21,6 +22,20 @@ pub(crate) struct RegisteredHelper {
     _registration: ProcessRegistration,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum HelperSpawnError {
+    #[error("{0}")]
+    Failed(String),
+    /// The child exited before it could be registered; its stderr pipe, when piped, is
+    /// handed back so the caller can say why.
+    #[error("{label} exited before ownership admission")]
+    ExitedEarly {
+        label: String,
+        status: Option<ExitStatus>,
+        stderr: Option<ChildStderr>,
+    },
+}
+
 /// Spawns `command` and registers it as a helper labelled `label`. A child that has no stable
 /// identity, exits before registration, or is refused by the registry is killed and reaped.
 pub(crate) async fn spawn_registered_helper(
@@ -28,24 +43,42 @@ pub(crate) async fn spawn_registered_helper(
     exe: String,
     label: &str,
     registry: &ProcessAttributionRegistry,
-) -> Result<RegisteredHelper, String> {
-    let mut child = command.spawn().map_err(|error| error.to_string())?;
+) -> Result<RegisteredHelper, HelperSpawnError> {
+    let mut child = command
+        .spawn()
+        .map_err(|error| HelperSpawnError::Failed(error.to_string()))?;
     let identity = child
         .id()
         .and_then(|pid| NativeProcessSampler::process_identity(pid).ok());
     let Some(identity) = identity else {
+        // An exited child has no identity to read either.
+        if let Some(status) = crate::process::exited_status(&*child) {
+            return Err(exited_early(child, label, status).await);
+        }
         terminate_unregistered(&mut *child).await;
-        return Err(format!("spawned {label} has no stable process identity"));
+        return Err(HelperSpawnError::Failed(format!(
+            "spawned {label} has no stable process identity"
+        )));
     };
     match helper_is_live(&*child) {
         Ok(true) => {}
         Ok(false) => {
-            terminate_unregistered(&mut *child).await;
-            return Err(format!("{label} exited before ownership admission"));
+            let status = crate::process::exited_status(&*child);
+            return Err(match status {
+                Some(status) => exited_early(child, label, status).await,
+                None => {
+                    terminate_unregistered(&mut *child).await;
+                    HelperSpawnError::ExitedEarly {
+                        label: label.to_owned(),
+                        status: None,
+                        stderr: None,
+                    }
+                }
+            });
         }
         Err(error) => {
             terminate_unregistered(&mut *child).await;
-            return Err(error);
+            return Err(HelperSpawnError::Failed(error));
         }
     }
     let pid = identity.pid;
@@ -62,7 +95,7 @@ pub(crate) async fn spawn_registered_helper(
         Ok(registration) => registration,
         Err(error @ (ProcessRegistrationError::Shutdown | ProcessRegistrationError::Capacity)) => {
             terminate_unregistered(&mut *child).await;
-            return Err(error.to_string());
+            return Err(HelperSpawnError::Failed(error.to_string()));
         }
     };
     Ok(RegisteredHelper {
@@ -124,6 +157,20 @@ pub(crate) fn helper_is_live(child: &dyn ChildWrapper) -> Result<bool, String> {
     Ok(crate::process::exited_status(child).is_none())
 }
 
+async fn exited_early(
+    mut child: Box<dyn ChildWrapper>,
+    label: &str,
+    status: ExitStatus,
+) -> HelperSpawnError {
+    let stderr = child.stderr().take();
+    terminate_unregistered(&mut *child).await;
+    HelperSpawnError::ExitedEarly {
+        label: label.to_owned(),
+        status: Some(status),
+        stderr,
+    }
+}
+
 async fn terminate_unregistered(child: &mut dyn ChildWrapper) {
     let _ = child.start_kill();
     let _ = child.wait().await;
@@ -158,7 +205,7 @@ mod tests {
     async fn exit_is_observed_without_reaping() {
         let registry = ProcessAttributionRegistry::new();
         let mut command = CommandWrap::with_new("sh", |command| {
-            command.args(["-c", "sleep 0.2; exit 3"]);
+            command.args(["-c", "sleep 1; exit 3"]);
         });
         crate::process::configure_supervised_background_command_wrap(&mut command);
         let helper = spawn_registered_helper(command, "sh".into(), "test helper", &registry)

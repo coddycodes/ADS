@@ -495,7 +495,8 @@ pub(crate) enum LaunchStub {
     /// Like `Runs`, but ignores `SIGTERM`.
     IgnoresShutdown { grpc_port: u16, token: &'static str },
     /// Like `Runs`, but keeps a `sleep` child (its PID in the SDK's fork PID file) instead of
-    /// exec'ing it, as an `emulator` launcher running qemu as a child does.
+    /// exec'ing it, and publishes the discovery file under the child's PID, as an `emulator`
+    /// launcher running qemu as a child does.
     ForksChild { grpc_port: u16, token: &'static str },
     /// Prints the message to stderr and exits with the code.
     ExitsWith(i32, &'static str),
@@ -511,6 +512,8 @@ pub(crate) struct FakeSdk {
     launch: Option<LaunchStub>,
     /// `getprop sys.boot_completed` answers `1` from this call on; `None` never.
     boot_completed_after: Option<u32>,
+    /// Which of `discovery_dirs()` the launch stub publishes in.
+    discovery_index: usize,
 }
 
 #[cfg(unix)]
@@ -523,6 +526,7 @@ impl FakeSdk {
             with_adb: true,
             launch: None,
             boot_completed_after: Some(1),
+            discovery_index: 0,
         }
     }
 
@@ -549,6 +553,12 @@ impl FakeSdk {
 
     pub(crate) fn boot_completed_after(mut self, calls: u32) -> Self {
         self.boot_completed_after = Some(calls);
+        self
+    }
+
+    /// Publishes the discovery file in `discovery_dirs()[index]`.
+    pub(crate) fn discovery_in(mut self, index: usize) -> Self {
+        self.discovery_index = index;
         self
     }
 
@@ -593,34 +603,41 @@ impl FakeSdk {
 
     fn launch_script(&self) -> String {
         let launched = self.dir.path().join("launched");
-        let mut script = format!("#!/bin/sh\necho $$ >> \"{}\"\n", launched.display());
-        let (grpc_port, token, run) = match self.launch {
+        let script = format!("#!/bin/sh\necho $$ >> \"{}\"\n", launched.display());
+        let (grpc_port, token) = match self.launch {
             None => return script + "exit 1\n",
             Some(LaunchStub::ExitsWith(code, message)) => {
                 return script + &format!("echo '{message}' >&2\nexit {code}\n");
             }
-            Some(LaunchStub::Runs { grpc_port, token }) => {
-                (grpc_port, token, "exec sleep 600\n".to_owned())
-            }
-            Some(LaunchStub::IgnoresShutdown { grpc_port, token }) => (
-                grpc_port,
-                token,
-                "trap '' TERM\nexec sleep 600\n".to_owned(),
-            ),
-            Some(LaunchStub::ForksChild { grpc_port, token }) => (
-                grpc_port,
-                token,
-                format!(
-                    "sleep 600 &\necho $! > \"{}\"\nwait\n",
-                    self.fork_pid_file().display()
-                ),
-            ),
+            Some(
+                LaunchStub::Runs { grpc_port, token }
+                | LaunchStub::IgnoresShutdown { grpc_port, token }
+                | LaunchStub::ForksChild { grpc_port, token },
+            ) => (grpc_port, token),
         };
         // Written whole, then renamed, so a reader never sees half a file.
-        script += &format!(
-            "dir=\"$ANDROID_EMULATOR_HOME/avd/running\"\nmkdir -p \"$dir\"\nprintf 'grpc.port={grpc_port}\\ngrpc.token={token}\\n' > \"$dir/pid_$$.tmp\"\nmv \"$dir/pid_$$.tmp\" \"$dir/pid_$$.ini\"\n"
-        );
-        script + &run
+        let dir = &self.discovery_dirs()[self.discovery_index];
+        let publish = |pid: &str| {
+            format!(
+                "dir=\"{dir}\"\nmkdir -p \"$dir\"\nprintf 'grpc.port={grpc_port}\\ngrpc.token={token}\\n' > \"$dir/pid_{pid}.tmp\"\nmv \"$dir/pid_{pid}.tmp\" \"$dir/pid_{pid}.ini\"\n",
+                dir = dir.display()
+            )
+        };
+        match self.launch {
+            Some(LaunchStub::IgnoresShutdown { .. }) => {
+                script + &publish("$$") + "trap '' TERM\nexec sleep 600\n"
+            }
+            Some(LaunchStub::ForksChild { .. }) => {
+                script
+                    + &format!(
+                        "sleep 600 &\nchild=$!\necho \"$child\" > \"{}\"\n",
+                        self.fork_pid_file().display()
+                    )
+                    + &publish("$child")
+                    + "wait\n"
+            }
+            _ => script + &publish("$$") + "exec sleep 600\n",
+        }
     }
 
     fn adb_script(&self) -> String {
@@ -651,14 +668,32 @@ impl FakeSdk {
         }
     }
 
-    /// A launcher for this SDK whose discovery directory lies inside it.
-    pub(crate) fn launcher(&self) -> crate::device::emulator::EmulatorLauncher {
-        crate::device::emulator::EmulatorLauncher::new(
-            crate::device::sdk::locate_sdk(&self.env()).expect("fake sdk is complete"),
+    /// Two discovery directories inside the SDK's temporary tree, in search order.
+    pub(crate) fn discovery_dirs(&self) -> Vec<PathBuf> {
+        vec![
+            self.root().join("runtime/avd/running"),
             self.root().join("emulator-home/avd/running"),
+        ]
+    }
+
+    /// A launcher for this SDK that searches `discovery_dirs()` and requests the stub's
+    /// gRPC port, where the fake controller listens.
+    pub(crate) fn launcher(&self) -> crate::device::emulator::EmulatorLauncher {
+        let mut launcher = crate::device::emulator::EmulatorLauncher::new(
+            crate::device::sdk::locate_sdk(&self.env()).expect("fake sdk is complete"),
+            self.discovery_dirs(),
             crate::diagnostics::ProcessAttributionRegistry::new(),
             false,
-        )
+        );
+        launcher.grpc_port = match self.launch {
+            Some(
+                LaunchStub::Runs { grpc_port, .. }
+                | LaunchStub::IgnoresShutdown { grpc_port, .. }
+                | LaunchStub::ForksChild { grpc_port, .. },
+            ) => Some(grpc_port),
+            _ => None,
+        };
+        launcher
     }
 
     /// PIDs of every launch stub started so far.
