@@ -3,8 +3,9 @@ pub mod catalog;
 // Discovery is consumed by the DeviceManager task that follows.
 #[allow(dead_code)]
 pub(crate) mod sdk;
-// The client is consumed by the lifecycle, frame, and input tasks that follow.
+// Launch and stop are consumed by the DeviceManager task that follows.
 #[allow(dead_code)]
+pub(crate) mod emulator;
 pub(crate) mod grpc;
 // Handle fields are consumed by the lifecycle, frame, and input tests that follow.
 #[cfg(test)]

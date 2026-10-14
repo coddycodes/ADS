@@ -2,6 +2,7 @@ mod appimage;
 mod background;
 mod cleanup;
 mod executable;
+mod registered_helper;
 mod runner;
 mod shell;
 pub(crate) mod supervised;
@@ -25,6 +26,7 @@ pub(crate) use executable::{
     PreparedLaunch, SpawnPlan, launch_executable_extensions, locate_executable,
     wrap_launch_program, wrap_windows_batch_command,
 };
+pub(crate) use registered_helper::{RegisteredHelper, helper_is_live, spawn_registered_helper};
 pub use runner::{
     OutputMode, ProcessError, ProcessRunInput, ProcessRunOutput, ProcessRunner, TimeoutBehavior,
 };

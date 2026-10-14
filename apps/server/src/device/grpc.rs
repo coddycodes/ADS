@@ -40,7 +40,11 @@ pub(crate) struct EmulatorClient {
 
 const MAX_MESSAGE_BYTES: usize = 32 * 1024 * 1024; // a full-size RGB888 frame is ~7.8 MB
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+// Consumed with `input_sink` by the input task that follows.
+#[allow(dead_code)]
 const INPUT_QUEUE_DEPTH: usize = 256;
+/// Bound on each unary call; the streams run for the device's lifetime and have none.
+const UNARY_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl EmulatorClient {
     pub(crate) async fn connect(port: u16, token: Option<String>) -> Result<Self, DeviceError> {
@@ -51,22 +55,20 @@ impl EmulatorClient {
             .await
             .map_err(|error| DeviceError::Grpc(error.to_string()))?;
         let header = token
-            .map(|token| format!("Bearer {token}").parse())
+            .map(|token| format!("Bearer {token}").parse::<MetadataValue<_>>())
             .transpose()
-            .map_err(|_| DeviceError::Protocol("emulator token is not ASCII".into()))?;
+            .map_err(|_| DeviceError::Protocol("emulator token is not ASCII".into()))?
+            .map(|mut value| {
+                value.set_sensitive(true);
+                value
+            });
         let inner = EmulatorControllerClient::with_interceptor(channel, TokenInterceptor(header))
             .max_decoding_message_size(MAX_MESSAGE_BYTES);
         Ok(Self { inner })
     }
 
     pub(crate) async fn status(&self) -> Result<proto::EmulatorStatus, DeviceError> {
-        Ok(self
-            .inner
-            .clone()
-            .get_status(())
-            .await
-            .map_err(grpc_error)?
-            .into_inner())
+        Ok(unary(self.inner.clone().get_status(())).await?.into_inner())
     }
 
     pub(crate) async fn screenshot(
@@ -79,15 +81,13 @@ impl EmulatorClient {
             width,
             ..Default::default()
         };
-        Ok(self
-            .inner
-            .clone()
-            .get_screenshot(request)
-            .await
-            .map_err(grpc_error)?
+        Ok(unary(self.inner.clone().get_screenshot(request))
+            .await?
             .into_inner())
     }
 
+    // Consumed by the frame and input tasks that follow.
+    #[allow(dead_code)]
     pub(crate) async fn stream_screenshot(
         &self,
         width: u32,
@@ -106,6 +106,8 @@ impl EmulatorClient {
             .into_inner())
     }
 
+    // Consumed by the frame and input tasks that follow.
+    #[allow(dead_code)]
     pub(crate) fn input_sink(&self) -> Result<mpsc::Sender<proto::InputEvent>, DeviceError> {
         let (sender, receiver) = mpsc::channel(INPUT_QUEUE_DEPTH);
         let mut inner = self.inner.clone();
@@ -120,6 +122,8 @@ impl EmulatorClient {
         Ok(sender)
     }
 
+    // Consumed by the frame and input tasks that follow.
+    #[allow(dead_code)]
     pub(crate) async fn set_rotation(&self, data: [f32; 3]) -> Result<(), DeviceError> {
         let request = proto::PhysicalModelValue {
             target: proto::physical_model_value::PhysicalType::Rotation as i32,
@@ -128,11 +132,7 @@ impl EmulatorClient {
             }),
             ..Default::default()
         };
-        self.inner
-            .clone()
-            .set_physical_model(request)
-            .await
-            .map_err(grpc_error)?;
+        unary(self.inner.clone().set_physical_model(request)).await?;
         Ok(())
     }
 
@@ -140,13 +140,17 @@ impl EmulatorClient {
         let request = proto::VmRunState {
             state: proto::vm_run_state::RunState::Shutdown as i32,
         };
-        self.inner
-            .clone()
-            .set_vm_state(request)
-            .await
-            .map_err(grpc_error)?;
+        unary(self.inner.clone().set_vm_state(request)).await?;
         Ok(())
     }
+}
+
+/// Runs a unary call within [`UNARY_TIMEOUT`].
+async fn unary<T>(call: impl Future<Output = Result<T, tonic::Status>>) -> Result<T, DeviceError> {
+    tokio::time::timeout(UNARY_TIMEOUT, call)
+        .await
+        .map_err(|_| DeviceError::Grpc(format!("no answer within {UNARY_TIMEOUT:?}")))?
+        .map_err(grpc_error)
 }
 
 fn grpc_error(status: tonic::Status) -> DeviceError {
@@ -168,6 +172,15 @@ mod tests {
         let format = image.format.unwrap();
         assert_eq!((format.width, format.height), (360, 800));
         assert_eq!(image.image.len(), 360 * 800 * 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unary_calls_give_up_after_the_timeout() {
+        let call = std::future::pending::<Result<(), tonic::Status>>();
+        assert!(matches!(
+            unary(call).await,
+            Err(DeviceError::Grpc(message)) if message.contains("no answer")
+        ));
     }
 
     #[tokio::test]

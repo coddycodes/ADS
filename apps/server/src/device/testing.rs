@@ -43,6 +43,26 @@ pub(crate) struct FakeHandle {
     pub(crate) vm_state: Arc<Mutex<Option<i32>>>,
 }
 
+impl FakeHandle {
+    /// Sends `pid` `SIGTERM` once the VM is asked to shut down, as a real emulator exits
+    /// after `setVmState(SHUTDOWN)`.
+    #[cfg(unix)]
+    pub(crate) fn exit_on_shutdown(&self, pid: u32) {
+        let vm_state = self.vm_state.clone();
+        tokio::spawn(async move {
+            loop {
+                let state = *vm_state.lock().expect("fake vm state lock");
+                if state == Some(proto::vm_run_state::RunState::Shutdown as i32) {
+                    // SAFETY: plain signal delivery to a PID the test launched.
+                    unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        });
+    }
+}
+
 pub(crate) struct FakeController {
     inputs: Arc<Mutex<Vec<proto::InputEvent>>>,
     rotations: Arc<Mutex<Vec<[f32; 3]>>>,
@@ -465,6 +485,22 @@ impl EmulatorController for FakeController {
     }
 }
 
+/// What the fake `emulator` runs for a launch (any invocation other than a query). Every stub
+/// records its PID in the SDK's `launched` file.
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+pub(crate) enum LaunchStub {
+    /// Writes the gRPC discovery file, then runs until killed.
+    Runs { grpc_port: u16, token: &'static str },
+    /// Like `Runs`, but ignores `SIGTERM`.
+    IgnoresShutdown { grpc_port: u16, token: &'static str },
+    /// Like `Runs`, but keeps a `sleep` child (its PID in the SDK's fork PID file) instead of
+    /// exec'ing it, as an `emulator` launcher running qemu as a child does.
+    ForksChild { grpc_port: u16, token: &'static str },
+    /// Prints the message to stderr and exits with the code.
+    ExitsWith(i32, &'static str),
+}
+
 /// Builder for a fake Android SDK tree of shell-script `emulator` and `adb` tools.
 #[cfg(unix)]
 pub(crate) struct FakeSdk {
@@ -472,7 +508,9 @@ pub(crate) struct FakeSdk {
     avds: Vec<String>,
     accel_ok: bool,
     with_adb: bool,
-    launch: PathBuf,
+    launch: Option<LaunchStub>,
+    /// `getprop sys.boot_completed` answers `1` from this call on; `None` never.
+    boot_completed_after: Option<u32>,
 }
 
 #[cfg(unix)]
@@ -483,7 +521,8 @@ impl FakeSdk {
             avds: Vec::new(),
             accel_ok: true,
             with_adb: true,
-            launch: PathBuf::from("/bin/false"),
+            launch: None,
+            boot_completed_after: Some(1),
         }
     }
 
@@ -502,9 +541,19 @@ impl FakeSdk {
         self
     }
 
-    /// Program the emulator script execs for any non-query invocation.
-    pub(crate) fn launch_stub(mut self, path: impl Into<PathBuf>) -> Self {
-        self.launch = path.into();
+    /// What the emulator script runs for any non-query invocation; without one it fails.
+    pub(crate) fn launch_stub(mut self, stub: LaunchStub) -> Self {
+        self.launch = Some(stub);
+        self
+    }
+
+    pub(crate) fn boot_completed_after(mut self, calls: u32) -> Self {
+        self.boot_completed_after = Some(calls);
+        self
+    }
+
+    pub(crate) fn never_boots(mut self) -> Self {
+        self.boot_completed_after = None;
         self
     }
 
@@ -521,21 +570,70 @@ impl FakeSdk {
         } else {
             (1, "KVM is not available.")
         };
+        let launch = self.dir.path().join("launch-stub");
         let emulator = format!(
             "#!/bin/sh\ncase \"$1\" in\n  -list-avds) printf '%s\\n' {avds} ;;\n  -accel-check) echo \"accel:\"; echo \"{code}\"; echo \"{text}\"; echo \"accel\"; exit {code} ;;\n  *) exec \"{launch}\" \"$@\" ;;\nesac\n",
-            launch = self.launch.display()
+            launch = launch.display()
         );
-        let write_script = |relative: &str, body: &str| {
-            let path = self.dir.path().join(relative);
+        let write_script = |path: &Path, body: &str| {
             fs::create_dir_all(path.parent().expect("script parent")).expect("script dir");
-            fs::write(&path, body).expect("write script");
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod script");
+            fs::write(path, body).expect("write script");
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("chmod script");
         };
-        write_script("emulator/emulator", &emulator);
+        write_script(&self.dir.path().join("emulator/emulator"), &emulator);
+        write_script(&launch, &self.launch_script());
         if self.with_adb {
-            write_script("platform-tools/adb", "#!/bin/sh\nexit 0\n");
+            write_script(
+                &self.dir.path().join("platform-tools/adb"),
+                &self.adb_script(),
+            );
         }
         self
+    }
+
+    fn launch_script(&self) -> String {
+        let launched = self.dir.path().join("launched");
+        let mut script = format!("#!/bin/sh\necho $$ >> \"{}\"\n", launched.display());
+        let (grpc_port, token, run) = match self.launch {
+            None => return script + "exit 1\n",
+            Some(LaunchStub::ExitsWith(code, message)) => {
+                return script + &format!("echo '{message}' >&2\nexit {code}\n");
+            }
+            Some(LaunchStub::Runs { grpc_port, token }) => {
+                (grpc_port, token, "exec sleep 600\n".to_owned())
+            }
+            Some(LaunchStub::IgnoresShutdown { grpc_port, token }) => (
+                grpc_port,
+                token,
+                "trap '' TERM\nexec sleep 600\n".to_owned(),
+            ),
+            Some(LaunchStub::ForksChild { grpc_port, token }) => (
+                grpc_port,
+                token,
+                format!(
+                    "sleep 600 &\necho $! > \"{}\"\nwait\n",
+                    self.fork_pid_file().display()
+                ),
+            ),
+        };
+        // Written whole, then renamed, so a reader never sees half a file.
+        script += &format!(
+            "dir=\"$ANDROID_EMULATOR_HOME/avd/running\"\nmkdir -p \"$dir\"\nprintf 'grpc.port={grpc_port}\\ngrpc.token={token}\\n' > \"$dir/pid_$$.tmp\"\nmv \"$dir/pid_$$.tmp\" \"$dir/pid_$$.ini\"\n"
+        );
+        script + &run
+    }
+
+    fn adb_script(&self) -> String {
+        let counter = self.dir.path().join("boot-polls");
+        let after = self.boot_completed_after.unwrap_or(0);
+        format!(
+            "#!/bin/sh\n[ \"$1\" = \"-s\" ] && shift 2\ncase \"$1 $2 $3\" in\n  wait-for-device*) exit 0 ;;\n  'shell getprop sys.boot_completed')\n    polls=$(( $(cat \"{counter}\" 2>/dev/null || echo 0) + 1 ))\n    echo \"$polls\" > \"{counter}\"\n    if [ {after} -gt 0 ] && [ \"$polls\" -ge {after} ]; then echo 1; else echo; fi ;;\nesac\nexit 0\n",
+            counter = counter.display()
+        )
+    }
+
+    fn fork_pid_file(&self) -> PathBuf {
+        self.dir.path().join("fork-pid")
     }
 
     pub(crate) fn root(&self) -> &Path {
@@ -552,4 +650,55 @@ impl FakeSdk {
             os: "linux",
         }
     }
+
+    /// A launcher for this SDK whose discovery directory lies inside it.
+    pub(crate) fn launcher(&self) -> crate::device::emulator::EmulatorLauncher {
+        crate::device::emulator::EmulatorLauncher::new(
+            crate::device::sdk::locate_sdk(&self.env()).expect("fake sdk is complete"),
+            self.root().join("emulator-home/avd/running"),
+            crate::diagnostics::ProcessAttributionRegistry::new(),
+            false,
+        )
+    }
+
+    /// PIDs of every launch stub started so far.
+    pub(crate) fn launched_pids(&self) -> Vec<u32> {
+        std::fs::read_to_string(self.root().join("launched"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.trim().parse().ok())
+            .collect()
+    }
+
+    /// The PID of the `sleep` a `ForksChild` stub started.
+    pub(crate) async fn wait_forked_child_pid(&self) -> u32 {
+        for _ in 0..200 {
+            if let Some(pid) = std::fs::read_to_string(self.fork_pid_file())
+                .ok()
+                .and_then(|contents| contents.trim().parse().ok())
+            {
+                return pid;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        panic!("the forked child never wrote its PID");
+    }
+}
+
+/// Whether `pid` names a live (or unreaped) process.
+#[cfg(unix)]
+pub(crate) fn process_alive(pid: u32) -> bool {
+    // SAFETY: signal 0 only checks that the process exists.
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+/// Polls `done` for up to ten seconds.
+pub(crate) async fn wait_until(done: impl Fn() -> bool) {
+    for _ in 0..400 {
+        if done() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("condition not reached within ten seconds");
 }
