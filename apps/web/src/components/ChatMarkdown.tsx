@@ -645,6 +645,8 @@ interface SuspenseShikiCodeBlockProps {
   code: string;
   themeName: DiffThemeName;
   isStreaming: boolean;
+  /** The plain block shown until the highlighted one is ready. */
+  fallback: React.ReactNode;
 }
 
 function SuspenseShikiCodeBlock({
@@ -652,6 +654,7 @@ function SuspenseShikiCodeBlock({
   code,
   themeName,
   isStreaming,
+  fallback,
 }: SuspenseShikiCodeBlockProps) {
   const language = extractFenceLanguage(className);
   const cacheKey = createHighlightCacheKey(code, language, themeName);
@@ -662,6 +665,18 @@ function SuspenseShikiCodeBlock({
       <div
         className="chat-markdown-shiki"
         dangerouslySetInnerHTML={{ __html: cachedHighlightedHtml }}
+      />
+    );
+  }
+
+  if (!isStreaming) {
+    return (
+      <DeferredShikiCodeBlock
+        code={code}
+        language={language}
+        themeName={themeName}
+        cacheKey={cacheKey}
+        fallback={fallback}
       />
     );
   }
@@ -685,6 +700,123 @@ interface UncachedShikiCodeBlockProps {
   isStreaming: boolean;
 }
 
+function highlightWith(
+  highlighter: DiffsHighlighter,
+  code: string,
+  language: string,
+  themeName: DiffThemeName,
+): string {
+  try {
+    return highlighter.codeToHtml(code, { lang: language, theme: themeName });
+  } catch (error) {
+    // Log highlighting failures for debugging while falling back to plain text
+    console.warn(
+      `Code highlighting failed for language "${language}", falling back to plain text.`,
+      error instanceof Error ? error.message : error,
+    );
+    // If highlighting fails for this language, render as plain text
+    return highlighter.codeToHtml(code, { lang: "text", theme: themeName });
+  }
+}
+
+interface HighlightJob {
+  readonly run: () => string;
+  readonly done: (html: string) => void;
+}
+
+/** Waiting blocks, the most recently mounted last. */
+const highlightQueue: HighlightJob[] = [];
+let highlightPumpScheduled = false;
+
+/**
+ * Highlights one waiting block per task, the most recently mounted first, so a block the user
+ * scrolled to is highlighted before the ones scrolled past and input runs between blocks
+ * (#103). Returns a cancel that drops the job if it has not run.
+ */
+function scheduleHighlight(run: () => string, done: (html: string) => void): () => void {
+  const job: HighlightJob = { run, done };
+  highlightQueue.push(job);
+  if (!highlightPumpScheduled) {
+    highlightPumpScheduled = true;
+    setTimeout(pumpHighlights, 0);
+  }
+  let cancelled = false;
+  return () => {
+    if (cancelled) return;
+    cancelled = true;
+    const index = highlightQueue.indexOf(job);
+    if (index >= 0) highlightQueue.splice(index, 1);
+  };
+}
+
+function pumpHighlights(): void {
+  const job = highlightQueue.pop();
+  if (job) {
+    try {
+      job.done(job.run());
+    } catch {
+      // The plain block stays.
+    }
+  }
+  if (highlightQueue.length > 0) {
+    setTimeout(pumpHighlights, 0);
+  } else {
+    highlightPumpScheduled = false;
+  }
+}
+
+interface DeferredShikiCodeBlockProps {
+  code: string;
+  language: string;
+  themeName: DiffThemeName;
+  cacheKey: string;
+  fallback: React.ReactNode;
+}
+
+/**
+ * A finished block not highlighted yet: shown plain at once, then highlighted between frames.
+ * Scrolling into old turns mounts many such blocks, and highlighting each during render held
+ * the main thread for most of every frame (#103).
+ */
+function DeferredShikiCodeBlock({
+  code,
+  language,
+  themeName,
+  cacheKey,
+  fallback,
+}: DeferredShikiCodeBlockProps) {
+  const [highlighted, setHighlighted] = useState<{ key: string; html: string } | null>(null);
+  useEffect(() => {
+    // The grammar loads first, outside the queue: a slow grammar chunk holds up only its own
+    // blocks.
+    let active = true;
+    let cancel = (): void => undefined;
+    getHighlighterPromise(language).then(
+      (highlighter) => {
+        if (!active) return;
+        cancel = scheduleHighlight(
+          () => highlightWith(highlighter, code, language, themeName),
+          (html) => {
+            highlightedCodeCache.set(cacheKey, html, estimateHighlightedSize(html, code));
+            setHighlighted({ key: cacheKey, html });
+          },
+        );
+      },
+      () => {
+        // No highlighter at all: the plain block stays.
+      },
+    );
+    return () => {
+      active = false;
+      cancel();
+    };
+  }, [cacheKey, code, language, themeName]);
+  if (highlighted?.key !== cacheKey) return fallback;
+  return (
+    <div className="chat-markdown-shiki" dangerouslySetInnerHTML={{ __html: highlighted.html }} />
+  );
+}
+
 function UncachedShikiCodeBlock({
   code,
   language,
@@ -693,19 +825,10 @@ function UncachedShikiCodeBlock({
   isStreaming,
 }: UncachedShikiCodeBlockProps) {
   const highlighter = use(getHighlighterPromise(language));
-  const highlightedHtml = useMemo(() => {
-    try {
-      return highlighter.codeToHtml(code, { lang: language, theme: themeName });
-    } catch (error) {
-      // Log highlighting failures for debugging while falling back to plain text
-      console.warn(
-        `Code highlighting failed for language "${language}", falling back to plain text.`,
-        error instanceof Error ? error.message : error,
-      );
-      // If highlighting fails for this language, render as plain text
-      return highlighter.codeToHtml(code, { lang: "text", theme: themeName });
-    }
-  }, [code, highlighter, language, themeName]);
+  const highlightedHtml = useMemo(
+    () => highlightWith(highlighter, code, language, themeName),
+    [code, highlighter, language, themeName],
+  );
 
   useEffect(() => {
     if (!isStreaming) {
@@ -1526,6 +1649,7 @@ function ChatMarkdown({
                   code={codeBlock.code}
                   themeName={diffThemeName}
                   isStreaming={isStreaming}
+                  fallback={<pre {...props}>{children}</pre>}
                 />
               </Suspense>
             </CodeHighlightErrorBoundary>
