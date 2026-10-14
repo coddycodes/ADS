@@ -2049,6 +2049,11 @@ async fn wait_for_termination_signal() {
     // A logout signals the whole session; the processes that die with BiBCode are not
     // crashes.
     bibcode_server::diagnostics::profiler::exits::note_terminating();
+    // A small synchronous write, read on the next start if this shutdown never finishes.
+    let _ = tokio::task::spawn_blocking(|| {
+        bibcode_server::diagnostics::profiler::note_exit("signal", Some("SIGTERM"));
+    })
+    .await;
 }
 
 fn emit_backend_ready<R: Runtime>(

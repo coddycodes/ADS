@@ -1617,6 +1617,17 @@ it.
   | The user session cgroup's `oom_kill` count rose (Linux) | `crash.oom` (error)                                           |
   | None of these                                           | `crash.unclean-exit` (warn), naming the crash-record source   |
 
+  The record also keeps the run's systemd user `unit` (Linux) and an `exit`
+  note `{ cause, detail, at }` written synchronously as the run ends, the first
+  note standing: the desktop's GLib log writer notes `display-lost` when GDK
+  logs that it lost the Wayland or X11 connection (GTK then calls `_exit(1)`,
+  so nothing else records it), and the desktop notes `quit` on an exit request
+  and `signal` on `SIGTERM`. The crash monitor writes `gone.json` with the time
+  it saw its parent end without a dump. For `crash.unclean-exit` and
+  `shutdown.incomplete`, the next start adds that note, the monitor's `goneAt`,
+  and systemd's own lines about the unit ending (`journalctl --user -u <unit>
+-t systemd`, within 5 s); a recorded cause also splits the fingerprint.
+
 - **OS crash records** are read read-only within 5 s. Linux runs
   `coredumpctl --json=short list` and `journalctl -a -o json` for the coredump
   record that matches the pid and executable name; when `coredumpctl --json`

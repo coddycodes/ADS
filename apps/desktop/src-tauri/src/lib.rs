@@ -95,6 +95,9 @@ pub fn run() {
     let shell_path_hydration = shell_environment::hydrate_process_path();
     // After the PATH hydration, which must run before any thread exists, and before Tauri.
     crash_monitor::start();
+    // Before GTK starts: GLib takes one log writer per process.
+    #[cfg(target_os = "linux")]
+    display_loss::install();
     bibcode_server::allocator::start_heap_trimmer();
     let builder = tauri::Builder::<bridge::DesktopRuntime>::new()
         .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}))
@@ -262,11 +265,14 @@ pub fn run() {
         .build(desktop_context())
         .expect("error while building BiBCode Tauri application")
         .run(|app_handle, event| {
-            if matches!(event, tauri::RunEvent::ExitRequested { .. })
-                && let Err(error) =
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                // So a quit that never finishes shutting down says so on the next start.
+                bibcode_server::diagnostics::profiler::note_exit("quit", None);
+                if let Err(error) =
                     tauri::async_runtime::block_on(prepare_desktop_runtime_for_exit(app_handle))
-            {
-                tracing::warn!("failed to stop Tauri desktop runtime during exit: {error}");
+                {
+                    tracing::warn!("failed to stop Tauri desktop runtime during exit: {error}");
+                }
             }
             if matches!(event, tauri::RunEvent::Exit) {
                 // Mark after backend shutdown, at the last callback before Tauri's relaunch spawn.
@@ -334,6 +340,8 @@ mod crash_monitor;
 mod data_safety;
 #[cfg(any(feature = "desktop-e2e", test))]
 mod desktop_e2e_page_load;
+#[cfg(target_os = "linux")]
+mod display_loss;
 mod firewall;
 #[cfg(target_os = "linux")]
 mod linux_text_rendering;

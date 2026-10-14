@@ -75,6 +75,13 @@ it repeats.
    - **OS records:** the evidence `frames` and `rawRef`. `crash.unclean-exit`
      names the crash-record `facility`. `no systemd-coredump` means Linux kept
      no record, so say so instead of guessing a cause.
+   - **Exit context:** `crash.unclean-exit` and `shutdown.incomplete` may carry
+     `exitCause`/`exitDetail` (what the run noted as it ended: `display-lost`
+     means GDK lost the compositor or X server and GTK exited), `goneAt` (when
+     the crash monitor saw it end), and `journal` (systemd's lines about the
+     user unit). `code=killed, status=9/KILL` there is a forced kill from
+     outside; `code=exited, status=1/FAILURE` with `display-lost` is GTK's exit.
+     With none of them, nothing recorded the ending: say so.
 2. **Symbolicate.**
    - Run `P symbolicate <crash-id> --json` for a dump, or
      `P symbolicate <sid>:<seq> --json` for a panic, with the `sid` and `seq`

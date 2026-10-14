@@ -132,6 +132,7 @@ impl ProfilerRuntime {
         let (panics, panic_records) = mpsc::channel(PANIC_QUEUE);
         let linked_dumps = Mutex::new(findings.crash_ids().collect());
         let handle = Arc::new(ProfilerHandle {
+            dir: dir.clone(),
             enabled: Default::default(),
             sender: store.sender(),
             findings: Mutex::new(findings),
@@ -419,7 +420,7 @@ async fn raise_unrecorded_crashes(
 async fn classify_previous_run(handle: Arc<ProfilerHandle>, previous: SessionRecord, dir: PathBuf) {
     let record = os_records::harvest_previous_crash(&previous).await;
     let dump = {
-        let (handle, previous) = (handle.clone(), previous.clone());
+        let (handle, previous, dir) = (handle.clone(), previous.clone(), dir.clone());
         tokio::task::spawn_blocking(move || {
             let sidecars = sentinel::dump_sidecars(&dir);
             let mut linked = lock(&handle.linked_dumps);
@@ -432,13 +433,20 @@ async fn classify_previous_run(handle: Arc<ProfilerHandle>, previous: SessionRec
         .ok()
         .flatten()
     };
-    let run = sentinel::classify(
+    let mut run = sentinel::classify(
         &previous,
         sentinel::boot_id().as_deref(),
         sentinel::oom_kill_count(),
         record,
         dump,
     );
+    // No crash record explains the ending: add what systemd and the crash monitor saw.
+    if let sentinel::PreviousRun::UncleanExit { context, .. }
+    | sentinel::PreviousRun::ShutdownIncomplete(context) = &mut run
+    {
+        context.journal = os_records::unit_exit_lines(&previous).await;
+        context.gone_at = sentinel::gone_at(&dir, &previous);
+    }
     if let Some(input) = sentinel::finding_for(&previous, run) {
         lock(&handle.findings).record_now(input, OffsetDateTime::now_utc(), &handle.sender);
     }

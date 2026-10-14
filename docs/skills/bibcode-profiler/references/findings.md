@@ -123,11 +123,24 @@ and `startedAt`.
 
 - **Severity:** `warn`.
 - **Raised when:** the run ended on the same boot with no matching OS record. A
-  forced kill, a main-thread panic exit, a hang the user killed, or a missed dump
-  can cause it.
-- **Fingerprint:** the kind only.
-- **Evidence:** `facility`: `systemd-coredump`, `no systemd-coredump`,
-  `Windows Error Reporting`, `DiagnosticReports` or `none`.
+  forced kill, a main-thread panic exit, a hang the user killed, GTK exiting on a
+  lost display, or a missed dump can cause it.
+- **Fingerprint:** the kind, plus `exitCause` when the run recorded one, so a
+  display loss is its own finding.
+- **Title:** "Previous run exited after losing its display" when `exitCause` is
+  `display-lost`; otherwise "Previous run did not exit cleanly".
+- **Evidence:**
+  - `facility`: `systemd-coredump`, `no systemd-coredump`,
+    `Windows Error Reporting`, `DiagnosticReports` or `none`;
+  - `exitCause`, `exitDetail`, `exitNotedAt` when the run noted its ending on
+    the way out: `display-lost` (GDK logged that it lost the Wayland or X11
+    connection, with that message as the detail, and GTK then exits with no
+    signal), `quit`, or `signal` (`SIGTERM`);
+  - `goneAt`: when the crash monitor saw the process end without asking for a
+    dump (only while the Profiler was on), within about 2 s on Linux and macOS;
+  - `journal` (Linux): systemd's own last lines about the run's user unit
+    ending, such as `Main process exited, code=killed, status=9/KILL`, when the
+    run was in a `.service` or `.scope` below the user manager.
 
 ### shutdown.incomplete
 
@@ -137,6 +150,8 @@ and `startedAt`.
   bounds the in-process server's stop, so quitting while a worktree removal,
   a clone or a provider was still stopping, or a forced quit, can cause it.
 - **Fingerprint:** the kind only.
+- **Evidence:** the same `exitCause`, `exitDetail`, `exitNotedAt`, `goneAt` and
+  `journal` as `crash.unclean-exit`, when known.
 
 ### crash.oom
 
