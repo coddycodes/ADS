@@ -255,9 +255,11 @@ impl<S: ResourceSampler> Shared<S> {
             match sampled {
                 Ok(snapshot) => {
                     let snapshot = Arc::new(snapshot);
-                    state
-                        .samples
-                        .push_back(Arc::new(AttributedProcessSample::from(snapshot.as_ref())));
+                    let sample = AttributedProcessSample::new(
+                        snapshot.as_ref(),
+                        state.samples.back().map(Arc::as_ref),
+                    );
+                    state.samples.push_back(Arc::new(sample));
                     trim_samples(&mut state.samples, snapshot.sampled_at_ms);
                     state.current = Some(snapshot);
                     state.last_error = None;

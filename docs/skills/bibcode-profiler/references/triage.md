@@ -157,7 +157,11 @@ Covers `memory.leak-suspect`, `memory.leak-likely`, `cpu.sustained`,
      Memory that stays is live data or pages that live data shares with freed
      chunks (fragmentation), not free heap the allocator kept. On v0.9.0 and
      earlier nothing trims, and arena heaps that stay after a burst are usually
-     free memory glibc kept.
+     free memory glibc kept. Through v0.9.2, the process history behind the
+     status bar's resource readout added about 10 to 15 MB in its first hour
+     and then stayed flat (#100). A single `memory.leak-suspect` 75 to 90
+     minutes into an idle run, followed by a plateau, is that fill. Newer
+     builds keep the full hour in about 0.5 MB.
    - `provider`: the provider CLI named by `label` is third-party. Check what
      BiBCode feeds it and how long it keeps sessions:
      `apps/server/src/provider/<driver>/`, `apps/server/src/provider_terminal/`.
