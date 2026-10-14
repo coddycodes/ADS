@@ -79,6 +79,7 @@ async fn profiler_runtime_scenarios_share_the_process_global_handle_in_sequence(
     // From here on this process has its crash hook, as every BiBCode binary does.
     crash::attach();
     rapid_toggles_never_leave_a_crash_monitor_behind().await;
+    a_dropped_setting_reaps_the_monitor_before_follow_returns().await;
     #[cfg(unix)]
     a_stuck_runtime_still_replaces_a_hung_monitor().await;
     status_reports_findings_and_disk_use().await;
@@ -200,6 +201,30 @@ async fn rapid_toggles_never_leave_a_crash_monitor_behind() {
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(monitor_children().is_empty());
     runtime.shutdown().await;
+}
+
+/// How the desktop host stops its monitor before an exit the monitor must not outlive: it
+/// drops the setting and waits for `follow`. By then the monitor is reaped, not merely told.
+async fn a_dropped_setting_reaps_the_monitor_before_follow_returns() {
+    if cfg!(all(windows, target_arch = "aarch64")) {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let profiler_dir = profiler::profiler_dir(dir.path());
+    let (tx, rx) = watch::channel(true);
+    let detector = crash::MonitorDetector::new(profiler_dir.clone(), "desktop")
+        .with_executable(env!("CARGO_BIN_EXE_bibcode").into());
+    let follower = tokio::spawn(crash::follow(detector, rx));
+    wait_until("the monitor is connected", || {
+        native_dumps(&profiler_dir) == "available" && monitor_children().len() == 1
+    })
+    .await;
+    drop(tx);
+    tokio::time::timeout(Duration::from_secs(2), follower)
+        .await
+        .expect("follow returns once its setting is gone")
+        .unwrap();
+    assert!(monitor_children().is_empty(), "the monitor outlived follow");
 }
 
 /// The detector must replace a monitor that stopped answering even while the runtime that

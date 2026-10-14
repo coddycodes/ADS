@@ -18,7 +18,7 @@ BiBCode v0.9.3 ends the macOS freezes caused by a page-wide label scan after eve
 
 ### Preview
 
-- On the Linux desktop, a remote environment's development server opens at its real address (`http://localhost:5173`, HTTPS included) instead of a gateway address, through a tunnel on the environment's own connection. Only the account signed in on this computer can use the tunnel. (#69)
+- On the Linux desktop, a remote environment's development server opens at its real address (`http://localhost:5173`, a wildcard address such as `http://0.0.0.0:5173`, HTTPS included) instead of a gateway address, through a tunnel on the environment's own connection. Only the account signed in on this computer can use the tunnel. (#69)
 
 ### Windows
 
@@ -33,6 +33,7 @@ BiBCode v0.9.3 ends the macOS freezes caused by a page-wide label scan after eve
 - On macOS the Profiler samples the WebKit process that runs the interface, so its CPU and memory can raise findings. (#104)
 - `worktree.orphan-dir` no longer reports hidden folders other tools create in a managed worktree directory, such as Orca's `.orca-worktree-trash`. (#105)
 - `server.getProviderCapabilities` waiting on a provider check right after start no longer raises `rpc.slow`. (#107)
+- On Linux, an AppImage run as a systemd service stops its crash monitor before it exits. The service's stop took the AppImage's files away while the monitor still ran, which ended it with `SIGBUS` and raised a false `crash.native` after each update. An update run by v0.9.2 or earlier can still leave one.
 
 ## [v0.9.2] - 2026-10-13
 

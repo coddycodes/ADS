@@ -17,6 +17,21 @@ pub(crate) fn note_relaunch_requested() {
     RELAUNCH_REQUESTED.store(true, Ordering::Release);
 }
 
+/// Whether this process's exit takes its AppImage mount down while its children still run
+/// from it: a service unit's stop kills its whole cgroup, the mount's FUSE process included.
+/// A crash monitor that ignored that SIGTERM then dies with SIGBUS on its next page fault.
+pub(crate) fn exit_takes_mount_from_children() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var_os("APPIMAGE").is_some()
+            && linux::runs_in_service_unit(
+                &std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default(),
+            )
+    }
+    #[cfg(not(target_os = "linux"))]
+    false
+}
+
 /// The relaunch Tauri performs after the last exit callback spawns the new app as a child
 /// in this process's cgroup. When this process is a systemd service's main process (a
 /// launcher such as `systemd-run --user`), its exit stops the unit, which kills that whole

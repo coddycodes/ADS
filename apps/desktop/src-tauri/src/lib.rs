@@ -295,6 +295,9 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                if crate::relaunch::exit_takes_mount_from_children() {
+                    crash_monitor::stop();
+                }
                 // Mark after backend shutdown, at the last callback before Tauri's relaunch spawn.
                 crate::relaunch::prepare_descriptors_for_relaunch();
                 crate::relaunch::relaunch_outside_service_unit(app_handle);

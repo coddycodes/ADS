@@ -1586,7 +1586,11 @@ it.
   starts, the host reads the local environment's `enableProfiler` from that data
   root's `settings.json` (`BIBCODE_HOME` or `~/.bibcode`), so a crash during
   startup is captured once the toggle is on. Afterwards it follows the in-process
-  server's committed setting. WSL, SSH, and remote environments run their own
+  server's committed setting. An AppImage host that runs directly in a systemd
+  `.service` unit stops its monitor and waits for it at its last exit callback:
+  the unit's stop kills the AppImage's FUSE mount with the cgroup, and a monitor
+  that ignored that SIGTERM would die with SIGBUS on its next page fault, a
+  false `crash.native`. WSL, SSH, and remote environments run their own
   `bibcode` process, hook, and monitor under their own setting.
 - **Dumps become findings.** A dump is a `crash.native` finding (error) whose
   evidence has `source: "minidump"`, `crashId`, `crashIds` (every dump the
