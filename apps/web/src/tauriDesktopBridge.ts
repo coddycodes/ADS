@@ -484,12 +484,14 @@ async function showTauriContextMenu<T extends string>(
 
 function createTauriDesktopBridge(
   previewSupported: boolean,
+  previewTunnels: boolean,
   connectionCatalogProtection: ConnectionCatalogProtectionCapability,
 ): DesktopBridge {
   const preview = previewSupported
     ? createTauriPreviewBridge({
         invoke: tauriInvoke,
         listen: tauriListen,
+        tunnels: previewTunnels,
       })
     : undefined;
   const connectionCatalog =
@@ -680,6 +682,7 @@ async function installTauriDesktopBridge(): Promise<void> {
 
   const bridge = createTauriDesktopBridge(
     metadata?.features?.preview === true,
+    metadata?.features?.previewTunnels === true,
     connectionCatalogProtection,
   );
   window.desktopBridge = bridge;

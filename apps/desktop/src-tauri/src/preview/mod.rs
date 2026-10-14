@@ -6,6 +6,8 @@ pub mod commands;
 pub mod host;
 pub mod platform;
 pub mod registry;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub mod socks;
 
 #[allow(unused_imports)]
 pub use registry::{PendingBounds, PreviewRegistry, TabEntry, webview_label_for_tab};

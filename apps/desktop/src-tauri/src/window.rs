@@ -240,6 +240,16 @@ pub(crate) fn build_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result
         if payload.event() == tauri::webview::PageLoadEvent::Finished {
             crate::webview_exit::page_loaded(window.app_handle(), window.label());
         }
+        // A reload starts a renderer that knows none of the old one's preview tunnels (#69).
+        #[cfg(target_os = "linux")]
+        if payload.event() == tauri::webview::PageLoadEvent::Started
+            && let Some(tunnels) = window
+                .app_handle()
+                .try_state::<crate::preview::socks::PreviewTunnels>()
+        {
+            let tunnels = tunnels.inner().clone();
+            tauri::async_runtime::spawn(async move { tunnels.close_all().await });
+        }
     });
     let window = builder.build()?;
     #[cfg(any(target_os = "linux", target_os = "windows"))]

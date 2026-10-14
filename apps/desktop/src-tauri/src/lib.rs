@@ -78,6 +78,11 @@ macro_rules! desktop_preview_commands {
             desktop_preview_forget_environment,
             desktop_preview_capture_screenshot,
             desktop_preview_reveal_artifact,
+            desktop_preview_tunnel_mode,
+            desktop_preview_tunnel_answer,
+            desktop_preview_tunnel_read,
+            desktop_preview_tunnel_write,
+            desktop_preview_tunnel_close,
         ]
     };
 }
@@ -135,6 +140,14 @@ pub fn run() {
         // Built here (not from config) so it can route new-window requests;
         // first, so everything below still runs after the main window exists.
         window::build_main_window(app.handle())?;
+        // Remote environments' preview tunnels (#69): each request goes to the renderer.
+        let tunnel_requests = app.handle().clone();
+        app.manage(preview::socks::PreviewTunnels::new(move |request| {
+            use tauri::Emitter;
+            if let Err(error) = tunnel_requests.emit(preview::socks::REQUEST_EVENT, request) {
+                tracing::warn!("failed to hand a preview tunnel request to the renderer: {error}");
+            }
+        }));
         #[cfg(target_os = "linux")]
         {
             linux_text_rendering::apply_webview_hinting_override();
@@ -258,6 +271,11 @@ pub fn run() {
         preview::commands::desktop_preview_forget_environment,
         preview::commands::desktop_preview_capture_screenshot,
         preview::commands::desktop_preview_reveal_artifact,
+        preview::commands::desktop_preview_tunnel_mode,
+        preview::commands::desktop_preview_tunnel_answer,
+        preview::commands::desktop_preview_tunnel_read,
+        preview::commands::desktop_preview_tunnel_write,
+        preview::commands::desktop_preview_tunnel_close,
         #[cfg(feature = "desktop-e2e")]
         desktop_e2e_prepare_for_exit,
     ]);

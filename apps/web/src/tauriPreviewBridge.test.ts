@@ -14,12 +14,17 @@ const screenshotArtifact = {
   createdAt: "2026-07-20T00:00:00.000Z",
 };
 
-function makeBridge() {
+function makeBridge(options: { readonly tunnels?: boolean } = {}) {
   const invoke = vi
     .fn()
-    .mockImplementation((command: string) =>
+    .mockImplementation((command: string, args?: { readonly tunnel?: boolean }) =>
       Promise.resolve(
-        command === "desktop_preview_capture_screenshot" ? screenshotArtifact : undefined,
+        command === "desktop_preview_capture_screenshot"
+          ? screenshotArtifact
+          : // The desktop's answer: whether the environment's host routes through SOCKS.
+            command === "desktop_preview_create_tab"
+            ? args?.tunnel === true
+            : undefined,
       ),
     );
   const listeners = new Map<string, Set<(payload: unknown) => void>>();
@@ -37,7 +42,7 @@ function makeBridge() {
     for (const listener of listeners.get(event) ?? []) listener(payload);
   };
   return {
-    bridge: createTauriPreviewBridge({ invoke, listen }),
+    bridge: createTauriPreviewBridge({ invoke, listen, ...options }),
     emit,
     invoke,
     listenerCount: (event: string) => listeners.get(event)?.size ?? 0,
@@ -223,6 +228,51 @@ describe("tauriPreviewBridge", () => {
     expect(invoke.mock.calls.some(([command]) => command === "desktop_preview_close_tab")).toBe(
       false,
     );
+  });
+
+  // #69: an environment's first preview host decides whether its previews route through SOCKS.
+  it("creates a tunneled host only where the desktop offers tunnels, and remembers it", async () => {
+    const plain = makeBridge();
+    expect(plain.bridge.tunnels).toBeUndefined();
+    await plain.bridge.createTab("remote-a", "env-remote", { tunnel: true });
+    expect(plain.invoke).toHaveBeenCalledWith("desktop_preview_create_tab", {
+      tabId: "remote-a",
+      environmentId: "env-remote",
+    });
+
+    const { bridge, invoke } = makeBridge({ tunnels: true });
+    await bridge.createTab("remote-a", "env-remote", { tunnel: true });
+    await bridge.createTab("remote-b", "env-remote", { tunnel: false });
+    await bridge.createTab("other-a", "env-other");
+    await bridge.createTab("local-a", null, { tunnel: true });
+    expect(
+      invoke.mock.calls.filter(([command]) => command === "desktop_preview_create_tab"),
+    ).toEqual([
+      [
+        "desktop_preview_create_tab",
+        { tabId: "remote-a", environmentId: "env-remote", tunnel: true },
+      ],
+      ["desktop_preview_create_tab", { tabId: "other-a", environmentId: "env-other" }],
+      ["desktop_preview_create_tab", { tabId: "local-a" }],
+    ]);
+    // Known from creation: no question to the desktop.
+    expect(await bridge.tunnels?.mode("env-remote", false)).toBe(true);
+    expect(await bridge.tunnels?.mode("env-other", true)).toBe(false);
+    expect(invoke.mock.calls.some(([command]) => command === "desktop_preview_tunnel_mode")).toBe(
+      false,
+    );
+    // Before its first host, the desktop decides.
+    expect(await bridge.tunnels?.mode("env-new", true)).toBe(false);
+    expect(invoke).toHaveBeenCalledWith("desktop_preview_tunnel_mode", {
+      environmentId: "env-new",
+      requested: true,
+    });
+
+    await bridge.tunnels?.write("c1", "aGk=");
+    expect(invoke).toHaveBeenCalledWith("desktop_preview_tunnel_write", {
+      connectionId: "c1",
+      data: "aGk=",
+    });
   });
 
   it("never shares the local environment's storage with a falsy environment id", async () => {

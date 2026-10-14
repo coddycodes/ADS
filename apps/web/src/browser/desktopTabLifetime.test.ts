@@ -36,8 +36,9 @@ describe("desktopTabLifetime", () => {
     const local = acquireDesktopTab("tab_local", null);
     await local.ready;
 
-    expect(createTab).toHaveBeenCalledWith("tab_remote", "env-remote");
-    expect(createTab).toHaveBeenCalledWith("tab_local", null);
+    // Without desktop tunnels (#69), no environment asks for one.
+    expect(createTab).toHaveBeenCalledWith("tab_remote", "env-remote", { tunnel: false });
+    expect(createTab).toHaveBeenCalledWith("tab_local", null, { tunnel: false });
     remote.release();
     local.release();
     await vi.runAllTimersAsync();

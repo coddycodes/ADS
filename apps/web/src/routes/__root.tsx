@@ -37,6 +37,7 @@ import {
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { startClientCollector } from "../profiler/startClientCollector";
+import { startPreviewTunnelBroker } from "../browser/previewTunnelBroker";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
@@ -181,6 +182,7 @@ function DocumentTitleSync() {
 /** Measures client responsiveness for every environment whose profiler is on. */
 function ProfilerClientCollector() {
   useEffect(() => startClientCollector(appAtomRegistry), []);
+  useEffect(() => startPreviewTunnelBroker(appAtomRegistry), []);
   return null;
 }
 

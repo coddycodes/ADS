@@ -797,6 +797,11 @@ clients the other way: their `$BROWSER` shim posts to
 event that one client claims. See
 [Preview gateway](remote.md#preview-gateway) and
 [Open requests and automation hosts](remote.md#open-requests-and-automation-hosts).
+On the Linux desktop, a remote environment's previews skip the gateway: its
+preview profile routes loopback traffic through a desktop SOCKS server, and the
+web client carries each connection over the environment's own RPC connection
+(`preview.tunnelOpen`, `preview.tunnelWrite`, `preview.tunnelClose`). See
+[Preview tunnels](remote.md#preview-tunnels).
 
 When WSL-only mode is selected, that intent is authoritative even if an older
 persisted document has a stale disabled-backend flag. WSL planning and primary

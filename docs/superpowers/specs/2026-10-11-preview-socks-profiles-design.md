@@ -1,9 +1,9 @@
 # SOCKS-routed preview profiles (true-origin previews, Phase 2) — design proposal
 
-Status: **proposed, not approved for implementation** (2026-10-11). Agreed scope for
-now: this document plus the Linux engine spike. Implementation waits for the
-user's decision on the open questions below and for the Windows and macOS
-spikes.
+Status: **approved for implementation, Linux first** (2026-10-14). The user
+chose to build it now, with the tunnel carried by the web client's own
+connection (see [Decisions](#decisions-2026-10-14)). Windows and macOS keep the
+gateway until their engine spikes pass.
 Issue: [#69](https://github.com/mubeda/BibCode/issues/69).
 Builds on: [preview gateway (Phase 1)](2026-10-07-internal-browser-preview-gateway-design.md),
 [SSH same-port](2026-10-09-preview-ssh-same-port-design.md) (§6 per-environment
@@ -136,7 +136,47 @@ WSL, and relay behave the same and E2EE connections keep previews inside Noise.
 - E2EE connections carry tunnel data inside Noise; relay without E2EE is
   visible to Cloudflare, like relay RPC.
 
-## Open questions for the user
+## Decisions (2026-10-14)
+
+1. **Build it now.**
+2. **Transport: typed RPC streams.** No carve-out to the typed-RPC rule: the
+   tunnel is an RPC stream (server to client) plus a unary write (client to
+   server), the same shape as `terminal.attach` and `terminal.writeInput`.
+3. **Linux first.** WebKitGTK is the only verified engine; the Windows and
+   macOS preview hosts are created without a proxy until their spikes pass,
+   and those desktops keep the gateway.
+4. **Data path: through the web client.** The connection to an SSH, LAN, WSL
+   or relay environment (auth, E2EE, relay) lives in the web client, so the
+   desktop's SOCKS server hands each loopback `CONNECT` to the web view over
+   new `DesktopBridge` streaming commands, and the web client opens the
+   tunnel on that environment's RPC connection:
+
+   ```text
+   preview webview -> SOCKS (desktop Rust, 127.0.0.1) -> DesktopBridge (raw bytes)
+     -> web client -> preview.tunnel* RPC -> server -> TCP 127.0.0.1:<port>
+   ```
+
+   A Rust RPC client per environment was rejected: it would duplicate the
+   client-runtime connection stack (auth, Noise, relay). `ssh -D` was rejected
+   as the only mechanism: SSH only, and all preview traffic through the server.
+
+## Implementation (2026-10-14)
+
+Living description: [Preview tunnels](../../architecture/remote.md#preview-tunnels).
+Differences from the proposal above:
+
+- `preview.tunnelOpen` takes `{ port }`: a tunnel belongs to the caller's
+  session, not to a thread, since one environment's profile serves every
+  thread's previews. It refuses the server's own port.
+- Credit is the transport's own: a stream chunk is sent only after the client
+  acknowledged the last, and the web client acknowledges only after the
+  desktop wrote it; writes are one awaited chunk at a time.
+- Not built yet: falling back to the gateway, with a notice, when a tunnel
+  fails mid-session (a tunneled page shows its own connection error until the
+  environment reconnects), the WebRTC policy (WebKitGTK's default is off), and
+  the Windows and macOS engines.
+
+## Open questions for the user (answered above)
 
 1. **Worth building now?** After #68, every topology reaches previews; SOCKS
    adds real origins for LAN/WSL/relay, `form_post` OAuth, and busy-port SSH.

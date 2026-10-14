@@ -11,7 +11,13 @@ import { readPreparedConnection } from "~/state/session";
 
 import { isBrowserMode } from "~/components/preview/previewBridge";
 
-import { formatHost, resolvePreviewTarget, UNREACHABLE_MESSAGES } from "./browserTargetResolver";
+import {
+  formatHost,
+  hasPreviewTunnels,
+  resolvePreviewTarget,
+  routesThroughTunnel,
+  UNREACHABLE_MESSAGES,
+} from "./browserTargetResolver";
 import { showSamePortBusyNotice } from "./linkNotices";
 
 export type GatewayOpenMutation = (input: {
@@ -216,6 +222,14 @@ export async function resolveForNavigation(input: {
     };
   }
   if (resolution.kind === "reachable") return { kind: "ok", url: resolution.url };
+  // Before any await: a tab closed meanwhile then holds no forward this resolution opens.
+  const generation = tabId === undefined ? 0 : (tabGenerations.get(tabId) ?? 0);
+  // A preview tab of a SOCKS-routed environment loads the real origin (#69); the system
+  // browser has no such proxy and keeps the gateway. Without tunnels nothing is awaited, so
+  // the SSH forward below is still opened before any await.
+  if (tabId !== undefined && hasPreviewTunnels() && (await routesThroughTunnel(environmentId))) {
+    return { kind: "ok", url: resolution.url };
+  }
 
   const canonical = new URL(resolution.url);
   const connectionLabel = readPreparedConnection(environmentId)?.label;
@@ -234,7 +248,6 @@ export async function resolveForNavigation(input: {
   // resolution cannot release the forward it is about to use.
   const key = `${input.threadId} ${canonical.origin}`;
   const entry = resolution.via === "ssh" ? openEntry(environmentId, key) : null;
-  const generation = tabId === undefined ? 0 : (tabGenerations.get(tabId) ?? 0);
   if (entry) entry.pending += 1;
   const settle = (forward: SshForward | null, clientOrigin?: string) => {
     if (!entry) return;
