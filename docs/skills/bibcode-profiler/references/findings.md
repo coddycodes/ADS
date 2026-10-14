@@ -392,7 +392,9 @@ The remaining kinds come from the read-only scan in
 
 - **Severity:** `warn`.
 - **Raised when:** a directory in a managed worktree directory has no catalog
-  entry and no Git registration.
+  entry and no Git registration. Entries whose names start with a dot belong to
+  other tools, such as Orca's `.orca-worktree-trash`, and are skipped; builds
+  through v0.9.2 reported them at every audit (#105).
 - **Fingerprint:** `unowned-unregistered`.
 - **Evidence:** `path`.
 
