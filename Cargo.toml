@@ -24,6 +24,7 @@ hmac = "0.13.0"
 http-body-util = "0.1.5"
 httpdate = "1.0.3"
 hyper = { version = "1.11.1", features = ["client", "http1", "server"] }
+jpeg-encoder = "0.6"
 hyper-util = { version = "0.1.20", features = ["tokio"] }
 if-addrs = "0.15.0"
 junction = "2.0.0"
@@ -56,6 +57,8 @@ percent-encoding = "2.3.2"
 p256 = { version = "0.14.0", features = ["ecdsa"] }
 portpicker = "0.1.1"
 portable-pty = "0.9.0"
+prost = "0.14"
+protox = "0.9"
 process-wrap = { version = "9.1.0", features = ["tokio1"] }
 reqwest = { version = "0.13.4", default-features = false, features = [
   "form",
@@ -97,9 +100,17 @@ tokio = { version = "1.53.1", features = [
   "sync",
   "time",
 ] }
+tokio-stream = { version = "0.1", features = ["net", "sync"] }
 tokio-util = { version = "0.7.19", features = ["io", "io-util", "rt"] }
 tokio-tungstenite = "0.30.0"
 toml = "1.1.5"
+tonic = { version = "0.14", default-features = false, features = [
+  "router",
+  "transport",
+  "codegen",
+] }
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
 tower-http = { version = "0.7.1", features = ["cors"] }
 tower = { version = "0.5.3", features = ["util"] }
 tracing = "0.1"

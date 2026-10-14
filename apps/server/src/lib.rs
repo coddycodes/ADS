@@ -10,6 +10,7 @@ pub mod cloud;
 mod config;
 mod crypto;
 pub mod data_root;
+pub mod device;
 pub mod diagnostic_bundle;
 pub mod diagnostics;
 mod environment_identity;
