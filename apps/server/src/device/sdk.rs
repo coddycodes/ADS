@@ -36,7 +36,7 @@ impl SdkEnv {
             vars: std::env::vars_os()
                 .filter_map(|(key, value)| Some((key.into_string().ok()?, value)))
                 .collect(),
-            home: std::env::home_dir(),
+            home: dirs::home_dir(),
             os: std::env::consts::OS,
         }
     }
@@ -55,7 +55,8 @@ pub(crate) fn locate_sdk(env: &SdkEnv) -> Result<AndroidSdk, Availability> {
     let exe = if env.os == "windows" { ".exe" } else { "" };
     let candidates = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
         .iter()
-        .filter_map(|key| env.vars.get(*key).map(PathBuf::from))
+        .filter_map(|key| env.vars.get(*key).filter(|value| !value.is_empty()))
+        .map(PathBuf::from)
         .chain(default_sdk_dirs(env));
     for root in candidates {
         let emulator = root.join("emulator").join(format!("emulator{exe}"));
@@ -100,7 +101,20 @@ pub(crate) async fn discover(env: &SdkEnv) -> (Availability, Vec<Avd>, Option<An
         Err(availability) => return (availability, Vec::new(), None),
     };
     let avds = match run_tool(&sdk.emulator, &["-list-avds"]).await {
-        Ok(output) => parse_avds(&output.stdout),
+        Ok(output) if output.success => parse_avds(&output.stdout),
+        Ok(_) => {
+            return (
+                availability(
+                    AvailabilityKind::SdkMissing,
+                    format!(
+                        "{} could not list virtual devices. Check that the Android SDK installation is intact.",
+                        sdk.emulator.display()
+                    ),
+                ),
+                Vec::new(),
+                Some(sdk),
+            );
+        }
         Err(message) => {
             return (
                 availability(AvailabilityKind::SdkMissing, message),
@@ -151,7 +165,10 @@ fn parse_avds(stdout: &str) -> Vec<Avd> {
         .lines()
         .map(str::trim)
         .filter(|line| {
-            !line.is_empty() && !line.starts_with("INFO") && !line.starts_with("WARNING")
+            !line.is_empty()
+                && !["INFO", "WARNING", "ERROR", "emulator:"]
+                    .iter()
+                    .any(|prefix| line.starts_with(prefix))
         })
         .map(|name| Avd {
             name: name.to_owned(),
@@ -257,6 +274,29 @@ mod tests {
         assert_eq!(
             locate_sdk(&env).unwrap().emulator,
             first.root().join("emulator/emulator")
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_avd_listing_is_not_parsed_into_avds() {
+        let sdk = FakeSdk::new().avds(&["a"]).write();
+        let script = "#!/bin/sh\necho 'ERROR | broken sdk'\nexit 1\n";
+        std::fs::write(sdk.root().join("emulator/emulator"), script).unwrap();
+        let (availability, avds, _) = discover(&sdk.env()).await;
+        assert_eq!(availability.kind, AvailabilityKind::SdkMissing);
+        assert!(avds.is_empty());
+    }
+
+    #[test]
+    fn empty_android_home_falls_through_to_sdk_root() {
+        let sdk = FakeSdk::new().write();
+        let mut env = sdk.env();
+        env.vars.insert("ANDROID_HOME".into(), OsString::new());
+        env.vars
+            .insert("ANDROID_SDK_ROOT".into(), sdk.root().into());
+        assert_eq!(
+            locate_sdk(&env).unwrap().emulator,
+            sdk.root().join("emulator/emulator")
         );
     }
 }

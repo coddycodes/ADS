@@ -1,7 +1,8 @@
 //! In-process fake of the emulator gRPC controller for hermetic tests.
 
+#[cfg(unix)]
+use std::path::{Path, PathBuf};
 use std::{
-    path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, Mutex},
 };
