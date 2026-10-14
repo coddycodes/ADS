@@ -29,9 +29,9 @@
 Facts that cannot be verified on the development Mac (no Android SDK). Each task that depends on one codes against the stated assumption, keeps it in one named constant or function, and the native run (Task 14) confirms or corrects it:
 
 1. gRPC discovery file: `<ANDROID_EMULATOR_HOME or ~/.android>/avd/running/pid_<pid>.ini` with `grpc.port=` and `grpc.token=` lines (`device::emulator::discovery_file_path`). Whether `-grpc-use-token` is needed (`device::emulator::EMULATOR_GRPC_FLAGS`).
-2. Rotation vectors for `setPhysicalModel(ROTATION)` (`device::input::rotation_vector`).
-3. Touch coordinates are in the current orientation's display pixels (`device::input::to_device_pixels`).
-4. scrcpy v4.1 accepts the spec's arguments and emits the documented 12-byte codec header and 12-byte packet headers (`device::scrcpy`).
+2. Rotation vectors for `setPhysicalModel(ROTATION)` (`device::input::rotation_vector`). The command only tilts the virtual sensor; the screen rotates only if auto-rotate is on and the foreground app allows it. The **reported** orientation (`Image.format.rotation`) is therefore the only source of truth for the catalog, never the command.
+3. Whether `streamScreenshot` returns native-size images with rotated content plus `format.rotation` (client applies the rotation as a canvas transform) or already-rotated dimensions; and whether touch coordinates are in the current orientation's display pixels (`device::input::to_device_pixels`, `deviceGeometry.displaySize`). The code assumes rotated dimensions in images and current-orientation touch pixels; both live in those two functions only.
+4. scrcpy v4.1 accepts the spec's arguments and emits the documented 12-byte codec header and 12-byte packet headers (`device::scrcpy`), and emits a new config unit with swapped dimensions after a rotation.
 
 ## Review Focus
 
@@ -177,8 +177,16 @@ commit_control.device_previews_enabled.send_if_modified(|current| {
 
 - [ ] **Step 4: Run tests, expect PASS** (same commands).
 
+- [ ] **Step 4b: Format the design documents** committed before dependencies were installed:
+```bash
+vp install
+vp fmt docs/superpowers/specs/2026-10-14-android-device-previews-design.md docs/superpowers/plans/2026-10-14-android-device-previews.md
+```
+Include any resulting changes in this task's commit.
+
 - [ ] **Step 5: Commit**
 ```bash
+git add docs/superpowers/specs/2026-10-14-android-device-previews-design.md docs/superpowers/plans/2026-10-14-android-device-previews.md
 git add packages/contracts/src/settings.ts packages/contracts/src/settings.test.ts packages/contracts/src/environment.ts apps/server/src/production/control.rs apps/server/src/lifecycle.rs
 git commit -m "feat(settings): add enableDevicePreviews setting and capability (#70)"
 ```
@@ -267,6 +275,8 @@ Fake frames: native size 1080×2400; `screenshot`/`stream_screenshot` scale to t
 
 - [ ] **Step 5: Implement `grpc.rs`**
 ```rust
+// Generated code: the workspace denies all warnings (`[workspace.lints.rust] warnings = "deny"`).
+#[allow(warnings, clippy::all, clippy::pedantic)]
 pub(crate) mod proto {
     tonic::include_proto!("android.emulation.control");
 }
@@ -558,7 +568,7 @@ pub struct RegisteredHelper { pub child: Box<dyn ChildWrapper>, pub pid: u32, pu
 pub async fn spawn_registered_helper(command: CommandWrap, exe: String, label: &str, registry: &ProcessAttributionRegistry) -> Result<RegisteredHelper, String>
 impl RegisteredHelper {
     pub fn exited(&self) -> Option<ExitStatus>;            // crate::process::exited_status
-    pub async fn terminate(mut self);                       // start_kill + wait
+    pub async fn terminate(mut self);                       // crate::process::supervised::terminate_and_wait: kills the whole process group, waits, then the root; logs the ProcessCleanupReport via log_cleanup_failures
     pub fn report_unrequested_exit(&self, label: &str, status: &ExitStatus); // tracing::warn + exits::report_exit(Watch::Failures, kind "command")
 }
 ```
@@ -643,7 +653,27 @@ async fn stop_escalates_to_kill_when_vm_ignores_shutdown() {
     tokio::time::timeout(STOP_TIMEOUT + Duration::from_secs(5), stop(running)).await.unwrap();
     assert!(!process_alive(pid));
 }
+
+#[tokio::test]
+async fn stop_kills_grandchildren_of_the_emulator_launcher() {
+    // The real `emulator` launcher may run qemu as a child rather than exec it.
+    let controller = FakeController::spawn().await;
+    let sdk = FakeSdk::new().avds(&["Pixel"]).launch_stub(LaunchStub::ForksChild { grpc_port: controller.port, token: "test-token" }).write();
+    let running = sdk.launcher().launch("Pixel", |_| {}, &CancellationToken::new()).await.unwrap();
+    let child_pid = sdk.wait_forked_child_pid().await; // the stub writes `sleep`'s pid to a file
+    stop(running).await;
+    wait_until(|| !process_alive(child_pid)).await;
+}
+
+#[test]
+fn software_gpu_only_on_headless_linux() {
+    assert!(software_gpu_for("linux", |_| None));
+    assert!(!software_gpu_for("linux", |key| (key == "DISPLAY").then(|| ":0".into())));
+    assert!(!software_gpu_for("linux", |key| (key == "WAYLAND_DISPLAY").then(|| "wayland-0".into())));
+    assert!(!software_gpu_for("macos", |_| None));
+}
 ```
+`LaunchStub::ForksChild` runs `sleep 600 & echo $! > "$FORK_PID_FILE"; wait` (no `exec`) after writing the discovery file.
 (`start_paused` cannot drive real child processes; if the paused-time test is flaky, make `BOOT_TIMEOUT` a field on `EmulatorLauncher` with the constant as default and set 2 s in the test instead.)
 
 Launch stubs (`testing.rs`): `LaunchStub::Runs` writes a script that writes `grpc.port=<port>\ngrpc.token=<token>` to `$DISCOVERY_DIR/pid_$$.ini` then `exec sleep 600`; `IgnoresShutdown` adds `trap '' TERM`; `ExitsWith(code, msg)` prints `msg` to stderr and exits. Fake `adb` handles `-s <serial> wait-for-device` (exit 0) and `-s <serial> shell getprop sys.boot_completed` (prints `1` once a counter file reaches `boot_completed_after`, else empty; `never_boots` always empty). `DISCOVERY_DIR` is passed to the stub through the environment of the spawned command (the launcher sets `ANDROID_EMULATOR_HOME` for the child to the parent of `discovery_dir/..`; the stub reads `$ANDROID_EMULATOR_HOME/avd/running`).
@@ -666,7 +696,17 @@ pub(crate) fn spawn_args(avd: &str, ports: &EmulatorPorts, software_gpu: bool) -
 1. Pick ports: console = first even port in 5554..=5682 where both `port` and `port+1` bind on `127.0.0.1` (probe with `std::net::TcpListener::bind` and drop); grpc = OS-assigned port from binding `127.0.0.1:0`.
 2. Build `CommandWrap::with_new(&self.sdk.emulator, |c| { c.args(spawn_args(..)).stdin(null).stdout(null).stderr(piped) })`, `configure_supervised_background_command_wrap`, `spawn_registered_helper(.., "android-emulator", &self.registry)`. Keep the last 4 KiB of stderr in a ring buffer task for `LaunchError::Exited`.
 3. Poll every 250 ms until deadline `BOOT_TIMEOUT`: if `helper.exited()` → terminate and `Err(Exited(stderr tail or status))`; if no client yet and the discovery file parses → `EmulatorClient::connect(port, token)`; once `client.status()` succeeds call `on_phase(Booting)` once; then run `adb -s emulator-<console> shell getprop sys.boot_completed` (`run_supervised`, 10 s timeout) until stdout trims to `"1"`. Cancellation → terminate, `Err(Cancelled)`. Deadline → terminate, `Err(BootTimeout)`.
-4. Read native size with `client.screenshot(ImgFormat::Rgb888, 0)` → `format.width/height`.
+4. Read native size with `client.screenshot(ImgFormat::Png, 0)` → `format.width/height`. PNG avoids the `FAILED_PRECONDITION` the proto documents for non-PNG formats before the guest posts a frame; still retry up to 10 times, 500 ms apart, on any error.
+
+Also add to `emulator.rs`:
+```rust
+/// `-gpu swiftshader_indirect` only on a Linux server without a display; elsewhere the
+/// emulator's `auto` GPU mode works headless.
+pub(crate) fn software_gpu_for(os: &str, var: impl Fn(&str) -> Option<OsString>) -> bool {
+    os == "linux" && var("DISPLAY").is_none() && var("WAYLAND_DISPLAY").is_none()
+}
+```
+`EmulatorLauncher.software_gpu` is `software_gpu_for(std::env::consts::OS, |key| std::env::var_os(key))`, computed once in `DeviceManager::start` (Task 5).
 `stop`: `exits::note_stop_requested(pid)` (match its actual signature in `diagnostics/profiler/exits.rs:377`), `client.shutdown_vm()` (ignore error), wait up to `STOP_TIMEOUT` polling `helper.exited()`, then `helper.terminate().await`, then remove the discovery file.
 
 - [ ] **Step 4: Run** `cargo test -p bibcode-server device::emulator process::registered_helper managed_endpoint` → PASS (managed endpoint tests guard the moved liveness helper).
@@ -766,6 +806,8 @@ async fn unknown_avd_is_rejected_before_spawning() {
 - Setting follower: on `false`, `close` every non-terminal slot.
 - `shutdown`: cancel `shutdown`, close every slot concurrently (`futures_util::future::join_all`), then `tracker.close(); tracker.wait()`.
 - Publish snapshots sorted by device id; drop `Stopped`/`Failed` slots older than the newest 4 to bound the catalog.
+- `refresh()` reruns discovery at most once per 30 s (cache the last result with its `Instant`); `refresh_now()` bypasses the cache and is used by `open` when the AVD is unknown and by the MCP `device_list` tool. Test: `refresh_is_cached_for_30_seconds` counts fake `-list-avds` invocations across two `refresh()` calls.
+- Orientation in snapshots is written only from what the emulator reports (Task 6), never from a `rotate` command.
 
 Step 3b, profiler event (in `mod.rs`):
 ```rust
@@ -923,13 +965,29 @@ async fn dangling_touch_is_released_on_stream_reset() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn rotate_sends_vector_and_updates_catalog() {
+async fn rotate_sends_vector_but_catalog_follows_reported_rotation() {
     let fixture = ManagerFixture::ready_device().await;
+    fixture.controller.report_rotation(SkinRotation::Portrait); // app refuses to rotate
     fixture.manager.rotate(&fixture.id, Orientation::Landscape).await.unwrap();
     assert_eq!(fixture.controller.rotations.lock().unwrap().last(), Some(&[0.0, 0.0, -90.0]));
+    assert_eq!(fixture.snapshot().orientation, Orientation::Portrait);
+    fixture.controller.report_rotation(SkinRotation::Landscape);
+    fixture.manager.rotate(&fixture.id, Orientation::Landscape).await.unwrap();
+    fixture.wait_orientation(Orientation::Landscape).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn frame_stream_updates_orientation_and_size() {
+    let fixture = ManagerFixture::ready_device().await;
+    let mut sub = fixture.manager.subscribe_frames(&fixture.id).unwrap();
+    fixture.controller.report_rotation(SkinRotation::Landscape); // fake now serves 2400x1080 frames
+    let frame = wait_frame(&mut sub, |frame| frame.orientation == Orientation::Landscape).await;
+    assert!(frame.width > frame.height);
     assert_eq!(fixture.snapshot().orientation, Orientation::Landscape);
 }
 ```
+(`FakeController::report_rotation` sets `ImageFormat.rotation` on every served image and swaps the served dimensions, matching native verification item 3's assumption.)
 
 - [ ] **Step 2: Run** → FAIL.
 
@@ -948,7 +1006,9 @@ pub(crate) fn encode_rgb888(rgb: &[u8], width: u32, height: u32) -> Result<Vec<u
     Ok(out)
 }
 ```
-Producer task: `client.stream_screenshot(JPEG_MAX_WIDTH)`; for each image, skip if less than `JPEG_MIN_INTERVAL` since the last published frame (keep the newest pending and publish it when the interval elapses), encode on `tokio::task::spawn_blocking`, publish `Some(JpegFrame { seq, .. })` via `watch::Sender::send_replace`. On stream error, `tracing::warn!` and retry after 1 s while subscribers remain and the device is `Ready`. Orientation in the frame comes from the catalog snapshot.
+Producer task: `client.stream_screenshot(JPEG_MAX_WIDTH)`; for each image, skip if less than `JPEG_MIN_INTERVAL` since the last published frame (keep the newest pending and publish it when the interval elapses), encode on `tokio::task::spawn_blocking`, publish `Some(JpegFrame { seq, .. })` via `watch::Sender::send_replace`. On stream error, `tracing::warn!` and retry after 1 s while subscribers remain and the device is `Ready`. Orientation in the frame comes from the image's `format.rotation`; when it differs from the catalog snapshot, the producer updates the snapshot (orientation, width, height) through `DeviceManager::set_reported_orientation`.
+
+`rotate`: send `rotation_vector`, then call `client.screenshot(ImgFormat::Png, 1)` up to 5 times 300 ms apart and publish whatever `format.rotation` reports (so the catalog updates even when no frame subscriber is active). The catalog is never set from the requested orientation.
 
 Input: per device keep `InputState { sink: mpsc::Sender<InputEvent>, pressed: BTreeSet<u32> }` created lazily from `client.input_sink()`. Validate the whole batch first (≤ 64 events, text ≤ 1,000 chars, finite coordinates). If `sink.send` fails (stream closed), create a new sink, then send a release (`pressure 0`) for every pointer in `pressed`, clear it, and resend the current event. Touch → `TouchEvent { touches: [Touch { x, y, identifier: pointer_id, pressure: if Up|Cancel {0} else {1}, expiration: NeverExpire }] }`; Key → `KeyboardEvent { code_type: Usb (ignored when key set), event_type: keydown|keyup, key: w3c_key(..) }`; Text → `KeyboardEvent { text }`.
 `to_device_pixels`: in Portrait/ReversePortrait use `(width, height)`; in Landscape/ReverseLandscape use `(height, width)`; `x = (x.clamp(0,1) * w).min(w-1)`, same for y.
@@ -999,8 +1059,8 @@ export class DeviceInputError extends Schema.TaggedError<DeviceInputError>()("De
 export const DeviceRpcError = Schema.Union([DevicePreviewsDisabledError, DeviceSdkUnavailableError, DeviceLimitError, DeviceNotFoundError, DeviceNotReadyError, DeviceInputError]);
 ```
 (Use the same `Schema.check`/length helpers that neighbouring contracts use — `rg -n "isMaxLength|maxLength" packages/contracts/src | head -3` — and match their spelling.)
-- RPC names (WS_METHODS keys → wire): `deviceSubscribeCatalog: "device.subscribeCatalog"`, `deviceOpen: "device.open"`, `deviceClose: "device.close"`, `deviceInput: "device.input"`, `deviceRotate: "device.rotate"`, `deviceSubscribeFrames: "device.subscribeFrames"`, `deviceCreateMediaTicket: "device.createMediaTicket"`. Every Rpc's `error` is `Schema.Union([DeviceRpcError, EnvironmentRpcError])`; streams set `stream: true`.
-- `createMediaTicket` is declared here but registered in Task 11; until then `methods.rs` omits it and the manifest omits it (both added in Task 11), so `validate_complete` stays green.
+- RPC names (WS_METHODS keys → wire): `deviceSubscribeCatalog: "device.subscribeCatalog"`, `deviceOpen: "device.open"`, `deviceClose: "device.close"`, `deviceInput: "device.input"`, `deviceRotate: "device.rotate"`, `deviceSubscribeFrames: "device.subscribeFrames"`. (`DeviceMediaTicket` schema may live in `device.ts` now; the method arrives in Task 11.) Every Rpc's `error` is `Schema.Union([DeviceRpcError, EnvironmentRpcError])`; streams set `stream: true`.
+- `device.createMediaTicket` is **entirely absent** from this task: no `WS_METHODS` key, no `Rpc`, no `WsRpcGroup` entry, no manifest entry, no `methods.rs`/`scope.rs` entry. Task 11 adds all of them together, so the RPC parity tests and `validate_complete` never see a partial method.
 
 - [ ] **Step 1: Failing tests**
 
@@ -1312,7 +1372,7 @@ it("keeps going after a failed send", async () => { /* send rejects once; next p
 
 - [ ] **Step 4: Run** the Step 2 command → PASS; then `vp run typecheck`.
 
-- [ ] **Step 5: Review** changed components against `/vercel-react-best-practices` and `UI.md` (disabled-state titles, actionable errors, the off-toggle confirmation preserving the user's running device). Note the results for the final report.
+- [ ] **Step 5: Review** changed components and hooks against `/vercel-react-best-practices` and `UI.md` (disabled-state titles, actionable errors, the off-toggle confirmation preserving the user's running device). If the `vercel-react-best-practices` skill is unavailable in the session, report that review as **not run** (AGENTS.md completion rule 5); do not substitute a self-review for it. Note both results for the final report.
 
 - [ ] **Step 6: Commit** `feat(web): device preview pane with JPEG rendering and input (#70)`.
 
@@ -1395,8 +1455,8 @@ async fn session_streams_units_and_sends_reset() {
 
 - [ ] **Step 3: Implement** `start`:
 1. `adb -s <serial> shell sha256sum /data/local/tmp/bibcode-scrcpy-server-v4.1.jar`; push only when the hash differs (`adb -s <serial> push <tempfile> <remote>` with the embedded bytes written to a temp file).
-2. `scid = rand::random::<u32>() & 0x7fff_ffff` (use the crate's existing randomness source, e.g. `getrandom`).
-3. `adb -s <serial> forward tcp:0 localabstract:scrcpy_<scid as 8 hex>`; parse the printed local port.
+2. `scid` = a random `u32` from `getrandom` masked with `0x7fff_ffff` (scrcpy requires a positive 31-bit value), always rendered as exactly 8 lowercase hex digits: `format!("{scid:08x}")` — both in `scid=` and in the socket name.
+3. `adb -s <serial> forward tcp:0 localabstract:scrcpy_{scid:08x}`; parse the printed local port.
 4. Spawn `adb -s <serial> shell <server_args…>` through `spawn_registered_helper(.., "android-scrcpy", registry)`.
 5. Connect the video socket to `127.0.0.1:<port>` (retry every 100 ms for 5 s; scrcpy needs a moment to listen), read the dummy byte, then connect the control socket; read the codec header.
 6. Spawn a reader task that loops `read_exact(12)` → header → `read_exact(len)` → send `VideoUnit` on a `mpsc::channel(64)`; on EOF or error, log with `tracing::warn!` and end (the channel closes).
@@ -1413,7 +1473,7 @@ async fn session_streams_units_and_sends_reset() {
 **Files:**
 - Create: `apps/server/src/device/media.rs`, `apps/server/src/device/media_socket.rs`
 - Modify: `apps/server/src/production/http_routes.rs:324` (route), `HttpRoutesState` (add `devices: DeviceManager`), `apps/server/src/production/device_rpc.rs` (ticket RPC), `apps/server/src/rpc/session.rs` (record the connection channel), `apps/server/src/rpc/e2ee.rs` (mark context as E2EE), `apps/server/src/http.rs:364-376` (mark plain)
-- Modify: contracts `rpc.ts` (+ `deviceCreateMediaTicket` Rpc), manifest, `methods.rs` (`read_unary("device.createMediaTicket")`), `scope.rs` (read arm)
+- Modify, all in this task and together (Task 7 deliberately left every piece out): contracts `rpc.ts` (`WS_METHODS.deviceCreateMediaTicket: "device.createMediaTicket"`, `WsDeviceCreateMediaTicketRpc` with payload `DeviceIdInput`, success `DeviceMediaTicket`, error `Schema.Union([DeviceRpcError, EnvironmentRpcError])`, and its `WsRpcGroup` entry), `fixtures/rpc-wire/manifest.json` (`unary`), `methods.rs` (`read_unary("device.createMediaTicket")`), `scope.rs` (`SCOPE_ORCHESTRATION_READ` arm)
 - Test: unit tests in `media.rs`; `apps/server/tests/device_media_socket.rs`
 
 **Interfaces:**
@@ -1611,18 +1671,23 @@ it("uses jpeg when VideoDecoder is missing", () => { /* expect { kind: "jpeg", r
 it("falls back to jpeg when no frame arrives within 5 s", () => { /* fake timers */ });
 it("falls back to jpeg on decoder error and closes the socket", () => {});
 it("re-requests a ticket on reconnect", () => {});
+// deviceVideo worker (decoder logic extracted as a pure `createDecoderPipeline(decoderFactory)` for testing)
+it("reconfigures and resizes on a second config frame with swapped dimensions", () => {
+  /* feed config(1280x576 SPS) after config(576x1280 SPS); expect configure called twice and a resize message 1280x576 */
+});
+it("drops deltas between a reconfigure and the next key frame", () => {});
 ```
 
 - [ ] **Step 2: Run** `vp test packages/client-runtime/src/device apps/web/src/components/device` → FAIL.
 
 - [ ] **Step 3: Implement**
 - `mediaSocket.ts` plain: `new WebSocket(url)`, `binaryType = "arraybuffer"`, on open send `JSON.stringify({type:"ticket",ticket})`, on message `parseMediaFrame(new Uint8Array(data))`. E2EE: `createNkInitiator({ responderStaticPublicKey: decodeBase64UrlKey(hostKey) })`, send `writeMessageA(new Uint8Array())`, read message B, `split()`, send the ticket as records (`splitIntoRecords` + `transport.send.encryptWithAd(EMPTY, record)`), decrypt incoming with `transport.receive.decryptWithAd` into a `RecordAssembler`, and `parseMediaFrame` each assembled message. `requestKeyframe` sends `{"type":"keyframe"}` (encrypted on E2EE).
-- Worker: receives `{ type: "start", target, ticket, canvas?: OffscreenCanvas }`; owns the socket and a `VideoDecoder` configured from the first config frame (`codec: avcCodecString(sps)`, `optimizeForLatency: true`, Annex-B input so no `description`); decodes `key`/`delta` as `EncodedVideoChunk({ type: kind === "key" ? "key" : "delta", timestamp: Number(ptsUs), data })`; draws each `VideoFrame` to the `OffscreenCanvas` (or posts it, transferred, to the main thread when no canvas was given) and closes it; on decoder error posts `{type:"error"}` and requests a keyframe once before giving up; posts `{type:"firstFrame"}` once.
+- Worker: receives `{ type: "start", target, ticket, canvas?: OffscreenCanvas }`; owns the socket and a `VideoDecoder` that is (re)configured on **every** config frame (`codec: avcCodecString(sps)`, `optimizeForLatency: true`, Annex-B input so no `description`), resizing the canvas to the new coded size and posting `{type:"resize", width, height}` so the main thread recomputes the letterbox — scrcpy sends a new config with swapped dimensions after a rotation; until the next key frame after a reconfigure, deltas are dropped; decodes `key`/`delta` as `EncodedVideoChunk({ type: kind === "key" ? "key" : "delta", timestamp: Number(ptsUs), data })`; draws each `VideoFrame` to the `OffscreenCanvas` (or posts it, transferred, to the main thread when no canvas was given) and closes it; on decoder error posts `{type:"error"}` and requests a keyframe once before giving up; posts `{type:"firstFrame"}` once.
 - `useDeviceVideo`: if `typeof VideoDecoder === "undefined"` or `VideoDecoder.isConfigSupported({ codec: "avc1.42E01F" })` is not supported → jpeg/unsupported. Otherwise mint a ticket (`deviceEnvironment.createMediaTicket`), start the worker (transfer `canvas.transferControlToOffscreen()` when available), 5 s first-frame timer → jpeg/noFirstFrame, worker error → jpeg/decoderError, socket close with a ticket reason → jpeg/rejected, transient close → new ticket and restart (max 3 retries per minute, then jpeg). `DeviceScreen` renders the JPEG path only when the mode is `jpeg` (subscribing to `frames` only then, so the JPEG producer does not run while H.264 works).
 
 - [ ] **Step 4: Run** → PASS; `vp run typecheck`.
 
-- [ ] **Step 5: Review** with `/vercel-react-best-practices` (worker lifetime tied to effect cleanup, no re-render per frame) and `UI.md` (a small "Low-bandwidth mode" badge with a tooltip explaining why when the mode is `jpeg`).
+- [ ] **Step 5: Review** with `/vercel-react-best-practices` (worker lifetime tied to effect cleanup, no re-render per frame) and `UI.md` (a small "Low-bandwidth mode" badge with a tooltip explaining why when the mode is `jpeg`). If the skill is unavailable, report the React review as **not run**.
 
 - [ ] **Step 6: Commit** `feat(web): H.264 device video via WebCodecs worker with JPEG fallback (#70)`.
 
@@ -1652,5 +1717,12 @@ Expected: all pass. Fix and re-run only what failed.
 - [ ] **Step 3: Native acceptance (needs an Android SDK host)** following the new runbook section on a Linux KVM server reached from a remote desktop client and a browser-mode client; record results in a report from `docs/testing/execution-report-template.md` (outside the repo). Confirm or correct each "Native verification item"; any correction is a code change with its test updated.
 
 - [ ] **Step 4: Final review** — `git diff main...` and `git status --short` for stray files, debug output, dependency drift; confirm `.codegraph/` is untouched.
+
+- [ ] **Step 4b: Final report contents** (AGENTS.md task completion requirements):
+  - exact validation commands run and their results, and any command that could not run;
+  - a profiler coverage line: child processes (`android-emulator`, `android-scrcpy` registered, `report_exit(Watch::Failures)`, requested stops noted), RPC methods (session wrappers; `device.close` in `is_long_running`), shutdown (`DeviceManager::shutdown` before the profiler teardown), events (`device.lifecycle`, documented);
+  - testing runbooks: which were changed, or that they were reviewed and remain accurate;
+  - React review result (`vercel-react-best-practices`: run, or not run because unavailable) and `UI.md` review result;
+  - residual risk: native acceptance status and every native verification item not yet confirmed on a real SDK.
 
 - [ ] **Step 5: Commit** `docs: device previews architecture, user guide and validation runbooks (#70)`.
