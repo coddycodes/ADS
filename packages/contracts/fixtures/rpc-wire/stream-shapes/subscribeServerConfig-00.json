@@ -48,6 +48,7 @@
           "enableChatAgentActivity": true,
           "enableTerminalAgentActivity": false,
           "enableProfiler": false,
+          "enableDevicePreviews": false,
           "automaticGitFetchInterval": 180000,
           "defaultThreadEnvMode": "local",
           "newWorktreesStartFromOrigin": false,
