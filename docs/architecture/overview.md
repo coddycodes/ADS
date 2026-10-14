@@ -1198,6 +1198,29 @@ it and early output (a known limitation of surviving streams). A reopen
 therefore leaves the first-attachment grant available for the next
 claim-carrying attach.
 
+A PTY's reader thread hands its reads to the manager through a channel of 1024,
+and the manager publishes the reads already waiting together, up to 64 KiB per
+event. A program printing thousands of short lines wrote faster than one read
+per publication, and the earlier 256-read channel dropped many of its lines
+before they reached the history. The channel still drops output, recorded as a
+gap, when the manager stalls for longer than 1024 reads.
+
+Every terminal's events go through one shared channel of 512 events. A
+`terminal.attach` stream sends the events already waiting together in one chunk
+(at most 64 items or 32 KiB, which bounds its 64-chunk queue at about 2 MiB), so a burst of output does not wait for one
+acknowledgement per event. A stream that still falls further behind than the
+channel holds no longer skips the lost events, which left lines missing from
+the terminal. It sends the session's state instead, with history and sequence
+read together under the session lock, and then only newer events. A chunk with
+such a snapshot waits until the chunks already queued for the client have gone
+out, so at most one waits. When the
+process is the one the stream last saw, the `snapshot` is marked
+`resync: true`: the client replaces its transcript, size and status but keeps
+the attachment generation, so input still waiting to be written survives.
+After a restart, or one that may have been among the lost events, it is a
+plain `snapshot`, handled as a new attachment. Clients that predate the flag
+handle every resync that way.
+
 Resize requests publish `resized { size }` after the PTY accepts the size,
 before subsequent output can publish. Claim-only changes publish; exact no-ops
 do not. Failed resizes preserve the prior state. Legacy resizes without a claim

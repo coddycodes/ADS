@@ -9,7 +9,7 @@ pub use input::TerminalInputError;
 pub(crate) use input::{InputReadmissionScope, TerminalInputAdmission};
 pub(crate) use manager::TerminalSessionIdentity;
 pub use manager::{
-    SubprocessInspection, TerminalAttachment, TerminalError, TerminalEventReceiver,
+    AttachmentItem, SubprocessInspection, TerminalAttachment, TerminalError, TerminalEventReceiver,
     TerminalManager, TerminalManagerOptions, TerminalMetadataAttachment,
     TerminalSubprocessInspector, WorktreeRemovalGuard,
 };

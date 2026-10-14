@@ -197,6 +197,32 @@ describe("createTerminalTranscriptRuntime", () => {
     expect(runtime.metadata().consoleTheme).toBe("dark");
   });
 
+  it("replaces the transcript on a resync but keeps the attachment generation", () => {
+    const runtime = createTerminalTranscriptRuntime();
+    runtime.ingest(snapshot("boot\n"));
+    runtime.ingest(output("partial"));
+    const generation = runtime.metadata().generation;
+    const signals: TerminalRenderSignal[] = [];
+    runtime.attachRenderer((signal) => signals.push(signal));
+    signals.length = 0;
+
+    // The server fell behind and lost output, and the process exited meanwhile: it sends the
+    // session's whole state again.
+    runtime.ingest({
+      type: "snapshot",
+      snapshot: snapshotData("boot\nall of the output\n", "exited"),
+      resync: true,
+    });
+
+    expect(runtime.snapshot()).toBe("boot\nall of the output\n");
+    expect(signals).toEqual([{ type: "reset", snapshot: "boot\nall of the output\n" }]);
+    expect(runtime.metadata().status).toBe("exited");
+    // Same process: input waiting to be written is not discarded as for a new attachment.
+    expect(runtime.metadata().generation).toBe(generation);
+    runtime.ingest(snapshot("fresh\n"));
+    expect(runtime.metadata().generation).toBe(generation + 1);
+  });
+
   it("attach plus live output reconstructs exactly with no gap or duplicate (C1)", () => {
     const runtime = createTerminalTranscriptRuntime();
     runtime.ingest(snapshot("boot\n"));

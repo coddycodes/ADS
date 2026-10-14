@@ -20,7 +20,8 @@
         "sequence": 2147483622,
         "oscColorResponderActive": false,
         "firstAttachmentGrant": false
-      }
+      },
+      "resync": false
     }
   ]
 }
