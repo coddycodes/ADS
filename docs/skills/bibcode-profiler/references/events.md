@@ -213,7 +213,11 @@ figures go to every connected environment whose profiler is on.
 - `envId`, `clientId`;
 - `capabilities`: how the client measures:
   - `long-animation-frame` (WebView2, Chromium) or `heartbeat` (a 500 ms timer;
-    arriving over 50 ms late counts as a stall);
+    arriving over 50 ms late counts as a stall). The heartbeat runs only while
+    BiBCode's window is visible and has focus, because WebKit keeps a covered
+    window, or one on another Space, visible while macOS throttles its timers.
+    It also counts nothing for 20 s after a sleep, while the system catches up.
+    Builds through v0.9.2 counted both cases as stalls (#99);
   - `event` when Event Timing reports interactions;
   - `memory` when `jsHeapBytes` is available (Chromium);
 - `windowMs`;

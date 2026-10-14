@@ -324,7 +324,9 @@ covers every client and environment, and the evidence names the latest
 
 - **Severity:** `warn`.
 - **Raised when:** main-thread stalls add up to more than 1 s within one batch
-  window (about 10 s).
+  window (about 10 s). With the `heartbeat` capability (WebKit), stalls are
+  measured only while the window has focus, and not in the first 20 s after a
+  sleep.
 - **Evidence:** `stalls: { count, totalMs, maxMs }`.
 
 ### client.interaction

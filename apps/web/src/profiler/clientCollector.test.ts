@@ -10,11 +10,18 @@ function setVisibility(state: "visible" | "hidden"): void {
   document.dispatchEvent(new Event("visibilitychange"));
 }
 
+/** Whether BiBCode's window has focus; the page stays visible either way (#99). */
+function setFocus(focused: boolean): void {
+  vi.spyOn(document, "hasFocus").mockReturnValue(focused);
+  window.dispatchEvent(new Event(focused ? "focus" : "blur"));
+}
+
 /** Runs frame callbacks at once, so a slow record is ready for the next flush. */
 const nextFrame = (callback: () => void) => callback();
 
 afterEach(() => {
   Reflect.deleteProperty(document, "visibilityState");
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -467,6 +474,106 @@ describe("clientCollector", () => {
     t = 2_000;
     c.setEnabledEnvironments(new Set(["a", "b"]));
     spanning.complete();
+    await c.flush();
+    expect(send).not.toHaveBeenCalled();
+    c.dispose();
+  });
+
+  it("counts no stalls while the window is in the background, where macOS throttles its timers", async () => {
+    vi.useFakeTimers();
+    let t = 0;
+    const send = vi.fn(async (_environmentId: string, _batch: any) => ({ accepted: true }));
+    const c = createClientCollector({
+      now: () => t,
+      send,
+      supportedEntryTypes: [],
+      clientId: "c1",
+      raf: nextFrame,
+    });
+    c.setEnabledEnvironments(new Set(["e"]));
+    // Covered, or on another Space: App Nap aligns the timers to about 1 s (#99).
+    setFocus(false);
+    const occluded = c.observeRequest("e", "m");
+    for (let beat = 0; beat < 10; beat += 1) {
+      t += 1_050;
+      vi.advanceTimersByTime(1_050);
+    }
+    occluded.complete();
+    await c.flush();
+    expect(send).not.toHaveBeenCalled();
+    // In front again, a late heartbeat is a stall as before.
+    setFocus(true);
+    t += 500;
+    vi.advanceTimersByTime(500);
+    t += 930;
+    vi.advanceTimersByTime(500);
+    await c.flush();
+    expect(send.mock.calls[0]![1].stalls).toEqual({ count: 1, totalMs: 430, maxMs: 430 });
+    c.dispose();
+  });
+
+  it("ignores the heartbeat while the system catches up after waking", async () => {
+    vi.useFakeTimers();
+    let t = 0;
+    let wall = 1_000_000;
+    const send = vi.fn(async (_environmentId: string, _batch: any) => ({ accepted: true }));
+    const c = createClientCollector({
+      now: () => t,
+      wallNow: () => wall,
+      send,
+      supportedEntryTypes: [],
+      clientId: "c1",
+      raf: nextFrame,
+    });
+    c.setEnabledEnvironments(new Set(["e"]));
+    // An hour with the display off and the machine asleep: the monotonic clock stopped.
+    t = 500;
+    wall += 3_600_000;
+    vi.advanceTimersByTime(500);
+    // The ticks after waking run late while the system catches up (1,220 ms, then 300 ms).
+    for (const late of [1_220, 300, 0, 0]) {
+      t += 500 + late;
+      wall += 500 + late;
+      vi.advanceTimersByTime(500);
+    }
+    await c.flush();
+    expect(send).not.toHaveBeenCalled();
+    // Once caught up, a real stall counts.
+    while (t < 40_000) {
+      t += 500;
+      wall += 500;
+      vi.advanceTimersByTime(500);
+    }
+    t += 900;
+    wall += 900;
+    vi.advanceTimersByTime(500);
+    await c.flush();
+    expect(send.mock.calls[0]![1].stalls).toEqual({ count: 1, totalMs: 400, maxMs: 400 });
+    c.dispose();
+  });
+
+  it("ignores the catch-up after waking when the window was in the background through the sleep", async () => {
+    vi.useFakeTimers();
+    let t = 0;
+    let wall = 1_000_000;
+    const send = vi.fn(async (_environmentId: string, _batch: any) => ({ accepted: true }));
+    const c = createClientCollector({
+      now: () => t,
+      wallNow: () => wall,
+      send,
+      supportedEntryTypes: [],
+      clientId: "c1",
+      raf: nextFrame,
+    });
+    c.setEnabledEnvironments(new Set(["e"]));
+    // The screen locked, the machine slept, and the window got focus back on unlocking.
+    setFocus(false);
+    t = 200;
+    wall += 3_600_000;
+    setFocus(true);
+    t += 500 + 1_220;
+    wall += 500 + 1_220;
+    vi.advanceTimersByTime(500);
     await c.flush();
     expect(send).not.toHaveBeenCalled();
     c.dispose();
