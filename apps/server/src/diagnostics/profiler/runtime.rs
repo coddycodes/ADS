@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::{
     sync::{mpsc, watch},
@@ -611,9 +611,51 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Writes `session.start` each time recording starts, first among the detectors: which
+/// BiBCode recorded the events that follow under this `sid` (#98).
+pub struct SessionHeader {
+    host: &'static str,
+}
+
+impl SessionHeader {
+    /// `host` is `desktop` for the server inside the desktop app, `server` otherwise.
+    pub fn new(host: &'static str) -> Self {
+        Self { host }
+    }
+
+    fn payload(&self) -> Value {
+        json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "host": self.host,
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+        })
+    }
+}
+
+impl Detector for SessionHeader {
+    fn name(&self) -> &'static str {
+        "session"
+    }
+
+    fn start(&self, _cancel: CancellationToken) -> JoinHandle<()> {
+        super::emit(store::SESSION_START, self.payload());
+        tokio::spawn(async {})
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_names_the_build_that_recorded_it() {
+        let payload = SessionHeader::new("desktop").payload();
+        assert_eq!(payload["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(payload["host"], "desktop");
+        assert_eq!(payload["os"], std::env::consts::OS);
+        assert_eq!(payload["arch"], std::env::consts::ARCH);
+    }
 
     fn finding_line(last_seen: &str) -> String {
         format!(

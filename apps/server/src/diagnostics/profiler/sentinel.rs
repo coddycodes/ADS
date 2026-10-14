@@ -780,6 +780,13 @@ pub fn unrecorded_crash_finding(
     }
 }
 
+/// The BiBCode version of the latest run that used `dir`, running now or not (#98). The
+/// sentinel is written with the profiler off too, so this is not necessarily the version that
+/// recorded the events: `session.start` events and findings name that.
+pub(super) fn recorded_version(dir: &Path) -> Option<String> {
+    read(dir).map(|record| record.version)
+}
+
 fn read(dir: &Path) -> Option<SessionRecord> {
     serde_json::from_slice(&fs::read(dir.join(SESSION_FILE)).ok()?).ok()
 }

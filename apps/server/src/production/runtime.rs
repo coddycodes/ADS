@@ -30,7 +30,7 @@ use crate::{
             crash::MonitorDetector,
             latency::LatencyDetector,
             profiler_dir,
-            runtime::{Detector, ProfilerRuntime},
+            runtime::{Detector, ProfilerRuntime, SessionHeader},
             sampler::SamplerDetector,
             worktree_audit::{AuditSources, WorktreeAuditDetector},
         },
@@ -251,6 +251,10 @@ impl ProductionRuntime {
         let worktree_audit_sources = Arc::new(OnceLock::new());
         let sampler = SamplerDetector::new(process_attribution.clone());
         let mut profiler_detectors: Vec<Box<dyn Detector>> = vec![
+            Box::new(SessionHeader::new(match process_tree_cleanup {
+                ProcessTreeCleanup::StandaloneServer => "server",
+                ProcessTreeCleanup::EmbeddedHost => "desktop",
+            })),
             Box::new(match process_tree_cleanup {
                 ProcessTreeCleanup::StandaloneServer => sampler,
                 ProcessTreeCleanup::EmbeddedHost => sampler.in_desktop_host(),

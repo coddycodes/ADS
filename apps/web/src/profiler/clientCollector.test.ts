@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { APP_VERSION } from "../branding";
 import { bucketOf, createClientCollector } from "./clientCollector";
 import { rememberProfilerRefused } from "./profilerSupport";
 
@@ -63,6 +64,8 @@ describe("clientCollector", () => {
       "orchestration.dispatch",
     ]);
     expect(batch.records[0]).toMatchObject({ correlationId: "c1:2", rttMs: 380, startedAtMs: 20 });
+    // The server may run another version (#98).
+    expect(batch.appVersion).toBe(APP_VERSION);
     expect(batch.histograms.map((h: { method: string }) => h.method).sort()).toEqual([
       "orchestration.dispatch",
       "server.getConfig",

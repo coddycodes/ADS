@@ -4,6 +4,7 @@ import {
   WS_METHODS,
 } from "@bibcode/contracts";
 
+import { APP_VERSION } from "../branding";
 import { randomHex } from "../lib/utils";
 import { isProfilerUnsupported, profilerRefused, rememberProfilerRefused } from "./profilerSupport";
 
@@ -396,6 +397,7 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
           stalls: clientWide.stalls,
           interactions: clientWide.interactions,
           jsHeapBytes: heap,
+          appVersion: APP_VERSION,
         }),
       );
     }

@@ -353,6 +353,9 @@ fn write_symbolicated(out: &mut impl Write, symbolicated: &Value) -> io::Result<
 fn write_status(out: &mut impl Write, status: &Value) -> io::Result<()> {
     let on = status["enabled"].as_bool().unwrap_or(false);
     writeln!(out, "Profiler setting: {}", if on { "on" } else { "off" })?;
+    if let Some(version) = status["version"].as_str() {
+        writeln!(out, "Latest run: BiBCode {}", plain(version))?;
+    }
     if let Some(since) = status["recordingSince"].as_str() {
         writeln!(out, "Recording since: {}", plain(since))?;
     }

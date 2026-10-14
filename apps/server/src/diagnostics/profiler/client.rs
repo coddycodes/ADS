@@ -33,6 +33,7 @@ const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
 const MAX_RECORDS: usize = 64;
 const MAX_HISTOGRAMS: usize = 64;
 const MAX_METHOD_BYTES: usize = 128;
+const MAX_VERSION_BYTES: usize = 64;
 const MAX_ID_BYTES: usize = 64;
 const MAX_CAPABILITIES: usize = 32;
 const MAX_CAPABILITY_BYTES: usize = 64;
@@ -132,6 +133,10 @@ struct ClientBatch {
     stalls: Stalls,
     interactions: Interactions,
     js_heap_bytes: Option<f64>,
+    /// The client's own BiBCode version (#98): in browser or remote mode it can differ from
+    /// the server's. Older clients send none.
+    #[serde(default)]
+    app_version: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -284,6 +289,12 @@ impl ClientBatch {
             self.js_heap_bytes
                 .is_none_or(|bytes| bounded(bytes, MAX_HEAP_BYTES)),
             "jsHeapBytes is out of range.",
+        )?;
+        ensure(
+            self.app_version
+                .as_ref()
+                .is_none_or(|version| version.len() <= MAX_VERSION_BYTES),
+            "appVersion is over 64 bytes.",
         )
     }
 }
@@ -372,6 +383,7 @@ fn analyze(
             "stalls": stalls,
             "interactions": interactions,
             "jsHeapBytes": batch.js_heap_bytes,
+            "appVersion": batch.app_version,
         }),
     ));
     // Client-wide findings cite the batch event, which carries their figures.
@@ -722,6 +734,22 @@ mod tests {
             "server.getConfig"
         );
         assert_eq!(analysis.findings[0].0.severity, Severity::Error);
+    }
+
+    /// #98: the client's own version goes with its batch; an older client sends none.
+    #[test]
+    fn a_batch_carries_the_clients_version() {
+        let book = LatencyBook::default();
+        let older = analyze_with(&book, &batch(Vec::new()));
+        assert!(events(&older, "client.batch")[0]["appVersion"].is_null());
+
+        let mut newer = batch(Vec::new());
+        newer["appVersion"] = json!("0.9.3");
+        let analysis = analyze_with(&book, &newer);
+        assert_eq!(events(&analysis, "client.batch")[0]["appVersion"], "0.9.3");
+
+        newer["appVersion"] = json!("9".repeat(65));
+        assert!(validate(&newer).is_err(), "a version over 64 bytes");
     }
 
     #[test]

@@ -1497,6 +1497,13 @@ it.
   event dropped by a full channel is never cited.
 - `server.getProfilerStatus` returns the 20 newest findings without evidence;
   the CLI and MCP readers return the evidence too.
+- **Versions (#98).** Every event line names the build that wrote it
+  (`bibcode`), so retention and failed writes never part events from their
+  version. Each start of recording also writes a `session.start` event with
+  the version, host (`desktop` or `server`), OS and architecture. Findings
+  carry `firstVersion` and `lastVersion`, which are not part of the
+  fingerprint. Status reports the `version` in `session.json`, the latest run's, which may
+  not have recorded. Client batches carry the client's own `appVersion`.
 
 ### Crash capture
 
