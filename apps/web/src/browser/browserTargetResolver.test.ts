@@ -197,14 +197,15 @@ describe("browser target resolver", () => {
     });
   });
 
-  it("refuses relay environments", async () => {
+  it("routes relay loopback through the gateway on canonical localhost", async () => {
     readPreparedConnection.mockReturnValue(
       conn({ _tag: "RelayConnectionTarget" }, "https://abc.connect.example.com"),
     );
     const { resolvePreviewTarget } = await import("./browserTargetResolver");
-    expect(resolvePreviewTarget(env, "http://127.0.0.1:8080/")).toMatchObject({
-      kind: "unreachable",
-      reason: "relay",
+    expect(resolvePreviewTarget(env, "http://127.0.0.1:8080/x")).toEqual({
+      kind: "gateway",
+      via: "relay",
+      url: "http://localhost:8080/x",
     });
   });
 
@@ -433,12 +434,23 @@ describe("browser target resolver", () => {
 
   it("resolves agent url targets through the environment topology", async () => {
     const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    readPreparedConnection.mockReturnValue(
-      conn({ _tag: "RelayConnectionTarget" }, "https://abc.connect.example.com"),
-    );
+    readPreparedConnection.mockReturnValue(bearer("https://203.0.113.10"));
     expect(() =>
       resolveBrowserNavigationTarget(env, { kind: "url", url: "http://localhost:3000" }),
     ).toThrow("This address is on Build box, not this computer.");
+
+    // A relay environment's loopback is canonical too: the server names the preview hostname per open.
+    readPreparedConnection.mockReturnValue(
+      conn({ _tag: "RelayConnectionTarget" }, "https://abc.connect.example.com"),
+    );
+    expect(
+      resolveBrowserNavigationTarget(env, { kind: "url", url: "http://127.0.0.1:3000/app" }),
+    ).toEqual({
+      requestedUrl: "http://127.0.0.1:3000/app",
+      resolvedUrl: "http://localhost:3000/app",
+      resolutionKind: "direct",
+      environmentId: "environment-1",
+    });
 
     // Gateway-backed targets stay canonical; each client resolves them for its own view.
     readPreparedConnection.mockReturnValue(bearer("http://192.168.1.25:3773"));
@@ -457,7 +469,7 @@ describe("browser target resolver", () => {
 
   it("names the environment without transport jargon", async () => {
     const { UNREACHABLE_MESSAGES } = await import("./browserTargetResolver");
-    for (const reason of ["ssh", "relay", "public-host"] as const) {
+    for (const reason of ["ssh", "public-host"] as const) {
       expect(UNREACHABLE_MESSAGES[reason]("Box")).toBe(
         "This address is on Box, not this computer. Opening its ports from here isn't supported yet.",
       );

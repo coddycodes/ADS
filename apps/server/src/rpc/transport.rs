@@ -41,6 +41,14 @@ pub(crate) const CHUNKED_RPC_SUBPROTOCOL: &str = "bibcode.rpc.chunked.v1";
 pub(crate) const RECORD_FLAG_CONTROL: u8 = 0x02;
 /// E2EE feature that lets control records interleave with a split message.
 pub(crate) const E2EE_INTERLEAVE_FEATURE: &str = "interleave-v1";
+/// E2EE feature: large server messages may arrive raw-deflate compressed, every
+/// record of such a message carrying [`RECORD_FLAG_DEFLATE`].
+pub(crate) const E2EE_DEFLATE_FEATURE: &str = "deflate-v1";
+/// Set on every record of a compressed message, with the final or continuation value.
+pub(crate) const RECORD_FLAG_DEFLATE: u8 = 0x10;
+/// Smaller messages stay uncompressed: interactive replies keep content-independent
+/// sizes, which limits the length side channel compression opens (see the design).
+const DEFLATE_MIN_BYTES: usize = 16 * 1024;
 /// Plain messages up to this size stay one text frame on a chunked socket.
 pub(crate) const PLAIN_WHOLE_MESSAGE_MAX_BYTES: usize = 64 * 1024;
 /// Largest message a record-reassembling client accepts (64 MiB).
@@ -386,6 +394,8 @@ pub(crate) enum OutboundFraming {
     Encrypted {
         channel: Arc<Mutex<E2eeChannel>>,
         interleave: bool,
+        /// The client accepts compressed data messages ([`E2EE_DEFLATE_FEATURE`]).
+        deflate: bool,
     },
 }
 
@@ -420,6 +430,10 @@ impl OutboundFraming {
             Self::PlainRecords => true,
             Self::Encrypted { interleave, .. } => *interleave,
         }
+    }
+
+    fn deflates(&self) -> bool {
+        matches!(self, Self::Encrypted { deflate: true, .. })
     }
 
     fn record(&self, flag: u8, chunk: &[u8]) -> Result<Message, TransportError> {
@@ -616,8 +630,32 @@ where
         Message::Binary(bytes) => bytes,
         Message::Ping(_) | Message::Pong(_) | Message::Close(_) => return Ok(()),
     };
+    // Large data messages to a client that accepts it leave compressed, on a blocking
+    // thread so a multi-megabyte snapshot does not stall the runtime. The job shares the
+    // message's bytes and stops once this write is dropped, so a closed connection
+    // leaves no compression running outside its byte budget.
+    let compressed = if is_data && framing.deflates() && payload.len() >= DEFLATE_MIN_BYTES {
+        let shared: axum::body::Bytes = match &message {
+            Message::Text(text) => text.clone().into(),
+            Message::Binary(bytes) => bytes.clone(),
+            Message::Ping(_) | Message::Pong(_) | Message::Close(_) => return Ok(()),
+        };
+        let abandoned = CancellationToken::new();
+        let _abandon_on_drop = abandoned.clone().drop_guard();
+        tokio::task::spawn_blocking(move || deflate_message(&shared, &abandoned))
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let (payload, compression_flag) = match &compressed {
+        Some(compressed) => (compressed.as_slice(), RECORD_FLAG_DEFLATE),
+        None => (payload, 0),
+    };
     let records = plaintext_records(payload).map_err(|_| TransportError::Encode)?;
     for (index, (flag, chunk)) in records.enumerate() {
+        let flag = flag | compression_flag;
         if index > 0 {
             let lane = if framing.interleaves() {
                 control.as_deref_mut()
@@ -644,6 +682,27 @@ where
         }
     }
     Ok(())
+}
+
+/// A 4-byte big-endian uncompressed length, then raw deflate data; `None` when the
+/// result would not be smaller or the write was `abandoned`, checked between chunks.
+fn deflate_message(payload: &[u8], abandoned: &CancellationToken) -> Option<Vec<u8>> {
+    use std::io::Write as _;
+    const CHUNK_BYTES: usize = 256 * 1024;
+    let length = u32::try_from(payload.len()).ok()?;
+    let mut encoder = flate2::write::DeflateEncoder::new(
+        Vec::with_capacity(payload.len() / 4 + 4),
+        flate2::Compression::new(3),
+    );
+    encoder.get_mut().extend_from_slice(&length.to_be_bytes());
+    for chunk in payload.chunks(CHUNK_BYTES) {
+        if abandoned.is_cancelled() {
+            return None;
+        }
+        encoder.write_all(chunk).ok()?;
+    }
+    let compressed = encoder.finish().ok()?;
+    (compressed.len() < payload.len()).then_some(compressed)
 }
 
 /// Drains one finite snapshot: the heartbeat Ping and the control messages
@@ -764,6 +823,27 @@ mod tests {
     use axum::extract::ws::{CloseFrame, Utf8Bytes};
 
     use super::*;
+
+    #[test]
+    fn deflate_round_trips_and_stops_once_its_write_is_abandoned() {
+        use std::io::Read as _;
+        let payload = br#"{"activities":[{"kind":"tool"}]}"#.repeat(20_000);
+        let compressed =
+            deflate_message(&payload, &CancellationToken::new()).expect("compresses smaller");
+        assert_eq!(
+            compressed[..4],
+            u32::try_from(payload.len()).unwrap().to_be_bytes()
+        );
+        let mut inflated = Vec::new();
+        flate2::read::DeflateDecoder::new(&compressed[4..])
+            .read_to_end(&mut inflated)
+            .expect("raw deflate");
+        assert_eq!(inflated, payload);
+
+        let abandoned = CancellationToken::new();
+        abandoned.cancel();
+        assert_eq!(deflate_message(&payload, &abandoned), None);
+    }
     use crate::rpc::message::RequestId;
 
     type Recorded = Arc<Mutex<Vec<Message>>>;

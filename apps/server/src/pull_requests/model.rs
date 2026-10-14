@@ -248,6 +248,9 @@ pub enum Context {
         merge_policy: MergePolicy,
         capabilities: Box<HostCapabilities>,
         web_url: String,
+        /// Answered from the stored copy (`allowStale`); a live read follows.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        stale: bool,
     },
     Unavailable {
         code: UnavailableCode,

@@ -129,20 +129,20 @@ impl ConfiguredPullRequestsRpcServices {
             "pullRequests.getContext" => {
                 let input: ContextInput = decode(request.payload, operation)?;
                 validate_cwd(&input.cwd, operation)?;
-                encode(
+                let context = if input.rescan {
                     self.service
-                        .context(
-                            &input.cwd,
-                            if input.rescan {
-                                ContextRead::Rescan
-                            } else {
-                                ContextRead::Open
-                            },
-                            &cancellation,
-                        )
-                        .await,
-                    operation,
-                )
+                        .context(&input.cwd, ContextRead::Rescan, &cancellation)
+                        .await
+                } else if input.allow_stale {
+                    self.service
+                        .context_allowing_stale(&input.cwd, &cancellation)
+                        .await
+                } else {
+                    self.service
+                        .context(&input.cwd, ContextRead::Open, &cancellation)
+                        .await
+                };
+                encode(context, operation)
             }
             "pullRequests.getVocabulary" => {
                 let input: VocabularyInput = decode(request.payload, operation)?;
@@ -382,6 +382,9 @@ struct ContextInput {
     /// Only Rescan and auth recovery bypass the bounded context caches.
     #[serde(default)]
     rescan: bool,
+    /// The panel's first read may answer from the stored context (`stale`).
+    #[serde(default, rename = "allowStale")]
+    allow_stale: bool,
 }
 
 #[derive(Deserialize)]

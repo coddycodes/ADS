@@ -1,4 +1,6 @@
 mod layout;
+#[cfg(target_os = "linux")]
+mod pruned;
 mod registration;
 
 use layout::{component_matches, metadata_layout};
@@ -19,8 +21,10 @@ use std::{
     time::Duration,
 };
 
+#[cfg(not(target_os = "linux"))]
+use notify::Watcher;
 use notify::{
-    Config, Event, EventKind, RecursiveMode, Watcher,
+    Config, Event, EventKind, RecursiveMode,
     event::{AccessKind, AccessMode, MetadataKind, ModifyKind},
 };
 use tokio::sync::{Notify, watch};
@@ -179,6 +183,51 @@ struct Inner {
     setups: Arc<SetupTracker>,
     setup_cancellation: CancellationToken,
     readiness_timeout: Duration,
+    /// The first spacing between full re-registrations after overflows.
+    rescan_backoff: Duration,
+}
+
+/// The first spacing between full re-registrations; it doubles while overflows
+/// continue, up to [`RESCAN_BACKOFF_MAX`].
+const RESCAN_BACKOFF: Duration = Duration::from_secs(30);
+const RESCAN_BACKOFF_MAX: Duration = Duration::from_secs(30 * 60);
+
+/// A lost-event overflow asks for a full re-registration, which walks the whole
+/// tree. On Linux that walk queues one open event per watched directory, so a
+/// tree larger than the kernel's event queue overflows again on every
+/// re-registration and the watcher would loop forever. The gate spaces full
+/// re-registrations out instead; meanwhile status runs on its fallback reads.
+#[derive(Default)]
+struct RescanGate {
+    not_before: Option<tokio::time::Instant>,
+    delay: Duration,
+    deferred: bool,
+    retry_armed: bool,
+}
+
+impl RescanGate {
+    /// Whether a full re-registration may start now. A refused one is deferred
+    /// until `not_before`.
+    fn admit(&mut self, now: tokio::time::Instant, base: Duration) -> bool {
+        if let Some(not_before) = self.not_before {
+            if now < not_before {
+                self.deferred = true;
+                return false;
+            }
+            // A quiet stretch resets the spacing.
+            if now >= not_before + RESCAN_BACKOFF_MAX {
+                self.delay = Duration::ZERO;
+            }
+        }
+        self.delay = if self.delay.is_zero() {
+            base
+        } else {
+            (self.delay * 2).min(RESCAN_BACKOFF_MAX)
+        };
+        self.not_before = Some(now + self.delay);
+        self.deferred = false;
+        true
+    }
 }
 
 #[derive(Default)]
@@ -227,6 +276,7 @@ struct WatchEntry {
     root_aliases: Vec<GitWatchIdentity>,
     registered_roots: Vec<(String, RecursiveMode)>,
     setup: Arc<SetupCompletion>,
+    rescans: RescanGate,
 }
 
 struct InstalledWatcher {
@@ -378,6 +428,11 @@ impl GitWatcherBackend for GatedWatcherBackend {
 struct NativeWatcherBackendFactory;
 
 struct NativeWatcherBackend {
+    // Linux prunes Git-ignored directories from the worktree's recursive watch (#88);
+    // macOS and Windows watch a whole tree with one native handle.
+    #[cfg(target_os = "linux")]
+    watcher: pruned::PrunedWatcher,
+    #[cfg(not(target_os = "linux"))]
     watcher: notify::RecommendedWatcher,
 }
 
@@ -387,8 +442,11 @@ impl GitWatcherBackendFactory for NativeWatcherBackendFactory {
         callback: BackendCallback,
         config: Config,
     ) -> notify::Result<Box<dyn GitWatcherBackend>> {
-        notify::RecommendedWatcher::new(move |event| callback(event), config)
-            .map(|watcher| Box::new(NativeWatcherBackend { watcher }) as Box<dyn GitWatcherBackend>)
+        #[cfg(target_os = "linux")]
+        let watcher = pruned::PrunedWatcher::new(move |event| callback(event), config)?;
+        #[cfg(not(target_os = "linux"))]
+        let watcher = notify::RecommendedWatcher::new(move |event| callback(event), config)?;
+        Ok(Box::new(NativeWatcherBackend { watcher }))
     }
 }
 
@@ -411,6 +469,7 @@ impl GitWatchService {
                 setups: Arc::new(SetupTracker::default()),
                 setup_cancellation: CancellationToken::new(),
                 readiness_timeout: READINESS_TIMEOUT,
+                rescan_backoff: RESCAN_BACKOFF,
             }),
         }
     }
@@ -457,6 +516,18 @@ impl GitWatchService {
     #[cfg(test)]
     pub(super) async fn wait_for_setup_cancellation_for_test(&self) {
         self.inner.setup_cancellation.cancelled().await;
+    }
+
+    #[cfg(test)]
+    fn with_backend_factory_and_rescan_backoff(
+        backend_factory: Arc<dyn GitWatcherBackendFactory>,
+        rescan_backoff: Duration,
+    ) -> Self {
+        let mut service = Self::with_backend_factory(backend_factory);
+        Arc::get_mut(&mut service.inner)
+            .expect("new watcher service is uniquely owned")
+            .rescan_backoff = rescan_backoff;
+        service
     }
 
     #[cfg(test)]
@@ -541,6 +612,7 @@ impl GitWatchService {
                             root_aliases,
                             registered_roots,
                             setup: Arc::clone(&setup),
+                            rescans: RescanGate::default(),
                         },
                     );
                     (
@@ -849,8 +921,22 @@ impl Inner {
                         host_path_platform(),
                     );
                     if event.need_rescan() {
-                        entry.registration_requests.rescan();
-                        entry.registration_event = Some(GitWatchEvent::RefMetadata);
+                        let now = tokio::time::Instant::now();
+                        if entry.rescans.admit(now, self.rescan_backoff) {
+                            entry.registration_requests.rescan();
+                            entry.registration_event = Some(GitWatchEvent::RefMetadata);
+                        } else if !entry.rescans.retry_armed
+                            && let Some(not_before) = entry.rescans.not_before
+                        {
+                            entry.rescans.retry_armed = true;
+                            self.schedule_deferred_rescan(
+                                identity.clone(),
+                                generation,
+                                entry.cancellation.clone(),
+                                not_before,
+                                runtime,
+                            );
+                        }
                     } else if event_changes_directories(event.kind) {
                         for path in &event.paths {
                             let key = normalize_event_path_key(
@@ -892,6 +978,71 @@ impl Inner {
             if let Some(event) = invalidation {
                 publish(entry, event);
             }
+            self.take_registration_work(entry)
+        };
+        if let Some(work) = work {
+            self.start_registration(identity.clone(), generation, work, runtime);
+        }
+    }
+
+    fn schedule_deferred_rescan(
+        self: &Arc<Self>,
+        identity: GitWatchIdentity,
+        generation: u64,
+        cancellation: CancellationToken,
+        not_before: tokio::time::Instant,
+        runtime: &tokio::runtime::Handle,
+    ) {
+        let inner = Arc::downgrade(self);
+        let handle = runtime.clone();
+        runtime.spawn(async move {
+            tokio::select! {
+                () = cancellation.cancelled() => return,
+                () = tokio::time::sleep_until(not_before) => {}
+            }
+            if let Some(inner) = inner.upgrade() {
+                inner.run_deferred_rescan(&identity, generation, &handle);
+            }
+        });
+    }
+
+    fn run_deferred_rescan(
+        self: &Arc<Self>,
+        identity: &GitWatchIdentity,
+        generation: u64,
+        runtime: &tokio::runtime::Handle,
+    ) {
+        let work = {
+            let mut state = self.lock_state();
+            let Some(entry) = state.entries.get_mut(identity).filter(|entry| {
+                entry.generation == generation && !entry.cancellation.is_cancelled()
+            }) else {
+                return;
+            };
+            entry.rescans.retry_armed = false;
+            if !entry.rescans.deferred {
+                return;
+            }
+            if !entry
+                .rescans
+                .admit(tokio::time::Instant::now(), self.rescan_backoff)
+            {
+                // Another overflow moved the deadline while this timer waited: keep
+                // the deferred recovery armed for the new one.
+                if let Some(not_before) = entry.rescans.not_before {
+                    entry.rescans.retry_armed = true;
+                    self.schedule_deferred_rescan(
+                        identity.clone(),
+                        generation,
+                        entry.cancellation.clone(),
+                        not_before,
+                        runtime,
+                    );
+                }
+                return;
+            }
+            entry.registration_requests.rescan();
+            entry.registration_event = Some(GitWatchEvent::RefMetadata);
             self.take_registration_work(entry)
         };
         if let Some(work) = work {
@@ -3370,6 +3521,76 @@ mod tests {
             ),
         );
         assert_eq!(subscription.recv().await, Some(GitWatchEvent::RefMetadata));
+    }
+
+    #[test]
+    fn rescan_gate_doubles_its_spacing_and_resets_after_quiet() {
+        let base = Duration::from_secs(10);
+        let start = tokio::time::Instant::now();
+        let at = |secs: u64| start + Duration::from_secs(secs);
+        let mut gate = RescanGate::default();
+        assert!(gate.admit(at(0), base));
+        assert!(!gate.admit(at(5), base), "inside the first 10 s");
+        assert!(gate.deferred);
+        assert!(gate.admit(at(10), base));
+        assert!(!gate.admit(at(29), base), "the spacing doubled to 20 s");
+        assert!(gate.admit(at(30), base));
+        assert_eq!(gate.delay, Duration::from_secs(40));
+        // A quiet stretch past the deadline resets the spacing.
+        let quiet = 70 + RESCAN_BACKOFF_MAX.as_secs();
+        assert!(gate.admit(at(quiet), base));
+        assert_eq!(gate.delay, base);
+        assert!(!gate.deferred);
+    }
+
+    /// On Linux a full re-registration's own walk can overflow the kernel queue
+    /// again; a following overflow must not start another full walk at once.
+    #[tokio::test]
+    async fn overflows_space_out_full_reregistrations() {
+        let root = tempfile::tempdir().expect("watch fixture");
+        let worktree = root.path().join("worktree");
+        let git_dir = worktree.join(".git");
+        std::fs::create_dir_all(&git_dir).expect("Git directory");
+        let worktree = std::fs::canonicalize(&worktree).expect("canonical worktree");
+        let backend = FakeWatcherBackendFactory::default();
+        let service = GitWatchService::with_backend_factory_and_rescan_backoff(
+            Arc::new(backend.clone()),
+            Duration::from_millis(400),
+        );
+        let _subscription = service
+            .subscribe(request(
+                &worktree,
+                &worktree.join(".git"),
+                &worktree.join(".git"),
+            ))
+            .await
+            .expect("watch subscription");
+        let installs = || {
+            backend
+                .state
+                .all_watches
+                .lock()
+                .expect("watches lock")
+                .iter()
+                .filter(|(_, path, mode)| path == &worktree && *mode == RecursiveMode::Recursive)
+                .count()
+        };
+        service.inner.setups.wait_until_idle().await;
+        assert_eq!(installs(), 1);
+
+        backend.emit(0, Ok(Event::new(EventKind::Other).set_flag(Flag::Rescan)));
+        service.inner.setups.wait_until_idle().await;
+        assert_eq!(installs(), 2, "the first overflow re-registers at once");
+
+        // The overflow its own walk caused arrives straight after.
+        backend.emit(0, Ok(Event::new(EventKind::Other).set_flag(Flag::Rescan)));
+        backend.emit(0, Ok(Event::new(EventKind::Other).set_flag(Flag::Rescan)));
+        service.inner.setups.wait_until_idle().await;
+        assert_eq!(installs(), 2, "overflows inside the spacing are deferred");
+
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        service.inner.setups.wait_until_idle().await;
+        assert_eq!(installs(), 3, "the deferred re-registration runs once");
     }
 
     #[tokio::test]

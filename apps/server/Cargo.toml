@@ -1,6 +1,6 @@
 [package]
 name = "bibcode-server"
-version = "0.9.1"
+version = "0.9.2"
 description = "BiBCode Rust server runtime"
 default-run = "bibcode"
 edition.workspace = true
@@ -69,6 +69,7 @@ tracing-subscriber.workspace = true
 url.workspace = true
 uuid.workspace = true
 zip.workspace = true
+flate2.workspace = true
 
 [dev-dependencies]
 bibcode-server = { workspace = true, features = ["hermetic-test-guard"] }

@@ -13,7 +13,7 @@ use std::{
 };
 
 use serde_json::Value;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
@@ -144,6 +144,9 @@ impl ProfilerRuntime {
         install(handle.clone());
         // The sentinel and the panic hook work with the profiler off too.
         let earlier_in_process = SESSION_BEGUN.swap(true, Ordering::Relaxed);
+        // Read before this run replaces it: crashes since it began that no session covered.
+        let last = sentinel::last_session(&dir)
+            .filter(|last| !(earlier_in_process && last.pid == std::process::id()));
         let previous = sentinel::begin_session(&dir)
             .filter(|previous| !(earlier_in_process && previous.pid == std::process::id()));
         install_panic_hook();
@@ -157,6 +160,7 @@ impl ProfilerRuntime {
         let classification = runtime.spawn(classify_earlier_runs(
             handle.clone(),
             previous,
+            last,
             dir.clone(),
             dumps.since,
         ));
@@ -340,11 +344,29 @@ fn lock_dir(dir: &Path) -> io::Result<File> {
 async fn classify_earlier_runs(
     handle: Arc<ProfilerHandle>,
     previous: Option<SessionRecord>,
+    last: Option<SessionRecord>,
     dir: PathBuf,
     since: OffsetDateTime,
 ) {
+    // The previous run's own crash is classified with its session below.
+    let mut skip_pids = vec![std::process::id()];
+    skip_pids.extend(previous.as_ref().map(|previous| previous.pid));
     if let Some(previous) = previous {
         classify_previous_run(handle.clone(), previous, dir.clone()).await;
+    }
+    // From the last successful query, or the last session's start the first time.
+    let crash_query_since = sentinel::crash_query_cursor(&dir).or_else(|| {
+        last.as_ref()
+            .and_then(|last| OffsetDateTime::parse(&last.started_at, &Rfc3339).ok())
+    });
+    if let Some(crash_query_since) = crash_query_since
+        && let Ok(exe) = std::env::current_exe()
+    {
+        let queried_at = OffsetDateTime::now_utc();
+        let exe = exe.to_string_lossy();
+        if raise_unrecorded_crashes(&handle, crash_query_since, &exe, &skip_pids).await {
+            sentinel::advance_crash_query_cursor(&dir, queried_at);
+        }
     }
     // The findings file was not read in full, so a dump a finding cites may look unlinked;
     // the next start, which retries the read, raises what is truly unlinked.
@@ -366,6 +388,28 @@ async fn classify_earlier_runs(
         }
     })
     .await;
+}
+
+/// Raises the OS's crash records of this executable since `since` that no session reported
+/// and no finding links yet. False when the records could not be read.
+async fn raise_unrecorded_crashes(
+    handle: &ProfilerHandle,
+    since: OffsetDateTime,
+    exe: &str,
+    skip_pids: &[u32],
+) -> bool {
+    let Some(crashes) = os_records::harvest_unrecorded_crashes(since, exe, skip_pids).await else {
+        return false;
+    };
+    for crash in crashes {
+        let crash_id = format!("coredump-{}-{}", crash.pid, crash.time_micros);
+        if !lock(&handle.linked_dumps).insert(crash_id.clone()) {
+            continue;
+        }
+        let finding = sentinel::unrecorded_crash_finding(&crash, crash_id);
+        lock(&handle.findings).record_now(finding, OffsetDateTime::now_utc(), &handle.sender);
+    }
+    true
 }
 
 /// Reads the crash dump and the OS crash records for a run that never marked its session
@@ -615,7 +659,10 @@ mod tests {
             .sender
             .send_finding(serde_json::from_str(&line).unwrap());
         eventually(|| line_count(&findings) == 2).await;
-        assert!(stale.exists());
+        // Only maintenance compacts findings, so two lines here show it has not run yet. The
+        // stale events file is not checked here: in a full test run this runtime can be the
+        // process-global one, and another test's event can open an events file, whose
+        // retention removes it early.
 
         tokio::time::advance(MAINTENANCE_EVERY).await;
         eventually(|| !stale.exists() && line_count(&findings) == 1).await;

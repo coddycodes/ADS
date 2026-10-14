@@ -264,8 +264,9 @@ function CreatePullRequestReviewDialog({
           head: review.head,
           provider: review.provider,
         });
-  const busy = presentation?.busy === true;
-  const settled = presentation?.settled === true;
+  // From the request itself, so a status re-read after creation cannot unlock the form.
+  const busy = running;
+  const settled = progress.kind === "created" || progress.kind === "existing";
   const trimmedTitle = title.trim();
   const blockedReason = capabilityBlockedReason ?? review?.blockedReason ?? null;
   const primaryDisabledReason =
@@ -273,28 +274,22 @@ function CreatePullRequestReviewDialog({
       ? "Reading repository status…"
       : busy
         ? waitReason
-        : settled
-          ? null
-          : (blockedReason ??
-            (review.existingPullRequest !== null
-              ? `A ${noun} already exists for this branch.`
-              : trimmedTitle.length === 0
-                ? `Enter a title for the ${noun}.`
-                : baseBranch === null
-                  ? "Select a target branch."
-                  : !commitInput?.featureBranch && baseBranch === review.head
-                    ? "Select a target branch different from the source branch."
-                    : null));
+        : (blockedReason ??
+          (review.existingPullRequest !== null
+            ? `A ${noun} already exists for this branch.`
+            : trimmedTitle.length === 0
+              ? `Enter a title for the ${noun}.`
+              : baseBranch === null
+                ? "Select a target branch."
+                : !commitInput?.featureBranch && baseBranch === review.head
+                  ? "Select a target branch different from the source branch."
+                  : null));
 
   const onProgress = useCallback((event: GitActionProgressEvent) => {
     setProgress((current) => reduceCreatePullRequestProgress(current, event));
   }, []);
 
   const submit = useCallback(async () => {
-    if (settled) {
-      onOpenChange(false);
-      return;
-    }
     if (primaryDisabledReason !== null || baseBranch === null) return;
     const retrying = progress.kind === "failed";
     setProgress({ kind: "running", phase: null, pushed: false });
@@ -383,12 +378,10 @@ function CreatePullRequestReviewDialog({
     sourceBranch,
     refreshStatusQuery,
     cwd,
-    onOpenChange,
     onProgress,
     onSettled,
     primaryDisabledReason,
     runStackedAction,
-    settled,
     trimmedTitle,
     noun,
   ]);
@@ -650,25 +643,35 @@ function CreatePullRequestReviewDialog({
           )}
         </DialogPanel>
         <DialogFooter>
-          <Button
-            disabled={busy}
-            title={busy ? waitReason : undefined}
-            variant="outline"
-            onClick={() => handleOpenChange(false)}
-          >
-            {settled ? "Close" : "Cancel"}
-          </Button>
-          <PermissionButton
-            permission={{ allowed: primaryDisabledReason === null, reason: primaryDisabledReason }}
-            onClick={() => {
-              void submit();
-            }}
-          >
-            <GitPullRequestIcon aria-hidden="true" />
-            {commitInput !== undefined && progress.kind === "review"
-              ? `Commit, publish and create ${noun}`
-              : (presentation?.primaryLabel ?? `Create ${noun}`)}
-          </PermissionButton>
+          {settled ? (
+            // The request exists: the form is a read-only record and closing is the only action.
+            <Button onClick={() => onOpenChange(false)}>Done</Button>
+          ) : (
+            <>
+              <Button
+                disabled={busy}
+                title={busy ? waitReason : undefined}
+                variant="outline"
+                onClick={() => handleOpenChange(false)}
+              >
+                Cancel
+              </Button>
+              <PermissionButton
+                permission={{
+                  allowed: primaryDisabledReason === null,
+                  reason: primaryDisabledReason,
+                }}
+                onClick={() => {
+                  void submit();
+                }}
+              >
+                <GitPullRequestIcon aria-hidden="true" />
+                {commitInput !== undefined && progress.kind === "review"
+                  ? `Commit, publish and create ${noun}`
+                  : (presentation?.primaryLabel ?? `Create ${noun}`)}
+              </PermissionButton>
+            </>
+          )}
         </DialogFooter>
       </DialogPopup>
     </Dialog>

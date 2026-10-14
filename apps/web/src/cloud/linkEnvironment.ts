@@ -62,8 +62,10 @@ const relayClientRpcError = (message: string) => (cause: unknown) =>
     cause,
   });
 
+/** With `installIfMissing` false, a missing relay client fails instead of asking to install it. */
 function ensureRelayClientAvailable(
   environmentId: EnvironmentId,
+  installIfMissing: boolean,
 ): Effect.Effect<void, CloudEnvironmentLinkError, EnvironmentRegistry> {
   return Effect.gen(function* () {
     const registry = yield* EnvironmentRegistry;
@@ -74,6 +76,11 @@ function ensureRelayClientAvailable(
     if (status.status === "unsupported") {
       return yield* new CloudEnvironmentLinkError({
         message: `BiBCode cannot install the relay client automatically on ${status.platform}-${status.arch}.`,
+      });
+    }
+    if (!installIfMissing) {
+      return yield* new CloudEnvironmentLinkError({
+        message: "The relay client is not installed.",
       });
     }
 
@@ -302,6 +309,59 @@ export function readPrimaryCloudLinkState(input: {
   }).pipe(Effect.provide(primaryEnvironmentHttpLayer));
 }
 
+/**
+ * A linked BiBCode Connect tunnel that a link must provision again: its server stores no
+ * preview hostnames (it was linked before they existed), or the tunnel points at a port
+ * the server no longer listens on. A server that predates the flags reports neither.
+ */
+export function needsManagedEndpointRelink(state: CloudLinkState | null): boolean {
+  return (
+    state?.linked === true &&
+    state.managedEndpoint === true &&
+    (state.previewHostnames === false || state.managedEndpointStale === true)
+  );
+}
+
+/**
+ * Re-links the primary environment so the relay provisions its tunnel again, only while
+ * its server still needs it (`needsManagedEndpointRelink`) and is linked to `accountId`.
+ * It runs on the link scheduler and re-reads the link state there, so it never undoes a
+ * manual link or unlink in this client, and the server refuses it if its stored link
+ * changed meanwhile (another client unlinked or re-linked), by `linkGeneration`. The
+ * relay-side link it made then stays: removing
+ * it could delete a newer link another client made since, and the relay has no
+ * conditional unlink. It never prompts to install the relay client. Resolves to whether
+ * it re-linked.
+ */
+export function relinkPrimaryManagedEndpoint(input: {
+  readonly target: CloudLinkTarget;
+  readonly clerkToken: string;
+  readonly accountId: string;
+}): Effect.Effect<
+  boolean,
+  CloudEnvironmentLinkError,
+  EnvironmentRegistry | HttpClient.HttpClient | ManagedRelay.ManagedRelayClient
+> {
+  return Effect.gen(function* () {
+    const state = yield* readPrimaryCloudLinkState({ target: input.target });
+    const generation = state?.linkGeneration;
+    if (
+      !needsManagedEndpointRelink(state) ||
+      state?.cloudUserId !== input.accountId ||
+      typeof generation !== "string"
+    ) {
+      return false;
+    }
+    yield* linkPrimaryEnvironmentToCloud({
+      target: input.target,
+      clerkToken: input.clerkToken,
+      installRelayClient: false,
+      requireLinkGeneration: generation,
+    });
+    return true;
+  });
+}
+
 export function unlinkPrimaryEnvironmentFromCloud(input: {
   readonly target: CloudLinkTarget;
   readonly clerkToken: string | null;
@@ -338,6 +398,10 @@ export function unlinkPrimaryEnvironmentFromCloud(input: {
 export function linkPrimaryEnvironmentToCloud(input: {
   readonly target: CloudLinkTarget;
   readonly clerkToken: string;
+  /** False for a background re-link: a missing relay client fails instead of prompting. */
+  readonly installRelayClient?: boolean;
+  /** A background re-link: the server refuses it unless its stored link is still this one. */
+  readonly requireLinkGeneration?: string;
 }): Effect.Effect<
   void,
   CloudEnvironmentLinkError,
@@ -352,7 +416,10 @@ export function linkPrimaryEnvironmentToCloud(input: {
     }
     const relayClient = yield* ManagedRelay.ManagedRelayClient;
     const environmentClient = yield* makeEnvironmentHttpApiClient(input.target.httpBaseUrl);
-    yield* ensureRelayClientAvailable(EnvironmentId.make(input.target.environmentId));
+    yield* ensureRelayClientAvailable(
+      EnvironmentId.make(input.target.environmentId),
+      input.installRelayClient ?? true,
+    );
 
     const challenge = yield* relayClient
       .createEnvironmentLinkChallenge({
@@ -412,6 +479,9 @@ export function linkPrimaryEnvironmentToCloud(input: {
           environmentCredential: link.environmentCredential,
           cloudMintPublicKey: link.cloudMintPublicKey,
           endpointRuntime: link.endpointRuntime,
+          ...(input.requireLinkGeneration === undefined
+            ? {}
+            : { requireLinkGeneration: input.requireLinkGeneration }),
         },
       })
       .pipe(Effect.mapError(environmentApiError("Could not configure environment relay access.")));

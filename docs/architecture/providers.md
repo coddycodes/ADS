@@ -37,6 +37,14 @@ existing absolute directory, and owns executable, environment, credential, and
 home resolution. Effective runtime environment values are materialized from the
 secret store; persisted and client-visible settings stay redacted.
 
+Discovery starts the provider CLI (about a second for Claude), so the server
+caches each successful catalog by instance and directory for the current
+provider settings. A catalog younger than 60 seconds is returned as is; an older
+one is returned at once while one background read refreshes it for the next
+call. Changed provider settings drop every cached catalog; failures and
+catalogs that report discovery issues are never cached, so a retry discovers
+again; and at most 64 catalogs are kept, the oldest leaving first.
+
 The result contains `slashCommands`, `skills`, `agents`, and `issues`. Codex
 initializes an App Server in the requested directory and calls `skills/list`
 without an account/model query, using the session launch's configured Codex
@@ -188,7 +196,14 @@ acknowledges the write, while a different command or different arguments do
 not. Text with any other first character, including whitespace before the
 slash, is matched exactly. An outstanding steer does
 not prevent a normal delivery from registering its own waiter. Acceptance uses
-the runtime turn ID current when the matching echo arrives.
+the runtime turn ID current when the matching echo arrives. A new turn begins
+when Claude replays its input: a successful `result` that arrives between a
+normal delivery's write and the replay of that write belongs to work Claude
+was still finishing (seen right after a suspended session resumes) and does
+not end the new turn, so the session is still published `running` on
+acceptance. An error `result` in that window still ends it, and so does any
+`result` once that write's acknowledgement wait ends without its replay. Only
+the replay of that write opens the turn; another write's replay does not.
 
 The expected-turn cancellation fence applies through the first byte: input that
 has not begun writing when the expected turn ends, changes, or is interrupted
@@ -204,7 +219,9 @@ result or an interrupt), because Claude replays a steer when it consumes it,
 which can follow a long tool call. An expired write keeps its place in the
 acknowledgement order until its replay arrives or the session is retired, so a
 late replay is consumed by it and cannot confirm a later identical retry; that
-retry is acknowledged only by its own replay. Dropping a delivery releases only its own waiter.
+retry is acknowledged only by its own replay. A late replay also marks its own
+delivery delivered when that delivery is still uncertain (not retried or
+dismissed since), because Claude did read the message. Dropping a delivery releases only its own waiter.
 Rejected or unavailable steering returns to queued/start for normal promotion,
 with the reason in `delivery.detail`; transport
 ambiguity retains the existing uncertain-delivery behavior and never triggers

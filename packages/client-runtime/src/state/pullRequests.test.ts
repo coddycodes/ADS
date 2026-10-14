@@ -1,8 +1,13 @@
 import {
   createOneShotBypass,
   createPullRequestsEnvironmentAtoms,
+  createStoredContextFirst,
 } from "@bibcode/client-runtime/state/pull-requests";
-import { EnvironmentId, PullRequestsOperationError } from "@bibcode/contracts";
+import {
+  EnvironmentId,
+  PullRequestsOperationError,
+  type PullRequestsContext,
+} from "@bibcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/unstable/reactivity";
@@ -132,5 +137,39 @@ describe("Pull Requests environment atoms", () => {
         yield* list(page);
         expect(pages).toEqual([{ ...page, cursor: "2" }, { ...page, refreshTotals: true }, page]);
       }),
+  );
+
+  it.effect("asks for the stored context first, then reads live after a stale answer", () =>
+    Effect.gen(function* () {
+      const stored = createStoredContextFirst();
+      const environmentId = EnvironmentId.make("env-1");
+      const input = { cwd: "/repo" };
+      const sent: boolean[] = [];
+      const answer = (stale: boolean) => (allowStale: boolean) =>
+        Effect.sync(() => {
+          sent.push(allowStale);
+          return { status: "available", ...(stale ? { stale } : {}) } as PullRequestsContext;
+        });
+
+      yield* stored.run(environmentId, input, answer(true));
+      yield* stored.run(environmentId, input, answer(false));
+      // The next open asks for the stored copy again; other environments are separate.
+      yield* stored.run(environmentId, input, answer(false));
+      yield* stored.run(EnvironmentId.make("env-2"), input, answer(false));
+      expect(sent).toEqual([true, false, true, true]);
+
+      // A failed live read is not remembered: once the cached context is gone, the
+      // next open paints the stored copy again instead of waiting on the host.
+      yield* stored.run(environmentId, input, answer(true));
+      yield* Effect.exit(
+        stored.run(environmentId, input, (allowStale) =>
+          Effect.sync(() => void sent.push(allowStale)).pipe(
+            Effect.andThen(Effect.fail("offline")),
+          ),
+        ),
+      );
+      yield* stored.run(environmentId, input, answer(false));
+      expect(sent.slice(4)).toEqual([true, false, true]);
+    }),
   );
 });

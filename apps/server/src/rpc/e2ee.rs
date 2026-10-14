@@ -29,7 +29,10 @@ use super::{
         PUMP_JOIN_TIMEOUT, PairingConfirmationLatch, RpcInboundFrame, SOCKET_WRITE_TIMEOUT,
         run_session_split_budgeted,
     },
-    transport::{ConnectionLiveness, E2EE_INTERLEAVE_FEATURE, OutboundFraming, observe_inbound},
+    transport::{
+        ConnectionLiveness, E2EE_DEFLATE_FEATURE, E2EE_INTERLEAVE_FEATURE, OutboundFraming,
+        observe_inbound,
+    },
 };
 use crate::{
     auth::{
@@ -806,18 +809,52 @@ pub(crate) struct E2eeAuthMessage {
     pub features: Vec<String>,
 }
 
-fn confirm_features(reply: &mut serde_json::Value, interleave: bool) {
-    if interleave {
-        reply
-            .as_object_mut()
-            .expect("static authenticated reply is an object")
-            .insert("features".to_owned(), json!([E2EE_INTERLEAVE_FEATURE]));
+/// The channel features both sides agreed on in the auth exchange.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct E2eeFeatures {
+    pub(crate) interleave: bool,
+    pub(crate) deflate: bool,
+}
+
+impl E2eeFeatures {
+    /// What this server confirms of a client's offer.
+    fn agreed(offered: &[String], compression_enabled: bool) -> Self {
+        let offers = |name: &str| offered.iter().any(|feature| feature == name);
+        Self {
+            interleave: offers(E2EE_INTERLEAVE_FEATURE),
+            deflate: offers(E2EE_DEFLATE_FEATURE) && compression_enabled,
+        }
     }
 }
 
-pub(crate) fn e2ee_authenticated_json(interleave: bool) -> Vec<u8> {
+/// `BIBCODE_REMOTE_COMPRESSION=0` keeps every message uncompressed.
+fn remote_compression_enabled() -> bool {
+    compression_allowed(std::env::var_os("BIBCODE_REMOTE_COMPRESSION").as_deref())
+}
+
+fn compression_allowed(setting: Option<&std::ffi::OsStr>) -> bool {
+    setting.is_none_or(|value| value != "0")
+}
+
+fn confirm_features(reply: &mut serde_json::Value, features: E2eeFeatures) {
+    let mut names = Vec::new();
+    if features.interleave {
+        names.push(E2EE_INTERLEAVE_FEATURE);
+    }
+    if features.deflate {
+        names.push(E2EE_DEFLATE_FEATURE);
+    }
+    if !names.is_empty() {
+        reply
+            .as_object_mut()
+            .expect("static authenticated reply is an object")
+            .insert("features".to_owned(), json!(names));
+    }
+}
+
+pub(crate) fn e2ee_authenticated_json(features: E2eeFeatures) -> Vec<u8> {
     let mut reply = json!({ "type": "e2ee_authenticated" });
-    confirm_features(&mut reply, interleave);
+    confirm_features(&mut reply, features);
     serde_json::to_vec(&reply).expect("static JSON")
 }
 
@@ -826,7 +863,7 @@ pub(crate) fn e2ee_authenticated_with_credential_json(
     environment_id: &str,
     storage_instance_id: Option<&str>,
     pairing_confirmation_required: bool,
-    interleave: bool,
+    features: E2eeFeatures,
 ) -> Vec<u8> {
     let mut reply = json!({
         "type": "e2ee_authenticated",
@@ -851,7 +888,7 @@ pub(crate) fn e2ee_authenticated_with_credential_json(
                 serde_json::Value::Bool(true),
             );
     }
-    confirm_features(&mut reply, interleave);
+    confirm_features(&mut reply, features);
     serde_json::to_vec(&reply).expect("static JSON")
 }
 
@@ -928,7 +965,7 @@ enum EstablishOutcome {
     Accepted {
         channel: E2eeChannel,
         admission: EstablishedE2eeAdmission,
-        interleave: bool,
+        features: E2eeFeatures,
     },
     Rejected {
         channel: E2eeChannel,
@@ -998,10 +1035,7 @@ pub(crate) async fn run_e2ee_session(
                 code: "protocol",
             });
         }
-        let interleave = message
-            .features
-            .iter()
-            .any(|feature| feature == E2EE_INTERLEAVE_FEATURE);
+        let features = E2eeFeatures::agreed(&message.features, remote_compression_enabled());
 
         let established_reservation = match E2EE_RESOURCE_BUDGET.try_reserve() {
             Ok(reservation) => reservation,
@@ -1082,10 +1116,10 @@ pub(crate) async fn run_e2ee_session(
                 &config.environment_id,
                 storage_instance_id.as_deref(),
                 minted.delivery_guard.is_some(),
-                interleave,
+                features,
             ),
             E2eeAccept::Authenticated { minted: None, .. } | E2eeAccept::Unauthenticated => {
-                e2ee_authenticated_json(interleave)
+                e2ee_authenticated_json(features)
             }
         };
         send_encrypted_frames(&mut ws_writer, &mut channel, &reply).await?;
@@ -1095,18 +1129,18 @@ pub(crate) async fn run_e2ee_session(
                 accept,
                 _permit: established_permit,
             },
-            interleave,
+            features,
         })
     })
     .await;
     drop(preauth_permit);
 
-    let (channel, admission, interleave) = match established {
+    let (channel, admission, features) = match established {
         Ok(Ok(EstablishOutcome::Accepted {
             channel,
             admission,
-            interleave,
-        })) => (channel, admission, interleave),
+            features,
+        })) => (channel, admission, features),
         Ok(Ok(EstablishOutcome::Rejected { mut channel, code })) => {
             let _ =
                 send_encrypted_frames(&mut ws_writer, &mut channel, &e2ee_error_json(code)).await;
@@ -1134,7 +1168,7 @@ pub(crate) async fn run_e2ee_session(
         channel,
         admission,
         reach,
-        interleave,
+        features,
         auth,
         registry,
         session_shutdown,
@@ -1190,7 +1224,7 @@ async fn run_established_e2ee<W, R>(
     channel: E2eeChannel,
     admission: EstablishedE2eeAdmission,
     reach: Option<ClientReach>,
-    interleave: bool,
+    features: E2eeFeatures,
     auth: AuthService,
     registry: RpcRegistry,
     session_shutdown: CancellationToken,
@@ -1409,7 +1443,8 @@ async fn run_established_e2ee<W, R>(
         ws_writer,
         OutboundFraming::Encrypted {
             channel: Arc::clone(&channel),
-            interleave,
+            interleave: features.interleave,
+            deflate: features.deflate,
         },
         liveness,
         reader_stream,
@@ -1995,7 +2030,7 @@ mod tests {
                 "environment",
                 None,
                 true,
-                false,
+                E2eeFeatures::default(),
             ))
             .expect("absent storage reply");
         assert!(absent.get("storageInstanceId").is_none());
@@ -2006,7 +2041,7 @@ mod tests {
                 "environment",
                 Some("storage"),
                 true,
-                false,
+                E2eeFeatures::default(),
             ))
             .expect("present storage reply");
         assert_eq!(present["storageInstanceId"], "storage");
@@ -2015,10 +2050,15 @@ mod tests {
     #[test]
     fn authenticated_replies_confirm_interleave_only_when_requested() {
         let plain: serde_json::Value =
-            serde_json::from_slice(&e2ee_authenticated_json(false)).expect("plain reply");
+            serde_json::from_slice(&e2ee_authenticated_json(E2eeFeatures::default()))
+                .expect("plain reply");
         assert!(plain.get("features").is_none());
         let interleaved: serde_json::Value =
-            serde_json::from_slice(&e2ee_authenticated_json(true)).expect("interleaved reply");
+            serde_json::from_slice(&e2ee_authenticated_json(E2eeFeatures {
+                interleave: true,
+                deflate: false,
+            }))
+            .expect("interleaved reply");
         assert_eq!(interleaved["features"], json!(["interleave-v1"]));
         let minted: serde_json::Value =
             serde_json::from_slice(&e2ee_authenticated_with_credential_json(
@@ -2026,10 +2066,126 @@ mod tests {
                 "environment",
                 None,
                 false,
-                true,
+                E2eeFeatures {
+                    interleave: true,
+                    deflate: false,
+                },
             ))
             .expect("minted reply");
         assert_eq!(minted["features"], json!(["interleave-v1"]));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn deflate_compresses_large_data_messages_and_leaves_small_ones_plain() {
+        let (mut initiator, responder) = establish().await;
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let sink_recorded = Arc::clone(&recorded);
+        let sink = Box::pin(futures_util::sink::unfold(
+            (),
+            move |(), message: Message| {
+                let recorded = Arc::clone(&sink_recorded);
+                async move {
+                    recorded.lock().expect("recorded frames").push(message);
+                    Ok::<_, std::convert::Infallible>(())
+                }
+            },
+        ));
+        let (data_sender, data) = tokio::sync::mpsc::channel(4);
+        let (_control_sender, control) =
+            tokio::sync::mpsc::channel(super::super::transport::CONTROL_LANE_CAPACITY);
+        // Three records uncompressed, far above the 16 KiB threshold.
+        let large = encrypted_response(MAX_E2EE_CHUNK_BYTES * 3);
+        let small = encrypted_response(64);
+        data_sender.try_send(large).expect("queue large frame");
+        data_sender.try_send(small).expect("queue small frame");
+        drop(data_sender);
+        super::super::transport::run_writer(
+            sink,
+            OutboundFraming::Encrypted {
+                channel: Arc::new(Mutex::new(responder)),
+                interleave: false,
+                deflate: true,
+            },
+            ConnectionLiveness::new(),
+            data,
+            control,
+            CancellationToken::new(),
+        )
+        .await;
+
+        let mut messages: Vec<(u8, Vec<u8>)> = Vec::new();
+        let mut assembling = Vec::new();
+        for message in recorded.lock().expect("recorded frames").iter() {
+            let Message::Binary(frame) = message else {
+                panic!("encrypted records are binary");
+            };
+            let mut plaintext = vec![0_u8; MAX_E2EE_CIPHERTEXT_BYTES];
+            let len = initiator
+                .transport
+                .read_message(frame, &mut plaintext)
+                .expect("decrypt record");
+            assembling.extend_from_slice(&plaintext[1..len]);
+            if plaintext[0] & !super::super::transport::RECORD_FLAG_DEFLATE == 0x00 {
+                messages.push((plaintext[0], std::mem::take(&mut assembling)));
+            }
+        }
+        assert_eq!(messages.len(), 2);
+        let (flag, compressed) = &messages[0];
+        assert_eq!(*flag, super::super::transport::RECORD_FLAG_DEFLATE);
+        let declared = u32::from_be_bytes(compressed[..4].try_into().unwrap()) as usize;
+        let mut inflated = Vec::new();
+        std::io::Read::read_to_end(
+            &mut flate2::read::DeflateDecoder::new(&compressed[4..]),
+            &mut inflated,
+        )
+        .expect("raw deflate");
+        assert_eq!(inflated.len(), declared);
+        serde_json::from_slice::<serde_json::Value>(&inflated).expect("the original JSON");
+        assert!(inflated.len() > MAX_E2EE_CHUNK_BYTES * 3);
+        assert!(
+            inflated
+                .windows(MAX_E2EE_CHUNK_BYTES)
+                .any(|window| window.iter().all(|byte| *byte == b'x'))
+        );
+        assert!(
+            compressed.len() < MAX_E2EE_CHUNK_BYTES,
+            "compressed to one record"
+        );
+        assert_eq!(messages[1].0, 0x00, "a small message stays uncompressed");
+    }
+
+    #[test]
+    fn deflate_is_confirmed_only_when_offered() {
+        let offered = |features: &[&str]| {
+            E2eeFeatures::agreed(
+                &features.iter().map(|f| (*f).to_owned()).collect::<Vec<_>>(),
+                true,
+            )
+        };
+        assert_eq!(offered(&[]), E2eeFeatures::default());
+        let both = offered(&["interleave-v1", "deflate-v1"]);
+        assert_eq!(
+            both,
+            E2eeFeatures {
+                interleave: true,
+                deflate: true
+            }
+        );
+        let reply: serde_json::Value =
+            serde_json::from_slice(&e2ee_authenticated_json(both)).expect("reply");
+        assert_eq!(reply["features"], json!(["interleave-v1", "deflate-v1"]));
+        let switched_off = E2eeFeatures::agreed(
+            &["interleave-v1".to_owned(), "deflate-v1".to_owned()],
+            false,
+        );
+        assert!(switched_off.interleave && !switched_off.deflate);
+    }
+
+    #[test]
+    fn remote_compression_switch_turns_off_only_on_zero() {
+        assert!(compression_allowed(None));
+        assert!(compression_allowed(Some("1".as_ref())));
+        assert!(!compression_allowed(Some("0".as_ref())));
     }
 
     #[tokio::test(start_paused = true)]
@@ -2059,6 +2215,7 @@ mod tests {
             OutboundFraming::Encrypted {
                 channel: Arc::new(Mutex::new(responder)),
                 interleave: true,
+                deflate: false,
             },
             ConnectionLiveness::new(),
             data,
@@ -2180,7 +2337,10 @@ mod tests {
                 _permit: permit,
             },
             None,
-            true,
+            E2eeFeatures {
+                interleave: true,
+                deflate: false,
+            },
             auth.clone(),
             registry,
             shutdown,
@@ -2307,6 +2467,7 @@ mod tests {
             OutboundFraming::Encrypted {
                 channel: Arc::new(Mutex::new(responder)),
                 interleave: false,
+                deflate: false,
             },
             ConnectionLiveness::new(),
             data,

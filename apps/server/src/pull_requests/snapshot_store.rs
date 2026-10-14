@@ -151,6 +151,29 @@ impl<'a> SnapshotStore<'a> {
         Ok(())
     }
 
+    /// Every row of one kind, for example each stored `context`.
+    pub fn list_kind(&self, kind: &str) -> Result<Vec<Snapshot>> {
+        let mut statement = self.connection.prepare(
+            "SELECT host, project, kind, key, fingerprint, payload, observed_at_ms, generation
+             FROM pull_request_snapshots
+             WHERE kind = ?1",
+        )?;
+        statement
+            .query_map(params![kind], |row| {
+                Ok(Snapshot {
+                    host: row.get(0)?,
+                    project: row.get(1)?,
+                    kind: row.get(2)?,
+                    key: row.get(3)?,
+                    fingerprint: row.get(4)?,
+                    payload: row.get(5)?,
+                    observed_at_ms: row.get(6)?,
+                    generation: row.get(7)?,
+                })
+            })?
+            .collect()
+    }
+
     pub fn delete_number(&self, host: &str, project: &str, number: u64) -> Result<()> {
         self.connection.execute(
             "DELETE FROM pull_request_snapshots

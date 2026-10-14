@@ -1459,6 +1459,9 @@ pub struct ClaudeProviderRuntime {
     session_id: String,
     runtime_mode: Option<RuntimeMode>,
     current_turn_id: Option<String>,
+    /// The write whose replay begins the current turn, until Claude replays it or its
+    /// wait ends.
+    turn_input_awaiting_replay: Option<u64>,
     turn_input_cancellation: CancellationToken,
     delivery_acknowledgement_cancellation: CancellationToken,
     active_assistant_item_id: Option<String>,
@@ -1499,6 +1502,7 @@ impl ClaudeProviderRuntime {
             session_id,
             runtime_mode: None,
             current_turn_id: None,
+            turn_input_awaiting_replay: None,
             turn_input_cancellation: CancellationToken::new(),
             delivery_acknowledgement_cancellation: CancellationToken::new(),
             active_assistant_item_id: None,
@@ -1607,6 +1611,7 @@ impl ClaudeProviderRuntime {
         // reported as the cause of this one's failure.
         self.last_api_error = None;
         self.current_turn_id = Some(input.turn_id.clone());
+        self.turn_input_awaiting_replay = None;
         vec![self.event(
             "turn.started",
             Some(input.turn_id),
@@ -1631,6 +1636,20 @@ impl ClaudeProviderRuntime {
 
     pub(crate) fn current_turn_id(&self) -> Option<&str> {
         self.current_turn_id.as_deref()
+    }
+
+    /// Claude replays a turn's input when it reads it. Until `write` is replayed, a
+    /// successful result belongs to work Claude was still finishing, not to the turn
+    /// just started.
+    pub fn await_turn_input(&mut self, write: u64) {
+        self.turn_input_awaiting_replay = Some(write);
+    }
+
+    /// `write` was replayed, or its wait ended without a replay.
+    pub fn stop_awaiting_turn_input(&mut self, write: u64) {
+        if self.turn_input_awaiting_replay == Some(write) {
+            self.turn_input_awaiting_replay = None;
+        }
     }
 
     // A result ends admission of new steers, but a written message may only be
@@ -2463,6 +2482,16 @@ impl ClaudeProviderRuntime {
     }
 
     fn handle_result_message(&mut self, message: ResultMessage) -> Vec<CanonicalEvent> {
+        // Seen right after a suspended session resumes: Claude reports a result before it
+        // replays the new message. Ending the new turn there leaves its work running while
+        // the thread reads ready. An error still ends it; Claude can fail before reading.
+        if self.turn_input_awaiting_replay.is_some() && !message.is_error {
+            tracing::info!(
+                thread_id = %self.thread_id,
+                "ignored a Claude result that arrived before the turn's input was read"
+            );
+            return Vec::new();
+        }
         self.stop_turn_input();
         let mut events = self.flush_incomplete_tools();
         let interrupted = is_interrupted_result(&message);

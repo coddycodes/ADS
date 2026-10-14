@@ -934,14 +934,21 @@ fn shell_stream(
         {
             return;
         }
+        // A burst of events yields one trailing snapshot: every event changed the
+        // shell, but re-sending it per event saturated slow remote links (#89).
+        let mut due: Option<tokio::time::Instant> = None;
         loop {
             tokio::select! {
                 () = cancellation.cancelled() => return,
+                () = async { tokio::time::sleep_until(due.expect("guarded")).await }, if due.is_some() => {
+                    due = None;
+                    if send_snapshot(&sender, shell_snapshot(&engine, false).await).await.is_err() {
+                        return;
+                    }
+                }
                 event = events.recv() => match event {
                     Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {
-                        if send_snapshot(&sender, shell_snapshot(&engine, false).await).await.is_err() {
-                            return;
-                        }
+                        due.get_or_insert_with(|| tokio::time::Instant::now() + SHELL_SNAPSHOT_COALESCE);
                     }
                     Err(broadcast::error::RecvError::Closed) => return,
                 }
@@ -950,6 +957,64 @@ fn shell_stream(
     });
     receiver
 }
+
+/// How long a thread stream gathers its events before one update; short enough
+/// for streamed assistant text to read smoothly.
+const THREAD_UPDATE_COALESCE: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// The change from one thread snapshot (`{snapshotSequence, thread}`) to the next,
+/// as a `patch` stream item, or `None` when nothing changed. Changed fields are
+/// replaced whole, except arrays: they send their new length and only the
+/// entries that differ, by index. The client rebuilds exactly the server's next
+/// snapshot.
+fn thread_patch(held: &Value, next: &Value) -> Option<Value> {
+    let (Some(old), Some(new)) = (
+        held.get("thread").and_then(Value::as_object),
+        next.get("thread").and_then(Value::as_object),
+    ) else {
+        return Some(json!({ "kind": "snapshot", "snapshot": next }));
+    };
+    let mut set = serde_json::Map::new();
+    let mut arrays = serde_json::Map::new();
+    for (key, value) in new {
+        match (old.get(key), value) {
+            (Some(before), _) if before == value => {}
+            (Some(Value::Array(before)), Value::Array(after)) => {
+                // Only the entries that differ: an appended activity or a message
+                // updated in place costs one entry, wherever it sorts.
+                let changes = after
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, entry)| before.get(*index) != Some(*entry))
+                    .map(|(index, entry)| json!([index, entry]))
+                    .collect::<Vec<_>>();
+                arrays.insert(
+                    key.clone(),
+                    json!({ "length": after.len(), "changes": changes }),
+                );
+            }
+            _ => {
+                set.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    let unset = old
+        .keys()
+        .filter(|key| !new.contains_key(*key))
+        .cloned()
+        .collect::<Vec<_>>();
+    if set.is_empty() && arrays.is_empty() && unset.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "kind": "patch",
+        "snapshotSequence": next.get("snapshotSequence"),
+        "patch": { "set": set, "unset": unset, "arrays": arrays },
+    }))
+}
+
+/// How long the shell stream gathers events before sending one snapshot.
+const SHELL_SNAPSHOT_COALESCE: std::time::Duration = std::time::Duration::from_millis(500);
 
 fn thread_stream(
     engine: OrchestrationEngine,
@@ -970,22 +1035,46 @@ fn thread_stream(
     // startup can publish a session update while this snapshot is loading.
     let mut events = engine.subscribe_events();
     tokio::spawn(async move {
-        if send_snapshot(&sender, thread_snapshot(&engine, &input.thread_id).await)
-            .await
-            .is_err()
-        {
+        let first = thread_snapshot(&engine, &input.thread_id).await;
+        // The last snapshot this subscriber holds; patches are computed against it.
+        let mut held = first.as_ref().ok().cloned();
+        if send_snapshot(&sender, first).await.is_err() {
             return;
         }
+        let mut due: Option<tokio::time::Instant> = None;
         loop {
             tokio::select! {
                 () = cancellation.cancelled() => return,
-                event = events.recv() => match event {
-                    Ok(event) if event.event.aggregate_kind == "thread" && event.event.aggregate_id == input.thread_id => {
-                        if send_snapshot(&sender, thread_snapshot(&engine, &input.thread_id).await).await.is_err() {
-                            return;
-                        }
+                () = async { tokio::time::sleep_until(due.expect("guarded")).await }, if due.is_some() => {
+                    due = None;
+                    let next = thread_snapshot(&engine, &input.thread_id).await;
+                    // A whole thread per update re-sent megabytes for long threads and
+                    // saturated slow remote links (#89): a client that applies patches
+                    // gets only what changed since the snapshot it holds.
+                    let patch = match (&next, &held) {
+                        (Ok(next), Some(held)) if input.patches => Some(thread_patch(held, next)),
+                        _ => None,
+                    };
+                    let sent = match patch {
+                        Some(None) => Ok(()),
+                        Some(Some(item)) => sender.send(Ok(vec![item])).await.map_err(|_| ()),
+                        None => send_snapshot(&sender, next.clone()).await,
+                    };
+                    if sent.is_err() {
+                        return;
                     }
-                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    held = next.ok();
+                }
+                event = events.recv() => match event {
+                    // Lost events need no special handling: every update re-reads the
+                    // projection, so the next one is exact either way.
+                    Ok(event) if event.event.aggregate_kind == "thread" && event.event.aggregate_id == input.thread_id => {
+                        due.get_or_insert_with(|| tokio::time::Instant::now() + THREAD_UPDATE_COALESCE);
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        due.get_or_insert_with(|| tokio::time::Instant::now() + THREAD_UPDATE_COALESCE);
+                    }
+                    Ok(_) => {}
                     Err(broadcast::error::RecvError::Closed) => return,
                 }
             }
@@ -1686,6 +1775,9 @@ struct ReplayInput {
 #[serde(rename_all = "camelCase")]
 struct SubscribeThreadInput {
     thread_id: String,
+    /// The client applies `patch` items; without it every update is a snapshot.
+    #[serde(default)]
+    patches: bool,
 }
 
 #[derive(Deserialize)]
@@ -6200,6 +6292,236 @@ mod tests {
         let (sender, receiver) = mpsc::channel(1);
         drop(receiver);
         assert!(send_snapshot(&sender, Ok(json!({}))).await.is_err());
+        engine.shutdown().await;
+    }
+
+    async fn created_project_thread(engine: &OrchestrationEngine) -> String {
+        engine
+            .dispatch(decode_command(json!({
+                "type": "project.create",
+                "commandId": "project",
+                "projectId": "project",
+                "title": "Project",
+                "workspaceRoot": "C:/repo",
+                "defaultModelSelection": null,
+                "createdAt": CREATED_AT,
+            })))
+            .await
+            .expect("project created");
+        load_snapshot(&engine.repositories())
+            .await
+            .expect("snapshot")
+            .threads
+            .into_iter()
+            .find(|thread| thread.kind == "default")
+            .expect("default thread")
+            .thread_id
+    }
+
+    async fn rename(engine: &OrchestrationEngine, thread_id: &str, index: usize) {
+        engine
+            .dispatch(decode_command(json!({
+                "type": "thread.meta.update",
+                "commandId": format!("rename-{index}"),
+                "threadId": thread_id,
+                "title": format!("Title {index}"),
+            })))
+            .await
+            .expect("thread renamed");
+    }
+
+    async fn next_items(stream: &mut mpsc::Receiver<RpcStreamChunk>) -> Vec<Value> {
+        tokio::time::timeout(Duration::from_secs(5), stream.recv())
+            .await
+            .expect("a stream chunk")
+            .expect("an open stream")
+            .expect("a successful chunk")
+    }
+
+    /// A client that applies patches gets only what changed: re-sending the whole
+    /// thread per update saturated slow links (#89). Older clients keep snapshots.
+    #[tokio::test]
+    async fn thread_stream_sends_patches_to_clients_that_apply_them() {
+        let engine = migrated_engine().await;
+        let thread_id = created_project_thread(&engine).await;
+        let cancellation = CancellationToken::new();
+        let subscribe = |patches: bool| {
+            thread_stream(
+                engine.clone(),
+                request(
+                    "orchestration.subscribeThread",
+                    json!({ "threadId": thread_id, "patches": patches }),
+                ),
+                cancellation.clone(),
+            )
+        };
+        let mut patched = subscribe(true);
+        let mut legacy = subscribe(false);
+        assert_eq!(next_items(&mut patched).await[0]["kind"], "snapshot");
+        assert_eq!(next_items(&mut legacy).await[0]["kind"], "snapshot");
+
+        rename(&engine, &thread_id, 1).await;
+        let items = next_items(&mut patched).await;
+        assert_eq!(items[0]["kind"], "patch", "{items:?}");
+        assert_eq!(items[0]["patch"]["set"]["title"], "Title 1");
+        assert!(items[0]["patch"]["set"].get("messages").is_none());
+        assert_eq!(next_items(&mut legacy).await[0]["kind"], "snapshot");
+        cancellation.cancel();
+        engine.shutdown().await;
+    }
+
+    /// The thread stream's wire contract: a client that applies these patches to
+    /// the first snapshot must reach the server's final snapshot. The TypeScript
+    /// side decodes and applies this fixture (`threadStreamParity.test.ts`).
+    /// Regenerate with `BIBCODE_UPDATE_THREAD_STREAM_FIXTURE=1`.
+    #[tokio::test]
+    async fn thread_stream_lifecycle_fixture_matches_the_wire() {
+        const AT: &str = "2026-07-10T10:00:00.000Z";
+        let engine = migrated_engine().await;
+        for command in [
+            json!({"type":"project.create","commandId":"c01","projectId":"p1","title":"Project","workspaceRoot":"C:/repo","defaultModelSelection":null,"createdAt":AT}),
+            json!({"type":"thread.create","commandId":"c02","threadId":"t1","projectId":"p1","title":"Thread","modelSelection":{"instanceId":"codex","model":"gpt-5"},"runtimeMode":"full-access","branch":null,"worktreePath":null,"createdAt":AT}),
+        ] {
+            engine
+                .dispatch(decode_command(command))
+                .await
+                .expect("setup");
+        }
+        let initial = thread_snapshot(&engine, "t1")
+            .await
+            .expect("initial snapshot");
+        let mut held = initial.clone();
+        let mut patches = Vec::new();
+        let at = |second: u32| format!("2026-07-10T10:01:{second:02}.000Z");
+        for command in [
+            json!({"type":"thread.meta.update","commandId":"c03","threadId":"t1","title":"Renamed","branch":"main","worktreePath":null}),
+            json!({"type":"thread.runtime-mode.set","commandId":"c04","threadId":"t1","runtimeMode":"approval-required","createdAt":at(1)}),
+            json!({"type":"thread.interaction-mode.set","commandId":"c05","threadId":"t1","interactionMode":"plan","createdAt":at(2)}),
+            json!({"type":"thread.turn.start","commandId":"c06","threadId":"t1","message":{"messageId":"m-user","role":"user","text":"hello","attachments":[]},"createdAt":at(3)}),
+            json!({"type":"thread.session.set","commandId":"c07","threadId":"t1","session":{"threadId":"t1","status":"running","providerName":"codex","providerInstanceId":"codex","runtimeMode":"approval-required","activeTurnId":"turn-1","lastError":null,"updatedAt":at(4)},"createdAt":at(4)}),
+            json!({"type":"thread.activity.append","commandId":"c08","threadId":"t1","activity":{"id":"a1","tone":"tool","kind":"command","summary":"ran","payload":{"step":1},"turnId":"turn-1","createdAt":at(5)},"createdAt":at(5)}),
+            json!({"type":"thread.message.assistant.delta","commandId":"c09","threadId":"t1","messageId":"m-assistant","delta":"hel","turnId":"turn-1","createdAt":at(6)}),
+            json!({"type":"thread.message.assistant.delta","commandId":"c10","threadId":"t1","messageId":"m-assistant","delta":"lo","turnId":"turn-1","createdAt":at(7)}),
+            json!({"type":"thread.activity.append","commandId":"c11","threadId":"t1","activity":{"id":"a2","tone":"info","kind":"status","summary":"working","payload":{"step":2},"turnId":"turn-1","createdAt":at(8)},"createdAt":at(8)}),
+            json!({"type":"thread.message.assistant.complete","commandId":"c12","threadId":"t1","messageId":"m-assistant","turnId":"turn-1","createdAt":at(9)}),
+            json!({"type":"thread.proposed-plan.upsert","commandId":"c13","threadId":"t1","proposedPlan":{"id":"plan-1","turnId":"turn-1","planMarkdown":"Do it","createdAt":at(10),"updatedAt":at(10)},"createdAt":at(10)}),
+            json!({"type":"thread.turn.diff.complete","commandId":"c14","threadId":"t1","turnId":"turn-1","completedAt":at(11),"checkpointRef":"ref-1","status":"ready","files":[{"path":"a.rs","kind":"modified","additions":2,"deletions":1}],"assistantMessageId":"m-assistant","checkpointTurnCount":1,"createdAt":at(11)}),
+            json!({"type":"thread.turn.start","commandId":"c15","threadId":"t1","message":{"messageId":"m-queued","role":"user","text":"next","attachments":[]},"runtimeMode":"approval-required","interactionMode":"plan","queued":true,"createdAt":at(12)}),
+            json!({"type":"thread.turn.steer","commandId":"c16","threadId":"t1","messageId":"m-queued","createdAt":at(13)}),
+            json!({"type":"thread.session.set","commandId":"c17","threadId":"t1","session":{"threadId":"t1","status":"ready","providerName":"codex","providerInstanceId":"codex","runtimeMode":"approval-required","activeTurnId":null,"lastError":null,"updatedAt":at(14)},"createdAt":at(14)}),
+            json!({"type":"thread.archive","commandId":"c18","threadId":"t1"}),
+            json!({"type":"thread.unarchive","commandId":"c19","threadId":"t1"}),
+            json!({"type":"thread.session.stop","commandId":"c20","threadId":"t1","createdAt":at(15)}),
+        ] {
+            // A command the thread's state refuses still exercises the stream.
+            let _ = engine.dispatch(decode_command(command)).await;
+            let next = thread_snapshot(&engine, "t1").await.expect("snapshot");
+            if let Some(patch) = thread_patch(&held, &next) {
+                patches.push(patch);
+            }
+            held = next;
+        }
+        let fixture = stable_ids_and_clock_times(
+            json!({ "initial": initial, "patches": patches, "final": held }),
+            AT,
+        );
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/contracts/fixtures/thread-stream/lifecycle.json");
+        if std::env::var_os("BIBCODE_UPDATE_THREAD_STREAM_FIXTURE").is_some() {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(
+                &path,
+                serde_json::to_string_pretty(&fixture).unwrap() + "\n",
+            )
+            .unwrap();
+        }
+        let committed: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("committed fixture"))
+                .expect("fixture JSON");
+        assert_eq!(fixture, committed, "regenerate the thread stream fixture");
+        engine.shutdown().await;
+    }
+
+    /// Event ids and times the engine takes from the clock (rather than from a
+    /// command) differ per run; they become stable placeholders in first-seen order,
+    /// so references between them and their order survive.
+    fn stable_ids_and_clock_times(fixture: Value, day_of_commands: &str) -> Value {
+        fn collect(value: &Value, day: &str, seen: &mut Vec<String>) {
+            match value {
+                Value::String(text) => {
+                    let event_id = uuid::Uuid::parse_str(text).is_ok();
+                    // An ISO-8601 instant such as 2026-10-13T12:00:00.000Z.
+                    let bytes = text.as_bytes();
+                    let clock_time = bytes.len() >= 20
+                        && bytes[4] == b'-'
+                        && bytes[10] == b'T'
+                        && text.ends_with('Z')
+                        && bytes[..4].iter().all(u8::is_ascii_digit)
+                        && !text.starts_with(&day[..10]);
+                    if (event_id || clock_time) && !seen.contains(text) {
+                        seen.push(text.clone());
+                    }
+                }
+                Value::Array(items) => items.iter().for_each(|item| collect(item, day, seen)),
+                Value::Object(map) => map.values().for_each(|item| collect(item, day, seen)),
+                _ => {}
+            }
+        }
+        fn replace(value: Value, stable: &HashMap<String, String>) -> Value {
+            match value {
+                Value::String(text) => Value::String(stable.get(&text).cloned().unwrap_or(text)),
+                Value::Array(items) => Value::Array(
+                    items
+                        .into_iter()
+                        .map(|item| replace(item, stable))
+                        .collect(),
+                ),
+                Value::Object(map) => Value::Object(
+                    map.into_iter()
+                        .map(|(key, item)| (key, replace(item, stable)))
+                        .collect(),
+                ),
+                other => other,
+            }
+        }
+        let mut seen = Vec::new();
+        collect(&fixture, day_of_commands, &mut seen);
+        let stable = seen
+            .into_iter()
+            .enumerate()
+            .map(|(index, original)| {
+                let placeholder = if uuid::Uuid::parse_str(&original).is_ok() {
+                    format!("event-{index:02}")
+                } else {
+                    format!("2026-07-11T00:00:{index:02}.000Z")
+                };
+                (original, placeholder)
+            })
+            .collect::<HashMap<_, _>>();
+        replace(fixture, &stable)
+    }
+
+    /// A burst of events yields one shell snapshot, not one per event.
+    #[tokio::test]
+    async fn shell_stream_coalesces_event_bursts() {
+        let engine = migrated_engine().await;
+        let thread_id = created_project_thread(&engine).await;
+        let cancellation = CancellationToken::new();
+        let mut stream = shell_stream(engine.clone(), cancellation.clone());
+        assert_eq!(next_items(&mut stream).await[0]["kind"], "snapshot");
+
+        for index in 0..10 {
+            rename(&engine, &thread_id, index).await;
+        }
+        let latest = next_items(&mut stream).await;
+        assert_eq!(latest[0]["kind"], "snapshot");
+        tokio::time::sleep(SHELL_SNAPSHOT_COALESCE * 3).await;
+        let mut snapshots = 1;
+        while let Ok(Some(_)) = stream.try_recv().map(Some) {
+            snapshots += 1;
+        }
+        assert!(snapshots <= 2, "{snapshots} shell snapshots for one burst");
+        cancellation.cancel();
         engine.shutdown().await;
     }
 

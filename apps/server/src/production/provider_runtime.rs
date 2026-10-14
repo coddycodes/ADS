@@ -33,7 +33,8 @@ use crate::{
         profiler::exits::{self, Exited, Watch},
     },
     orchestration::{
-        ProviderTurnDelivery, TurnDeliveryMode, TurnDeliveryState, canonical_command_digest,
+        ProviderTurnDelivery, TurnDeliveryMode, TurnDeliveryState, TurnDeliveryTransition,
+        canonical_command_digest,
         engine::{
             ActivityInput, OrchestrationCommand, OrchestrationEngine, ProposedPlanInput,
             SessionInput, ThreadMessageInput,
@@ -123,6 +124,8 @@ const DEFAULT_EVENT_QUEUE_CAPACITY: usize = 128;
 const CLAUDE_CONTROL_RESPONSE_CAPACITY: usize = 128;
 const DEFAULT_SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const ACTIVITY_ONLY_PROVIDER_EVENT_TYPE: &str = "activity.native";
+/// A provider read a message after its delivery was marked uncertain; carries `deliveryKey`.
+const LATE_DELIVERY_PROVIDER_EVENT_TYPE: &str = "delivery.confirmed-late";
 const DELIVERY_ROUTE_FINGERPRINT_FIELD: &str = "_bibcodeProviderRouteFingerprint";
 const DELIVERY_ROUTE_CWD_PENDING_FIELD: &str = "_bibcodeProviderRouteCwdPending";
 const DELIVERY_ROUTE_FINGERPRINT_VERSION: &str = "provider-route-v4";
@@ -2771,6 +2774,124 @@ mod workspace_loss_tests {
             "runtimeMode":"full-access", "interactionMode":"default", "createdAt":BEFORE_LOSS,
         }))
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_late_replay_confirms_only_its_uncertain_delivery() {
+        let f = Fixture::new(true).await;
+        for (id, key) in [("late", "late-key"), ("other", "other-key")] {
+            let command = turn(id, false);
+            let admission = CommandAdmission {
+                payload_digest: canonical_command_digest(&command).unwrap(),
+                attachment_refs: Vec::new(),
+                provider_turn: Some(NewProviderTurnDelivery {
+                    command_id: id.into(),
+                    thread_id: "t1".into(),
+                    message_id: id.into(),
+                    provider_instance_id: "claudeAgent".into(),
+                    provider_kind: "claudeAgent".into(),
+                    provider_session_id: None,
+                    delivery_key: key.into(),
+                    payload: serde_json::to_value(&command).unwrap(),
+                    state: TurnDeliveryState::Pending,
+                    mode: TurnDeliveryMode::Start,
+                    created_at: BEFORE_LOSS.into(),
+                }),
+            };
+            f.engine
+                .dispatch_with_admission(command, admission, || {})
+                .await
+                .unwrap();
+            assert!(
+                f.engine
+                    .transition_turn_delivery(TurnDeliveryTransition {
+                        turn_id: None,
+                        command_id: id.into(),
+                        expected_states: vec![TurnDeliveryState::Pending],
+                        expected_attempt: 0,
+                        next_state: TurnDeliveryState::Uncertain,
+                        detail: Some("Claude did not confirm it received this message.".into()),
+                        updated_at: BEFORE_LOSS.into(),
+                    })
+                    .await
+                    .unwrap()
+            );
+        }
+
+        super::confirm_late_delivery(&f.engine, "t1", "late-key").await;
+
+        // A replay that beats the timeout's own write waits for the row to settle.
+        let command = turn("racing", false);
+        let admission = CommandAdmission {
+            payload_digest: canonical_command_digest(&command).unwrap(),
+            attachment_refs: Vec::new(),
+            provider_turn: Some(NewProviderTurnDelivery {
+                command_id: "racing".into(),
+                thread_id: "t1".into(),
+                message_id: "racing".into(),
+                provider_instance_id: "claudeAgent".into(),
+                provider_kind: "claudeAgent".into(),
+                provider_session_id: None,
+                delivery_key: "racing-key".into(),
+                payload: serde_json::to_value(&command).unwrap(),
+                state: TurnDeliveryState::Pending,
+                mode: TurnDeliveryMode::Start,
+                created_at: BEFORE_LOSS.into(),
+            }),
+        };
+        f.engine
+            .dispatch_with_admission(command, admission, || {})
+            .await
+            .unwrap();
+        let transition = |from, to| TurnDeliveryTransition {
+            turn_id: None,
+            command_id: "racing".into(),
+            expected_states: vec![from],
+            expected_attempt: 0,
+            next_state: to,
+            detail: None,
+            updated_at: BEFORE_LOSS.into(),
+        };
+        assert!(
+            f.engine
+                .transition_turn_delivery(transition(
+                    TurnDeliveryState::Pending,
+                    TurnDeliveryState::Sending
+                ))
+                .await
+                .unwrap()
+        );
+        let confirmation = tokio::spawn({
+            let engine = f.engine.clone();
+            async move { super::confirm_late_delivery(&engine, "t1", "racing-key").await }
+        });
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        assert!(
+            f.engine
+                .transition_turn_delivery(transition(
+                    TurnDeliveryState::Sending,
+                    TurnDeliveryState::Uncertain
+                ))
+                .await
+                .unwrap()
+        );
+        confirmation.await.unwrap();
+
+        let repositories = f.engine.repositories();
+        let state = |id: &'static str| {
+            let repositories = repositories.clone();
+            async move {
+                repositories
+                    .get_provider_turn_delivery(id.into())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .state
+            }
+        };
+        assert_eq!(state("late").await, TurnDeliveryState::Delivered);
+        assert_eq!(state("other").await, TurnDeliveryState::Uncertain);
+        assert_eq!(state("racing").await, TurnDeliveryState::Delivered);
     }
 
     #[tokio::test]
@@ -6422,6 +6543,65 @@ mod context_handoff_tests {
     }
 }
 
+/// The provider read a message whose delivery had been marked uncertain, so that delivery
+/// arrived after all. A retry or dismissal since then leaves the row as it is. The replay
+/// can beat the timeout's own `sending -> uncertain` write by a moment, so a matching row
+/// still sending is given a second to settle.
+async fn confirm_late_delivery(engine: &OrchestrationEngine, thread_id: &str, delivery_key: &str) {
+    const SETTLE_POLL: Duration = Duration::from_millis(50);
+    const SETTLE_ATTEMPTS: usize = 20;
+    for _ in 0..SETTLE_ATTEMPTS {
+        let rows = match engine
+            .repositories()
+            .list_provider_turn_deliveries(vec![
+                TurnDeliveryState::Uncertain,
+                TurnDeliveryState::Sending,
+            ])
+            .await
+        {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(%error, thread_id, "could not read deliveries for a late replay");
+                return;
+            }
+        };
+        let Some(row) = rows
+            .into_iter()
+            .find(|row| row.thread_id == thread_id && row.delivery_key == delivery_key)
+        else {
+            return;
+        };
+        if row.state == TurnDeliveryState::Sending {
+            tokio::time::sleep(SETTLE_POLL).await;
+            continue;
+        }
+        let transition = TurnDeliveryTransition {
+            turn_id: None,
+            command_id: row.command_id,
+            expected_states: vec![TurnDeliveryState::Uncertain],
+            expected_attempt: row.attempts,
+            next_state: TurnDeliveryState::Delivered,
+            detail: None,
+            updated_at: OffsetDateTime::now_utc()
+                .format(&Rfc3339)
+                .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned()),
+        };
+        match engine.transition_turn_delivery(transition).await {
+            Ok(true) => {
+                tracing::info!(
+                    thread_id,
+                    "a late provider replay confirmed an uncertain delivery"
+                );
+            }
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(%error, thread_id, "could not confirm a late-replayed delivery");
+            }
+        }
+        return;
+    }
+}
+
 async fn capture_start_revision(entry: &SessionEntry) -> Result<u64, ProviderRuntimeError> {
     #[cfg(test)]
     if let Some(observed) = entry
@@ -6450,10 +6630,16 @@ async fn publish_running_session(
     let publication = entry.publication.lock().await;
     if publication.closed
         || entry.event_cancellation.is_cancelled()
-        || publication.terminal_revision != terminal_revision
         // Exhaustion is absorbing: a saturated witness can never reopen publication.
         || publication.terminal_revision == u64::MAX
     {
+        return Ok(());
+    }
+    if publication.terminal_revision != terminal_revision {
+        tracing::info!(
+            thread_id = %entry.launch.thread_id,
+            "a turn ended before this delivery was accepted; the session is not marked running"
+        );
         return Ok(());
     }
     let runtime = persist_entry(&engine.repositories(), entry, "running").await;
@@ -7848,6 +8034,17 @@ fn spawn_event_pump(
                         .last_provider_event_at = Some(tokio::time::Instant::now());
                     if let Some(log) = &operational_log {
                         let _ = log.record(&event);
+                    }
+                    if event.event_type == LATE_DELIVERY_PROVIDER_EVENT_TYPE {
+                        if let Some(key) = event.payload.get("deliveryKey").and_then(Value::as_str) {
+                            // Off the pump: it may wait for the timeout's own write to land.
+                            let (engine, thread_id, key) =
+                                (engine.clone(), launch.thread_id.clone(), key.to_owned());
+                            tokio::spawn(async move {
+                                confirm_late_delivery(&engine, &thread_id, &key).await;
+                            });
+                        }
+                        continue;
                     }
                     let session_exited = event.event_type == "session.exited"
                         && event.thread_id == launch.thread_id
@@ -11320,6 +11517,15 @@ struct ClaudePendingAcknowledgement {
     id: u64,
     sender: oneshot::Sender<Option<String>>,
     session_cancellation: CancellationToken,
+    /// The outbox delivery this write carries, confirmed if its replay arrives late.
+    delivery_key: Option<Arc<str>>,
+}
+
+/// The write a replay acknowledged.
+struct ClaudeReplay {
+    write: u64,
+    /// Set when that write's wait had already ended: its delivery shows as uncertain.
+    late_delivery_key: Option<Arc<str>>,
 }
 
 #[derive(Clone, Default)]
@@ -11328,11 +11534,22 @@ struct ClaudeAcknowledgements {
 }
 
 impl ClaudeAcknowledgements {
+    #[cfg(test)]
     fn register(
         &self,
         text: &str,
         sender: oneshot::Sender<Option<String>>,
         session_cancellation: CancellationToken,
+    ) -> ClaudeAcknowledgementRegistration {
+        self.register_delivery(text, sender, session_cancellation, None)
+    }
+
+    fn register_delivery(
+        &self,
+        text: &str,
+        sender: oneshot::Sender<Option<String>>,
+        session_cancellation: CancellationToken,
+        delivery_key: Option<Arc<str>>,
     ) -> ClaudeAcknowledgementRegistration {
         let mut state = self.state.lock().expect("Claude acknowledgement lock");
         state.next_id = state.next_id.wrapping_add(1);
@@ -11346,6 +11563,7 @@ impl ClaudeAcknowledgements {
                 id,
                 sender,
                 session_cancellation,
+                delivery_key,
             });
         ClaudeAcknowledgementRegistration {
             id,
@@ -11355,23 +11573,29 @@ impl ClaudeAcknowledgements {
         }
     }
 
-    fn acknowledge(&self, text: &str, turn_id: Option<String>) {
+    /// The live write the replay belongs to, if any.
+    fn acknowledge(&self, text: &str, turn_id: Option<String>) -> Option<ClaudeReplay> {
         let text = claude_acknowledgement_key(text);
         let text = text.as_ref();
         let mut state = self.state.lock().expect("Claude acknowledgement lock");
-        let Some(pending) = state.pending.get_mut(text) else {
-            return;
-        };
+        let pending = state.pending.get_mut(text)?;
         // The oldest live write owns the replay, even one whose wait expired.
+        let mut matched = None;
         while let Some(entry) = pending.pop_front() {
             if !entry.session_cancellation.is_cancelled() {
-                let _ = entry.sender.send(turn_id.clone());
+                // Only an expired wait keeps its entry with the receiver gone.
+                let late = entry.sender.send(turn_id.clone()).is_err();
+                matched = Some(ClaudeReplay {
+                    write: entry.id,
+                    late_delivery_key: late.then_some(entry.delivery_key).flatten(),
+                });
                 break;
             }
         }
         if pending.is_empty() {
             state.pending.remove(text);
         }
+        matched
     }
 }
 
@@ -13607,6 +13831,7 @@ impl ClaudeDriver {
         text: String,
         attachments: Vec<Value>,
         expected_turn_id: Option<String>,
+        delivery_key: String,
     ) -> ProviderDeliveryOutcome {
         let (steer_cancellation, acknowledgement_cancellation) = {
             let runtime = self.runtime.lock().await;
@@ -13675,19 +13900,23 @@ impl ClaudeDriver {
         // Register under the writer lock: identical-text waiters must have the
         // same FIFO order as the actual input writes, not preparation completion.
         let (acknowledgement_tx, acknowledgement_rx) = oneshot::channel();
-        let acknowledgement_registration = self.pending_acknowledgement.register(
+        let acknowledgement_registration = self.pending_acknowledgement.register_delivery(
             &text,
             acknowledgement_tx,
             acknowledgement_cancellation.clone(),
+            Some(Arc::from(delivery_key)),
         );
-        if expected_turn_id.is_none() {
-            self.runtime
-                .lock()
-                .await
-                .start_turn(crate::provider::claude::TurnInput {
-                    turn_id: turn_id.clone(),
-                    input: text,
-                });
+        // A new turn begins when Claude replays this write.
+        let turn_input = expected_turn_id
+            .is_none()
+            .then_some(acknowledgement_registration.id);
+        if let Some(write) = turn_input {
+            let mut runtime = self.runtime.lock().await;
+            runtime.start_turn(crate::provider::claude::TurnInput {
+                turn_id: turn_id.clone(),
+                input: text,
+            });
+            runtime.await_turn_input(write);
         }
         if let Err(outcome) = self
             .write_delivery_bytes(
@@ -13698,6 +13927,7 @@ impl ClaudeDriver {
             )
             .await
         {
+            self.stop_awaiting_turn_input(turn_input).await;
             return outcome;
         }
         drop(writer);
@@ -13738,7 +13968,18 @@ impl ClaudeDriver {
         } else {
             drop(acknowledgement_registration);
         }
+        // Without its replay, results stop waiting for this write; an accepted write's
+        // replay already ended the wait.
+        if !matches!(outcome, ProviderDeliveryOutcome::Accepted { .. }) {
+            self.stop_awaiting_turn_input(turn_input).await;
+        }
         outcome
+    }
+
+    async fn stop_awaiting_turn_input(&self, write: Option<u64>) {
+        if let Some(write) = write {
+            self.runtime.lock().await.stop_awaiting_turn_input(write);
+        }
     }
 }
 
@@ -13794,18 +14035,18 @@ impl ProviderDriver for ClaudeDriver {
         text: String,
         attachments: Vec<Value>,
         _: String,
-        _: String,
+        delivery_key: String,
     ) -> BoxRuntimeFuture<'_, ProviderDeliveryOutcome> {
-        Box::pin(self.deliver_user_line(text, attachments, None))
+        Box::pin(self.deliver_user_line(text, attachments, None, delivery_key))
     }
     fn steer(
         &self,
         text: String,
         attachments: Vec<Value>,
         expected_turn_id: String,
-        _: String,
+        delivery_key: String,
     ) -> BoxRuntimeFuture<'_, ProviderDeliveryOutcome> {
-        Box::pin(self.deliver_user_line(text, attachments, Some(expected_turn_id)))
+        Box::pin(self.deliver_user_line(text, attachments, Some(expected_turn_id), delivery_key))
     }
     fn interrupt(
         &self,
@@ -14624,10 +14865,16 @@ async fn emit_claude_value(
             .div_euclid(1_000_000),
     )
     .unwrap_or_default();
+    let mut late_delivery_key = None;
     let mut output = {
         let mut runtime = runtime.lock().await;
-        if !authenticated_hook && let Some(text) = claude_replayed_user_text(&value) {
-            pending_acknowledgement.acknowledge(text, runtime.current_turn_id().map(str::to_owned));
+        if !authenticated_hook
+            && let Some(text) = claude_replayed_user_text(&value)
+            && let Some(replay) = pending_acknowledgement
+                .acknowledge(text, runtime.current_turn_id().map(str::to_owned))
+        {
+            runtime.stop_awaiting_turn_input(replay.write);
+            late_delivery_key = replay.late_delivery_key;
         }
         if authenticated_hook {
             runtime.handle_authenticated_hook_value(&value, emitted_at_ms)
@@ -14635,6 +14882,26 @@ async fn emit_claude_value(
             runtime.handle_raw_value(&value, emitted_at_ms)
         }
     };
+    if let Some(delivery_key) = late_delivery_key
+        && !send_claude_output(
+            sender,
+            cancellation,
+            ProviderEvent {
+                native_event_id: None,
+                event_type: LATE_DELIVERY_PROVIDER_EVENT_TYPE.to_owned(),
+                thread_id: thread_id.to_owned(),
+                turn_id: None,
+                item_id: None,
+                request_id: None,
+                payload: json!({ "deliveryKey": &*delivery_key }),
+                activity: Vec::new(),
+                activity_controls: ProviderActivityControls::default(),
+            },
+        )
+        .await
+    {
+        return false;
+    }
     let recovery_request = output.recovery_request.take();
     let native_event_id = output
         .native_event_id
@@ -16678,6 +16945,32 @@ done
     #[cfg(windows)]
     const CLAUDE_REPLAY_FIXTURE: &str = "claude-replay";
 
+    // Replays each message only after a delay longer than the test's acknowledgement wait.
+    #[cfg(unix)]
+    const CLAUDE_LATE_REPLAY_FIXTURE: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$BIBCODE_TEST_REQUEST_CAPTURE"
+  case "$line" in
+    *'"type":"user"'*) sleep 1; printf '%s\n' "$line";;
+  esac
+done
+"#;
+
+    // Reports a result for earlier work before replaying each message, then ends the turn.
+    #[cfg(unix)]
+    const CLAUDE_EARLY_RESULT_FIXTURE: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$BIBCODE_TEST_REQUEST_CAPTURE"
+  case "$line" in
+    *'"type":"user"'*)
+      printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":null,"session_id":"s","uuid":"before-replay"}'
+      printf '%s\n' "$line"
+      printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s","uuid":"after-replay"}'
+      ;;
+  esac
+done
+"#;
+
     #[cfg(unix)]
     const CLAUDE_DISCONNECT_FIXTURE: &str = r#"#!/bin/sh
 IFS= read -r line
@@ -17503,6 +17796,87 @@ done
         })
         .await
         .unwrap();
+        // Nor does it hold back the turn's results once it gave up on the replay.
+        let result = driver.runtime.lock().await.handle_raw_value(
+            &json!({"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s","uuid":"late"}),
+            0,
+        );
+        assert!(
+            result
+                .events
+                .iter()
+                .any(|event| event.event_type == "turn.completed")
+        );
+        driver.shutdown().await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_replay_after_the_wait_confirms_its_delivery_late() {
+        let temp = TempDir::new().unwrap();
+        let capture = temp.path().join("late-replay.jsonl");
+        let mut driver = claude_delivery_fixture(
+            &temp,
+            "claude-late-replay",
+            CLAUDE_LATE_REPLAY_FIXTURE,
+            &capture,
+            None,
+            None,
+        )
+        .await;
+        Arc::get_mut(&mut driver)
+            .expect("fixture driver is not shared yet")
+            .acknowledgement_timeout = Duration::from_millis(100);
+        driver.start().await.unwrap();
+        let outcome = timeout(
+            Duration::from_secs(5),
+            driver.deliver("hello".into(), vec![], "default".into(), "late-key".into()),
+        )
+        .await
+        .expect("the acknowledgement wait ends at its deadline");
+        assert!(
+            matches!(outcome, super::ProviderDeliveryOutcome::Ambiguous { .. }),
+            "{outcome:?}"
+        );
+        let confirmed =
+            claude_fixture_output(&driver, super::LATE_DELIVERY_PROVIDER_EVENT_TYPE).await;
+        assert_eq!(confirmed.payload["deliveryKey"], "late-key");
+        driver.shutdown().await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_result_before_the_replay_does_not_end_the_new_turn() {
+        // Issue #93: after a suspended thread resumed, Claude reported a result before it
+        // replayed the new message; that result ended the new turn and the thread read
+        // ready while Claude worked on it.
+        let temp = TempDir::new().unwrap();
+        let capture = temp.path().join("early-result.jsonl");
+        let driver = claude_delivery_fixture(
+            &temp,
+            "claude-early-result",
+            CLAUDE_EARLY_RESULT_FIXTURE,
+            &capture,
+            None,
+            None,
+        )
+        .await;
+        driver.start().await.unwrap();
+        let outcome = timeout(
+            Duration::from_secs(5),
+            driver.deliver("hello".into(), vec![], "default".into(), "key".into()),
+        )
+        .await
+        .expect("the replay acknowledges the delivery");
+        let super::ProviderDeliveryOutcome::Accepted {
+            turn_id: Some(turn_id),
+        } = outcome
+        else {
+            panic!("{outcome:?}");
+        };
+        let completed = claude_fixture_output(&driver, "turn.completed").await;
+        assert_eq!(completed.turn_id.as_deref(), Some(turn_id.as_str()));
+        assert_eq!(completed.payload["stopReason"], "end_turn");
         driver.shutdown().await.unwrap();
     }
 

@@ -40,6 +40,15 @@ fn fixture() -> (TestSandbox, GitLabHost, HostScope) {
     fs::write(s.path("versions.json"),json!([{"base_commit_sha":"version-base","start_commit_sha":"version-start","head_commit_sha":"head-sha"}]).to_string()).unwrap();
     let glab=s.executable_script("glab",r##"
 printf '%s\n' "$*" >> calls
+# With a `barrier` file, the five action reads each wait until all five have started.
+if [ -e barrier ]; then
+  case "$1 $2" in
+    'api projects/gitlab-org%2Fcli'|'api projects/gitlab-org%2Fcli/merge_requests/3941'|'api projects/gitlab-org%2Fcli/merge_requests/3941/approvals'|'api projects/gitlab-org%2Fcli/merge_requests/3941/reviewers'|'api --method')
+      mkdir -p started && : > "started/$$"
+      n=0
+      while [ "$(ls started | wc -l)" -lt 5 ]; do n=$((n+1)); [ "$n" -gt 100 ] && exit 75; sleep 0.05; done ;;
+  esac
+fi
 case "$1 $2" in
   'api user') echo '{"id":8,"username":"viewer","name":null}' ;;
   'api version') if [ -e version-denied ]; then echo 'HTTP 403' >&2; exit 1; fi; printf '{"version":"%s"}\n' "$(cat version)" ;;
@@ -80,6 +89,19 @@ esac
         provider: PullRequestsProvider::Gitlab,
     };
     (s, host, scope)
+}
+
+#[tokio::test]
+async fn pull_requests_gitlab_action_detail_reads_in_one_wave() {
+    let (s, host, scope) = fixture();
+    let c = CancellationToken::new();
+    let context = host.context(&scope, &c).await.unwrap();
+    // Reads that run one after another wait out the barrier and fail.
+    fs::write(s.path("barrier"), "").unwrap();
+    host.action_detail(&scope, 3941, &context, &c)
+        .await
+        .expect("the five action reads run together");
+    assert_eq!(fs::read_dir(s.path("started")).unwrap().count(), 5);
 }
 
 #[tokio::test]

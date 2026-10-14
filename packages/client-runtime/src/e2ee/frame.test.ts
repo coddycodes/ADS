@@ -4,6 +4,7 @@ import transportConstants from "../../../shared/fixtures/e2ee-transport-constant
 import {
   E2EE_RECORD_FLAG_CONTINUATION,
   E2EE_RECORD_FLAG_CONTROL,
+  E2EE_RECORD_FLAG_DEFLATE,
   E2EE_RECORD_FLAG_FINAL,
   E2eeFrameError,
   MAX_E2EE_CHUNK_BYTES,
@@ -188,5 +189,41 @@ describe("RecordAssembler control records", () => {
   it("rejects an empty control record", () => {
     const assembler = new RecordAssembler(undefined, { allowControlRecords: true });
     expect(() => assembler.push(Uint8Array.of(0x02))).toThrow(E2eeFrameError);
+  });
+
+  it("marks a message whose records carry 0x10 as compressed once deflate-v1 is agreed", () => {
+    const assembler = new RecordAssembler(undefined, { allowDeflate: true });
+    expect(assembler.push(record(E2EE_RECORD_FLAG_DEFLATE | 0x01, "ab"))).toBeNull();
+    expect(new TextDecoder().decode(assembler.push(record(E2EE_RECORD_FLAG_DEFLATE, "cd"))!)).toBe(
+      "abcd",
+    );
+    expect(assembler.lastMessageDeflated).toBe(true);
+    expect(new TextDecoder().decode(assembler.push(record(0x00, "plain"))!)).toBe("plain");
+    expect(assembler.lastMessageDeflated).toBe(false);
+  });
+
+  it("reports a control record after a compressed message as uncompressed", () => {
+    const assembler = new RecordAssembler(undefined, {
+      allowControlRecords: true,
+      allowDeflate: true,
+    });
+    assembler.push(record(E2EE_RECORD_FLAG_DEFLATE, "zz"));
+    expect(assembler.lastMessageDeflated).toBe(true);
+    assembler.push(record(E2EE_RECORD_FLAG_DEFLATE | 0x01, "ab"));
+    expect(new TextDecoder().decode(assembler.push(record(0x02, "pong"))!)).toBe("pong");
+    expect(assembler.lastMessageDeflated).toBe(false);
+    assembler.push(record(E2EE_RECORD_FLAG_DEFLATE, "cd"));
+    expect(assembler.lastMessageDeflated).toBe(true);
+  });
+
+  it("rejects 0x10 unless deflate-v1 was negotiated", () => {
+    const assembler = new RecordAssembler();
+    expect(() => assembler.push(record(E2EE_RECORD_FLAG_DEFLATE, "ab"))).toThrow(E2eeFrameError);
+  });
+
+  it("rejects a message whose records disagree on compression", () => {
+    const assembler = new RecordAssembler(undefined, { allowDeflate: true });
+    assembler.push(record(E2EE_RECORD_FLAG_DEFLATE | 0x01, "ab"));
+    expect(() => assembler.push(record(0x00, "cd"))).toThrow(E2eeFrameError);
   });
 });

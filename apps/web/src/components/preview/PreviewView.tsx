@@ -665,7 +665,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         // The agent sees the canonical page URL, never this client's gateway origin.
         addPreviewAnnotation(threadRef, {
           ...annotation,
-          pageUrl: canonicalizePreviewUrl(annotation.pageUrl),
+          pageUrl: canonicalizePreviewUrl(annotation.pageUrl, tabId),
         });
         const screenshotFile = await previewAnnotationScreenshotFile(annotation);
         if (screenshotFile && annotation.screenshot) {

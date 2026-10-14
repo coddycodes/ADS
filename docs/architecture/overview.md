@@ -148,7 +148,12 @@ flowchart TB
   metadata signals collapse at a 125 ms trailing edge, with exactly one trailing
   read retained when signals arrive during a physical read. Overflow, watcher
   loss, and setup unavailability are sticky fallback states; they preserve the
-  subscription and cannot be cleared by a later ordinary event. Active
+  subscription and cannot be cleared by a later ordinary event. An overflow
+  re-registers every watch, but further overflows defer that re-registration:
+  30 seconds apart at first, doubling to 30 minutes, and reset after a quiet
+  stretch. On Linux, re-registering a tree larger than the kernel's event queue
+  overflows the queue again by itself, so without that spacing it would loop.
+  Active
   subscriptions also retain a completion-based safety read after the greater of
   60 seconds or four times the last completed read duration, capped at 300
   seconds. Explicit mutation, workspace, focus/menu catch-up, and structured
@@ -287,9 +292,24 @@ flowchart TB
   count serialized JSON including escaping.
 
   Git Manager signals reuse the status watcher's lifecycle. The worktree root
-  retains one native recursive watch, including its `.git` tree. The notify
-  backend owns recursion: inotify directory watches on Linux, FSEvents on
-  macOS, and subtree watching on Windows. Events from the top-level `objects/`
+  retains one native recursive watch, including its `.git` tree. FSEvents on
+  macOS and subtree watching on Windows cover the tree with one handle. On
+  Linux, where each directory costs an inotify watch,
+  `git/watcher/pruned.rs` walks the tree itself and watches every directory
+  non-recursively except the ones Git ignores (listed once per registration
+  with `git ls-files --others --ignored --directory`, confirmed by
+  `git check-ignore`) and nested repositories or linked worktrees (a `.git`
+  directory, or a `.git` file whose Git directory is not in this worktree's
+  `modules/`), which have their own watches; a submodule keeps notify's
+  recursive watch, as before, because the parent's status shows its changes. A worker thread watches directories created later (one
+  `git check-ignore` per new level, so an anchored rule such as `/build/` does
+  not skip `src/build/`), watches a removed and recreated directory again, and
+  re-reads the rules when a `.gitignore` or `.git/info/exclude` is written (a
+  read, such as Git's own, does not count); when Git cannot answer, it skips
+  `node_modules` and `target` by name; a
+  watch it cannot add reaches the watcher as an error. Git runs through the
+  supervised process runner. A checkout with agent worktrees and build output
+  under it went from about 312,000 watched directories to about 2,400. Events from the top-level `objects/`
   and `lfs/` stores and from submodule object stores (`modules/<name>/objects/`)
   are filtered; the rest of a submodule's Git directory still refreshes status.
   Git metadata outside the worktree has non-recursive root watches and native
@@ -402,7 +422,13 @@ stderr close-on-exec (`apps/desktop/src-tauri/src/relaunch.rs`), so the new
 process no longer inherits the old AppImage runtime's keep-alive pipe. The old
 FUSE mount, its daemon and the replaced AppImage therefore end with the old
 process; the relaunched app still inherits the old environment, including stale
-`.mount_*` entries behind the new mount's own paths.
+`.mount_*` entries behind the new mount's own paths. When the host runs directly
+in a systemd `.service` unit (a launcher such as `systemd-run --user`), the
+update relaunch starts the new AppImage through `systemd-run --user --scope`
+instead, at the last exit callback: the unit stops when its main process exits
+and kills its whole cgroup, which would otherwise take the relaunched app's
+FUSE mount down and kill it with SIGBUS. If `systemd-run` fails, Tauri's
+in-place relaunch runs as before.
 
 The gate checks a few variables before copying the full environment. A nonempty
 `APPIMAGE` and an absolute, non-root `APPDIR` activate isolation. For an
@@ -1370,6 +1396,10 @@ are listed in the
   scan (see [Crash capture](#crash-capture)).
 - The detectors are the process sampler, the RPC latency detector, and the
   worktree audit. A standalone `bibcode` also runs the crash monitor detector.
+  Every 5 minutes the latency detector also emits `rpc.histogram` per method
+  and outcome, and `rpc.bytes` per method: the encoded reply bytes that left on
+  connections that encode before queueing (E2EE and record-framed), counted in
+  `rpc/session.rs` only while the profiler is on.
   The exit watches are not detectors: their call sites check `is_enabled()`
   before building a report.
 - `ProductionRuntime::start` starts the runtime on a blocking thread, because it
@@ -1643,11 +1673,13 @@ it.
   connection writes `rpc.reconnect` with the gap. Neither raises a finding. See
   [Connection ends](./rpc-and-orchestration.md#connection-ends).
 - **Subprocess exits.** The provider, terminal, and supervised-command exit
-  paths report a death BiBCode did not ask for as a `subprocess.exit` event and
+  paths, and the BiBCode Connect tunnel connector (checked every 5 s while it
+  is the active one), report a death BiBCode did not ask for as a
+  `subprocess.exit` event and
   a `subprocess.crash` finding with the signal or exit code, uptime, and the
   sampler's last memory sample. On Linux, for a signal that dumps core, a
   matching core dump record is looked up in the background for up to about 5 s
-  and attached when found. Providers count signals and non-zero exits,
+  and attached when found. Providers and the tunnel connector count signals and non-zero exits,
   supervised commands such as git only signals, and terminals only signals
   people do not type (not `Ctrl-\` or `kill -9`). SIGTERM, SIGHUP, and SIGINT (on
   Windows the Ctrl-C status), and a provider's exit codes 129, 130, and 143,

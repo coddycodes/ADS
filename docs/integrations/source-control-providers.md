@@ -288,7 +288,11 @@ GraphQL reads, passes `-H "Content-Type: application/json"` before `--input`:
 The explicit header makes the raw file payload JSON on hosts that reject an
 empty content type; GraphQL queries and variables remain in the private file.
 Host/repository operands and `GH_HOST` / `GITLAB_HOST`
-pin every request; `glab api` also receives `--hostname`. See the
+pin every request; `glab api` also receives `--hostname`. Every `glab` that
+BiBCode starts, including status lookups, request creation and Settings
+discovery, runs with `GLAB_SEND_TELEMETRY=0`: otherwise glab sends a telemetry
+event to the host before each command returns, which roughly doubles the cost
+of every call on a slow link. Your own `glab` configuration is unchanged. See the
 [RPC flow and limits](../architecture/rpc-and-orchestration.md#pull-requests-flow).
 
 ## Source Control panel

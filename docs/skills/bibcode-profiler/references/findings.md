@@ -81,6 +81,15 @@ and `startedAt`.
     classification: one written while no profiler session ran, such as a
     desktop host that crashed during startup or between in-process server
     restarts. Its summary says no profiler session reported it.
+  - **an OS crash record no session covered** (Linux systemd-coredump only), at
+    every start: a coredump of this same executable since the last successful
+    query (the `crash-query-cursor` file; the last session's start the first
+    time), from a process other than this one and an unclean previous run, such
+    as an app relaunched by an update that died before its profiler started, or
+    a crash monitor. Fingerprint `unrecorded`, the executable's file name and
+    the signal, so repeats group; evidence `source: coredump`, `pid`, `signal`,
+    `exe`, `crashedAt`, `crashId`/`crashIds` (`coredump-<pid>-<time>`, which
+    keeps it from being raised again) and `rawRef` (`coredumpctl info <pid>`).
 - **Fingerprint:**
   - from a dump: `processKind`, `minidump`, the dump's crash reason (such as
     `SIGSEGV / SEGV_MAPERR`), the faulting module's file name and the offset in
@@ -192,7 +201,11 @@ A panic that ended the process also leaves a `crash.unclean-exit` or
     codes for a caught `SIGHUP`, `SIGINT` or `SIGTERM`);
   - terminal sessions: crash signals only (`SIGQUIT` and `SIGKILL` are typed by
     users, `exit 1` is ordinary);
-  - commands such as `git`: signals only.
+  - commands such as `git`: signals only;
+  - the BiBCode Connect tunnel connector (`command`, labelled by its
+    executable, such as `bibcode-connect`): signals and non-zero exits, noticed
+    within 5 s; its relay preview hostnames are withdrawn until the next link
+    or restart.
 - **Fingerprint:** `processKind`, `label` and `outcome`.
 - **Evidence:**
   - `pid`, `outcome`, `uptimeMs`;

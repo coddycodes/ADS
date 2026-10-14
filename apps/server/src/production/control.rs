@@ -320,6 +320,7 @@ pub struct NativeServerControl {
     capability_tasks: TaskTracker,
     capability_shutdown: CancellationToken,
     capability_admission: Arc<std::sync::Mutex<()>>,
+    capability_cache: Arc<std::sync::Mutex<CapabilityCache>>,
     full_provider_refresh_running: Arc<AtomicBool>,
     provider_refresh_state: Arc<std::sync::Mutex<ProviderRefreshState>>,
     activity_protocol_registered: Arc<AtomicBool>,
@@ -432,6 +433,7 @@ impl NativeServerControl {
             capability_tasks: TaskTracker::new(),
             capability_shutdown: CancellationToken::new(),
             capability_admission: Arc::new(std::sync::Mutex::new(())),
+            capability_cache: Arc::default(),
             full_provider_refresh_running: Arc::new(AtomicBool::new(false)),
             provider_refresh_state: Arc::new(
                 std::sync::Mutex::new(ProviderRefreshState::default()),
@@ -1600,6 +1602,179 @@ fn agent_activity_enabled(settings: &Value, source: AgentActivitySource) -> bool
         .unwrap_or(fallback)
 }
 
+/// How long a provider's skill and command catalog is answered without re-reading it.
+/// Older entries are still answered at once and refreshed in the background.
+const CAPABILITY_CACHE_FRESH: Duration = Duration::from_secs(60);
+/// Catalogs kept at most; the least recently stored goes first, so worktrees that are gone
+/// do not stay for the server's lifetime.
+const CAPABILITY_CACHE_ENTRIES: usize = 64;
+
+type CapabilityKey = (String, String);
+
+/// Provider skill and command catalogs by instance and workspace. Discovery starts the
+/// provider CLI (about a second for Claude), so a composer opening repeatedly must not
+/// wait for it each time. Entries belong to one settings generation.
+#[derive(Debug, Default)]
+struct CapabilityCache {
+    entries: std::collections::HashMap<CapabilityKey, CachedCapabilities>,
+    refreshing: std::collections::HashSet<CapabilityKey>,
+}
+
+#[derive(Debug)]
+struct CachedCapabilities {
+    generation: u64,
+    stored_at: std::time::Instant,
+    value: Value,
+}
+
+impl CapabilityCache {
+    fn key(payload: &Value) -> Option<CapabilityKey> {
+        let field = |name| payload.get(name).and_then(Value::as_str).map(str::to_owned);
+        Some((field("instanceId")?, field("cwd")?))
+    }
+
+    /// The cached catalog for this generation, and whether it should be refreshed.
+    fn cached(&self, key: &CapabilityKey, generation: u64) -> Option<(Value, bool)> {
+        self.entries
+            .get(key)
+            .filter(|entry| entry.generation == generation)
+            .map(|entry| {
+                (
+                    entry.value.clone(),
+                    entry.stored_at.elapsed() >= CAPABILITY_CACHE_FRESH,
+                )
+            })
+    }
+
+    /// Keeps a complete catalog. One that reports discovery issues stays uncached, so the
+    /// composer's retry discovers again.
+    fn store(&mut self, key: CapabilityKey, generation: u64, value: Value) {
+        // Entries from older settings can never be answered again.
+        self.entries
+            .retain(|_, entry| entry.generation == generation);
+        if value
+            .get("issues")
+            .and_then(Value::as_array)
+            .is_some_and(|issues| !issues.is_empty())
+        {
+            self.entries.remove(&key);
+            return;
+        }
+        if !self.entries.contains_key(&key)
+            && self.entries.len() >= CAPABILITY_CACHE_ENTRIES
+            && let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.stored_at)
+                .map(|(key, _)| key.clone())
+        {
+            self.entries.remove(&oldest);
+        }
+        self.entries.insert(
+            key,
+            CachedCapabilities {
+                generation,
+                stored_at: std::time::Instant::now(),
+                value,
+            },
+        );
+    }
+}
+
+impl NativeServerControl {
+    /// Runs discovery as a supervised task that finishes its cleanup even if the caller
+    /// stops waiting, and caches a successful catalog.
+    async fn discover_provider_capabilities(
+        &self,
+        payload: Value,
+        cancellation: CancellationToken,
+    ) -> Result<Value, Value> {
+        let key = CapabilityCache::key(&payload);
+        let generation = self.settings_generation.load(Ordering::Acquire);
+        let task = {
+            let _guard = self
+                .capability_admission
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if self.capability_shutdown.is_cancelled() {
+                return Err(
+                    json!({"_tag":"ServerProviderCapabilitiesError","reason":"Skill discovery is unavailable while the server is shutting down."}),
+                );
+            }
+            let owner = self.clone();
+            self.capability_tasks.spawn(async move {
+                let cancellation = cancellation.child_token();
+                let probe = owner.provider_capabilities(&payload, &cancellation);
+                tokio::pin!(probe);
+                tokio::select! {
+                    biased;
+                    () = owner.capability_shutdown.cancelled() => {
+                        cancellation.cancel();
+                        probe.await
+                    }
+                    result = &mut probe => result,
+                }
+            })
+        };
+        let result = match task.await {
+            Ok(result) => result,
+            Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+            Err(_) => {
+                Err(json!({"_tag":"RequestCancelled","method":"server.getProviderCapabilities"}))
+            }
+        };
+        if let (Some(key), Ok(value)) = (key, &result) {
+            self.capability_cache
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .store(key, generation, value.clone());
+        }
+        result
+    }
+
+    async fn provider_capabilities_cached(
+        &self,
+        payload: Value,
+        cancellation: CancellationToken,
+    ) -> Result<Value, Value> {
+        let generation = self.settings_generation.load(Ordering::Acquire);
+        if let Some(key) = CapabilityCache::key(&payload) {
+            let mut cache = self
+                .capability_cache
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if let Some((value, stale)) = cache.cached(&key, generation) {
+                if stale && cache.refreshing.insert(key.clone()) {
+                    drop(cache);
+                    let owner = self.clone();
+                    tokio::spawn(async move {
+                        if let Err(error) = owner
+                            .discover_provider_capabilities(payload, CancellationToken::new())
+                            .await
+                        {
+                            let reason = error.get("reason").and_then(Value::as_str);
+                            tracing::warn!(
+                                instance_id = %key.0,
+                                reason = reason.unwrap_or_default(),
+                                "background provider capability refresh failed"
+                            );
+                        }
+                        owner
+                            .capability_cache
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .refreshing
+                            .remove(&key);
+                    });
+                }
+                return Ok(value);
+            }
+        }
+        self.discover_provider_capabilities(payload, cancellation)
+            .await
+    }
+}
+
 impl ProductionServerControl for NativeServerControl {
     fn call(
         &self,
@@ -1623,39 +1798,9 @@ impl ProductionServerControl for NativeServerControl {
                 },
                 "server.updateSettings" => control.update_settings(payload).await,
                 "server.getProviderCapabilities" => {
-                    // This owner must finish supervised cleanup even if the RPC future is dropped.
-                    let task = {
-                        let _guard = control
-                            .capability_admission
-                            .lock()
-                            .unwrap_or_else(|error| error.into_inner());
-                        if control.capability_shutdown.is_cancelled() {
-                            return Err(
-                                json!({"_tag":"ServerProviderCapabilitiesError","reason":"Skill discovery is unavailable while the server is shutting down."}),
-                            );
-                        }
-                        let owner = control.clone();
-                        control.capability_tasks.spawn(async move {
-                            let cancellation = cancellation.child_token();
-                            let probe = owner.provider_capabilities(&payload, &cancellation);
-                            tokio::pin!(probe);
-                            tokio::select! {
-                                biased;
-                                () = owner.capability_shutdown.cancelled() => {
-                                    cancellation.cancel();
-                                    probe.await
-                                }
-                                result = &mut probe => result,
-                            }
-                        })
-                    };
-                    match task.await {
-                        Ok(result) => result,
-                        Err(error) if error.is_panic() => {
-                            std::panic::resume_unwind(error.into_panic())
-                        }
-                        Err(_) => Err(json!({"_tag":"RequestCancelled","method":method})),
-                    }
+                    control
+                        .provider_capabilities_cached(payload, cancellation)
+                        .await
                 }
                 "server.refreshProviders" => {
                     // The task owns the manual-refresh guard through probe, publish,
@@ -2829,6 +2974,116 @@ mod tests {
         .await
         .expect("write settings");
         NativeServerControl::new(config, json!({"policy":"test"})).await
+    }
+
+    #[test]
+    fn capability_cache_skips_partial_catalogs_and_stays_bounded() {
+        let key = |index: usize| ("claude".to_owned(), format!("/w/{index}"));
+        let mut cache = CapabilityCache::default();
+        cache.store(key(0), 1, json!({"skills":[],"issues":["Retry to load"]}));
+        assert!(
+            cache.cached(&key(0), 1).is_none(),
+            "a partial catalog is rediscovered"
+        );
+        for index in 0..=CAPABILITY_CACHE_ENTRIES {
+            cache.store(key(index), 1, json!({"skills":[],"issues":[]}));
+        }
+        assert_eq!(cache.entries.len(), CAPABILITY_CACHE_ENTRIES);
+        assert!(cache.cached(&key(CAPABILITY_CACHE_ENTRIES), 1).is_some());
+        assert!(
+            cache.cached(&key(0), 2).is_none(),
+            "another generation never answers"
+        );
+    }
+
+    #[tokio::test]
+    async fn capability_rpc_answers_from_cache_and_refreshes_stale_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let control = scheduler_control(&temp).await;
+        let home = temp.path().join("home");
+        let workspace = temp.path().join("workspace");
+        let skill = |name: &str| workspace.join(".agents/skills").join(name);
+        tokio::fs::create_dir_all(skill("first")).await.unwrap();
+        tokio::fs::write(skill("first").join("SKILL.md"), "# Skill")
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(&home).await.unwrap();
+        let mut instances = control.settings.read().await["providerInstances"].clone();
+        instances["cursor"]["environment"] = json!([
+            {"name":"HOME","value":home},
+            {"name":"USERPROFILE","value":home}
+        ]);
+        control
+            .update_settings(json!({"patch":{"providerInstances":instances}}))
+            .await
+            .unwrap();
+        wait_for_full_refresh_idle(&control).await;
+        let payload = json!({"instanceId":"cursor","cwd":workspace});
+        let names = |control: NativeServerControl| {
+            let payload = payload.clone();
+            async move {
+                let result = control
+                    .call(
+                        "server.getProviderCapabilities",
+                        payload,
+                        CancellationToken::new(),
+                    )
+                    .await
+                    .unwrap();
+                result["skills"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|skill| skill["name"].as_str().unwrap().to_owned())
+                    .collect::<Vec<_>>()
+            }
+        };
+        assert_eq!(names(control.clone()).await, ["first"]);
+
+        tokio::fs::create_dir_all(skill("second")).await.unwrap();
+        tokio::fs::write(skill("second").join("SKILL.md"), "# Skill")
+            .await
+            .unwrap();
+        // A fresh entry answers without discovering again.
+        assert_eq!(names(control.clone()).await, ["first"]);
+
+        // A stale entry still answers at once, and its refresh lands for the next call.
+        for entry in control
+            .capability_cache
+            .lock()
+            .unwrap()
+            .entries
+            .values_mut()
+        {
+            entry.stored_at = std::time::Instant::now()
+                .checked_sub(CAPABILITY_CACHE_FRESH * 2)
+                .unwrap();
+        }
+        assert_eq!(names(control.clone()).await, ["first"]);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !control
+                .capability_cache
+                .lock()
+                .unwrap()
+                .refreshing
+                .is_empty()
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the background refresh finishes");
+        assert_eq!(names(control.clone()).await, ["first", "second"]);
+
+        // Changed provider settings never answer from the previous catalog.
+        tokio::fs::remove_dir_all(skill("second")).await.unwrap();
+        instances["cursor"]["environment"][0]["value"] = json!(home.join("."));
+        control
+            .update_settings(json!({"patch":{"providerInstances":instances}}))
+            .await
+            .unwrap();
+        wait_for_full_refresh_idle(&control).await;
+        assert_eq!(names(control.clone()).await, ["first"]);
     }
 
     #[tokio::test]

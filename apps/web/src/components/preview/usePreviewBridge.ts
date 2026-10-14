@@ -44,7 +44,7 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
       if (changedTabId !== tabId) return;
       // The webview may sit on a client-specific gateway origin; everything
       // shared or compared below uses the canonical URL.
-      const state = canonicalizeDesktopState(nativeState);
+      const state = canonicalizeDesktopState(nativeState, tabId);
       if (shouldClearBrowserPointer(lastDesktopNavStatus.current, state.navStatus)) {
         clearBrowserPointer(tabId);
       }
@@ -85,9 +85,12 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
   }, [bridge, clearBrowserPointer, reportStatus, tabId, threadRef]);
 }
 
-function canonicalizeDesktopState(state: DesktopPreviewTabState): DesktopPreviewTabState {
+function canonicalizeDesktopState(
+  state: DesktopPreviewTabState,
+  tabId: string,
+): DesktopPreviewTabState {
   if (state.navStatus.kind === "Idle") return state;
-  const url = canonicalizePreviewUrl(state.navStatus.url);
+  const url = canonicalizePreviewUrl(state.navStatus.url, tabId);
   return url === state.navStatus.url ? state : { ...state, navStatus: { ...state.navStatus, url } };
 }
 

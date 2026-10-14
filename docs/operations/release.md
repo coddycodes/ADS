@@ -323,7 +323,11 @@ must retain the selected project-data root.
 [`desktop-upgrade-smoke.yml`](../../.github/workflows/desktop-upgrade-smoke.yml)
 runs real packaged previous-stable-to-candidate and protected-baseline upgrades
 for Linux ARM64/x64 AppImages, Windows ARM64/x64 NSIS installers, and macOS
-ARM64/x64 DMGs.
+ARM64/x64 DMGs. Pull requests seed from the latest stable release. Before a
+release, also run it by hand from the oldest client still in use, so that
+client's update path is proven too:
+`gh workflow run desktop-upgrade-smoke.yml --ref <release branch> -f previous_tag=v0.7.2`
+(any stable `vX.Y.Z` tag; the WSL job keeps the latest stable release).
 The protected lane verifies the same storage UUID, seeded project, and a
 verified `pre-update` backup after restart. A separate Windows job exercises a
 WSL primary when the runner declares WSL plus an installed distribution; an

@@ -27,6 +27,7 @@ import {
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { DesktopDeepLinkRouter } from "../desktopDeepLink";
+import { ManagedEndpointRelink } from "../cloud/managedEndpointRelink";
 import { useClientSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -151,6 +152,8 @@ function RootRouteView() {
         <HostedStaticEnvironmentBootstrap />
         <ProfilerClientCollector />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
+        {/* Reads the primary's Connect link state, so only once the primary authenticated. */}
+        {primaryEnvironmentAuthenticated ? <ManagedEndpointRelink /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}
       </AnchoredToastProvider>

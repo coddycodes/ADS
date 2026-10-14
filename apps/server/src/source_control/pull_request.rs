@@ -54,6 +54,16 @@ impl ProviderCommandSpec {
     }
 }
 
+/// Environment for every provider CLI BiBCode starts. Without it, glab sends a
+/// telemetry event to the host before each command returns: one more HTTPS
+/// connection per call, about 1.2 s on a VPN.
+pub(crate) fn provider_cli_environment(provider: ProviderKind) -> Vec<(OsString, OsString)> {
+    match provider {
+        ProviderKind::Gitlab => vec![("GLAB_SEND_TELEMETRY".into(), "0".into())],
+        _ => Vec::new(),
+    }
+}
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum BitbucketResolutionMode {
     CurrentBranch,
@@ -885,7 +895,7 @@ impl PullRequestService {
                     command: command.executable.clone(),
                     args: command.args(args),
                     cwd: input.cwd.clone(),
-                    env: vec![],
+                    env: provider_cli_environment(input.provider),
                     stdin: None,
                     timeout: Duration::from_secs(30),
                     max_output_bytes: 128_000,
@@ -1381,7 +1391,7 @@ impl PullRequestService {
                     command: command.executable.clone(),
                     args: command.args(args),
                     cwd: cwd.to_path_buf(),
-                    env: vec![],
+                    env: provider_cli_environment(provider),
                     stdin: None,
                     timeout: Duration::from_secs(60),
                     max_output_bytes: 128_000,
@@ -2379,6 +2389,61 @@ esac
                 .expect("provider PR should create");
             assert_eq!(created.number, expected);
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn gitlab_cli_flows_run_with_telemetry_off() {
+        let _fixture_permit = acquire_pull_request_fixture().await;
+
+        let sandbox = TestSandbox::new("provider-cli-telemetry");
+        // Answers only when telemetry is off, so every GitLab path must set it.
+        let script = r#"#!/bin/sh
+[ "$GLAB_SEND_TELEMETRY" = 0 ] || exit 3
+case "$*" in
+  *list*) printf '%s\n' '[{"iid":43,"title":"GitLab MR","web_url":"https://gitlab.test/43","target_branch":"main","source_branch":"feature","state":"opened"}]' ;;
+  *) printf '%s\n' '{"iid":43,"title":"GitLab MR","web_url":"https://gitlab.test/43","target_branch":"main","source_branch":"feature","state":"opened"}' ;;
+esac
+"#;
+        let service = PullRequestService::with_provider_commands(
+            "unused-gh",
+            sandbox
+                .executable_script("glab", script, "")
+                .to_string_lossy(),
+            "unused-az",
+        );
+        let cancellation = CancellationToken::new();
+        let input = |reference: &str| ResolvePullRequestInput {
+            cwd: sandbox.root().to_path_buf(),
+            provider: ProviderKind::Gitlab,
+            reference: reference.to_owned(),
+        };
+
+        let current = service
+            .resolve_current(input("feature"), &cancellation)
+            .await
+            .expect("current merge request resolves with telemetry off");
+        assert_eq!(current.number, 43);
+        let resolved = service
+            .resolve(input("43"), &cancellation)
+            .await
+            .expect("merge request resolves with telemetry off");
+        assert_eq!(resolved.number, 43);
+        let created = service
+            .create(
+                CreatePullRequestInput {
+                    cwd: sandbox.root().to_path_buf(),
+                    provider: ProviderKind::Gitlab,
+                    base_branch: "main".to_owned(),
+                    head_branch: "feature".to_owned(),
+                    title: "Fixture".to_owned(),
+                    body: "Body".to_owned(),
+                },
+                &cancellation,
+            )
+            .await
+            .expect("merge request creates with telemetry off");
+        assert_eq!(created.number, 43);
     }
 
     #[tokio::test]

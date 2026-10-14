@@ -388,6 +388,23 @@ impl ServerRuntime {
                     .map_err(|error| ServerError::ProductionInitialize(format!("{error:?}")))?,
                 );
                 runtime.attach_connect_mcp(connect.clone()).await;
+                // The tunnel starts only on a link; a restart brings it back from the stored one.
+                tokio::spawn({
+                    let connect = connect.clone();
+                    async move {
+                        match connect.restore_managed_endpoint().await {
+                            Ok(Some(status)) if status["status"] != "running" => tracing::warn!(
+                                status = %status["status"],
+                                "BiBCode Connect tunnel was not restored"
+                            ),
+                            Ok(_) => {}
+                            Err(error) => tracing::warn!(
+                                status = %error.status(),
+                                "BiBCode Connect tunnel could not be restored"
+                            ),
+                        }
+                    }
+                });
                 (
                     runtime.registry.clone(),
                     core_http_routes(auth.clone(), runtime.clone(), connect),
@@ -421,6 +438,20 @@ impl ServerRuntime {
         } else {
             None
         };
+        let preview_gateway = production_runtime
+            .as_ref()
+            .map(|runtime| runtime.preview_gateway());
+        // The main port serves BiBCode Connect previews, and its graceful shutdown waits for
+        // their exchanges, which only the gateway's drain ends: start the drain as soon as
+        // shutdown is signaled, not after the server stops; the runtime's later call waits
+        // for this same drain.
+        if let Some(gateway) = preview_gateway.clone() {
+            let shutdown = shutdown.clone();
+            tokio::spawn(async move {
+                shutdown.cancelled().await;
+                gateway.shutdown().await;
+            });
+        }
         let app = http::build_router(http::AppState {
             config: Arc::new(config),
             shutdown: shutdown.clone(),
@@ -430,6 +461,7 @@ impl ServerRuntime {
             auth,
             admission_gate,
             update_maintenance,
+            preview_gateway,
         });
         let server_shutdown = shutdown.clone();
         let completion_signal = shutdown.clone();

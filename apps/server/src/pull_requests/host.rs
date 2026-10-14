@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     git::{OutputPolicy, ProcessError, ProcessRequest, ProcessRunner, git_environment},
-    source_control::{ProviderCommandSpec, ProviderHosts, ProviderKind},
+    source_control::{ProviderCommandSpec, ProviderHosts, ProviderKind, provider_cli_environment},
 };
 
 /// One admitted repository: every hosted read and write runs against this scope.
@@ -328,6 +328,7 @@ impl HostCommandRunner {
                 ("GLAB_CHECK_UPDATE".into(), "false".into()),
             ]);
         }
+        env.extend(provider_cli_environment(provider.kind()));
         ProcessRequest {
             operation: format!("pullRequests.{cli}"),
             command: command.executable.clone(),
@@ -709,7 +710,7 @@ mod tests {
         let s = TestSandbox::new("pr-glab-runner");
         let script = s.executable_script(
             "glab",
-            "printf '%s\\n' \"$GITLAB_HOST|$GLAB_CHECK_UPDATE|$NO_COLOR|$*\"",
+            "printf '%s\\n' \"$GITLAB_HOST|$GLAB_CHECK_UPDATE|$GLAB_SEND_TELEMETRY|$NO_COLOR|$*\"",
             "",
         );
         let runner =
@@ -721,7 +722,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             api.stdout.trim(),
-            "git.acme.example|false|1|api user --hostname git.acme.example"
+            "git.acme.example|false|0|1|api user --hostname git.acme.example"
         );
         let mr = runner
             .glab(&scope(&s), &["mr", "list"], Budget::Large, None, &c)
@@ -729,7 +730,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             mr.stdout.trim(),
-            "git.acme.example|false|1|mr list --repo git.acme.example/team/sub/repo"
+            "git.acme.example|false|0|1|mr list --repo git.acme.example/team/sub/repo"
         );
     }
 

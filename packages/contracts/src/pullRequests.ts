@@ -9,10 +9,14 @@ const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 export const PullRequestsCwdInput = Schema.Struct({ cwd: TrimmedNonEmptyStringSchema });
 export type PullRequestsCwdInput = typeof PullRequestsCwdInput.Type;
 
-/** `rescan` bypasses the server's bounded context caches; only Rescan and auth recovery set it. */
+/**
+ * `rescan` bypasses the server's bounded context caches; only Rescan and auth recovery set it.
+ * `allowStale` lets the server answer from its stored context (marked `stale`); a live read follows.
+ */
 export const PullRequestsGetContextInput = Schema.Struct({
   ...PullRequestsCwdInput.fields,
   rescan: Schema.optional(Schema.Boolean),
+  allowStale: Schema.optional(Schema.Boolean),
 });
 export type PullRequestsGetContextInput = typeof PullRequestsGetContextInput.Type;
 
@@ -166,6 +170,8 @@ export const PullRequestsContext = Schema.Union([
     }),
     capabilities: PullRequestsHostCapabilities,
     webUrl: TrimmedNonEmptyStringSchema,
+    /** Answered from the server's stored copy (`allowStale`); a live read follows. */
+    stale: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     status: Schema.Literal("unavailable"),

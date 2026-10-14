@@ -36,7 +36,7 @@ use crate::{
         TraceDiagnosticsStore,
         profiler::{
             connections,
-            latency::{FIRST_ITEM, RequestTimer},
+            latency::{self, FIRST_ITEM, RequestTimer},
         },
     },
     json_size::encoded_json_len,
@@ -1269,6 +1269,8 @@ async fn run_unary(
             0
         };
         match reserve_server_message(&outbound, &session_shutdown, encoded_len_bound).await {
+            // Not counted: the guard picks the reply it sends after this, so only a bound
+            // is known here.
             Ok(permit) => enqueue_guard.enqueue(permit, response),
             Err(failure) => {
                 let _ = send_unbudgeted_server_message(
@@ -1279,7 +1281,9 @@ async fn run_unary(
                 .await;
             }
         }
-    } else if let Err(failure) = send_server_message(&outbound, &session_shutdown, response).await {
+    } else if let Err(failure) =
+        send_method_message(&outbound, &session_shutdown, response, Some(&method)).await
+    {
         let _ = send_unbudgeted_server_message(
             &outbound,
             &session_shutdown,
@@ -1350,13 +1354,14 @@ async fn run_stream(
                     .await;
                     return;
                 }
-                if let Err(failure) = send_server_message(
+                if let Err(failure) = send_method_message(
                     &outbound,
                     &session_shutdown,
                     ServerMessage::Chunk {
                         request_id: request_id.clone(),
                         values,
                     },
+                    Some(&method),
                 )
                 .await
                 {
@@ -1452,6 +1457,7 @@ async fn run_latest_stream(
                         &session_shutdown,
                         &cancellation,
                         ServerMessage::connection_defect("RPC stream produced an empty Chunk"),
+                        None,
                     )
                     .await;
                     return;
@@ -1464,6 +1470,7 @@ async fn run_latest_stream(
                         request_id: request_id.clone(),
                         values,
                     },
+                    Some(&method),
                 )
                 .await
                 {
@@ -1511,7 +1518,7 @@ async fn send_latest_stream_terminal(
     method: &str,
 ) {
     if let Err(failure) =
-        send_latest_stream_message(outbound, session_shutdown, cancellation, primary).await
+        send_latest_stream_message(outbound, session_shutdown, cancellation, primary, None).await
     {
         if cancellation.is_cancelled() {
             let _ = try_send_control_message(outbound, ServerMessage::interrupt(request_id));
@@ -1531,11 +1538,12 @@ async fn send_latest_stream_message(
     session_shutdown: &CancellationToken,
     cancellation: &CancellationToken,
     message: ServerMessage,
+    method: Option<&str>,
 ) -> Result<(), SendFailure> {
     tokio::select! {
         biased;
         () = cancellation.cancelled() => Err(SendFailure::Rejected),
-        result = send_server_message(outbound, session_shutdown, message) => result,
+        result = send_method_message(outbound, session_shutdown, message, method) => result,
     }
 }
 
@@ -1544,7 +1552,19 @@ async fn send_server_message(
     session_shutdown: &CancellationToken,
     message: ServerMessage,
 ) -> Result<(), SendFailure> {
+    send_method_message(outbound, session_shutdown, message, None).await
+}
+
+/// [`send_server_message`] for a reply of `method`, whose encoded bytes the Profiler counts
+/// where the connection encodes before admission (E2EE and record-framed sockets).
+async fn send_method_message(
+    outbound: &RpcOutboundQueue,
+    session_shutdown: &CancellationToken,
+    message: ServerMessage,
+    method: Option<&str>,
+) -> Result<(), SendFailure> {
     let deadline = Instant::now() + OUTBOUND_SEND_TIMEOUT;
+    let mut counted = None;
     let limit = outbound.message_limit();
     let frame = if limit.is_some() {
         // Encode exactly once and drop the value tree before the admission
@@ -1553,6 +1573,7 @@ async fn send_server_message(
         let encoded = serde_json::to_string(&message).map_err(SendFailure::rejected)?;
         drop(message);
         check_fits(encoded.len(), limit)?;
+        counted = method.map(|method| (method, encoded.len()));
         let budget = outbound
             .acquire_budget(session_shutdown, encoded.len(), deadline)
             .await?;
@@ -1568,7 +1589,11 @@ async fn send_server_message(
             queued_at: Instant::now(),
         }
     };
-    admit_before(session_shutdown, deadline, outbound.sender.send(frame)).await
+    admit_before(session_shutdown, deadline, outbound.sender.send(frame)).await?;
+    if let Some((method, bytes)) = counted {
+        latency::record_outbound_bytes(method, bytes);
+    }
+    Ok(())
 }
 
 /// Waits for `admission` until `deadline`. The session ending, the deadline
@@ -2542,6 +2567,49 @@ mod tests {
             .await
             .expect("session cleanup deadline")
             .expect("session joins");
+    }
+
+    #[tokio::test]
+    async fn profiler_counts_reply_bytes_by_method_where_they_are_encoded() {
+        use crate::diagnostics::profiler::latency::{self, PinnedProfiling};
+        let _profiling = PinnedProfiling::new(true);
+        let (sender, mut receiver) = mpsc::channel(4);
+        let (control, _control_receiver) = mpsc::channel(CONTROL_LANE_CAPACITY);
+        let outbound = RpcOutboundQueue {
+            sender,
+            control,
+            budget: None,
+            max_message_bytes: Some(1 << 20),
+        };
+        let reply = ServerMessage::success(
+            RequestId::try_from("1").expect("request id"),
+            Some(json!({ "data": "x".repeat(100) })),
+        );
+        let encoded = serde_json::to_string(&reply).expect("reply JSON").len();
+        let shutdown = CancellationToken::new();
+        for _ in 0..2 {
+            send_method_message(
+                &outbound,
+                &shutdown,
+                reply.clone(),
+                Some("test.profiler.bytes"),
+            )
+            .await
+            .expect("admitted");
+            receiver.recv().await.expect("queued frame");
+        }
+        send_server_message(&outbound, &shutdown, reply)
+            .await
+            .expect("admitted");
+
+        let payloads = latency::global_latency().outbound_bytes_for_test(u64::MAX);
+        let counted = payloads
+            .iter()
+            .find(|payload| payload["method"] == "test.profiler.bytes")
+            .expect("rpc.bytes for the method");
+        assert_eq!(counted["messages"], 2);
+        assert_eq!(counted["bytes"], 2 * encoded);
+        assert_eq!(counted["maxBytes"], encoded);
     }
 
     #[tokio::test]

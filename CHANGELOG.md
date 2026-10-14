@@ -1,5 +1,39 @@
 # Changelog
 
+## [v0.9.2] - 2026-10-13
+
+BiBCode v0.9.2 keeps remote clients responsive on slow links, paints the Pull Requests panel at once, ends the Linux Git watcher's CPU loop, fixes "Delivery uncertain" on Claude messages, keeps the app alive when a Linux update relaunches it under a systemd launcher, and opens server-side development servers from BiBCode Connect clients. This release includes the changes since v0.9.1.
+
+### Remote clients
+
+- An open thread receives only what changed after each event instead of the whole thread, which reached 6 to 10 MB on long threads, and thread and sidebar updates are batched (100 ms and 500 ms). Terminal typing and other replies no longer wait seconds behind those snapshots on a slow link. (#89)
+- Server replies of 16 KiB or more are compressed before encryption when the client supports it. `BIBCODE_REMOTE_COMPRESSION=0` in the server's environment turns this off. (#89)
+- The Profiler records, every five minutes, how many bytes each method sent to remote clients (`rpc.bytes`). (#89)
+
+### Pull Requests and Git
+
+- The Pull Requests panel paints the list and an open pull request or merge request from stored copies, then refreshes them, for GitHub and GitLab. GitLab commands no longer wait about a second each for `glab`'s telemetry request. (#90)
+- Approving a GitLab merge request reads its permissions in one wave, and a failed pull request action logs its error code. (#90)
+- After **Create**, the Create PR/MR dialog shows only **Done**.
+- On Linux, the Git watcher no longer watches directories Git ignores, such as `node_modules`, `target`, and agent worktrees inside a checkout: one affected checkout went from about 312,000 watched directories to about 2,400. After a kernel queue overflow, full re-registrations are spaced out (30 s, doubling to 30 min) instead of looping at full CPU. (#88)
+- **Hide** on discovered worktrees works again after the worktree catalog refreshes, and a view that subscribes to the branch summary while it is already running gets the current branch at once.
+
+### Chat
+
+- When Claude reports a result before reading a newly sent message, which happened after an idle thread resumed, that result no longer ends the new message's turn. The thread stays **Running** while Claude works, and the next message waits in the queue instead of showing "Delivery uncertain". A message Claude reads after its 60-second confirmation wait is marked delivered. (#93)
+- The composer's skills and commands come from a cache refreshed in the background instead of starting the provider's CLI every time, which took about a second for Claude.
+
+### Preview over BiBCode Connect
+
+- A client connected through BiBCode Connect opens a development server on the server's `localhost` in the BiBCode browser at its own `https://` preview hostname. Each Connect endpoint gets four preview hostnames, and the primary client re-links once to add them to an older link. (#68)
+- The Connect tunnel comes back by itself after a server restart, and linking no longer fails with "Invalid managed endpoint origin." on every real client.
+
+### Updates and crash reporting
+
+- On Linux, when BiBCode runs as a systemd service (for example started with `systemd-run --user`), an update relaunches the new version in its own scope, so stopping the old service no longer kills it. (#94)
+- The Profiler reports crashes of BiBCode processes that no profiler session covered, such as an app relaunched by an update, from systemd-coredump. (#94)
+- The packaged upgrade checks can start from any stable release, and on Windows they require the updated app to come back with a window. (#95)
+
 ## [v0.9.1] - 2026-10-12
 
 BiBCode v0.9.1 fixes the slowdowns, memory growth, dropped connections, and crash that the Profiler recorded on v0.9.0. The desktop stops reloading every thread's history while an agent runs, returns freed memory on Linux, keeps terminal typing, Git panels, and process diagnostics responsive under load, and keeps remote clients connected after they wake. This release includes the changes since v0.9.0.

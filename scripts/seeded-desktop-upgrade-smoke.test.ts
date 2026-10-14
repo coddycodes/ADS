@@ -27,6 +27,8 @@ import {
   remoteEvidenceReadFailure,
   windowsCandidateIsInstalled,
   productVersionFromExecutableBytes,
+  waitForWindowsRelaunchedApplication,
+  windowedApplicationRunning,
   windowsInstallerProcesses,
   observeWindowsInstalledCandidate,
   waitForWindowsInstalledCandidate,
@@ -2340,5 +2342,64 @@ describe("seeded packaged desktop upgrade harness", () => {
     expect(config).toContain("transformRequest");
     expect(config).toContain('headers.delete("content-length")');
     expect(config).toContain("captureBackendLogs: true");
+  });
+});
+
+describe("windowedApplicationRunning", () => {
+  const row = (image: string, title: string) =>
+    `"${image}","4242","Console","1","120,000 K","Running","host\\runner","0:00:03","${title}"`;
+
+  it("finds the relaunched app by its window and ignores windowless helpers", () => {
+    expect(
+      windowedApplicationRunning(
+        [row("bibcode-desktop.exe", "N/A"), row("bibcode-desktop.exe", "BiBCode")].join("\r\n"),
+        "bibcode-desktop.exe",
+      ),
+    ).toBe(true);
+    expect(
+      windowedApplicationRunning(row("bibcode-desktop.exe", "N/A"), "bibcode-desktop.exe"),
+    ).toBe(false);
+    expect(windowedApplicationRunning(row("other.exe", "BiBCode"), "bibcode-desktop.exe")).toBe(
+      false,
+    );
+    expect(
+      windowedApplicationRunning(
+        "INFO: No tasks are running which match the specified criteria.",
+        "bibcode-desktop.exe",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("waitForWindowsRelaunchedApplication", () => {
+  it("treats a timed-out process listing as one more sample", async () => {
+    let calls = 0;
+    let clock = 0;
+    await waitForWindowsRelaunchedApplication({
+      appBinaryPath: "C:\\Program Files\\BiBCode\\bibcode-desktop.exe",
+      timeoutMs: 10_000,
+      now: () => clock,
+      sleep: async (milliseconds) => {
+        clock += milliseconds;
+      },
+      listProcesses: async () => {
+        calls += 1;
+        if (calls === 1) throw Object.assign(new Error("timed out"), { killed: true });
+        return `"bibcode-desktop.exe","1","Console","1","1 K","Running","u","0:00:01","BiBCode"`;
+      },
+    });
+    expect(calls).toBe(2);
+  });
+
+  it("still fails when the listing cannot run at all", async () => {
+    await expect(
+      waitForWindowsRelaunchedApplication({
+        appBinaryPath: "bibcode-desktop.exe",
+        timeoutMs: 10_000,
+        listProcesses: async () => {
+          throw Object.assign(new Error("spawn tasklist.exe ENOENT"), { code: "ENOENT" });
+        },
+      }),
+    ).rejects.toThrow("ENOENT");
   });
 });

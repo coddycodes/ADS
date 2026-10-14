@@ -13,6 +13,7 @@ use bibcode_server::{
         gateway::{
             proxy::PrincipalCheck,
             registry::{PreviewGateway, gateway_context},
+            relay::RelayHosts,
         },
     },
     production::{
@@ -191,6 +192,7 @@ async fn open_url_route_reports_whether_a_client_could_see_the_request() {
         "devbox",
         gateway_context(Arc::new(LivePrincipal), vec![1; 32], "session".into()),
         preview.clone(),
+        RelayHosts::default(),
     );
     let app = router(Arc::clone(&connect), preview.clone());
     let credential = connect.issue_open_url_credential("thread-1").await.unwrap();

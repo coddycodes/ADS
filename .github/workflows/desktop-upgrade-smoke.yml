@@ -3,6 +3,12 @@ name: Seeded Packaged Desktop Upgrade
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      previous_tag:
+        description: Seed every lane from this stable tag (for example the oldest supported client) instead of the latest stable release
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -108,11 +114,21 @@ jobs:
       - id: versions
         name: Resolve previous stable and isolated candidate versions
         shell: bash
+        env:
+          PREVIOUS_TAG_INPUT: ${{ inputs.previous_tag }}
         run: |
           set -euo pipefail
-          previous_line="$(node scripts/resolve-previous-release-tag.ts \
-            --channel stable --current-tag "v2147483647.0.0")"
-          previous_tag="${previous_line#previous_tag=}"
+          if [[ -n "$PREVIOUS_TAG_INPUT" ]]; then
+            [[ "$PREVIOUS_TAG_INPUT" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+              echo "::error::previous_tag must be a stable tag such as v0.7.2"
+              exit 1
+            }
+            previous_tag="$PREVIOUS_TAG_INPUT"
+          else
+            previous_line="$(node scripts/resolve-previous-release-tag.ts \
+              --channel stable --current-tag "v2147483647.0.0")"
+            previous_tag="${previous_line#previous_tag=}"
+          fi
           test -n "$previous_tag"
           previous_version="${previous_tag#v}"
           previous_core="${previous_version%%[-+]*}"

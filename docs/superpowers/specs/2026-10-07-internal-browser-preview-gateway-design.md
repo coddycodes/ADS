@@ -369,7 +369,8 @@ Wayland and X11.
 
 ## Out of scope
 
-Relay reach (needs relay ingress/DNS/cert work), SSH same-port forwarding
+Relay reach (needs relay ingress/DNS/cert work; see
+[2026-10-11-preview-gateway-relay-design.md](2026-10-11-preview-gateway-relay-design.md)), SSH same-port forwarding
 (see [2026-10-09-preview-ssh-same-port-design.md](2026-10-09-preview-ssh-same-port-design.md)),
 SOCKS profiles, iframe previews in browser mode, picker/annotation, automation
 parity, device streaming, emulators.

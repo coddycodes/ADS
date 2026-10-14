@@ -316,9 +316,10 @@ export function PullRequestsListView({
     () => ({ environmentId: scope.environmentId, input: { ...input, number: null, tab: null } }),
     [input, scope.environmentId],
   );
+  // Both hosts paint the stored first page; only GitLab subscribes to changes.
   const snapshotAtom = useMemo(
-    () => (isGitlab ? pullRequestsEnvironment.readSnapshot(snapshotTarget) : null),
-    [isGitlab, snapshotTarget],
+    () => pullRequestsEnvironment.readSnapshot(snapshotTarget),
+    [snapshotTarget],
   );
   const snapshotQuery = useEnvironmentQuery(snapshotAtom);
   const visible = useDocumentVisible();
@@ -335,7 +336,9 @@ export function PullRequestsListView({
     shownList,
     environmentRpcKey(snapshotTarget),
     firstQuery.data,
-    isGitlab
+    // GitHub never polls, so once its live page answers a stored copy only covered the
+    // wait: a late one must not replace it, whatever the two clocks say.
+    isGitlab || firstQuery.data === null
       ? { answered: snapshotQuery.data !== null, row: snapshotQuery.data?.list ?? null }
       : null,
   );

@@ -113,9 +113,26 @@ describe("relay schemas", () => {
       },
     });
 
+    const relink = decodeEnvironmentConfig({
+      relayUrl: "https://relay.example.test",
+      cloudUserId: "user-1",
+      environmentCredential: "credential",
+      cloudMintPublicKey: "public-key",
+      endpointRuntime: {
+        providerKind: "cloudflare_tunnel",
+        connectorToken: "connector-token",
+        hostname: "env.zone.test",
+        previewHostnames: ["env-p1.zone.test", "env-p2.zone.test"],
+      },
+      requireLinkGeneration: "generation-1",
+    });
+
     expect(minimal.relayIssuer).toBeUndefined();
+    expect(minimal.requireLinkGeneration).toBeUndefined();
     expect(configured.endpointRuntime?.tunnelName).toBe("primary");
+    expect(configured.endpointRuntime?.previewHostnames).toBeUndefined();
     expect(encodeEnvironmentConfig(configured)).toEqual(configured);
+    expect(encodeEnvironmentConfig(relink)).toEqual(relink);
   });
 
   it("reports invalid provider kinds on decode and encode", () => {

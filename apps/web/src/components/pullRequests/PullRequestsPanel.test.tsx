@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   connection: null as SupervisorConnectionState | null,
   config: null as ServerConfig | null,
   context: null as PullRequestsContext | null,
+  contextError: null as string | null,
   pending: false,
   catalogPending: false,
   catalogData: { worktrees: [] } as {
@@ -58,7 +59,8 @@ vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (atom: { kind: string } | null) => ({
     data: atom?.kind === "context" ? h.context : atom?.kind === "catalog" ? h.catalogData : null,
     emission: { _tag: "Initial" },
-    error: atom?.kind === "catalog" ? h.catalogError : null,
+    error:
+      atom?.kind === "catalog" ? h.catalogError : atom?.kind === "context" ? h.contextError : null,
     isPending: atom?.kind === "catalog" ? h.catalogPending : h.pending,
     refresh: h.refresh,
     revalidate: h.revalidate,
@@ -124,6 +126,7 @@ beforeEach(() => {
     },
   } as ServerConfig;
   h.context = context;
+  h.contextError = null;
   h.pending = false;
   h.catalogPending = false;
   h.catalogData = { worktrees: [] };
@@ -183,6 +186,37 @@ describe("PullRequestsPanel", () => {
     );
     expect(container.querySelector("a")?.getAttribute("href")).toBe("/settings/source-control");
     expect(h.getContext).not.toHaveBeenCalled();
+  });
+  it("paints from the stored context, then reads it live once", async () => {
+    h.context = { ...context, stale: true };
+    await act(async () => root.render(<PullRequestsPanel projectRef={ref} />));
+    expect(container.textContent).toContain("List content");
+    expect(h.revalidate).toHaveBeenCalledTimes(1);
+    await act(async () => root.render(<PullRequestsPanel projectRef={ref} />));
+    expect(h.revalidate).toHaveBeenCalledTimes(1);
+    // A failed live read leaves the stored copy; the next stored answer is read live again.
+    h.context = { ...context, stale: true };
+    await act(async () => root.render(<PullRequestsPanel projectRef={ref} />));
+    expect(h.revalidate).toHaveBeenCalledTimes(2);
+    h.context = { ...context, account: { ...context.account, login: "bob" } };
+    await act(async () => root.render(<PullRequestsPanel projectRef={ref} />));
+    expect(container.textContent).toContain("bob");
+    expect(h.revalidate).toHaveBeenCalledTimes(2);
+  });
+  it("joins a live context read already in flight instead of restarting it", async () => {
+    // A panel remounted by a route change finds the shared read still running.
+    h.context = { ...context, stale: true };
+    h.pending = true;
+    await act(async () => root.render(<PullRequestsPanel projectRef={ref} />));
+    expect(container.textContent).toContain("List content");
+    expect(h.revalidate).not.toHaveBeenCalled();
+  });
+  it("keeps the stored context when its live read fails", async () => {
+    h.context = { ...context, stale: true };
+    h.contextError = "The host could not be reached.";
+    await act(async () => root.render(<PullRequestsPanel projectRef={ref} />));
+    expect(container.textContent).toContain("List content");
+    expect(container.textContent).not.toContain(h.contextError);
   });
   it("loads context with an opaque checkout and passes the scope to the list", async () => {
     usePullRequestsStore.getState().setCheckoutCwd(ref, "Z:\\opaque\\worktree");

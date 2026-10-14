@@ -4,12 +4,19 @@ import {
 } from "@bibcode/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Socket from "effect/unstable/socket/Socket";
 
-import { MAX_E2EE_PREAUTH_MESSAGE_BYTES, plaintextRecords, RecordAssembler } from "./frame.ts";
+import {
+  E2eeFrameError,
+  MAX_E2EE_LOGICAL_MESSAGE_BYTES,
+  MAX_E2EE_PREAUTH_MESSAGE_BYTES,
+  plaintextRecords,
+  RecordAssembler,
+} from "./frame.ts";
 import {
   createNkInitiator,
   decodeBase64UrlKey,
@@ -23,13 +30,64 @@ export const E2EE_HANDSHAKE_TIMEOUT_MS = 10_000;
 export const E2EE_HOST_IDENTITY_CLOSE_CODE = 4403;
 /** Lets the server interleave `0x02` control records with a large message. */
 export const E2EE_INTERLEAVE_FEATURE = "interleave-v1";
-const E2EE_CLIENT_FEATURES = [E2EE_INTERLEAVE_FEATURE];
+/** Lets the server send large messages raw-deflate compressed (`0x10` records). */
+export const E2EE_DEFLATE_FEATURE = "deflate-v1";
+// Compression is offered only where the platform can decompress raw deflate;
+// some engines ship DecompressionStream with gzip and deflate only.
+const canInflateRawDeflate = (): boolean => {
+  try {
+    return new DecompressionStream("deflate-raw") instanceof DecompressionStream;
+  } catch {
+    return false;
+  }
+};
+const E2EE_CLIENT_FEATURES = canInflateRawDeflate()
+  ? [E2EE_INTERLEAVE_FEATURE, E2EE_DEFLATE_FEATURE]
+  : [E2EE_INTERLEAVE_FEATURE];
 
 const EMPTY = new Uint8Array(0);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
+/**
+ * A compressed message: a 4-byte big-endian uncompressed length, then raw deflate.
+ * The output must match the declared length, which the message cap bounds.
+ */
+const inflateMessage = async (message: Uint8Array, signal: AbortSignal): Promise<string> => {
+  if (message.length < 4) throw new E2eeFrameError("truncated compressed E2EE message");
+  const declared = new DataView(message.buffer, message.byteOffset, 4).getUint32(0);
+  if (declared > MAX_E2EE_LOGICAL_MESSAGE_BYTES) {
+    throw new E2eeFrameError("compressed E2EE message exceeds the E2EE cap");
+  }
+  const output = new Uint8Array(declared);
+  const reader = new Blob([message.slice(4)])
+    .stream()
+    .pipeThrough(new DecompressionStream("deflate-raw"))
+    .getReader();
+  // A closed socket stops the inflation instead of finishing work nobody reads.
+  const stop = () => void reader.cancel();
+  signal.addEventListener("abort", stop, { once: true });
+  let offset = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (offset + value.length > declared) {
+        await reader.cancel();
+        throw new E2eeFrameError("compressed E2EE message exceeds its declared size");
+      }
+      output.set(value, offset);
+      offset += value.length;
+    }
+  } finally {
+    signal.removeEventListener("abort", stop);
+  }
+  if (signal.aborted) throw new E2eeFrameError("compressed E2EE message abandoned");
+  if (offset !== declared) throw new E2eeFrameError("compressed E2EE message is truncated");
+  return decoder.decode(output);
+};
 
 export type E2eeFailureReason = "host-identity-mismatch" | "unauthorized" | "protocol" | "timeout";
 
@@ -112,6 +170,47 @@ export const makeE2eeSocket = (inner: Socket.Socket, options: E2eeSocketOptions)
         Deferred.doneUnsafe(sessionTransport, Effect.fail(error));
         Deferred.doneUnsafe(authenticated, Effect.fail(error));
         return Effect.fail(error);
+      };
+
+      // Messages reach the handler in arrival order: while one is being inflated,
+      // later ones wait until its handler's effect has started, then take their turn.
+      // The handlers' effects still run concurrently, as for uncompressed messages,
+      // so a stream waiting on a full queue does not hold up other replies. A
+      // message dropped before its handler ran (it failed to inflate, or the socket
+      // closed first) stops delivery, so nothing behind it can overtake it.
+      let queueTail: Deferred.Deferred<void> | null = null;
+      let deliveryStopped = false;
+      const deliver = (message: Uint8Array, deflated: boolean) => {
+        if (!deflated && queueTail === null) return handler(decoder.decode(message));
+        const previous = queueTail;
+        const done = Deferred.makeUnsafe<void>();
+        queueTail = done;
+        let handled = false;
+        const release = () => {
+          if (!handled) deliveryStopped = true;
+          Deferred.doneUnsafe(done, Effect.void);
+          if (queueTail === done) queueTail = null;
+        };
+        return Effect.gen(function* () {
+          if (previous !== null) yield* Deferred.await(previous);
+          if (deliveryStopped) return;
+          const text = deflated
+            ? yield* Effect.tryPromise({
+                try: (signal) => inflateMessage(message, signal),
+                catch: (cause) => String(cause),
+              }).pipe(
+                Effect.catch((detail) => fail("protocol", `E2EE message rejected: ${detail}`)),
+              )
+            : decoder.decode(message);
+          const result = handler(text);
+          handled = true;
+          if (!Effect.isEffect(result)) return release();
+          // Start the handler's effect before the next message's, as the socket does
+          // for uncompressed messages, without waiting for it to finish.
+          const running = yield* Effect.forkChild(result, { startImmediately: true });
+          release();
+          yield* Fiber.join(running);
+        }).pipe(Effect.ensuring(Effect.sync(release)));
       };
 
       const currentTransport = (): NkTransport => {
@@ -211,7 +310,7 @@ export const makeE2eeSocket = (inner: Socket.Socket, options: E2eeSocketOptions)
                   return fail("protocol", `E2EE frame rejected: ${String(cause)}`);
                 }
                 if (message === null) return undefined;
-                if (phase === "open") return handler(decoder.decode(message));
+                if (phase === "open") return deliver(message, assembler.lastMessageDeflated);
 
                 let parsed: { type?: string; code?: string };
                 try {
@@ -241,6 +340,7 @@ export const makeE2eeSocket = (inner: Socket.Socket, options: E2eeSocketOptions)
                   phase = "open";
                   assembler = new RecordAssembler(undefined, {
                     allowControlRecords: ready.features?.includes(E2EE_INTERLEAVE_FEATURE) === true,
+                    allowDeflate: ready.features?.includes(E2EE_DEFLATE_FEATURE) === true,
                   });
                   Deferred.doneUnsafe(sessionTransport, Effect.succeed(currentTransport()));
                   Deferred.doneUnsafe(authenticated, Effect.void);

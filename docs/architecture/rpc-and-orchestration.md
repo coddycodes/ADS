@@ -26,6 +26,8 @@ the existing WS shell/thread output remains unchanged.
 selected provider's commands, skills,
 agents, and partial-discovery issues for that directory and its user configuration.
 Invalid contexts and failed discovery use `ServerProviderCapabilitiesError`.
+Successful catalogs are served from a server cache and refreshed in the
+background ([providers](./providers.md#workspace-capability-discovery)).
 The request cannot override server-owned provider settings or credentials. It
 uses the same authenticated environment RPC path in browser and desktop clients.
 See [provider capability ownership and lifecycle](./providers.md#workspace-capability-discovery).
@@ -177,7 +179,9 @@ whole text frames, individual requests are never split, and the limits are 64 Mi
 2,048 records per message. Without the echoed subprotocol the server keeps
 today's whole text frames. E2EE sockets always use records; `0x02` control
 records are used there only when the client lists `interleave-v1` in
-`e2ee_auth` and the server confirms it.
+`e2ee_auth` and the server confirms it. Likewise, `0x10` marks every record of a
+raw-deflate compressed server message only after the client lists `deflate-v1`
+and the server confirms it ([Remote environments](./remote.md#direct-connection-e2ee)).
 
 A response that does not fit the connection's message limit (64 MiB on E2EE and
 record-framed plain sockets) fails only its own request with a typed
@@ -230,8 +234,9 @@ cancels that load. Subscription bootstrap, delayed local fallback, workspace
 invalidation, and explicit full refresh all use this owner.
 
 `subscribeVcsStatusSummary` is the read-scoped passive counterpart. Its
-latest-value stream shares one 30-second producer per canonical cwd and emits
-only repository identity, dirty, provider, matching named-branch PR,
+latest-value stream shares one 30-second producer per canonical cwd; a
+subscriber that joins a running producer receives its current value at once
+instead of waiting for the next publication. It emits only repository identity, dirty, provider, matching named-branch PR,
 observation time, and stale state. It performs no numstat, full-file storage,
 or fetch. After a failed status read, the shared repository probe and bounded
 classifier decide the same optional `repositoryUnavailableReason` as the status
@@ -672,10 +677,11 @@ Browser and desktop clients use these same typed unary RPCs; native actions such
 as opening a host URL retain the existing DesktopBridge/local API boundary.
 Reads begin on route/tab/picker open, user filters/pagination, Refresh, Rescan,
 or successful-action invalidation. No timer, window focus, constructor, or idle
-worker initiates provider traffic. A mounted GitLab merge request list or
-detail route opens `pullRequests.subscribe` only while the document is
-visible, paints from `pullRequests.readSnapshot` (display copies in SQLite;
-zero host calls), and keeps the client's 20 s mounted-query refresh timer
+worker initiates provider traffic. Mounted list and detail routes of both
+hosts paint from `pullRequests.readSnapshot` (display copies in SQLite; zero
+host calls) while their live reads run. A mounted GitLab merge request list or
+detail route also opens `pullRequests.subscribe` only while the document is
+visible, and keeps the client's 20 s mounted-query refresh timer
 paused from the subscription's first, all-false event until the subscription
 ends. Successful unary `list` (first page), `get`, `getTimeline`, `getCommits`,
 `getChecks`, and `getFiles` reads store those display copies. One server poller
@@ -694,13 +700,26 @@ subscriber remains. The route still prefetches `get` plus `getTimeline` for a
 row hovered 150 ms, at most two per environment, and an open within 5 s of that
 prefetch shows it without reading again. `pullRequests.runAction` and
 `pullRequests.checkout` re-read the host and do not use snapshots; a successful
-`runAction` deletes that number's rows. GitHub routes do not subscribe. The
+`runAction` deletes that number's rows. GitHub routes store and paint display
+copies but do not subscribe or poll. The
 explicit Refresh action is unchanged. `pullRequests.getContext` accepts an
 optional
 `rescan`: without it the server reuses its bounded 30 s probe and host-context
 answers (the origin is still read); with it the server clears those caches and
 forgets the origin host's recorded provider before resolving. Only Rescan and
-authentication recovery set it. `pullRequests.list` accepts an optional
+authentication recovery set it. It also accepts an optional `allowStale`, which the
+panel sends on its first read of a checkout: when a stored context exists, the
+server answers from it with `stale: true` and no host call, and the panel then
+reads live at once and replaces it; a failed live read keeps the stored context
+on screen; each stored answer is followed by one live read. Each live
+`available` answer is stored as the display copy (kind `context`);
+`repository_unreachable`, `cli_missing` and `cli_too_old` answers replace it with
+an empty tombstone, and `not_authenticated`, or a Rescan answering
+`unknown_host`, deletes every row for the host. A context read that started
+before such an invalidation never writes its answer afterwards. On
+its first read after start the service records the provider of every host that
+has a stored context, so a self-hosted origin resolves without CLI discovery.
+Older clients never send `allowStale` and always read live. `pullRequests.list` accepts an optional
 `refreshTotals`, set only by an explicit list Refresh: GitLab's three
 repository-wide totals are otherwise reused for 30 s per host and repository
 across filters and pages, and cleared by Rescan, auth/permission failures, any
@@ -1136,7 +1155,7 @@ The catalog protocol is server-resolved and capability gated:
 | -------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------- |
 | `subscribeWorktreeCatalog`       | `orchestration:read`    | Stream the latest project snapshot; the request contains only `projectId`.                  |
 | `vcs.refreshWorktreeCatalog`     | `orchestration:read`    | Request one bounded observation and return its snapshot.                                    |
-| `worktree.updateDiscoveryPolicy` | `orchestration:operate` | Persist a complete policy derived from an exact authoritative generation.                   |
+| `worktree.updateDiscoveryPolicy` | `orchestration:operate` | Persist a policy derived from an authoritative generation with unchanged candidates.        |
 | `worktree.createManaged`         | `orchestration:operate` | Resolve the project root and checkout path, create Git state, then persist one owner.       |
 | `worktree.createPanel`           | `orchestration:operate` | Derive panel project, kind, branch, and path from a persisted host thread.                  |
 | `worktree.retarget`              | `orchestration:operate` | Resolve an opaque catalog key/generation before changing a workspace owner path.            |
@@ -1189,8 +1208,10 @@ pointer-checked eviction after 60 seconds; reuse cancels the old timer, and
 cancellation cannot evict a newly installed entry or repository observation.
 
 `worktree.updateDiscoveryPolicy` requires `orchestration:operate`. An
-acknowledgement must name the exact latest authoritative generation. The
-server derives the baseline from eligible normalized paths in that snapshot,
+acknowledgement must name a generation whose eligible candidate paths still
+match the last authoritative snapshot; a refresh that changed nothing does not
+invalidate it. The server derives the baseline from eligible normalized paths
+in that snapshot,
 deduplicates it, caps it at 512, and persists the complete policy through the
 durable `project.meta.update` command. The policy handler digests the decoded
 public payload, acquires its cancellation-aware command claim, and transfers
@@ -1856,7 +1877,18 @@ subsequent durable orchestration events. Resync after reconnect is snapshot-firs
 `subscribeShell` and `subscribeThread` send a whole snapshot. `subscribeThread` and
 `subscribeShell` register their durable-event receiver before reading the
 initial snapshot, so a commit concurrent with that read is queued and then
-projected instead of being lost between snapshot and live delivery.
+projected instead of being lost between snapshot and live delivery. Live
+updates are coalesced: a thread stream re-reads its thread 100 ms after the
+first of a burst of its events, and the shell stream re-reads the shell
+500 ms after the first event of a burst. A thread subscriber that sends
+`patches: true` then receives a `patch` item against the snapshot it holds:
+changed fields are replaced, removed fields listed, and each changed array
+sends its new length and only the entries that differ, by index, so an
+appended activity or a message updated in place costs one entry instead of
+the whole thread. The client decodes only the changed fields with the thread's field
+schemas, and `packages/contracts/fixtures/thread-stream/lifecycle.json` pins
+that patches rebuild the server's snapshot exactly. Older clients omit
+`patches` and keep receiving whole snapshots; older servers ignore it.
 Every shell snapshot, live or from `orchestration.getArchivedShellSnapshot`,
 is read in one SQLite job: projects, the undeleted live or archived threads
 whose project row exists, and per thread only its session, latest turn, the

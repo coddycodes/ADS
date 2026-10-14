@@ -63,9 +63,9 @@
       "verificationDate": "2026-09-04",
       "status": "partial",
       "ledgerClosure": {
-        "rows": 231,
+        "rows": 232,
         "statuses": {
-          "green": 112,
+          "green": 113,
           "current": 73,
           "blocked": 42,
           "removed": 4
@@ -310,7 +310,7 @@
   "inventorySummary": {
     "javascriptDirect": 81,
     "javascriptLedger": 83,
-    "rustRegistry": 122,
+    "rustRegistry": 123,
     "rustPath": 3,
     "rustGit": 1,
     "actions": 9,
@@ -1594,6 +1594,18 @@
       "platforms": ["windows"],
       "status": "blocked",
       "notes": "Owned by third_party/portable-pty/Cargo.toml; update only with the vendored portable-pty release by following third_party/portable-pty/UPSTREAM.md."
+    },
+    {
+      "key": "rust:workspace:flate2",
+      "name": "flate2",
+      "current": "1.1.10",
+      "target": "1.1.10",
+      "channel": "stable",
+      "source": "https://crates.io/crates/flate2",
+      "cohort": "rust-archive",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "Raw deflate with the zlib-rs backend (already in the graph through zip) compresses large server messages before E2EE encryption; round trips, the size threshold, cancellation, and the client's inflate limits are covered."
     },
     {
       "key": "rust:workspace:tauri-plugin-wdio-webdriver",

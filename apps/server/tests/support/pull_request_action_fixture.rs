@@ -62,8 +62,9 @@ case "$1 $2" in
   *) role= ;;
 esac
 if [ -n "$role" ] && [ -f "role-$role" ]; then
-  slot=$(cat "role-$role")
-  rm -f "role-$role"
+  slot=$(head -n 1 "role-$role")
+  tail -n +2 "role-$role" > "role-$role.rest"
+  if [ -s "role-$role.rest" ]; then mv "role-$role.rest" "role-$role"; else rm -f "role-$role" "role-$role.rest"; fi
 fi
 rmdir count.lock
 printf '%s\000' "$@" > "call-$n.argv"
@@ -141,12 +142,30 @@ if [ -f "error-$slot" ]; then cat "error-$slot" >&2; exit 1; fi
     /// (`merge-request`, `approvals`, `reviewers`, `approval-state`, `awards`,
     /// `issues`, `graphql`, `*-events`). Every call in an overlapping group must
     /// reserve its own role; only sequential calls may use arrival-order slots.
+    /// A role reserved again queues behind its earlier reservation, so a later
+    /// group's read of the same argv takes the later response.
     pub fn role(&self, role: &str) {
-        fs::write(
-            self.root.path().join(format!("role-{role}")),
-            self.responses.to_string(),
-        )
-        .unwrap();
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.root.path().join(format!("role-{role}")))
+            .unwrap();
+        writeln!(file, "{}", self.responses).unwrap();
+    }
+    /// The five permission reads an action makes together: merge request,
+    /// approvals, reviewers, GraphQL metadata and project.
+    pub fn gitlab_action_reads(&mut self, reads: [&Value; 5]) {
+        for (value, role) in reads.into_iter().zip([
+            "merge-request",
+            "approvals",
+            "reviewers",
+            "graphql",
+            "project",
+        ]) {
+            self.response(value.clone());
+            self.role(role);
+        }
     }
     pub fn request(&self, mut value: Value) -> ActionRequest {
         value["cwd"] = json!(self.scope.cwd);
@@ -299,25 +318,20 @@ impl Fixture {
             serde_json::from_str(include_str!("../fixtures/pull_requests/gitlab_detail.json"))
                 .unwrap();
         detail["iid"] = json!(14);
-        self.response(detail);
         let mut approvals: Value = serde_json::from_str(include_str!(
             "../fixtures/pull_requests/gitlab_approvals.json"
         ))
         .unwrap();
         approvals["user_can_approve"] = json!(can_approve);
-        self.response(approvals);
-        self.response(
-            serde_json::from_str(include_str!(
-                "../fixtures/pull_requests/gitlab_reviewers.json"
-            ))
-            .unwrap(),
-        );
-        self.response(json!({"data":{"project":{"mergeRequest":{"commitCount":2,"resolvableDiscussionsCount":1,"diffStatsSummary":{"fileCount":2,"additions":2,"deletions":1},"sourceProject":{"fullPath":"fork/repo"},"userPermissions":{"createNote":true,"pushToSourceBranch":true}}}}}));
-        self.response(
-            serde_json::from_str(include_str!(
-                "../fixtures/pull_requests/gitlab_project.json"
-            ))
-            .unwrap(),
-        );
+        let reviewers: Value = serde_json::from_str(include_str!(
+            "../fixtures/pull_requests/gitlab_reviewers.json"
+        ))
+        .unwrap();
+        let metadata = json!({"data":{"project":{"mergeRequest":{"commitCount":2,"resolvableDiscussionsCount":1,"diffStatsSummary":{"fileCount":2,"additions":2,"deletions":1},"sourceProject":{"fullPath":"fork/repo"},"userPermissions":{"createNote":true,"pushToSourceBranch":true}}}}});
+        let project: Value = serde_json::from_str(include_str!(
+            "../fixtures/pull_requests/gitlab_project.json"
+        ))
+        .unwrap();
+        self.gitlab_action_reads([&detail, &approvals, &reviewers, &metadata, &project]);
     }
 }

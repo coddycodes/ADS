@@ -55,6 +55,61 @@ pub fn journal_record_for_exe(journal: &str, exe: &str) -> Option<OsCrashRecord>
         .and_then(|record| parse_journal_message(&record))
 }
 
+/// The entries a `coredumpctl --json list` run answered, or `None` when it failed. It exits
+/// 1 with "No coredumps found." when the window is empty, which is an answer; any other
+/// failure, or output that is not a JSON list, is not.
+pub fn coredumpctl_list_outcome(
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) -> Option<Vec<CoredumpEntry>> {
+    match exit_code {
+        Some(0) => coredumpctl_list(stdout),
+        Some(1) if stdout.trim().is_empty() && stderr.contains("No coredumps found") => {
+            Some(Vec::new())
+        }
+        _ => None,
+    }
+}
+
+/// The entries for processes running `exe` (by file name), other than `skip_pids`.
+pub fn unrecorded_entries(
+    entries: Vec<CoredumpEntry>,
+    exe: &str,
+    skip_pids: &[u32],
+) -> Vec<super::UnrecordedCrash> {
+    entries
+        .into_iter()
+        .filter(|entry| !skip_pids.contains(&entry.pid) && same_executable(&entry.exe, exe))
+        .map(|entry| super::UnrecordedCrash {
+            pid: entry.pid,
+            signal: entry.sig,
+            time_micros: entry.time,
+            exe: entry.exe,
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+pub(super) async fn unrecorded_crashes(
+    since: time::OffsetDateTime,
+    exe: &str,
+    skip_pids: &[u32],
+) -> Option<Vec<super::UnrecordedCrash>> {
+    let since = format!("--since=@{}", since.unix_timestamp());
+    let output = super::query_output(
+        "coredumpctl",
+        &["--json=short", "--no-pager", "list", &since],
+    )
+    .await?;
+    let list = coredumpctl_list_outcome(
+        output.status.code(),
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+    )?;
+    Some(unrecorded_entries(list, exe, skip_pids))
+}
+
 /// The latest entry for `pid` whose executable has the same file name as `exe`.
 pub fn matching_entry(entries: Vec<CoredumpEntry>, pid: u32, exe: &str) -> Option<CoredumpEntry> {
     entries
@@ -216,6 +271,45 @@ mod tests {
 
     const LIST: &str = include_str!("../../../../tests/fixtures/profiler/coredumpctl-list.json");
     const JOURNAL: &str = include_str!("../../../../tests/fixtures/profiler/journal-coredump.json");
+
+    #[test]
+    fn a_failed_coredump_listing_is_not_an_empty_one() {
+        assert_eq!(
+            coredumpctl_list_outcome(Some(1), "", "No coredumps found.\n"),
+            Some(Vec::new())
+        );
+        assert_eq!(
+            coredumpctl_list_outcome(Some(1), "", "Failed to access journal: Permission denied"),
+            None
+        );
+        assert_eq!(coredumpctl_list_outcome(Some(0), "not json", ""), None);
+        assert_eq!(coredumpctl_list_outcome(None, "", ""), None);
+    }
+
+    #[test]
+    fn unrecorded_entries_keep_this_executable_other_than_skipped_pids() {
+        let entry = |pid, exe: &str| CoredumpEntry {
+            time: 1_000 + u64::from(pid),
+            pid,
+            sig: 7,
+            exe: exe.to_owned(),
+        };
+        let crashes = unrecorded_entries(
+            vec![
+                entry(10, "/tmp/.mount_old/usr/bin/bibcode-desktop"),
+                entry(11, "/usr/bin/bibcode-desktop"),
+                entry(12, "/usr/bin/firefox"),
+                entry(13, "/usr/bin/bibcode-desktop"),
+            ],
+            "/tmp/.mount_new/usr/bin/bibcode-desktop",
+            &[13],
+        );
+        assert_eq!(
+            crashes.iter().map(|crash| crash.pid).collect::<Vec<_>>(),
+            [10, 11]
+        );
+        assert_eq!(crashes[0].signal, 7);
+    }
 
     #[test]
     fn coredumpctl_list_picks_the_entry_with_matching_pid_and_exe() {

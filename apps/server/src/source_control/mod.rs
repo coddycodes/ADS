@@ -19,6 +19,7 @@ pub(crate) use pull_request::ProviderCommandFailure;
 #[allow(unused_imports)]
 pub(crate) use pull_request::ProviderCommandSpec;
 pub(crate) use pull_request::parse_github_create_url;
+pub(crate) use pull_request::provider_cli_environment;
 #[allow(unused_imports)]
 pub use pull_request::{
     ChangeRequestState, CreatePullRequestInput, CreatePullRequestOptions, CreatedPullRequest,

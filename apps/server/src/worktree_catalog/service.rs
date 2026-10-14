@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     ffi::OsString,
     future::Future,
     hash::{DefaultHasher, Hash, Hasher},
@@ -362,6 +362,8 @@ struct PendingFingerprintPublication {
 struct EntryState {
     snapshot: Arc<WorktreeCatalogSnapshot>,
     last_authoritative: Arc<WorktreeCatalogSnapshot>,
+    /// Oldest generation whose eligible candidate paths equal `last_authoritative`'s.
+    eligible_paths_since: u64,
     sender: watch::Sender<Arc<WorktreeCatalogSnapshot>>,
     completed_at: Option<Instant>,
     completed_refreshes: u64,
@@ -1149,6 +1151,9 @@ impl WorktreeCatalogService {
                 state.last_refresh_result = Some(Err(error.clone()));
                 return Err(error);
             }
+            if eligible_paths(&state.last_authoritative) != eligible_paths(&snapshot) {
+                state.eligible_paths_since = snapshot.generation;
+            }
             state.snapshot = Arc::clone(&snapshot);
             state.last_authoritative = Arc::clone(&snapshot);
             state.completed_at = Some(Instant::now());
@@ -1175,6 +1180,24 @@ impl WorktreeCatalogService {
         let snapshot = Arc::clone(&lock(&user.entry.state).snapshot);
         drop(user);
         Some(snapshot)
+    }
+
+    /// Returns the last authoritative snapshot when `generation` showed the same eligible
+    /// candidate paths, or the current authoritative generation when it did not.
+    pub async fn acknowledgeable(
+        &self,
+        project_id: &str,
+        generation: u64,
+    ) -> Result<Arc<WorktreeCatalogSnapshot>, Option<u64>> {
+        let entry = self.entry_for_project(project_id).ok_or(None)?;
+        let user = self.reserve_active_user(project_id, entry).ok_or(None)?;
+        let state = lock(&user.entry.state);
+        let current = &state.last_authoritative;
+        if (state.eligible_paths_since..=current.generation).contains(&generation) {
+            Ok(Arc::clone(current))
+        } else {
+            Err(Some(current.generation))
+        }
     }
 
     /// Revalidates a catalog candidate against live Git membership and filesystem presence.
@@ -1886,6 +1909,7 @@ impl WorktreeCatalogService {
                 state: Mutex::new(EntryState {
                     snapshot: Arc::clone(&scan.snapshot),
                     last_authoritative: Arc::clone(&scan.snapshot),
+                    eligible_paths_since: scan.snapshot.generation,
                     sender,
                     completed_at: Some(Instant::now()),
                     completed_refreshes: 0,
@@ -3567,6 +3591,15 @@ fn retained_snapshot(
         worktrees: authoritative.worktrees.clone(),
         adopted_workspaces: authoritative.adopted_workspaces.clone(),
     }
+}
+
+fn eligible_paths(snapshot: &WorktreeCatalogSnapshot) -> BTreeSet<&str> {
+    snapshot
+        .worktrees
+        .iter()
+        .filter(|worktree| worktree.eligible_for_adoption)
+        .map(|worktree| worktree.path.as_str())
+        .collect()
 }
 
 fn lifecycle_inactive(state: &EntryState, requires_subscriber: bool) -> bool {

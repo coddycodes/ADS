@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - The scripted server compresses replies with zlib.
+import * as NodeZlib from "node:zlib";
+
 import type { E2eeAuthenticatedMessage } from "@bibcode/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -146,6 +149,8 @@ const responderScript = (options?: {
   messageBPayload?: Uint8Array;
   confirmInterleave?: boolean;
   interleaveControl?: boolean;
+  /** Confirm deflate-v1 and answer with a compressed echo, then a plain one. */
+  deflateEcho?: { declaredBytes?: number; closeAfter?: boolean };
 }) => {
   const staticPrivate = crypto.getRandomValues(new Uint8Array(32));
   const hostKey = derivePublicKey(staticPrivate);
@@ -197,6 +202,9 @@ const responderScript = (options?: {
         reply({
           type: "e2ee_authenticated",
           ...(options?.confirmInterleave === true ? { features: ["interleave-v1"] } : {}),
+          ...(options?.deflateEcho !== undefined
+            ? { features: ["interleave-v1", "deflate-v1"] }
+            : {}),
         });
       }
       return;
@@ -210,13 +218,29 @@ const responderScript = (options?: {
       send(Uint8Array.of(0x00, ...body.subarray(4)));
       return;
     }
+    if (options?.deflateEcho !== undefined) {
+      const body = new TextEncoder().encode(
+        encodeJson({ echoed: text.length, padding: "x".repeat(64 * 1024) }),
+      );
+      const compressed = NodeZlib.deflateRawSync(body);
+      const message = new Uint8Array(4 + compressed.length);
+      new DataView(message.buffer).setUint32(0, options.deflateEcho.declaredBytes ?? body.length);
+      message.set(compressed, 4);
+      for (const outRecord of splitIntoRecords(message)) {
+        outRecord[0]! |= 0x10;
+        emit(currentTransport().send.encryptWithAd(new Uint8Array(0), outRecord));
+      }
+      reply({ after: true });
+      if (options.deflateEcho.closeAfter === true) close();
+      return;
+    }
     reply({ echoed: text.length });
   };
   return { hostKey, script, received };
 };
 
 describe("makeE2eeSocket", () => {
-  it.effect("offers interleave-v1 in the auth message", () =>
+  it.effect("offers interleave-v1 and deflate-v1 in the auth message", () =>
     Effect.gen(function* () {
       const responder = responderScript();
       const socket = makeE2eeSocket(makeScriptedInnerSocket(responder.script), {
@@ -233,7 +257,7 @@ describe("makeE2eeSocket", () => {
       expect(decodeJson(responder.received[0]!)).toMatchObject({
         type: "e2ee_auth",
         bearer: "stored",
-        features: ["interleave-v1"],
+        features: ["interleave-v1", "deflate-v1"],
       });
       yield* Fiber.interrupt(fiber);
     }),
@@ -264,6 +288,165 @@ describe("makeE2eeSocket", () => {
       }
       expect(received.map((text) => decodeJson(text))).toEqual([{ control: true }, { echoed: 14 }]);
       yield* Fiber.interrupt(fiber);
+    }),
+  );
+
+  it.effect("inflates a compressed message and keeps it ahead of the next plain one", () =>
+    Effect.gen(function* () {
+      const responder = responderScript({ deflateEcho: {} });
+      const socket = makeE2eeSocket(makeScriptedInnerSocket(responder.script), {
+        hostKey: Buffer.from(responder.hostKey).toString("base64url"),
+        auth: { kind: "bearer", credential: "stored" },
+      });
+      const received: Array<string> = [];
+      const both = yield* Deferred.make<void>();
+      const opened = yield* Deferred.make<void>();
+      const fiber = yield* Effect.forkChild(
+        socket.runRaw(
+          (data) => {
+            received.push(typeof data === "string" ? data : new TextDecoder().decode(data));
+            if (received.length === 2) Deferred.doneUnsafe(both, Effect.void);
+          },
+          { onOpen: Deferred.succeed(opened, undefined).pipe(Effect.asVoid) },
+        ),
+      );
+      yield* Deferred.await(opened);
+      const write = yield* Scope.provide(socket.writer, yield* Scope.make());
+      yield* write('{"hello":true}');
+      yield* Deferred.await(both);
+      expect(received.map((text) => decodeJson(text))).toEqual([
+        { echoed: 14, padding: "x".repeat(64 * 1024) },
+        { after: true },
+      ]);
+      yield* Fiber.interrupt(fiber);
+    }),
+  );
+
+  it.effect("starts handler effects in arrival order across a compressed message", () =>
+    Effect.gen(function* () {
+      // The RPC client routes a reply inside the effect its handler returns, so the
+      // effects must begin in arrival order, not only the handler calls.
+      const responder = responderScript({ deflateEcho: {} });
+      const socket = makeE2eeSocket(makeScriptedInnerSocket(responder.script), {
+        hostKey: Buffer.from(responder.hostKey).toString("base64url"),
+        auth: { kind: "bearer", credential: "stored" },
+      });
+      const started: Array<string> = [];
+      const both = yield* Deferred.make<void>();
+      const opened = yield* Deferred.make<void>();
+      const fiber = yield* Effect.forkChild(
+        socket.runRaw(
+          (data) => {
+            const text = typeof data === "string" ? data : new TextDecoder().decode(data);
+            const name =
+              (decodeJson(text) as { after?: boolean }).after === true ? "plain" : "compressed";
+            return Effect.sync(() => {
+              started.push(name);
+              if (started.length === 2) Deferred.doneUnsafe(both, Effect.void);
+            });
+          },
+          { onOpen: Deferred.succeed(opened, undefined).pipe(Effect.asVoid) },
+        ),
+      );
+      yield* Deferred.await(opened);
+      const write = yield* Scope.provide(socket.writer, yield* Scope.make());
+      yield* write('{"hello":true}');
+      yield* Deferred.await(both);
+      expect(started).toEqual(["compressed", "plain"]);
+      yield* Fiber.interrupt(fiber);
+    }),
+  );
+
+  it.effect("does not hold later messages behind a compressed message's slow handler", () =>
+    Effect.gen(function* () {
+      // A stream response's handler can wait on a full consumer queue; replies after it
+      // must still reach their own handlers.
+      const responder = responderScript({ deflateEcho: {} });
+      const socket = makeE2eeSocket(makeScriptedInnerSocket(responder.script), {
+        hostKey: Buffer.from(responder.hostKey).toString("base64url"),
+        auth: { kind: "bearer", credential: "stored" },
+      });
+      const backpressure = yield* Deferred.make<void>();
+      const plainHandled = yield* Deferred.make<void>();
+      const opened = yield* Deferred.make<void>();
+      const fiber = yield* Effect.forkChild(
+        socket.runRaw(
+          (data) => {
+            const text = typeof data === "string" ? data : new TextDecoder().decode(data);
+            return (decodeJson(text) as { after?: boolean }).after === true
+              ? Deferred.succeed(plainHandled, undefined)
+              : Deferred.await(backpressure);
+          },
+          { onOpen: Deferred.succeed(opened, undefined).pipe(Effect.asVoid) },
+        ),
+      );
+      yield* Deferred.await(opened);
+      const write = yield* Scope.provide(socket.writer, yield* Scope.make());
+      yield* write('{"hello":true}');
+      yield* Deferred.await(plainHandled);
+      yield* Fiber.interrupt(fiber);
+    }),
+  );
+
+  it.effect("never delivers a message ahead of a compressed one cut off by a close", () =>
+    Effect.gen(function* () {
+      const responder = responderScript({ deflateEcho: { closeAfter: true } });
+      const socket = makeE2eeSocket(makeScriptedInnerSocket(responder.script), {
+        hostKey: Buffer.from(responder.hostKey).toString("base64url"),
+        auth: { kind: "bearer", credential: "stored" },
+      });
+      const received: Array<unknown> = [];
+      const opened = yield* Deferred.make<void>();
+      const fiber = yield* Effect.forkChild(
+        Effect.exit(
+          socket.runRaw(
+            (data) => {
+              received.push(
+                decodeJson(typeof data === "string" ? data : new TextDecoder().decode(data)),
+              );
+            },
+            { onOpen: Deferred.succeed(opened, undefined).pipe(Effect.asVoid) },
+          ),
+        ),
+      );
+      yield* Deferred.await(opened);
+      const write = yield* Scope.provide(socket.writer, yield* Scope.make());
+      yield* write('{"hello":true}');
+      yield* Fiber.join(fiber);
+      // Whatever arrived before the close arrived in order.
+      expect(received).toEqual(
+        received.length === 0
+          ? []
+          : [{ echoed: 14, padding: "x".repeat(64 * 1024) }, { after: true }],
+      );
+    }),
+  );
+
+  it.effect("fails closed when a compressed message inflates past its declared size", () =>
+    Effect.gen(function* () {
+      const responder = responderScript({ deflateEcho: { declaredBytes: 1024 } });
+      const socket = makeE2eeSocket(makeScriptedInnerSocket(responder.script), {
+        hostKey: Buffer.from(responder.hostKey).toString("base64url"),
+        auth: { kind: "bearer", credential: "stored" },
+      });
+      const received: Array<string> = [];
+      const opened = yield* Deferred.make<void>();
+      const fiber = yield* Effect.forkChild(
+        Effect.exit(
+          socket.runRaw(
+            (data) => {
+              received.push(typeof data === "string" ? data : new TextDecoder().decode(data));
+            },
+            { onOpen: Deferred.succeed(opened, undefined).pipe(Effect.asVoid) },
+          ),
+        ),
+      );
+      yield* Deferred.await(opened);
+      const write = yield* Scope.provide(socket.writer, yield* Scope.make());
+      yield* write('{"hello":true}');
+      const exit = yield* Fiber.join(fiber);
+      expect(findE2eeCause(exit)?.reason).toBe("protocol");
+      expect(received).toEqual([]);
     }),
   );
 
@@ -354,7 +537,11 @@ describe("makeE2eeSocket", () => {
       yield* Effect.sleep("200 millis");
       yield* Fiber.interrupt(fiber);
       expect(received[0]).toBe(
-        encodeJson({ type: "e2ee_auth", pairing: "one-time-1", features: ["interleave-v1"] }),
+        encodeJson({
+          type: "e2ee_auth",
+          pairing: "one-time-1",
+          features: ["interleave-v1", "deflate-v1"],
+        }),
       );
       expect(received[1]).toBe(encodeJson({ hello: true }));
       expect(delivered).toEqual([encodeJson({ echoed: received[1]?.length })]);
@@ -379,7 +566,11 @@ describe("makeE2eeSocket", () => {
       yield* Deferred.await(opened);
       yield* Fiber.interrupt(fiber);
       expect(received[0]).toBe(
-        encodeJson({ type: "e2ee_auth", bearer: "stored-1", features: ["interleave-v1"] }),
+        encodeJson({
+          type: "e2ee_auth",
+          bearer: "stored-1",
+          features: ["interleave-v1", "deflate-v1"],
+        }),
       );
     }),
   );
@@ -421,7 +612,11 @@ describe("makeE2eeSocket", () => {
       yield* Effect.sleep("200 millis");
       yield* Fiber.interrupt(fiber);
       expect(received[0]).toBe(
-        encodeJson({ type: "e2ee_auth", pairing: "one-time-2", features: ["interleave-v1"] }),
+        encodeJson({
+          type: "e2ee_auth",
+          pairing: "one-time-2",
+          features: ["interleave-v1", "deflate-v1"],
+        }),
       );
       expect(received[1]).toBe(encodeJson({ hello: true }));
       expect(delivered).toEqual([encodeJson({ echoed: received[1]?.length })]);
