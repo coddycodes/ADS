@@ -175,7 +175,11 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
    * about 1 s (#99), and every tick would read as a stall. Its rendering waits too.
    */
   const inBackground = () =>
-    isHidden() || (!longFrames && typeof document !== "undefined" && !document.hasFocus());
+    isHidden() ||
+    (!longFrames &&
+      typeof document !== "undefined" &&
+      typeof document.hasFocus === "function" &&
+      !document.hasFocus());
 
   /** Whether the machine slept since `at` (monotonic) and `wallAt`; see `SUSPEND_DIVERGENCE_MS`. */
   const slept = (at: number, wallAt: number) =>
@@ -244,7 +248,12 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", onForegroundChange);
     }
-    if (!longFrames && typeof window !== "undefined") {
+    // A window that cannot report focus (an embedding, a test) is treated as focused.
+    if (
+      !longFrames &&
+      typeof window !== "undefined" &&
+      typeof window.addEventListener === "function"
+    ) {
       window.addEventListener("focus", onForegroundChange);
       window.addEventListener("blur", onForegroundChange);
     }
@@ -280,7 +289,7 @@ export function createClientCollector(deps: ClientCollectorDeps): ClientCollecto
     if (typeof document !== "undefined") {
       document.removeEventListener("visibilitychange", onForegroundChange);
     }
-    if (typeof window !== "undefined") {
+    if (typeof window !== "undefined" && typeof window.removeEventListener === "function") {
       window.removeEventListener("focus", onForegroundChange);
       window.removeEventListener("blur", onForegroundChange);
     }
