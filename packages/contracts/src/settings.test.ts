@@ -125,6 +125,19 @@ describe("ServerSettings agent activity", () => {
   });
 });
 
+describe("ServerSettings device previews", () => {
+  it("defaults enableDevicePreviews to false and accepts a patch", () => {
+    expect(DEFAULT_SERVER_SETTINGS.enableDevicePreviews).toBe(false);
+    expect(decodeServerSettingsPatch({ enableDevicePreviews: true })).toEqual({
+      enableDevicePreviews: true,
+    });
+  });
+
+  it("rejects a non-boolean device previews toggle", () => {
+    expect(() => decodeServerSettingsPatch({ enableDevicePreviews: "yes" })).toThrow();
+  });
+});
+
 describe("ServerSettings profiler", () => {
   it("defaults off and patches the toggle", () => {
     expect(decodeServerSettings({}).enableProfiler).toBe(false);
