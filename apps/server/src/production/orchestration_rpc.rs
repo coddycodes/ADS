@@ -962,43 +962,129 @@ fn shell_stream(
 /// for streamed assistant text to read smoothly.
 const THREAD_UPDATE_COALESCE: std::time::Duration = std::time::Duration::from_millis(100);
 
-/// The change from one thread snapshot (`{snapshotSequence, thread}`) to the next,
-/// as a `patch` stream item, or `None` when nothing changed. Changed fields are
-/// replaced whole, except arrays: they send their new length and only the
-/// entries that differ, by index. The client rebuilds exactly the server's next
-/// snapshot.
-fn thread_patch(held: &Value, next: &Value) -> Option<Value> {
-    let (Some(old), Some(new)) = (
-        held.get("thread").and_then(Value::as_object),
-        next.get("thread").and_then(Value::as_object),
-    ) else {
+/// What a thread subscriber keeps of the last snapshot it sent, to compute the next patch:
+/// a fingerprint of each field of `thread`, and of each entry of its arrays, instead of the
+/// thread itself (#101). A long session's thread is megabytes of JSON, and every open
+/// subscription held its own copy for as long as it stayed open.
+struct HeldThread {
+    fields: HashMap<String, HeldField>,
+}
+
+enum HeldField {
+    Value(u64),
+    Array(Vec<u64>),
+}
+
+impl HeldThread {
+    /// `None` for a snapshot without a thread, after which the next update is a snapshot.
+    fn of(snapshot: &Value) -> Option<Self> {
+        let thread = snapshot.get("thread")?.as_object()?;
+        let fields = thread
+            .iter()
+            .map(|(key, value)| {
+                let held = match value {
+                    Value::Array(entries) => {
+                        HeldField::Array(entries.iter().map(fingerprint).collect())
+                    }
+                    other => HeldField::Value(fingerprint(other)),
+                };
+                (key.clone(), held)
+            })
+            .collect();
+        Some(Self { fields })
+    }
+}
+
+/// A 64-bit fingerprint of `value`, walked like an equality check: no serializing.
+// ponytail: a collision (about 1 in 2^64 per entry) leaves that entry out of one patch, so
+// the client shows it stale until it changes again; keep entries if that ever matters.
+fn fingerprint(value: &Value) -> u64 {
+    use std::hash::{DefaultHasher, Hasher};
+
+    fn walk(value: &Value, hasher: &mut DefaultHasher) {
+        match value {
+            Value::Null => hasher.write_u8(0),
+            Value::Bool(flag) => hasher.write_u8(1 + u8::from(*flag)),
+            // Each representation its own tag: an integer and a float with the same bits
+            // are different values.
+            Value::Number(number) => {
+                if let Some(integer) = number.as_i64() {
+                    hasher.write_u8(3);
+                    hasher.write_i64(integer);
+                } else if let Some(integer) = number.as_u64() {
+                    hasher.write_u8(4);
+                    hasher.write_u64(integer);
+                } else {
+                    hasher.write_u8(5);
+                    hasher.write_u64(number.as_f64().unwrap_or(f64::NAN).to_bits());
+                }
+            }
+            Value::String(text) => {
+                hasher.write_u8(6);
+                hasher.write_usize(text.len());
+                hasher.write(text.as_bytes());
+            }
+            Value::Array(entries) => {
+                hasher.write_u8(7);
+                hasher.write_usize(entries.len());
+                for entry in entries {
+                    walk(entry, hasher);
+                }
+            }
+            Value::Object(fields) => {
+                hasher.write_u8(8);
+                hasher.write_usize(fields.len());
+                for (key, field) in fields {
+                    hasher.write_usize(key.len());
+                    hasher.write(key.as_bytes());
+                    walk(field, hasher);
+                }
+            }
+        }
+    }
+    let mut hasher = DefaultHasher::new();
+    walk(value, &mut hasher);
+    hasher.finish()
+}
+
+/// The change from the thread snapshot a subscriber holds to `next`
+/// (`{snapshotSequence, thread}`), as a `patch` stream item, or `None` when nothing changed.
+/// Changed fields are replaced whole, except arrays: they send their new length and only the
+/// entries that differ, by index. The client rebuilds exactly the server's next snapshot.
+fn thread_patch(held: &HeldThread, next: &Value) -> Option<Value> {
+    let Some(new) = next.get("thread").and_then(Value::as_object) else {
         return Some(json!({ "kind": "snapshot", "snapshot": next }));
     };
     let mut set = serde_json::Map::new();
     let mut arrays = serde_json::Map::new();
     for (key, value) in new {
-        match (old.get(key), value) {
-            (Some(before), _) if before == value => {}
-            (Some(Value::Array(before)), Value::Array(after)) => {
+        match (held.fields.get(key), value) {
+            (Some(HeldField::Array(before)), Value::Array(after)) => {
                 // Only the entries that differ: an appended activity or a message
                 // updated in place costs one entry, wherever it sorts.
                 let changes = after
                     .iter()
                     .enumerate()
-                    .filter(|(index, entry)| before.get(*index) != Some(*entry))
+                    .filter(|(index, entry)| before.get(*index) != Some(&fingerprint(entry)))
                     .map(|(index, entry)| json!([index, entry]))
                     .collect::<Vec<_>>();
+                if changes.is_empty() && before.len() == after.len() {
+                    continue;
+                }
                 arrays.insert(
                     key.clone(),
                     json!({ "length": after.len(), "changes": changes }),
                 );
             }
+            (Some(HeldField::Value(before)), value)
+                if !value.is_array() && *before == fingerprint(value) => {}
             _ => {
                 set.insert(key.clone(), value.clone());
             }
         }
     }
-    let unset = old
+    let unset = held
+        .fields
         .keys()
         .filter(|key| !new.contains_key(*key))
         .cloned()
@@ -1036,8 +1122,15 @@ fn thread_stream(
     let mut events = engine.subscribe_events();
     tokio::spawn(async move {
         let first = thread_snapshot(&engine, &input.thread_id).await;
-        // The last snapshot this subscriber holds; patches are computed against it.
-        let mut held = first.as_ref().ok().cloned();
+        // What the subscriber holds of the last snapshot, for a client that applies patches.
+        let hold = |snapshot: &RpcResult| {
+            snapshot
+                .as_ref()
+                .ok()
+                .filter(|_| input.patches)
+                .and_then(HeldThread::of)
+        };
+        let mut held = hold(&first);
         if send_snapshot(&sender, first).await.is_err() {
             return;
         }
@@ -1063,7 +1156,7 @@ fn thread_stream(
                     if sent.is_err() {
                         return;
                     }
-                    held = next.ok();
+                    held = hold(&next);
                 }
                 event = events.recv() => match event {
                     // Lost events need no special handling: every update re-reads the
@@ -1798,6 +1891,28 @@ struct FullDiffInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #101: a subscriber keeps fingerprints; a number that changes representation, but not
+    /// its bits, is still a change.
+    #[test]
+    fn a_patch_sees_a_number_change_its_representation() {
+        let held = json!({ "snapshotSequence": 1, "thread": { "activities": [
+            { "id": "a", "payload": { "n": 4_609_434_218_613_702_656_i64 } },
+        ] } });
+        let next = json!({ "snapshotSequence": 2, "thread": { "activities": [
+            { "id": "a", "payload": { "n": 1.5 } },
+        ] } });
+        let patch = thread_patch(&HeldThread::of(&held).expect("a thread"), &next)
+            .expect("the number changed");
+        assert_eq!(
+            patch["patch"]["arrays"]["activities"]["changes"],
+            json!([[0, next["thread"]["activities"][0]]])
+        );
+        assert_eq!(
+            thread_patch(&HeldThread::of(&next).expect("a thread"), &next),
+            None
+        );
+    }
     fn test_upload_registry() -> UploadRegistry {
         UploadRegistry::new(
             std::env::temp_dir().join(format!("bibcode-test-uploads-{}", uuid::Uuid::new_v4())),
@@ -6416,7 +6531,7 @@ mod tests {
             // A command the thread's state refuses still exercises the stream.
             let _ = engine.dispatch(decode_command(command)).await;
             let next = thread_snapshot(&engine, "t1").await.expect("snapshot");
-            if let Some(patch) = thread_patch(&held, &next) {
+            if let Some(patch) = thread_patch(&HeldThread::of(&held).expect("a thread"), &next) {
                 patches.push(patch);
             }
             held = next;
