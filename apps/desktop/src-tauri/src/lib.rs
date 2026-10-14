@@ -284,6 +284,8 @@ pub fn run() {
         .expect("error while building BiBCode Tauri application")
         .run(|app_handle, event| {
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                #[cfg(windows)]
+                EXIT_REQUESTED.store(true, std::sync::atomic::Ordering::Relaxed);
                 // So a quit that never finishes shutting down says so on the next start.
                 bibcode_server::diagnostics::profiler::note_exit("quit", None);
                 if let Err(error) =
@@ -296,8 +298,33 @@ pub fn run() {
                 // Mark after backend shutdown, at the last callback before Tauri's relaunch spawn.
                 crate::relaunch::prepare_descriptors_for_relaunch();
                 crate::relaunch::relaunch_outside_service_unit(app_handle);
+                #[cfg(windows)]
+                if !EXIT_REQUESTED.load(std::sync::atomic::Ordering::Relaxed) {
+                    end_session(app_handle);
+                }
             }
         });
+}
+
+/// Set once Tauri asks to exit: a quit, the last window closing, or an update's restart. Every
+/// exit Tauri starts asks first.
+#[cfg(windows)]
+static EXIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Windows ended the session (shut down, signed out, or Restart Manager closed the app) with
+/// BiBCode open. Tao destroys its event loop on `WM_ENDSESSION`, which is how `Exit` arrives
+/// without `ExitRequested`, then keeps dispatching messages until Windows ends the process,
+/// and the next one panics with "cannot move state from Destroyed" (#102). Tao 0.36 exits here
+/// (tauri-apps/tao#1157), but Tauri 2.11 still requires tao 0.35, so BiBCode does it.
+#[cfg(windows)]
+fn end_session<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) -> ! {
+    bibcode_server::diagnostics::profiler::note_exit(
+        bibcode_server::diagnostics::profiler::sentinel::SESSION_END,
+        None,
+    );
+    // What Tauri does after this callback returns: tray icons and the like.
+    app_handle.cleanup_before_exit();
+    std::process::exit(0);
 }
 
 async fn prepare_desktop_runtime_for_exit<R: tauri::Runtime>(

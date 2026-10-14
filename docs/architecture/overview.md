@@ -1634,7 +1634,12 @@ it.
   note standing: the desktop's GLib log writer notes `display-lost` when GDK
   logs that it lost the Wayland or X11 connection (GTK then calls `_exit(1)`,
   so nothing else records it), and the desktop notes `quit` on an exit request
-  and `signal` on `SIGTERM`. The crash monitor writes `gone.json` with the time
+  and `signal` on `SIGTERM`. On Windows it notes `session-end` when Windows ends
+  the session with BiBCode open (shutdown, sign-out or Restart Manager): tao
+  destroys its event loop on `WM_ENDSESSION`, so the desktop exits at once, as
+  tao 0.36 would, instead of dispatching further messages into the destroyed
+  loop (#102). A run noted `session-end` is a clean ending unless a crash dump
+  or OS record matches it. The crash monitor writes `gone.json` with the time
   it saw its parent end without a dump. For `crash.unclean-exit` and
   `shutdown.incomplete`, the next start adds that note, the monitor's `goneAt`,
   and systemd's own lines about the unit ending (`journalctl --user -u <unit>

@@ -27,6 +27,9 @@ const SESSION_FILE: &str = "session.json";
 static WRITE: Mutex<()> = Mutex::new(());
 const SESSION_TMP_FILE: &str = "session.json.tmp";
 const RUNNING: &str = "running";
+/// The exit cause of a run the OS ended with its session (shutdown, sign-out, Restart
+/// Manager), which exited as asked: an expected ending.
+pub const SESSION_END: &str = "session-end";
 /// Shutdown began: a run left in this state was being shut down, not crashed, unless a dump
 /// or an OS crash record says otherwise.
 const STOPPING: &str = "stopping";
@@ -62,7 +65,8 @@ pub struct SessionRecord {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExitNote {
-    /// `display-lost` (GDK lost its display and is about to exit), `quit`, or `signal`.
+    /// `display-lost` (GDK lost its display and is about to exit), `quit`, `signal`, or
+    /// `session-end` (the OS ended the session, on Windows).
     pub cause: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
@@ -430,6 +434,13 @@ pub fn classify(
     }
     if let Some(record) = record {
         return PreviousRun::Crash(record);
+    }
+    if previous
+        .exit
+        .as_ref()
+        .is_some_and(|note| note.cause == SESSION_END)
+    {
+        return PreviousRun::Clean;
     }
     if previous.state == STOPPING {
         return PreviousRun::ShutdownIncomplete(ExitContext::noted(previous));
@@ -1299,6 +1310,35 @@ mod tests {
             "{}",
             incomplete.summary
         );
+    }
+
+    /// #102: Windows ending the session with BiBCode open is no crash, also across the reboot
+    /// that follows; a crash record of the same run still wins.
+    #[test]
+    fn a_run_the_os_ended_with_its_session_is_clean() {
+        let ended = SessionRecord {
+            exit: Some(ExitNote {
+                cause: SESSION_END.into(),
+                detail: None,
+                at: "2026-10-09T10:05:00Z".into(),
+            }),
+            ..previous()
+        };
+        assert!(matches!(
+            classify(&ended, Some("b2"), Some(3), None, None),
+            PreviousRun::Clean
+        ));
+        assert!(finding_for(&ended, classify(&ended, Some("b1"), Some(3), None, None)).is_none());
+        assert!(matches!(
+            classify(
+                &ended,
+                Some("b1"),
+                Some(3),
+                Some(abort_in("bibcode_desktop")),
+                None
+            ),
+            PreviousRun::Crash(_)
+        ));
     }
 
     fn prev_journal_line() -> &'static str {

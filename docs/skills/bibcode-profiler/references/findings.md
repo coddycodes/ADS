@@ -141,7 +141,8 @@ and `startedAt`.
   - `exitCause`, `exitDetail`, `exitNotedAt` when the run noted its ending on
     the way out: `display-lost` (GDK logged that it lost the Wayland or X11
     connection, with that message as the detail, and GTK then exits with no
-    signal), `quit`, or `signal` (`SIGTERM`);
+    signal), `quit`, or `signal` (`SIGTERM`). A run that noted `session-end`
+    (Windows ended the session) raises no finding;
   - `goneAt`: when the crash monitor saw the process end without asking for a
     dump (only while the Profiler was on), within about 2 s on Linux and macOS;
   - `journal` (Linux): systemd's own last lines about the run's user unit

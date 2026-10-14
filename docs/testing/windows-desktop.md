@@ -807,6 +807,13 @@ ones:
   open, quit the app normally. After the next start no new `crash.webview`
   (a `ProcessFailed` raised during shutdown) or `subprocess.crash` finding
   exists.
+- **Windows ends the session.** With the profiler on and the app open, sign
+  out of Windows (or shut down) without quitting BiBCode. After signing back in
+  and starting the app, `profiler findings --json` holds no new `crash.panic`
+  (`cannot move state from Destroyed`), `crash.unclean-exit` or `crash.system`
+  finding for that run, and `session.json` from before the start recorded
+  `exit.cause` `session-end` (#102). A virtual machine you can sign out of is
+  enough; a CI runner cannot end its own session.
 - **Console attach.** Run `profiler status` from `cmd.exe` and from
   PowerShell, with and without piping the output. The executable borrows the
   calling console, so `cmd.exe` returns its prompt at once: record whether the

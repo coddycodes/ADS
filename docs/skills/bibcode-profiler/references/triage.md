@@ -81,7 +81,10 @@ it repeats.
      the crash monitor saw it end), and `journal` (systemd's lines about the
      user unit). `code=killed, status=9/KILL` there is a forced kill from
      outside; `code=exited, status=1/FAILURE` with `display-lost` is GTK's exit.
-     With none of them, nothing recorded the ending: say so.
+     With none of them, nothing recorded the ending: say so. Builds through
+     v0.9.2 on Windows panic with `cannot move state from Destroyed` in tao's
+     `runner.rs` when Windows shuts down with BiBCode open (#102). Newer builds
+     note `session-end` and exit, which raises no finding.
 2. **Symbolicate.**
    - Run `P symbolicate <crash-id> --json` for a dump, or
      `P symbolicate <sid>:<seq> --json` for a panic, with the `sid` and `seq`
