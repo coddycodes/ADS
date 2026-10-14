@@ -34,7 +34,7 @@ pub(crate) const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 /// verification item 1).
 pub(crate) const EMULATOR_GRPC_FLAGS: &[&str] = &["-grpc-use-token"];
 
-const HELPER_LABEL: &str = "android-emulator";
+pub(crate) const HELPER_LABEL: &str = "android-emulator";
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// Console ports the emulator accepts; each instance also takes the next (odd) port for adb.
 const CONSOLE_PORTS: std::ops::RangeInclusive<u16> = 5554..=5682;
@@ -165,6 +165,8 @@ pub(crate) fn parse_discovery(contents: &str) -> Option<(u16, Option<String>)> {
 pub(crate) struct RunningEmulator {
     pub helper: RegisteredHelper,
     /// The adb serial, `emulator-<console port>`.
+    // Read through `DeviceManager::client`, consumed by the scrcpy source.
+    #[allow(dead_code)]
     pub serial: String,
     pub client: EmulatorClient,
     pub width: u32,

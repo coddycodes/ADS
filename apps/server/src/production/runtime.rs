@@ -111,6 +111,7 @@ pub struct ProductionRuntime {
     pub preview_automation: PreviewAutomationBroker,
     pub preview: PreviewManager,
     preview_gateway: PreviewGateway,
+    device_manager: crate::device::DeviceManager,
     asset_access: AssetAccess,
     transfer_access: TransferAccess,
     terminal_services: ServerTerminalServices,
@@ -163,6 +164,10 @@ impl ProductionRuntime {
     #[must_use]
     pub fn preview_gateway(&self) -> PreviewGateway {
         self.preview_gateway.clone()
+    }
+
+    pub fn device_manager(&self) -> crate::device::DeviceManager {
+        self.device_manager.clone()
     }
 
     /// The handler that serves signed download URLs.
@@ -238,6 +243,15 @@ impl ProductionRuntime {
         let provider_update_checks = control.start_provider_update_checks();
         // Built before the profiler, whose sampler reads it; it has no dependencies.
         let process_attribution = ProcessAttributionRegistry::new();
+        let device_env = crate::device::sdk::SdkEnv::from_process();
+        let device_manager =
+            crate::device::DeviceManager::start(crate::device::DeviceManagerConfig {
+                discovery_dirs: crate::device::emulator::default_discovery_dirs(&device_env),
+                env: device_env,
+                registry: process_attribution.clone(),
+                enabled: control.device_previews_enabled_signal(),
+                grpc_port: None,
+            });
         // Starting replays and compacts the findings file, so it runs off the async workers.
         let profiler_state_dir = config.state_dir();
         let profiler_enabled = control.profiler_enabled_signal();
@@ -614,6 +628,7 @@ impl ProductionRuntime {
             preview_automation,
             preview,
             preview_gateway,
+            device_manager,
             asset_access,
             transfer_access,
             terminal_services,
@@ -767,6 +782,8 @@ impl ProductionRuntime {
         self.process_monitor.shutdown().await;
         self.server_control.shutdown_capability_discovery().await;
         self.preview_gateway.shutdown().await;
+        // Stops emulators gracefully before ownership teardown, which would only kill them.
+        self.device_manager.shutdown().await;
         let process_ownership = self.terminal_services.freeze_process_ownership().await;
         self.managed_endpoint.shutdown().await;
         self.workspace.shutdown().await;

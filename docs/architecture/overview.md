@@ -1402,6 +1402,9 @@ are listed in the
   `rpc/session.rs` only while the profiler is on.
   The exit watches are not detectors: their call sites check `is_enabled()`
   before building a report.
+  The Android device manager (`apps/server/src/device/`) likewise emits
+  `device.lifecycle` (`start`, `ready`, `fail`, `stop`) only while the profiler
+  is on, and reports an emulator that exits on its own as `subprocess.crash`.
 - `ProductionRuntime::start` starts the runtime on a blocking thread, because it
   replays `findings.ndjson`, before the orchestration engine starts.
 - **Global handle.** Hot paths reach the runtime through a process-global

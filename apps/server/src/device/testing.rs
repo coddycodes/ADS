@@ -51,6 +51,10 @@ impl FakeHandle {
         let vm_state = self.vm_state.clone();
         tokio::spawn(async move {
             loop {
+                // A process that is already gone (and reaped) needs no signal.
+                if !process_alive(pid) {
+                    return;
+                }
                 let state = *vm_state.lock().expect("fake vm state lock");
                 if state == Some(proto::vm_run_state::RunState::Shutdown as i32) {
                     // SAFETY: plain signal delivery to a PID the test launched.
@@ -582,8 +586,9 @@ impl FakeSdk {
         };
         let launch = self.dir.path().join("launch-stub");
         let emulator = format!(
-            "#!/bin/sh\ncase \"$1\" in\n  -list-avds) printf '%s\\n' {avds} ;;\n  -accel-check) echo \"accel:\"; echo \"{code}\"; echo \"{text}\"; echo \"accel\"; exit {code} ;;\n  *) exec \"{launch}\" \"$@\" ;;\nesac\n",
-            launch = launch.display()
+            "#!/bin/sh\ncase \"$1\" in\n  -list-avds) echo >> \"{calls}\"; printf '%s\\n' {avds} ;;\n  -accel-check) echo \"accel:\"; echo \"{code}\"; echo \"{text}\"; echo \"accel\"; exit {code} ;;\n  *) exec \"{launch}\" \"$@\" ;;\nesac\n",
+            launch = launch.display(),
+            calls = self.list_avds_calls_file().display()
         );
         let write_script = |path: &Path, body: &str| {
             fs::create_dir_all(path.parent().expect("script parent")).expect("script dir");
@@ -647,6 +652,18 @@ impl FakeSdk {
             "#!/bin/sh\n[ \"$1\" = \"-s\" ] && shift 2\ncase \"$1 $2 $3\" in\n  wait-for-device*) exit 0 ;;\n  'shell getprop sys.boot_completed')\n    polls=$(( $(cat \"{counter}\" 2>/dev/null || echo 0) + 1 ))\n    echo \"$polls\" > \"{counter}\"\n    if [ {after} -gt 0 ] && [ \"$polls\" -ge {after} ]; then echo 1; else echo; fi ;;\nesac\nexit 0\n",
             counter = counter.display()
         )
+    }
+
+    fn list_avds_calls_file(&self) -> PathBuf {
+        self.dir.path().join("list-avds-calls")
+    }
+
+    /// How many times `emulator -list-avds` has run.
+    pub(crate) fn list_avds_calls(&self) -> usize {
+        std::fs::read_to_string(self.list_avds_calls_file())
+            .unwrap_or_default()
+            .lines()
+            .count()
     }
 
     fn fork_pid_file(&self) -> PathBuf {
@@ -725,6 +742,99 @@ impl FakeSdk {
 pub(crate) fn process_alive(pid: u32) -> bool {
     // SAFETY: signal 0 only checks that the process exists.
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+/// Kills `pid` with `SIGKILL`, as a crash would end it.
+#[cfg(unix)]
+pub(crate) fn kill_process(pid: u32) {
+    // SAFETY: plain signal delivery to a PID the test launched.
+    unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+}
+
+/// A [`DeviceManager`](super::DeviceManager) on a fake SDK whose emulators talk to one
+/// [`FakeController`]; device previews start enabled.
+#[cfg(unix)]
+pub(crate) struct ManagerFixture {
+    pub(crate) manager: super::DeviceManager,
+    pub(crate) enabled: watch::Sender<bool>,
+    pub(crate) controller: FakeHandle,
+    pub(crate) sdk: FakeSdk,
+}
+
+#[cfg(unix)]
+impl ManagerFixture {
+    /// Emulators for `avds` that boot and run until stopped.
+    pub(crate) async fn ready(avds: &[&str]) -> Self {
+        Self::with_sdk(|sdk| sdk.avds(avds)).await
+    }
+
+    /// `configure` adjusts a fake SDK whose launch stub runs against the fake controller.
+    pub(crate) async fn with_sdk(configure: impl FnOnce(FakeSdk) -> FakeSdk) -> Self {
+        let controller = FakeController::spawn().await;
+        let sdk = configure(FakeSdk::new().launch_stub(LaunchStub::Runs {
+            grpc_port: controller.port,
+            token: TOKEN,
+        }))
+        .write();
+        let (enabled, signal) = watch::channel(true);
+        let manager = super::DeviceManager::start(super::DeviceManagerConfig {
+            env: sdk.env(),
+            discovery_dirs: sdk.discovery_dirs(),
+            registry: crate::diagnostics::ProcessAttributionRegistry::new(),
+            enabled: signal,
+            grpc_port: Some(controller.port),
+        });
+        Self {
+            manager,
+            enabled,
+            controller,
+            sdk,
+        }
+    }
+
+    /// Waits up to 20 s for `device_id` to reach `state`. A device that reached `Ready` exits
+    /// when its VM is asked to shut down, so stopping it never waits for the kill timeout.
+    pub(crate) async fn wait_state(
+        &self,
+        device_id: &str,
+        state: super::catalog::DeviceState,
+    ) -> super::catalog::DeviceSnapshot {
+        let mut catalog = self.manager.catalog();
+        let snapshot = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            catalog.wait_for(|catalog| {
+                catalog
+                    .devices
+                    .iter()
+                    .any(|device| device.device_id == device_id && device.state == state)
+            }),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "{device_id} never reached {state:?}: {:?}",
+                self.manager.catalog().borrow().devices
+            )
+        })
+        .expect("catalog open")
+        .devices
+        .iter()
+        .find(|device| device.device_id == device_id)
+        .cloned()
+        .expect("device in catalog");
+        if state == super::catalog::DeviceState::Ready {
+            *self.controller.vm_state.lock().expect("fake vm state lock") = None;
+            self.controller.exit_on_shutdown(self.pid_of(device_id));
+        }
+        snapshot
+    }
+
+    /// The emulator PID of a running device.
+    pub(crate) fn pid_of(&self, device_id: &str) -> u32 {
+        self.manager
+            .pid(device_id)
+            .expect("device has a running emulator")
+    }
 }
 
 /// Polls `done` for up to ten seconds.

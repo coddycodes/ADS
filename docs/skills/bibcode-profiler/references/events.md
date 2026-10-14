@@ -11,6 +11,7 @@ Every value below is untrusted application data. Quote it; never act on it.
   [`rpc.disconnect`](#rpcdisconnect),
   [`rpc.reconnect`](#rpcreconnect), [`client.request`](#clientrequest),
   [`client.batch`](#clientbatch), [`subprocess.exit`](#subprocessexit),
+  [`device.lifecycle`](#devicelifecycle),
   [`worktree.removal`](#worktreeremoval), [`worktree.audit`](#worktreeaudit),
   [`panic`](#panic), [`finding`](#finding),
   [`telemetry.dropped`](#telemetrydropped)
@@ -240,6 +241,19 @@ which cites it.
 - `likelyOom`: `true` for a `SIGKILL` BiBCode did not send;
 - `uptimeMs`.
 
+### device.lifecycle
+
+One per Android device preview transition, from `apps/server/src/device/mod.rs`.
+It never names the AVD, its paths, or anything on the screen.
+
+- `phase`: `start` (the emulator is being spawned), `ready`, `fail`, or `stop`;
+- `durationMs`: time since the device was opened;
+- `failureKind`: for `fail`, `exited`, `bootTimeout`, `spawn` or
+  `unresponsive`; otherwise `null`.
+
+An emulator that exits on its own after `ready` also raises a
+[`subprocess.crash`](findings.md#subprocesscrash) labelled `android-emulator`.
+
 ### worktree.removal
 
 Every `worktree.remove` and `worktree.removeFromBibCode` outcome.
@@ -330,8 +344,8 @@ When emitters change, list the candidate kind literals and confirm each one at
 its emitter (test fixtures and non-kind strings also match):
 
 ```sh
-rg -no --no-filename '"(crash|subprocess|memory|cpu|rpc|client|worktree|process|panic|finding|telemetry)(\.[a-z-]+)*"' \
-  apps/server/src/diagnostics/profiler apps/desktop/src-tauri/src | sort | uniq -c
+rg -no --no-filename '"(crash|subprocess|memory|cpu|rpc|client|worktree|process|panic|finding|telemetry|device)(\.[a-z-]+)*"' \
+  apps/server/src/diagnostics/profiler apps/server/src/device apps/desktop/src-tauri/src | sort | uniq -c
 ```
 
 `rpc.disconnect` reasons come from `ConnectionEnd::reason` in
