@@ -376,7 +376,7 @@ impl DeviceManager {
         self.inner.tasks.wait().await;
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn pid(&self, device_id: &str) -> Option<u32> {
         let table = self.inner.table();
         let running = table.slots.get(device_id)?.running.as_ref()?;
