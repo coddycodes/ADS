@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [v0.9.4] - 2026-10-15
+
+BiBCode v0.9.4 opens pull and merge requests in a thread's right panel, keeps Claude background agents and other provider work running after a turn ends, stops the server from burning CPU on failed thread subscriptions, makes **Revert to this message** work again, keeps the Claude MCP token off the command line, and reports OpenCode 2 as not supported yet instead of failing late. This release includes the changes since v0.9.3.
 
 ### Pull and merge requests
 
