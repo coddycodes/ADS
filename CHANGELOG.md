@@ -10,6 +10,18 @@
 
 - A view of a deleted thread no longer makes the server use several CPU cores after a few hours. Each failed subscription to the thread left a task on the server that received every agent event until the app restarted, and the client retried every 250 ms. A failed subscription now ends with its request, and the client waits longer between retries, up to 30 s. (#113)
 
+### Left panel and Git Manager
+
+- After you check out another branch in the Git Manager, the left panel's cards show the new branch even when the repository's pull request lookup fails. They used to go back to the thread's old branch about half a second later.
+
+### Profiler
+
+- The startup crash scan reports only crashes of this BiBCode executable: the same path, or another mount of the same AppImage. An extracted AppImage or another build with the same file name no longer raises a `crash.native` finding. (#110)
+
+### Release reliability
+
+- Server tests that check log output run in a process of their own, so a test running beside them can no longer switch off the warning they look for. One of them failed a release check. (#112)
+
 ## [v0.9.3] - 2026-10-14
 
 BiBCode v0.9.3 ends the macOS freezes caused by a page-wide label scan after every render, keeps long conversations smooth to scroll, stops terminals from losing output, stops the server from growing while threads stay open during agent turns, opens remote development servers at their real address on the Linux desktop, exits cleanly when Windows shuts down, and makes the Profiler's findings more accurate. This release includes the changes since v0.9.2.
