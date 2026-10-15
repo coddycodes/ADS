@@ -579,10 +579,14 @@ Amended after the spikes (§0 Results).
   0xEA.
 - **Keys and text.**
   - Keys are `IndigoKeyboardButtonEvent`s with HID keyboard usages.
-  - Text in the US-layout printable set is sent as key down/up pairs, with
-    Shift where needed.
-  - Any other text goes through `xcrun simctl pbcopy <udid>` followed by
-    Cmd+V. The pane notes that iOS may show its paste prompt.
+  - A text event made only of US-layout printable characters is sent as key
+    down/up pairs, with Shift where needed.
+  - A text event containing any other character is sent **whole** as one
+    paste: `xcrun simctl pbcopy <udid>` with the event's full text, then
+    Cmd+V. One pasteboard write per event prevents a later paste from
+    replacing text iOS has not read yet.
+  - The pane notes that iOS may show its "Allow Paste" prompt. While it is
+    up, keys typed afterwards can arrive before the pasted text.
   - The existing per-chunk limit (≤1000 UTF-16 units) still applies.
 - **Rotation.** This uses S2's Purple GSEvent to `PurpleWorkspacePort`, and
   `canRotate` is `true`.
