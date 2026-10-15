@@ -16,6 +16,11 @@ BiBCode v0.9.3 ends the macOS freezes caused by a page-wide label scan after eve
 
 - A program printing many short lines quickly, such as a build or an agent's output, no longer loses lines in the terminal. The server publishes the output waiting together instead of one read at a time. A client that still falls behind gets the terminal's full state instead of a gap, and keeps the input it has not sent yet.
 
+### Git and files
+
+- In the Git manager's **History** tab, a page of older commits that fails to load no longer re-requests itself in a loop. It shows its error, and loads again when you scroll back to the end of the list or choose **Refresh**.
+- The file editor's **Saved** notice no longer stays up after you open another file right after saving.
+
 ### Preview
 
 - On the Linux desktop, a remote environment's development server opens at its real address (`http://localhost:5173`, a wildcard address such as `http://0.0.0.0:5173`, HTTPS included) instead of a gateway address, through a tunnel on the environment's own connection. Only the account signed in on this computer can use the tunnel. (#69)
