@@ -126,6 +126,10 @@ const DEFAULT_SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const ACTIVITY_ONLY_PROVIDER_EVENT_TYPE: &str = "activity.native";
 /// A provider read a message after its delivery was marked uncertain; carries `deliveryKey`.
 const LATE_DELIVERY_PROVIDER_EVENT_TYPE: &str = "delivery.confirmed-late";
+/// How many background tasks (`liveTasks`) the provider reports running. It needs no activity
+/// capability: idle suspension spares a session while it is non-zero, so a provider that cannot
+/// report subagents to Activity still keeps its background work alive.
+const BACKGROUND_WORK_PROVIDER_EVENT_TYPE: &str = "session.background-work";
 const DELIVERY_ROUTE_FINGERPRINT_FIELD: &str = "_bibcodeProviderRouteFingerprint";
 const DELIVERY_ROUTE_CWD_PENDING_FIELD: &str = "_bibcodeProviderRouteCwdPending";
 const DELIVERY_ROUTE_FINGERPRINT_VERSION: &str = "provider-route-v4";
@@ -839,6 +843,9 @@ struct ProviderActivityLifecycleState {
     /// Actors and work items whose latest projected lifecycle is starting or running.
     live_actor_ids: HashSet<String>,
     live_work_item_ids: HashSet<String>,
+    /// Background tasks the provider process reports running, from its own stream, independent
+    /// of activity capabilities.
+    live_background_tasks: usize,
     last_provider_event_at: Option<tokio::time::Instant>,
 }
 
@@ -870,16 +877,23 @@ impl ProviderActivityLifecycleState {
             runtime_observed_capabilities: false,
             live_actor_ids: HashSet::new(),
             live_work_item_ids: HashSet::new(),
+            live_background_tasks: 0,
             last_provider_event_at: None,
         }
     }
 
     /// Whether provider subagents or background work still run and recently reported.
     fn has_recent_live_activity(&self) -> bool {
-        (!self.live_actor_ids.is_empty() || !self.live_work_item_ids.is_empty())
+        self.has_live_work()
             && self
                 .last_provider_event_at
                 .is_some_and(|at| at.elapsed() < LIVE_ACTIVITY_QUIET_CAP)
+    }
+
+    fn has_live_work(&self) -> bool {
+        !self.live_actor_ids.is_empty()
+            || !self.live_work_item_ids.is_empty()
+            || self.live_background_tasks > 0
     }
 
     /// The process that ran this activity is gone.
@@ -5887,13 +5901,16 @@ async fn run_supervisor(
                     {
                         // Provider subagents and background work outlive the turn that started them.
                         Ok(confirmed_idle) => {
+                            let activity_enabled =
+                                activity.agent_activity_controller().snapshot().enabled;
                             confirmed_idle
-                                && !sessions.get(&thread_id).is_some_and(|entry| {
-                                    entry
+                                && sessions.get(&thread_id).is_some_and(|entry| {
+                                    let lifecycle = entry
                                         .activity_lifecycle
                                         .lock()
-                                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                        .has_recent_live_activity()
+                                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                                    session_reports_its_work(entry, &lifecycle, activity_enabled)
+                                        && !lifecycle.has_recent_live_activity()
                                 })
                         }
                         Err(error) => {
@@ -5908,6 +5925,9 @@ async fn run_supervisor(
                 let is_current =
                     is_current && idle_generation.load(Ordering::Relaxed) == generation;
                 let suspension = if is_current && confirmed_idle {
+                    if let Some(entry) = sessions.get(&thread_id) {
+                        log_idle_suspension(entry);
+                    }
                     Some(
                         suspend_idle_session(
                             &engine.repositories(),
@@ -7786,11 +7806,15 @@ async fn restart_session(
     }
     if let Some(mut entry) = sessions.remove(thread_id) {
         close_publication_and_reap_event_task(&mut entry).await;
-        entry
-            .activity_lifecycle
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .forget_live_activity();
+        {
+            // The process that ran this work is gone.
+            let mut lifecycle = entry
+                .activity_lifecycle
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            lifecycle.forget_live_activity();
+            lifecycle.live_background_tasks = 0;
+        }
         synchronize_activity_lifecycle(
             activity,
             &entry.launch.thread_id,
@@ -8035,6 +8059,15 @@ fn spawn_event_pump(
                     if let Some(log) = &operational_log {
                         let _ = log.record(&event);
                     }
+                    if event.event_type == BACKGROUND_WORK_PROVIDER_EVENT_TYPE {
+                        let live = event.payload.get("liveTasks").and_then(Value::as_u64);
+                        activity_lifecycle
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .live_background_tasks =
+                            live.map_or(0, |live| usize::try_from(live).unwrap_or(usize::MAX));
+                        continue;
+                    }
                     if event.event_type == LATE_DELIVERY_PROVIDER_EVENT_TYPE {
                         if let Some(key) = event.payload.get("deliveryKey").and_then(Value::as_str) {
                             // Off the pump: it may wait for the timeout's own write to land.
@@ -8208,6 +8241,11 @@ fn spawn_event_pump(
                     // Start the fence after activity-control acknowledgements, before the
                     // final event becomes visible, so projection cannot deadlock on the supervisor.
                     let session_settlement = session_exited.then(&begin_settlement);
+                    // Any turn, delivered or started by the provider itself, cancels a pending idle
+                    // deadline: the evaluation re-checks its generation after reading the session.
+                    if event.event_type == "turn.started" {
+                        idle_generation.fetch_add(1, Ordering::Relaxed);
+                    }
                     let completion_generation = (event.event_type == "turn.completed")
                         .then(|| idle_generation.fetch_add(1, Ordering::Relaxed) + 1);
                     let completed = event.event_type == "turn.completed"
@@ -8544,6 +8582,31 @@ async fn project_provider_event(
     let created_at = now();
     let command_id = format!("provider:{}", Uuid::new_v4());
     let assistant_message_id = assistant_message_id(&event);
+    if event.event_type == "turn.started" && provider_reports_its_turns(&launch.provider) {
+        // A turn the provider started itself (a Codex goal continuation, Claude answering a
+        // finished background task) runs like a delivered one: the thread reads running, and idle
+        // suspension waits for its `turn.completed`.
+        let running = engine
+            .repositories()
+            .get_thread_session(launch.thread_id.clone())
+            .await
+            .map_err(|error| ProviderRuntimeError::Persistence(error.to_string()))?
+            .is_some_and(|session| {
+                session.status == "running" && session.active_turn_id == event.turn_id
+            });
+        if !running {
+            persist_runtime(
+                &engine.repositories(),
+                launch,
+                "running",
+                resume_cursor.clone(),
+                runtime_payload.clone(),
+            )
+            .await?;
+            dispatch_session_state(engine, launch, "running", event.turn_id.clone(), None, None)
+                .await?;
+        }
+    }
     if event.event_type == "turn.completed" {
         let state = event
             .payload
@@ -9179,6 +9242,68 @@ async fn session_is_confirmed_idle(
             !matches!(session.status.as_str(), "running" | "starting")
                 && session.active_turn_id.is_none()
         }))
+}
+
+/// Whether every `turn.started` the driver emits is a turn the provider reported running. Codex
+/// emits it for each `turn/started` notification, and Claude for a turn it starts itself (its
+/// delivered turns begin on their replay). Cursor, OpenCode, and Grok announce a turn before
+/// BiBCode sends it, so a send that then fails would leave the thread reading running.
+fn provider_reports_its_turns(provider: &str) -> bool {
+    matches!(provider, "codex" | "claude" | "claudeAgent")
+}
+
+/// Whether BiBCode can see the session's work outside a turn, so its absence means idle. Claude
+/// reports its background tasks on its own stream. Other providers report subagents and background
+/// work only through Activity, so with Chat Activity off, or for Cursor and Grok, which have no
+/// Activity adapter, an idle-looking session may still be working and is not suspended.
+fn session_reports_its_work(
+    entry: &SessionEntry,
+    lifecycle: &ProviderActivityLifecycleState,
+    activity_enabled: bool,
+) -> bool {
+    matches!(entry.launch.provider.as_str(), "claude" | "claudeAgent")
+        || (entry.activity_capable
+            && activity_enabled
+            && (lifecycle.capabilities.actors || lifecycle.capabilities.background_work))
+}
+
+/// Why an idle session is being stopped: nothing runs, or its running work stopped reporting.
+fn log_idle_suspension(entry: &SessionEntry) {
+    let lifecycle = entry
+        .activity_lifecycle
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let quiet_secs = lifecycle
+        .last_provider_event_at
+        .map(|at| at.elapsed().as_secs());
+    let thread_id = &entry.launch.thread_id;
+    let provider = &entry.launch.provider;
+    let idle_timeout_secs = entry.idle_timeout.as_secs();
+    let live_subagents = lifecycle.live_actor_ids.len();
+    let live_background_tasks = lifecycle.live_background_tasks;
+    let observes_subagents = lifecycle.capabilities.actors;
+    if lifecycle.has_live_work() {
+        tracing::warn!(
+            %thread_id,
+            %provider,
+            idle_timeout_secs,
+            live_subagents,
+            live_background_tasks,
+            observes_subagents,
+            quiet_secs,
+            "suspending an idle provider session whose running subagents or background tasks \
+             stopped reporting"
+        );
+    } else {
+        tracing::info!(
+            %thread_id,
+            %provider,
+            idle_timeout_secs,
+            observes_subagents,
+            quiet_secs,
+            "suspending an idle provider session: no turn, subagent, or background task is running"
+        );
+    }
 }
 
 async fn suspend_idle_session(
@@ -14950,6 +15075,26 @@ async fn emit_claude_value(
             runtime.handle_raw_value(&value, emitted_at_ms)
         }
     };
+    if let Some(live_tasks) = output.background_tasks.take()
+        && !send_claude_output(
+            sender,
+            cancellation,
+            ProviderEvent {
+                native_event_id: None,
+                event_type: BACKGROUND_WORK_PROVIDER_EVENT_TYPE.to_owned(),
+                thread_id: thread_id.to_owned(),
+                turn_id: None,
+                item_id: None,
+                request_id: None,
+                payload: json!({ "liveTasks": live_tasks }),
+                activity: Vec::new(),
+                activity_controls: ProviderActivityControls::default(),
+            },
+        )
+        .await
+    {
+        return false;
+    }
     if let Some(delivery_key) = late_delivery_key
         && !send_claude_output(
             sender,
@@ -22436,7 +22581,11 @@ done
         const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
         let engine = supervisor_engine().await;
-        let state = Arc::new(StdMutex::new(SupervisorDriverState::default()));
+        // A session that reports its subagents, so an empty report means idle.
+        let state = Arc::new(StdMutex::new(SupervisorDriverState {
+            activity_capabilities: crate::activity::ActivityCapabilities::structured_full(false),
+            ..SupervisorDriverState::default()
+        }));
         let (events_tx, events_rx) = mpsc::channel(2);
         let (idle_deadline_tx, mut idle_deadline_rx) = mpsc::unbounded_channel();
         let supervisor = super::ProviderRuntimeSupervisor::start(
@@ -22913,6 +23062,10 @@ done
 
     impl IdleDeadlineFixture {
         async fn new(idle_timeout: Duration) -> Self {
+            Self::new_for_provider(idle_timeout, "codex").await
+        }
+
+        async fn new_for_provider(idle_timeout: Duration, provider: &str) -> Self {
             let engine = supervisor_engine().await;
             let state = Arc::new(StdMutex::new(SupervisorDriverState {
                 send_turn_ids: ["idle-turn-1".to_owned(), "idle-turn-2".to_owned()].into(),
@@ -22946,7 +23099,7 @@ done
                 },
             );
             let workspace = TempDir::new().unwrap();
-            let mut request = native_launch(&workspace, "codex");
+            let mut request = native_launch(&workspace, provider);
             request.thread_id = "t1".to_owned();
             supervisor.launch(request).await.unwrap();
             Self {
@@ -23539,18 +23692,110 @@ done
         fixture.close().await;
     }
 
+    /// Chat Activity is a display preference: turning it off must not let idle suspension kill
+    /// the subagent it can no longer see.
     #[tokio::test(start_paused = true)]
-    async fn idle_deadline_forgets_live_activity_when_activity_monitoring_is_disabled() {
+    async fn idle_deadline_keeps_unseen_work_when_activity_monitoring_is_disabled() {
         let _clock = keep_idle_clock_paused();
         let mut fixture = IdleDeadlineFixture::new(BUSY_SESSION_IDLE_TIMEOUT).await;
         fixture.complete_first_turn_with_actor("running").await;
-        // Disabling monitoring interrupts the projected actor; no terminal report follows.
+        // As the settings handler does. Disabling monitoring interrupts the projected actor; no
+        // terminal report follows.
+        fixture.activity.agent_activity_controller().disable().await;
         fixture
             .supervisor
             .set_agent_activity_enabled(false)
             .await
             .unwrap();
-        fixture.assert_suspended_after_timeout(2).await;
+        fixture
+            .assert_busy_after_timeout(
+                2,
+                "the idle deadline suspended a session whose subagent Chat Activity no longer shows",
+            )
+            .await;
+        fixture.close().await;
+    }
+
+    /// Cursor reports no subagents or background work, so BiBCode cannot tell an idle session from
+    /// one whose background shell or subagent still runs, and never suspends it. (Grok chat
+    /// sessions are refused at launch.)
+    #[tokio::test(start_paused = true)]
+    async fn idle_deadline_keeps_a_provider_that_cannot_report_its_work() {
+        let _clock = keep_idle_clock_paused();
+        let mut fixture =
+            IdleDeadlineFixture::new_for_provider(BUSY_SESSION_IDLE_TIMEOUT, "cursor").await;
+        IdleDeadlineFixture::accepted(fixture.admit("first").await, "idle-turn-1").await;
+        fixture.stream("idle-turn-1", "assistant-first").await;
+        fixture
+            .emit("turn.completed", "idle-turn-1", "assistant-first")
+            .await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Armed { generation: 2 }
+        );
+        fixture
+            .assert_busy_after_timeout(2, "the idle deadline suspended Cursor")
+            .await;
+        fixture.close().await;
+    }
+
+    /// Cursor announces a turn before BiBCode sends it. If that send fails no `turn.completed`
+    /// follows, so the announcement must not leave the thread reading running.
+    #[tokio::test(start_paused = true)]
+    async fn a_turn_announced_before_its_send_does_not_mark_the_thread_running() {
+        let _clock = keep_idle_clock_paused();
+        let fixture =
+            IdleDeadlineFixture::new_for_provider(BUSY_SESSION_IDLE_TIMEOUT, "cursor").await;
+        fixture.emit("turn.started", "announced", "unused").await;
+        fixture.stream("announced", "assistant-announced").await;
+        fixture.assert_projection("ready", None).await;
+        fixture.close().await;
+    }
+
+    /// Finding 1: a turn the provider starts itself (a Codex goal continuation, Claude answering a
+    /// finished background task) keeps the session like a delivered turn, and the session is
+    /// suspended once that turn completes.
+    #[tokio::test(start_paused = true)]
+    async fn idle_deadline_waits_for_a_turn_the_provider_started_itself() {
+        let _clock = keep_idle_clock_paused();
+        let mut fixture = IdleDeadlineFixture::new(BUSY_SESSION_IDLE_TIMEOUT).await;
+        IdleDeadlineFixture::accepted(fixture.admit("first").await, "idle-turn-1").await;
+        fixture.stream("idle-turn-1", "assistant-first").await;
+        fixture
+            .emit("turn.completed", "idle-turn-1", "assistant-first")
+            .await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Armed { generation: 2 }
+        );
+        fixture
+            .emit("turn.started", "provider-turn", "unused")
+            .await;
+        fixture.stream("provider-turn", "assistant-provider").await;
+        fixture
+            .assert_projection("running", Some("provider-turn"))
+            .await;
+        tokio::time::advance(fixture.idle_timeout * 2).await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Evaluated {
+                generation: 2,
+                outcome: super::IdleDeadlineEvaluation::Stale,
+            },
+            "the provider's turn cancels the deadline armed before it"
+        );
+        fixture
+            .assert_live("the idle deadline suspended a turn the provider started itself")
+            .await;
+        fixture
+            .emit("turn.completed", "provider-turn", "assistant-provider")
+            .await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Armed { generation: 4 }
+        );
+        fixture.assert_projection("ready", None).await;
+        fixture.assert_suspended_after_timeout(4).await;
         fixture.close().await;
     }
 
@@ -23561,6 +23806,293 @@ done
         fixture.complete_first_turn_with_actor("waiting").await;
         fixture.assert_suspended_after_timeout(2).await;
         fixture.close().await;
+    }
+
+    impl IdleDeadlineFixture {
+        /// Reports the provider's live background tasks, then waits until the pump has read it:
+        /// the pump handles events in order, so a later projected batch proves it.
+        async fn report_background_tasks(&self, live_tasks: usize, barrier: &str) {
+            self.events
+                .send(super::ProviderEvent {
+                    native_event_id: None,
+                    event_type: super::BACKGROUND_WORK_PROVIDER_EVENT_TYPE.to_owned(),
+                    thread_id: "t1".to_owned(),
+                    turn_id: None,
+                    item_id: None,
+                    request_id: None,
+                    payload: json!({ "liveTasks": live_tasks }),
+                    activity: Vec::new(),
+                    activity_controls: Default::default(),
+                })
+                .await
+                .unwrap();
+            self.emit_activity(
+                barrier,
+                ProviderActivityMutation::upsert_actor(
+                    format!("actor:{barrier}"),
+                    None,
+                    "Barrier",
+                    "completed",
+                )
+                .unwrap(),
+            )
+            .await;
+        }
+    }
+
+    /// Test (c), at the production timeout: background work the provider reports keeps the
+    /// session past the 60-second idle deadline, and the session suspends once it ends.
+    #[tokio::test(start_paused = true)]
+    async fn idle_deadline_keeps_reported_background_work_past_the_default_timeout() {
+        let _clock = keep_idle_clock_paused();
+        let mut fixture = IdleDeadlineFixture::new(super::DEFAULT_SESSION_IDLE_TIMEOUT).await;
+        IdleDeadlineFixture::accepted(fixture.admit("first").await, "idle-turn-1").await;
+        fixture.stream("idle-turn-1", "assistant-first").await;
+        fixture.report_background_tasks(1, "started").await;
+        fixture
+            .emit("turn.completed", "idle-turn-1", "assistant-first")
+            .await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Armed { generation: 2 }
+        );
+        fixture
+            .assert_busy_after_timeout(
+                2,
+                "the idle deadline suspended the session while its background task ran",
+            )
+            .await;
+        fixture.report_background_tasks(0, "finished").await;
+        fixture.assert_suspended_after_timeout(3).await;
+        fixture.close().await;
+    }
+
+    /// A Claude whose turn starts one background agent and ends while the agent runs. The agent
+    /// finishes when the test creates `$BIBCODE_TEST_RELEASE`. Claude then reports it done and
+    /// answers it in a turn of its own (`origin.kind` `task-notification`), as the Agent SDK
+    /// reference documents for Claude Code 2.1.300. Each pause outlasts the test's idle timeout:
+    /// the first between the task leaving the live set and Claude's turn, the second inside it.
+    #[cfg(unix)]
+    const CLAUDE_BACKGROUND_AGENT_FIXTURE: &str = r#"#!/bin/sh
+case "$1" in
+  --version) printf '%s\n' '2.1.300 (Claude Code)'; exit 0;;
+  --help) printf '%s\n' '__HELP__'; exit 0;;
+esac
+printf '%s\n' "$@" > "$BIBCODE_TEST_ARGS"
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"user"'*)
+      printf '%s\n' "$line"
+      printf '%s\n' '{"type":"system","subtype":"task_started","task_id":"task-bg","tool_use_id":"tool-agent-bg","description":"Background agent","task_type":"local_agent","is_backgrounded":true,"uuid":"task-started","session_id":"fixture-session"}'
+      printf '%s\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"task-bg","task_type":"local_agent","description":"Background agent"}],"uuid":"tasks-changed-1","session_id":"fixture-session"}'
+      printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"fixture-session","uuid":"result-1"}'
+      (
+        while [ ! -f "$BIBCODE_TEST_RELEASE" ]; do sleep 0.05; done
+        printf '%s\n' '{"type":"system","subtype":"task_notification","task_id":"task-bg","status":"completed","output_file":"/tmp/task-bg.output","summary":"Done.","uuid":"task-notified","session_id":"fixture-session"}'
+        printf '%s\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[],"uuid":"tasks-changed-2","session_id":"fixture-session"}'
+        sleep 0.6
+        printf '%s\n' '{"type":"user","message":{"role":"user","content":"<task-notification><task-id>task-bg</task-id><status>completed</status></task-notification>"},"origin":{"kind":"task-notification"},"parent_tool_use_id":null,"session_id":"fixture-session","uuid":"follow-up-user"}'
+        printf '%s\n' '{"type":"stream_event","session_id":"fixture-session","uuid":"follow-up-delta","parent_tool_use_id":null,"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The background agent finished."}}}'
+        sleep 0.6
+        : > "$BIBCODE_TEST_FOLLOW_UP"
+        printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","origin":{"kind":"task-notification"},"session_id":"fixture-session","uuid":"follow-up-result"}'
+      ) &
+      ;;
+  esac
+done
+"#;
+
+    /// Tests (b) and (c), end to end: a real Claude driver whose turn ended while a background
+    /// agent runs is not suspended by the idle deadline, and is suspended once the agent ends.
+    #[cfg(unix)]
+    async fn assert_claude_background_agent_outlives_the_idle_deadline(
+        help: &str,
+        launched_with_hook_events: bool,
+        chat_activity: bool,
+    ) {
+        const IDLE_TIMEOUT: Duration = Duration::from_millis(300);
+        let temp = TempDir::new().unwrap();
+        let release = temp.path().join("release");
+        let follow_up = temp.path().join("follow-up");
+        let arguments = temp.path().join("arguments");
+        let executable = executable_fixture(
+            &temp,
+            "claude-background-agent",
+            &CLAUDE_BACKGROUND_AGENT_FIXTURE.replace("__HELP__", help),
+        );
+        let engine = supervisor_engine().await;
+        let (deadline_tx, mut deadlines) = mpsc::unbounded_channel();
+        let activity = super::ActivityProjection::new(ActivityRepository::new(
+            engine.repositories().database().clone(),
+        ));
+        let supervisor = super::ProviderRuntimeSupervisor::start(
+            engine.clone(),
+            Arc::new(super::NativeProviderDriverFactory::new(
+                temp.path().join("attachments"),
+            )),
+            activity.clone(),
+            super::SupervisorOptions {
+                session_idle_timeout: IDLE_TIMEOUT,
+                idle_deadline_test_observer: Some(deadline_tx),
+                ..super::SupervisorOptions::default()
+            },
+        );
+        let mut request = native_launch(&temp, "claudeAgent");
+        request.thread_id = "t1".to_owned();
+        request.binary_path = executable.to_string_lossy().into_owned();
+        for (name, path) in [
+            ("BIBCODE_TEST_RELEASE", &release),
+            ("BIBCODE_TEST_FOLLOW_UP", &follow_up),
+            ("BIBCODE_TEST_ARGS", &arguments),
+        ] {
+            request
+                .environment
+                .insert(name.to_owned(), path.to_string_lossy().into_owned());
+        }
+        supervisor.launch(request).await.unwrap();
+        if !chat_activity {
+            // As the settings handler does.
+            activity.agent_activity_controller().disable().await;
+            supervisor.set_agent_activity_enabled(false).await.unwrap();
+        }
+        let handle = supervisor
+            .deliver_turn(
+                IdleDeadlineFixture::turn_command("first"),
+                "first".to_owned(),
+            )
+            .await
+            .expect("turn admitted");
+        assert!(matches!(
+            timeout(Duration::from_secs(10), handle.completion())
+                .await
+                .expect("Claude replays the turn"),
+            super::ProviderDeliveryOutcome::Accepted { .. }
+        ));
+        let launched = std::fs::read_to_string(&arguments).expect("launch arguments");
+        assert_eq!(
+            launched
+                .lines()
+                .any(|argument| argument == "--include-hook-events"),
+            launched_with_hook_events,
+            "{launched}"
+        );
+
+        // The turn ended with the agent running: every deadline finds the session busy.
+        let mut busy = 0;
+        while busy < 3 {
+            match timeout(Duration::from_secs(10), deadlines.recv())
+                .await
+                .expect("an idle deadline")
+                .expect("deadline observer")
+            {
+                super::IdleDeadlineTestEvent::Evaluated {
+                    outcome: super::IdleDeadlineEvaluation::Busy,
+                    ..
+                } => busy += 1,
+                super::IdleDeadlineTestEvent::Evaluated {
+                    outcome: super::IdleDeadlineEvaluation::Stale,
+                    ..
+                }
+                | super::IdleDeadlineTestEvent::Armed { .. } => {}
+                super::IdleDeadlineTestEvent::Evaluated { outcome, .. } => panic!(
+                    "the idle deadline stopped Claude while its background agent ran: {outcome:?}"
+                ),
+            }
+        }
+        assert!(
+            supervisor
+                .capture_session_identity("t1")
+                .await
+                .unwrap()
+                .is_some(),
+            "Claude keeps running while its background agent works"
+        );
+
+        std::fs::write(&release, b"").unwrap();
+        timeout(Duration::from_secs(10), async {
+            loop {
+                match deadlines.recv().await.expect("deadline observer") {
+                    super::IdleDeadlineTestEvent::Evaluated {
+                        outcome: super::IdleDeadlineEvaluation::Suspended,
+                        ..
+                    } => {
+                        assert!(
+                            follow_up.exists(),
+                            "the idle deadline stopped Claude before it answered its finished agent"
+                        );
+                        return;
+                    }
+                    super::IdleDeadlineTestEvent::Evaluated {
+                        outcome: super::IdleDeadlineEvaluation::Failed,
+                        ..
+                    } => panic!("idle suspension failed"),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("the session is suspended once the background agent finished");
+        assert!(
+            supervisor
+                .capture_session_identity("t1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // Claude's answer is a turn of its own, after the delivered one.
+        let snapshot = load_snapshot(&engine.repositories()).await.unwrap();
+        let answer = snapshot
+            .messages
+            .iter()
+            .find(|message| message.text == "The background agent finished.")
+            .expect("Claude's answer to its finished agent is in the thread");
+        assert!(!answer.is_streaming);
+        assert!(answer.turn_id.is_some());
+        let delivered_turn = snapshot
+            .messages
+            .iter()
+            .find(|message| message.role == "user")
+            .and_then(|message| message.turn_id.clone());
+        assert_ne!(answer.turn_id, delivered_turn);
+        supervisor.shutdown().await.unwrap();
+        engine.shutdown().await;
+    }
+
+    /// Test (b): the reported bug. The probe found no hook-event flags, so the session has no
+    /// activity capability and BiBCode never saw the subagent.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_without_activity_capability_keeps_a_background_agent_past_the_idle_deadline() {
+        assert_claude_background_agent_outlives_the_idle_deadline(
+            "Usage: claude [options]",
+            false,
+            true,
+        )
+        .await;
+    }
+
+    /// Finding 2: Chat Activity off hides subagents; it does not let idle suspension kill them.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_with_chat_activity_off_keeps_a_background_agent_past_the_idle_deadline() {
+        assert_claude_background_agent_outlives_the_idle_deadline(
+            "--include-hook-events --forward-subagent-text",
+            true,
+            false,
+        )
+        .await;
+    }
+
+    /// Test (c): with full activity capability, liveness does not depend on hook delivery either.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_with_activity_capability_keeps_a_background_agent_past_the_idle_deadline() {
+        assert_claude_background_agent_outlives_the_idle_deadline(
+            "--include-hook-events --forward-subagent-text",
+            true,
+            true,
+        )
+        .await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

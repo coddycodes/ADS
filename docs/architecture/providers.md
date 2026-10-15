@@ -310,17 +310,48 @@ the fatal-exit trigger, and intentional stop/idle suspension cancels and joins
 the supervisor event pump before shutting down any driver. Each completion reserves
 an idle deadline generation before `ready` is published; successful projection of a
 non-failed completion arms it. When a current deadline finds a busy session (an
-admitted delivery, a `running` or `starting` projection, an active turn, or live
-provider activity), it immediately re-arms for one idle timeout, and the next
-completion supersedes that re-arm. Live provider activity is the session's
-in-memory set of actors (Claude subagents, Codex child agents) and work items
-(background tasks and terminals) whose latest projected lifecycle is `starting` or
-`running`; `waiting` and `unknown` do not count. It follows the changes the
-projection accepted, not the provider's raw reports, and disabling Agent Activity
-clears it because the projection interrupts that activity. It keeps the session busy only
-while the provider has emitted an event within the last 30 minutes, which bounds
-activity that never reports a terminal state. Removal-time suspension ignores live
-activity. A clean server shutdown retires every live session like idle suspension:
+admitted delivery, a `running` or `starting` projection, an active turn, live
+provider work, or work BiBCode cannot see), it immediately re-arms for one idle
+timeout, and the next completion supersedes that re-arm.
+
+Idle suspension must never stop work the provider still runs:
+
+- **Provider-started turns.** Every `turn.started`, including one the provider
+  starts itself (a Codex goal continuation, Claude answering a finished
+  background task), cancels the pending deadline; the turn's `turn.completed`
+  arms the next one. When the driver emits `turn.started` only for turns the
+  provider reported running (Codex for each `turn/started`, Claude for a turn it
+  starts itself), the session is also projected `running` with that turn unless
+  it already reads so. Cursor, OpenCode, and Grok announce a turn before BiBCode
+  sends it, so their announcement does not change the projection: a send that
+  fails reports no completion.
+- **Live provider work** is the session's in-memory set of actors (Claude
+  subagents, Codex child agents) and work items (background tasks and
+  terminals) whose latest projected lifecycle is `starting` or `running`
+  (`waiting` and `unknown` do not count), plus the background work the provider
+  reports outside Activity in a `session.background-work` event (`liveTasks`).
+  The projected sets follow the changes the projection accepted, not the
+  provider's raw reports, and disabling Chat Activity clears them because the
+  projection interrupts that activity. The reported count does not depend on
+  activity capabilities or on Chat Activity: Claude reports its live background
+  tasks from its own stream (see
+  [Claude background work](../providers/claude.md#background-work-and-idle-suspension)).
+  Live work keeps the session busy only while the provider has emitted an event
+  within the last 30 minutes, which bounds work that never reports a terminal
+  state.
+- **Work BiBCode cannot see.** A session is suspended only when the absence of
+  live work means idle: Claude always, and Codex or OpenCode while Chat Activity
+  is on and their scope reports actors or background work. Cursor, which has no
+  Activity adapter, and Codex or OpenCode with Chat Activity off, can run
+  background shells or subagents BiBCode cannot see, so their sessions are not
+  idle-suspended; they end with the thread, an explicit stop, or server
+  shutdown.
+
+Each suspension logs why at INFO (`suspending an idle provider session: no turn,
+subagent, or background task is running`), or at WARN when live work stopped
+reporting for the 30-minute cap, with the live subagent and background-task
+counts. Removal-time suspension ignores live activity. A clean server shutdown
+retires every live session like idle suspension:
 the runtime row becomes `suspended` with its resume cursor (unless the thread is
 deleted), so the next message after a restart resumes the same native
 conversation. Explicit stop, thread deletion, and provider restart still delete
@@ -355,11 +386,11 @@ session that has never run a turn; and a failed turn. None arms a new idle
 deadline. Idle policy retains the session until a later successfully projected,
 non-failed completion arms one, or an explicit stop/lifecycle cleanup removes
 it. This retains resources longer but avoids treating those events as proof
-that the provider is idle. The existing admission/projection check cannot see
-all unprojected provider work, including a provider-initiated turn or a failed
-running-state write; that limitation remains explicit. Expiring these cases
-would first require an authoritative busy/idle signal and defined failure
-ordering. The current decision is to preserve this retention policy.
+that the provider is idle. A provider turn that never reports `turn.completed`
+likewise leaves no deadline armed. The admission/projection check still cannot
+see a failed running-state write; that limitation remains explicit. Expiring
+these cases would first require an authoritative busy/idle signal and defined
+failure ordering. The current decision is to preserve this retention policy.
 
 The next start delivery,
 including **Send now** on a held queued message, detaches the dead session and
