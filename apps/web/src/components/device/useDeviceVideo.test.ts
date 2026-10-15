@@ -211,7 +211,14 @@ describe("DeviceVideoSession", () => {
   });
 
   it("falls back at once when a new ticket cannot help", async () => {
-    for (const reason of ["host-identity", "disabled", "unauthorized", "wrongDevice"]) {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    for (const reason of [
+      "host-identity",
+      "disabled",
+      "unauthorized",
+      "wrongDevice",
+      "wrongChannel",
+    ]) {
       const { mintTicket, modes, video, worker } = session();
       video.start();
       await flush();
@@ -220,6 +227,9 @@ describe("DeviceVideoSession", () => {
       expect(modes).toEqual([{ kind: "jpeg", reason: "rejected" }]);
       expect(mintTicket).toHaveBeenCalledTimes(1);
     }
+    // Only the channel mismatch is a client bug worth a warning.
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 
   it("retries when the server will not issue a ticket", async () => {

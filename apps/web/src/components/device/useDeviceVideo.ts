@@ -28,14 +28,16 @@ export const WORKER_STOP_GRACE_MS = 1_000;
 
 /**
  * Close reasons a new ticket cannot fix: the pinned host key (or prologue) is wrong, previews
- * were turned off, the session lost its rights, or the device is gone. Anything else (a dropped
- * or refused connection, an expired ticket, a slow socket) is retried.
+ * were turned off, the session lost its rights, the device is gone, or the ticket was minted on
+ * another channel than the socket uses (a client bug that a retry would only repeat). Anything
+ * else (a dropped or refused connection, an expired ticket, a slow socket) is retried.
  */
 const FINAL_CLOSE_REASONS: ReadonlySet<string> = new Set([
   "host-identity",
   "disabled",
   "unauthorized",
   "wrongDevice",
+  "wrongChannel",
 ]);
 
 /** The parts of a `Worker` the session uses. */
@@ -151,6 +153,9 @@ export class DeviceVideoSession {
   }
 
   private closed(reason: string): void {
+    if (reason === "wrongChannel") {
+      console.warn("device video: media ticket was minted for another channel than its socket");
+    }
     if (FINAL_CLOSE_REASONS.has(reason)) return this.fallBack("rejected");
     const now = this.deps.now?.() ?? Date.now();
     while (this.reconnects.length > 0 && now - this.reconnects[0]! >= RECONNECT_WINDOW_MS) {
