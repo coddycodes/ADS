@@ -15,10 +15,12 @@
 ### Providers
 
 - OpenCode 2 is reported as not supported yet, in Settings and when you send a message, with the setting to change (point **Binary path** at an OpenCode 1.x executable), instead of failing later with "HTTP 405" or "error decoding response body". BiBCode now waits for the OpenCode 1.x API to answer before it treats a server as ready.
+- **Revert to this message** works again in Codex chats on Codex 0.151 and later. BiBCode now rewinds the conversation with `thread/revert`, since Codex no longer accepts `thread/rollback` for new threads and removed it in 0.156. A thread created by an older Codex that can no longer be rewound now says to start a new thread.
 
 ### Left panel and Git Manager
 
 - After you check out another branch in the Git Manager, the left panel's cards show the new branch even when the repository's pull request lookup fails. They used to go back to the thread's old branch about half a second later.
+- Removing a worktree thread from BiBCode no longer waits for the removal dialog's Git details to finish loading: those details are read without holding the project's lock. A slow load logs how long each of its steps took. (#114)
 
 ### Profiler
 
