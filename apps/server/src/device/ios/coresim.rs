@@ -212,7 +212,12 @@ impl SymbolResolver for DlsymResolver {
 
 /// Loads both frameworks for `developer_dir` and checks every private name; never panics.
 pub(crate) fn probe(developer_dir: &Path) -> GuardResult {
-    let opened = Library::open(Path::new(CORE_SIMULATOR))
+    probe_frameworks(Path::new(CORE_SIMULATOR), developer_dir)
+}
+
+/// [`probe`] with CoreSimulator at `core_simulator`.
+fn probe_frameworks(core_simulator: &Path, developer_dir: &Path) -> GuardResult {
+    let opened = Library::open(core_simulator)
         .and_then(|_| Library::open(&simulator_kit_path(developer_dir)));
     match opened {
         Ok(simulator_kit) => probe_with(&DlsymResolver {
@@ -844,16 +849,17 @@ mod tests {
 
     #[test]
     fn a_missing_framework_gives_view_only() {
-        match probe(Path::new("/nonexistent/Xcode.app/Contents/Developer")) {
+        // Nonexistent paths, so the unit suite never loads the host's frameworks.
+        let probed = probe_frameworks(
+            Path::new("/nonexistent/CoreSimulator"),
+            Path::new("/nonexistent/Xcode.app/Contents/Developer"),
+        );
+        match probed {
             GuardResult::ViewOnly { kind, missing } => {
                 assert_eq!(kind, AvailabilityKind::XcodeUnsupported);
-                // CoreSimulator is missing on a Mac without Xcode, SimulatorKit otherwise.
-                assert!(
-                    missing.contains("SimulatorKit") || missing.contains("CoreSimulator"),
-                    "{missing}"
-                );
+                assert_eq!(missing, "/nonexistent/CoreSimulator");
             }
-            GuardResult::Live(_) => panic!("no SimulatorKit there"),
+            GuardResult::Live(_) => panic!("no frameworks there"),
         }
     }
 
