@@ -6996,7 +6996,9 @@ pub async fn load_shell_snapshot(
 }
 
 /// Loads one thread and the rows its detail shows, ordered as [`load_snapshot`] orders
-/// them. Like [`load_snapshot`], it leaves out a thread whose project row is missing.
+/// them. Like [`load_snapshot`], it leaves out a thread whose project row is missing. It
+/// also leaves out a deleted thread, which no detail shows, without reading its rows: a view
+/// of a deleted thread keeps asking for it (#113).
 pub async fn load_thread_snapshot(
     repositories: &Repositories,
     thread_id: &str,
@@ -7022,6 +7024,7 @@ pub async fn load_thread_snapshot(
         .get_thread(thread_id.to_owned())
         .await
         .map_err(wrap_persistence)?
+        .filter(|thread| thread.deleted_at.is_none())
     else {
         return Ok(snapshot);
     };

@@ -133,7 +133,12 @@ message's inbound byte permits until it is admitted. A refusal (a missing scope,
 an invalid session, maintenance) that cannot be queued before its 5-second
 deadline goes through the control lane, and one that reaches neither ends the
 session. A periodic task that holds the single database worker therefore delays
-only the requests behind it, and the read loop keeps answering `Ping`.
+only the requests behind it, and the read loop keeps answering `Ping`. When a
+request's task ends, however it ends (a reply, a stream terminal, a refusal, an
+interrupt or a panic), the session cancels the request's cancellation token, so
+work its handler started ends with the request rather than with the connection.
+A stream producer that kept waiting for events after its error terminal held an
+engine event receiver for as long as the socket stayed open (#113).
 
 Each connection has one writer task that owns the socket sink. It drains a
 bounded control lane before every queued message: RPC `Pong`, interrupt exits,
@@ -1897,6 +1902,8 @@ client decodes only the changed fields with the thread's field
 schemas, and `packages/contracts/fixtures/thread-stream/lifecycle.json` pins
 that patches rebuild the server's snapshot exactly. Older clients omit
 `patches` and keep receiving whole snapshots; older servers ignore it.
+A thread stream ends with its first error, such as `Thread … was not found`
+for a missing or deleted thread, whose targeted load reads none of its rows.
 Every shell snapshot, live or from `orchestration.getArchivedShellSnapshot`,
 is read in one SQLite job: projects, the undeleted live or archived threads
 whose project row exists, and per thread only its session, latest turn, the
