@@ -1,6 +1,10 @@
 import type { DeviceSnapshot, EnvironmentId } from "@bibcode/contracts";
-import { InfoIcon } from "lucide-react";
-import { useId, useState } from "react";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@bibcode/client-runtime/state/runtime";
+import { InfoIcon, TriangleAlertIcon } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { deviceEnvironment } from "../../state/device";
@@ -50,6 +54,15 @@ function DevicePreviewsToggle({ environmentId }: { readonly environmentId: Envir
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const reasonId = useId();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   // The catalog is only served while previews are on; it names a device turning off would stop.
   const catalog = useEnvironmentQuery(
     availability.enabled ? deviceEnvironment.catalog({ environmentId, input: {} }) : null,
@@ -78,8 +91,19 @@ function DevicePreviewsToggle({ environmentId }: { readonly environmentId: Envir
     );
   }
 
-  const setEnabled = (enabled: boolean) => {
-    void updateSettings({ enableDevicePreviews: enabled });
+  const setEnabled = async (enabled: boolean) => {
+    setSaving(true);
+    setSaveError(null);
+    const result = await updateSettings({ enableDevicePreviews: enabled });
+    if (!mountedRef.current) return;
+    setSaving(false);
+    if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+    const failure = squashAtomCommandFailure(result);
+    const detail =
+      failure instanceof Error && failure.message.trim().length > 0
+        ? failure.message
+        : `Check the connection to ${label}.`;
+    setSaveError(`Could not turn device previews ${enabled ? "on" : "off"}. ${detail} Try again.`);
   };
   const handleToggle = (checked: boolean) => {
     // Turning off stops the running device, so that is confirmed first.
@@ -87,7 +111,7 @@ function DevicePreviewsToggle({ environmentId }: { readonly environmentId: Envir
       setConfirmOpen(true);
       return;
     }
-    setEnabled(checked);
+    void setEnabled(checked);
   };
 
   return (
@@ -95,10 +119,22 @@ function DevicePreviewsToggle({ environmentId }: { readonly environmentId: Envir
       <SettingsRow
         title={TOGGLE_TITLE}
         description={DEVICE_PREVIEWS_DESCRIPTION}
-        status={running === null ? null : `${running.avdName} is running on ${label}.`}
+        status={
+          saving ? (
+            "Saving…"
+          ) : saveError !== null ? (
+            <div role="alert" className="flex items-start gap-1.5 text-destructive">
+              <TriangleAlertIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+              <span>{saveError}</span>
+            </div>
+          ) : running === null ? null : (
+            `${running.avdName} is running on ${label}.`
+          )
+        }
         control={
           <Switch
             checked={availability.enabled}
+            disabled={saving}
             onCheckedChange={handleToggle}
             aria-label={TOGGLE_TITLE}
           />
@@ -118,7 +154,7 @@ function DevicePreviewsToggle({ environmentId }: { readonly environmentId: Envir
               variant="destructive"
               onClick={() => {
                 setConfirmOpen(false);
-                setEnabled(false);
+                void setEnabled(false);
               }}
             >
               Stop {running?.avdName ?? "device"} and turn off

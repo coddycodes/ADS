@@ -133,21 +133,74 @@ describe("DeviceInputQueue", () => {
     expect(sent).toEqual([[key(0)], [key(1)]]);
   });
 
-  it("sends nothing after dispose, even from a flush already scheduled", () => {
+  it("lifts held keys on release, once", () => {
     const sent: Array<ReadonlyArray<DeviceInputEvent>> = [];
     const flushes: Array<() => void> = [];
     const queue = new DeviceInputQueue(
       (events) => {
         sent.push(events);
-        return Promise.resolve();
+        return new Promise<void>(() => undefined);
       },
       (flush) => flushes.push(flush),
     );
-    queue.push(key(0));
-    queue.dispose();
+    queue.push({ type: "key", key: "backspace", action: "down" });
+    queue.push({ type: "key", key: "home", action: "down" });
+    queue.push({ type: "key", key: "home", action: "up" });
+    queue.releaseKeys();
+    queue.releaseKeys();
     flushes.shift()?.();
+    expect(sent[0]).toEqual([
+      { type: "key", key: "backspace", action: "down" },
+      { type: "key", key: "home", action: "down" },
+      { type: "key", key: "home", action: "up" },
+      { type: "key", key: "backspace", action: "up" },
+    ]);
+  });
+
+  it("on dispose cancels a drag in progress and sends it without waiting for a frame", async () => {
+    const sent: Array<ReadonlyArray<DeviceInputEvent>> = [];
+    const flushes: Array<() => void> = [];
+    let release!: () => void;
+    const queue = new DeviceInputQueue(
+      (events) => {
+        sent.push(events);
+        return new Promise<void>((resolve) => (release = resolve));
+      },
+      (flush) => flushes.push(flush),
+    );
+    queue.push(touch("down", 0.1, 0.1, 3));
+    flushes.shift()?.();
+    queue.push(touch("move", 0.4, 0.5, 3));
+    queue.push({ type: "key", key: "back", action: "down" });
+    queue.dispose();
     queue.push(key(1));
-    expect(sent).toEqual([]);
+    // The first batch is still in flight; the rest follows as soon as it settles.
+    release();
+    await settle();
+    expect(sent).toEqual([
+      [touch("down", 0.1, 0.1, 3)],
+      [
+        touch("move", 0.4, 0.5, 3),
+        { type: "key", key: "back", action: "down" },
+        { type: "key", key: "back", action: "up" },
+        touch("cancel", 0.4, 0.5, 3),
+      ],
+    ]);
     expect(flushes).toHaveLength(0);
+  });
+
+  it("forgets a touch once it is lifted", () => {
+    const sent: Array<ReadonlyArray<DeviceInputEvent>> = [];
+    const queue = new DeviceInputQueue(
+      (events) => {
+        sent.push(events);
+        return new Promise<void>(() => undefined);
+      },
+      () => undefined,
+    );
+    queue.push(touch("down", 0.1, 0.1));
+    queue.push(touch("up", 0.1, 0.1));
+    queue.dispose();
+    expect(sent).toEqual([[touch("down", 0.1, 0.1), touch("up", 0.1, 0.1)]]);
   });
 });

@@ -137,7 +137,7 @@ export function DeviceToolbar({
           aria-label="Virtual device"
           size="sm"
           className="w-40 min-w-0"
-          title={pickerLocked ? DEVICE_DISABLED_REASONS.running : undefined}
+          title={startReason ?? undefined}
         >
           <SelectValue>{selectedLabel}</SelectValue>
         </SelectTrigger>

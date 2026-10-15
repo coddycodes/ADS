@@ -6,7 +6,7 @@ export const DEVICE_PREVIEWS_SETTINGS_ANCHOR = "device-previews";
 
 /** Shown wherever device previews are off, with a way to Settings next to it. */
 export const DEVICE_PREVIEWS_OFF_MESSAGE =
-  "Device previews are off. Turn them on in Settings → Device previews.";
+  "Device previews are off. Turn them on in Settings → Diagnostics → Device previews.";
 
 export const DEVICE_PREVIEWS_UNSUPPORTED_MESSAGE =
   "This server's BiBCode version has no device previews. Update the server to use them.";

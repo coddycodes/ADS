@@ -314,7 +314,7 @@ describe("DevicePanel", () => {
     h.availability = { known: true, supported: true, enabled: false };
     const container = await render();
     expect(container.textContent).toContain(
-      "Device previews are off. Turn them on in Settings → Device previews.",
+      "Device previews are off. Turn them on in Settings → Diagnostics → Device previews.",
     );
     await click(button(container, "Open settings"));
     expect(h.navigations).toEqual([

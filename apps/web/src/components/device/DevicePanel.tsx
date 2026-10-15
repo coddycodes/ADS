@@ -252,6 +252,12 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
     [environmentId, runInput, shownDeviceId],
   );
 
+  const releaseInput = useCallback((scope: "keys" | "all") => {
+    const queue = laneRef.current?.queue;
+    if (scope === "keys") queue?.releaseKeys();
+    else queue?.releaseAll();
+  }, []);
+
   const start = async () => {
     if (selectedAvd === null) return;
     setStartPending(true);
@@ -370,6 +376,7 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
             environmentId={environmentId}
             device={device}
             onInput={pushInput}
+            onRelease={releaseInput}
           />
         ) : device === null ? (
           <PanelMessage>

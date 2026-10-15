@@ -46,16 +46,20 @@ function freeTouchId(used: ReadonlyMap<number, number>): number {
 
 /**
  * The running device's screen: JPEG frames drawn to a letterboxed canvas outside React state,
- * and pointer and keyboard input handed to `onInput`, which queues it for the device.
+ * and pointer and keyboard input handed to `onInput`, which queues it for the device. Held keys
+ * are released when focus leaves the screen or the window, and everything held when it unmounts.
  */
 export function DeviceScreen({
   environmentId,
   device,
   onInput,
+  onRelease,
 }: {
   readonly environmentId: EnvironmentId;
   readonly device: DeviceSnapshot;
   readonly onInput: (event: DeviceInputEvent) => void;
+  /** Lifts held keys (`keys`), or held keys and touches (`all`), on the device. */
+  readonly onRelease: (scope: "keys" | "all") => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -154,6 +158,21 @@ export function DeviceScreen({
   }, []);
   useAtomSubscribe(framesAtom, onFrame, { immediate: true });
 
+  // A key released while another window has focus never reaches the canvas; lift it on blur.
+  useEffect(() => {
+    const releaseKeys = () => onRelease("keys");
+    window.addEventListener("blur", releaseKeys);
+    return () => window.removeEventListener("blur", releaseKeys);
+  }, [onRelease]);
+  // Unmounting mid-drag or with a key down must not leave it pressed on the device.
+  useEffect(() => {
+    const touches = touchesRef.current;
+    return () => {
+      touches.clear();
+      onRelease("all");
+    };
+  }, [onRelease]);
+
   const queueTouch = useCallback(
     (action: "down" | "move" | "up" | "cancel", touchId: number, point: { x: number; y: number }) =>
       onInput({ type: "touch", action, pointerId: touchId, x: point.x, y: point.y }),
@@ -216,7 +235,7 @@ export function DeviceScreen({
       <canvas
         ref={canvasRef}
         tabIndex={0}
-        aria-label={`${device.avdName} screen. Click or drag to touch; type to send keys.`}
+        aria-label={`${device.avdName} screen. Click or drag to touch; type to send keys; Shift+Tab to leave.`}
         className="absolute touch-none rounded-2xl bg-black outline-none ring-4 ring-foreground/80 focus-visible:ring-primary"
         style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
         onPointerDown={handlePointerDown}
@@ -227,6 +246,7 @@ export function DeviceScreen({
         onKeyDown={(event) => handleKey(event, "down")}
         onKeyUp={(event) => handleKey(event, "up")}
         onPaste={handlePaste}
+        onBlur={() => onRelease("keys")}
         onContextMenu={(event) => event.preventDefault()}
       />
       {streamFailed ? (

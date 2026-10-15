@@ -53,6 +53,7 @@ describe("settings navigation", () => {
       ["Providers", "/settings/providers"],
       ["Source Control", "/settings/source-control"],
       ["Archive", "/settings/archived"],
+      ["Diagnostics", "/settings/diagnostics"],
       ["About", "/settings/about"],
     ]);
   });

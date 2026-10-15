@@ -2,6 +2,8 @@
 
 import type { DeviceCatalog } from "@bibcode/contracts";
 import { EnvironmentId } from "@bibcode/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -13,6 +15,8 @@ const h = vi.hoisted(() => ({
   catalog: null as unknown,
   queried: [] as unknown[],
   updates: [] as Array<{ environmentId: string; patch: unknown }>,
+  updateResult: null as unknown,
+  updateGate: null as Promise<void> | null,
 }));
 
 vi.mock("../device/deviceAvailability", () => ({
@@ -37,7 +41,9 @@ vi.mock("../../state/query", () => ({
 vi.mock("../../hooks/useSettings", () => ({
   useUpdateEnvironmentSettings: (environmentId: string) => (patch: unknown) => {
     h.updates.push({ environmentId, patch });
-    return Promise.resolve({ _tag: "Success" });
+    return (h.updateGate ?? Promise.resolve()).then(
+      () => h.updateResult ?? { _tag: "Success", value: undefined },
+    );
   },
 }));
 
@@ -105,6 +111,8 @@ beforeEach(() => {
   h.catalog = null;
   h.queried.length = 0;
   h.updates.length = 0;
+  h.updateResult = null;
+  h.updateGate = null;
 });
 
 afterEach(async () => {
@@ -154,6 +162,24 @@ describe("DevicePreviewsSection", () => {
       { environmentId: ENVIRONMENT_ID, patch: { enableDevicePreviews: false } },
     ]);
     expect(container.querySelector("[role='alertdialog']")).toBeNull();
+  });
+
+  it("shows saving, then an actionable line when the change fails", async () => {
+    let open!: () => void;
+    h.updateGate = new Promise<void>((resolve) => (open = resolve));
+    h.updateResult = AsyncResult.failure(Cause.fail(new Error("The server refused the change.")));
+    const container = await render();
+    await click(toggle(container));
+    expect(container.textContent).toContain("Saving…");
+    expect((toggle(container) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      open();
+      await h.updateGate;
+    });
+    expect(container.querySelector("[role='alert']")?.textContent).toBe(
+      "Could not turn device previews on. The server refused the change. Try again.",
+    );
+    expect((toggle(container) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("explains a server without device previews", async () => {
