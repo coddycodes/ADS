@@ -157,6 +157,17 @@ protocol:
 | Grok     | Agent Client Protocol                          | Unsupported           | No structured Activity observation.                                                        |
 | OpenCode | OpenCode server/events API                     | Unsupported           | Structured chat and managed-terminal observation.                                          |
 
+The OpenCode driver speaks the V1 server API of OpenCode 1.x. OpenCode 2
+replaced it with `/api/*` routes and answers V1 GET paths with its web UI as
+HTTP 200, so the adapter identifies the API before use
+(`provider::opencode::probe_server_api`): an authenticated `GET /global/health`
+that returns `{"healthy": true}` is the V1 API, and a `GET /api/info` that
+returns a version is OpenCode 2. A managed server is ready only on the V1
+answer; an OpenCode 2 answer stops it and fails the launch with an actionable
+provider error. A configured Server URL is checked once at launch with the same
+probe. Inventory reads the CLI's `--version` and reports OpenCode 2 as an error
+without starting its server.
+
 Provider-specific events are normalized into shared orchestration contracts;
 provider wire payloads do not leak into React state. See
 [RPC and orchestration](./rpc-and-orchestration.md).

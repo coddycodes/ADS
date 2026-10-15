@@ -105,6 +105,14 @@ For packaged visual validation on each available supported provider:
 Record unavailable provider/platform scenarios and visual evidence in the
 execution report. Hermetic tests do not establish a packaged native visual pass.
 
+OpenCode scenarios need OpenCode 1.x. Run `opencode --version` with the
+desktop's `PATH` first: OpenCode 2 prints `opencode v2.x.y`. With OpenCode 2,
+verify instead that the OpenCode row and the chat banner show the
+unsupported-version error naming Binary path, then either set Binary path to an
+OpenCode 1.x executable or record the OpenCode scenarios as unavailable. The
+version gate's focused checks are
+`cargo test -p bibcode-server --lib -j 2 -- opencode_readiness opencode_configured_server_url opencode_2_ provider::opencode::server_api_tests`.
+
 ## Revision and worktree preflight
 
 Use GitHub CLI for GitHub metadata and Git for worktree/revision operations.

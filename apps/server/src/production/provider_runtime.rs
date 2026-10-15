@@ -11184,6 +11184,26 @@ impl OpenCodeDriver {
         activity_enabled: bool,
     ) -> Result<Self, ProviderRuntimeError> {
         if let Some(endpoint) = request.endpoint.as_ref() {
+            // A configured server that does not answer yet keeps today's behaviour (the session
+            // request reports it); only a server identified as OpenCode 2 is refused here.
+            let client = reqwest::Client::builder()
+                .timeout(crate::provider::opencode::API_PROBE_TIMEOUT)
+                .build()
+                .map_err(provider_error("opencode"))?;
+            if let crate::provider::opencode::OpenCodeServerApi::Unsupported { version } =
+                crate::provider::opencode::probe_server_api(
+                    &client,
+                    endpoint,
+                    request.server_password.as_deref(),
+                )
+                .await
+            {
+                tracing::warn!(%version, "configured OpenCode server is OpenCode 2; launch refused");
+                return Err(ProviderRuntimeError::Provider {
+                    provider: "opencode".to_owned(),
+                    detail: crate::provider::opencode::unsupported_server_message(&version, false),
+                });
+            }
             let runtime =
                 OpenCodeSessionRuntime::new_with_options_reconciliation_revision_and_agent_activity(
                 endpoint,
@@ -11238,7 +11258,7 @@ impl OpenCodeDriver {
         if let Some(stderr) = server_stderr {
             drain_opencode_output(stderr, "stderr");
         }
-        wait_for_endpoint(&endpoint, &child).await?;
+        wait_for_endpoint(&endpoint, &local_password, &child).await?;
         let runtime =
             OpenCodeSessionRuntime::new_with_options_reconciliation_revision_and_agent_activity(
                 &endpoint,
@@ -15200,13 +15220,24 @@ fn drain_opencode_output(
     });
 }
 
+/// Waits until the managed OpenCode server answers its V1 API. Any HTTP response is not enough:
+/// OpenCode 2 answers V1 paths with its web UI, and is stopped with an actionable error instead.
 async fn wait_for_endpoint(
     endpoint: &str,
+    password: &str,
     child: &SharedChild,
 ) -> Result<(), ProviderRuntimeError> {
+    use crate::provider::opencode::{
+        OpenCodeServerApi, probe_server_api, unsupported_server_message,
+    };
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let client = reqwest::Client::builder()
+        .timeout(crate::provider::opencode::API_PROBE_TIMEOUT)
+        .build()
+        .map_err(provider_error("opencode"))?;
     loop {
-        if reqwest::get(endpoint).await.is_ok() {
+        let api = probe_server_api(&client, endpoint, Some(password)).await;
+        if api != OpenCodeServerApi::Unavailable {
             if child
                 .lock()
                 .await
@@ -15217,6 +15248,14 @@ async fn wait_for_endpoint(
                 return Err(ProviderRuntimeError::Provider {
                     provider: "opencode".to_owned(),
                     detail: "server process exited before claiming its reserved port".to_owned(),
+                });
+            }
+            if let OpenCodeServerApi::Unsupported { version } = api {
+                tracing::warn!(%version, "managed OpenCode server is OpenCode 2; launch refused");
+                kill_child(child).await;
+                return Err(ProviderRuntimeError::Provider {
+                    provider: "opencode".to_owned(),
+                    detail: unsupported_server_message(&version, true),
                 });
             }
             return Ok(());
@@ -24938,10 +24977,116 @@ done
         }
     }
 
+    fn opencode_endpoint_child() -> super::SharedChild {
+        #[cfg(windows)]
+        let child = tokio::process::Command::new("cmd.exe")
+            .args(["/d", "/s", "/c", "ping -n 30 127.0.0.1 >NUL"])
+            .spawn()
+            .expect("endpoint child should spawn");
+        #[cfg(not(windows))]
+        let child = tokio::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 30"])
+            .spawn()
+            .expect("endpoint child should spawn");
+        let child: Box<dyn process_wrap::tokio::ChildWrapper> = Box::new(child);
+        Arc::new(tokio::sync::Mutex::new(child))
+    }
+
+    /// OpenCode 2 answers HTTP 200 HTML on every V1 path, so the managed server must not count as
+    /// ready: the launch fails at once with the setting to change, and the server is stopped.
+    #[tokio::test]
+    async fn opencode_readiness_rejects_an_opencode_2_server_with_an_actionable_error() {
+        use crate::provider::opencode::server_fixtures;
+        let (endpoint, server) = server_fixtures::serve(server_fixtures::v2("secret")).await;
+        let child = opencode_endpoint_child();
+
+        let started = tokio::time::Instant::now();
+        let error = super::wait_for_endpoint(&endpoint, "secret", &child)
+            .await
+            .expect_err("an OpenCode 2 server is not the API BiBCode speaks");
+        server.abort();
+
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "the version is known from the first answer; do not wait out the deadline"
+        );
+        let super::ProviderRuntimeError::Provider { provider, detail } = &error else {
+            panic!("expected a provider error, got {error:?}");
+        };
+        assert_eq!(provider, "opencode");
+        assert_eq!(
+            detail,
+            "OpenCode 2.0.29 isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x executable."
+        );
+        assert_eq!(
+            super::delivery_detail(&error, Some("OpenCode")),
+            *detail,
+            "the delivery notice shows the actionable text, not a driver prefix"
+        );
+        assert!(
+            child
+                .lock()
+                .await
+                .try_wait()
+                .expect("child status")
+                .is_some(),
+            "the rejected server must be stopped"
+        );
+    }
+
+    #[tokio::test]
+    async fn opencode_readiness_accepts_the_v1_api_with_the_launch_password() {
+        use crate::provider::opencode::server_fixtures;
+        let (endpoint, server) = server_fixtures::serve(server_fixtures::v1("secret")).await;
+        let child = opencode_endpoint_child();
+
+        super::wait_for_endpoint(&endpoint, "secret", &child)
+            .await
+            .expect("the V1 health route is readiness");
+        server.abort();
+        super::kill_child(&child).await;
+    }
+
+    /// A configured Server URL that runs OpenCode 2 fails the launch with the setting to change,
+    /// instead of a later "error decoding response body" or "HTTP 405".
+    #[tokio::test]
+    async fn opencode_configured_server_url_rejects_opencode_2() {
+        use crate::provider::opencode::server_fixtures;
+        let (endpoint, server) = server_fixtures::serve(server_fixtures::v2("secret")).await;
+        let temp = TempDir::new().expect("OpenCode fixture directory");
+        let factory =
+            super::NativeProviderDriverFactory::new(temp.path().join("state").join("attachments"));
+        let mut request = native_launch(&temp, "opencode");
+        request.endpoint = Some(endpoint);
+        request.server_password = Some("secret".to_owned());
+
+        let error = match factory.create(request).await {
+            Ok(driver) => driver
+                .start()
+                .await
+                .map(|_| ())
+                .expect_err("an OpenCode 2 server cannot start a V1 session"),
+            Err(error) => error,
+        };
+        server.abort();
+
+        let super::ProviderRuntimeError::Provider { detail, .. } = &error else {
+            panic!("expected a provider error, got {error:?}");
+        };
+        assert_eq!(
+            detail,
+            "The OpenCode server at Server URL runs 2.0.29, which isn't supported yet. In Settings → Providers, point Server URL at an OpenCode 1.x server."
+        );
+    }
+
     #[tokio::test]
     async fn native_opencode_adapter_covers_live_session_turn_and_control_commands() {
         let prompt_body = Arc::new(StdMutex::new(None::<Value>));
         let app = Router::new()
+            .route(
+                "/global/health",
+                get(|| async { Json(json!({"healthy":true,"version":"1.18.32"})) }),
+            )
             .route(
                 "/session",
                 post(|| async { Json(json!({"id":"native-opencode-session"})) }),
@@ -24999,7 +25144,7 @@ done
             .expect("endpoint child should spawn");
         let endpoint_child: Box<dyn process_wrap::tokio::ChildWrapper> = Box::new(endpoint_child);
         let endpoint_child = Arc::new(tokio::sync::Mutex::new(endpoint_child));
-        super::wait_for_endpoint(&format!("http://{address}"), &endpoint_child)
+        super::wait_for_endpoint(&format!("http://{address}"), "secret", &endpoint_child)
             .await
             .expect("live endpoint should become ready");
         super::kill_child(&endpoint_child).await;
