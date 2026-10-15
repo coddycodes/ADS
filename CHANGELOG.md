@@ -14,6 +14,9 @@
 
 ### Providers
 
+- In the chat panel, Claude background subagents, background shells and Monitor watches are no longer stopped about a minute after the turn ends, and Claude's reply when one of them finishes runs as its own turn. A failed check of Claude's activity flags is retried on the next launch instead of turning off subagent tracking until BiBCode restarts, and each check writes one line to the server log.
+- An idle chat session is no longer stopped while its provider may still be working: a turn the provider starts itself counts as running, Chat Activity being off no longer lets idle sessions stop running subagents, and Cursor sessions are not stopped while idle. The server log says why a session was suspended.
+- The BiBCode MCP token is no longer visible on Claude's command line: Claude reads it from a file only your account can open, removed when the session ends. Providers reach BiBCode's MCP server on loopback (`127.0.0.1`) instead of the wildcard address.
 - OpenCode 2 is reported as not supported yet, in Settings and when you send a message, with the setting to change (point **Binary path** at an OpenCode 1.x executable), instead of failing later with "HTTP 405" or "error decoding response body". BiBCode now waits for the OpenCode 1.x API to answer before it treats a server as ready.
 - **Revert to this message** works again in Codex chats on Codex 0.151 and later. BiBCode now rewinds the conversation with `thread/revert`, since Codex no longer accepts `thread/rollback` for new threads and removed it in 0.156. A thread created by an older Codex that can no longer be rewound now says to start a new thread.
 
