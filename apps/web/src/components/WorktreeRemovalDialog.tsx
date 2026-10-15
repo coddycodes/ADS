@@ -134,7 +134,9 @@ export function WorktreeRemovalDialog({
   const remove = useAtomCommand(worktreeEnvironment.remove, { reportFailure: false });
   const [plan, setPlan] = useState<WorktreeRemovalPlan | null>(null);
   const [step, setStep] = useState<ConfirmationStep>("choices");
-  const [isLoadingPlan, setIsLoadingPlan] = useState(false);
+  const [isLoadingPlan, setIsLoadingPlan] = useState(
+    () => open && target !== null && target.availability !== "removing",
+  );
   const [isRemoving, setIsRemoving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [serverRefusedRunning, setServerRefusedRunning] = useState(false);
@@ -169,37 +171,41 @@ export function WorktreeRemovalDialog({
     setServerRefusedRunning(false);
   }
 
+  // Callers mark the plan as loading before the request starts.
   const loadPlanForTarget = useCallback(
-    async (requestTarget: WorktreeRemovalTarget, epoch: number) => {
-      setIsLoadingPlan(true);
-      setError(null);
-      setServerRefusedRunning(false);
-      const result = await getRemovalPlan({
+    (requestTarget: WorktreeRemovalTarget, epoch: number) =>
+      getRemovalPlan({
         environmentId: requestTarget.environmentId,
         input: { projectId: requestTarget.projectId, threadId: requestTarget.threadId },
-      });
-      if (epoch !== asyncEpochRef.current) return;
-      setIsLoadingPlan(false);
-      if (result._tag === "Failure") {
-        setError(failureMessage(result));
-        return;
-      }
-      setPlan(result.value);
-    },
+      }).then((result) => {
+        if (epoch !== asyncEpochRef.current) return;
+        setIsLoadingPlan(false);
+        if (result._tag === "Failure") {
+          setError(failureMessage(result));
+          return;
+        }
+        setPlan(result.value);
+      }),
     [getRemovalPlan],
   );
 
-  useEffect(() => {
-    const epoch = asyncEpochRef.current + 1;
-    asyncEpochRef.current = epoch;
+  // Opening, closing, or retargeting starts over from the choices.
+  const [shownFor, setShownFor] = useState({ open, target });
+  if (shownFor.open !== open || shownFor.target !== target) {
+    setShownFor({ open, target });
     setPlan(null);
     setStep("choices");
-    setIsLoadingPlan(false);
+    setIsLoadingPlan(open && target !== null && target.availability !== "removing");
     setIsRemoving(false);
     setError(null);
     setServerRefusedRunning(false);
     setPlanChanged(false);
     setCompleted(null);
+  }
+
+  useEffect(() => {
+    const epoch = asyncEpochRef.current + 1;
+    asyncEpochRef.current = epoch;
     if (open && target && target.availability !== "removing") {
       void loadPlanForTarget(target, epoch);
     }
@@ -214,6 +220,9 @@ export function WorktreeRemovalDialog({
     if (!target || target.availability === "removing") return;
     const epoch = asyncEpochRef.current + 1;
     asyncEpochRef.current = epoch;
+    setIsLoadingPlan(true);
+    setError(null);
+    setServerRefusedRunning(false);
     void loadPlanForTarget(target, epoch);
   }, [loadPlanForTarget, target]);
 

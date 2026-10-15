@@ -6,7 +6,7 @@ import type {
   DesktopServerExposureState,
   EnvironmentId,
 } from "@bibcode/contracts";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 import { toastManager } from "../components/ui/toast";
 import { getServerShareState } from "../environments/primary";
@@ -148,29 +148,30 @@ export function useShareExposureReconciler(): void {
       : null,
   );
   const revision = accessChanges.data?.revision ?? null;
-  const generationRef = useRef(0);
-  const previousTargetRef = useRef({ bridge, primaryEnvironmentId, canManageNativeExposure });
-  const previousTarget = previousTargetRef.current;
-  if (
-    previousTarget.bridge !== bridge ||
-    previousTarget.primaryEnvironmentId !== primaryEnvironmentId ||
-    previousTarget.canManageNativeExposure !== canManageNativeExposure
-  ) {
-    generationRef.current += 1;
-    previousTargetRef.current = { bridge, primaryEnvironmentId, canManageNativeExposure };
-  }
+  // Each committed change of bridge, environment, or native capability starts a
+  // new generation, which cancels exposure changes planned for the previous one.
   const targetRef = useRef<ReconcileTarget>({
     bridge,
     primaryEnvironmentId,
     canManageNativeExposure,
-    generation: generationRef.current,
+    generation: 0,
   });
-  targetRef.current = {
-    bridge,
-    primaryEnvironmentId,
-    canManageNativeExposure,
-    generation: generationRef.current,
-  };
+  useLayoutEffect(() => {
+    const previous = targetRef.current;
+    if (
+      previous.bridge === bridge &&
+      previous.primaryEnvironmentId === primaryEnvironmentId &&
+      previous.canManageNativeExposure === canManageNativeExposure
+    ) {
+      return;
+    }
+    targetRef.current = {
+      bridge,
+      primaryEnvironmentId,
+      canManageNativeExposure,
+      generation: previous.generation + 1,
+    };
+  }, [bridge, canManageNativeExposure, primaryEnvironmentId]);
   const requestedRef = useRef(false);
   const inFlightRef = useRef<Promise<void> | null>(null);
   const mountedRef = useRef(false);
@@ -189,7 +190,7 @@ export function useShareExposureReconciler(): void {
     };
   }, []);
 
-  const requestReconcile = useCallback(() => {
+  const requestReconcile = useCallback(function requestReconcile() {
     requestedRef.current = true;
     if (inFlightRef.current !== null) return;
 
@@ -263,8 +264,10 @@ export function useShareExposureReconciler(): void {
     inFlightRef.current = inFlight;
   }, []);
 
+  // Every authority revision is reconciled while reconciling is possible.
+  const reconcileKey = canReconcile ? String(revision) : null;
   useEffect(() => {
-    if (!canReconcile) return;
+    if (reconcileKey === null) return;
     requestReconcile();
-  }, [canReconcile, requestReconcile, revision]);
+  }, [reconcileKey, requestReconcile]);
 }

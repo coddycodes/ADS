@@ -356,10 +356,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     [props],
   );
 
+  const activeSurfaceId = props.activeSurfaceId;
   useEffect(() => {
+    if (activeSurfaceId === null) return;
     const activeTab = tabListRef.current?.querySelector<HTMLElement>("[data-active-tab='true']");
     activeTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [props.activeSurfaceId]);
+  }, [activeSurfaceId]);
 
   return (
     <PreviewPanelShell

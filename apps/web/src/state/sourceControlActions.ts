@@ -82,38 +82,39 @@ function useAction<
   readonly onSuccess?: () => void;
   readonly managedExternally?: boolean;
 }): SourceControlActionState<TArgs, R> {
+  const { action, label, managedExternally, onSuccess, scope } = input;
   const operation = ACTION_OPERATION[input.kind];
-  const state = useAtomValue(vcsActionManager.stateAtom(input.scope));
+  const state = useAtomValue(vcsActionManager.stateAtom(scope));
   const ownsState = state.operation === operation;
 
   const resetError = useCallback(() => {
-    vcsActionManager.resetError(appAtomRegistry, input.scope, operation);
-  }, [input.scope, operation]);
+    vcsActionManager.resetError(appAtomRegistry, scope, operation);
+  }, [scope, operation]);
 
   const run = useCallback(
     async (...args: TArgs) => {
       const execute = async (): Promise<
         AtomCommandResult<AtomCommandSuccess<R>, AtomCommandFailure<R>>
       > => {
-        const result = await input.action(...args);
+        const result = await action(...args);
         if (AsyncResult.isSuccess(result)) {
-          input.onSuccess?.();
+          onSuccess?.();
         }
         return result as AtomCommandResult<AtomCommandSuccess<R>, AtomCommandFailure<R>>;
       };
-      return input.managedExternally === true
+      return managedExternally === true
         ? execute()
         : vcsActionManager.track(
             appAtomRegistry,
-            input.scope,
+            scope,
             {
               operation,
-              label: input.label,
+              label,
             },
             execute,
           );
     },
-    [input.action, input.label, input.managedExternally, input.onSuccess, input.scope, operation],
+    [action, label, managedExternally, onSuccess, scope, operation],
   );
 
   return {

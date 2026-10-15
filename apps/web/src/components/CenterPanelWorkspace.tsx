@@ -17,6 +17,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -50,6 +51,7 @@ import {
 import { CenterPanelSplitLayout } from "./CenterPanelSplitLayout";
 import type { CenterPaneHeaderDensity } from "./centerPaneHeaderDensity";
 import {
+  type CenterPanelBodyTargetRegistry,
   CenterPanelSurfaceHosts,
   type CenterPanelSurfaceHostsHandle,
   type CenterPanelSurfaceRenderContext,
@@ -225,6 +227,22 @@ function requestForIntent(
   }
 }
 
+function isLegalIntent(
+  state: ThreadCenterPanelState,
+  rects: CenterPanelBodyTargetRegistry["rects"],
+  activeDrag: CenterPanelTabDragData,
+  intent: CenterPanelDropIntent,
+): boolean {
+  if (intent.type === "none") return false;
+  const request = requestForIntent(state, activeDrag.surfaceId, intent);
+  if (!canDropCenterPanelSurface(state, activeDrag.surfaceId, request)) {
+    return false;
+  }
+  if (intent.type !== "split") return true;
+  const bodyRect = rects.get(intent.groupId);
+  return bodyRect !== undefined && canCenterPanelPaneSplit(bodyRect, intent.direction);
+}
+
 function directionLabel(direction: CenterPanelSplitDirection): string {
   return direction[0]!.toUpperCase() + direction.slice(1);
 }
@@ -253,11 +271,15 @@ export const CenterPanelWorkspace = forwardRef<
   CenterPanelWorkspaceHandle,
   CenterPanelWorkspaceProps
 >(function CenterPanelWorkspace(props, ref) {
-  const targets = useCenterPanelBodyTargets(props.state.groups);
+  const { readBodyRect, registerBodyTarget, rects, rootRef } = useCenterPanelBodyTargets(
+    props.state.groups,
+  );
   const surfaceHostsRef = useRef<CenterPanelSurfaceHostsHandle>(null);
   const workspaceElementRef = useRef<HTMLDivElement | null>(null);
   const propsRef = useRef(props);
-  propsRef.current = props;
+  useLayoutEffect(() => {
+    propsRef.current = props;
+  }, [props]);
   const activeRef = useRef<CenterPanelTabDragData | null>(null);
   const startPointRef = useRef<CenterPanelPoint | null>(null);
   const snapshotRef = useRef<DropSnapshot | null>(null);
@@ -286,21 +308,6 @@ export const CenterPanelWorkspace = forwardRef<
     setActive((current) => (current === null ? current : null));
     setPreviewIntent((current) => (current.type === "none" ? current : NONE_INTENT));
   }, []);
-
-  const isLegalIntent = useCallback(
-    (activeDrag: CenterPanelTabDragData, intent: CenterPanelDropIntent): boolean => {
-      if (intent.type === "none") return false;
-      const currentProps = propsRef.current;
-      const request = requestForIntent(currentProps.state, activeDrag.surfaceId, intent);
-      if (!canDropCenterPanelSurface(currentProps.state, activeDrag.surfaceId, request)) {
-        return false;
-      }
-      if (intent.type !== "split") return true;
-      const bodyRect = targets.rects.get(intent.groupId);
-      return bodyRect !== undefined && canCenterPanelPaneSplit(bodyRect, intent.direction);
-    },
-    [targets.rects],
-  );
 
   const resolveIntent = useCallback(
     (position: LastDragPosition): CenterPanelDropIntent => {
@@ -343,9 +350,11 @@ export const CenterPanelWorkspace = forwardRef<
         groupId,
         ...(hoveredTab ? { hoveredTab } : {}),
       });
-      return isLegalIntent(activeDrag, intent) ? intent : NONE_INTENT;
+      return isLegalIntent(propsRef.current.state, rects, activeDrag, intent)
+        ? intent
+        : NONE_INTENT;
     },
-    [isLegalIntent],
+    [rects],
   );
 
   const handleDragStart = useCallback(
@@ -400,9 +409,9 @@ export const CenterPanelWorkspace = forwardRef<
   const workspaceRef = useCallback(
     (node: HTMLDivElement | null) => {
       workspaceElementRef.current = node;
-      targets.rootRef(node);
+      rootRef(node);
     },
-    [targets.rootRef],
+    [rootRef],
   );
   const syncSurfaceRects = useCallback(() => {
     surfaceHostsRef.current?.syncRects();
@@ -426,10 +435,10 @@ export const CenterPanelWorkspace = forwardRef<
       ) {
         return false;
       }
-      const rect = targets.readBodyRect(groupId);
+      const rect = readBodyRect(groupId);
       return rect !== null && canCenterPanelPaneSplit(rect, direction);
     },
-    [targets.readBodyRect],
+    [readBodyRect],
   );
   useImperativeHandle(ref, () => ({ canSplitGroup }), [canSplitGroup]);
   const canMoveToSplit = useCallback(
@@ -437,7 +446,7 @@ export const CenterPanelWorkspace = forwardRef<
       const currentProps = propsRef.current;
       const group = findCenterPanelGroup(currentProps.state, groupId);
       const surfaceId = group?.surfaceIds[0];
-      const rect = targets.readBodyRect(groupId);
+      const rect = readBodyRect(groupId);
       return Boolean(
         group &&
         group.surfaceIds.length > 1 &&
@@ -450,13 +459,13 @@ export const CenterPanelWorkspace = forwardRef<
         }),
       );
     },
-    [targets.readBodyRect],
+    [readBodyRect],
   );
   const moveToSplit = useCallback(
     (groupId: string, surface: CenterSurface, direction: CenterPanelSplitDirection) => {
       const currentProps = propsRef.current;
       const request = { groupId, splitDirection: direction } as const;
-      const rect = targets.readBodyRect(groupId);
+      const rect = readBodyRect(groupId);
       if (
         rect &&
         canCenterPanelPaneSplit(rect, direction) &&
@@ -465,7 +474,7 @@ export const CenterPanelWorkspace = forwardRef<
         currentProps.onDropSurface(surface.id, request);
       }
     },
-    [targets.readBodyRect],
+    [readBodyRect],
   );
 
   useEffect(() => {
@@ -514,10 +523,12 @@ export const CenterPanelWorkspace = forwardRef<
     return () => observer.disconnect();
   }, [active, recaptureDropSnapshot]);
 
-  const previewRect =
-    previewIntent.type === "split" ? targets.rects.get(previewIntent.groupId) : undefined;
+  const previewRect = previewIntent.type === "split" ? rects.get(previewIntent.groupId) : undefined;
   const renderedPreviewIntent =
-    active && previewIntent.type === "split" && previewRect && isLegalIntent(active, previewIntent)
+    active &&
+    previewIntent.type === "split" &&
+    previewRect &&
+    isLegalIntent(props.state, rects, active, previewIntent)
       ? previewIntent
       : null;
   const splitPreview =
@@ -563,7 +574,7 @@ export const CenterPanelWorkspace = forwardRef<
           {...(props.terminalLabelsById ? { terminalLabelsById: props.terminalLabelsById } : {})}
           dragInProgress={active !== null}
           renderFocusedActions={props.renderFocusedActions}
-          registerBodyTarget={targets.registerBodyTarget}
+          registerBodyTarget={registerBodyTarget}
           onResizeFrame={syncSurfaceRects}
           onFocusGroup={props.onFocusGroup}
           onActivate={props.onActivate}
@@ -580,8 +591,8 @@ export const CenterPanelWorkspace = forwardRef<
           <CenterPanelSurfaceHosts
             ref={surfaceHostsRef}
             state={props.state}
-            rects={targets.rects}
-            readBodyRect={targets.readBodyRect}
+            rects={rects}
+            readBodyRect={readBodyRect}
             onFocusGroup={props.onFocusGroup}
             renderSurface={props.renderSurface}
           />

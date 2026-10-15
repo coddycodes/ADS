@@ -55,11 +55,9 @@ export function SidebarProviderUpdatePill() {
     dismissedKeys,
   });
 
-  useEffect(() => {
-    if (visibleAfterIso === undefined && effectiveVisibleAfterIso !== undefined) {
-      setVisibleAfterIso(effectiveVisibleAfterIso);
-    }
-  }, [effectiveVisibleAfterIso, visibleAfterIso]);
+  if (visibleAfterIso === undefined && effectiveVisibleAfterIso !== undefined) {
+    setVisibleAfterIso(effectiveVisibleAfterIso);
+  }
 
   const openProviderSettings = useCallback(() => {
     void navigate({ to: "/settings/providers" });
@@ -84,25 +82,17 @@ export function SidebarProviderUpdatePill() {
     [exitingKey],
   );
 
-  useEffect(() => {
-    if (exitingKey !== null) {
-      return;
-    }
+  if (exitingKey === null) {
     if (!renderedView) {
       if (view) {
         setRenderedView(view);
       }
-      return;
-    }
-    if (!view) {
+    } else if (!view) {
       startExit(renderedView.key, null);
-      return;
-    }
-    if (view.key !== renderedView.key) {
+    } else if (view.key !== renderedView.key) {
       startExit(renderedView.key, view);
-      return;
     }
-  }, [exitingKey, renderedView, startExit, view]);
+  }
 
   useEffect(() => {
     if (!dismissAfterVisibleMs || !viewKey) {

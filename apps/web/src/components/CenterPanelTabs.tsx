@@ -124,7 +124,7 @@ function SortableCenterTab({
   onContextMenu,
   onKeyDown,
 }: SortableCenterTabProps) {
-  const sortable = useSortable({
+  const { attributes, isDragging, listeners, setActivatorNodeRef, setNodeRef } = useSortable({
     id: surface.id,
     data: {
       type: "center-panel-tab",
@@ -137,11 +137,11 @@ function SortableCenterTab({
 
   return (
     <div
-      ref={sortable.setNodeRef}
+      ref={setNodeRef}
       data-center-panel-tab-id={surface.id}
       data-center-panel-group-id={groupId}
       data-active-tab={active}
-      data-dragging={sortable.isDragging}
+      data-dragging={isDragging}
       onMouseDown={onMouseDown}
       onAuxClick={(event) => onAuxClick(event, surface)}
       onContextMenu={(event) => onContextMenu(event, surface)}
@@ -150,16 +150,16 @@ function SortableCenterTab({
         active
           ? "bg-accent text-foreground"
           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-        sortable.isDragging && "opacity-40",
+        isDragging && "opacity-40",
       )}
     >
       <Tooltip>
         <TooltipTrigger
           render={
             <button
-              ref={sortable.setActivatorNodeRef}
-              {...sortable.attributes}
-              {...sortable.listeners}
+              ref={setActivatorNodeRef}
+              {...attributes}
+              {...listeners}
               type="button"
               role="tab"
               aria-selected={active}
@@ -338,12 +338,17 @@ export function CenterPanelTabs(props: CenterPanelTabsProps) {
     [props],
   );
 
+  const activeSurfaceId = props.activeSurfaceId;
   useEffect(() => {
+    if (activeSurfaceId === null) return;
     const activeTab = tabListRef.current?.querySelector<HTMLElement>("[data-active-tab='true']");
     activeTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [props.activeSurfaceId]);
+  }, [activeSurfaceId]);
 
+  const surfaceCount = props.surfaces.length;
   useEffect(() => {
+    // An empty tab bar renders without the scroll area, so there is nothing to observe.
+    if (surfaceCount === 0) return;
     const boundary = tabListRef.current;
     const viewport = getTabViewport();
     if (!boundary || !viewport) return;
@@ -363,7 +368,7 @@ export function CenterPanelTabs(props: CenterPanelTabsProps) {
       viewport.removeEventListener?.("scroll", syncOverflow);
       resizeObserver?.disconnect();
     };
-  }, [getTabViewport, props.surfaces.length]);
+  }, [getTabViewport, surfaceCount]);
 
   if (props.surfaces.length === 0) {
     return (
