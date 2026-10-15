@@ -1,0 +1,53 @@
+{
+  "devices": {
+    "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
+      {
+        "dataPath": "/Users/user/Library/Developer/CoreSimulator/Devices/9AFB380D-3F4E-4688-B7AF-E0EADE5D4E81/data",
+        "dataPathSize": 18337792,
+        "logPath": "/Users/user/Library/Logs/CoreSimulator/9AFB380D-3F4E-4688-B7AF-E0EADE5D4E81",
+        "udid": "9AFB380D-3F4E-4688-B7AF-E0EADE5D4E81",
+        "lastUsedAt": "2026-10-13T21:21:24Z",
+        "isAvailable": true,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro",
+        "state": "Shutdown",
+        "name": "iPhone 18 Pro"
+      },
+      {
+        "dataPath": "/Users/user/Library/Developer/CoreSimulator/Devices/62E03AFB-83CF-4002-BD10-6A9C595286E3/data",
+        "dataPathSize": 18337792,
+        "logPath": "/Users/user/Library/Logs/CoreSimulator/62E03AFB-83CF-4002-BD10-6A9C595286E3",
+        "udid": "62E03AFB-83CF-4002-BD10-6A9C595286E3",
+        "isAvailable": true,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro-Max",
+        "state": "Shutdown",
+        "name": "iPhone 18 Pro Max"
+      }
+    ],
+    "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [
+      {
+        "dataPath": "/Users/user/Library/Developer/CoreSimulator/Devices/308FD3CD-F46A-44B9-9B68-9A849F337C80/data",
+        "dataPathSize": 1924878336,
+        "logPath": "/Users/user/Library/Logs/CoreSimulator/308FD3CD-F46A-44B9-9B68-9A849F337C80",
+        "udid": "308FD3CD-F46A-44B9-9B68-9A849F337C80",
+        "lastUsedAt": "2026-10-15T13:24:15Z",
+        "isAvailable": true,
+        "logPathSize": 86016,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+        "state": "Shutdown",
+        "name": "iPhone 17 Pro"
+      }
+    ],
+    "com.apple.CoreSimulator.SimRuntime.watchOS-27-0": [
+      {
+        "dataPath": "/Users/user/Library/Developer/CoreSimulator/Devices/0D3B0F7A-5C1E-4A8B-9F2D-6E4C3B2A1908/data",
+        "dataPathSize": 18337792,
+        "logPath": "/Users/user/Library/Logs/CoreSimulator/0D3B0F7A-5C1E-4A8B-9F2D-6E4C3B2A1908",
+        "udid": "0D3B0F7A-5C1E-4A8B-9F2D-6E4C3B2A1908",
+        "isAvailable": true,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-11-46mm",
+        "state": "Shutdown",
+        "name": "Apple Watch Series 11 (46mm)"
+      }
+    ]
+  }
+}

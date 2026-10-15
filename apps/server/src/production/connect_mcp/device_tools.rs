@@ -197,7 +197,7 @@ impl DeviceTools {
             "platform": self.platform_of(&device_id),
             "screenshot": {
                 "data": STANDARD.encode(&image.png),
-                "mimeType": "image/png",
+                "mimeType": image.mime_type,
                 "width": image.width,
                 "height": image.height,
             },

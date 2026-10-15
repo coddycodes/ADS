@@ -9,6 +9,8 @@ use std::{
 use tokio::{io::AsyncReadExt, process::ChildStderr, task::JoinHandle};
 
 const STDERR_TAIL_BYTES: usize = 4 * 1024;
+/// How many lines of a finished command's stderr explain its failure.
+const STDERR_TAIL_LINES: usize = 5;
 /// How long an exited helper's stderr may take to reach end of file before it is read.
 pub(crate) const STDERR_DRAIN_GRACE: Duration = Duration::from_millis(500);
 
@@ -45,5 +47,31 @@ impl StderrTail {
         let bytes: Vec<u8> = tail.iter().copied().collect();
         let text = String::from_utf8_lossy(&bytes).trim().to_owned();
         (!text.is_empty()).then_some(text)
+    }
+}
+
+/// The last lines of a finished command's captured stderr, at most [`STDERR_TAIL_BYTES`].
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // Only `simctl` failures use it.
+pub(crate) fn tail_of(stderr: &[u8]) -> Option<String> {
+    let start = stderr.len().saturating_sub(STDERR_TAIL_BYTES);
+    let text = String::from_utf8_lossy(&stderr[start..]);
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let tail = lines[lines.len().saturating_sub(STDERR_TAIL_LINES)..].join("\n");
+    (!tail.is_empty()).then_some(tail)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tail_of;
+
+    #[test]
+    fn keeps_the_last_non_empty_lines() {
+        let stderr = b"1\n2\n\n3\n4\n5\n6\n  \n";
+        assert_eq!(tail_of(stderr).as_deref(), Some("2\n3\n4\n5\n6"));
+        assert_eq!(tail_of(b" \n"), None);
     }
 }

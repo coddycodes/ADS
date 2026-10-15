@@ -7,6 +7,8 @@ pub mod catalog;
 pub(crate) mod fake_backend;
 pub mod frames;
 pub mod input;
+#[cfg(target_os = "macos")]
+pub(crate) mod ios;
 pub mod media;
 pub(crate) mod media_socket;
 pub(crate) mod stderr_tail;

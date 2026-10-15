@@ -260,9 +260,16 @@ impl ProductionRuntime {
                 grpc_port: None,
             },
         );
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+        let mut device_backends: Vec<Arc<dyn crate::device::backend::DeviceBackend>> =
+            vec![Arc::new(android_devices)];
+        #[cfg(target_os = "macos")]
+        device_backends.push(Arc::new(crate::device::ios::IosBackend::new(
+            crate::device::ios::IosBackendConfig::from_process(process_attribution.clone()),
+        )));
         let device_manager =
             crate::device::DeviceManager::start(crate::device::DeviceManagerConfig {
-                backends: vec![Arc::new(android_devices)],
+                backends: device_backends,
                 enabled: control.device_previews_enabled_signal(),
             });
         // Starting replays and compacts the findings file, so it runs off the async workers.

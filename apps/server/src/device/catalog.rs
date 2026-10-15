@@ -10,6 +10,13 @@ pub enum AvailabilityKind {
     AdbMissing,
     NoAvds,
     AccelerationUnavailable,
+    XcodeMissing,
+    XcodeSetupIncomplete,
+    NoSimulators,
+    /// Simulators open as screenshots without touch input; the private-API guard reports it.
+    XcodeUnsupported,
+    /// Live input needs a GUI login; the private-API guard reports it.
+    ViewOnlyHeadless,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

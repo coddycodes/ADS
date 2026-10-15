@@ -222,6 +222,7 @@ impl RunningDevice for RunningAndroid {
                 .unwrap_or_else(|| *lock(&self.orientation));
             Ok(Png {
                 png: image.image,
+                mime_type: "image/png",
                 width,
                 height,
                 orientation,

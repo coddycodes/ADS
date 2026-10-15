@@ -42,9 +42,12 @@ pub(crate) struct RawJpeg {
     pub orientation: Orientation,
 }
 
-/// A PNG for the MCP screenshot tool.
+/// A screenshot for the MCP screenshot tool: a PNG, or a JPEG from a device that cannot
+/// take PNG screenshots, as `mime_type` says.
 pub(crate) struct Png {
     pub png: Vec<u8>,
+    /// `image/png` or `image/jpeg`.
+    pub mime_type: &'static str,
     pub width: u32,
     pub height: u32,
     #[allow(dead_code)] // Read by the iOS backend's screenshot and by tests.
