@@ -39,7 +39,7 @@ export const STILL_IMAGES_REASONS: Readonly<Record<StillImagesReason, string>> =
   decoderError:
     "Video could not be decoded, so the screen updates as still images. Reopen the device panel to try video again.",
   rejected:
-    "The video connection kept failing, so the screen updates as still images. Reopen the device panel to try video again.",
+    "The server refused video, or the video connection kept failing, so the screen updates as still images. This happens when too many video viewers are connected to this device. Reopen the device panel to try video again.",
 };
 
 const AVAILABILITY_TITLES: Readonly<Record<DeviceAvailabilityKind, string>> = {

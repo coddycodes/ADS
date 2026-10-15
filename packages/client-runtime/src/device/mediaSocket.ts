@@ -14,8 +14,9 @@ export const DEVICE_MEDIA_NOISE_PROLOGUE = new TextEncoder().encode("bibcode-dev
 const HOST_IDENTITY_CLOSE_CODE = 4403;
 
 /**
- * Close reasons besides the server's own (`expired`, `reused`, `wrongDevice`, `wrongChannel`,
- * `failed`, `unauthorized`, `slow`, `disabled`): `host-identity` (wrong pinned key or prologue),
+ * Close reasons besides the server's own (`expired`, `reused`, `wrongChannel`, `wrongDevice`,
+ * `limit`, `disabled`, `stopped`, `failed`, `unauthorized`, `slow`): `host-identity` (wrong
+ * pinned key or prologue),
  * `network` (refused before upgrade, as when the server's admission is full, or dropped without
  * a close frame), and `protocol` (a frame or record this client could not read).
  */

@@ -3003,7 +3003,7 @@
     {
       "key": "rust:workspace:jpeg-encoder",
       "name": "jpeg-encoder",
-      "current": "0.6",
+      "current": "0.6.1",
       "target": "0.6.1",
       "channel": "stable",
       "source": "https://crates.io/crates/jpeg-encoder",
@@ -3015,7 +3015,7 @@
     {
       "key": "rust:workspace:prost",
       "name": "prost",
-      "current": "0.14",
+      "current": "0.14.4",
       "target": "0.14.4",
       "channel": "stable",
       "source": "https://crates.io/crates/prost",
@@ -3027,7 +3027,7 @@
     {
       "key": "rust:workspace:protox",
       "name": "protox",
-      "current": "0.9",
+      "current": "0.9.1",
       "target": "0.9.1",
       "channel": "stable",
       "source": "https://crates.io/crates/protox",
@@ -3039,7 +3039,7 @@
     {
       "key": "rust:workspace:tokio-stream",
       "name": "tokio-stream",
-      "current": "0.1",
+      "current": "0.1.19",
       "target": "0.1.19",
       "channel": "stable",
       "source": "https://crates.io/crates/tokio-stream",
@@ -3051,7 +3051,7 @@
     {
       "key": "rust:workspace:tonic",
       "name": "tonic",
-      "current": "0.14",
+      "current": "0.14.6",
       "target": "0.14.6",
       "channel": "stable",
       "source": "https://crates.io/crates/tonic",
@@ -3063,7 +3063,7 @@
     {
       "key": "rust:workspace:tonic-prost",
       "name": "tonic-prost",
-      "current": "0.14",
+      "current": "0.14.6",
       "target": "0.14.6",
       "channel": "stable",
       "source": "https://crates.io/crates/tonic-prost",
@@ -3075,7 +3075,7 @@
     {
       "key": "rust:workspace:tonic-prost-build",
       "name": "tonic-prost-build",
-      "current": "0.14",
+      "current": "0.14.6",
       "target": "0.14.6",
       "channel": "stable",
       "source": "https://crates.io/crates/tonic-prost-build",

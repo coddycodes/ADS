@@ -223,6 +223,7 @@ describe("DeviceVideoSession", () => {
       "unauthorized",
       "wrongDevice",
       "wrongChannel",
+      "limit",
     ]) {
       const { mintTicket, modes, video, worker } = session();
       video.start();
@@ -235,6 +236,39 @@ describe("DeviceVideoSession", () => {
     // Only the channel mismatch is a client bug worth a warning.
     expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
+  });
+
+  it("falls back at once when the device already has as many video viewers as it allows", async () => {
+    const { mintTicket, modes, video, worker } = session();
+    video.start();
+    await flush();
+    worker().emit({ type: "firstFrame" });
+    worker().emit({ type: "closed", reason: "limit" });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(modes.at(-1)).toEqual({ kind: "jpeg", reason: "rejected" });
+    expect(mintTicket).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops trying video, without still images, when the device stopped", async () => {
+    const { mintTicket, modes, video, worker } = session();
+    video.start();
+    await flush();
+    worker().emit({ type: "firstFrame" });
+    worker().emit({ type: "closed", reason: "stopped" });
+    await vi.advanceTimersByTimeAsync(FIRST_FRAME_TIMEOUT_MS + 60_000);
+    expect(modes).toEqual([{ kind: "probing" }, { kind: "h264", stalled: false }]);
+    expect(mintTicket).toHaveBeenCalledTimes(1);
+    expect(worker().received.at(-1)).toEqual({ type: "stop" });
+  });
+
+  it("stops trying video before its first frame when the device stopped", async () => {
+    const { mintTicket, modes, video, worker } = session();
+    video.start();
+    await flush();
+    worker().emit({ type: "closed", reason: "stopped" });
+    await vi.advanceTimersByTimeAsync(FIRST_FRAME_TIMEOUT_MS + 60_000);
+    expect(modes).toEqual([{ kind: "probing" }]);
+    expect(mintTicket).toHaveBeenCalledTimes(1);
   });
 
   it("marks video stalled after 5 s without a frame and clears it on the next", async () => {

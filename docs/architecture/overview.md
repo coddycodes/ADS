@@ -1963,10 +1963,17 @@ H.264 with WebCodecs when `VideoDecoder` exists and accepts the stream's codec,
 and draws the transferred `VideoFrame`s on the main thread. It falls back to
 the JPEG stream (shown as **Still images** with the reason) when WebCodecs is
 missing (any insecure context, such as `http://<lan-ip>`), when no frame
-arrives within 5 s, on a decoder error, or on a close reason a new ticket
-cannot fix (`host-identity`, `disabled`, `unauthorized`, `wrongDevice`,
-`wrongChannel`). Other closes reconnect with a new ticket, at most 3 times in
-60 s with backoff, before falling back.
+arrives within 5 s, or on a decoder error. Close reasons fall into three
+groups:
+
+- **Still images at once:** `host-identity`, `disabled`, `unauthorized`,
+  `wrongDevice`, `wrongChannel`, and `limit`, which a new ticket cannot fix.
+- **Stop without still images:** `stopped`. The catalog already shows the
+  device's state, and video starts again with the next ready device.
+- **Retried:** `expired`, `reused`, `failed`, `slow`, and a connection that is
+  refused or drops without a close frame (`network`, such as 1006 or the
+  pre-upgrade 503), with a new ticket each time, at most 3 times in 60 s with
+  backoff, before falling back to still images.
 
 **Agents.** Coding agents reach the same device through four MCP tools on the
 provider MCP endpoint: `device_list`, `device_open` (waits up to 180 s for
