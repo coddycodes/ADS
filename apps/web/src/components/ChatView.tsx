@@ -377,6 +377,11 @@ const PreviewPanel = lazy(() =>
 const DiffPanel = lazy(() => import("./DiffPanel"));
 const SourceControlPanel = lazy(() => import("./SourceControlPanel"));
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+const PullRequestPanelSurface = lazy(() =>
+  import("./pullRequests/PullRequestPanelSurface").then((module) => ({
+    default: module.PullRequestPanelSurface,
+  })),
+);
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -6698,6 +6703,17 @@ function ChatViewContent(props: ChatViewProps) {
           gitCwd={gitCwd}
           projectRef={activeProjectRef}
           workspaceUnavailable={workspaceUnavailable}
+        />
+      </Suspense>
+    ) : activeRightPanelSurface?.kind === "pullRequest" ? (
+      <Suspense fallback={null}>
+        <PullRequestPanelSurface
+          key={`${scopedThreadKey(activeThreadRef)}:${activeRightPanelSurface.id}`}
+          threadRef={activeThreadRef}
+          projectRef={activeProjectRef}
+          gitCwd={gitCwd}
+          workspaceUnavailable={workspaceUnavailable}
+          surface={activeRightPanelSurface}
         />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "plan" ? (

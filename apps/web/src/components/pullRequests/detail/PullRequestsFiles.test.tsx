@@ -147,6 +147,15 @@ describe("PullRequestsFiles", () => {
       container.querySelector<HTMLInputElement>('input[aria-label="Ignore whitespace"]')!.checked,
     ).toBe(true);
   });
+  it("lays out the changed-files tree by the detail's width, not the window's", async () => {
+    await render();
+    const tree = container.querySelector('nav[aria-label="Changed files"]')!;
+    expect(tree.className).toContain("@3xl/pull-request:w-64");
+    expect(tree.className).toContain("@3xl/pull-request:border-r");
+    expect(tree.className).not.toMatch(/(^|\s)md:/);
+    expect(tree.parentElement!.className).toContain("@3xl/pull-request:flex-row");
+    expect(tree.parentElement!.className).not.toMatch(/(^|\s)md:/);
+  });
   it("selects and scrolls the file encoded in the route hash", async () => {
     h.hash = "file=docs%2Fread%20me%23%C3%A9.md";
     await render();

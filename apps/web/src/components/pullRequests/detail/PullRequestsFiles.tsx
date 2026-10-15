@@ -374,10 +374,10 @@ export const PullRequestsFiles = memo(function PullRequestsFiles({
         {files.files.length === 0 ? (
           <p className="p-4 text-sm text-muted-foreground">No files changed</p>
         ) : (
-          <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+          <div className="flex min-h-0 flex-1 flex-col @3xl/pull-request:flex-row">
             <nav
               aria-label="Changed files"
-              className="flex h-48 shrink-0 flex-col border-b border-border md:h-auto md:w-64 md:border-r md:border-b-0"
+              className="flex h-48 shrink-0 flex-col border-b border-border @3xl/pull-request:h-auto @3xl/pull-request:w-64 @3xl/pull-request:border-r @3xl/pull-request:border-b-0"
             >
               <LegendList
                 data={rows}
