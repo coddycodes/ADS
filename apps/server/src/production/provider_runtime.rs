@@ -12995,6 +12995,8 @@ struct ClaudeDriver {
     acknowledgement_timeout: Duration,
     hook_sink: Option<Arc<ClaudeHookSinkHandle>>,
     output: Arc<ClaudeOutputHandle>,
+    /// The private `--mcp-config` file Claude reads; removed when the driver is dropped.
+    _mcp_config: Option<crate::source_control::PrivateJsonBody>,
 }
 
 struct ClaudeOutputHandle {
@@ -13502,6 +13504,7 @@ fn build_claude_launch_arguments(
     session_id: &str,
     support: ClaudeActivitySupport,
     hook_settings: Option<&Value>,
+    mcp_config: Option<&Path>,
 ) -> Vec<String> {
     let mode = claude_mode(&request.runtime_mode, &request.interaction_mode);
     let mut args = vec![
@@ -13542,19 +13545,28 @@ fn build_claude_launch_arguments(
     if let Some(settings) = claude_session_settings(request, hook_settings) {
         args.extend(["--settings".to_owned(), settings.to_string()]);
     }
-    if let Some(mcp) = request.mcp.as_ref() {
-        let config = json!({
-            "mcpServers": {
-                "bibcode": {
-                    "type": "http",
-                    "url": mcp.endpoint,
-                    "headers": { "Authorization": mcp.authorization_header },
-                }
-            }
-        });
-        args.extend(["--mcp-config".to_owned(), config.to_string()]);
+    if let Some(mcp_config) = mcp_config {
+        args.extend([
+            "--mcp-config".to_owned(),
+            mcp_config.to_string_lossy().into_owned(),
+        ]);
     }
     args
+}
+
+/// The BiBCode MCP server for one Claude process. Claude reads it from a private file: on the
+/// command line its bearer token would be readable by every local process (`ps`,
+/// `/proc/<pid>/cmdline`).
+fn claude_mcp_config(mcp: &ProviderMcpConfig) -> Value {
+    json!({
+        "mcpServers": {
+            "bibcode": {
+                "type": "http",
+                "url": mcp.endpoint,
+                "headers": { "Authorization": mcp.authorization_header },
+            }
+        }
+    })
 }
 
 fn claude_session_settings(
@@ -13654,7 +13666,13 @@ pub fn build_claude_launch_arguments_for_test(
     session_id: &str,
     support: ClaudeActivitySupport,
 ) -> Vec<String> {
-    build_claude_launch_arguments(request, session_id, support, None)
+    build_claude_launch_arguments(
+        request,
+        session_id,
+        support,
+        None,
+        request.mcp.as_ref().map(|_| Path::new("bibcode-mcp.json")),
+    )
 }
 
 #[doc(hidden)]
@@ -13664,7 +13682,13 @@ pub fn build_claude_launch_arguments_with_settings_for_test(
     support: ClaudeActivitySupport,
     hook_settings: Option<Value>,
 ) -> Vec<String> {
-    build_claude_launch_arguments(request, session_id, support, hook_settings.as_ref())
+    build_claude_launch_arguments(
+        request,
+        session_id,
+        support,
+        hook_settings.as_ref(),
+        request.mcp.as_ref().map(|_| Path::new("bibcode-mcp.json")),
+    )
 }
 
 /// Owns an isolated Claude activity-probe cache for integration tests.
@@ -13836,8 +13860,31 @@ impl ClaudeDriver {
                 .environment
                 .insert(CLAUDE_HOOK_TOKEN_ENV.to_owned(), sink.token.clone());
         }
-        let args =
-            build_claude_launch_arguments(&request, &session_id, support, hook_settings.as_ref());
+        let mcp_config = match request.mcp.as_ref() {
+            Some(mcp) => Some(
+                crate::source_control::PrivateJsonBody::write(
+                    &std::env::temp_dir(),
+                    &claude_mcp_config(mcp),
+                )
+                .await
+                .map_err(|error| ProviderRuntimeError::Provider {
+                    provider: request.provider.clone(),
+                    detail: format!(
+                        "BiBCode could not write the BiBCode MCP configuration for Claude: {error}"
+                    ),
+                })?,
+            ),
+            None => None,
+        };
+        let args = build_claude_launch_arguments(
+            &request,
+            &session_id,
+            support,
+            hook_settings.as_ref(),
+            mcp_config
+                .as_ref()
+                .map(crate::source_control::PrivateJsonBody::path),
+        );
         let mut child = spawn_child(&request, &args, true, attribution).await?;
         let stdout = child
             .stdout()
@@ -13903,6 +13950,7 @@ impl ClaudeDriver {
             acknowledgement_timeout: CLAUDE_DELIVERY_ACKNOWLEDGEMENT_TIMEOUT,
             hook_sink: hook_handle,
             output,
+            _mcp_config: mcp_config,
         })
     }
 
@@ -16934,6 +16982,7 @@ mod tests {
             &request,
             "claude-session",
             super::ClaudeActivitySupport::default(),
+            None,
             None,
         );
 

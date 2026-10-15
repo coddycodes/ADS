@@ -13613,6 +13613,12 @@ fn claude_launch_arguments_preserve_controls_and_gate_activity_flags() {
         );
     }
     assert!(supported.iter().any(|argument| argument == "--mcp-config"));
+    assert!(
+        !supported
+            .iter()
+            .any(|argument| argument.contains("Bearer") || argument.contains("/mcp")),
+        "the MCP server and its token stay off the command line: {supported:?}"
+    );
 
     let unsupported = build_claude_launch_arguments_for_test(
         &request,
@@ -13902,6 +13908,81 @@ async fn claude_activity_probe_retries_transient_failures_without_poisoning_cach
         "a failed version probe must be retried, then cache the successful version/help pair"
     );
     assert_eq!(probe_context.cache_len(), 1);
+}
+
+/// Claude reads the BiBCode MCP server from a file only this user can read: on the command line
+/// its bearer token was readable by every local process. The file goes with the driver.
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_reads_its_mcp_token_from_a_private_file_removed_with_the_driver() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let probe_context = ClaudeActivityProbeTestContext::new();
+    let temp = TempDir::new().unwrap();
+    let captured = temp.path().join("mcp-config-path");
+    let arguments = temp.path().join("arguments");
+    let executable = executable_fixture(
+        &temp,
+        "claude-mcp-file",
+        "#!/bin/sh\ncase \"$1\" in\n  --version) printf '%s\\n' '2.1.300 (Claude Code)'; exit 0;;\n  --help) printf '%s\\n' 'Usage: claude'; exit 0;;\nesac\nprintf '%s\\n' \"$@\" > \"$BIBCODE_TEST_ARGS\"\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = --mcp-config ]; then printf '%s' \"$2\" > \"$BIBCODE_TEST_MCP_CONFIG\"; fi\n  shift\ndone\ncat >/dev/null\n",
+        "",
+    );
+    let factory = probe_context.driver_factory(temp.path().join("attachments"));
+    let mut request = launch();
+    request.provider = "claudeAgent".to_owned();
+    request.binary_path = executable.to_string_lossy().into_owned();
+    request.cwd = temp.path().to_path_buf();
+    request.mcp = Some(ProviderMcpConfig {
+        endpoint: "http://127.0.0.1:1234/mcp".to_owned(),
+        authorization_header: "Bearer private-test-token".to_owned(),
+        provider_session_id: "provider-session".to_owned(),
+    });
+    for (name, path) in [
+        ("BIBCODE_TEST_ARGS", &arguments),
+        ("BIBCODE_TEST_MCP_CONFIG", &captured),
+    ] {
+        request
+            .environment
+            .insert(name.to_owned(), path.to_string_lossy().into_owned());
+    }
+    let driver = factory.create(request).await.unwrap();
+    driver.start().await.unwrap();
+    let config_path = timeout(Duration::from_secs(10), async {
+        loop {
+            if let Ok(path) = std::fs::read_to_string(&captured)
+                && !path.is_empty()
+            {
+                return PathBuf::from(path);
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("Claude was launched with an MCP configuration file");
+
+    let launched = std::fs::read_to_string(&arguments).unwrap();
+    assert!(!launched.contains("private-test-token"), "{launched}");
+    let config: Value = serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+    assert_eq!(
+        config["mcpServers"]["bibcode"]["headers"]["Authorization"],
+        "Bearer private-test-token"
+    );
+    assert_eq!(
+        config["mcpServers"]["bibcode"]["url"],
+        "http://127.0.0.1:1234/mcp"
+    );
+    assert_eq!(
+        std::fs::metadata(&config_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+
+    driver.shutdown().await.unwrap();
+    drop(driver);
+    assert!(!config_path.exists(), "the token file goes with the driver");
 }
 
 /// The background-agent report: one `--help` that failed or ran out of time after `--version`

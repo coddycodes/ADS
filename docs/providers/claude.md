@@ -200,6 +200,23 @@ is unavailable, returns to the queue with its reason on the card. Interrupts and
 errors keep queued messages on hold until you use **Send now**. See
 [Queued messages](../user/workspace-ui.md#queued-messages) for queue controls.
 
+## BiBCode tools
+
+Each Claude chat session gets the BiBCode MCP server (`bibcode`) with a
+credential scoped to its thread. BiBCode writes that server's configuration,
+bearer token included, to a file only your user can read (mode `0600` on Linux
+and macOS, an owner-only access list on Windows) in the system temporary directory and passes the file's path to
+`--mcp-config`, so the token never appears on Claude's command line, where any
+local process could read it. The file is removed when the session ends. The
+server's MCP URL uses loopback (`127.0.0.1`) even when BiBCode listens on every
+interface.
+
+The credential is a random token that exists only in the running server's
+memory, as a hash. It expires after eight hours, is replaced when a message
+starts the thread's session again after it was suspended or stopped, and is
+discarded when BiBCode quits. To retire a token that may have been exposed, quit
+and restart BiBCode, or stop the thread's session and send it a new message.
+
 ## Background work and idle suspension
 
 BiBCode suspends an idle chat session 60 seconds after its turn ends and
