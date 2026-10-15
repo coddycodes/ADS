@@ -522,7 +522,11 @@ mod tests {
             let fixture =
                 ManagerFixture::with_sdk(|sdk| sdk.avds(&["Pixel"]).adb_forwards_to(source.port))
                     .await;
-            let device_id = fixture.manager.open("Pixel").await.expect("open Pixel");
+            let device_id = fixture
+                .manager
+                .open(crate::device::catalog::Platform::Android, "Pixel")
+                .await
+                .expect("open Pixel");
             fixture.wait_state(&device_id, DeviceState::Ready).await;
             let config = ServerConfig::new(".")
                 .with_bind("127.0.0.1", 3773)

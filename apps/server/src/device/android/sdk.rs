@@ -9,7 +9,7 @@ use std::{
 
 use tokio_util::sync::CancellationToken;
 
-use crate::device::catalog::{Availability, AvailabilityKind, Avd};
+use crate::device::catalog::{Availability, AvailabilityKind, Image};
 use crate::process::supervised::{SupervisedOverflow, SupervisedRunRequest, run_supervised};
 
 const LIST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -109,7 +109,7 @@ fn default_sdk_dirs(env: &SdkEnv) -> Vec<PathBuf> {
     }
 }
 
-pub(crate) async fn discover(env: &SdkEnv) -> (Availability, Vec<Avd>, Option<AndroidSdk>) {
+pub(crate) async fn discover(env: &SdkEnv) -> (Availability, Vec<Image>, Option<AndroidSdk>) {
     let sdk = match locate_sdk(env) {
         Ok(sdk) => sdk,
         Err(availability) => return (availability, Vec::new(), None),
@@ -174,7 +174,7 @@ fn acceleration_message(os: &str) -> String {
     .to_owned()
 }
 
-fn parse_avds(stdout: &str) -> Vec<Avd> {
+fn parse_avds(stdout: &str) -> Vec<Image> {
     stdout
         .lines()
         .map(str::trim)
@@ -184,9 +184,10 @@ fn parse_avds(stdout: &str) -> Vec<Avd> {
                     .iter()
                     .any(|prefix| line.starts_with(prefix))
         })
-        .map(|name| Avd {
-            name: name.to_owned(),
+        .map(|name| Image {
+            id: name.to_owned(),
             display_name: name.replace('_', " "),
+            in_use_elsewhere: false,
         })
         .collect()
 }
@@ -251,7 +252,7 @@ mod tests {
         let (availability, avds, _) = discover(&sdk.env()).await;
         assert_eq!(availability.kind, AvailabilityKind::Ready);
         assert_eq!(
-            avds.iter().map(|avd| avd.name.as_str()).collect::<Vec<_>>(),
+            avds.iter().map(|avd| avd.id.as_str()).collect::<Vec<_>>(),
             ["Pixel_8_API_35", "Tablet API 34"]
         );
         assert_eq!(avds[0].display_name, "Pixel 8 API 35");

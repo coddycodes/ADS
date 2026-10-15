@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     DeviceError, DeviceOpError,
-    catalog::{Availability, Avd, DeviceState, Orientation},
+    catalog::{Availability, DeviceState, Image, Orientation, Platform},
     input::DeviceInputEvent,
     video::VideoUnit,
 };
@@ -16,7 +16,7 @@ use super::{
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PlatformDiscovery {
     pub availability: Availability,
-    pub images: Vec<Avd>,
+    pub images: Vec<Image>,
 }
 
 /// Why a launch did not reach `Ready`; mirrors the emulator's `LaunchError`.
@@ -27,8 +27,9 @@ pub(crate) enum LaunchFailure {
     Spawn(String),
     Unresponsive(String),
     Cancelled,
-    /// The image exists but is in use outside BiBCode (`DeviceBusyError`). No Android launch
-    /// reports it; the iOS backend does.
+    /// The image exists but is in use outside BiBCode. `check_available` reports it before
+    /// a slot exists (`DeviceBusyError`); a launch that finds it late fails its slot. No
+    /// Android backend reports it.
     #[allow(dead_code)]
     Busy,
 }
@@ -54,6 +55,10 @@ pub(crate) struct Png {
 pub(crate) type JpegStream = BoxStream<'static, Result<RawJpeg, DeviceError>>;
 
 pub(crate) trait DeviceBackend: Send + Sync + 'static {
+    /// The platform this backend runs; the manager configures at most one backend for each.
+    fn platform(&self) -> Platform;
+    /// What the catalog shows before the first discovery finishes.
+    fn looking(&self) -> Availability;
     /// Fresh discovery; the manager caches it for 30 s.
     fn discover(&self) -> BoxFuture<'_, PlatformDiscovery>;
     /// Boots `image_id`, reporting `Booting` through `on_phase`. Stops what it started on
@@ -64,12 +69,21 @@ pub(crate) trait DeviceBackend: Send + Sync + 'static {
         on_phase: Box<dyn Fn(DeviceState) + Send + Sync>,
         cancel: &'a CancellationToken,
     ) -> BoxFuture<'a, Result<Box<dyn RunningDevice>, LaunchFailure>>;
+    /// Refuses an image that cannot be opened now, before the manager creates a slot for it.
+    /// Only `LaunchFailure::Busy` is reported to the caller as such.
+    fn check_available<'a>(
+        &'a self,
+        image_id: &'a str,
+    ) -> BoxFuture<'a, Result<(), LaunchFailure>> {
+        let _ = image_id;
+        Box::pin(async { Ok(()) })
+    }
 }
 
 pub(crate) trait RunningDevice: Send + Sync + 'static {
     /// Native (portrait) display size.
     fn native_size(&self) -> (u32, u32);
-    #[allow(dead_code)] // The rotate toolbar gate reads it once iOS reports `false`.
+    /// Whether the device turns; the catalog reports it once the device is `Ready`.
     fn can_rotate(&self) -> bool;
     /// A stream of JPEGs at most `max_width` wide, at most one per
     /// [`frames::JPEG_MIN_INTERVAL`](super::frames::JPEG_MIN_INTERVAL); the frame producer

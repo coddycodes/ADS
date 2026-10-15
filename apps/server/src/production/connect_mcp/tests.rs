@@ -2134,7 +2134,10 @@ mod device_tools {
             .call(&scope(), "list", json!({}), CancellationToken::new())
             .await;
         assert_eq!(result["isError"], false);
-        assert_eq!(result["structuredContent"]["avds"][0]["name"], "Pixel");
+        assert_eq!(
+            result["structuredContent"]["platforms"][0]["images"][0]["id"],
+            "Pixel"
+        );
         assert_eq!(result["structuredContent"]["devices"][0]["state"], "ready");
     }
 

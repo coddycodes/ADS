@@ -987,7 +987,7 @@ impl ManagerFixture {
             grpc_port: Some(controller.port),
         });
         let manager = crate::device::DeviceManager::start(crate::device::DeviceManagerConfig {
-            backend: Box::new(backend),
+            backends: vec![std::sync::Arc::new(backend)],
             enabled: signal,
         });
         Self {
@@ -1064,7 +1064,11 @@ impl ManagerFixture {
     /// A manager whose only AVD, `Pixel`, is open and `Ready`.
     pub(crate) async fn ready_device() -> DeviceFixture {
         let fixture = Self::ready(&["Pixel"]).await;
-        let id = fixture.manager.open("Pixel").await.expect("open Pixel");
+        let id = fixture
+            .manager
+            .open(crate::device::catalog::Platform::Android, "Pixel")
+            .await
+            .expect("open Pixel");
         fixture
             .wait_state(&id, crate::device::catalog::DeviceState::Ready)
             .await;

@@ -19,11 +19,33 @@ pub struct Availability {
     pub message: String,
 }
 
+/// The platform a device image runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Platform {
+    Android,
+    Ios,
+}
+
+/// A device a platform can start: an Android AVD or an iOS simulator.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Avd {
-    pub name: String,
+pub struct Image {
+    /// The AVD name or the simulator UDID.
+    pub id: String,
     pub display_name: String,
+    /// Already running outside BiBCode; serialized only when true.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub in_use_elsewhere: bool,
+}
+
+/// One platform's availability and images.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformCatalog {
+    pub platform: Platform,
+    pub availability: Availability,
+    pub images: Vec<Image>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -50,7 +72,8 @@ pub enum Orientation {
 #[serde(rename_all = "camelCase")]
 pub struct DeviceSnapshot {
     pub device_id: String,
-    pub avd_name: String,
+    pub platform: Platform,
+    pub image_id: String,
     pub state: DeviceState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
@@ -59,12 +82,14 @@ pub struct DeviceSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
     pub orientation: Orientation,
+    /// Whether the device turns; reported by the running device once `Ready`.
+    pub can_rotate: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceCatalog {
-    pub availability: Availability,
-    pub avds: Vec<Avd>,
+    /// One entry per configured backend, in configuration order.
+    pub platforms: Vec<PlatformCatalog>,
     pub devices: Vec<DeviceSnapshot>,
 }

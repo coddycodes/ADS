@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 use super::{PreviewScope, snapshot_tool_result, tool_failure};
 use crate::device::{
     DeviceManager, DeviceOpError,
-    catalog::{DeviceSnapshot, DeviceState},
+    catalog::{DeviceSnapshot, DeviceState, Platform},
 };
 
 /// Matches the manager's 180 s emulator boot timeout.
@@ -95,7 +95,7 @@ impl DeviceTools {
             Some(name) => name.to_owned(),
             None => self.only_avd().await?,
         };
-        let device_id = self.manager.open(&avd_name).await?;
+        let device_id = self.manager.open(Platform::Android, &avd_name).await?;
         let ready = tokio::select! {
             ready = self.manager.wait_ready(&device_id, self.boot_timeout) => ready,
             () = cancellation.cancelled() => {
@@ -137,17 +137,29 @@ impl DeviceTools {
 
     async fn only_avd(&self) -> Result<String, DeviceOpError> {
         self.manager.refresh().await;
-        let catalog = self.manager.catalog().borrow().clone();
-        let mut names = catalog.avds.iter().map(|avd| avd.name.as_str());
+        let Some(android) = self
+            .manager
+            .catalog()
+            .borrow()
+            .platforms
+            .iter()
+            .find(|listed| listed.platform == Platform::Android)
+            .cloned()
+        else {
+            return Err(DeviceOpError::InvalidInput(
+                "This server cannot run Android emulators.".into(),
+            ));
+        };
+        let mut names = android.images.iter().map(|image| image.id.as_str());
         match (names.next(), names.next()) {
             (Some(name), None) => Ok(name.to_owned()),
-            (None, _) => Err(DeviceOpError::Sdk(catalog.availability)),
+            (None, _) => Err(DeviceOpError::Sdk(android.availability)),
             _ => Err(DeviceOpError::InvalidInput(format!(
                 "Several virtual devices exist. Pass avdName as one of: {}.",
-                catalog
-                    .avds
+                android
+                    .images
                     .iter()
-                    .map(|avd| avd.name.as_str())
+                    .map(|image| image.id.as_str())
                     .collect::<Vec<_>>()
                     .join(", ")
             ))),

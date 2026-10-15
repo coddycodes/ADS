@@ -32,7 +32,7 @@ use super::{
         DeviceBackend, ErasedVideoSource, JpegStream, LaunchFailure, PlatformDiscovery, Png,
         RawJpeg, RunningDevice,
     },
-    catalog::{AvailabilityKind, DeviceState, Orientation},
+    catalog::{Availability, AvailabilityKind, DeviceState, Orientation, Platform},
     frames::{JPEG_MIN_INTERVAL, encode_rgb888},
     input::DeviceInputEvent,
     media::VideoSource,
@@ -81,6 +81,17 @@ impl AndroidBackend {
 }
 
 impl DeviceBackend for AndroidBackend {
+    fn platform(&self) -> Platform {
+        Platform::Android
+    }
+
+    fn looking(&self) -> Availability {
+        Availability {
+            kind: AvailabilityKind::SdkMissing,
+            message: "Looking for the Android SDK on the server.".to_owned(),
+        }
+    }
+
     fn discover(&self) -> BoxFuture<'_, PlatformDiscovery> {
         Box::pin(async move {
             let (availability, avds, sdk) = sdk::discover(&self.env).await;

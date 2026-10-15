@@ -1,7 +1,10 @@
-//! Server-hosted Android device previews; see docs/architecture/overview.md#device-previews.
+//! Server-hosted device previews, one running device per platform; see
+//! docs/architecture/overview.md#device-previews.
 pub(crate) mod android;
 pub(crate) mod backend;
 pub mod catalog;
+#[cfg(test)]
+pub(crate) mod fake_backend;
 pub mod frames;
 pub mod input;
 pub mod media;
@@ -22,6 +25,7 @@ use self::{
     backend::{DeviceBackend, LaunchFailure, PlatformDiscovery, Png, RunningDevice},
     catalog::{
         Availability, AvailabilityKind, DeviceCatalog, DeviceSnapshot, DeviceState, Orientation,
+        Platform, PlatformCatalog,
     },
     frames::FrameHub,
     input::oriented_size,
@@ -61,10 +65,16 @@ pub enum DeviceOpError {
     NotFound,
     #[error("{}", not_ready_message(*.0))]
     NotReady(DeviceState),
+    #[error("{}", unknown_image_message(*platform, image_id))]
+    UnknownImage {
+        platform: Platform,
+        image_id: String,
+    },
+    /// The image is already running outside BiBCode.
     #[error(
-        "No virtual device named \"{0}\" exists on the server. Choose one from the device list, or create it in Android Studio's Device Manager."
+        "This simulator is already running outside BibCode. Shut it down in Simulator, then open it here."
     )]
-    UnknownAvd(String),
+    Busy { image_id: String },
     #[error("{0}")]
     InvalidInput(String),
     /// An emulator call failed on a `Ready` device; the message says what to do.
@@ -75,6 +85,17 @@ pub enum DeviceOpError {
         "Video needs a signed-in session, and this server runs with --unsafe-no-auth, so the screen updates as still images. Restart the server without --unsafe-no-auth to show video."
     )]
     MediaUnavailable,
+}
+
+fn unknown_image_message(platform: Platform, image_id: &str) -> String {
+    match platform {
+        Platform::Android => format!(
+            "No virtual device named \"{image_id}\" exists on the server. Choose one from the device list, or create it in Android Studio's Device Manager."
+        ),
+        Platform::Ios => format!(
+            "No simulator with id \"{image_id}\" exists on the server. Choose one from the device list."
+        ),
+    }
 }
 
 fn not_ready_message(state: DeviceState) -> &'static str {
@@ -111,7 +132,12 @@ impl DeviceOpError {
                 "running": running,
                 "message": message,
             }),
-            Self::NotFound | Self::UnknownAvd(_) => serde_json::json!({
+            Self::Busy { image_id } => serde_json::json!({
+                "_tag": "DeviceBusyError",
+                "imageId": image_id,
+                "message": message,
+            }),
+            Self::NotFound | Self::UnknownImage { .. } => serde_json::json!({
                 "_tag": "DeviceNotFoundError",
                 "message": message,
             }),
@@ -137,8 +163,9 @@ impl DeviceOpError {
 }
 
 pub(crate) struct DeviceManagerConfig {
-    /// The platform whose devices this manager runs.
-    pub backend: Box<dyn DeviceBackend>,
+    /// The platforms whose devices this manager runs, at most one backend per platform, in
+    /// the order the catalog lists them.
+    pub backends: Vec<Arc<dyn DeviceBackend>>,
     /// The committed `enableDevicePreviews` setting.
     pub enabled: watch::Receiver<bool>,
 }
@@ -147,8 +174,8 @@ pub(crate) struct DeviceManagerConfig {
 /// input, and media tasks clone it for one call at a time.
 type SharedDevice = Arc<Box<dyn RunningDevice>>;
 
-/// Owns every emulator of this environment and the catalog that describes them: at most one
-/// running device, stopped when the setting turns off and on shutdown.
+/// Owns every device of this environment and the catalog that describes them: at most one
+/// running device per platform, stopped when the setting turns off and on shutdown.
 #[derive(Clone)]
 pub struct DeviceManager {
     inner: Arc<Inner>,
@@ -157,13 +184,19 @@ pub struct DeviceManager {
 struct Inner {
     catalog: watch::Sender<DeviceCatalog>,
     devices: Mutex<DeviceTable>,
-    discovery: tokio::sync::Mutex<Option<Discovery>>,
     enabled: watch::Receiver<bool>,
-    backend: Box<dyn DeviceBackend>,
+    backends: Vec<PlatformBackend>,
     shutdown: CancellationToken,
     tasks: TaskTracker,
     /// Outstanding media-socket tickets.
     tickets: TicketBook,
+}
+
+/// A backend and its own discovery cache, so a slow listing on one platform never holds up
+/// another's.
+struct PlatformBackend {
+    backend: Arc<dyn DeviceBackend>,
+    discovery: tokio::sync::Mutex<Option<Discovery>>,
 }
 
 #[derive(Default)]
@@ -214,23 +247,33 @@ fn ended(state: DeviceState) -> bool {
 }
 
 impl DeviceManager {
-    /// Starts the manager and the task that follows the setting: on, it discovers the SDK;
-    /// off, it stops every device.
+    /// Starts the manager and the task that follows the setting: on, it discovers every
+    /// platform; off, it stops every device.
     pub(crate) fn start(config: DeviceManagerConfig) -> Self {
         let (catalog, _) = watch::channel(DeviceCatalog {
-            availability: Availability {
-                kind: AvailabilityKind::SdkMissing,
-                message: "Looking for the Android SDK on the server.".to_owned(),
-            },
-            avds: Vec::new(),
+            platforms: config
+                .backends
+                .iter()
+                .map(|backend| PlatformCatalog {
+                    platform: backend.platform(),
+                    availability: backend.looking(),
+                    images: Vec::new(),
+                })
+                .collect(),
             devices: Vec::new(),
         });
         let inner = Arc::new(Inner {
             catalog,
             devices: Mutex::default(),
-            discovery: tokio::sync::Mutex::new(None),
             enabled: config.enabled,
-            backend: config.backend,
+            backends: config
+                .backends
+                .into_iter()
+                .map(|backend| PlatformBackend {
+                    backend,
+                    discovery: tokio::sync::Mutex::new(None),
+                })
+                .collect(),
             shutdown: CancellationToken::new(),
             tasks: TaskTracker::new(),
             tickets: TicketBook::default(),
@@ -247,32 +290,54 @@ impl DeviceManager {
         self.inner.catalog.subscribe()
     }
 
-    /// Reruns SDK discovery unless the last run is under 30 s old, and publishes it.
+    /// Reruns each platform's discovery unless its last run is under 30 s old, and
+    /// publishes it.
     pub async fn refresh(&self) {
-        self.inner.discover(false).await;
+        self.inner.discover_all(false).await;
     }
 
-    /// Reruns SDK discovery now and publishes it.
+    /// Reruns every platform's discovery now and publishes it.
     pub async fn refresh_now(&self) {
-        self.inner.discover(true).await;
+        self.inner.discover_all(true).await;
     }
 
-    /// Starts `avd_name` and returns its device id at `Starting`; boot progress is published
-    /// in the catalog.
-    pub async fn open(&self, avd_name: &str) -> Result<String, DeviceOpError> {
+    /// Starts `image_id` on `platform` and returns its device id at `Starting`; boot progress
+    /// is published in the catalog.
+    pub async fn open(&self, platform: Platform, image_id: &str) -> Result<String, DeviceOpError> {
         if !self.inner.accepting() {
             return Err(DeviceOpError::Disabled);
         }
-        let mut found = self.inner.discover(false).await;
-        if found.found.availability.kind != AvailabilityKind::Ready || !found.lists(avd_name) {
-            found = self.inner.discover(true).await;
+        let unknown = || DeviceOpError::UnknownImage {
+            platform,
+            image_id: image_id.to_owned(),
+        };
+        // A platform this server has no backend for has no images.
+        let entry = self.inner.backend(platform).ok_or_else(unknown)?;
+        let mut found = self.inner.discover(entry, false).await;
+        if found.found.availability.kind != AvailabilityKind::Ready || !found.lists(image_id) {
+            found = self.inner.discover(entry, true).await;
         }
         if found.found.availability.kind != AvailabilityKind::Ready {
             return Err(DeviceOpError::Sdk(found.found.availability));
         }
-        if !found.lists(avd_name) {
-            return Err(DeviceOpError::UnknownAvd(avd_name.to_owned()));
+        if !found.lists(image_id) {
+            return Err(unknown());
         }
+        match entry.backend.check_available(image_id).await {
+            Ok(()) => {}
+            Err(LaunchFailure::Busy) => {
+                return Err(DeviceOpError::Busy {
+                    image_id: image_id.to_owned(),
+                });
+            }
+            Err(error) => {
+                let (_, failure) = launch_failure(&error);
+                return Err(DeviceOpError::Emulator(format!(
+                    "The device cannot start: {failure}."
+                )));
+            }
+        }
+        let backend = entry.backend.clone();
         let started = Instant::now();
         let device_id = uuid::Uuid::new_v4().to_string();
         let cancel = CancellationToken::new();
@@ -286,10 +351,10 @@ impl DeviceManager {
             if let Some(active) = table
                 .slots
                 .values()
-                .find(|slot| !ended(slot.snapshot.state))
+                .find(|slot| slot.snapshot.platform == platform && !ended(slot.snapshot.state))
             {
                 return Err(DeviceOpError::Limit {
-                    running: active.snapshot.avd_name.clone(),
+                    running: active.snapshot.image_id.clone(),
                 });
             }
             let seq = table.next_seq;
@@ -299,12 +364,15 @@ impl DeviceManager {
                 Slot {
                     snapshot: DeviceSnapshot {
                         device_id: device_id.clone(),
-                        avd_name: avd_name.to_owned(),
+                        platform,
+                        image_id: image_id.to_owned(),
                         state: DeviceState::Starting,
                         failure: None,
                         width: None,
                         height: None,
                         orientation: Orientation::Portrait,
+                        // Until the running device says otherwise.
+                        can_rotate: true,
                     },
                     running: None,
                     cancel: cancel.clone(),
@@ -320,7 +388,8 @@ impl DeviceManager {
         record_lifecycle("start", started, None);
         self.inner.tasks.spawn(self.inner.clone().launch(
             device_id.clone(),
-            avd_name.to_owned(),
+            backend,
+            image_id.to_owned(),
             cancel,
         ));
         Ok(device_id)
@@ -425,8 +494,8 @@ impl DeviceManager {
 }
 
 impl Discovery {
-    fn lists(&self, avd_name: &str) -> bool {
-        self.found.images.iter().any(|avd| avd.name == avd_name)
+    fn lists(&self, image_id: &str) -> bool {
+        self.found.images.iter().any(|image| image.id == image_id)
     }
 }
 
@@ -511,21 +580,45 @@ impl Inner {
         });
     }
 
-    async fn discover(&self, force: bool) -> Discovery {
-        let mut cached = self.discovery.lock().await;
+    fn backend(&self, platform: Platform) -> Option<&PlatformBackend> {
+        self.backends
+            .iter()
+            .find(|entry| entry.backend.platform() == platform)
+    }
+
+    /// Discovers every platform at once.
+    async fn discover_all(&self, force: bool) {
+        futures_util::future::join_all(
+            self.backends
+                .iter()
+                .map(|entry| self.discover(entry, force)),
+        )
+        .await;
+    }
+
+    async fn discover(&self, entry: &PlatformBackend, force: bool) -> Discovery {
+        let mut cached = entry.discovery.lock().await;
         if !force
             && let Some(discovery) = cached.as_ref()
             && discovery.at.elapsed() < DISCOVERY_TTL
         {
             return discovery.clone();
         }
-        let found = self.backend.discover().await;
+        let found = entry.backend.discover().await;
+        let platform = entry.backend.platform();
         self.catalog.send_if_modified(|catalog| {
+            let Some(listed) = catalog
+                .platforms
+                .iter_mut()
+                .find(|listed| listed.platform == platform)
+            else {
+                return false;
+            };
             let changed =
-                catalog.availability != found.availability || catalog.avds != found.images;
+                listed.availability != found.availability || listed.images != found.images;
             if changed {
-                catalog.availability = found.availability.clone();
-                catalog.avds = found.images.clone();
+                listed.availability = found.availability.clone();
+                listed.images = found.images.clone();
             }
             changed
         });
@@ -554,7 +647,13 @@ impl Inner {
         });
     }
 
-    async fn launch(self: Arc<Self>, device_id: String, avd: String, cancel: CancellationToken) {
+    async fn launch(
+        self: Arc<Self>,
+        device_id: String,
+        backend: Arc<dyn DeviceBackend>,
+        image_id: String,
+        cancel: CancellationToken,
+    ) {
         let phases = self.clone();
         let phase_device = device_id.clone();
         let on_phase = Box::new(move |phase: DeviceState| {
@@ -564,11 +663,12 @@ impl Inner {
                 }
             });
         });
-        let result = self.backend.launch(&avd, on_phase, &cancel).await;
+        let result = backend.launch(&image_id, on_phase, &cancel).await;
         let started = self.started(&device_id);
         let error = match result {
             Ok(running) => {
                 let (width, height) = running.native_size();
+                let can_rotate = running.can_rotate();
                 let unwanted = {
                     let mut table = self.table();
                     match table.slots.get_mut(&device_id) {
@@ -581,6 +681,7 @@ impl Inner {
                             slot.snapshot.state = DeviceState::Ready;
                             slot.snapshot.width = Some(width);
                             slot.snapshot.height = Some(height);
+                            slot.snapshot.can_rotate = can_rotate;
                             slot.running = Some(Arc::new(running));
                             self.publish(&mut table);
                             None
@@ -733,7 +834,7 @@ impl Inner {
                     // (`SupervisedChildGuard`), so shutdown never waits for a slow SDK.
                     tokio::select! {
                         () = shutdown.cancelled() => return,
-                        _ = this.discover(false) => {}
+                        () = this.discover_all(false) => {}
                     }
                 } else {
                     this.close_all().await;
@@ -789,11 +890,11 @@ fn launch_failure(error: &LaunchFailure) -> (&'static str, String) {
             format!("did not report its display: {message}"),
         ),
         LaunchFailure::Cancelled => ("cancelled", "cancelled".to_owned()),
-        LaunchFailure::Busy => ("busy", "is in use outside BiBCode".to_owned()),
+        LaunchFailure::Busy => ("busy", "in use outside BibCode".to_owned()),
     }
 }
 
-/// A `device.lifecycle` profiler event; it never names the AVD or its paths.
+/// A `device.lifecycle` profiler event; it never names the image or its paths.
 fn record_lifecycle(phase: &'static str, started: Instant, failure_kind: Option<&'static str>) {
     if !crate::diagnostics::profiler::is_enabled() {
         return;
@@ -819,30 +920,44 @@ mod tests {
     #[tokio::test]
     async fn open_publishes_states_and_enforces_one_device() {
         let fixture = ManagerFixture::ready(&["Pixel", "Tablet"]).await;
-        let id = fixture.manager.open("Pixel").await.unwrap();
+        let id = fixture
+            .manager
+            .open(Platform::Android, "Pixel")
+            .await
+            .unwrap();
         let ready = fixture.wait_state(&id, DeviceState::Ready).await;
         assert_eq!((ready.width, ready.height), (Some(1080), Some(2400)));
         assert!(matches!(
-            fixture.manager.open("Tablet").await,
+            fixture.manager.open(Platform::Android, "Tablet").await,
             Err(DeviceOpError::Limit { running }) if running == "Pixel"
         ));
         fixture.manager.close(&id).await.unwrap();
         fixture.wait_state(&id, DeviceState::Stopped).await;
-        assert!(fixture.manager.open("Tablet").await.is_ok());
+        assert!(
+            fixture
+                .manager
+                .open(Platform::Android, "Tablet")
+                .await
+                .is_ok()
+        );
         fixture.manager.shutdown().await;
     }
 
     #[tokio::test]
     async fn disabled_manager_refuses_and_disabling_stops_devices() {
         let fixture = ManagerFixture::ready(&["Pixel"]).await;
-        let id = fixture.manager.open("Pixel").await.unwrap();
+        let id = fixture
+            .manager
+            .open(Platform::Android, "Pixel")
+            .await
+            .unwrap();
         fixture.wait_state(&id, DeviceState::Ready).await;
         let pid = fixture.pid_of(&id);
         fixture.enabled.send(false).unwrap();
         fixture.wait_state(&id, DeviceState::Stopped).await;
         assert!(!process_alive(pid));
         assert!(matches!(
-            fixture.manager.open("Pixel").await,
+            fixture.manager.open(Platform::Android, "Pixel").await,
             Err(DeviceOpError::Disabled)
         ));
     }
@@ -850,7 +965,11 @@ mod tests {
     #[tokio::test]
     async fn crash_marks_failed_and_frees_the_slot() {
         let fixture = ManagerFixture::ready(&["Pixel"]).await;
-        let id = fixture.manager.open("Pixel").await.unwrap();
+        let id = fixture
+            .manager
+            .open(Platform::Android, "Pixel")
+            .await
+            .unwrap();
         fixture.wait_state(&id, DeviceState::Ready).await;
         let pid = fixture.pid_of(&id);
         kill_process(pid);
@@ -876,20 +995,30 @@ mod tests {
         assert!(snapshot.failure.unwrap().contains("exited"));
         // Cleanup runs after the Failed publish and reaps the process.
         crate::device::android::testing::wait_until(|| !process_alive(pid)).await;
-        assert!(fixture.manager.open("Pixel").await.is_ok());
+        assert!(
+            fixture
+                .manager
+                .open(Platform::Android, "Pixel")
+                .await
+                .is_ok()
+        );
         fixture.manager.shutdown().await;
     }
 
     #[tokio::test]
     async fn shutdown_reaps_running_emulators() {
         let fixture = ManagerFixture::ready(&["Pixel"]).await;
-        let id = fixture.manager.open("Pixel").await.unwrap();
+        let id = fixture
+            .manager
+            .open(Platform::Android, "Pixel")
+            .await
+            .unwrap();
         fixture.wait_state(&id, DeviceState::Ready).await;
         let pid = fixture.pid_of(&id);
         fixture.manager.shutdown().await;
         assert!(!process_alive(pid));
         assert!(matches!(
-            fixture.manager.open("Pixel").await,
+            fixture.manager.open(Platform::Android, "Pixel").await,
             Err(DeviceOpError::Disabled)
         ));
     }
@@ -898,8 +1027,11 @@ mod tests {
     async fn unknown_avd_is_rejected_before_spawning() {
         let fixture = ManagerFixture::ready(&["Pixel"]).await;
         assert!(matches!(
-            fixture.manager.open("Nope").await,
-            Err(DeviceOpError::UnknownAvd(_))
+            fixture.manager.open(Platform::Android, "Nope").await,
+            Err(DeviceOpError::UnknownImage {
+                platform: Platform::Android,
+                ..
+            })
         ));
         assert!(fixture.sdk.launched_pids().is_empty());
     }
@@ -911,8 +1043,12 @@ mod tests {
         fixture.manager.refresh().await;
         assert_eq!(fixture.sdk.list_avds_calls(), 1);
         let catalog = fixture.manager.catalog().borrow().clone();
-        assert_eq!(catalog.availability.kind, AvailabilityKind::Ready);
-        assert_eq!(catalog.avds[0].name, "Pixel");
+        assert_eq!(catalog.platforms[0].platform, Platform::Android);
+        assert_eq!(
+            catalog.platforms[0].availability.kind,
+            AvailabilityKind::Ready
+        );
+        assert_eq!(catalog.platforms[0].images[0].id, "Pixel");
         fixture.manager.refresh_now().await;
         assert_eq!(fixture.sdk.list_avds_calls(), 2);
     }
@@ -920,7 +1056,11 @@ mod tests {
     #[tokio::test]
     async fn closing_a_booting_device_stops_its_launch() {
         let fixture = ManagerFixture::with_sdk(|sdk| sdk.avds(&["Pixel"]).never_boots()).await;
-        let id = fixture.manager.open("Pixel").await.unwrap();
+        let id = fixture
+            .manager
+            .open(Platform::Android, "Pixel")
+            .await
+            .unwrap();
         fixture.wait_state(&id, DeviceState::Booting).await;
         fixture.manager.close(&id).await.unwrap();
         let state = fixture.manager.catalog().borrow().devices[0].state;
@@ -928,7 +1068,13 @@ mod tests {
         let launched = fixture.sdk.launched_pids();
         assert_eq!(launched.len(), 1);
         assert!(launched.iter().all(|pid| !process_alive(*pid)));
-        assert!(fixture.manager.open("Pixel").await.is_ok());
+        assert!(
+            fixture
+                .manager
+                .open(Platform::Android, "Pixel")
+                .await
+                .is_ok()
+        );
         fixture.manager.shutdown().await;
     }
 
@@ -936,7 +1082,11 @@ mod tests {
     async fn a_dropped_close_still_stops_the_device() {
         use futures_util::FutureExt as _;
         let fixture = ManagerFixture::ready(&["Pixel"]).await;
-        let id = fixture.manager.open("Pixel").await.unwrap();
+        let id = fixture
+            .manager
+            .open(Platform::Android, "Pixel")
+            .await
+            .unwrap();
         fixture.wait_state(&id, DeviceState::Ready).await;
         let pid = fixture.pid_of(&id);
         // One poll starts the stop; the RPC or MCP request is then dropped mid-stop.
@@ -948,7 +1098,11 @@ mod tests {
         .await
         .expect("the stop finishes without its caller");
         crate::device::android::testing::wait_until(|| !process_alive(pid)).await;
-        let next = fixture.manager.open("Pixel").await.unwrap();
+        let next = fixture
+            .manager
+            .open(Platform::Android, "Pixel")
+            .await
+            .unwrap();
         fixture.wait_state(&next, DeviceState::Ready).await;
         tokio::time::timeout(Duration::from_secs(20), fixture.manager.shutdown())
             .await
@@ -958,7 +1112,11 @@ mod tests {
     #[tokio::test]
     async fn closing_a_crashed_device_waits_for_its_process() {
         let fixture = ManagerFixture::ready(&["Pixel"]).await;
-        let id = fixture.manager.open("Pixel").await.unwrap();
+        let id = fixture
+            .manager
+            .open(Platform::Android, "Pixel")
+            .await
+            .unwrap();
         fixture.wait_state(&id, DeviceState::Ready).await;
         let pid = fixture.pid_of(&id);
         kill_process(pid);
@@ -983,7 +1141,11 @@ mod tests {
             )
         })
         .await;
-        let id = fixture.manager.open("Pixel").await.unwrap();
+        let id = fixture
+            .manager
+            .open(Platform::Android, "Pixel")
+            .await
+            .unwrap();
         let started = Instant::now();
         let result = fixture
             .manager
@@ -1006,7 +1168,11 @@ mod tests {
     #[tokio::test]
     async fn ready_device_exposes_its_client_and_orientation() {
         let fixture = ManagerFixture::ready(&["Pixel"]).await;
-        let id = fixture.manager.open("Pixel").await.unwrap();
+        let id = fixture
+            .manager
+            .open(Platform::Android, "Pixel")
+            .await
+            .unwrap();
         assert!(matches!(
             fixture.manager.inner.running(&id),
             Err(DeviceOpError::NotReady(_))
@@ -1098,9 +1264,16 @@ mod tests {
         assert_eq!(sdk["_tag"], "DeviceSdkUnavailableError");
         assert_eq!(sdk["kind"], "noAvds");
         assert_eq!(sdk["message"], "Create a virtual device.");
-        let unknown = DeviceOpError::UnknownAvd("Nope".into()).to_rpc_error();
+        let unknown = DeviceOpError::UnknownImage {
+            platform: Platform::Android,
+            image_id: "Nope".into(),
+        }
+        .to_rpc_error();
         assert_eq!(unknown["_tag"], "DeviceNotFoundError");
-        assert!(unknown["message"].as_str().unwrap().contains("\"Nope\""));
+        assert_eq!(
+            unknown["message"],
+            "No virtual device named \"Nope\" exists on the server. Choose one from the device list, or create it in Android Studio's Device Manager."
+        );
         let not_ready = DeviceOpError::NotReady(DeviceState::Booting).to_rpc_error();
         assert_eq!(not_ready["_tag"], "DeviceNotReadyError");
         assert_eq!(not_ready["state"], "booting");
@@ -1154,6 +1327,252 @@ mod tests {
         assert_eq!(
             launch_failure(&LaunchFailure::Unresponsive("x".into())).0,
             "unresponsive"
+        );
+    }
+}
+
+#[cfg(test)]
+mod platform_tests {
+    use super::{
+        fake_backend::{FakeBackend, fake_manager, wait_state},
+        *,
+    };
+    use crate::device::catalog::Platform;
+
+    #[tokio::test]
+    async fn one_device_per_platform_runs_side_by_side() {
+        let android = FakeBackend::new(Platform::Android, &["Pixel"]);
+        let ios = FakeBackend::new(Platform::Ios, &["UDID-1", "UDID-2"]);
+        let (manager, _enabled) = fake_manager(vec![android.clone(), ios.clone()]);
+        let a = manager.open(Platform::Android, "Pixel").await.unwrap();
+        let i = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        wait_state(&manager, &a, DeviceState::Ready).await;
+        let ios_ready = wait_state(&manager, &i, DeviceState::Ready).await;
+        assert_eq!(
+            (ios_ready.platform, ios_ready.image_id.as_str()),
+            (Platform::Ios, "UDID-1")
+        );
+        assert!(matches!(
+            manager.open(Platform::Ios, "UDID-2").await,
+            Err(DeviceOpError::Limit { running }) if running == "UDID-1"
+        ));
+        manager.shutdown().await;
+        assert_eq!((android.stops(), ios.stops()), (1, 1));
+    }
+
+    #[tokio::test]
+    async fn a_busy_image_is_refused_and_leaves_no_slot() {
+        let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
+        ios.busy("UDID-1");
+        let (manager, _enabled) = fake_manager(vec![ios.clone()]);
+        assert!(matches!(
+            manager.open(Platform::Ios, "UDID-1").await,
+            Err(DeviceOpError::Busy { image_id }) if image_id == "UDID-1"
+        ));
+        assert!(manager.catalog().borrow().devices.is_empty());
+        assert_eq!(ios.launches(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_image_found_busy_at_launch_fails_its_slot() {
+        let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
+        ios.busy_on_launch("UDID-1");
+        let (manager, _enabled) = fake_manager(vec![ios.clone()]);
+        let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        let failed = wait_state(&manager, &id, DeviceState::Failed).await;
+        assert_eq!(failed.failure.as_deref(), Some("in use outside BibCode"));
+        assert_eq!(ios.stops(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_unrequested_exit_fails_only_that_device() {
+        let android = FakeBackend::new(Platform::Android, &["Pixel"]);
+        let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
+        let (manager, _enabled) = fake_manager(vec![android.clone(), ios.clone()]);
+        let a = manager.open(Platform::Android, "Pixel").await.unwrap();
+        let i = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        wait_state(&manager, &i, DeviceState::Ready).await;
+        ios.exit_running(0, "Shutdown outside BibCode");
+        let failed = wait_state(&manager, &i, DeviceState::Failed).await;
+        assert_eq!(failed.failure.as_deref(), Some("Shutdown outside BibCode"));
+        assert_eq!(ios.stops(), 1);
+        assert_eq!(
+            wait_state(&manager, &a, DeviceState::Ready).await.state,
+            DeviceState::Ready
+        );
+        manager.shutdown().await;
+        assert_eq!(android.stops(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_catalog_lists_each_platform_with_its_own_availability() {
+        let android = FakeBackend::new(Platform::Android, &[]);
+        let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
+        let (manager, _enabled) = fake_manager(vec![android.clone(), ios.clone()]);
+        manager.refresh_now().await;
+        let catalog = manager.catalog().borrow().clone();
+        let kinds: Vec<_> = catalog
+            .platforms
+            .iter()
+            .map(|p| (p.platform, p.availability.kind))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (Platform::Android, AvailabilityKind::NoAvds),
+                (Platform::Ios, AvailabilityKind::Ready)
+            ]
+        );
+        assert_eq!(catalog.platforms[1].images[0].id, "UDID-1");
+        assert!(ios.discover_calls() >= 1 && android.discover_calls() >= 1);
+        let json = serde_json::to_value(&catalog).unwrap();
+        assert_eq!(json["platforms"][0]["platform"], "android");
+        assert_eq!(json["platforms"][1]["platform"], "ios");
+        assert_eq!(
+            json["platforms"][1]["images"][0],
+            serde_json::json!({ "id": "UDID-1", "displayName": "UDID-1" })
+        );
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn the_catalog_starts_with_each_platform_looking() {
+        let android = FakeBackend::new(Platform::Android, &["Pixel"]);
+        let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
+        let (manager, enabled) = fake_manager(vec![android, ios]);
+        // Off, so nothing discovers before the first look.
+        enabled.send(false).unwrap();
+        let catalog = manager.catalog().borrow().clone();
+        assert_eq!(
+            catalog
+                .platforms
+                .iter()
+                .map(|p| (p.platform, p.availability.message.as_str(), p.images.len()))
+                .collect::<Vec<_>>(),
+            vec![
+                (Platform::Android, "Looking for fake devices.", 0),
+                (Platform::Ios, "Looking for fake devices.", 0)
+            ]
+        );
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_snapshot_reports_whether_its_device_can_rotate() {
+        let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
+        ios.without_rotation();
+        ios.never_boots();
+        let (manager, _enabled) = fake_manager(vec![ios.clone()]);
+        let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        let booting = wait_state(&manager, &id, DeviceState::Booting).await;
+        assert!(booting.can_rotate);
+        manager.close(&id).await.unwrap();
+
+        let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
+        ios.without_rotation();
+        let (manager, _enabled) = fake_manager(vec![ios]);
+        let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        let ready = wait_state(&manager, &id, DeviceState::Ready).await;
+        assert!(!ready.can_rotate);
+        assert_eq!(
+            serde_json::to_value(&ready).unwrap()["canRotate"],
+            serde_json::json!(false)
+        );
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn an_unconfigured_or_unknown_image_is_refused() {
+        let android = FakeBackend::new(Platform::Android, &["Pixel"]);
+        let (manager, _enabled) = fake_manager(vec![android.clone()]);
+        assert!(matches!(
+            manager.open(Platform::Android, "Nope").await,
+            Err(DeviceOpError::UnknownImage { platform: Platform::Android, ref image_id }) if image_id == "Nope"
+        ));
+        assert!(matches!(
+            manager.open(Platform::Ios, "UDID-1").await,
+            Err(DeviceOpError::UnknownImage {
+                platform: Platform::Ios,
+                ..
+            })
+        ));
+        assert_eq!(android.launches(), 0);
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn closing_a_booting_fake_device_cancels_its_launch() {
+        let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
+        ios.never_boots();
+        let (manager, _enabled) = fake_manager(vec![ios.clone()]);
+        let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        wait_state(&manager, &id, DeviceState::Booting).await;
+        manager.close(&id).await.unwrap();
+        assert_eq!(
+            manager.catalog().borrow().devices[0].state,
+            DeviceState::Stopped
+        );
+        assert!(manager.open(Platform::Ios, "UDID-1").await.is_ok());
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn turning_the_setting_off_stops_every_platform() {
+        let android = FakeBackend::new(Platform::Android, &["Pixel"]);
+        let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
+        let (manager, enabled) = fake_manager(vec![android.clone(), ios.clone()]);
+        let a = manager.open(Platform::Android, "Pixel").await.unwrap();
+        let i = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        wait_state(&manager, &a, DeviceState::Ready).await;
+        wait_state(&manager, &i, DeviceState::Ready).await;
+        enabled.send(false).unwrap();
+        wait_state(&manager, &a, DeviceState::Stopped).await;
+        wait_state(&manager, &i, DeviceState::Stopped).await;
+        assert_eq!((android.stops(), ios.stops()), (1, 1));
+        assert!(matches!(
+            manager.open(Platform::Ios, "UDID-1").await,
+            Err(DeviceOpError::Disabled)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_dropped_close_still_stops_a_fake_device() {
+        use futures_util::FutureExt as _;
+        let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
+        let (manager, _enabled) = fake_manager(vec![ios.clone()]);
+        let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        wait_state(&manager, &id, DeviceState::Ready).await;
+        assert!(manager.close(&id).now_or_never().is_none());
+        wait_state(&manager, &id, DeviceState::Stopped).await;
+        assert_eq!(ios.stops(), 1);
+    }
+
+    #[test]
+    fn busy_and_unknown_image_errors_name_the_platform() {
+        assert_eq!(
+            DeviceOpError::Busy {
+                image_id: "UDID-1".into()
+            }
+            .to_rpc_error(),
+            serde_json::json!({
+                "_tag": "DeviceBusyError",
+                "imageId": "UDID-1",
+                "message": "This simulator is already running outside BibCode. Shut it down in Simulator, then open it here.",
+            })
+        );
+        let ios = DeviceOpError::UnknownImage {
+            platform: Platform::Ios,
+            image_id: "X".into(),
+        }
+        .to_rpc_error();
+        assert_eq!(ios["_tag"], "DeviceNotFoundError");
+        assert_eq!(
+            ios["message"],
+            "No simulator with id \"X\" exists on the server. Choose one from the device list."
+        );
+        assert_eq!(
+            launch_failure(&LaunchFailure::Busy),
+            ("busy", "in use outside BibCode".to_owned())
         );
     }
 }

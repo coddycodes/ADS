@@ -10,7 +10,9 @@ use tokio::sync::watch;
 use crate::{
     RpcRegistry, RpcResult, RpcStreamChunk,
     device::{
-        DeviceManager, DeviceOpError, catalog::Orientation, frames::FrameSubscription,
+        DeviceManager, DeviceOpError,
+        catalog::{Orientation, Platform},
+        frames::FrameSubscription,
         input::DeviceInputEvent,
     },
     rpc::RpcSessionContext,
@@ -136,7 +138,11 @@ pub fn register_device_rpc(registry: &mut RpcRegistry, devices: DeviceManager) {
         &devices,
         |devices, payload| async move {
             let input: DeviceOpenInput = decode(payload)?;
-            let device_id = devices.open(&input.avd_name).await.map_err(rpc_error)?;
+            // Task 4 moves the input to `{ platform, imageId }`; until then it opens an AVD.
+            let device_id = devices
+                .open(Platform::Android, &input.avd_name)
+                .await
+                .map_err(rpc_error)?;
             Ok(json!({ "deviceId": device_id }))
         },
     );
@@ -388,9 +394,12 @@ mod tests {
         let mut harness = Harness::start(fixture.manager.clone()).await;
         let catalog = harness.request("device.subscribeCatalog", json!({})).await;
         let ready = harness
-            .chunk_until(&catalog, |value| value["availability"]["kind"] == "ready")
+            .chunk_until(&catalog, |value| {
+                value["platforms"][0]["availability"]["kind"] == "ready"
+            })
             .await;
-        assert_eq!(ready["avds"][0]["name"], "Pixel");
+        assert_eq!(ready["platforms"][0]["platform"], "android");
+        assert_eq!(ready["platforms"][0]["images"][0]["id"], "Pixel");
         let opened = harness
             .call("device.open", json!({ "avdName": "Pixel" }))
             .await

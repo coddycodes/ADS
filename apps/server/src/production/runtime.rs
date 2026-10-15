@@ -262,7 +262,7 @@ impl ProductionRuntime {
         );
         let device_manager =
             crate::device::DeviceManager::start(crate::device::DeviceManagerConfig {
-                backend: Box::new(android_devices),
+                backends: vec![Arc::new(android_devices)],
                 enabled: control.device_previews_enabled_signal(),
             });
         // Starting replays and compacts the findings file, so it runs off the async workers.
