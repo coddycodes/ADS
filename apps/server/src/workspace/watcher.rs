@@ -106,19 +106,23 @@ impl WorkspaceWatcher {
                         let current = directory_stamps(&root, &directories).await;
                         let changed = changed_paths(&previous, &current);
                         previous = current;
-                        if !changed.is_empty() {
+                        let quiet = changed.is_empty();
+                        if !quiet {
                             pending.extend(changed);
                             // Arm the window on the first change of a burst and leave it alone.
-                            // Re-arming on every change lets sustained activity — a build, an
-                            // install, an agent writing files — push the flush out indefinitely,
-                            // because the window is shorter than the poll interval and so is always
-                            // pushed past the current tick.
+                            // Re-arming on every change would let sustained activity — a build, an
+                            // install, an agent writing files — push the flush out indefinitely.
                             if deadline.is_none() {
                                 deadline = Some(tokio::time::Instant::now() + coalesce_window);
                             }
                         }
-                        if deadline.is_some_and(|when| tokio::time::Instant::now() >= when)
-                            && !pending.is_empty()
+                        // A burst is announced once, at the first sweep that sees nothing new;
+                        // the window only bounds how long sustained change defers it. Every
+                        // announcement costs each subscriber a full re-list.
+                        if !pending.is_empty()
+                            && (quiet
+                                || deadline
+                                    .is_some_and(|when| tokio::time::Instant::now() >= when))
                         {
                             let event = WatchEvent {
                                 changed_paths: std::mem::take(&mut pending),

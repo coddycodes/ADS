@@ -298,6 +298,16 @@ impl WorkspaceSearchIndex {
         }
     }
 
+    /// Whether `other` lists exactly what this index lists: the same entries in the same order, and
+    /// the same truncation.
+    pub async fn same_entries(&self, other: &Self) -> bool {
+        if Arc::ptr_eq(&self.snapshot, &other.snapshot) {
+            return true;
+        }
+        let (left, right) = (self.snapshot.read().await, other.snapshot.read().await);
+        left.truncated == right.truncated && left.entries == right.entries
+    }
+
     /// Workspace-relative paths of every directory in the current snapshot.
     ///
     /// Change detection stats these directories rather than walking the tree: the snapshot is a set

@@ -2334,11 +2334,22 @@ something invalidates it:
   the directories the snapshot already lists rather than walking the tree,
   because adding, renaming, or removing an entry moves its parent directory's
   mtime while an in-place content edit does not. The first subscriber for a root
-  starts the sweep and the last one to leave stops it; the cached index is
-  dropped before the signal is sent, so a subscriber that re-lists on the signal
-  sees the new state. The event carries only `cwd` — the index stays the single
-  source of truth for entry data, so subscribers re-list rather than apply a
-  diff, which also keeps the payload independent of how many files changed;
+  starts the sweep and the last one to leave stops it. The sweep runs every two
+  seconds and reports a burst of changes once, at the first sweep that sees
+  nothing new; while changes keep arriving it reports about every ten seconds.
+  A report drops the cached index and rebuilds it before deciding whether to
+  signal, so a subscriber that re-lists on the signal sees the new state. It
+  stays silent only when the rebuilt entries (paths, kinds, ignored flags, and
+  truncation) match the list it last announced and nothing else (a mutation or
+  an explicit refresh) rebuilt the index since: an atomic save (write a
+  temporary file, rename it over the target) moves its directory but lists the
+  same entries, and every signal costs each subscriber a full re-read. A failed
+  rebuild is signalled. The rebuild holds a path admission and cancels its scan
+  when the workspace is lost, the last subscriber leaves, or the server shuts
+  down, so it holds up none of them. The event carries only `cwd` — the index
+  stays the single source of truth for entry data, so subscribers re-list rather
+  than apply a diff, which also keeps the payload independent of how many files
+  changed;
 - `projects.listEntries` accepts an optional boolean `refresh`. Omitting it, or
   sending `false`, serves the retained index and preserves compatibility for
   older clients. `refresh: true` drops the cached index before listing, so the

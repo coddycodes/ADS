@@ -744,6 +744,122 @@ async fn entry_change_subscribers_share_one_sweep_per_root() {
         .expect("second signal");
 }
 
+/// The save a formatter or editor makes: write a sibling temp file, then rename it over the target.
+async fn save_atomically(root: &Path, relative: &str, contents: &[u8]) {
+    let target = root.join(relative);
+    let temp = target.with_extension("bibcode-save-tmp");
+    tokio::fs::write(&temp, contents).await.expect("temp file");
+    tokio::fs::rename(&temp, &target)
+        .await
+        .expect("rename over target");
+}
+
+/// An atomic save moves the parent directory's mtime twice but leaves the entry list unchanged.
+///
+/// Every signal makes each subscriber re-read the whole list, so a formatter run over a large
+/// workspace used to push the full list once per sweep while nothing a client shows had changed
+/// (#111).
+#[tokio::test]
+async fn atomic_saves_that_keep_the_entry_list_do_not_signal() {
+    let root = TempDir::new().expect("root");
+    write(root.path(), "nested/tracked.txt", b"tracked").await;
+    let rpc = WorkspaceRpc::new(WorkspaceService::default())
+        .with_watch_timing(Duration::from_millis(25), Duration::from_millis(20));
+    let mut changes = rpc
+        .subscribe_entry_changes(root.path())
+        .await
+        .expect("subscription");
+
+    for round in 0..3 {
+        save_atomically(
+            root.path(),
+            "nested/tracked.txt",
+            format!("{round}").as_bytes(),
+        )
+        .await;
+        tokio::time::sleep(Duration::from_millis(60)).await;
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), changes.recv())
+            .await
+            .is_err(),
+        "an unchanged entry list must not be announced"
+    );
+
+    // The same subscription still reports a change a client would show.
+    write(root.path(), "nested/added.txt", b"added").await;
+    tokio::time::timeout(Duration::from_secs(10), changes.recv())
+        .await
+        .expect("change signal timeout")
+        .expect("change signal");
+}
+
+/// Equal paths are not enough: an atomic `.gitignore` save that reclassifies an entry changes what
+/// the tree shows, so it must still be announced.
+#[tokio::test]
+async fn an_atomic_gitignore_save_that_reclassifies_entries_still_signals() {
+    let root = TempDir::new().expect("root");
+    git_in(root.path(), &["init", "-b", "main"]);
+    write(root.path(), ".gitignore", b"").await;
+    write(root.path(), "build.log", b"log").await;
+    let rpc = WorkspaceRpc::new(WorkspaceService::default())
+        .with_watch_timing(Duration::from_millis(25), Duration::from_millis(20));
+    let mut changes = rpc
+        .subscribe_entry_changes(root.path())
+        .await
+        .expect("subscription");
+
+    save_atomically(root.path(), ".gitignore", b"build.log\n").await;
+
+    tokio::time::timeout(Duration::from_secs(10), changes.recv())
+        .await
+        .expect("reclassification signal timeout")
+        .expect("reclassification signal");
+}
+
+/// A list rebuilt outside the sweep may show more than the sweep last announced.
+///
+/// A rescan or a mutation rebuilds the index and the panel shows that list. If what it showed is
+/// undone before the next sweep, the sweep's rebuild matches its last announcement while the panel
+/// does not, so the sweep must announce rather than treat the rebuild as old news.
+#[tokio::test]
+async fn a_list_rebuilt_outside_the_sweep_is_corrected_by_the_next_announcement() {
+    let root = TempDir::new().expect("root");
+    write(root.path(), "nested/tracked.txt", b"tracked").await;
+    let rpc = WorkspaceRpc::new(WorkspaceService::default())
+        .with_watch_timing(Duration::from_millis(300), Duration::from_secs(5));
+    let cwd = path_string(root.path());
+    let mut changes = rpc
+        .subscribe_entry_changes(root.path())
+        .await
+        .expect("subscription");
+
+    write(root.path(), "nested/transient.txt", b"transient").await;
+    let rescanned = rpc
+        .handle(
+            "projects.listEntries",
+            json!({ "cwd": cwd, "refresh": true }),
+        )
+        .await
+        .expect("rescan");
+    assert!(
+        rescanned["entries"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .any(|entry| entry["path"] == "nested/transient.txt"),
+        "the rescan shows the transient file"
+    );
+    tokio::fs::remove_file(root.path().join("nested/transient.txt"))
+        .await
+        .expect("remove transient file");
+
+    tokio::time::timeout(Duration::from_secs(5), changes.recv())
+        .await
+        .expect("correction signal timeout")
+        .expect("correction signal");
+}
+
 /// Supplies a fixed directory set, standing in for the workspace index.
 struct FixedScope(Vec<String>);
 
@@ -759,7 +875,9 @@ async fn watcher_reports_directories_whose_contents_changed_and_coalesces_bursts
     let root = TempDir::new().expect("root");
     write(root.path(), "nested/baseline.txt", b"baseline").await;
     let coalesce_window = Duration::from_millis(500);
-    let watcher = WorkspaceWatcher::new(Duration::from_millis(20), coalesce_window, 2);
+    // A burst ends at the first sweep that sees nothing new, so the sweep must be slower than the
+    // writes below for them to read as one burst.
+    let watcher = WorkspaceWatcher::new(Duration::from_millis(200), coalesce_window, 2);
     let mut subscription = watcher
         .watch(
             root.path().to_path_buf(),
@@ -849,6 +967,52 @@ async fn watcher_flushes_during_sustained_change_instead_of_starving() {
     assert!(
         event.is_ok_and(|received| received.is_some()),
         "a signal must arrive while changes are still arriving"
+    );
+    subscription.cancel();
+}
+
+/// A burst is announced once it stops, and a lone change is not held back by the window.
+///
+/// The window only bounds how long sustained change can defer a signal; a burst ends at the first
+/// sweep that sees nothing new. Every signal costs each open Files panel a full re-read, so a tool
+/// touching files for a few seconds must cost one read rather than one per sweep (#111).
+#[tokio::test]
+async fn watcher_announces_a_burst_once_it_stops_without_waiting_out_the_window() {
+    let root = TempDir::new().expect("root");
+    write(root.path(), "nested/seed.txt", b"seed").await;
+    let poll_interval = Duration::from_millis(200);
+    let watcher = WorkspaceWatcher::new(poll_interval, Duration::from_secs(5), 4);
+    let mut subscription = watcher
+        .watch(
+            root.path().to_path_buf(),
+            Arc::new(FixedScope(vec!["nested".to_owned()])),
+        )
+        .await;
+
+    write(root.path(), "nested/lone.txt", b"lone").await;
+    tokio::time::timeout(Duration::from_secs(2), subscription.recv())
+        .await
+        .expect("a lone change must not wait out the window")
+        .expect("lone change event");
+
+    // Faster than the sweep, so no sweep in between is quiet.
+    for sequence in 0..15 {
+        write(
+            root.path(),
+            &format!("nested/burst-{sequence}.txt"),
+            sequence.to_string().as_bytes(),
+        )
+        .await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::timeout(Duration::from_secs(2), subscription.recv())
+        .await
+        .expect("burst event timeout")
+        .expect("burst event");
+    tokio::time::sleep(poll_interval * 4).await;
+    assert!(
+        subscription.try_recv().is_err(),
+        "a burst must be announced once"
     );
     subscription.cancel();
 }
