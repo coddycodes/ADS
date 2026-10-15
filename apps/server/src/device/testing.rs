@@ -639,6 +639,21 @@ pub(crate) struct FakeSdk {
     list_avds_delay_secs: u32,
     /// The local port `adb forward tcp:0 …` reports, where a fake scrcpy source listens.
     adb_forward_port: Option<u16>,
+    /// What `adb shell sha256sum` reports for the device's scrcpy-server jar.
+    remote_jar_sha256: String,
+    scrcpy: ScrcpyStub,
+}
+
+/// What the fake `adb shell CLASSPATH=… app_process …` (scrcpy-server) does.
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+pub(crate) enum ScrcpyStub {
+    /// Runs until killed.
+    Runs,
+    /// Runs until [`FakeSdk::end_scrcpy_server`], then exits with code 3.
+    ExitsWhenTold,
+    /// Prints the message to stderr and exits with code 1.
+    FailsWith(&'static str),
 }
 
 #[cfg(unix)]
@@ -654,6 +669,8 @@ impl FakeSdk {
             discovery_index: 0,
             list_avds_delay_secs: 0,
             adb_forward_port: None,
+            remote_jar_sha256: "0".repeat(64),
+            scrcpy: ScrcpyStub::Runs,
         }
     }
 
@@ -703,6 +720,26 @@ impl FakeSdk {
     pub(crate) fn adb_forwards_to(mut self, port: u16) -> Self {
         self.adb_forward_port = Some(port);
         self
+    }
+
+    /// `adb shell sha256sum` reports `hash` for the device's scrcpy-server jar.
+    pub(crate) fn remote_jar_sha256(mut self, hash: &str) -> Self {
+        hash.clone_into(&mut self.remote_jar_sha256);
+        self
+    }
+
+    pub(crate) fn scrcpy_stub(mut self, stub: ScrcpyStub) -> Self {
+        self.scrcpy = stub;
+        self
+    }
+
+    fn scrcpy_end_file(&self) -> PathBuf {
+        self.dir.path().join("scrcpy-end")
+    }
+
+    /// Makes an [`ScrcpyStub::ExitsWhenTold`] server exit.
+    pub(crate) fn end_scrcpy_server(&self) {
+        std::fs::write(self.scrcpy_end_file(), "").expect("write scrcpy end file");
     }
 
     pub(crate) fn write(self) -> Self {
@@ -780,18 +817,28 @@ impl FakeSdk {
         }
     }
 
-    /// Logs every call, then: `push` succeeds; `shell sha256sum` reports a hash that never
-    /// matches, so the jar is always pushed; `shell CLASSPATH=…` (scrcpy-server) runs until
-    /// killed; `forward tcp:0` prints the configured port; `forward --remove` succeeds.
+    /// Logs every call, then: `push` succeeds; `shell sha256sum` reports the configured hash
+    /// (by default one that never matches, so the jar is pushed); `shell CLASSPATH=…`
+    /// (scrcpy-server) follows the [`ScrcpyStub`]; `forward tcp:0` prints the configured
+    /// port; `forward --remove` succeeds.
     fn adb_script(&self) -> String {
         let counter = self.dir.path().join("boot-polls");
         let after = self.boot_completed_after.unwrap_or(0);
         let forward_port = self
             .adb_forward_port
             .map_or_else(String::new, |port| port.to_string());
+        let scrcpy = match self.scrcpy {
+            ScrcpyStub::Runs => "exec sleep 600".to_owned(),
+            ScrcpyStub::ExitsWhenTold => format!(
+                "while [ ! -e \"{}\" ]; do sleep 0.05; done; exit 3",
+                self.scrcpy_end_file().display()
+            ),
+            ScrcpyStub::FailsWith(message) => format!("echo '{message}' >&2; exit 1"),
+        };
         format!(
-            "#!/bin/sh\necho \"$*\" >> \"{log}\"\n[ \"$1\" = \"-s\" ] && shift 2\ncase \"$1 $2 $3\" in\n  wait-for-device*) exit 0 ;;\n  'shell getprop sys.boot_completed')\n    polls=$(( $(cat \"{counter}\" 2>/dev/null || echo 0) + 1 ))\n    echo \"$polls\" > \"{counter}\"\n    if [ {after} -gt 0 ] && [ \"$polls\" -ge {after} ]; then echo 1; else echo; fi ;;\n  push*) exit 0 ;;\n  'shell sha256sum'*) echo \"0000000000000000000000000000000000000000000000000000000000000000  $3\" ;;\n  'shell CLASSPATH='*) exec sleep 600 ;;\n  'forward tcp:0'*) echo \"{forward_port}\" ;;\n  'forward --remove'*) exit 0 ;;\nesac\nexit 0\n",
+            "#!/bin/sh\necho \"$*\" >> \"{log}\"\n[ \"$1\" = \"-s\" ] && shift 2\ncase \"$1 $2 $3\" in\n  wait-for-device*) exit 0 ;;\n  'shell getprop sys.boot_completed')\n    polls=$(( $(cat \"{counter}\" 2>/dev/null || echo 0) + 1 ))\n    echo \"$polls\" > \"{counter}\"\n    if [ {after} -gt 0 ] && [ \"$polls\" -ge {after} ]; then echo 1; else echo; fi ;;\n  push*) exit 0 ;;\n  'shell sha256sum'*) echo \"{remote_hash}  $3\" ;;\n  'shell CLASSPATH='*) {scrcpy} ;;\n  'forward tcp:0'*) echo \"{forward_port}\" ;;\n  'forward --remove'*) exit 0 ;;\nesac\nexit 0\n",
             log = self.adb_log_file().display(),
+            remote_hash = self.remote_jar_sha256,
             counter = counter.display()
         )
     }
@@ -1072,6 +1119,7 @@ pub(crate) async fn wait_until(done: impl Fn() -> bool) {
 pub(crate) struct FakeScrcpySource {
     pub(crate) port: u16,
     control: Arc<Mutex<Vec<u8>>>,
+    close_video: Arc<tokio::sync::Notify>,
 }
 
 /// The display size the fake source's session header reports.
@@ -1086,7 +1134,8 @@ impl FakeScrcpySource {
             .expect("bind fake scrcpy source");
         let port = listener.local_addr().expect("fake scrcpy address").port();
         let control = Arc::<Mutex<Vec<u8>>>::default();
-        let recorded = control.clone();
+        let close_video = Arc::new(tokio::sync::Notify::new());
+        let (recorded, close) = (control.clone(), close_video.clone());
         tokio::spawn(async move {
             let (mut video, _) = listener.accept().await.expect("video connection");
             let mut preamble = vec![0_u8];
@@ -1094,22 +1143,34 @@ impl FakeScrcpySource {
             preamble.extend(session_packet(FAKE_SCRCPY_SIZE.0, FAKE_SCRCPY_SIZE.1));
             video.write_all(&preamble).await.expect("write preamble");
             let (mut control, _) = listener.accept().await.expect("control connection");
+            tokio::spawn(async move {
+                let mut buffer = [0_u8; 64];
+                while let Ok(read) = control.read(&mut buffer).await {
+                    if read == 0 {
+                        break;
+                    }
+                    recorded
+                        .lock()
+                        .expect("fake control lock")
+                        .extend(&buffer[..read]);
+                }
+            });
             for packet in packets {
                 video.write_all(&packet).await.expect("write packet");
             }
-            let mut buffer = [0_u8; 64];
-            while let Ok(read) = control.read(&mut buffer).await {
-                if read == 0 {
-                    break;
-                }
-                recorded
-                    .lock()
-                    .expect("fake control lock")
-                    .extend(&buffer[..read]);
-            }
+            close.notified().await;
             drop(video);
         });
-        Self { port, control }
+        Self {
+            port,
+            control,
+            close_video,
+        }
+    }
+
+    /// Closes the video connection, as a server that dies or breaks does.
+    pub(crate) fn close_video(&self) {
+        self.close_video.notify_one();
     }
 
     /// Waits up to ten seconds for the first control bytes and returns all received so far.

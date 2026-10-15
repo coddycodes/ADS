@@ -14,6 +14,7 @@ use std::{
     net::Ipv4Addr,
     path::{Path, PathBuf},
     process::Stdio,
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 
@@ -22,16 +23,20 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
     sync::mpsc,
-    task::JoinHandle,
+    task::AbortHandle,
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
 
-use super::DeviceError;
+use super::{
+    DeviceError,
+    stderr_tail::{STDERR_DRAIN_GRACE, StderrTail},
+};
 use crate::{
     diagnostics::{ProcessAttributionRegistry, profiler::exits},
     process::{
-        RegisteredHelper, configure_supervised_background_command_wrap, spawn_registered_helper,
+        HelperSpawnError, RegisteredHelper, configure_supervised_background_command_wrap,
+        spawn_registered_helper,
         supervised::{SupervisedOverflow, SupervisedRunRequest, run_supervised},
     },
 };
@@ -70,6 +75,9 @@ const ADB_TIMEOUT: Duration = Duration::from_secs(10);
 const ADB_PUSH_TIMEOUT: Duration = Duration::from_secs(60);
 const ADB_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
 const ADB_MAX_OUTPUT_BYTES: usize = 4 * 1024;
+/// How long a server whose stream broke may take to be seen exiting before a stop.
+const SERVER_EXIT_GRACE: Duration = Duration::from_secs(1);
+const SERVER_EXIT_POLL: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum UnitKind {
@@ -173,20 +181,33 @@ pub(crate) fn server_args(scid: u32) -> Vec<String> {
         "video_bit_rate=4000000".into(),
         "max_fps=30".into(),
         "send_device_meta=false".into(),
+        // Nothing reads the control socket, so the server must not write clipboard changes.
+        "clipboard_autosync=false".into(),
     ]
     .into()
 }
 
+/// Why `units` closed.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum StreamEnd {
+    /// Nobody received units any more.
+    ConsumerLeft,
+    /// The server closed the stream or sent one that cannot be read; it may have died.
+    Failed(DeviceError),
+}
+
 /// A running scrcpy-server streaming one device's display as H.264 units. Call
-/// [`stop`](Self::stop) to end it: dropping it kills the server but leaves the forward.
+/// [`stop`](Self::stop) to end it. Dropping it instead also stops the reader, kills the
+/// server, and removes the forward in the background, but reports nothing.
 pub(crate) struct ScrcpySession {
     pub units: mpsc::Receiver<VideoUnit>,
     pub codec: CodecInfo,
     control: TcpStream,
     helper: RegisteredHelper,
-    /// The adb executable, the device serial, and the loopback port forwarded to the server.
-    forward: (PathBuf, String, u16),
-    reader: JoinHandle<()>,
+    forward: Forward,
+    reader: AbortOnDrop,
+    ended: Arc<OnceLock<StreamEnd>>,
+    stderr: StderrTail,
 }
 
 impl ScrcpySession {
@@ -202,15 +223,40 @@ impl ScrcpySession {
         let scid = getrandom::u32()
             .map_err(|error| DeviceError::Io(format!("no random scrcpy id: {error}")))?
             & 0x7fff_ffff;
-        let port = forward(adb, serial, scid).await?;
-        match launch(adb, serial, registry, scid, port).await {
-            Ok((helper, codec, video, control)) => {
+        // Removed in the background if this future is dropped before it finishes.
+        let forward = Forward {
+            port: forward(adb, serial, scid).await?,
+            adb: adb.to_owned(),
+            serial: serial.to_owned(),
+            removed: false,
+        };
+        match launch(adb, serial, registry, scid, forward.port).await {
+            Ok(Launched {
+                helper,
+                codec,
+                video,
+                control,
+                stderr,
+            }) => {
                 let (sender, units) = mpsc::channel(UNIT_QUEUE);
-                let reader = tokio::spawn(async move {
-                    let mut video = video;
-                    match read_units(&mut video, &sender).await {
-                        Ok(()) => tracing::debug!("scrcpy video consumer went away"),
-                        Err(error) => tracing::warn!(%error, "scrcpy video stream ended"),
+                let ended = Arc::new(OnceLock::new());
+                let reader = tokio::spawn({
+                    let ended = ended.clone();
+                    async move {
+                        let mut video = video;
+                        let end = match read_units(&mut video, &sender).await {
+                            Ok(()) => {
+                                tracing::debug!("scrcpy video consumer went away");
+                                StreamEnd::ConsumerLeft
+                            }
+                            Err(error) => {
+                                tracing::warn!(%error, "scrcpy video stream ended");
+                                StreamEnd::Failed(error)
+                            }
+                        };
+                        // Set before `sender` drops, so a closed `units` always has an end.
+                        let _ = ended.set(end);
+                        drop(sender);
                     }
                 });
                 Ok(Self {
@@ -218,16 +264,23 @@ impl ScrcpySession {
                     codec,
                     control,
                     helper,
-                    forward: (adb.to_owned(), serial.to_owned(), port),
-                    reader,
+                    forward,
+                    reader: AbortOnDrop(reader.abort_handle()),
+                    ended,
+                    stderr,
                 })
             }
             Err(error) => {
                 tracing::warn!(%error, "scrcpy-server failed to start");
-                remove_forward(adb, serial, port).await;
+                forward.remove().await;
                 Err(error)
             }
         }
+    }
+
+    /// How the unit stream ended; `None` while it runs. Set before `units` closes.
+    pub(crate) fn ended(&self) -> Option<StreamEnd> {
+        self.ended.get().cloned()
     }
 
     /// Asks the server to restart its encoder, which then sends a config and a key unit.
@@ -238,21 +291,38 @@ impl ScrcpySession {
             .map_err(|error| DeviceError::Io(format!("scrcpy control socket: {error}")))
     }
 
-    /// Closes the sockets, ends the server, and removes the forward.
+    /// Closes the sockets, ends the server, and removes the forward. A server that died on
+    /// its own is reported as an exit nobody asked for.
     pub(crate) async fn stop(self) {
         let Self {
             control,
             helper,
-            forward: (adb, serial, port),
+            forward,
             reader,
+            ended,
+            stderr,
             ..
         } = self;
+        if let Some(StreamEnd::Failed(error)) = ended.get() {
+            // A dying server breaks its stream first; give its exit a moment to show.
+            let deadline = Instant::now() + SERVER_EXIT_GRACE;
+            while helper.exited().is_none() && Instant::now() < deadline {
+                tokio::time::sleep(SERVER_EXIT_POLL).await;
+            }
+            if helper.exited().is_none() {
+                tracing::warn!(
+                    %error,
+                    stderr = stderr.text().unwrap_or_default(),
+                    "scrcpy video stream failed while scrcpy-server still ran"
+                );
+            }
+        }
         // Closing the sockets alone makes the server exit, so the stop is noted first.
         note_stop(&helper);
-        reader.abort();
+        drop(reader);
         drop(control);
         helper.terminate().await;
-        remove_forward(&adb, &serial, port).await;
+        forward.remove().await;
     }
 }
 
@@ -293,28 +363,56 @@ fn read_error(error: std::io::Error) -> DeviceError {
     DeviceError::Io(format!("scrcpy video socket: {error}"))
 }
 
+struct Launched {
+    helper: RegisteredHelper,
+    codec: CodecInfo,
+    video: TcpStream,
+    control: TcpStream,
+    stderr: StderrTail,
+}
+
 /// Starts the server and opens its sockets in scrcpy's order: video (which answers with a
-/// dummy byte once the server listens), then control; then reads the stream headers.
+/// dummy byte once the server listens), then control; then reads the stream headers. A
+/// failure carries the end of the server's stderr.
 async fn launch(
     adb: &Path,
     serial: &str,
     registry: &ProcessAttributionRegistry,
     scid: u32,
     port: u16,
-) -> Result<(RegisteredHelper, CodecInfo, TcpStream, TcpStream), DeviceError> {
+) -> Result<Launched, DeviceError> {
     let mut command = CommandWrap::with_new(adb, |command| {
         command
             .args(["-s", serial, "shell"])
             .args(server_args(scid))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
     });
     configure_supervised_background_command_wrap(&mut command);
     let exe = adb.to_string_lossy().into_owned();
-    let helper = spawn_registered_helper(command, exe, HELPER_LABEL, registry)
-        .await
-        .map_err(|error| DeviceError::Io(format!("could not start scrcpy-server: {error}")))?;
+    let stderr = StderrTail::default();
+    let mut helper = match spawn_registered_helper(command, exe, HELPER_LABEL, registry).await {
+        Ok(helper) => helper,
+        Err(HelperSpawnError::ExitedEarly {
+            status,
+            stderr: pipe,
+            ..
+        }) => {
+            if let Some(pipe) = pipe {
+                let _ = tokio::time::timeout(STDERR_DRAIN_GRACE, stderr.drain(pipe)).await;
+            }
+            let status = status.map_or_else(|| "exited".to_owned(), |status| status.to_string());
+            let error = DeviceError::Io(format!("scrcpy-server exited while starting: {status}"));
+            return Err(with_stderr(error, &stderr));
+        }
+        Err(error) => {
+            return Err(DeviceError::Io(format!(
+                "could not start scrcpy-server: {error}"
+            )));
+        }
+    };
+    let drain = helper.child.stderr().take().map(|pipe| stderr.drain(pipe));
     // The sockets outlive the attempt so a failure notes the stop before closing them.
     let (mut video_socket, mut control_socket) = (None, None);
     let connected = async {
@@ -342,14 +440,82 @@ async fn launch(
     }
     .await;
     match (connected, video_socket, control_socket) {
-        (Ok(codec), Some(video), Some(control)) => Ok((helper, codec, video, control)),
+        (Ok(codec), Some(video), Some(control)) => Ok(Launched {
+            helper,
+            codec,
+            video,
+            control,
+            stderr,
+        }),
         (connected, video, control) => {
             note_stop(&helper);
             drop((video, control));
             helper.terminate().await;
-            Err(connected.err().unwrap_or_else(|| {
+            if let Some(drain) = drain {
+                let _ = tokio::time::timeout(STDERR_DRAIN_GRACE, drain).await;
+            }
+            let error = connected.err().unwrap_or_else(|| {
                 DeviceError::Protocol("scrcpy sockets missing after connecting".to_owned())
-            }))
+            });
+            Err(with_stderr(error, &stderr))
+        }
+    }
+}
+
+/// `error` followed by what the server last wrote to stderr, if anything.
+fn with_stderr(error: DeviceError, stderr: &StderrTail) -> DeviceError {
+    let Some(tail) = stderr.text() else {
+        return error;
+    };
+    match error {
+        DeviceError::Io(message) => DeviceError::Io(format!("{message}; scrcpy-server: {tail}")),
+        DeviceError::Protocol(message) => {
+            DeviceError::Protocol(format!("{message}; scrcpy-server: {tail}"))
+        }
+        other @ DeviceError::Grpc(_) => other,
+    }
+}
+
+/// Aborts the reader task when the session goes away.
+struct AbortOnDrop(AbortHandle);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// The loopback port forwarded to the server: removed by [`remove`](Self::remove), or in the
+/// background when dropped (a cancelled start, or a session dropped without `stop`).
+struct Forward {
+    adb: PathBuf,
+    serial: String,
+    port: u16,
+    removed: bool,
+}
+
+impl Forward {
+    async fn remove(mut self) {
+        self.removed = true;
+        remove_forward(&self.adb, &self.serial, self.port).await;
+    }
+}
+
+impl Drop for Forward {
+    fn drop(&mut self) {
+        if self.removed {
+            return;
+        }
+        let (adb, serial, port) = (
+            std::mem::take(&mut self.adb),
+            std::mem::take(&mut self.serial),
+            self.port,
+        );
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(async move { remove_forward(&adb, &serial, port).await });
+            }
+            Err(_) => tracing::warn!(port, "could not remove the scrcpy adb forward: no runtime"),
         }
     }
 }
@@ -597,6 +763,7 @@ mod tests {
             "video_bit_rate=4000000",
             "max_fps=30",
             "send_device_meta=false",
+            "clipboard_autosync=false",
         ] {
             assert!(args.iter().any(|arg| arg == expected), "{expected}");
         }
@@ -693,6 +860,7 @@ mod tests {
         .map(|unit| unit.unwrap().kind)
         .collect();
         assert_eq!(kinds, [UnitKind::Config, UnitKind::Key, UnitKind::Delta]);
+        assert_eq!(session.ended(), None);
         session.reset_video().await.unwrap();
         assert_eq!(source.control_bytes().await, vec![17]);
         let pid = session.helper.pid;
@@ -756,5 +924,142 @@ mod tests {
             "{}",
             sdk.adb_log()
         );
+    }
+
+    #[cfg(unix)]
+    async fn session_on(
+        sdk: &crate::device::testing::FakeSdk,
+    ) -> Result<ScrcpySession, DeviceError> {
+        ScrcpySession::start(
+            &sdk.adb(),
+            "emulator-5554",
+            &crate::diagnostics::ProcessAttributionRegistry::new(),
+        )
+        .await
+    }
+
+    /// A loopback port nobody listens on.
+    #[cfg(unix)]
+    fn closed_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn matching_remote_jar_is_not_pushed() {
+        use crate::device::testing::{FakeScrcpySource, FakeSdk};
+        let source = FakeScrcpySource::spawn(vec![config_unit()]).await;
+        let sdk = FakeSdk::new()
+            .adb_forwards_to(source.port)
+            .remote_jar_sha256(SCRCPY_SERVER_SHA256)
+            .write();
+        let session = session_on(&sdk).await.unwrap();
+        session.stop().await;
+        let log = sdk.adb_log();
+        assert!(log.contains("shell sha256sum"), "{log}");
+        assert!(!log.contains(" push "), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn server_dying_mid_stream_is_reported_as_unrequested() {
+        use crate::{
+            device::testing::{FakeScrcpySource, FakeSdk, ScrcpyStub},
+            diagnostics::profiler::exits::CapturedExits,
+        };
+        let captured = CapturedExits::start();
+        let source = FakeScrcpySource::spawn(vec![config_unit()]).await;
+        let sdk = FakeSdk::new()
+            .adb_forwards_to(source.port)
+            .scrcpy_stub(ScrcpyStub::ExitsWhenTold)
+            .write();
+        let mut session = session_on(&sdk).await.unwrap();
+        assert_eq!(session.units.recv().await.unwrap().kind, UnitKind::Config);
+        sdk.end_scrcpy_server();
+        source.close_video();
+        assert!(session.units.recv().await.is_none());
+        assert!(
+            matches!(session.ended(), Some(StreamEnd::Failed(DeviceError::Io(_)))),
+            "{:?}",
+            session.ended()
+        );
+        session.stop().await;
+        let reported = captured.take();
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert_eq!(reported[0][1], HELPER_LABEL, "{reported:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stream_failing_while_the_server_runs_is_a_requested_stop() {
+        use crate::{
+            device::testing::{FakeScrcpySource, FakeSdk},
+            diagnostics::profiler::exits::CapturedExits,
+        };
+        let captured = CapturedExits::start();
+        let source = FakeScrcpySource::spawn(vec![config_unit()]).await;
+        let sdk = FakeSdk::new().adb_forwards_to(source.port).write();
+        let mut session = session_on(&sdk).await.unwrap();
+        assert_eq!(session.units.recv().await.unwrap().kind, UnitKind::Config);
+        source.close_video();
+        assert!(session.units.recv().await.is_none());
+        assert!(matches!(session.ended(), Some(StreamEnd::Failed(_))));
+        let pid = session.helper.pid;
+        session.stop().await;
+        assert!(!crate::device::testing::process_alive(pid));
+        assert!(captured.take().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn start_failure_carries_the_server_stderr() {
+        use crate::device::testing::{FakeSdk, ScrcpyStub};
+        let port = closed_port();
+        let sdk = FakeSdk::new()
+            .adb_forwards_to(port)
+            .scrcpy_stub(ScrcpyStub::FailsWith("Unknown option: bogus"))
+            .write();
+        let error = session_on(&sdk).await.err().expect("the server fails");
+        assert!(
+            error.to_string().contains("Unknown option: bogus"),
+            "{error}"
+        );
+        assert!(
+            sdk.adb_log()
+                .contains(&format!("forward --remove tcp:{port}")),
+            "{}",
+            sdk.adb_log()
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelled_start_removes_the_forward() {
+        use crate::device::testing::{FakeSdk, wait_until};
+        let port = closed_port();
+        let sdk = FakeSdk::new().adb_forwards_to(port).write();
+        // Cancelled while it retries the connection.
+        let start = tokio::time::timeout(Duration::from_millis(500), session_on(&sdk)).await;
+        assert!(start.is_err(), "start was still connecting");
+        let removed = format!("forward --remove tcp:{port}");
+        wait_until(|| sdk.adb_log().contains(&removed)).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dropped_session_removes_the_forward() {
+        use crate::device::testing::{FakeScrcpySource, FakeSdk, wait_until};
+        let source = FakeScrcpySource::spawn(vec![config_unit()]).await;
+        let sdk = FakeSdk::new().adb_forwards_to(source.port).write();
+        let session = session_on(&sdk).await.unwrap();
+        let pid = session.helper.pid;
+        drop(session);
+        let removed = format!("forward --remove tcp:{}", source.port);
+        wait_until(|| sdk.adb_log().contains(&removed)).await;
+        wait_until(|| !crate::device::testing::process_alive(pid)).await;
     }
 }

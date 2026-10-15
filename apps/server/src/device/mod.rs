@@ -8,6 +8,7 @@ pub mod input;
 #[allow(dead_code)]
 pub(crate) mod scrcpy;
 pub(crate) mod sdk;
+pub(crate) mod stderr_tail;
 #[cfg(test)]
 pub(crate) mod testing;
 
