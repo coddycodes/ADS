@@ -1397,6 +1397,7 @@ export default function SourceControlPanel({
             if (result.commit.status === "created") draft.clear();
             reloadCommits();
           }}
+          onDone={(request) => useRightPanelStore.getState().openPullRequest(threadRef, request)}
         />
       ) : null}
       {projectRef !== null && gitCwd !== null ? (

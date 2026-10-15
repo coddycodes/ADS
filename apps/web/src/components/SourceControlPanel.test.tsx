@@ -125,6 +125,7 @@ const testState = vi.hoisted(() => ({
   writeProjectFile: vi.fn(),
   openPullRequestLink: vi.fn(),
   rightPanelOpen: vi.fn(),
+  openPullRequest: vi.fn(),
   selectGitScope: vi.fn(),
   toast: { add: vi.fn(), update: vi.fn(), close: vi.fn() },
   groupByFolder: true,
@@ -378,7 +379,10 @@ vi.mock("~/sourceControlDraft", () => ({
 
 vi.mock("~/rightPanelStore", () => ({
   useRightPanelStore: {
-    getState: () => ({ open: testState.rightPanelOpen }),
+    getState: () => ({
+      open: testState.rightPanelOpen,
+      openPullRequest: testState.openPullRequest,
+    }),
   },
 }));
 
@@ -709,6 +713,7 @@ beforeEach(() => {
   );
   testState.openPullRequestLink = vi.fn().mockResolvedValue(undefined);
   testState.rightPanelOpen.mockReset();
+  testState.openPullRequest.mockReset();
   testState.selectGitScope.mockReset();
   testState.toast.add.mockReset();
   testState.toast.add.mockReturnValue("toast-1");
@@ -742,6 +747,25 @@ describe("SourceControlPanel", () => {
     render(props);
     expect(captured.createPullRequest).toBeNull();
     expect(testState.runAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the created merge request beside the thread on Done", async () => {
+    testState.statusQuery.data = status({
+      refName: "feature/test",
+      hasUpstream: false,
+      aheadCount: 1,
+      sourceControlProvider: { kind: "gitlab", name: "GitLab", baseUrl: "https://gitlab.test" },
+    });
+    const props = buildProps();
+    render(props);
+    buttonsByText("Push & create MR")[0]?.onClick?.();
+    await flushPromises();
+    render(props);
+    captured.createPullRequest?.onDone?.({ number: 89, provider: "gitlab" });
+    expect(testState.openPullRequest).toHaveBeenCalledWith(props.threadRef, {
+      number: 89,
+      provider: "gitlab",
+    });
   });
 
   it.each([
