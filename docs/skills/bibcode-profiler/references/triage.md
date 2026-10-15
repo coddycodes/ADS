@@ -257,7 +257,10 @@ Covers `rpc.slow`, `rpc.hang`, `rpc.saturation`, `client.stall` and
    cites its event in `evidence.eventIds`. The `worktree.audit` events give scan
    coverage: `compared: false` means orphan and registration checks were
    skipped, and `processesRead` `false` or `null` (Windows) means no
-   `worktree.held-open` check ran.
+   `worktree.held-open` check ran. An `rpc.slow` on `worktree.getRemovalPlan`
+   has a matching `worktree removal plan was slow` line in `server.log` that
+   gives the duration of each step: catalog refresh, trusted anchor, inventory,
+   status inspection and prune preview.
 3. **The scan itself** is `apps/server/src/diagnostics/profiler/worktree_audit.rs`.
    It is read-only and never prunes or deletes. Recommend cleanup steps to the
    user rather than running them.
