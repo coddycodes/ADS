@@ -1557,8 +1557,8 @@ performed on the machine that owns that server and filesystem.
 - Emulators are stopped on close, on the setting turning off, and on server
   shutdown. A server that crashes or is killed (`SIGKILL`) leaves its running
   emulator behind, and the next server neither sees nor stops it; it keeps
-  its RAM and console port until it is stopped by hand (`adb -s <serial> emu
-  kill`), and a new launch takes the next free port.
+  its RAM and console port until it is stopped by hand
+  (`adb -s <serial> emu kill`), and a new launch takes the next free port.
 - The emulator's console, adb, and gRPC ports are probed free and released
   before the emulator binds them, so two servers on one host, or another
   emulator started at the same moment, can pick the same port. The emulator
