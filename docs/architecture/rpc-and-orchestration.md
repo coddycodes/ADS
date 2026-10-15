@@ -1909,6 +1909,11 @@ backoff starting at 250 ms, doubling to a 30 s cap, and resetting after the
 stream stays up for 30 s: a thread can appear just after its view subscribes,
 while a view of a deleted thread retried every 250 ms for as long as it stayed
 mounted (#113).
+The client's thread detail projection keeps every object of a new snapshot or patch
+that equals what it already shows, and remembers which source object resolved
+to which shown one so later patches compare only what they changed. A resync
+snapshot therefore does not hand the UI a second copy of an unchanged thread;
+each copy used to stay pinned by memoized render closures (#96).
 Every shell snapshot, live or from `orchestration.getArchivedShellSnapshot`,
 is read in one SQLite job: projects, the undeleted live or archived threads
 whose project row exists, and per thread only its session, latest turn, the
