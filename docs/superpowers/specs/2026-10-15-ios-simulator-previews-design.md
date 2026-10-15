@@ -591,6 +591,10 @@ Amended after the spikes (§0 Results).
     does not rotate.
   - The mapping of `landscape`/`reverseLandscape` to Purple values 4 and 3 is
     fixed by a real-simulator test against Android's convention.
+    Result (Task 8): `landscape` is the phone turned left, as on Android
+    (`ROTATION_90`) and in the client's rotate-left order, so the UI's top lies
+    along the device's right edge: `landscape` is `uiOrientation` 4 and Purple
+    3, and `reverseLandscape` is `uiOrientation` 3 and Purple 4.
   - `canRotate` stays on `DeviceSnapshot` (`true` on both platforms today) so
     a future runtime without the Purple port can report `false`.
 - **Send failures.** A failed send surfaces as `DeviceInputError` and is

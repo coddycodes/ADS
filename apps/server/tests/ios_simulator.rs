@@ -646,6 +646,16 @@ async fn rotation_matches_android_convention() {
         upright * 2.0 < upside_down,
         "the landscape frame matches simctl's upright screenshot"
     );
+    // A tap in landscape coordinates lands where the frame shows it: Safari's address
+    // field, at the top centre of the landscape page, takes focus.
+    harness.tap(0.5, 0.08).await;
+    let changed = harness
+        .screen_changes_from(&ours, Duration::from_secs(5), "android-convention-tapped")
+        .await;
+    println!(
+        "{:.1}% of pixels changed after a landscape tap",
+        changed * 100.0
+    );
     harness.rotate(Orientation::Portrait).await;
     harness.stop().await;
 }
