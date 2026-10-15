@@ -4,6 +4,9 @@ pub(crate) mod emulator;
 pub mod frames;
 pub(crate) mod grpc;
 pub mod input;
+// The session is consumed by the media hub task that follows.
+#[allow(dead_code)]
+pub(crate) mod scrcpy;
 pub(crate) mod sdk;
 #[cfg(test)]
 pub(crate) mod testing;

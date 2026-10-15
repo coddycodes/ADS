@@ -497,6 +497,7 @@ dependencies = [
  "base64 0.22.1",
  "bibcode-server",
  "breakpad-symbols",
+ "bytes",
  "clap",
  "crash-handler",
  "dirs",

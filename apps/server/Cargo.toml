@@ -32,6 +32,7 @@ axum.workspace = true
 backtrace.workspace = true
 base64.workspace = true
 breakpad-symbols.workspace = true
+bytes.workspace = true
 clap.workspace = true
 crash-handler.workspace = true
 dirs.workspace = true

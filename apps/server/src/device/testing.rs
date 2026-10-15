@@ -637,6 +637,8 @@ pub(crate) struct FakeSdk {
     discovery_index: usize,
     /// Seconds `-list-avds` sleeps after counting its call.
     list_avds_delay_secs: u32,
+    /// The local port `adb forward tcp:0 …` reports, where a fake scrcpy source listens.
+    adb_forward_port: Option<u16>,
 }
 
 #[cfg(unix)]
@@ -651,6 +653,7 @@ impl FakeSdk {
             boot_completed_after: Some(1),
             discovery_index: 0,
             list_avds_delay_secs: 0,
+            adb_forward_port: None,
         }
     }
 
@@ -693,6 +696,12 @@ impl FakeSdk {
 
     pub(crate) fn never_boots(mut self) -> Self {
         self.boot_completed_after = None;
+        self
+    }
+
+    /// `adb forward tcp:0 …` reports `port`, where a [`FakeScrcpySource`] listens.
+    pub(crate) fn adb_forwards_to(mut self, port: u16) -> Self {
+        self.adb_forward_port = Some(port);
         self
     }
 
@@ -771,13 +780,34 @@ impl FakeSdk {
         }
     }
 
+    /// Logs every call, then: `push` succeeds; `shell sha256sum` reports a hash that never
+    /// matches, so the jar is always pushed; `shell CLASSPATH=…` (scrcpy-server) runs until
+    /// killed; `forward tcp:0` prints the configured port; `forward --remove` succeeds.
     fn adb_script(&self) -> String {
         let counter = self.dir.path().join("boot-polls");
         let after = self.boot_completed_after.unwrap_or(0);
+        let forward_port = self
+            .adb_forward_port
+            .map_or_else(String::new, |port| port.to_string());
         format!(
-            "#!/bin/sh\n[ \"$1\" = \"-s\" ] && shift 2\ncase \"$1 $2 $3\" in\n  wait-for-device*) exit 0 ;;\n  'shell getprop sys.boot_completed')\n    polls=$(( $(cat \"{counter}\" 2>/dev/null || echo 0) + 1 ))\n    echo \"$polls\" > \"{counter}\"\n    if [ {after} -gt 0 ] && [ \"$polls\" -ge {after} ]; then echo 1; else echo; fi ;;\nesac\nexit 0\n",
+            "#!/bin/sh\necho \"$*\" >> \"{log}\"\n[ \"$1\" = \"-s\" ] && shift 2\ncase \"$1 $2 $3\" in\n  wait-for-device*) exit 0 ;;\n  'shell getprop sys.boot_completed')\n    polls=$(( $(cat \"{counter}\" 2>/dev/null || echo 0) + 1 ))\n    echo \"$polls\" > \"{counter}\"\n    if [ {after} -gt 0 ] && [ \"$polls\" -ge {after} ]; then echo 1; else echo; fi ;;\n  push*) exit 0 ;;\n  'shell sha256sum'*) echo \"0000000000000000000000000000000000000000000000000000000000000000  $3\" ;;\n  'shell CLASSPATH='*) exec sleep 600 ;;\n  'forward tcp:0'*) echo \"{forward_port}\" ;;\n  'forward --remove'*) exit 0 ;;\nesac\nexit 0\n",
+            log = self.adb_log_file().display(),
             counter = counter.display()
         )
+    }
+
+    fn adb_log_file(&self) -> PathBuf {
+        self.dir.path().join("adb-log")
+    }
+
+    /// Every `adb` call so far, one line of arguments each.
+    pub(crate) fn adb_log(&self) -> String {
+        std::fs::read_to_string(self.adb_log_file()).unwrap_or_default()
+    }
+
+    /// The `adb` executable of this SDK.
+    pub(crate) fn adb(&self) -> PathBuf {
+        self.root().join("platform-tools/adb")
     }
 
     fn list_avds_calls_file(&self) -> PathBuf {
@@ -1033,4 +1063,90 @@ pub(crate) async fn wait_until(done: impl Fn() -> bool) {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
     panic!("condition not reached within ten seconds");
+}
+
+/// A loopback stand-in for scrcpy-server v4.1 behind `adb forward`: the first connection
+/// (video) gets the dummy byte, the codec id, the session header, and `packets`, then stays
+/// open; the second (control) is recorded.
+#[cfg(unix)]
+pub(crate) struct FakeScrcpySource {
+    pub(crate) port: u16,
+    control: Arc<Mutex<Vec<u8>>>,
+}
+
+/// The display size the fake source's session header reports.
+pub(crate) const FAKE_SCRCPY_SIZE: (u32, u32) = (720, 1280);
+
+#[cfg(unix)]
+impl FakeScrcpySource {
+    pub(crate) async fn spawn(packets: Vec<Vec<u8>>) -> Self {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fake scrcpy source");
+        let port = listener.local_addr().expect("fake scrcpy address").port();
+        let control = Arc::<Mutex<Vec<u8>>>::default();
+        let recorded = control.clone();
+        tokio::spawn(async move {
+            let (mut video, _) = listener.accept().await.expect("video connection");
+            let mut preamble = vec![0_u8];
+            preamble.extend(0x6832_3634_u32.to_be_bytes());
+            preamble.extend(session_packet(FAKE_SCRCPY_SIZE.0, FAKE_SCRCPY_SIZE.1));
+            video.write_all(&preamble).await.expect("write preamble");
+            let (mut control, _) = listener.accept().await.expect("control connection");
+            for packet in packets {
+                video.write_all(&packet).await.expect("write packet");
+            }
+            let mut buffer = [0_u8; 64];
+            while let Ok(read) = control.read(&mut buffer).await {
+                if read == 0 {
+                    break;
+                }
+                recorded
+                    .lock()
+                    .expect("fake control lock")
+                    .extend(&buffer[..read]);
+            }
+            drop(video);
+        });
+        Self { port, control }
+    }
+
+    /// Waits up to ten seconds for the first control bytes and returns all received so far.
+    pub(crate) async fn control_bytes(&self) -> Vec<u8> {
+        wait_until(|| !self.control.lock().expect("fake control lock").is_empty()).await;
+        self.control.lock().expect("fake control lock").clone()
+    }
+}
+
+/// A v4.1 session packet: header only, session flag set, then width and height.
+pub(crate) fn session_packet(width: u32, height: u32) -> Vec<u8> {
+    let mut packet = vec![0x80, 0, 0, 0];
+    packet.extend(width.to_be_bytes());
+    packet.extend(height.to_be_bytes());
+    packet
+}
+
+/// A v4.1 media packet: flags and PTS, length, then `data`.
+fn media_packet(flags_and_pts: u64, data: &[u8]) -> Vec<u8> {
+    let mut packet = flags_and_pts.to_be_bytes().to_vec();
+    packet.extend(
+        u32::try_from(data.len())
+            .expect("small packet")
+            .to_be_bytes(),
+    );
+    packet.extend(data);
+    packet
+}
+
+pub(crate) fn config_unit() -> Vec<u8> {
+    media_packet(1 << 62, &[0, 0, 0, 1, 0x67, 0x42])
+}
+
+pub(crate) fn key_unit(pts_us: u64) -> Vec<u8> {
+    media_packet((1 << 61) | pts_us, &[0, 0, 0, 1, 0x65, 0x88])
+}
+
+pub(crate) fn delta_unit(pts_us: u64) -> Vec<u8> {
+    media_packet(pts_us, &[0, 0, 0, 1, 0x41, 0x9a])
 }
