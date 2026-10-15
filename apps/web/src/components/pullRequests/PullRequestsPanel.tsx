@@ -33,6 +33,7 @@ import { PullRequestsContextRefresh } from "./pullRequestsContextRefresh";
 import { pullRequestsHostAddress } from "./pullRequestsHost.logic";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import { PullRequestsDetailView } from "./detail/PullRequestsDetailView";
+import { PullRequestsRouteNavigation } from "./detail/pullRequestsNavigation";
 import { PermissionButton } from "../ui/permission-button";
 
 export interface PullRequestsPanelProps {
@@ -145,15 +146,17 @@ function AvailablePullRequests({
           onFreshPageConsumed={onFreshPageConsumed}
         />
       ) : (
-        <PullRequestsDetailView
-          key={number}
-          scope={scope}
-          projectRef={projectRef}
-          context={context}
-          number={number}
-          tab={tab}
-          mutationsDisabledReason={mutationsDisabledReason}
-        />
+        <PullRequestsRouteNavigation projectRef={projectRef} number={number}>
+          <PullRequestsDetailView
+            key={number}
+            scope={scope}
+            projectRef={projectRef}
+            context={context}
+            number={number}
+            tab={tab}
+            mutationsDisabledReason={mutationsDisabledReason}
+          />
+        </PullRequestsRouteNavigation>
       )}
       {createOpen ? (
         <GitManagerCreatePullRequestDialog

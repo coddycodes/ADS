@@ -46,6 +46,7 @@ vi.mock("@legendapp/list/react", () => ({
   },
 }));
 import { PullRequestsFiles } from "./PullRequestsFiles";
+import { PullRequestsRouteNavigation } from "./pullRequestsNavigation";
 let root: Root;
 let container: HTMLDivElement;
 const persisted = new Map<string, string>();
@@ -74,14 +75,16 @@ async function render(
       <PullRequestsActionsContext
         value={{ run: mockRun(), pending: false, error: null, requestKind: "pull request" }}
       >
-        <PullRequestsFiles
-          files={files}
-          {...(timeline ? { timeline } : {})}
-          detail={overrideDetail}
-          {...(live === undefined ? {} : { live })}
-          projectRef={projectRef}
-          context={context}
-        />
+        <PullRequestsRouteNavigation projectRef={projectRef} number={overrideDetail.number}>
+          <PullRequestsFiles
+            files={files}
+            {...(timeline ? { timeline } : {})}
+            detail={overrideDetail}
+            {...(live === undefined ? {} : { live })}
+            projectRef={projectRef}
+            context={context}
+          />
+        </PullRequestsRouteNavigation>
       </PullRequestsActionsContext>,
     ),
   );

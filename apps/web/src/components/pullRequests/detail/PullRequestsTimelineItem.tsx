@@ -8,9 +8,8 @@ import type {
   PullRequestsTimelineItem as TimelineItem,
   ScopedProjectRef,
 } from "@bibcode/contracts";
-import { Link } from "@tanstack/react-router";
 import { CheckIcon, CircleDotIcon, MessageSquareIcon, XIcon } from "lucide-react";
-import { memo, useState } from "react";
+import { memo, type ReactNode, useState } from "react";
 import { formatRelativeTimeLabel } from "../../../timestampFormat";
 import { Button } from "../../ui/button";
 import { PullRequestsActor } from "../shared/PullRequestsActor";
@@ -18,6 +17,7 @@ import { PullRequestsMarkdown } from "../shared/PullRequestsMarkdown";
 import { PullRequestsReactions } from "../shared/PullRequestsReactions";
 import { PullRequestsSuggestionBlock } from "../shared/PullRequestsSuggestionBlock";
 import { timelineEventText } from "./pullRequestsDetail.logic";
+import { usePullRequestsNavigation } from "./pullRequestsNavigation";
 export interface PullRequestsTimelineItemProps {
   item: TimelineItem;
   permissions: PullRequestsPermissions;
@@ -110,6 +110,19 @@ function CommentBody({
         live={live}
       />
     </article>
+  );
+}
+/** The conversation's link to a file opens the Changes tab at that file, wherever the view is. */
+function PullRequestsFileLink({ path, children }: { path: string; children: ReactNode }) {
+  const navigation = usePullRequestsNavigation();
+  return (
+    <button
+      type="button"
+      className="break-all text-left font-mono text-primary underline underline-offset-4"
+      onClick={() => navigation.showFile(path)}
+    >
+      {children}
+    </button>
   );
 }
 export const PullRequestsTimelineItem = memo(function PullRequestsTimelineItem({
@@ -215,18 +228,12 @@ export const PullRequestsTimelineItem = memo(function PullRequestsTimelineItem({
       className="m-3 overflow-hidden rounded-lg border border-border"
     >
       <header className="flex flex-wrap items-center gap-2 bg-muted/40 p-3 text-xs">
-        <Link
-          to="/project/$environmentId/$projectId/pull-requests/$number"
-          params={{ ...projectRef, number: String(number) }}
-          search={{ tab: "files" }}
-          hash={`file=${encodeURIComponent(item.path)}`}
-          className="break-all font-mono text-primary underline underline-offset-4"
-        >
+        <PullRequestsFileLink path={item.path}>
           {item.path}
           {item.line === null
             ? ""
             : `:${item.startLine !== null && item.startLine !== item.line ? `${item.startLine}–` : ""}${item.line}`}
-        </Link>
+        </PullRequestsFileLink>
         {item.isResolved ? (
           <span className="rounded border border-border px-1.5">Resolved</span>
         ) : null}

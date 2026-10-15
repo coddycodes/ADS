@@ -4,7 +4,9 @@ import type {
   PullRequestsPermissions,
   PullRequestsTimelineItem,
 } from "@bibcode/contracts";
+import { vi } from "vite-plus/test";
 import { context, row } from "../testFixtures";
+import type { PullRequestsNavigation } from "./pullRequestsNavigation";
 export { context };
 export const gitlabContext = {
   ...context,
@@ -165,3 +167,19 @@ export const event: Extract<PullRequestsTimelineItem, { kind: "event" }> = {
   detail: "bug",
   createdAt: "2026-09-20T09:00:00Z",
 };
+
+export function fakeNavigation(
+  overrides: Partial<PullRequestsNavigation> = {},
+): PullRequestsNavigation {
+  return {
+    fileAnchor: null,
+    selectTab: vi.fn(),
+    showFile: vi.fn(),
+    setFileAnchor: vi.fn(),
+    openRequest: vi.fn(),
+    requestGone: vi.fn(),
+    discardDeleted: null,
+    back: null,
+    ...overrides,
+  };
+}

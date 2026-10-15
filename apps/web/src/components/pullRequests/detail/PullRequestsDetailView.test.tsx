@@ -92,6 +92,7 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
 }));
 import { PullRequestsDetailView } from "./PullRequestsDetailView";
+import { PullRequestsRouteNavigation } from "./pullRequestsNavigation";
 function setVisibility(state: DocumentVisibilityState) {
   Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
   document.dispatchEvent(new Event("visibilitychange"));
@@ -109,14 +110,16 @@ async function render(
   await act(async () =>
     root.render(
       <PullRequestsContextRefresh value={h.contextRefresh}>
-        <PullRequestsDetailView
-          scope={scope}
-          projectRef={projectRef}
-          context={host}
-          number={number}
-          tab={tab}
-          mutationsDisabledReason={mutationsDisabledReason}
-        />
+        <PullRequestsRouteNavigation projectRef={projectRef} number={number}>
+          <PullRequestsDetailView
+            scope={scope}
+            projectRef={projectRef}
+            context={host}
+            number={number}
+            tab={tab}
+            mutationsDisabledReason={mutationsDisabledReason}
+          />
+        </PullRequestsRouteNavigation>
       </PullRequestsContextRefresh>,
     ),
   );
