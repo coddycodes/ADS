@@ -2,6 +2,9 @@ pub(crate) mod activity;
 pub mod model;
 pub mod runtime;
 pub(crate) mod sse;
+pub(crate) mod v2;
+#[cfg(test)]
+mod v2_runtime_tests;
 
 use std::path::{Path, PathBuf};
 
@@ -9,16 +12,26 @@ use serde_json::Value;
 
 use crate::process::Platform;
 
+/// The OpenCode server API a runtime speaks.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OpenCodeProtocol {
+    /// OpenCode 1.x: unprefixed routes such as `/session` and `/event`.
+    V1,
+    /// OpenCode 2.x: `/api/*` routes and the V2 event vocabulary.
+    V2,
+}
+
 /// Which OpenCode server API answers at an endpoint.
 ///
-/// BiBCode speaks OpenCode's V1 server API. OpenCode 2 replaced it with `/api/*` routes and
-/// serves its web UI, as HTTP 200 HTML, for every unprefixed V1 path, so "any HTTP response"
-/// cannot tell the two apart.
+/// OpenCode 2 replaced the V1 server API with `/api/*` routes and serves its web UI, as HTTP 200
+/// HTML, for every unprefixed V1 path, so "any HTTP response" cannot tell the two apart.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum OpenCodeServerApi {
-    /// `GET /global/health` answered `{"healthy": true}` as JSON: the V1 API BiBCode uses.
+    /// `GET /global/health` answered `{"healthy": true}` as JSON: OpenCode 1.x.
     V1,
-    /// `GET /api/info` answered with an OpenCode version: an OpenCode 2 server.
+    /// `GET /api/info` answered with a 2.x version: OpenCode 2.
+    V2 { version: String },
+    /// `GET /api/info` answered with a version BiBCode cannot drive.
     Unsupported { version: String },
     /// Neither answered yet (still starting, unreachable, or wrong credentials).
     Unavailable,
@@ -62,38 +75,54 @@ pub(crate) async fn probe_server_api(
         .await
         .and_then(|info| info.get("version")?.as_str().map(str::to_owned))
     {
+        Some(version) if major_version(&version) == Some(2) => OpenCodeServerApi::V2 { version },
         Some(version) => OpenCodeServerApi::Unsupported { version },
         None => OpenCodeServerApi::Unavailable,
     }
 }
 
-/// The provider error for an OpenCode 2 server. `managed` is true when BiBCode started the server
-/// from Binary path, and false for a configured Server URL.
+/// The provider error for an OpenCode server BiBCode cannot drive. `managed` is true when BiBCode
+/// started the server from Binary path, and false for a configured Server URL.
 pub(crate) fn unsupported_server_message(version: &str, managed: bool) -> String {
     if managed {
         format!(
-            "OpenCode {version} isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x executable."
+            "OpenCode {version} isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x or 2.x executable."
         )
     } else {
         format!(
-            "The OpenCode server at Server URL runs {version}, which isn't supported yet. In Settings → Providers, point Server URL at an OpenCode 1.x server."
+            "The OpenCode server at Server URL runs {version}, which isn't supported yet. In Settings → Providers, point Server URL at an OpenCode 1.x or 2.x server."
         )
     }
 }
 
-/// The provider status message for an OpenCode CLI whose `--version` reports a major version BiBCode
-/// cannot drive. OpenCode 1 prints `1.18.32`; OpenCode 2 prints `opencode v2.0.29`.
-pub(crate) fn unsupported_cli_message(version_output: &str) -> Option<&'static str> {
-    let major = version_output.split_whitespace().find_map(|word| {
+/// The first number of the first version-like word: OpenCode 1 prints `1.18.32`, OpenCode 2
+/// prints `opencode v2.0.29`.
+fn major_version(version_output: &str) -> Option<u64> {
+    version_output.split_whitespace().find_map(|word| {
         word.trim_start_matches('v')
             .split('.')
             .next()?
             .parse::<u64>()
             .ok()
-    })?;
-    (major >= 2).then_some(
-        "OpenCode 2 isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x executable.",
-    )
+    })
+}
+
+/// How the inventory treats an OpenCode CLI, from its `--version` output.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OpenCodeCliSupport {
+    Supported(OpenCodeProtocol),
+    /// A major version BiBCode cannot drive, with the provider status message.
+    Unsupported(&'static str),
+}
+
+pub(crate) fn cli_support(version_output: &str) -> OpenCodeCliSupport {
+    match major_version(version_output) {
+        Some(major) if major >= 3 => OpenCodeCliSupport::Unsupported(
+            "This OpenCode version isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x or 2.x executable.",
+        ),
+        Some(2) => OpenCodeCliSupport::Supported(OpenCodeProtocol::V2),
+        _ => OpenCodeCliSupport::Supported(OpenCodeProtocol::V1),
+    }
 }
 
 /// Resolves the native OpenCode executable behind the standard Windows npm
@@ -182,6 +211,11 @@ pub(crate) mod server_fixtures {
     /// (including the V1 `/global/health`, `/session`, `/event` and `/session/{id}/children`), and
     /// 405 for unprefixed POSTs such as `/session`, `/mcp` and `/session/{id}/prompt_async`.
     pub(crate) fn v2(password: &'static str) -> Router {
+        api_server(password, "2.0.29")
+    }
+
+    /// An `/api/*` server reporting `version`, shaped like OpenCode 2.0.29.
+    pub(crate) fn api_server(password: &'static str, version: &'static str) -> Router {
         Router::new()
             .route(
                 "/api/info",
@@ -190,7 +224,7 @@ pub(crate) mod server_fixtures {
                         return StatusCode::UNAUTHORIZED.into_response();
                     }
                     Json(json!({
-                        "version":"2.0.29",
+                        "version":version,
                         "pid":4242,
                         "urls":["http://127.0.0.1:4096"],
                         "paths":{"tmp":"/tmp/opencode"},
@@ -229,8 +263,8 @@ pub(crate) mod server_fixtures {
 #[cfg(test)]
 mod server_api_tests {
     use super::{
-        OpenCodeServerApi, probe_server_api, server_fixtures, unsupported_cli_message,
-        unsupported_server_message,
+        OpenCodeCliSupport, OpenCodeProtocol, OpenCodeServerApi, cli_support, probe_server_api,
+        server_fixtures, unsupported_server_message,
     };
 
     #[tokio::test]
@@ -251,7 +285,7 @@ mod server_api_tests {
     }
 
     #[tokio::test]
-    async fn probe_rejects_an_opencode_2_server_whose_v1_paths_answer_html() {
+    async fn probe_identifies_opencode_2_by_its_info_route_not_its_html() {
         let (endpoint, server) = server_fixtures::serve(server_fixtures::v2("secret")).await;
         let client = reqwest::Client::new();
 
@@ -267,7 +301,7 @@ mod server_api_tests {
         );
         assert_eq!(
             probe_server_api(&client, &endpoint, Some("secret")).await,
-            OpenCodeServerApi::Unsupported {
+            OpenCodeServerApi::V2 {
                 version: "2.0.29".to_owned()
             }
         );
@@ -282,27 +316,48 @@ mod server_api_tests {
         server.abort();
     }
 
+    #[tokio::test]
+    async fn probe_refuses_an_api_server_of_another_major_version() {
+        let (endpoint, server) =
+            server_fixtures::serve(server_fixtures::api_server("secret", "3.0.0")).await;
+        assert_eq!(
+            probe_server_api(&reqwest::Client::new(), &endpoint, Some("secret")).await,
+            OpenCodeServerApi::Unsupported {
+                version: "3.0.0".to_owned()
+            }
+        );
+        server.abort();
+    }
+
     #[test]
-    fn cli_version_gate_accepts_opencode_1_and_rejects_opencode_2() {
-        for supported in ["1.18.32", "opencode 1.18.4", "", "not a version"] {
-            assert_eq!(unsupported_cli_message(supported), None, "{supported:?}");
-        }
-        for unsupported in ["opencode v2.0.29", "2.1.0", "v3.0.0"] {
-            assert!(
-                unsupported_cli_message(unsupported)
-                    .is_some_and(|message| message.contains("OpenCode 1.x")),
-                "{unsupported:?}"
+    fn cli_versions_select_the_protocol_and_refuse_unknown_majors() {
+        for v1 in ["1.18.32", "opencode 1.18.4", "", "not a version"] {
+            assert_eq!(
+                cli_support(v1),
+                OpenCodeCliSupport::Supported(OpenCodeProtocol::V1),
+                "{v1:?}"
             );
         }
+        for v2 in ["opencode v2.0.29", "2.1.0"] {
+            assert_eq!(
+                cli_support(v2),
+                OpenCodeCliSupport::Supported(OpenCodeProtocol::V2),
+                "{v2:?}"
+            );
+        }
+        assert!(matches!(
+            cli_support("v3.0.0"),
+            OpenCodeCliSupport::Unsupported(message) if message.contains("OpenCode 1.x or 2.x")
+        ));
     }
 
     #[test]
     fn unsupported_server_messages_name_the_setting_to_change() {
-        let managed = unsupported_server_message("2.0.29", true);
-        assert!(managed.starts_with("OpenCode 2.0.29 isn't supported yet."));
+        let managed = unsupported_server_message("3.0.0", true);
+        assert!(managed.starts_with("OpenCode 3.0.0 isn't supported yet."));
         assert!(managed.contains("Binary path"));
-        let external = unsupported_server_message("2.0.29", false);
-        assert!(external.contains("runs 2.0.29"));
+        let external = unsupported_server_message("3.0.0", false);
+        assert!(external.contains("runs 3.0.0"));
         assert!(external.contains("Server URL"));
     }
 }

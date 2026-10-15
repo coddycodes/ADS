@@ -56,6 +56,8 @@ const CLAUDE_CAPABILITY_PROBE_ARGS: [&str; 12] = [
 const LOCAL_OPENCODE_HEALTH_TIMEOUT: Duration = Duration::from_millis(250);
 const LOCAL_OPENCODE_INVENTORY_TIMEOUT: Duration = Duration::from_secs(30);
 const LOCAL_OPENCODE_STARTUP_ATTEMPTS: usize = 50;
+/// OpenCode 2 chats work, but its models, agents and commands are not listed yet.
+const OPENCODE_2_CATALOG_PENDING: &str = "BiBCode doesn't list OpenCode 2 models, agents and commands yet. Chats use OpenCode's default model.";
 const PROBE_OUTPUT_LIMIT: usize = 256 * 1024;
 
 #[derive(Clone)]
@@ -572,25 +574,42 @@ async fn probe_one_snapshot(
         && let Ok(client) = reqwest::Client::builder()
             .timeout(opencode::API_PROBE_TIMEOUT)
             .build()
-        && let opencode::OpenCodeServerApi::Unsupported { version } =
-            opencode::probe_server_api(&client, endpoint, definition.server_password.as_deref())
-                .await
     {
-        return ProviderProbeResult::new(
-            snapshot(
-                definition,
-                true,
-                None,
+        let (status, message) = match opencode::probe_server_api(
+            &client,
+            endpoint,
+            definition.server_password.as_deref(),
+        )
+        .await
+        {
+            opencode::OpenCodeServerApi::Unsupported { version } => (
                 "error",
-                json!({ "status": "unknown" }),
-                default_models,
-                ProviderCapabilities::default(),
-                Some(&opencode::unsupported_server_message(&version, false)),
-                checked_at,
-                "available",
+                Some(opencode::unsupported_server_message(&version, false)),
             ),
-            RichMetadataOutcome::Failed,
-        );
+            opencode::OpenCodeServerApi::V2 { .. } => {
+                ("ready", Some(OPENCODE_2_CATALOG_PENDING.to_owned()))
+            }
+            opencode::OpenCodeServerApi::V1 | opencode::OpenCodeServerApi::Unavailable => {
+                ("", None)
+            }
+        };
+        if let Some(message) = message {
+            return ProviderProbeResult::new(
+                snapshot(
+                    definition,
+                    true,
+                    None,
+                    status,
+                    json!({ "status": "unknown" }),
+                    default_models,
+                    ProviderCapabilities::default(),
+                    Some(&message),
+                    checked_at,
+                    "available",
+                ),
+                RichMetadataOutcome::Failed,
+            );
+        }
     }
     let mut rich_metadata = if include_slow_capabilities {
         RichMetadataOutcome::Failed
@@ -789,13 +808,20 @@ async fn probe_one_snapshot(
             }
         }
         "opencode" => {
-            // OpenCode 2 cannot answer the V1 API, so do not start its server to find out.
-            if let Some(unsupported) = version
-                .as_deref()
-                .and_then(opencode::unsupported_cli_message)
-            {
+            // A version BiBCode cannot drive, or an OpenCode 2 whose catalogs BiBCode cannot read
+            // yet, is reported without starting its server.
+            let support = version.as_deref().map(opencode::cli_support).unwrap_or(
+                opencode::OpenCodeCliSupport::Supported(opencode::OpenCodeProtocol::V1),
+            );
+            if let opencode::OpenCodeCliSupport::Unsupported(unsupported) = support {
                 status = "error";
                 message = Some(unsupported);
+            } else if support
+                == opencode::OpenCodeCliSupport::Supported(opencode::OpenCodeProtocol::V2)
+            {
+                // Chats work, so the instance stays selectable; the notice explains the empty
+                // catalog.
+                message = Some(OPENCODE_2_CATALOG_PENDING);
             } else if include_slow_capabilities
                 && let Some(inventory) = probe_local_opencode(
                     &executable,
@@ -1538,8 +1564,9 @@ where
                         let snapshot = discover(endpoint, local_password).await;
                         return child.try_wait().ok().flatten().is_none().then_some(snapshot).flatten();
                     }
-                    // OpenCode 2 never answers the V1 API: stop now instead of waiting it out.
-                    opencode::OpenCodeServerApi::Unsupported { .. } => return None,
+                    // BiBCode cannot read these catalogs: stop now instead of waiting it out.
+                    opencode::OpenCodeServerApi::V2 { .. }
+                    | opencode::OpenCodeServerApi::Unsupported { .. } => return None,
                     opencode::OpenCodeServerApi::Unavailable => {}
                 }
                 sleep(Duration::from_millis(100)).await;
@@ -1955,90 +1982,101 @@ mod tests {
         assert!(String::from_utf8_lossy(&output.stdout).contains(SENTINEL));
     }
 
-    /// OpenCode 2 replaced the server API BiBCode uses, so its row must not read Ready, and the
-    /// probe must not start a server that cannot answer.
+    /// A CLI whose catalogs BiBCode cannot read, or whose version it cannot drive, is reported
+    /// without starting its server.
     #[cfg(unix)]
     #[tokio::test]
-    async fn opencode_2_cli_is_reported_unsupported_without_starting_its_server() {
-        let root = tempfile::tempdir().expect("inventory root");
-        let marker = root.path().join("served");
-        let executable = root.path().join("opencode");
-        crate::test_support::executable_fixture::write_executable(
-            &executable,
-            format!(
-                "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'opencode v2.0.29\\n'; exit 0; fi\n: > '{}'\nexit 1\n",
-                marker.to_string_lossy()
+    async fn opencode_2_and_unknown_cli_versions_are_reported_without_starting_a_server() {
+        for (version, status, message) in [
+            ("opencode v2.0.29", "ready", OPENCODE_2_CATALOG_PENDING),
+            (
+                "opencode v3.0.0",
+                "error",
+                "This OpenCode version isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x or 2.x executable.",
             ),
-        );
-        let settings = json!({
-            "enableProviderUpdateChecks": false,
-            "providerInstances": {
-                "opencode": {
-                    "driver": "opencode",
-                    "enabled": true,
-                    "config": { "binaryPath": executable }
+        ] {
+            let root = tempfile::tempdir().expect("inventory root");
+            let marker = root.path().join("served");
+            let executable = root.path().join("opencode");
+            crate::test_support::executable_fixture::write_executable(
+                &executable,
+                format!(
+                    "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '{version}\\n'; exit 0; fi\n: > '{}'\nexit 1\n",
+                    marker.to_string_lossy()
+                ),
+            );
+            let settings = json!({
+                "enableProviderUpdateChecks": false,
+                "providerInstances": {
+                    "opencode": {
+                        "driver": "opencode",
+                        "enabled": true,
+                        "config": { "binaryPath": executable }
+                    }
                 }
-            }
-        });
+            });
 
-        let providers = probe_full(
-            &settings,
-            Some("opencode"),
-            root.path(),
-            &ProviderMaintenance::new(),
-        )
-        .await;
+            let providers = probe_full(
+                &settings,
+                Some("opencode"),
+                root.path(),
+                &ProviderMaintenance::new(),
+            )
+            .await;
 
-        let snapshot = &providers[0].snapshot;
-        assert_eq!(snapshot["version"], "opencode v2.0.29");
-        assert_eq!(snapshot["status"], "error");
-        assert_eq!(
-            snapshot["message"],
-            "OpenCode 2 isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x executable."
-        );
-        assert!(
-            !marker.exists(),
-            "the inventory must not start an OpenCode 2 server"
-        );
+            let snapshot = &providers[0].snapshot;
+            assert_eq!(snapshot["version"], version);
+            assert_eq!(snapshot["status"], status, "{version}");
+            assert_eq!(snapshot["message"], message, "{version}");
+            assert!(!marker.exists(), "{version}: no server may be started");
+        }
     }
 
     #[tokio::test]
-    async fn opencode_2_server_url_is_reported_unsupported() {
+    async fn opencode_server_urls_report_their_api_version() {
         use crate::provider::opencode::server_fixtures;
-        let (endpoint, server) = server_fixtures::serve(server_fixtures::v2("secret")).await;
-        let sandbox = tempfile::tempdir().unwrap();
-        let missing =
-            crate::test_support::hermetic_providers::missing_provider_executable(sandbox.path());
-        let settings = json!({
-            "enableProviderUpdateChecks": false,
-            "providerInstances": {
-                "remote": {
-                    "driver": "opencode",
-                    "enabled": true,
-                    "config": {
-                        "binaryPath": missing,
-                        "serverUrl": endpoint,
-                        "serverPassword": "secret"
+        for (version, status, message) in [
+            ("2.0.29", "ready", OPENCODE_2_CATALOG_PENDING.to_owned()),
+            (
+                "3.0.0",
+                "error",
+                "The OpenCode server at Server URL runs 3.0.0, which isn't supported yet. In Settings → Providers, point Server URL at an OpenCode 1.x or 2.x server.".to_owned(),
+            ),
+        ] {
+            let (endpoint, server) =
+                server_fixtures::serve(server_fixtures::api_server("secret", version)).await;
+            let sandbox = tempfile::tempdir().unwrap();
+            let missing = crate::test_support::hermetic_providers::missing_provider_executable(
+                sandbox.path(),
+            );
+            let settings = json!({
+                "enableProviderUpdateChecks": false,
+                "providerInstances": {
+                    "remote": {
+                        "driver": "opencode",
+                        "enabled": true,
+                        "config": {
+                            "binaryPath": missing,
+                            "serverUrl": endpoint,
+                            "serverPassword": "secret"
+                        }
                     }
                 }
-            }
-        });
+            });
 
-        let providers = probe_full(
-            &settings,
-            Some("remote"),
-            sandbox.path(),
-            &ProviderMaintenance::new(),
-        )
-        .await;
-        server.abort();
+            let providers = probe_full(
+                &settings,
+                Some("remote"),
+                sandbox.path(),
+                &ProviderMaintenance::new(),
+            )
+            .await;
+            server.abort();
 
-        let snapshot = &providers[0].snapshot;
-        assert_eq!(snapshot["status"], "error");
-        assert_eq!(
-            snapshot["message"],
-            "The OpenCode server at Server URL runs 2.0.29, which isn't supported yet. In Settings → Providers, point Server URL at an OpenCode 1.x server."
-        );
+            let snapshot = &providers[0].snapshot;
+            assert_eq!(snapshot["status"], status, "{version}");
+            assert_eq!(snapshot["message"], message, "{version}");
+        }
     }
 
     #[cfg(unix)]

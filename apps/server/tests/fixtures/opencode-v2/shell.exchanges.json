@@ -1,0 +1,348 @@
+{
+  "session": "ses_ebf1c0bf9ffeeWo6ZViycPrqRD",
+  "exchanges": [
+    {
+      "method": "POST",
+      "path": "/api/session",
+      "body": {
+        "title": "BiBCode capture",
+        "location": {
+          "directory": "/work/project"
+        },
+        "model": {
+          "providerID": "mock",
+          "id": "mock-model"
+        },
+        "agent": "build",
+        "permissions": [
+          {
+            "action": "*",
+            "resource": "*",
+            "effect": "allow"
+          },
+          {
+            "action": "shell",
+            "resource": "*",
+            "effect": "ask"
+          }
+        ]
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "ses_ebf1c0bf9ffeeWo6ZViycPrqRD",
+          "projectID": "bca2a4c13ad5ce3ef167f49a0f2c24bd5afe14dc",
+          "agent": "build",
+          "model": {
+            "id": "mock-model",
+            "providerID": "mock",
+            "variant": "default"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1792090043401,
+            "updated": 1792090043401
+          },
+          "title": "BiBCode capture",
+          "permissions": [
+            {
+              "action": "*",
+              "resource": "*",
+              "effect": "allow"
+            },
+            {
+              "action": "shell",
+              "resource": "*",
+              "effect": "ask"
+            }
+          ],
+          "location": {
+            "directory": "/work/project"
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1c0bf9ffeeWo6ZViycPrqRD",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "ses_ebf1c0bf9ffeeWo6ZViycPrqRD",
+          "projectID": "bca2a4c13ad5ce3ef167f49a0f2c24bd5afe14dc",
+          "agent": "build",
+          "model": {
+            "id": "mock-model",
+            "providerID": "mock",
+            "variant": "default"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1792090043401,
+            "updated": 1792090043401
+          },
+          "title": "BiBCode capture",
+          "permissions": [
+            {
+              "action": "*",
+              "resource": "*",
+              "effect": "allow"
+            },
+            {
+              "action": "shell",
+              "resource": "*",
+              "effect": "ask"
+            }
+          ],
+          "location": {
+            "directory": "/work/project"
+          }
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/session/ses_ebf1c0bf9ffeeWo6ZViycPrqRD/prompt",
+      "body": {
+        "id": "msg_bibcodecapture1792090043404",
+        "text": "RUN_SHELL please"
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "msg_bibcodecapture1792090043404",
+          "sessionID": "ses_ebf1c0bf9ffeeWo6ZViycPrqRD",
+          "time": {
+            "created": 1792090043406
+          },
+          "type": "user",
+          "payload": {
+            "text": "RUN_SHELL please"
+          },
+          "delivery": "steer"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1c0bf9ffeeWo6ZViycPrqRD/permission",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "per_140e3f43c001qGvNvGQi2Rd435",
+            "sessionID": "ses_ebf1c0bf9ffeeWo6ZViycPrqRD",
+            "action": "shell",
+            "resources": ["echo bibcode-v2"],
+            "save": ["echo *"],
+            "source": {
+              "type": "tool",
+              "messageID": "msg_140e3f41a0019VHXhPtXdm8IAM",
+              "id": "call_shell_1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/session/ses_ebf1c0bf9ffeeWo6ZViycPrqRD/permission/per_140e3f43c001qGvNvGQi2Rd435/reply",
+      "body": {
+        "decision": "once"
+      },
+      "status": 204,
+      "response": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1c0bf9ffeeWo6ZViycPrqRD/message",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "msg_140e3f49e001jVWyK7LGgPNThq",
+            "time": {
+              "created": 1792090043550
+            },
+            "type": "idle",
+            "outcome": "succeeded"
+          },
+          {
+            "id": "msg_140e3f48c001a6jngDrhoG9qih",
+            "time": {
+              "created": 1792090043539,
+              "streamed": 1792090043547,
+              "completed": 1792090043548
+            },
+            "type": "assistant",
+            "agent": "build",
+            "model": {
+              "id": "mock-model",
+              "providerID": "mock",
+              "variant": "default"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Done after tool."
+              }
+            ],
+            "finish": "stop",
+            "rawFinish": "stop",
+            "cost": 0,
+            "tokens": {
+              "input": 11,
+              "output": 5,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            }
+          },
+          {
+            "id": "msg_140e3f41a0019VHXhPtXdm8IAM",
+            "time": {
+              "created": 1792090043424,
+              "streamed": 1792090043434,
+              "completed": 1792090043523
+            },
+            "type": "assistant",
+            "agent": "build",
+            "model": {
+              "id": "mock-model",
+              "providerID": "mock",
+              "variant": "default"
+            },
+            "content": [
+              {
+                "type": "tool",
+                "id": "call_shell_1",
+                "name": "shell",
+                "executed": false,
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "command": "echo bibcode-v2",
+                    "description": "Echo a marker"
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "bibcode-v2\n"
+                    }
+                  ],
+                  "metadata": {
+                    "status": "completed",
+                    "truncated": false,
+                    "exit": 0
+                  }
+                },
+                "time": {
+                  "created": 1792090043430,
+                  "ran": 1792090043433,
+                  "completed": 1792090043521
+                }
+              }
+            ],
+            "finish": "tool-calls",
+            "rawFinish": "tool_calls",
+            "cost": 0,
+            "tokens": {
+              "input": 11,
+              "output": 5,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            }
+          },
+          {
+            "id": "msg_bibcodecapture1792090043404",
+            "time": {
+              "created": 1792090043414
+            },
+            "text": "RUN_SHELL please",
+            "type": "user"
+          }
+        ],
+        "cursor": {
+          "previous": "eyJpZCI6Im1zZ18xNDBlM2Y0OWUwMDFqVld5SzdMR2dQTlRocSIsIm9yZGVyIjoiZGVzYyIsImRpcmVjdGlvbiI6InByZXZpb3VzIn0",
+          "next": "eyJpZCI6Im1zZ19iaWJjb2RlY2FwdHVyZTE3OTIwOTAwNDM0MDQiLCJvcmRlciI6ImRlc2MiLCJkaXJlY3Rpb24iOiJuZXh0In0"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1c0bf9ffeeWo6ZViycPrqRD/message/msg_bibcodecapture1792090043404",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "msg_bibcodecapture1792090043404",
+          "time": {
+            "created": 1792090043414
+          },
+          "text": "RUN_SHELL please",
+          "type": "user"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1c0bf9ffeeWo6ZViycPrqRD/message/msg_doesnotexist000000000000",
+      "body": null,
+      "status": 404,
+      "response": {
+        "_tag": "MessageNotFoundError",
+        "sessionID": "ses_ebf1c0bf9ffeeWo6ZViycPrqRD",
+        "messageID": "msg_doesnotexist000000000000",
+        "message": "Message not found: msg_doesnotexist000000000000"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/active",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": {}
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session?parentID=ses_ebf1c0bf9ffeeWo6ZViycPrqRD",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": [],
+        "cursor": {
+          "previous": null,
+          "next": null
+        }
+      }
+    }
+  ]
+}

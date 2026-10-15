@@ -11490,24 +11490,23 @@ impl OpenCodeDriver {
         activity_enabled: bool,
     ) -> Result<Self, ProviderRuntimeError> {
         if let Some(endpoint) = request.endpoint.as_ref() {
-            // A configured server that does not answer yet keeps today's behaviour (the session
-            // request reports it); only a server identified as OpenCode 2 is refused here.
+            // A configured server that does not answer yet keeps today's behaviour (V1, and the
+            // session request reports the failure); a version BiBCode cannot drive is refused.
             let client = reqwest::Client::builder()
                 .timeout(crate::provider::opencode::API_PROBE_TIMEOUT)
                 .build()
                 .map_err(provider_error("opencode"))?;
-            if let crate::provider::opencode::OpenCodeServerApi::Unsupported { version } =
-                crate::provider::opencode::probe_server_api(
-                    &client,
-                    endpoint,
-                    request.server_password.as_deref(),
-                )
-                .await
-            {
-                tracing::warn!(%version, "configured OpenCode server is OpenCode 2; launch refused");
+            let api = crate::provider::opencode::probe_server_api(
+                &client,
+                endpoint,
+                request.server_password.as_deref(),
+            )
+            .await;
+            if let crate::provider::opencode::OpenCodeServerApi::Unsupported { version } = &api {
+                tracing::warn!(%version, "configured OpenCode server version is unsupported; launch refused");
                 return Err(ProviderRuntimeError::IncompatibleProvider {
                     provider: "opencode".to_owned(),
-                    detail: crate::provider::opencode::unsupported_server_message(&version, false),
+                    detail: crate::provider::opencode::unsupported_server_message(version, false),
                 });
             }
             let runtime =
@@ -11522,6 +11521,9 @@ impl OpenCodeDriver {
                 activity_enabled,
             )
             .map_err(provider_error("opencode"))?;
+            if matches!(api, crate::provider::opencode::OpenCodeServerApi::V2 { .. }) {
+                runtime.use_v2_api();
+            }
             runtime.configure_runtime_mode(&request.runtime_mode).await;
             return Ok(Self {
                 runtime,
@@ -11564,7 +11566,7 @@ impl OpenCodeDriver {
         if let Some(stderr) = server_stderr {
             drain_opencode_output(stderr, "stderr");
         }
-        wait_for_endpoint(&endpoint, &local_password, &child).await?;
+        let protocol = wait_for_endpoint(&endpoint, &local_password, &child).await?;
         let runtime =
             OpenCodeSessionRuntime::new_with_options_reconciliation_revision_and_agent_activity(
                 &endpoint,
@@ -11577,6 +11579,9 @@ impl OpenCodeDriver {
                 activity_enabled,
             )
             .map_err(provider_error("opencode"))?;
+        if protocol == crate::provider::opencode::OpenCodeProtocol::V2 {
+            runtime.use_v2_api();
+        }
         runtime.configure_runtime_mode(&request.runtime_mode).await;
         if let Some(mcp) = request.mcp.as_ref() {
             runtime
@@ -15642,15 +15647,16 @@ fn drain_opencode_output(
     });
 }
 
-/// Waits until the managed OpenCode server answers its V1 API. Any HTTP response is not enough:
-/// OpenCode 2 answers V1 paths with its web UI, and is stopped with an actionable error instead.
+/// Waits until the managed OpenCode server answers an API BiBCode speaks, and returns which. Any
+/// HTTP response is not enough: OpenCode 2 answers V1 paths with its web UI. A version BiBCode
+/// cannot drive is stopped with an actionable error.
 async fn wait_for_endpoint(
     endpoint: &str,
     password: &str,
     child: &SharedChild,
-) -> Result<(), ProviderRuntimeError> {
+) -> Result<crate::provider::opencode::OpenCodeProtocol, ProviderRuntimeError> {
     use crate::provider::opencode::{
-        OpenCodeServerApi, probe_server_api, unsupported_server_message,
+        OpenCodeProtocol, OpenCodeServerApi, probe_server_api, unsupported_server_message,
     };
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let client = reqwest::Client::builder()
@@ -15672,15 +15678,18 @@ async fn wait_for_endpoint(
                     detail: "server process exited before claiming its reserved port".to_owned(),
                 });
             }
-            if let OpenCodeServerApi::Unsupported { version } = api {
-                tracing::warn!(%version, "managed OpenCode server is OpenCode 2; launch refused");
-                kill_child(child).await;
-                return Err(ProviderRuntimeError::IncompatibleProvider {
-                    provider: "opencode".to_owned(),
-                    detail: unsupported_server_message(&version, true),
-                });
-            }
-            return Ok(());
+            return match api {
+                OpenCodeServerApi::V2 { .. } => Ok(OpenCodeProtocol::V2),
+                OpenCodeServerApi::Unsupported { version } => {
+                    tracing::warn!(%version, "managed OpenCode server version is unsupported; launch refused");
+                    kill_child(child).await;
+                    Err(ProviderRuntimeError::IncompatibleProvider {
+                        provider: "opencode".to_owned(),
+                        detail: unsupported_server_message(&version, true),
+                    })
+                }
+                OpenCodeServerApi::V1 | OpenCodeServerApi::Unavailable => Ok(OpenCodeProtocol::V1),
+            };
         }
         if tokio::time::Instant::now() >= deadline {
             kill_child(child).await;
@@ -25812,18 +25821,19 @@ done
         Arc::new(tokio::sync::Mutex::new(child))
     }
 
-    /// OpenCode 2 answers HTTP 200 HTML on every V1 path, so the managed server must not count as
-    /// ready: the launch fails at once with the setting to change, and the server is stopped.
+    /// A version BiBCode cannot drive is refused from its first answer: the launch fails at once
+    /// with the setting to change, and the server is stopped.
     #[tokio::test]
-    async fn opencode_readiness_rejects_an_opencode_2_server_with_an_actionable_error() {
+    async fn opencode_readiness_rejects_an_unsupported_version_with_an_actionable_error() {
         use crate::provider::opencode::server_fixtures;
-        let (endpoint, server) = server_fixtures::serve(server_fixtures::v2("secret")).await;
+        let (endpoint, server) =
+            server_fixtures::serve(server_fixtures::api_server("secret", "3.0.0")).await;
         let child = opencode_endpoint_child();
 
         let started = tokio::time::Instant::now();
         let error = super::wait_for_endpoint(&endpoint, "secret", &child)
             .await
-            .expect_err("an OpenCode 2 server is not the API BiBCode speaks");
+            .expect_err("OpenCode 3 is not an API BiBCode speaks");
         server.abort();
 
         assert!(
@@ -25836,7 +25846,7 @@ done
         assert_eq!(provider, "opencode");
         assert_eq!(
             detail,
-            "OpenCode 2.0.29 isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x executable."
+            "OpenCode 3.0.0 isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x or 2.x executable."
         );
         assert_eq!(
             super::delivery_detail(&error, Some("OpenCode")),
@@ -25854,25 +25864,35 @@ done
         );
     }
 
+    /// OpenCode 2 answers HTTP 200 HTML on every V1 path; readiness identifies it by `/api/info`
+    /// and selects the V2 wire, while OpenCode 1 is identified by its health route.
     #[tokio::test]
-    async fn opencode_readiness_accepts_the_v1_api_with_the_launch_password() {
-        use crate::provider::opencode::server_fixtures;
-        let (endpoint, server) = server_fixtures::serve(server_fixtures::v1("secret")).await;
-        let child = opencode_endpoint_child();
-
-        super::wait_for_endpoint(&endpoint, "secret", &child)
-            .await
-            .expect("the V1 health route is readiness");
-        server.abort();
-        super::kill_child(&child).await;
+    async fn opencode_readiness_selects_the_protocol_the_server_speaks() {
+        use crate::provider::opencode::{OpenCodeProtocol, server_fixtures};
+        for (app, expected) in [
+            (server_fixtures::v1("secret"), OpenCodeProtocol::V1),
+            (server_fixtures::v2("secret"), OpenCodeProtocol::V2),
+        ] {
+            let (endpoint, server) = server_fixtures::serve(app).await;
+            let child = opencode_endpoint_child();
+            assert_eq!(
+                super::wait_for_endpoint(&endpoint, "secret", &child)
+                    .await
+                    .expect("ready"),
+                expected
+            );
+            server.abort();
+            super::kill_child(&child).await;
+        }
     }
 
-    /// A configured Server URL that runs OpenCode 2 fails the launch with the setting to change,
-    /// instead of a later "error decoding response body" or "HTTP 405".
+    /// A configured Server URL that runs a version BiBCode cannot drive fails the launch with the
+    /// setting to change, instead of a later "error decoding response body" or "HTTP 405".
     #[tokio::test]
-    async fn opencode_configured_server_url_rejects_opencode_2() {
+    async fn opencode_configured_server_url_rejects_an_unsupported_version() {
         use crate::provider::opencode::server_fixtures;
-        let (endpoint, server) = server_fixtures::serve(server_fixtures::v2("secret")).await;
+        let (endpoint, server) =
+            server_fixtures::serve(server_fixtures::api_server("secret", "3.0.0")).await;
         let temp = TempDir::new().expect("OpenCode fixture directory");
         let factory =
             super::NativeProviderDriverFactory::new(temp.path().join("state").join("attachments"));
@@ -25881,11 +25901,7 @@ done
         request.server_password = Some("secret".to_owned());
 
         let error = match factory.create(request).await {
-            Ok(driver) => driver
-                .start()
-                .await
-                .map(|_| ())
-                .expect_err("an OpenCode 2 server cannot start a V1 session"),
+            Ok(_) => panic!("an OpenCode 3 server must be refused at launch"),
             Err(error) => error,
         };
         server.abort();
@@ -25895,7 +25911,7 @@ done
         };
         assert_eq!(
             detail,
-            "The OpenCode server at Server URL runs 2.0.29, which isn't supported yet. In Settings → Providers, point Server URL at an OpenCode 1.x server."
+            "The OpenCode server at Server URL runs 3.0.0, which isn't supported yet. In Settings → Providers, point Server URL at an OpenCode 1.x or 2.x server."
         );
     }
 

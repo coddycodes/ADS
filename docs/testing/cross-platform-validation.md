@@ -105,13 +105,16 @@ For packaged visual validation on each available supported provider:
 Record unavailable provider/platform scenarios and visual evidence in the
 execution report. Hermetic tests do not establish a packaged native visual pass.
 
-OpenCode scenarios need OpenCode 1.x. Run `opencode --version` with the
-desktop's `PATH` first: OpenCode 2 prints `opencode v2.x.y`. With OpenCode 2,
-verify instead that the OpenCode row and the chat banner show the
-unsupported-version error naming Binary path, then either set Binary path to an
-OpenCode 1.x executable or record the OpenCode scenarios as unavailable. The
-version gate's focused checks are
-`cargo test -p bibcode-server --lib -j 2 -- opencode_readiness opencode_configured_server_url opencode_2_ provider::opencode::server_api_tests`.
+Run `opencode --version` with the desktop's `PATH` first and record it: OpenCode
+1 prints `1.x.y`, OpenCode 2 prints `opencode v2.x.y`. With OpenCode 2, chat
+scenarios (messages, permissions, questions, Stop) apply; record its catalog,
+subagent-activity, rewind and terminal-observation scenarios as unavailable
+until those stages ship. The focused checks are
+`cargo test -p bibcode-server --lib -j 2 -- opencode`, which replays responses
+captured from a real OpenCode 2.0.29 server. The opt-in
+`live_opencode_2_round_trip` test drives a real OpenCode 2 server; its doc
+comment lists the environment it needs, and its server's default model must be
+a scripted local endpoint so no provider credits are spent.
 
 ## Revision and worktree preflight
 

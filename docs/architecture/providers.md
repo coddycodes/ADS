@@ -171,16 +171,25 @@ protocol:
 
 See [Checkpoint revert](./rpc-and-orchestration.md#checkpoint-revert).
 
-The OpenCode driver speaks the V1 server API of OpenCode 1.x. OpenCode 2
-replaced it with `/api/*` routes and answers V1 GET paths with its web UI as
-HTTP 200, so the adapter identifies the API before use
+The OpenCode driver speaks two wires. OpenCode 1.x serves the V1 server API;
+OpenCode 2 replaced it with `/api/*` routes and answers V1 GET paths with its
+web UI as HTTP 200, so the adapter identifies the API before use
 (`provider::opencode::probe_server_api`): an authenticated `GET /global/health`
-that returns `{"healthy": true}` is the V1 API, and a `GET /api/info` that
-returns a version is OpenCode 2. A managed server is ready only on the V1
-answer; an OpenCode 2 answer stops it and fails the launch with an actionable
-provider error. A configured Server URL is checked once at launch with the same
-probe. Inventory reads the CLI's `--version` and reports OpenCode 2 as an error
-without starting its server.
+that returns `{"healthy": true}` is V1, and a `GET /api/info` that reports a 2.x
+version is V2. A managed server is ready only on one of those answers; a
+configured Server URL is probed once at launch and falls back to V1 when it does
+not answer. Any other major version stops the launch with an actionable
+`IncompatibleProvider` error. `OpenCodeSessionRuntime` shares its event channel,
+turn state and lifecycle between the wires and branches at the requests and at
+event decoding: on V2, `provider::opencode::v2` folds the global `/api/event`
+stream into the root session's turn (`session.execution.*`,
+`session.text.*`, `session.step.*`), surfaces permission requests and forms of
+the root and its descendant sessions, and reports an execution OpenCode starts
+on its own (a background subagent's result) as a turn. Its V1 → V2 mapping and
+staging are recorded in
+[the OpenCode V2 client design](../superpowers/specs/2026-10-15-opencode-v2-client-design.md).
+Inventory reads the CLI's `--version` and does not start an OpenCode server it
+cannot read.
 
 Provider-specific events are normalized into shared orchestration contracts;
 provider wire payloads do not leak into React state. See

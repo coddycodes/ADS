@@ -1,0 +1,244 @@
+{
+  "session": "ses_ebf1c2cb6ffee8QsP7Vx3VxTDO",
+  "exchanges": [
+    {
+      "method": "POST",
+      "path": "/api/session",
+      "body": {
+        "title": "BiBCode capture",
+        "location": {
+          "directory": "/work/project"
+        },
+        "model": {
+          "providerID": "mock",
+          "id": "mock-model"
+        },
+        "agent": "build",
+        "permissions": [
+          {
+            "action": "*",
+            "resource": "*",
+            "effect": "allow"
+          }
+        ]
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "ses_ebf1c2cb6ffee8QsP7Vx3VxTDO",
+          "projectID": "bca2a4c13ad5ce3ef167f49a0f2c24bd5afe14dc",
+          "agent": "build",
+          "model": {
+            "id": "mock-model",
+            "providerID": "mock",
+            "variant": "default"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1792090035021,
+            "updated": 1792090035021
+          },
+          "title": "BiBCode capture",
+          "permissions": [
+            {
+              "action": "*",
+              "resource": "*",
+              "effect": "allow"
+            }
+          ],
+          "location": {
+            "directory": "/work/project"
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1c2cb6ffee8QsP7Vx3VxTDO",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "ses_ebf1c2cb6ffee8QsP7Vx3VxTDO",
+          "projectID": "bca2a4c13ad5ce3ef167f49a0f2c24bd5afe14dc",
+          "agent": "build",
+          "model": {
+            "id": "mock-model",
+            "providerID": "mock",
+            "variant": "default"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1792090035021,
+            "updated": 1792090035021
+          },
+          "title": "BiBCode capture",
+          "permissions": [
+            {
+              "action": "*",
+              "resource": "*",
+              "effect": "allow"
+            }
+          ],
+          "location": {
+            "directory": "/work/project"
+          }
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/session/ses_ebf1c2cb6ffee8QsP7Vx3VxTDO/prompt",
+      "body": {
+        "id": "msg_bibcodecapture1792090035027",
+        "text": "SAY_HELLO please"
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "msg_bibcodecapture1792090035027",
+          "sessionID": "ses_ebf1c2cb6ffee8QsP7Vx3VxTDO",
+          "time": {
+            "created": 1792090035325
+          },
+          "type": "user",
+          "payload": {
+            "text": "SAY_HELLO please"
+          },
+          "delivery": "steer"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1c2cb6ffee8QsP7Vx3VxTDO/message",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "msg_140e3d4bc001csAtvX6mwYVmby",
+            "time": {
+              "created": 1792090035388
+            },
+            "type": "idle",
+            "outcome": "succeeded"
+          },
+          {
+            "id": "msg_140e3d4a3001BtVHdcEq5sZVof",
+            "time": {
+              "created": 1792090035372,
+              "streamed": 1792090035385,
+              "completed": 1792090035386
+            },
+            "type": "assistant",
+            "agent": "build",
+            "model": {
+              "id": "mock-model",
+              "providerID": "mock",
+              "variant": "default"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello from mock."
+              }
+            ],
+            "finish": "stop",
+            "rawFinish": "stop",
+            "cost": 0,
+            "tokens": {
+              "input": 11,
+              "output": 5,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            }
+          },
+          {
+            "id": "msg_bibcodecapture1792090035027",
+            "time": {
+              "created": 1792090035357
+            },
+            "text": "SAY_HELLO please",
+            "type": "user"
+          }
+        ],
+        "cursor": {
+          "previous": "eyJpZCI6Im1zZ18xNDBlM2Q0YmMwMDFjc0F0dlg2bXdZVm1ieSIsIm9yZGVyIjoiZGVzYyIsImRpcmVjdGlvbiI6InByZXZpb3VzIn0",
+          "next": "eyJpZCI6Im1zZ19iaWJjb2RlY2FwdHVyZTE3OTIwOTAwMzUwMjciLCJvcmRlciI6ImRlc2MiLCJkaXJlY3Rpb24iOiJuZXh0In0"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1c2cb6ffee8QsP7Vx3VxTDO/message/msg_bibcodecapture1792090035027",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "msg_bibcodecapture1792090035027",
+          "time": {
+            "created": 1792090035357
+          },
+          "text": "SAY_HELLO please",
+          "type": "user"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1c2cb6ffee8QsP7Vx3VxTDO/message/msg_doesnotexist000000000000",
+      "body": null,
+      "status": 404,
+      "response": {
+        "_tag": "MessageNotFoundError",
+        "sessionID": "ses_ebf1c2cb6ffee8QsP7Vx3VxTDO",
+        "messageID": "msg_doesnotexist000000000000",
+        "message": "Message not found: msg_doesnotexist000000000000"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/active",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": {}
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session?parentID=ses_ebf1c2cb6ffee8QsP7Vx3VxTDO",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": [],
+        "cursor": {
+          "previous": null,
+          "next": null
+        }
+      }
+    }
+  ]
+}

@@ -18,12 +18,21 @@ Server password: empty
 
 ## Supported versions
 
-BiBCode drives OpenCode 1.x through its V1 server API. OpenCode 2 replaced that
-API with `/api/*` routes and is not supported yet. When the resolved `opencode`
-reports version 2 or later, the provider shows an error asking you to set
-**Binary path** to an OpenCode 1.x executable, and inventory does not start an
-OpenCode 2 server. A configured **Server URL** that runs OpenCode 2 reports the
-same error, naming **Server URL** instead.
+BiBCode drives OpenCode 1.x through its V1 server API and OpenCode 2.x through
+the `/api/*` API that replaced it. It picks the API from what the server
+answers, so the same instance works with either version.
+
+With OpenCode 2, chats work: messages and slash commands, streamed replies,
+permission requests (including those of subagents), questions, Stop, and
+OpenCode's own follow-up turns that deliver a background subagent's result.
+Not yet available with OpenCode 2: the provider row does not list OpenCode 2
+models, agents and commands (it shows a notice, and chats use OpenCode's
+default model), subagent activity, rewinding a conversation, and structured
+terminal observation.
+
+A version BiBCode cannot drive (3.x or later) shows an error asking you to set
+**Binary path** to an OpenCode 1.x or 2.x executable; a configured
+**Server URL** that runs one reports the same error, naming **Server URL**.
 
 ## Updates and version advisories
 
@@ -55,12 +64,13 @@ session:
 opencode serve --hostname=127.0.0.1 --port=<available-port>
 ```
 
-BiBCode generates a temporary password, waits until the loopback endpoint's
-authenticated `GET /global/health` answers `{"healthy": true}`, and stops the
-child process with the provider session. Any other answer, such as the HTML that
-OpenCode 2 serves for V1 paths, is not readiness. An OpenCode 2 server is
-identified by its `GET /api/info` version and stopped at once with the
-unsupported-version error. Inventory
+BiBCode generates a temporary password, waits until the loopback endpoint
+answers an API it speaks, and stops the child process with the provider
+session. OpenCode 1 is ready when its authenticated `GET /global/health` answers
+`{"healthy": true}`; OpenCode 2 when `GET /api/info` reports a 2.x version. Any
+other answer, such as the HTML that OpenCode 2 serves for V1 paths, is not
+readiness, and an unsupported version is stopped at once with its error.
+Inventory
 uses the same managed-server approach to discover authentication state, models,
 agents, and commands. On Windows, a standard npm `opencode.cmd` installation is
 resolved to its packaged native `opencode.exe` for managed launches so the
