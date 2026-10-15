@@ -1,8 +1,10 @@
 //! The pinned scrcpy-server: push it, run it, forward its sockets, and read its H.264 units.
 //!
-//! Wire format of scrcpy v4.1 (`app/src/demuxer.c`, `server/.../device/Streamer.java` at tag
-//! `v4.1`; native verification item 4). The video socket carries one dummy byte (tunnel
-//! forward mode), a 4-byte codec id, a 12-byte session header, then 12-byte packet headers.
+//! Wire format of scrcpy v4.1 (at tag `v4.1`: `app/src/demuxer.c` lines 14-17 and 73-119,
+//! `server/src/main/java/com/genymobile/scrcpy/device/Streamer.java` lines 48-65 and 91-121,
+//! `control/ControlMessage.java` line 27; native verification item 4). The video socket
+//! carries one dummy byte (tunnel forward mode), a 4-byte codec id, a 12-byte session header,
+//! then 12-byte packet headers.
 //! A header whose bit 63 is set is a session packet (no payload; bytes 4..8 width, 8..12
 //! height), sent again when the display size changes. Otherwise bit 62 marks a config
 //! packet, bit 61 a key frame, the low 61 bits are the PTS in microseconds, and a 4-byte
