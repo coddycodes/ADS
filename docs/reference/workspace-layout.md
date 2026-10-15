@@ -63,8 +63,10 @@ through Tauri commands/events. Browser mode connects directly to a native
   as resizable horizontal or vertical split panes; each group has its own
   active surface, while one group owns focus and new-panel creation.
 - Right-panel surfaces are per-thread tools: Plan, Diff, Source Control, Files,
-  individual files, Preview, Terminal, and Activity. Preview is hidden when the
-  active host does not report native preview support.
+  individual files, Preview, Terminal, Activity, and Device (kind `device`).
+  Preview is hidden when the active host does not report native preview
+  support; Device is offered only while the environment's device previews are
+  on.
 
 Center layout, focus, tab order, and split ratios persist across reloads. Closing
 a split pane merges its tabs into the adjacent layout; explicitly closing a tab

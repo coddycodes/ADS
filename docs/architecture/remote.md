@@ -860,6 +860,7 @@ is re-verified over RPC. The production call-site audit is:
 | `PreparedConnection.httpAuthorization`                                                                                                    | Explicitly `null` whenever `PreparedConnection.e2ee` is non-null. Pinned bearer credentials exist only in the E2EE auth form.                                                                                                                                                                                                                                                                                                                                                                     |
 | `assets.createUrl` and `apps/web/src/assets/assetUrls.ts`                                                                                 | URL issuance is authenticated RPC over E2EE. The resulting `/api/assets/<signed capability>/<path>` GET is a documented exception: it carries a bounded, expiring, resource-scoped HMAC capability and no bearer authorization.                                                                                                                                                                                                                                                                   |
 | `projects.createDownloadUrl`, `projects.createUploadUrl`, and `apps/web/src/components/files/fileTransfers.ts`                            | Same documented exception as `assets.createUrl`. URL issuance is authenticated RPC over E2EE; the resulting `GET`/`POST /api/transfers/<token>` carries a bounded, five-minute, resource-scoped HMAC capability and no bearer authorization. A download token names one entry and an upload token one file name in one directory, so a leaked URL reaches nothing else. The browser upload sends `credentials: "omit"`; desktop mode reaches the route from the Rust host instead of the WebView. |
+| `device.createMediaTicket` and `packages/client-runtime/src/device/mediaSocket.ts`                                                        | Ticket issuance is authenticated RPC over E2EE, and the ticket is redeemable only on the E2EE route. `GET /api/device-media-e2ee` carries no credential in the URL: it runs Noise_NK with the pinned key under the prologue `bibcode-device-media/1`, then reads the single-use ticket inside the encrypted records. See [Device media sockets](#device-media-sockets).                                                                                                                           |
 | `apps/web/src/diagnostics/downloadDiagnosticLogs.ts`                                                                                      | Direct authenticated HTTP is primary-environment-only and cannot target a saved bearer profile. Environment-scoped remote diagnostics are therefore unavailable until represented as RPC; an E2EE bearer must not be added to this request.                                                                                                                                                                                                                                                       |
 | `rpc/http.ts` HTTP API client and primary/cloud-link callers                                                                              | The module is a transport constructor, not an independent request. Its host-key callers are limited to the descriptor row above; primary and Connect control-plane calls are not saved host-key targets.                                                                                                                                                                                                                                                                                          |
 
@@ -1401,6 +1402,35 @@ itself. It announces the request, and exactly one client claims it.
   last touched a browser tab, and the browser-mode host serves only when no
   desktop host is connected.
 
+## Device media sockets
+
+[Device previews](./overview.md#device-previews) send H.264 video outside the
+RPC session, on two WebSocket routes of the main listener, so whatever reaches
+`/ws` or `/ws-e2ee` (a LAN address, an SSH `-L` forward, the relay hostname)
+reaches them too. The client derives the media URL from the connection's socket
+URL by replacing its path (`deviceMediaTarget`).
+
+- **Admission.** A media socket authenticates only with a ticket from
+  `device.createMediaTicket` (read scope), sent as its first message. The routes
+  read no cookie, bearer, or URL credential. Before the upgrade, both routes
+  draw on one pre-auth admission pool of their own, with the same global,
+  per-peer, and per-network limits as `/ws-e2ee`, so media sockets cannot
+  starve RPC handshakes. An over-limit connection gets HTTP `503` and is never
+  upgraded. A socket leaves the pool once its ticket is redeemed.
+- **Plain route.** `GET /api/device-media` waits 5 s for the ticket as a text
+  message, then sends frames as binary messages.
+- **E2EE route.** `GET /api/device-media-e2ee` serves profiles that pin the
+  host key. It runs Noise_NK with that key, as `/ws-e2ee` does, but under the
+  prologue `bibcode-device-media/1`, so a media handshake cannot be replayed
+  into `/ws-e2ee` or the reverse. The handshake and the ticket share one 10 s
+  deadline. After the handshake every message, the ticket included, is a
+  logical message in `/ws-e2ee` records. A client that pinned another key or
+  used another prologue is closed with 4403 `host-identity`.
+- **Channel binding.** A ticket is bound to the session, the device, and the
+  channel it was minted on: a ticket minted over E2EE is redeemable only on
+  the E2EE route and a plain one only on the plain route (`wrongChannel`). A
+  revoked or expired session closes its sockets with `unauthorized`.
+
 ## Profiler data
 
 Each environment has its own [Profiler](./overview.md#profiler): its toggle is
@@ -1472,6 +1502,19 @@ Remote Server mode, the joined record's slow part (`server`, `network`, or
   block as mixed content.
 - Remote descriptors expose storage identity but never requested/effective
   roots, alias diagnostics, or other server filesystem paths.
+- Device video is the one application stream outside typed RPC. Its sockets
+  are admitted only by a single-use, 60-second ticket bound to the minting
+  session, device, and channel, and pinned profiles carry it only over
+  Noise. A read-scope session can watch a device but cannot start, stop, or
+  drive it: `device.open`, `device.close`, `device.input`, and `device.rotate`
+  need `orchestration:operate`.
+- The `device_*` MCP tools, like `preview_*`, perform no per-call scope check:
+  a valid provider MCP credential is issued only when the server launches a
+  thread's provider, so holding it is the operate grant. Issuing MCP
+  credentials to a lower-privileged principal would require a scope check in
+  both tool families first.
+- Emulator, adb, and scrcpy sockets listen on loopback only; BiBCode never
+  passes `adb -a`.
 
 Storage-identity mismatch protection applies equally to direct bearer,
 BiBCode Connect, and desktop-managed SSH targets: a different non-null
@@ -1506,3 +1549,17 @@ performed on the machine that owns that server and filesystem.
   are unavailable in an ordinary browser.
 - Endpoint availability is advisory. The connection supervisor still verifies
   identity, authentication, and initial RPC synchronization on every attempt.
+- Device previews run only Android emulators (no physical devices), one
+  running device per environment. Two clients watching one device both drive
+  it, and their input interleaves.
+- A provider's MCP `tools/list` reflects the device-preview setting when the
+  provider asks for it; a provider that cached its list keeps showing the
+  `device_*` tools after the setting turns off, and their calls then fail
+  with `DevicePreviewsDisabledError`.
+- The media URL replaces the whole socket path, so a server behind a reverse
+  proxy that mounts it under a path prefix serves RPC but not device video;
+  the client then falls back to still images. Device video over the BiBCode
+  Connect relay has not been validated natively.
+- Browsers expose WebCodecs only in a secure context, so a browser on
+  `http://<lan-ip>` shows still images. WebKitGTK builds without
+  `VideoDecoder` fall back the same way.

@@ -785,6 +785,13 @@ the same executable, relaunched only while the profiler is on. A Windows update
 also starts a detached `cmd.exe` restart waiter, which is not a BiBCode
 executable.
 
+While [device previews](#device-previews) are on, the server also runs tools
+from the user's own Android SDK: the `emulator` (registered helper label
+`android-emulator`), `adb`, and, through `adb shell`, the pinned scrcpy-server
+on the device (registered helper label `android-scrcpy`). BiBCode ships no
+Android binary on the host; the scrcpy-server jar is embedded in the server and
+pushed to the emulator.
+
 The server can also open preview gateway listeners. Each one reverse-proxies
 one loopback dev server for one thread to a client that is not on the server's
 host. A listener binds an ephemeral port on the local address the caller's RPC
@@ -1726,7 +1733,8 @@ lock and replays `findings.ndjson`.
 
 ### Diagnostics page and status bar
 
-**Settings → About → View diagnostics**, in its **Profiler** section, controls
+**Settings → Diagnostics** (also reached from **Settings → About → View
+diagnostics**), in its **Profiler** section, controls
 any connected environment through an environment selector that defaults to the
 primary. Its switch reads and writes that environment's `enableProfiler`, not
 `status.enabled`, so a degraded runtime keeps the switch on and explains itself
@@ -1847,17 +1855,148 @@ bounded memory, and works while the server is stopped.
   server and crash monitor do not count. The passive installer's preinstall
   hook ends every same-user `bibcode-desktop.exe`, an MCP server included.
 
-## Android device previews
+## Device previews
 
-`apps/server/src/device/` runs one Android emulator per environment while the
-`enableDevicePreviews` setting is on, and `device.*` RPC exposes it to clients.
-Coding agents reach the same device through four MCP tools on the provider MCP
-endpoint: `device_list`, `device_open`, `device_screenshot` (PNG, at most 1080 px
-wide), and `device_close`. They are listed and callable only while
-`DeviceManager::enabled()` is true; with the setting off the tools disappear
-from `tools/list` and a call fails with `DevicePreviewsDisabledError`. Like the
-`preview_*` tools, they run with the operate rights of the thread whose provider
-holds the MCP credential.
+`apps/server/src/device/` runs one Android emulator per environment and shows
+it in a right-panel `device` surface. Everything is off until the environment's
+`enableDevicePreviews` setting (default `false`, toggled at **Settings →
+Diagnostics → Device previews**) is on; servers that support it advertise the
+`devicePreviews` capability, and older servers get no device RPC. While the
+setting is off, every `device.*` method fails with
+`DevicePreviewsDisabledError` (a stream fails at subscribe), media sockets close
+with `disabled`, and turning it off stops the running device.
+
+**Discovery.** The server looks for the SDK in `ANDROID_HOME`, then
+`ANDROID_SDK_ROOT`, then the platform default (`~/Library/Android/sdk`,
+`%LOCALAPPDATA%\Android\Sdk`, or `~/Android/Sdk`), and needs both
+`emulator/emulator` and `platform-tools/adb`. It lists AVDs with
+`emulator -list-avds` and checks acceleration with `emulator -accel-check`.
+Each failure becomes the catalog's `availability` (`sdkMissing`, `adbMissing`,
+`noAvds`, or `accelerationUnavailable`) with an actionable message. A
+discovery result serves for 30 s; the MCP `device_list` tool always reruns it.
+
+**Lifecycle.** `DeviceManager` owns the catalog (`device.subscribeCatalog`) and
+allows one running device; a second `device.open` fails with `DeviceLimitError`
+naming the running AVD. A device moves `starting → booting → ready →
+stopping → stopped`, or to `failed` with a reason (`exited`, `bootTimeout`,
+`spawn`, or `unresponsive`). The four most recent ended devices stay in the
+catalog so their reason stays visible.
+
+- The emulator starts with `-avd <name>`, `-no-window`, `-no-audio`,
+  `-no-boot-anim`, `-port <even console port 5554–5682>`,
+  `-grpc <loopback port>`, and `-grpc-use-token`, plus
+  `-gpu swiftshader_indirect` on a Linux server with neither `DISPLAY` nor
+  `WAYLAND_DISPLAY`. The AVD name is one argument and never meets a shell. It
+  is a registered helper (`android-emulator`) in its own process group or Job.
+- BiBCode never sets `ANDROID_EMULATOR_HOME`, because that also redirects AVD
+  lookup. It reads the gRPC port and token from the emulator's discovery file,
+  searching `emulator::default_discovery_dirs` in order: the OS runtime
+  directory (`$XDG_RUNTIME_DIR/avd/running` on Linux,
+  `~/Library/Caches/TemporaryItems/avd/running` on macOS,
+  `%LOCALAPPDATA%\Temp\avd\running` on Windows), then
+  `<ANDROID_EMULATOR_HOME or ~/.android>/avd/running`. In each directory it
+  tries `pid_<pid>.ini` first, then any `pid_*.ini`, and accepts only a file
+  whose `grpc.port` is the port it asked for.
+- `booting` starts when gRPC answers; `ready` follows once
+  `adb shell getprop sys.boot_completed` returns `1` and the display size is
+  known, within 180 s. The gRPC client connects only
+  to `127.0.0.1`; adb uses the user's adb server and BiBCode never passes `-a`.
+- A stop asks the emulator to shut down over gRPC, kills its process group
+  after 10 s, and removes its discovery file. An exit nobody asked for, checked every second, fails the device
+  with `exited` and raises `subprocess.crash`.
+
+**JPEG frames.** `device.subscribeFrames` streams the emulator's
+`streamScreenshot` as base64 JPEG, at most 720 px wide, quality 70, and at
+most 15 fps. One producer runs per device while anyone subscribes, and a slow
+subscriber sees only the latest frame. Width, height, and orientation come
+from what the emulator reports, never from a rotate command.
+
+**Input.** `device.input` takes batches of at most 64 touch, key, and text
+events (text at most 1,000 characters) and the client keeps one batch in
+flight. Touch points are normalized `0..1` of the oriented display and mapped
+to display pixels in `input::to_device_pixels`. A pointer still down when the
+device's input stream is reopened or the device stops is released where it
+was. `device.rotate` tilts the virtual sensor with `setPhysicalModel` and then
+reads back the reported orientation; the screen turns only when auto-rotate is
+on and the foreground app allows it.
+
+**H.264 video.** Device video is the only application traffic outside typed
+RPC. On the first media subscriber, `device/scrcpy.rs` pushes the embedded
+scrcpy-server v4.1 jar to `/data/local/tmp/bibcode-scrcpy-server-v4.1.jar`
+unless `sha256sum` on the device already matches, runs it through
+`adb shell` as a registered helper (`android-scrcpy`) with
+`max_size=1280 video_bit_rate=4000000 max_fps=30`, forwards a loopback port to
+it, and reads the scrcpy v4.1 wire format:
+
+- the video socket starts with one dummy byte (forward tunnel), a 4-byte
+  big-endian codec id (`h264`), and a 12-byte session packet;
+- every later 12-byte header is a 64-bit flags word and a 4-byte length.
+  Bit 63 marks a session packet with no payload whose bytes 4–8 and 8–12 are
+  the new width and height (sent after a rotation); otherwise bit 62 marks a
+  config packet, bit 61 a key frame, and the low 61 bits are the PTS in
+  microseconds;
+- the control socket is used only to send `RESET_VIDEO`.
+
+`MediaHub` fans those units out to at most four sockets per device. A client
+mints a ticket with `device.createMediaTicket`: random, single use, valid for
+60 s, bound to the session, the device, and the channel it was minted on
+(plain or E2EE). The book holds at most 256 tickets and 8 per session,
+dropping the oldest. The client opens `GET /api/device-media` (plain) or
+`GET /api/device-media-e2ee` (Noise_NK with the pinned host key and the
+prologue `bibcode-device-media/1`) on the main listener and sends the ticket
+as the first message, never in the URL; the routes accept no cookie or bearer.
+Each binary message is a 1-byte kind (`0` config, `1` key, `2` delta), an
+8-byte big-endian PTS in microseconds, and the Annex-B payload. The client
+sends only `{"type":"keyframe"}` after a decoder error.
+
+Each socket has a 2 MiB, 256-frame queue. On overflow the hub drops that
+socket's queued deltas, forwards nothing until the next key unit, and sends
+`RESET_VIDEO` at most once per second per device. A socket that accepts no
+frame for 10 s closes as `slow`. Rejections close with code 4400 and one of
+`expired`, `reused`, `wrongChannel`, `wrongDevice`, `limit`, `disabled`,
+`stopped`, `failed`, `unauthorized`, or `slow`; a wrong pinned key or prologue
+closes with 4403 `host-identity`. Pre-auth admission, deadlines, and the 503
+refusal are in [Remote architecture](./remote.md#device-media-sockets).
+
+**Client.** The device worker in `apps/web/src/components/device/` decodes
+H.264 with WebCodecs when `VideoDecoder` exists and accepts the stream's codec,
+and draws the transferred `VideoFrame`s on the main thread. It falls back to
+the JPEG stream (shown as **Still images** with the reason) when WebCodecs is
+missing (any insecure context, such as `http://<lan-ip>`), when no frame
+arrives within 5 s, on a decoder error, or on a close reason a new ticket
+cannot fix (`host-identity`, `disabled`, `unauthorized`, `wrongDevice`,
+`wrongChannel`). Other closes reconnect with a new ticket, at most 3 times in
+60 s with backoff, before falling back.
+
+**Agents.** Coding agents reach the same device through four MCP tools on the
+provider MCP endpoint: `device_list`, `device_open` (waits up to 180 s for
+`ready`), `device_screenshot` (PNG, at most 1080 px wide), and `device_close`.
+They are listed and callable only while `DeviceManager::enabled()` is true;
+with the setting off the tools disappear from `tools/list` and a call fails
+with `DevicePreviewsDisabledError`. There is no per-call scope check, by
+invariant: a valid provider MCP credential is issued only by `provider_runtime`
+when it launches a thread's provider, so holding it is the operate grant, as
+for the `preview_*` tools. If MCP credentials are ever issued to
+lower-privileged principals, both tool families need a real scope check.
+
+**Ownership and shutdown.** `ProductionRuntime` calls
+`DeviceManager::shutdown` after the preview gateway and before process
+ownership is frozen, so emulators stop gracefully rather than being killed by
+ownership teardown; the profiler's teardown runs later. The manager emits
+`device.lifecycle` while the profiler is on (see [Profiler](#profiler)), and
+`device.close`, `device.input`, and `device.rotate` are in `is_long_running`
+because they wait on the emulator.
+
+**Native verification items.** These behaviors are coded against an
+assumption kept in one function each and have not yet been confirmed on a
+real SDK: the discovery file and `-grpc-use-token`
+(`emulator::default_discovery_dirs`, `EMULATOR_GRPC_FLAGS`), the rotation
+vectors (`input::rotation_vector`), whether reported frame sizes are already
+oriented and touches use oriented display pixels (`input::oriented_size`,
+`input::to_device_pixels`, and the client's `displaySize`), and the scrcpy
+v4.1 stream after a rotation (`device::scrcpy`). The
+[device preview runbook](../testing/cross-platform-validation.md#android-device-previews)
+checks each one.
 
 ## Request and event flow
 
@@ -1970,7 +2109,11 @@ See [RPC and orchestration](./rpc-and-orchestration.md) and
   backups. Protected and bypassed attempts both stop the captured running set
   before invoking the installer and restart that exact set on failure.
   In-process backend shutdown preserves desktop-owned WebView descendants.
-- Normal application traffic uses HTTP and WebSocket RPC in every host.
+- Normal application traffic uses HTTP and WebSocket RPC in every host. The
+  one exception is device H.264 video on `/api/device-media` and
+  `/api/device-media-e2ee`: it is admitted by a single-use ticket from the
+  typed `device.createMediaTicket` RPC and Noise-encrypted on profiles that pin
+  the host key (see [Device previews](#device-previews)).
 - `packages/contracts` remains schema-only.
 - Rust owns all production backend behavior. TypeScript is limited to clients,
   contracts, shared utilities, relay infrastructure, and development tooling.

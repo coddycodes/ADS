@@ -935,6 +935,9 @@ Plan surfaces can also appear when the active provider/session supplies them.
 - **Diff** reviews branch or worktree changes.
 - **Activity** shows structured provider activity when available.
 - **Plan** displays the active agent plan when available.
+- **Device** shows an Android emulator running on the environment's server
+  (see [Android device previews](#android-device-previews)). It is in the `+`
+  menu only while device previews are on.
 
 ### Opening links
 
@@ -1159,6 +1162,55 @@ printing. It also prints when the command can't reach BiBCode, for example
 inside a sandbox without network access. See
 [Provider architecture](../architecture/providers.md) for the mechanism.
 
+### Android device previews
+
+The Device surface runs an Android emulator (AVD) on the server of the active
+thread's environment and shows its screen beside the chat. It is off by default.
+
+**Turn it on.** Open **Settings → Diagnostics → Device previews** and turn on
+**Device previews (Android emulator)** for that environment. The server needs
+the Android SDK, with `emulator` and `platform-tools`, at least one virtual
+device created in Android Studio's Device Manager, and hardware acceleration
+(KVM on Linux). The server finds the SDK through `ANDROID_HOME` or
+`ANDROID_SDK_ROOT`, or in the platform's default location. Turning the setting
+off while a device runs asks first, then stops it. A server too old for device
+previews shows the switch disabled with "This server's BiBCode version has no
+device previews. Update the server to use them."
+
+**Open it.** Choose **Device** from the right panel's `+` menu, or run **Open
+device preview** from the command palette. When the server cannot run a device,
+the panel says why (Android SDK not found, platform-tools missing, no virtual
+devices, or hardware acceleration unavailable) and what to do.
+
+**Use it.** Pick a virtual device and choose **Start**. The state pill moves
+through **Starting…** and **Booting…** to **Ready**; a first boot can take a
+few minutes. Then:
+
+- click or drag on the screen to touch it;
+- with the screen focused, type to send text, and use Backspace, Delete,
+  Enter, Tab, and the arrow keys; shortcuts with Ctrl, Cmd, or Alt stay with
+  BiBCode, and Shift+Tab leaves the screen;
+- paste into the focused screen to type the clipboard text;
+- use the toolbar's **Rotate left**, **Rotate right**, **Back**, **Home**,
+  **Recents**, **Power**, **Volume down**, and **Volume up**. The screen turns
+  only when the device's auto-rotate is on and the app allows it.
+
+A disabled control says why when you point at it. **Stop** shuts the device
+down. One device runs per environment: to start another, stop the running one
+first. A device that fails shows **Failed:** with the reason, for example a
+boot that did not finish within 180 s.
+
+**Video or still images.** The desktop app, and a browser on HTTPS or
+`localhost`, show the screen as video. A browser on plain HTTP to another
+address, such as `http://192.168.1.20:3773`, cannot decode video and shows
+**Still images** instead (at most 15 per second); the badge's tooltip says why
+and what to do. If video stops arriving, **Reconnect screen** starts it again.
+
+**Agents.** While device previews are on, coding agents on that environment can
+use the `device_list`, `device_open`, `device_screenshot`, and `device_close`
+tools on the same device you see. They disappear from an agent's tool list once
+the setting is off.
+
 ### Activity and targeted Stop
 
 Activity combines provider-attributed observation with capability-gated
@@ -1349,6 +1401,9 @@ The Files surface is a full file manager for the active workspace:
   actions visible but disabled.
 
 ## Current limitations
+
+- Device previews run Android emulators only, one device per environment. Two
+  people watching the same device both control it.
 
 - Staged-row diff viewing in the right-panel Source Control surface does not yet
   use a true `git diff --cached` source. Git Manager diffs are a separate path.

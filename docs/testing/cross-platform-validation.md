@@ -2961,6 +2961,136 @@ Record each value in the execution report's profiler section. A dump without a
 `crashId` finding, a duplicate crash finding, or a monitor that outlives the
 app fails the smoke.
 
+## Android device previews
+
+Run this when a change touches `apps/server/src/device/`, the `device.*`
+contracts, the device media routes, `packages/client-runtime/src/device/`,
+`apps/web/src/components/device/`, or the Device previews setting, and for
+release qualification. The design is in
+[Device previews](../architecture/overview.md#device-previews) and
+[Device media sockets](../architecture/remote.md#device-media-sockets); the
+user flow is in the
+[user guide](../user/workspace-ui.md#android-device-previews).
+
+Run the focused coverage first. Root runs leave the component tests
+uncompiled, so also run the `apps/web` paths from `apps/web` with
+`vp test run --project unit` and the paths without the `apps/web/` prefix, as
+for the other
+[compiler-sensitive](./README.md#web-unit-tests-and-the-react-compiler) files:
+
+```sh
+cargo test -p bibcode-server --lib device:: -j 2
+cargo test -p bibcode-server --lib connect_mcp -j 2
+cargo test -p bibcode-server --test device_rpc --test device_media_socket --test e2ee_ws --test production_connect_mcp -j 2
+vp test run packages/contracts/src/device.test.ts packages/client-runtime/src/device apps/web/src/components/device apps/web/src/components/settings/DevicePreviewsSection.test.tsx
+```
+
+The fakes stand in for `emulator`, `adb`, the emulator gRPC service, and
+scrcpy-server, so these tests prove BiBCode's side of each boundary but not the
+real tools. Run the
+[media interop suite](#direct-e2ee-interop-gate) when the media routes or
+their client change. Everything below needs a real Android SDK.
+
+**Host.** Use a server host with the Android SDK (`emulator` and
+`platform-tools`), at least one AVD, and hardware acceleration: KVM on Linux
+(`emulator -accel-check` succeeds), the Hypervisor framework on macOS, or
+WHPX/AEHD on Windows. Record the SDK path, `emulator -version`, `adb version`,
+the AVD's name, API level, and ABI, and the platform page's acceleration
+check. Start the server with `ANDROID_HOME` set in its own environment (a
+service manager does not read a login shell), on an address a second machine
+reaches. Use a fresh `BIBCODE_HOME` and enable the
+[Profiler](../architecture/overview.md#profiler) so `device.lifecycle` and
+any `subprocess.crash` are recorded. Clients: the desktop app on another
+machine with a pinned (E2EE) profile, and a browser on that machine opening
+`http://<server lan ip>:<port>` (not `localhost`, which is a secure context).
+Record each client's OS, app or browser version, and profile type.
+
+1. **Off by default.** Before turning anything on, the right panel's `+` menu
+   has no **Device** item and the command palette has no **Open device
+   preview**. Turn on **Settings → Diagnostics → Device previews** for the
+   environment; both appear.
+2. **Availability.** Open the Device panel: it lists the AVDs. On a host
+   without the SDK, without platform-tools, without AVDs, or without
+   acceleration (one at a time, where you can arrange it), the panel names
+   the problem and the fix. Record each message.
+3. **Start and discovery (native item 1).** Choose an AVD and **Start**. The
+   pill moves through **Starting…** and **Booting…** to **Ready** within
+   180 s. Record the boot time. While it runs, list `pid_*.ini` in each
+   directory of `emulator::default_discovery_dirs` (the platform page names
+   them) and record which one held the file, its name, and whether its
+   `pid_<pid>` matches the `emulator` process or a child. Record that it has
+   `grpc.port=` (equal to the `-grpc` argument on the emulator's command line)
+   and `grpc.token=` lines; never record the token's value. Record whether
+   the emulator printed any warning about `-grpc-use-token`. Confirm that the
+   console and gRPC ports listen on loopback only (`ss -ltnp`,
+   `lsof -nP -iTCP -sTCP:LISTEN`, or `Get-NetTCPConnection -State Listen`).
+4. **Video.** The desktop client shows video with no **Still images** badge
+   within 5 s of **Ready**. Record each desktop WebView's result (WKWebView,
+   WebView2, WebKitGTK); a WebView without `VideoDecoder` must show **Still
+   images** with the "Video isn't available" reason instead, never a blank
+   screen. The browser on `http://<lan ip>` shows **Still images** with the
+   same reason. A browser in a secure context (HTTPS, for example through the
+   relay) shows video. Record any decoder error from the developer tools
+   console of the window or the device worker.
+5. **Touch, keys, and paste (native item 3).** Turn on the device's pointer
+   location (`adb -s <serial> shell settings put system pointer_location 1`).
+   Tap the four corners and the centre of the screen and record the reported
+   coordinates against the display size (`adb -s <serial> shell wm size`).
+   Swipe down from the top to open the notification shade, and start a drag
+   on the screen that ends outside the panel: the touch ends and nothing stays
+   pressed. In a text field, type, use Backspace, Enter, and the arrow keys,
+   and paste text into the focused screen: the text arrives. Use **Back**,
+   **Home**, **Recents**, **Power**, and both volume buttons.
+6. **Rotation (native items 2, 3, and 4).** Turn on auto-rotate
+   (`adb -s <serial> shell settings put system accelerometer_rotation 1`) and
+   open an app that rotates. Use **Rotate right** and **Rotate left** through
+   all four orientations. For each, record the orientation the catalog shows,
+   `adb -s <serial> shell dumpsys input | grep -i SurfaceOrientation`, the
+   video's and the still images' width and height (landscape is wider than
+   tall), and the pointer location of a corner tap. The video must keep
+   playing at the new size without a fallback, which proves scrcpy's new
+   session and config packets were read. With auto-rotate off, a rotate
+   command leaves the screen and the catalog in portrait.
+7. **scrcpy session (native item 4).** After the first video session, record
+   `adb -s <serial> shell sha256sum /data/local/tmp/bibcode-scrcpy-server-v4.1.jar`
+   (it equals `SCRCPY_SERVER_SHA256` in `device/scrcpy.rs`) and
+   `adb -s <serial> shell stat -c %Y` of the same file. Close every Device
+   panel showing the device and wait 5 s: `adb forward --list` has no
+   `localabstract:scrcpy_` entry and
+   `adb -s <serial> shell 'ps -A -o PID,ARGS | grep -c com.genymobile.scrcpy'`
+   counts no server (the `grep` itself may count once). Open the panel again:
+   video returns, and the jar's `stat` time is unchanged, which shows the push
+   was skipped.
+8. **Two clients.** With the desktop and the browser both showing the device,
+   both see each other's input. Where five desktop windows can show the
+   device, the fifth video socket is refused with `limit` and that window
+   shows still images.
+9. **Agents.** In a thread on the environment, ask the agent to list devices,
+   take a screenshot, and close the device. `device_screenshot` returns a PNG
+   no wider than 1080 px. Turn the setting off: the agent's next `device_*`
+   call fails with the "Device previews are off" error.
+10. **Stop and cleanup.** **Stop** the device. Within 10 s the pill shows
+    **Stopped**, the platform page's process check finds no `emulator` or
+    `qemu-system` process, its discovery file is gone, and
+    `adb forward --list` is empty. Start the device again, then turn the
+    setting off: the confirmation names the running device, and after it
+    the same checks pass and the panel shows how to turn previews on. Start
+    it once more and stop the server (or quit the desktop that hosts it):
+    the same checks pass after shutdown.
+11. **Crash.** Start a device and kill the `emulator` process
+    (or its `qemu-system` child) from a shell. Within a few seconds the pill
+    shows **Failed:** with the reason, and with the profiler on
+    `profiler findings --kind subprocess.crash --json` lists a finding
+    labelled `android-emulator`. Record
+    `profiler events --kind device.lifecycle --json` across the run: `start`,
+    `ready`, `stop`, and `fail` with `failureKind` `exited`.
+
+Record the results in the execution report's device previews section and mark
+each native verification item confirmed or corrected. A correction is a code
+change in the named function with its test updated, never only a runbook
+edit. A surviving `emulator` or `qemu-system` process, a stuck touch, or a
+blank screen without a fallback fails the run.
+
 ## Non-native compatibility audit
 
 Review shared and platform-gated code for every supported non-native host. Run

@@ -246,8 +246,9 @@ changed identities, permission failures, and unsupported process topologies
 remain unclaimed and produce bounded partial or unavailable coverage. The
 observer never claims a generic WebKit process by machine-wide name matching.
 
-Production provider, terminal, provider-helper, and managed-endpoint tunnel
-launchers register their exact root identity, scope, kind, and bounded label.
+Production provider, terminal, provider-helper, managed-endpoint tunnel, and
+Android device preview (`android-emulator`, `android-scrcpy`) launchers
+register their exact root identity, scope, kind, and bounded label.
 Independent Codex/OpenCode helpers and the tunnel use the `helper` kind and
 dedicated process groups or Windows Jobs. Descendants inherit the
 nearest registered root's attribution. A process with no registered provider or

@@ -206,6 +206,11 @@ A panic that ended the process also leaves a `crash.unclean-exit` or
     executable, such as `bibcode-connect`): signals and non-zero exits, noticed
     within 5 s; its relay preview hostnames are withdrawn until the next link
     or restart.
+  - Android device preview helpers (`command`): the emulator, labelled
+    `android-emulator`, noticed within 1 s and failing the device with
+    `exited`; and the scrcpy-server `adb shell`, labelled `android-scrcpy`,
+    noticed when its video session stops. Signals and non-zero exits other
+    than 129, 130 and 143 count; a stop BiBCode requested does not.
 - **Fingerprint:** `processKind`, `label` and `outcome`.
 - **Evidence:**
   - `pid`, `outcome`, `uptimeMs`;

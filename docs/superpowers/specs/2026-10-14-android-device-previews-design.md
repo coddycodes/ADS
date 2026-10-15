@@ -113,6 +113,11 @@ starting → booting → ready → stopping → stopped
   whether a flag such as `-grpc-use-token` is required are **verified against
   an installed SDK during implementation**; the fake emulator mirrors what is
   found. The client connects only to `127.0.0.1`.
+  *Implementation note:* the server never sets `ANDROID_EMULATOR_HOME` and
+  searches the ordered `emulator::default_discovery_dirs` (OS runtime
+  directory first, then `<ANDROID_EMULATOR_HOME or ~/.android>/avd/running`),
+  accepting only a `pid_*.ini` whose `grpc.port` matches; see
+  `docs/architecture/overview.md#device-previews`.
 - **Boot:** `booting` once gRPC answers `getStatus`; `ready` once
   `adb -s emulator-<port> wait-for-device` and `getprop sys.boot_completed`
   return `1`, within 180 s, otherwise `failed{bootTimeout}` and the process is
@@ -207,6 +212,11 @@ On the first media subscriber, `scrcpy.rs`:
 4. parses the codec header and per-packet headers (config flag, key-frame
    flag, PTS) into `config | key | delta` units, caching the latest config.
 
+*Implementation note:* scrcpy v4.1 sends a dummy byte, a 4-byte codec id, and
+a 12-byte session packet, and marks packets with bit 63 (session), bit 62
+(config), and bit 61 (key frame). The living description of that wire format
+is in `docs/architecture/overview.md#device-previews`.
+
 Control is used only for `RESET_VIDEO`. The session stops (process reaped,
 forward removed) when the last subscriber leaves, the device stops, or on
 shutdown.
@@ -230,6 +240,9 @@ The ticket goes in the first message, never in the URL, and cookies are not
 accepted on these routes. Rejections close with a typed reason
 (`expired | reused | wrongDevice | wrongChannel`); an `e2ee` ticket is refused
 on the plain route.
+*Implementation note:* the full close-reason list, the Noise prologue
+`bibcode-device-media/1`, and the shared pre-auth admission are in
+`docs/architecture/remote.md#device-media-sockets`.
 
 ### 4.3 Frames and backpressure
 

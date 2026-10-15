@@ -527,6 +527,21 @@ ones:
   The release server job runs the same `codesign --verify`, so a failure here
   predicts a failed release; record it.
 
+## Android device previews
+
+Run the shared [Android device previews](./cross-platform-validation.md#android-device-previews)
+procedure with this machine as the server host, and record these platform
+values:
+
+- **Acceleration.** `emulator -accel-check` (the Hypervisor framework) and the
+  AVD's ABI, which must match the host (`arm64-v8a` on Apple silicon).
+- **Discovery directories.** `~/Library/Caches/TemporaryItems/avd/running`,
+  then `${ANDROID_EMULATOR_HOME:-$HOME/.android}/avd/running`.
+- **Process check.** `pgrep -fl 'emulator|qemu-system'` prints nothing after
+  stop, after the setting is turned off, and after server shutdown.
+- **WebView.** The desktop client's macOS version (WKWebView), and whether it
+  showed video or still images with the "Video isn't available" reason.
+
 ## Process-group cleanup
 
 Capture PID, PPID, process group, start time, executable, and command line for

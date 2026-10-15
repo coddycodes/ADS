@@ -17,6 +17,12 @@ Start with the shared procedure, then use the page for the native host:
 - [Flaky-test diagnosis](./flaky-tests.md)
 - [Typography component fixtures](./typography-fixtures.md)
 
+Android device previews need a server host with the Android SDK; their shared
+procedure is in
+[Shared cross-platform validation](./cross-platform-validation.md#android-device-previews),
+and each platform page names its acceleration check, discovery directories, and
+process check.
+
 ## Evidence classes
 
 - **Native evidence:** the command or scenario executed on the named operating
