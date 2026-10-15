@@ -1,7 +1,13 @@
-import type { DeviceKey, DevicePlatform, DeviceSnapshot } from "@bibcode/contracts";
+import type {
+  DeviceKey,
+  DevicePlatform,
+  DevicePlatformCatalog,
+  DeviceSnapshot,
+} from "@bibcode/contracts";
 import {
   ChevronLeftIcon,
   CircleIcon,
+  ClipboardPasteIcon,
   PlayIcon,
   PowerIcon,
   RotateCcwIcon,
@@ -16,25 +22,28 @@ import { type ReactNode, useId } from "react";
 import { cn } from "../../lib/utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import {
+  Select,
+  SelectGroup,
+  SelectGroupLabel,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   DEVICE_DISABLED_REASONS,
   deviceStateLabel,
+  IN_USE_ELSEWHERE_SUFFIX,
+  isViewOnlyAvailability,
+  PASTE_HINTS,
+  PLATFORM_LABELS,
   STILL_IMAGES_LABEL,
-  STILL_IMAGES_REASONS,
-  type StillImagesReason,
+  type StillImages,
 } from "./deviceMessages";
 
 export type RotateDirection = "left" | "right";
-
-/** An image the picker offers, with the platform that runs it. */
-export interface DevicePickerImage {
-  readonly platform: DevicePlatform;
-  readonly id: string;
-  readonly displayName: string;
-  readonly inUseElsewhere?: true;
-}
 
 /** Which image the picker shows; ids are unique only within a platform. */
 export interface DeviceImageSelection {
@@ -45,15 +54,21 @@ export interface DeviceImageSelection {
 /** The picker's string value for an image. A platform name never contains `:`. */
 const pickerValue = (platform: DevicePlatform, id: string) => `${platform}:${id}`;
 
+/** A platform's availability message in the picker; not a platform, so never an image's value. */
+const noticeValue = (platform: DevicePlatform) => `notice:${platform}`;
+
 /** A control that is either usable or says why not, in its tooltip and to screen readers. */
 function ToolbarButton({
   label,
+  hint,
   disabledReason,
   onClick,
   children,
   iconOnly = true,
 }: {
   readonly label: string;
+  /** The tooltip while enabled, when it says more than `label`. */
+  readonly hint?: string;
   readonly disabledReason: string | null;
   readonly onClick: () => void;
   readonly children: ReactNode;
@@ -65,7 +80,7 @@ function ToolbarButton({
       size={iconOnly ? "icon-xs" : "xs"}
       variant={iconOnly ? "ghost" : "outline"}
       aria-label={iconOnly ? label : undefined}
-      title={disabledReason === null ? label : undefined}
+      title={disabledReason === null ? (hint ?? label) : undefined}
       disabled={disabledReason !== null}
       aria-describedby={disabledReason === null ? undefined : reasonId}
       onClick={onClick}
@@ -94,43 +109,83 @@ const PILL_TONES: Readonly<Record<DeviceSnapshot["state"], string>> = {
   failed: "bg-destructive/12 text-destructive",
 };
 
+/** The picker's entries for one platform: its images, then why it cannot run (or runs view only). */
+function PlatformGroup({ listed }: { readonly listed: DevicePlatformCatalog }) {
+  const { platform, availability, images } = listed;
+  const opens = availability.kind === "ready" || isViewOnlyAvailability(availability.kind);
+  return (
+    <SelectGroup>
+      <SelectGroupLabel>{PLATFORM_LABELS[platform]}</SelectGroupLabel>
+      {opens
+        ? images.map((image) => {
+            const value = pickerValue(platform, image.id);
+            return (
+              <SelectItem
+                hideIndicator
+                key={value}
+                value={value}
+                disabled={image.inUseElsewhere === true}
+              >
+                {image.inUseElsewhere === true
+                  ? `${image.displayName}${IN_USE_ELSEWHERE_SUFFIX}`
+                  : image.displayName}
+              </SelectItem>
+            );
+          })
+        : null}
+      {availability.kind === "ready" ? null : (
+        <SelectItem
+          hideIndicator
+          disabled
+          value={noticeValue(platform)}
+          className="whitespace-normal text-xs text-muted-foreground"
+        >
+          {availability.message}
+        </SelectItem>
+      )}
+    </SelectGroup>
+  );
+}
+
 export function DeviceToolbar({
-  images,
+  platforms,
   selectedImage,
+  selectedName,
   device,
-  startPending,
+  startDisabledReason,
+  pickerLocked,
+  viewOnly,
   onSelectImage,
   onStart,
   onStop,
   onRotate,
   onKey,
-  stillImagesReason = null,
+  onPaste,
+  stillImages = null,
 }: {
-  readonly images: ReadonlyArray<DevicePickerImage>;
+  /** The catalog's platforms, each a group in the picker. */
+  readonly platforms: ReadonlyArray<DevicePlatformCatalog>;
   readonly selectedImage: DeviceImageSelection | null;
+  /** The selected image's display name. */
+  readonly selectedName: string | null;
   /** The device this pane shows; `null` before one is started. */
   readonly device: DeviceSnapshot | null;
-  readonly startPending: boolean;
+  /** Why Start is disabled, or `null` when it can start the selected image. */
+  readonly startDisabledReason: string | null;
+  readonly pickerLocked: boolean;
+  /** The shown device's platform runs view only: no keys, paste or rotation. */
+  readonly viewOnly: boolean;
   readonly onSelectImage: (platform: DevicePlatform, imageId: string) => void;
   readonly onStart: () => void;
   readonly onStop: () => void;
   readonly onRotate: (direction: RotateDirection) => void;
   readonly onKey: (key: DeviceKey) => void;
+  readonly onPaste: () => void;
   /** Set while the screen shows still images instead of video, and why. */
-  readonly stillImagesReason?: StillImagesReason | null;
+  readonly stillImages?: StillImages | null;
 }) {
   const state = device?.state ?? null;
   const running = state === "starting" || state === "booting" || state === "ready";
-  const startReason =
-    images.length === 0
-      ? DEVICE_DISABLED_REASONS.noAvd
-      : startPending
-        ? DEVICE_DISABLED_REASONS.starting
-        : running
-          ? DEVICE_DISABLED_REASONS.running
-          : state === "stopping"
-            ? DEVICE_DISABLED_REASONS.stopping
-            : null;
   const stopReason = running
     ? null
     : state === "stopping"
@@ -144,13 +199,14 @@ export function DeviceToolbar({
         : state === "stopping"
           ? DEVICE_DISABLED_REASONS.stopping
           : DEVICE_DISABLED_REASONS.startFirst;
+  const inputReason = readyReason ?? (viewOnly ? DEVICE_DISABLED_REASONS.viewOnly : null);
+  const rotateReason =
+    inputReason ?? (device?.canRotate === false ? DEVICE_DISABLED_REASONS.cannotRotate : null);
+  const platform = device?.platform ?? selectedImage?.platform ?? "android";
+  const ios = platform === "ios";
   const selectedValue =
     selectedImage === null ? "" : pickerValue(selectedImage.platform, selectedImage.imageId);
-  const selectedLabel =
-    images.find((image) => pickerValue(image.platform, image.id) === selectedValue)?.displayName ??
-    selectedImage?.imageId ??
-    "No device";
-  const pickerLocked = running || state === "stopping" || startPending;
+  const hasImages = platforms.some((listed) => listed.images.length > 0);
 
   return (
     <div
@@ -160,32 +216,31 @@ export function DeviceToolbar({
     >
       <Select
         value={selectedValue}
-        disabled={pickerLocked || images.length === 0}
+        disabled={pickerLocked || !hasImages}
         onValueChange={(value) => {
-          const picked = images.find((image) => pickerValue(image.platform, image.id) === value);
-          if (picked !== undefined) onSelectImage(picked.platform, picked.id);
+          for (const listed of platforms) {
+            const picked = listed.images.find(
+              (image) => pickerValue(listed.platform, image.id) === value,
+            );
+            if (picked !== undefined) return onSelectImage(listed.platform, picked.id);
+          }
         }}
       >
-        <SelectTrigger
-          aria-label="Virtual device"
-          size="sm"
-          className="w-40 min-w-0"
-          title={startReason ?? undefined}
-        >
-          <SelectValue>{selectedLabel}</SelectValue>
+        <SelectTrigger aria-label="Virtual device" size="sm" className="w-40 min-w-0">
+          <SelectValue>{selectedName ?? "No device"}</SelectValue>
         </SelectTrigger>
         <SelectPopup align="start" alignItemWithTrigger={false}>
-          {images.map((image) => {
-            const value = pickerValue(image.platform, image.id);
-            return (
-              <SelectItem hideIndicator key={value} value={value}>
-                {image.displayName}
-              </SelectItem>
-            );
-          })}
+          {platforms.map((listed) => (
+            <PlatformGroup key={listed.platform} listed={listed} />
+          ))}
         </SelectPopup>
       </Select>
-      <ToolbarButton label="Start" disabledReason={startReason} onClick={onStart} iconOnly={false}>
+      <ToolbarButton
+        label="Start"
+        disabledReason={startDisabledReason}
+        onClick={onStart}
+        iconOnly={false}
+      >
         <PlayIcon />
         Start
       </ToolbarButton>
@@ -196,50 +251,66 @@ export function DeviceToolbar({
       <span className="mx-0.5 h-4 w-px bg-border" aria-hidden />
       <ToolbarButton
         label="Rotate left"
-        disabledReason={readyReason}
+        disabledReason={rotateReason}
         onClick={() => onRotate("left")}
       >
         <RotateCcwIcon />
       </ToolbarButton>
       <ToolbarButton
         label="Rotate right"
-        disabledReason={readyReason}
+        disabledReason={rotateReason}
         onClick={() => onRotate("right")}
       >
         <RotateCwIcon />
       </ToolbarButton>
-      <ToolbarButton label="Back" disabledReason={readyReason} onClick={() => onKey("back")}>
-        <ChevronLeftIcon />
-      </ToolbarButton>
-      <ToolbarButton label="Home" disabledReason={readyReason} onClick={() => onKey("home")}>
+      {ios ? null : (
+        <ToolbarButton label="Back" disabledReason={inputReason} onClick={() => onKey("back")}>
+          <ChevronLeftIcon />
+        </ToolbarButton>
+      )}
+      <ToolbarButton label="Home" disabledReason={inputReason} onClick={() => onKey("home")}>
         <CircleIcon />
       </ToolbarButton>
+      {ios ? null : (
+        <ToolbarButton
+          label="Recents"
+          disabledReason={inputReason}
+          onClick={() => onKey("appSwitch")}
+        >
+          <SquareStackIcon />
+        </ToolbarButton>
+      )}
       <ToolbarButton
-        label="Recents"
-        disabledReason={readyReason}
-        onClick={() => onKey("appSwitch")}
+        label={ios ? "Lock" : "Power"}
+        disabledReason={inputReason}
+        onClick={() => onKey("power")}
       >
-        <SquareStackIcon />
-      </ToolbarButton>
-      <ToolbarButton label="Power" disabledReason={readyReason} onClick={() => onKey("power")}>
         <PowerIcon />
       </ToolbarButton>
       <ToolbarButton
         label="Volume down"
-        disabledReason={readyReason}
+        disabledReason={inputReason}
         onClick={() => onKey("volumeDown")}
       >
         <Volume1Icon />
       </ToolbarButton>
       <ToolbarButton
         label="Volume up"
-        disabledReason={readyReason}
+        disabledReason={inputReason}
         onClick={() => onKey("volumeUp")}
       >
         <Volume2Icon />
       </ToolbarButton>
+      <ToolbarButton
+        label="Paste"
+        hint={PASTE_HINTS[platform]}
+        disabledReason={inputReason}
+        onClick={onPaste}
+      >
+        <ClipboardPasteIcon />
+      </ToolbarButton>
       <div className="ml-auto flex min-w-0 items-center gap-1.5">
-        {stillImagesReason === null ? null : (
+        {stillImages === null ? null : (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -247,13 +318,13 @@ export function DeviceToolbar({
                   variant="outline"
                   size="sm"
                   tabIndex={0}
-                  data-still-images={stillImagesReason}
+                  data-still-images={stillImages.reason}
                 >
                   {STILL_IMAGES_LABEL}
                 </Badge>
               }
             />
-            <TooltipPopup>{STILL_IMAGES_REASONS[stillImagesReason]}</TooltipPopup>
+            <TooltipPopup>{stillImages.message}</TooltipPopup>
           </Tooltip>
         )}
         {device === null ? null : (

@@ -10,7 +10,7 @@ const atoms = vi.hoisted(() => ({
   subscribed: [] as unknown[],
   videoMode: { kind: "jpeg", reason: "unsupported" } as VideoMode,
   restarts: [] as number[],
-  stillImages: [] as Array<string | null>,
+  stillImages: [] as Array<{ reason: string; message: string } | null>,
 }));
 
 vi.mock("@effect/atom-react", () => ({
@@ -52,7 +52,7 @@ let container: HTMLDivElement | null = null;
 let sent: DeviceInputEvent[] = [];
 let queue: DeviceInputQueue;
 
-async function render() {
+async function render(props: { inputDisabledReason?: string | null; onPasted?: () => void } = {}) {
   queue = new DeviceInputQueue(
     (events) => {
       sent.push(...events);
@@ -70,9 +70,12 @@ async function render() {
       <DeviceScreen
         environmentId={ENVIRONMENT_ID}
         device={device}
+        name="Pixel 8"
+        inputDisabledReason={props.inputDisabledReason ?? null}
+        onPasted={props.onPasted ?? (() => undefined)}
         onInput={(event) => queue.push(event)}
         onRelease={onRelease}
-        onStillImages={(reason) => atoms.stillImages.push(reason)}
+        onStillImages={(still) => atoms.stillImages.push(still)}
       />,
     );
   });
@@ -142,7 +145,11 @@ describe("DeviceScreen", () => {
     atoms.videoMode = { kind: "jpeg", reason: "decoderError" };
     await render();
     expect(atoms.subscribed).not.toEqual([]);
-    expect(atoms.stillImages.at(-1)).toBe("decoderError");
+    expect(atoms.stillImages.at(-1)).toEqual({
+      reason: "decoderError",
+      message:
+        "Video could not be decoded, so the screen updates as still images. Reopen the device panel to try video again.",
+    });
     expect(container!.querySelector("[data-still-images]")).toBeNull();
     await act(async () => root!.unmount());
     root = null;
@@ -221,5 +228,68 @@ describe("DeviceScreen", () => {
     root = null;
     await settle();
     expect(sent.at(-1)).toEqual({ type: "touch", action: "cancel", pointerId: 0, x: 0.5, y: 0.5 });
+  });
+
+  it("passes on the server's own reason for still images", async () => {
+    atoms.videoMode = { kind: "jpeg", reason: "noVideo", message: "Video is off: view only." };
+    await render();
+    expect(atoms.stillImages.at(-1)).toEqual({
+      reason: "noVideo",
+      message: "Video is off: view only.",
+    });
+  });
+
+  it("names the device, not its image id, to screen readers", async () => {
+    const canvas = await render();
+    expect(canvas.getAttribute("aria-label")).toContain("Pixel 8 screen.");
+    expect(canvas.getAttribute("aria-label")).not.toContain("Pixel_8");
+  });
+
+  it("view-only shows why above the screen and sends no input", async () => {
+    const reason =
+      "Live input needs someone logged in on this Mac. Simulators open as screenshots.";
+    const onPasted = vi.fn();
+    const canvas = await render({ inputDisabledReason: reason, onPasted });
+    const notice = container!.querySelector("[data-view-only]");
+    expect(notice?.textContent).toBe(reason);
+    // The notice sits above the screen, outside the canvas's box.
+    expect(notice?.compareDocumentPosition(canvas)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(canvas.style.cursor).toBe("default");
+    expect(canvas.getAttribute("aria-label")).toContain("view only");
+    await act(async () => {
+      canvas.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          pointerId: 1,
+          pointerType: "mouse",
+          button: 0,
+          clientX: 500,
+          clientY: 400,
+        }),
+      );
+      canvas.dispatchEvent(
+        new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientX: 500, clientY: 400 }),
+      );
+      canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+      const paste = new Event("paste", { bubbles: true, cancelable: true });
+      Object.assign(paste, { clipboardData: { getData: () => "hello" } });
+      canvas.dispatchEvent(paste);
+    });
+    await settle();
+    expect(sent).toEqual([]);
+    expect(onPasted).not.toHaveBeenCalled();
+  });
+
+  it("reports a paste after sending its text", async () => {
+    const onPasted = vi.fn();
+    const canvas = await render({ onPasted });
+    await act(async () => {
+      const paste = new Event("paste", { bubbles: true, cancelable: true });
+      Object.assign(paste, { clipboardData: { getData: () => "hello" } });
+      canvas.dispatchEvent(paste);
+    });
+    await settle();
+    expect(sent).toEqual([{ type: "text", text: "hello" }]);
+    expect(onPasted).toHaveBeenCalledTimes(1);
   });
 });

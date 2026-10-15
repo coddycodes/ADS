@@ -1,4 +1,4 @@
-import type { DeviceAvailabilityKind, DeviceSnapshot } from "@bibcode/contracts";
+import type { DeviceAvailabilityKind, DevicePlatform, DeviceSnapshot } from "@bibcode/contracts";
 import { isQueryTransportCutoff } from "@bibcode/client-runtime/state/runtime";
 
 /** The Settings section the pane's "Open settings" lands on. */
@@ -12,7 +12,38 @@ export const DEVICE_PREVIEWS_UNSUPPORTED_MESSAGE =
   "This server's BiBCode version has no device previews. Update the server to use them.";
 
 export const DEVICE_PREVIEWS_DESCRIPTION =
-  "Run an Android emulator on this environment's server and show it in a side panel. Requires the Android SDK with at least one virtual device and hardware acceleration on the server.";
+  "Android emulators and, on macOS servers, iOS simulators.";
+
+/** The picker's heading for each platform's images. */
+export const PLATFORM_LABELS: Readonly<Record<DevicePlatform, string>> = {
+  android: "Android",
+  ios: "iOS",
+};
+
+/** Appended to an image that already runs outside BiBCode, which the picker lists disabled. */
+export const IN_USE_ELSEWHERE_SUFFIX = " — Running outside BiBCode";
+
+/**
+ * The availability kinds whose images still open, as screenshots without input: the platform
+ * is listed with its images, and its devices show why they are view only.
+ */
+export function isViewOnlyAvailability(kind: DeviceAvailabilityKind): boolean {
+  return kind === "xcodeUnsupported" || kind === "viewOnlyHeadless";
+}
+
+/** Shown once, after the first paste into an iOS simulator. */
+export const IOS_PASTE_NOTE =
+  "If iOS asks to Allow Paste, answer it before typing more: keys typed meanwhile can arrive before the pasted text.";
+
+/** The Paste button's tooltip, per platform. */
+export const PASTE_HINTS: Readonly<Record<DevicePlatform, string>> = {
+  android: "Paste",
+  ios: "Paste. iOS may ask to Allow Paste first.",
+};
+
+/** When the browser will not hand the clipboard to the Paste button. */
+export const CLIPBOARD_UNREADABLE_MESSAGE =
+  "BiBCode can't read the clipboard here. Click the screen and paste with Ctrl+V or ⌘V.";
 
 /** Why a toolbar control is disabled; every disabled control says one of these. */
 export const DEVICE_DISABLED_REASONS = {
@@ -21,16 +52,25 @@ export const DEVICE_DISABLED_REASONS = {
   stopping: "The device is stopping",
   running: "Stop the running device to start another",
   noAvd: "Create a virtual device in Android Studio's Device Manager first",
+  noImage: "No device can start on this server",
   starting: "The device is starting",
+  cannotRotate: "Rotation isn't available for iOS simulators yet",
+  viewOnly: "This simulator is view only",
 } as const;
 
 /** Why the screen shows still images (JPEG) instead of video. */
 export type StillImagesReason =
   | "unsupported"
-  | "noSignIn"
+  | "noVideo"
   | "noFirstFrame"
   | "decoderError"
   | "rejected";
+
+/** Why the screen shows still images, in the words its badge shows. */
+export interface StillImages {
+  readonly reason: StillImagesReason;
+  readonly message: string;
+}
 
 /** The toolbar badge shown while the screen updates as still images. */
 export const STILL_IMAGES_LABEL = "Still images";
@@ -39,8 +79,8 @@ export const STILL_IMAGES_LABEL = "Still images";
 export const STILL_IMAGES_REASONS: Readonly<Record<StillImagesReason, string>> = {
   unsupported:
     "Video isn't available in this browser or on this connection, so the screen updates as still images. The desktop app or an HTTPS connection usually shows video.",
-  noSignIn:
-    "Video needs a signed-in session, and this server runs with --unsafe-no-auth, so the screen updates as still images. Restart the server without --unsafe-no-auth to show video.",
+  // The server says why (no sign-in, or a view-only simulator); this is only its fallback.
+  noVideo: "The server has no video for this device, so the screen updates as still images.",
   noFirstFrame:
     "Video did not start, so the screen updates as still images. Reopen the device panel to try video again.",
   decoderError:
@@ -81,14 +121,17 @@ export function deviceStateLabel(device: DeviceSnapshot): string {
     case "stopped":
       return "Stopped";
     case "failed":
-      return `Failed: ${device.failure ?? "the emulator stopped unexpectedly"}`;
+      return `Failed: ${device.failure ?? (device.platform === "ios" ? "the simulator stopped unexpectedly" : "the emulator stopped unexpectedly")}`;
   }
 }
 
 /** A device RPC failure, as the pane shows it. */
 export interface DeviceErrorView {
   readonly message: string;
-  /** For a device limit: the running device's display name; the pane offers to stop it. */
+  /**
+   * For a device limit: the running device's display name, which the pane offers to stop. The
+   * pane finds that device by the platform it tried to start on, never by this name.
+   */
   readonly runningName: string | null;
   /** Device previews were turned off meanwhile; the pane offers Settings. */
   readonly disabled: boolean;

@@ -1,9 +1,11 @@
 import type {
   DeviceCatalog,
+  DeviceImage,
   DeviceInputEvent,
   DeviceKey,
   DeviceOrientation,
   DevicePlatform,
+  DevicePlatformCatalog,
   DeviceSnapshot,
   EnvironmentId,
 } from "@bibcode/contracts";
@@ -24,23 +26,23 @@ import { Button } from "../ui/button";
 import { RetryButton } from "../ui/retry-button";
 import { useDevicePreviewsAvailability } from "./deviceAvailability";
 import { DeviceInputQueue } from "./deviceInputQueue";
+import { splitDeviceText } from "./deviceKeyMap";
 import {
   availabilityTitle,
+  CLIPBOARD_UNREADABLE_MESSAGE,
+  DEVICE_DISABLED_REASONS,
   DEVICE_PREVIEWS_OFF_MESSAGE,
   DEVICE_PREVIEWS_SETTINGS_ANCHOR,
   DEVICE_PREVIEWS_UNSUPPORTED_MESSAGE,
   type DeviceErrorView,
   describeDeviceError,
   deviceStateLabel,
-  type StillImagesReason,
+  IOS_PASTE_NOTE,
+  isViewOnlyAvailability,
+  type StillImages,
 } from "./deviceMessages";
 import { DeviceScreen } from "./DeviceScreen";
-import {
-  type DeviceImageSelection,
-  type DevicePickerImage,
-  DeviceToolbar,
-  type RotateDirection,
-} from "./DeviceToolbar";
+import { type DeviceImageSelection, DeviceToolbar, type RotateDirection } from "./DeviceToolbar";
 
 /** Turning the device left goes portrait → landscape → reverse portrait → reverse landscape. */
 const ORIENTATIONS_LEFT: ReadonlyArray<DeviceOrientation> = [
@@ -62,30 +64,84 @@ export function rotatedOrientation(
 const isRunning = (device: DeviceSnapshot) =>
   device.state !== "stopped" && device.state !== "failed";
 
-/** Every platform's images in catalog order, each with the platform that runs it. */
-export function catalogImages(catalog: DeviceCatalog | null): ReadonlyArray<DevicePickerImage> {
-  if (catalog === null) return [];
-  return catalog.platforms.flatMap((listed) =>
-    listed.images.map((image) => ({ ...image, platform: listed.platform })),
+/** Whether a platform's images open: it is ready, or runs them view only. */
+const opensImages = (listed: DevicePlatformCatalog) =>
+  listed.availability.kind === "ready" || isViewOnlyAvailability(listed.availability.kind);
+
+const selectionOf = (device: DeviceSnapshot): DeviceImageSelection => ({
+  platform: device.platform,
+  imageId: device.imageId,
+});
+
+const isSelected = (device: DeviceSnapshot, selection: DeviceImageSelection) =>
+  device.platform === selection.platform && device.imageId === selection.imageId;
+
+function findImage(
+  catalog: DeviceCatalog,
+  platform: DevicePlatform,
+  imageId: string,
+): DeviceImage | undefined {
+  return catalog.platforms
+    .find((listed) => listed.platform === platform)
+    ?.images.find((image) => image.id === imageId);
+}
+
+/** An image's display name, else its id (an AVD name, or a simulator's UDID). */
+export function imageDisplayName(
+  catalog: DeviceCatalog | null,
+  platform: DevicePlatform,
+  imageId: string,
+): string {
+  return (
+    (catalog === null ? undefined : findImage(catalog, platform, imageId))?.displayName ?? imageId
   );
 }
 
-const isImage = (image: DevicePickerImage, platform: DevicePlatform, imageId: string) =>
-  image.platform === platform && image.id === imageId;
+/**
+ * The image the picker shows: the user's pick while the catalog lists it, else the device this
+ * pane started while it runs, else any running device, else the one this pane started (so its
+ * failure stays visible), else the first image that can start. The catalog sorts devices by
+ * id, not age, so the device this pane started is the only sign of which is newest.
+ */
+export function selectedImageOf(
+  catalog: DeviceCatalog | null,
+  picked: DeviceImageSelection | null,
+  followedDeviceId: string | null,
+): DeviceImageSelection | null {
+  if (catalog === null) return null;
+  if (picked !== null && findImage(catalog, picked.platform, picked.imageId) !== undefined) {
+    return picked;
+  }
+  const followed = catalog.devices.find((device) => device.deviceId === followedDeviceId);
+  if (followed !== undefined && isRunning(followed)) return selectionOf(followed);
+  const running = catalog.devices.find(isRunning);
+  if (running !== undefined) return selectionOf(running);
+  if (followed !== undefined && followed.state === "failed") return selectionOf(followed);
+  for (const listed of catalog.platforms) {
+    if (!opensImages(listed)) continue;
+    const free = listed.images.find((image) => image.inUseElsewhere !== true);
+    if (free !== undefined) return { platform: listed.platform, imageId: free.id };
+  }
+  return null;
+}
 
 /**
- * The device the pane shows: the environment's running one (there is at most one), else the
- * one this pane last started, so its failure reason stays visible.
+ * The device the pane shows: the selected image's running device (one per platform at most),
+ * else the one this pane started on it, if that failed, so its reason stays visible.
  */
 export function selectShownDevice(
   catalog: DeviceCatalog | null,
+  selected: DeviceImageSelection | null,
   followedDeviceId: string | null,
 ): DeviceSnapshot | null {
-  if (catalog === null) return null;
+  if (catalog === null || selected === null) return null;
   return (
-    catalog.devices.find(isRunning) ??
+    catalog.devices.find((device) => isRunning(device) && isSelected(device, selected)) ??
     catalog.devices.find(
-      (device) => device.deviceId === followedDeviceId && device.state === "failed",
+      (device) =>
+        device.deviceId === followedDeviceId &&
+        device.state === "failed" &&
+        isSelected(device, selected),
     ) ??
     null
   );
@@ -168,6 +224,40 @@ interface InputLane {
   alive: boolean;
 }
 
+/** A failed device action, with the platform a failed start was for. */
+interface PaneError extends DeviceErrorView {
+  readonly platform: DevicePlatform | null;
+}
+
+/** Whether the pane has had the iOS paste note out for a device, and whether it still shows. */
+interface PasteNote {
+  readonly deviceId: string;
+  readonly open: boolean;
+}
+
+/** Each platform's reason it cannot run devices, under its own heading. */
+function UnavailablePlatforms({
+  platforms,
+}: {
+  readonly platforms: ReadonlyArray<DevicePlatformCatalog>;
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+      <div className="flex max-w-sm flex-col items-center gap-4 text-center">
+        <SmartphoneIcon aria-hidden className="size-5 text-muted-foreground" />
+        {platforms.map((listed) => (
+          <div key={listed.platform} className="flex flex-col gap-1">
+            <h3 className="text-sm font-medium text-foreground">
+              {availabilityTitle(listed.availability.kind)}
+            </h3>
+            <p className="text-xs text-muted-foreground">{listed.availability.message}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const catalogQuery = useEnvironmentQuery(deviceEnvironment.catalog({ environmentId, input: {} }));
   const { data: catalog, emission, revalidate } = catalogQuery;
@@ -189,9 +279,10 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
   const [followedDeviceId, setFollowedDeviceId] = useState<string | null>(null);
   const [pickedImage, setPickedImage] = useState<DeviceImageSelection | null>(null);
   const [startPending, setStartPending] = useState(false);
-  const [actionError, setActionError] = useState<DeviceErrorView | null>(null);
+  const [actionError, setActionError] = useState<PaneError | null>(null);
   const [inputError, setInputError] = useState<string | null>(null);
-  const [stillImagesReason, setStillImagesReason] = useState<StillImagesReason | null>(null);
+  const [stillImages, setStillImages] = useState<StillImages | null>(null);
+  const [pasteNote, setPasteNote] = useState<PasteNote | null>(null);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -200,30 +291,32 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
     };
   }, []);
 
-  const device = selectShownDevice(catalog, followedDeviceId);
-  const images = useMemo(() => catalogImages(catalog), [catalog]);
-  const firstImage = images[0];
-  const selectedImage: DeviceImageSelection | null =
-    device !== null && isRunning(device)
-      ? { platform: device.platform, imageId: device.imageId }
-      : pickedImage !== null &&
-          images.some((image) => isImage(image, pickedImage.platform, pickedImage.imageId))
-        ? pickedImage
-        : device !== null
-          ? { platform: device.platform, imageId: device.imageId }
-          : firstImage === undefined
-            ? null
-            : { platform: firstImage.platform, imageId: firstImage.id };
+  // Memoized so the compiler treats them as settled values for the callbacks that use them.
+  const selectedImage = useMemo(
+    () => selectedImageOf(catalog, pickedImage, followedDeviceId),
+    [catalog, pickedImage, followedDeviceId],
+  );
+  const device = useMemo(
+    () => selectShownDevice(catalog, selectedImage, followedDeviceId),
+    [catalog, selectedImage, followedDeviceId],
+  );
   const selectImage = useCallback((platform: DevicePlatform, imageId: string) => {
     setPickedImage({ platform, imageId });
   }, []);
 
   const reportFailure = useCallback(
-    (result: AtomCommandResult<unknown, unknown>, fallback: string) => {
+    (
+      result: AtomCommandResult<unknown, unknown>,
+      fallback: string,
+      platform: DevicePlatform | null = null,
+    ) => {
       if (result._tag !== "Failure" || !mountedRef.current || isAtomCommandInterrupted(result)) {
         return;
       }
-      setActionError(describeDeviceError(squashAtomCommandFailure(result), fallback));
+      setActionError({
+        ...describeDeviceError(squashAtomCommandFailure(result), fallback),
+        platform,
+      });
     },
     [],
   );
@@ -231,6 +324,12 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
   // One input queue per device, made on first use and dropped with the device or the pane.
   const laneRef = useRef<InputLane | null>(null);
   const inputErrorRef = useRef<string | null>(null);
+  // Only a change re-renders: input runs at frame rate while dragging.
+  const showInputError = useCallback((message: string | null) => {
+    if (message === inputErrorRef.current) return;
+    inputErrorRef.current = message;
+    setInputError(message);
+  }, []);
   const shownDeviceId = device?.deviceId ?? null;
   useEffect(() => {
     const deviceId = shownDeviceId;
@@ -258,18 +357,14 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
           queue: new DeviceInputQueue(async (events) => {
             const result = await runInput({ environmentId, input: { deviceId, events } });
             if (!next.alive) return;
-            const message =
+            showInputError(
               result._tag === "Failure" && !isAtomCommandInterrupted(result)
                 ? describeDeviceError(
                     squashAtomCommandFailure(result),
                     "The device did not accept that input. Try again.",
                   ).message
-                : null;
-            // Only a change re-renders: input runs at frame rate while dragging.
-            if (message !== inputErrorRef.current) {
-              inputErrorRef.current = message;
-              setInputError(message);
-            }
+                : null,
+            );
           }),
         };
         laneRef.current = next;
@@ -277,7 +372,7 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
       }
       lane.queue.push(event);
     },
-    [environmentId, runInput, shownDeviceId],
+    [environmentId, runInput, shownDeviceId, showInputError],
   );
 
   const releaseInput = useCallback((scope: "keys" | "all") => {
@@ -286,21 +381,29 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
     else queue?.releaseAll();
   }, []);
 
+  // iOS may hold a paste behind its "Allow Paste" prompt; said once per simulator.
+  const shownPlatform = device?.platform ?? null;
+  const notePaste = useCallback(() => {
+    if (shownPlatform !== "ios" || shownDeviceId === null) return;
+    setPasteNote((current) =>
+      current?.deviceId === shownDeviceId ? current : { deviceId: shownDeviceId, open: true },
+    );
+  }, [shownDeviceId, shownPlatform]);
+
   const start = async () => {
     if (selectedImage === null) return;
+    const { platform, imageId } = selectedImage;
     setStartPending(true);
     setActionError(null);
-    const result = await runOpen({
-      environmentId,
-      input: { platform: selectedImage.platform, imageId: selectedImage.imageId },
-    });
+    const result = await runOpen({ environmentId, input: { platform, imageId } });
     if (!mountedRef.current) return;
     setStartPending(false);
     if (result._tag === "Success") {
       setFollowedDeviceId(result.value.deviceId);
+      setPickedImage(null);
       return;
     }
-    reportFailure(result, "Could not start the device. Try again.");
+    reportFailure(result, "Could not start the device. Try again.", platform);
   };
   const stop = async (deviceId: string) => {
     setActionError(null);
@@ -308,7 +411,7 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
     if (result._tag === "Failure") reportFailure(result, "Could not stop the device. Try again.");
   };
   const rotate = async (direction: RotateDirection) => {
-    if (device === null) return;
+    if (device === null || !device.canRotate) return;
     const result = await runRotate({
       environmentId,
       input: {
@@ -321,6 +424,19 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
   const pressKey = (key: DeviceKey) => {
     pushInput({ type: "key", key, action: "down" });
     pushInput({ type: "key", key, action: "up" });
+  };
+  const pasteClipboard = async () => {
+    let text: string;
+    try {
+      // Absent outside secure contexts; browsers may also ask, or refuse.
+      text = await navigator.clipboard.readText();
+    } catch {
+      if (mountedRef.current) showInputError(CLIPBOARD_UNREADABLE_MESSAGE);
+      return;
+    }
+    if (!mountedRef.current || text.length === 0) return;
+    for (const part of splitDeviceText(text)) pushInput({ type: "text", text: part });
+    notePaste();
   };
 
   if (catalog === null) {
@@ -344,40 +460,73 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
     return <PanelMessage>Looking for devices…</PanelMessage>;
   }
 
-  // With no platform ready and nothing running, the first platform says why in its own words.
-  const unavailable = catalog.platforms.some((listed) => listed.availability.kind === "ready")
-    ? undefined
-    : catalog.platforms[0];
-  if (unavailable !== undefined && device === null) {
-    return (
-      <PanelMessage title={availabilityTitle(unavailable.availability.kind)}>
-        {unavailable.availability.message}
-      </PanelMessage>
-    );
+  // With no platform able to open a device and nothing running, each platform says why.
+  if (!catalog.platforms.some(opensImages) && !catalog.devices.some(isRunning)) {
+    return <UnavailablePlatforms platforms={catalog.platforms} />;
   }
 
-  // A device limit names the running device by display name; find it through its image.
-  const runningName = actionError?.runningName ?? null;
-  const limitDevice =
-    runningName === null
+  const shownAvailability =
+    device === null
+      ? null
+      : (catalog.platforms.find((listed) => listed.platform === device.platform)?.availability ??
+        null);
+  const inputDisabledReason =
+    shownAvailability !== null && isViewOnlyAvailability(shownAvailability.kind)
+      ? shownAvailability.message
+      : null;
+  const shownName =
+    device === null ? null : imageDisplayName(catalog, device.platform, device.imageId);
+  // One device runs per platform; another image on that platform waits for it to stop.
+  const platformDevice =
+    selectedImage === null
       ? null
       : (catalog.devices.find(
-          (candidate) =>
-            isRunning(candidate) &&
-            images.some(
-              (image) =>
-                isImage(image, candidate.platform, candidate.imageId) &&
-                image.displayName === runningName,
-            ),
+          (candidate) => isRunning(candidate) && candidate.platform === selectedImage.platform,
+        ) ?? null);
+  const androidOnly = catalog.platforms.every((listed) => listed.platform === "android");
+  const startDisabledReason =
+    selectedImage === null
+      ? androidOnly
+        ? DEVICE_DISABLED_REASONS.noAvd
+        : DEVICE_DISABLED_REASONS.noImage
+      : startPending
+        ? DEVICE_DISABLED_REASONS.starting
+        : platformDevice === null
+          ? null
+          : platformDevice.state === "stopping"
+            ? DEVICE_DISABLED_REASONS.stopping
+            : DEVICE_DISABLED_REASONS.running;
+  const otherDevice = device === null ? platformDevice : null;
+  const otherName =
+    otherDevice === null
+      ? null
+      : imageDisplayName(catalog, otherDevice.platform, otherDevice.imageId);
+
+  // A device limit names the running device by display name, which may not match the catalog;
+  // the device to stop is the one running on the platform the start was for.
+  const runningName = actionError?.runningName ?? null;
+  const limitPlatform = actionError?.platform ?? null;
+  const limitDevice =
+    runningName === null || limitPlatform === null
+      ? null
+      : (catalog.devices.find(
+          (candidate) => isRunning(candidate) && candidate.platform === limitPlatform,
         ) ?? null);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <DeviceToolbar
-        images={images}
+        platforms={catalog.platforms}
         selectedImage={selectedImage}
+        selectedName={
+          selectedImage === null
+            ? null
+            : imageDisplayName(catalog, selectedImage.platform, selectedImage.imageId)
+        }
         device={device}
-        startPending={startPending}
+        startDisabledReason={startDisabledReason}
+        pickerLocked={startPending}
+        viewOnly={inputDisabledReason !== null}
         onSelectImage={selectImage}
         onStart={() => void start()}
         onStop={() => {
@@ -385,7 +534,8 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
         }}
         onRotate={(direction) => void rotate(direction)}
         onKey={pressKey}
-        stillImagesReason={device?.state === "ready" ? stillImagesReason : null}
+        onPaste={() => void pasteClipboard()}
+        stillImages={device?.state === "ready" ? stillImages : null}
       />
       {actionError === null ? null : (
         <div
@@ -408,9 +558,28 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
       {inputError === null || device?.state !== "ready" ? null : (
         <div
           role="status"
+          data-input-error
           className="border-b border-border/60 px-3 py-1.5 text-xs text-foreground"
         >
           {inputError}
+        </div>
+      )}
+      {pasteNote?.open !== true ||
+      pasteNote.deviceId !== device?.deviceId ||
+      device.state !== "ready" ? null : (
+        <div
+          role="status"
+          data-paste-note
+          className="flex flex-wrap items-center gap-2 border-b border-border/60 px-3 py-1.5 text-xs text-foreground"
+        >
+          <span className="min-w-0 flex-1">{IOS_PASTE_NOTE}</span>
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => setPasteNote({ deviceId: pasteNote.deviceId, open: false })}
+          >
+            Dismiss
+          </Button>
         </div>
       )}
       <div className="flex min-h-0 flex-1 flex-col bg-muted/30 p-4">
@@ -419,26 +588,45 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
             key={device.deviceId}
             environmentId={environmentId}
             device={device}
+            name={shownName ?? device.imageId}
+            inputDisabledReason={inputDisabledReason}
             onInput={pushInput}
             onRelease={releaseInput}
-            onStillImages={setStillImagesReason}
+            onStillImages={setStillImages}
+            onPasted={notePaste}
           />
         ) : device === null ? (
-          <PanelMessage>
-            {images.length === 0
-              ? "Create a virtual device in Android Studio's Device Manager, then come back."
-              : "Pick a virtual device and press Start."}
-          </PanelMessage>
+          otherDevice !== null && otherName !== null ? (
+            <PanelMessage
+              action={
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() => setPickedImage(selectionOf(otherDevice))}
+                >
+                  Show {otherName}
+                </Button>
+              }
+            >
+              {otherName} is running. Stop it to start another device.
+            </PanelMessage>
+          ) : (
+            <PanelMessage>
+              {selectedImage !== null
+                ? "Pick a device and press Start."
+                : androidOnly
+                  ? "Create a virtual device in Android Studio's Device Manager, then come back."
+                  : "No device can start on this server yet."}
+            </PanelMessage>
+          )
         ) : device.state === "failed" ? (
           <PanelMessage title={deviceStateLabel(device)}>
-            Press Start to try again, or pick another virtual device.
+            Press Start to try again, or pick another device.
           </PanelMessage>
         ) : device.state === "stopping" ? (
-          <PanelMessage>Stopping {device.imageId}…</PanelMessage>
+          <PanelMessage>Stopping {shownName}…</PanelMessage>
         ) : (
-          <PanelMessage>
-            Starting {device.imageId}. The first boot can take a few minutes.
-          </PanelMessage>
+          <PanelMessage>Starting {shownName}. The first boot can take a few minutes.</PanelMessage>
         )}
       </div>
     </div>

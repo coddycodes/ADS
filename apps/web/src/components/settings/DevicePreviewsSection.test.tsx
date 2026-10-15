@@ -140,8 +140,9 @@ describe("DevicePreviewsSection", () => {
   it("turns previews on and does not read the catalog while off", async () => {
     const container = await render();
     expect(container.textContent).toContain(
-      "Run an Android emulator on this environment's server and show it in a side panel. Requires the Android SDK with at least one virtual device and hardware acceleration on the server.",
+      "Android emulators and, on macOS servers, iOS simulators.",
     );
+    expect(toggle(container)?.getAttribute("aria-label")).toBe("Device previews");
     expect(h.queried.every((atom) => atom === null)).toBe(true);
     await click(toggle(container));
     expect(h.updates).toEqual([
@@ -166,16 +167,46 @@ describe("DevicePreviewsSection", () => {
     const container = await render();
     await click(toggle(container));
     const dialog = container.querySelector("[role='alertdialog']");
-    expect(dialog?.textContent).toContain("This stops Pixel_8 on Work Server.");
+    expect(container.textContent).toContain("Pixel 8 is running on Work Server.");
+    expect(dialog?.textContent).toContain("This stops Pixel 8 on Work Server.");
     expect(h.updates).toEqual([]);
     const confirm = [...(dialog?.querySelectorAll("button") ?? [])].find(
-      (button) => button.textContent === "Stop Pixel_8 and turn off",
+      (button) => button.textContent === "Stop Pixel 8 and turn off",
     );
     await click(confirm);
     expect(h.updates).toEqual([
       { environmentId: ENVIRONMENT_ID, patch: { enableDevicePreviews: false } },
     ]);
     expect(container.querySelector("[role='alertdialog']")).toBeNull();
+  });
+
+  it("names every running device, iOS by its simulator name", async () => {
+    h.availability = { known: true, supported: true, enabled: true };
+    h.catalog = {
+      platforms: [
+        ...runningCatalog.platforms,
+        {
+          platform: "ios",
+          availability: { kind: "ready", message: "Ready." },
+          images: [{ id: "UDID-1", displayName: "iPhone 17 Pro · iOS 27.0" }],
+        },
+      ],
+      devices: [
+        ...runningCatalog.devices,
+        { ...runningCatalog.devices[0]!, deviceId: "i-1", platform: "ios", imageId: "UDID-1" },
+      ],
+    } satisfies DeviceCatalog;
+    const container = await render();
+    expect(container.textContent).toContain(
+      "Pixel 8 and iPhone 17 Pro · iOS 27.0 are running on Work Server.",
+    );
+    expect(container.textContent).not.toContain("UDID-1");
+    await click(toggle(container));
+    const dialog = container.querySelector("[role='alertdialog']");
+    expect(dialog?.textContent).toContain(
+      "This stops Pixel 8 and iPhone 17 Pro · iOS 27.0 on Work Server.",
+    );
+    expect(dialog?.textContent).toContain("Stop devices and turn off");
   });
 
   it("shows saving, then an actionable line when the change fails", async () => {

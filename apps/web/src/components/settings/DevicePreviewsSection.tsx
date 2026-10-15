@@ -1,4 +1,4 @@
-import type { DeviceSnapshot, EnvironmentId } from "@bibcode/contracts";
+import type { DeviceCatalog, DeviceSnapshot, EnvironmentId } from "@bibcode/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -29,10 +29,26 @@ import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
-const TOGGLE_TITLE = "Device previews (Android emulator)";
+const TOGGLE_TITLE = "Device previews";
 
 const isRunning = (device: DeviceSnapshot) =>
   device.state !== "stopped" && device.state !== "failed";
+
+/** The running devices' display names (a simulator's id is a UDID nobody recognizes). */
+function runningNames(catalog: DeviceCatalog | null | undefined): ReadonlyArray<string> {
+  if (catalog === null || catalog === undefined) return [];
+  return catalog.devices
+    .filter(isRunning)
+    .map(
+      (device) =>
+        catalog.platforms
+          .find((listed) => listed.platform === device.platform)
+          ?.images.find((image) => image.id === device.imageId)?.displayName ?? device.imageId,
+    );
+}
+
+const joinNames = (names: ReadonlyArray<string>) =>
+  names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 
 /** The `enableDevicePreviews` toggle for one environment's server. */
 export function DevicePreviewsSection({
@@ -67,7 +83,8 @@ function DevicePreviewsToggle({ environmentId }: { readonly environmentId: Envir
   const catalog = useEnvironmentQuery(
     availability.enabled ? deviceEnvironment.catalog({ environmentId, input: {} }) : null,
   ).data;
-  const running = catalog?.devices.find(isRunning) ?? null;
+  const running = runningNames(catalog);
+  const runningList = joinNames(running);
   const label = environment?.label.trim() || "this server";
 
   if (!availability.known || !availability.supported) {
@@ -107,7 +124,7 @@ function DevicePreviewsToggle({ environmentId }: { readonly environmentId: Envir
   };
   const handleToggle = (checked: boolean) => {
     // Turning off stops the running device, so that is confirmed first.
-    if (!checked && running !== null) {
+    if (!checked && running.length > 0) {
       setConfirmOpen(true);
       return;
     }
@@ -127,8 +144,8 @@ function DevicePreviewsToggle({ environmentId }: { readonly environmentId: Envir
               <TriangleAlertIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
               <span>{saveError}</span>
             </div>
-          ) : running === null ? null : (
-            `${running.imageId} is running on ${label}.`
+          ) : running.length === 0 ? null : (
+            `${runningList} ${running.length === 1 ? "is" : "are"} running on ${label}.`
           )
         }
         control={
@@ -145,7 +162,7 @@ function DevicePreviewsToggle({ environmentId }: { readonly environmentId: Envir
           <AlertDialogHeader>
             <AlertDialogTitle>Turn off device previews?</AlertDialogTitle>
             <AlertDialogDescription>
-              This stops {running?.imageId ?? "the running device"} on {label}.
+              This stops {runningList || "the running device"} on {label}.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -157,7 +174,9 @@ function DevicePreviewsToggle({ environmentId }: { readonly environmentId: Envir
                 void setEnabled(false);
               }}
             >
-              Stop {running?.imageId ?? "device"} and turn off
+              {running.length === 1
+                ? `Stop ${runningList} and turn off`
+                : "Stop devices and turn off"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

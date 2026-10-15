@@ -23,7 +23,7 @@ import { Button } from "../ui/button";
 import { clampToBox, displaySize, letterbox, toNormalized } from "./deviceGeometry";
 import { keyboardEventToDeviceInput, splitDeviceText } from "./deviceKeyMap";
 import { JpegRenderer } from "./jpegRenderer";
-import type { StillImagesReason } from "./deviceMessages";
+import { STILL_IMAGES_REASONS, type StillImages } from "./deviceMessages";
 import { useDeviceVideo } from "./useDeviceVideo";
 
 interface Size {
@@ -137,22 +137,33 @@ function JpegFeed({
  * where the client can decode it, else JPEG frames, drawn outside React state either way.
  * Pointer and keyboard input go to `onInput`, which queues it for the device. Held keys are
  * released when focus leaves the screen or the window, and everything held when it unmounts.
+ * A view-only device (`inputDisabledReason`) says why above the screen and takes no input.
  */
 export function DeviceScreen({
   environmentId,
   device,
+  name,
+  inputDisabledReason = null,
   onInput,
   onRelease,
   onStillImages,
+  onPasted,
 }: {
   readonly environmentId: EnvironmentId;
   readonly device: DeviceSnapshot;
+  /** The device's display name, as the picker shows it. */
+  readonly name: string;
+  /** Set when the device is view only: why, shown above the screen. */
+  readonly inputDisabledReason?: string | null;
   readonly onInput: (event: DeviceInputEvent) => void;
   /** Lifts held keys (`keys`), or held keys and touches (`all`), on the device. */
   readonly onRelease: (scope: "keys" | "all") => void;
   /** Why the screen shows still images instead of video; `null` while it shows video. */
-  readonly onStillImages?: (reason: StillImagesReason | null) => void;
+  readonly onStillImages?: (still: StillImages | null) => void;
+  /** Called after pasted text was queued for the device. */
+  readonly onPasted?: () => void;
 }) {
+  const inputDisabled = inputDisabledReason !== null;
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   // Also in state, so the video hook starts once the canvas exists.
@@ -212,11 +223,17 @@ export function DeviceScreen({
     restart: videoRestart,
   });
   const jpeg = video.kind === "jpeg";
-  const stillImagesReason = video.kind === "jpeg" ? video.reason : null;
+  const stillReason = video.kind === "jpeg" ? video.reason : null;
+  const stillMessage =
+    video.kind === "jpeg" ? (video.message ?? STILL_IMAGES_REASONS[video.reason]) : null;
   // The toolbar, not the screen, carries the still-images badge, so nothing covers the device.
   useEffect(() => {
-    onStillImages?.(stillImagesReason);
-  }, [onStillImages, stillImagesReason]);
+    onStillImages?.(
+      stillReason === null || stillMessage === null
+        ? null
+        : { reason: stillReason, message: stillMessage },
+    );
+  }, [onStillImages, stillReason, stillMessage]);
   useEffect(() => () => onStillImages?.(null), [onStillImages]);
   const onJpegFrameSize = useCallback((size: Size) => setFrameSize(size), []);
   const onFirstJpegFrame = useCallback(() => setHasJpegFrame(true), []);
@@ -279,6 +296,7 @@ export function DeviceScreen({
   };
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (inputDisabled) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
     const local = containerPoint(event);
     const point = toNormalized(local.x, local.y, box);
@@ -306,52 +324,75 @@ export function DeviceScreen({
   };
 
   const handleKey = (event: ReactKeyboardEvent<HTMLCanvasElement>, action: "down" | "up") => {
-    if (event.nativeEvent.isComposing) return;
+    if (inputDisabled || event.nativeEvent.isComposing) return;
     const input = keyboardEventToDeviceInput(event, action);
     if (input === null) return;
     event.preventDefault();
     onInput(input);
   };
   const handlePaste = (event: ReactClipboardEvent<HTMLCanvasElement>) => {
+    if (inputDisabled) return;
     const text = event.clipboardData.getData("text/plain");
     if (text.length === 0) return;
     event.preventDefault();
     for (const part of splitDeviceText(text)) onInput({ type: "text", text: part });
+    onPasted?.();
   };
 
   return (
-    <div ref={containerRef} className="relative min-h-0 flex-1 overflow-hidden" data-device-screen>
-      <canvas
-        ref={attachCanvas}
-        tabIndex={0}
-        aria-label={`${device.imageId} screen. Click or drag to touch; type to send keys; Shift+Tab to leave.`}
-        className="absolute touch-none rounded-2xl bg-black outline-none ring-4 ring-foreground/80 focus-visible:ring-primary"
-        style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={(event) => endTouch(event, "up")}
-        onPointerCancel={(event) => endTouch(event, "cancel")}
-        onLostPointerCapture={(event) => endTouch(event, "cancel")}
-        onKeyDown={(event) => handleKey(event, "down")}
-        onKeyUp={(event) => handleKey(event, "up")}
-        onPaste={handlePaste}
-        onBlur={() => onRelease("keys")}
-        onContextMenu={(event) => event.preventDefault()}
-      />
-      {jpeg ? (
-        <JpegFeed
-          environmentId={environmentId}
-          deviceId={device.deviceId}
-          rendererRef={rendererRef}
-          waiting={!hasJpegFrame}
-          onFrameSize={onJpegFrameSize}
-          onFirstFrame={onFirstJpegFrame}
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
+      {inputDisabledReason === null ? null : (
+        <p data-view-only className="text-center text-xs text-muted-foreground">
+          {inputDisabledReason}
+        </p>
+      )}
+      <div
+        ref={containerRef}
+        className="relative min-h-0 flex-1 overflow-hidden"
+        data-device-screen
+      >
+        <canvas
+          ref={attachCanvas}
+          tabIndex={0}
+          aria-label={
+            inputDisabled
+              ? `${name} screen, view only.`
+              : `${name} screen. Click or drag to touch; type to send keys; Shift+Tab to leave.`
+          }
+          className="absolute touch-none rounded-2xl bg-black outline-none ring-4 ring-foreground/80 focus-visible:ring-primary"
+          style={{
+            left: box.x,
+            top: box.y,
+            width: box.width,
+            height: box.height,
+            cursor: inputDisabled ? "default" : undefined,
+          }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={(event) => endTouch(event, "up")}
+          onPointerCancel={(event) => endTouch(event, "cancel")}
+          onLostPointerCapture={(event) => endTouch(event, "cancel")}
+          onKeyDown={(event) => handleKey(event, "down")}
+          onKeyUp={(event) => handleKey(event, "up")}
+          onPaste={handlePaste}
+          onBlur={() => onRelease("keys")}
+          onContextMenu={(event) => event.preventDefault()}
         />
-      ) : video.kind === "probing" ? (
-        waitingForScreen
-      ) : video.stalled ? (
-        <ScreenStalled onReconnect={() => setVideoRestart((count) => count + 1)} />
-      ) : null}
+        {jpeg ? (
+          <JpegFeed
+            environmentId={environmentId}
+            deviceId={device.deviceId}
+            rendererRef={rendererRef}
+            waiting={!hasJpegFrame}
+            onFrameSize={onJpegFrameSize}
+            onFirstFrame={onFirstJpegFrame}
+          />
+        ) : video.kind === "probing" ? (
+          waitingForScreen
+        ) : video.stalled ? (
+          <ScreenStalled onReconnect={() => setVideoRestart((count) => count + 1)} />
+        ) : null}
+      </div>
     </div>
   );
 }

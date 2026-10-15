@@ -310,14 +310,18 @@ describe("DeviceVideoSession", () => {
 
   it("shows still images at once when the server never issues tickets", async () => {
     const { mintTicket, modes, video, workers } = session();
-    mintTicket.mockResolvedValueOnce({ unavailable: "noSignIn" } as unknown as string);
+    mintTicket.mockResolvedValueOnce({
+      unavailable: "noVideo",
+      message: "Video is off: view only.",
+    } as unknown as string);
     video.start();
     await flush();
     expect(workers).toHaveLength(0);
-    expect(modes.at(-1)).toEqual({ kind: "jpeg", reason: "noSignIn" });
+    const still = { kind: "jpeg", reason: "noVideo", message: "Video is off: view only." };
+    expect(modes.at(-1)).toEqual(still);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(mintTicket).toHaveBeenCalledTimes(1);
-    expect(modes.at(-1)).toEqual({ kind: "jpeg", reason: "noSignIn" });
+    expect(modes.at(-1)).toEqual(still);
   });
 
   it("does nothing after it is disposed", async () => {
@@ -401,7 +405,7 @@ describe("useDeviceVideo", () => {
     expect(posted.at(-1)).toEqual({ type: "stop" });
   });
 
-  it("uses jpeg at once when the server runs without sign-in", async () => {
+  it("uses jpeg at once, with the server's reason, when the server has no video", async () => {
     vi.stubGlobal("VideoDecoder", { isConfigSupported: async () => ({ supported: true }) });
     vi.stubGlobal(
       "Worker",
@@ -413,11 +417,18 @@ describe("useDeviceVideo", () => {
     );
     hookDeps.mintTicket.mockResolvedValueOnce({
       _tag: "Failure",
-      cause: Cause.fail({ _tag: "DeviceMediaUnavailableError", message: "no sign-in" }),
+      cause: Cause.fail({
+        _tag: "DeviceMediaUnavailableError",
+        message: "Video is off: Live input needs someone logged in on this Mac.",
+      }),
     } as never);
     const { modes, unmount } = await renderHook(document.createElement("canvas"));
     await act(async () => vi.advanceTimersByTimeAsync(0));
-    expect(modes.at(-1)).toEqual({ kind: "jpeg", reason: "noSignIn" });
+    expect(modes.at(-1)).toEqual({
+      kind: "jpeg",
+      reason: "noVideo",
+      message: "Video is off: Live input needs someone logged in on this Mac.",
+    });
     expect(hookDeps.mintTicket).toHaveBeenCalledTimes(1);
     await unmount();
   });

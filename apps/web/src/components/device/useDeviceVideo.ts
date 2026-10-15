@@ -19,7 +19,8 @@ export type VideoMode =
   | { readonly kind: "probing" }
   /** `stalled`: no frame for `STALL_TIMEOUT_MS` since the last one. */
   | { readonly kind: "h264"; readonly stalled: boolean }
-  | { readonly kind: "jpeg"; readonly reason: StillImagesReason };
+  /** `message`: the server's own words for why, when it gave them. */
+  | { readonly kind: "jpeg"; readonly reason: StillImagesReason; readonly message?: string };
 
 /** The baseline codec probed before any ticket is minted; the stream's own is checked on use. */
 export const PROBE_CODEC = "avc1.42E01F";
@@ -66,6 +67,8 @@ export interface DeviceVideoWorker {
 /** The server never issues media tickets on this connection, so no retry can help. */
 export interface TicketUnavailable {
   readonly unavailable: StillImagesReason;
+  /** The server's reason, shown instead of the generic one for `unavailable`. */
+  readonly message?: string;
 }
 
 export interface DeviceVideoSessionDeps {
@@ -126,7 +129,9 @@ export class DeviceVideoSession {
   private async connect(): Promise<void> {
     const ticket = await this.deps.mintTicket().catch(() => null);
     if (this.ended) return;
-    if (typeof ticket === "object" && ticket !== null) return this.fallBack(ticket.unavailable);
+    if (typeof ticket === "object" && ticket !== null) {
+      return this.fallBack(ticket.unavailable, ticket.message);
+    }
     const target = this.deps.target();
     if (ticket === null || target === null) return this.closed("network");
     if (this.worker === null) {
@@ -203,10 +208,12 @@ export class DeviceVideoSession {
     }, delay);
   }
 
-  private fallBack(reason: StillImagesReason): void {
+  private fallBack(reason: StillImagesReason, message?: string): void {
     if (this.ended) return;
     this.end();
-    this.deps.onMode({ kind: "jpeg", reason });
+    this.deps.onMode(
+      message === undefined ? { kind: "jpeg", reason } : { kind: "jpeg", reason, message },
+    );
   }
 
   private now(): number {
@@ -251,13 +258,17 @@ export class DeviceVideoSession {
   }
 }
 
-/** The server runs without sign-in, so it has no session to bind a media ticket to. */
-function isMediaUnavailable(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as { _tag?: unknown })._tag === "DeviceMediaUnavailableError"
-  );
+/**
+ * The server has no video for this device, so no retry can help: it runs without sign-in (no
+ * session to bind a media ticket to), or the device is view only. Its message says which.
+ */
+function mediaUnavailable(error: unknown): TicketUnavailable | null {
+  if (typeof error !== "object" || error === null) return null;
+  const { _tag: tag, message } = error as { _tag?: unknown; message?: unknown };
+  if (tag !== "DeviceMediaUnavailableError") return null;
+  return typeof message === "string" && message.trim().length > 0
+    ? { unavailable: "noVideo", message }
+    : { unavailable: "noVideo" };
 }
 
 const hasWebCodecs = () => typeof VideoDecoder !== "undefined" && typeof Worker !== "undefined";
@@ -353,9 +364,7 @@ export function useDeviceVideo(input: {
       mintTicket: async () => {
         const result = await mintTicket({ environmentId, input: { deviceId } });
         if (result._tag === "Success") return result.value.ticket;
-        return isMediaUnavailable(squashAtomCommandFailure(result))
-          ? { unavailable: "noSignIn" }
-          : null;
+        return mediaUnavailable(squashAtomCommandFailure(result));
       },
       target: () => ({ url: targetUrl, hostKey }),
       createWorker,
