@@ -4,8 +4,8 @@ pub(crate) mod emulator;
 pub mod frames;
 pub(crate) mod grpc;
 pub mod input;
-// The session is consumed by the media hub task that follows.
-#[allow(dead_code)]
+pub mod media;
+pub(crate) mod media_socket;
 pub(crate) mod scrcpy;
 pub(crate) mod sdk;
 pub(crate) mod stderr_tail;
@@ -31,6 +31,7 @@ use self::{
     frames::FrameHub,
     grpc::EmulatorClient,
     input::InputState,
+    media::{MediaHub, TicketBook},
     sdk::{AndroidSdk, SdkEnv},
 };
 use crate::diagnostics::ProcessAttributionRegistry;
@@ -162,6 +163,8 @@ struct Inner {
     grpc_port: Option<u16>,
     shutdown: CancellationToken,
     tasks: TaskTracker,
+    /// Outstanding media-socket tickets.
+    tickets: TicketBook,
 }
 
 #[derive(Default)]
@@ -183,13 +186,22 @@ struct Slot {
     frames: Option<Arc<FrameHub>>,
     /// The input stream, opened by the first `input` call.
     input: Arc<tokio::sync::Mutex<Option<InputState>>>,
+    /// The H.264 fan-out while any media socket watches the device.
+    media: Option<Arc<MediaHub>>,
+    /// The SDK's `adb`, which runs the device's scrcpy-server.
+    adb: PathBuf,
 }
 
 impl Slot {
-    /// Stops the frame producer and drops the input stream of a device that stops running.
+    /// Stops the frame producer and the media hub, and drops the input stream, of a device
+    /// that stops running.
     fn end_streams(&mut self) {
         if let Some(frames) = self.frames.take() {
             frames.stop();
+        }
+        // Closes every media socket and stops the scrcpy session.
+        if let Some(media) = self.media.take() {
+            media.stop();
         }
         // An `input` call still holding the old state finishes its batch, then drops it.
         self.input = Arc::default();
@@ -234,6 +246,7 @@ impl DeviceManager {
             grpc_port: config.grpc_port,
             shutdown: CancellationToken::new(),
             tasks: TaskTracker::new(),
+            tickets: TicketBook::default(),
         });
         inner.tasks.spawn(Inner::follow_setting(
             Arc::downgrade(&inner),
@@ -313,6 +326,8 @@ impl DeviceManager {
                     seq,
                     frames: None,
                     input: Arc::default(),
+                    media: None,
+                    adb: sdk.adb.clone(),
                 },
             );
             self.inner.publish(&mut table);

@@ -13,6 +13,7 @@ use crate::{
         DeviceManager, DeviceOpError, catalog::Orientation, frames::FrameSubscription,
         input::DeviceInputEvent,
     },
+    rpc::RpcSessionContext,
 };
 
 #[derive(Deserialize)]
@@ -120,6 +121,15 @@ pub fn register_device_rpc(registry: &mut RpcRegistry, devices: DeviceManager) {
         receiver
     });
 
+    let tickets = devices.clone();
+    registry.register_unary_with_context(
+        "device.createMediaTicket",
+        move |request, context, _cancellation| {
+            let result = create_media_ticket(&tickets, request.payload, &context);
+            async move { result }
+        },
+    );
+
     register_op(
         registry,
         "device.open",
@@ -168,6 +178,26 @@ pub fn register_device_rpc(registry: &mut RpcRegistry, devices: DeviceManager) {
             Ok(Value::Null)
         },
     );
+}
+
+/// A media ticket bound to the caller's session and to the transport this request came on,
+/// so a plain socket cannot redeem a ticket minted over E2EE.
+fn create_media_ticket(
+    devices: &DeviceManager,
+    payload: Value,
+    context: &RpcSessionContext,
+) -> RpcResult {
+    if !devices.enabled() {
+        return Err(DeviceOpError::Disabled.to_rpc_error());
+    }
+    let input: DeviceIdInput = decode(payload)?;
+    let principal = context.principal().ok_or_else(
+        || json!({ "_tag": "Defect", "message": "device media needs an authenticated session" }),
+    )?;
+    let (ticket, expires_at_ms) = devices
+        .create_media_ticket(&input.device_id, &principal.session_id, context.channel())
+        .map_err(rpc_error)?;
+    Ok(json!({ "ticket": ticket, "expiresAtMs": expires_at_ms }))
 }
 
 /// Registers a unary method that is refused while device previews are off.
@@ -491,6 +521,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn media_tickets_are_bound_to_the_session_and_channel() {
+        use crate::{
+            auth::{AuthService, ClientMetadata, SessionTransport},
+            device::media::{MediaChannel, TicketError},
+        };
+        let fixture = ManagerFixture::ready_device().await;
+        let config = ServerConfig::new(".")
+            .with_bind("127.0.0.1", 3773)
+            .with_desktop("device-rpc-test-bootstrap")
+            .expect("auth configuration");
+        let auth = AuthService::new(&config, vec![7_u8; 32]);
+        let issued = auth
+            .exchange_bootstrap(
+                "device-rpc-test-bootstrap",
+                None,
+                ClientMetadata::default(),
+                None,
+                SessionTransport::Plain,
+            )
+            .await
+            .expect("authorized session");
+        let session = issued.principal.session_id.clone();
+        let context = RpcSessionContext::authenticated(issued.principal, auth);
+        let payload = json!({ "deviceId": fixture.id });
+
+        let plain = create_media_ticket(&fixture.manager, payload.clone(), &context)
+            .expect("ticket over a plain connection");
+        let ticket = plain["ticket"].as_str().expect("ticket");
+        assert!(plain["expiresAtMs"].as_i64().expect("expiry") > 0);
+        assert_eq!(
+            fixture
+                .manager
+                .redeem_media_ticket(ticket, MediaChannel::Plain),
+            Ok((fixture.id.clone(), session))
+        );
+
+        let e2ee = create_media_ticket(
+            &fixture.manager,
+            payload.clone(),
+            &context.clone().with_channel(MediaChannel::E2ee),
+        )
+        .expect("ticket over E2EE");
+        assert_eq!(
+            fixture
+                .manager
+                .redeem_media_ticket(e2ee["ticket"].as_str().unwrap(), MediaChannel::Plain),
+            Err(TicketError::WrongChannel)
+        );
+
+        let anonymous = create_media_ticket(
+            &fixture.manager,
+            payload,
+            &RpcSessionContext::unauthenticated(),
+        )
+        .unwrap_err();
+        assert_eq!(anonymous["_tag"], "Defect");
+        let missing =
+            create_media_ticket(&fixture.manager, json!({ "deviceId": "missing" }), &context)
+                .unwrap_err();
+        assert_eq!(missing["_tag"], "DeviceNotFoundError");
+        fixture.manager.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn every_method_is_refused_while_disabled() {
         let fixture = ManagerFixture::ready(&["Pixel"]).await;
         fixture.enabled.send(false).unwrap();
@@ -508,6 +602,7 @@ mod tests {
                 "device.rotate",
                 json!({ "deviceId": "d", "orientation": "landscape" }),
             ),
+            ("device.createMediaTicket", json!({ "deviceId": "d" })),
         ] {
             let error = harness.call(method, payload).await.unwrap_err();
             assert_eq!(error["_tag"], "DevicePreviewsDisabledError", "{method}");

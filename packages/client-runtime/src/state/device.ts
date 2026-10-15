@@ -52,6 +52,12 @@ export function createDeviceEnvironmentAtoms<R, E>(
       // Unary calls may run concurrently on the server; input order is kept here.
       concurrency: { mode: "serial", key: deviceConcurrencyKey },
     }),
+    // A fresh single-use ticket per media socket connect; never cached.
+    createMediaTicket: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:device:createMediaTicket",
+      tag: WS_METHODS.deviceCreateMediaTicket,
+      scheduler: lifecycleScheduler,
+    }),
     rotate: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:device:rotate",
       tag: WS_METHODS.deviceRotate,

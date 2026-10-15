@@ -50,6 +50,10 @@
       "mode": "unary"
     },
     {
+      "name": "device.createMediaTicket",
+      "mode": "unary"
+    },
+    {
       "name": "device.input",
       "mode": "unary"
     },
@@ -723,6 +727,8 @@
     "typed-failures/cloud__getRelayClientStatus-01.json",
     "typed-failures/device__close-00.json",
     "typed-failures/device__close-01.json",
+    "typed-failures/device__createMediaTicket-00.json",
+    "typed-failures/device__createMediaTicket-01.json",
     "typed-failures/device__input-00.json",
     "typed-failures/device__input-01.json",
     "typed-failures/device__open-00.json",
@@ -1056,6 +1062,8 @@
     "stream-shapes/cloud__installRelayClient-01.json": "2eecaf787815a8b34e25922d2645c0f8418e5586da295614f657084176cc1c24",
     "typed-failures/device__close-00.json": "819e45959aeb68bcdfbf987418d7719fbf28041d06397ef2799970ecf614b5b5",
     "typed-failures/device__close-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
+    "typed-failures/device__createMediaTicket-00.json": "819e45959aeb68bcdfbf987418d7719fbf28041d06397ef2799970ecf614b5b5",
+    "typed-failures/device__createMediaTicket-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
     "typed-failures/device__input-00.json": "819e45959aeb68bcdfbf987418d7719fbf28041d06397ef2799970ecf614b5b5",
     "typed-failures/device__input-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
     "typed-failures/device__open-00.json": "819e45959aeb68bcdfbf987418d7719fbf28041d06397ef2799970ecf614b5b5",
@@ -1574,6 +1582,8 @@
     "typed-failures/cloud__getRelayClientStatus-01.json",
     "typed-failures/device__close-00.json",
     "typed-failures/device__close-01.json",
+    "typed-failures/device__createMediaTicket-00.json",
+    "typed-failures/device__createMediaTicket-01.json",
     "typed-failures/device__input-00.json",
     "typed-failures/device__input-01.json",
     "typed-failures/device__open-00.json",

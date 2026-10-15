@@ -1449,7 +1449,9 @@ async fn run_established_e2ee<W, R>(
         liveness,
         reader_stream,
         registry,
-        context.with_reach(reach),
+        context
+            .with_reach(reach)
+            .with_channel(crate::device::media::MediaChannel::E2ee),
         session_shutdown.clone(),
         Some(RpcOutboundBudget::new(
             E2EE_RESOURCE_BUDGET.global_outbound(),

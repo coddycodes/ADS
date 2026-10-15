@@ -66,6 +66,7 @@ pub const ACTIVE_RPC_METHODS: &[RpcMethodSpec] = &[
     read_unary("cloud.getRelayClientStatus"),
     mutation_stream("cloud.installRelayClient"),
     mutation_unary("device.close"),
+    read_unary("device.createMediaTicket"),
     mutation_unary("device.input"),
     mutation_unary("device.open"),
     mutation_unary("device.rotate"),
@@ -260,12 +261,7 @@ mod tests {
         ] {
             assert!(ACTIVE_RPC_METHODS.contains(&mutation_unary(name)), "{name}");
         }
-        // `device.createMediaTicket` arrives with the media socket.
-        assert!(
-            !ACTIVE_RPC_METHODS
-                .iter()
-                .any(|method| method.name == "device.createMediaTicket")
-        );
+        assert!(ACTIVE_RPC_METHODS.contains(&read_unary("device.createMediaTicket")));
     }
 
     #[test]

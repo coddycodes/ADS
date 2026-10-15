@@ -17,6 +17,7 @@ import {
   DeviceIdInput,
   DeviceInputInput,
   DeviceJpegFrame,
+  DeviceMediaTicket,
   DeviceOpenInput,
   DeviceOpenResult,
   DeviceRotateInput,
@@ -563,6 +564,7 @@ export const WS_METHODS = {
   deviceInput: "device.input",
   deviceRotate: "device.rotate",
   deviceSubscribeFrames: "device.subscribeFrames",
+  deviceCreateMediaTicket: "device.createMediaTicket",
 
   // Server meta
   serverGetConfig: "server.getConfig",
@@ -1626,6 +1628,12 @@ export const WsDeviceSubscribeFramesRpc = Rpc.make(WS_METHODS.deviceSubscribeFra
   stream: true,
 });
 
+export const WsDeviceCreateMediaTicketRpc = Rpc.make(WS_METHODS.deviceCreateMediaTicket, {
+  payload: DeviceIdInput,
+  success: DeviceMediaTicket,
+  error: DeviceRpcFailure,
+});
+
 export const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
   payload: PreviewAutomationHost,
   success: PreviewAutomationStreamEvent,
@@ -1960,6 +1968,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceInputRpc,
   WsDeviceRotateRpc,
   WsDeviceSubscribeFramesRpc,
+  WsDeviceCreateMediaTicketRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsSubscribeServerConfigRpc,

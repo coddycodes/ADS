@@ -571,6 +571,10 @@ fn core_http_routes(
     runtime: Arc<ProductionRuntime>,
     connect: Arc<ConnectMcpService>,
 ) -> HttpRoutesState {
+    let device_media = crate::device::media_socket::MediaSocketState {
+        devices: runtime.device_manager(),
+        auth: auth.clone(),
+    };
     let authorize = authorize_handler(auth);
     let json_runtime = runtime.clone();
     let json_connect = connect.clone();
@@ -630,6 +634,7 @@ fn core_http_routes(
         Box::pin(async move { connect.open_url_http(&preview, body, context).await })
             as crate::production::http_routes::BoxFuture<_>
     });
+    routes.device_media = Some(device_media);
     routes
 }
 

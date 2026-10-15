@@ -41,6 +41,7 @@ async fn device_methods_are_refused_while_device_previews_are_off() {
             "device.rotate",
             json!({ "deviceId": "d", "orientation": "landscape" }),
         ),
+        ("7", "device.createMediaTicket", json!({ "deviceId": "d" })),
     ] {
         socket
             .send(Message::Text(
