@@ -43,7 +43,7 @@ What the user decided:
 
 | Option                                        | Video                                 | Input                         | Headless  | Fragility                     | Verdict    |
 | --------------------------------------------- | ------------------------------------- | ----------------------------- | --------- | ----------------------------- | ---------- |
-| **A. Private CoreSimulator + SimulatorKit**   | IOSurface → VideoToolbox H.264, 60 fps | Indigo HID messages           | expected (spike S1) | may break on Xcode updates | **chosen** |
+| **A. Private CoreSimulator + SimulatorKit**   | IOSurface → VideoToolbox H.264, 60 fps | DTUHID over XPC; Indigo fallback | expected (spike S1) | may break on Xcode updates | **chosen** |
 | B. XCUITest runner (WebDriverAgent-style)     | screenshot stream, 10–15 fps          | XCTest events, ~100 ms latency | yes      | low                           | rejected: second media path, xcodebuild start-up, Xcode project in repo |
 | C. `simctl` only                              | ~2 fps screenshots                    | none                          | yes       | none                          | rejected as the main path; kept as the view-only fallback |
 | `idb_companion`                               | —                                     | —                             | —         | —                             | rejected: native helper sidecar, forbidden by `AGENTS.md` |
@@ -424,10 +424,23 @@ aliases.
 
 ## 4. iOS video (`coresim.rs`, `encoder.rs`)
 
-- **Screen source.** Register screen callbacks on the device's IO port for
-  the main display. Each damage callback yields the framebuffer `IOSurface`.
-  No copy is made: a `CVPixelBuffer` wraps the surface
-  (`CVPixelBufferCreateWithIOSurface`).
+Amended after the spikes (§0 Results); §0 names every call.
+
+- **Screen source.** Register the `SimScreen` callbacks
+  (`registerScreenCallbacksWithUUID:callbackQueue:frameCallback:surfacesChangedCallback:propertiesChangedCallback:`)
+  on the class-0 display descriptor. Read `framebufferSurface` at start and on
+  each `surfacesChanged`. Each `frameCallback` means "new pixels"; it carries
+  no surface. Each `propertiesChanged` reads `uiOrientation`, which becomes the
+  device's orientation in the catalog.
+- **Rotation is done on the server.** The surface stays portrait (1206×2622,
+  `'BGRA'`, padded rows) while the guest draws rotated content into it. Before
+  encoding, the server rotates each frame into the current UI orientation:
+  - H.264 uses `VTPixelRotationSession` on the `CVPixelBuffer` that wraps the
+    surface (`CVPixelBufferCreateWithIOSurface`), so no CPU copy is made.
+  - JPEG rotates while it converts BGRA to RGB.
+
+  As on Android, a rotated device's frames therefore swap width and height,
+  and the client needs no iOS-specific rendering.
 - **Encoder.** A `VTCompressionSession` produces H.264 with real-time on, no
   frame reordering, a 2 s key-frame interval, and a bitrate scaled to pixel
   count. Output conversion:
@@ -437,41 +450,72 @@ aliases.
 
   The output feeds `MediaHub` through the same `mpsc::Receiver<VideoUnit>` plus
   reset callback that Android uses (ruling R4 of the Android plan). A reset
-  forces the next frame to be a key frame. A size change (rotation) tears
-  down and recreates the session, then emits a new config unit.
-- **Pacing.** Frames go out only on damage, capped at 60 fps. Backpressure,
-  slow-viewer handling and the JPEG fallback rules are unchanged from Android.
-- **JPEG.** `snapshot_jpeg` locks the current surface and encodes it with
-  `jpeg-encoder` (already a dependency) at the requested width. In view-only
-  mode it uses `xcrun simctl io <udid> screenshot --type=jpeg -` instead.
-- **Threading.** Callbacks run on a private serial dispatch queue and hand
-  work to Tokio through bounded channels. No Tokio runtime call happens on a
-  dispatch thread, and no CoreFoundation object crosses threads unretained.
+  forces the next frame to be a key frame. A change of output size (a
+  rotation, or a new surface) tears down and recreates the session, then emits
+  a new config unit.
+- **Pacing.** Frames go out only on `frameCallback`, capped at 60 fps.
+  Backpressure, slow-viewer handling and the JPEG fallback rules are unchanged
+  from Android.
+- **JPEG.** `snapshot_jpeg` locks the current surface, honors its row stride,
+  rotates, and encodes with `jpeg-encoder` (already a dependency) at the
+  requested width. In view-only mode it uses
+  `xcrun simctl io <udid> screenshot --type=jpeg -` instead, which is already
+  rotated.
+- **Threading and exceptions.**
+  - Callbacks run on a private serial dispatch queue and hand work to Tokio
+    through bounded channels. No Tokio runtime call happens on a dispatch
+    thread, and no CoreFoundation object crosses threads unretained.
+  - The IO ports and descriptors are remote proxies that raise Objective-C
+    exceptions on unknown selectors. Every send to them is gated by
+    `conformsToProtocol:`/`respondsToSelector:` and wrapped in `objc2`'s
+    exception catching, so no exception unwinds through Rust.
 
 ## 5. iOS input (`hid.rs`)
 
-- **Touch.** Normalized `x`/`y` (0..1, current orientation) go straight into
-  the Indigo touch message, which takes screen ratios. **One pointer**:
+Amended after the spikes (§0 Results).
+
+- **Path.** All input goes through **DTUHID**: an XPC connection, made inside
+  the server process, to the guest's
+  `com.apple.coredevice.feature.remote.hid.digitizer` service. The connection
+  is made with the libxpc `*_4sim` functions and the port from
+  `-[SimDevice lookup:error:]`.
+  - **Liveness.** Opening the connection sends a barrier
+    `IndigoKeyboardButtonEvent` and waits for its reply: 5 attempts, a 4 s
+    reply timeout each, 4 s apart. A port alone does not prove `dtuhidd` is
+    alive.
+  - **Fallback.** If DTUHID never answers, touch and buttons fall back to the
+    legacy Indigo messages through `SimDeviceLegacyHIDClient`. Keys and text
+    then return `DeviceInputError` ("The simulator is not accepting keyboard
+    input yet. Try again in a few seconds."), because legacy keyboard input
+    is dropped on current CoreSimulator.
+- **Touch.** Normalized `x`/`y` (0..1, current orientation) are mapped into
+  the **portrait** surface's ratios for the current UI orientation; for
+  example, at `uiOrientation` 3, (u, v) becomes (v, 1 − u). They are sent as
+  `IndigoDigitizerEvent`. **One pointer**:
   - Events whose `pointerId` is not the first active pointer are dropped.
   - A second `down` while one is active is ignored.
   - Multi-touch and pinch are out of scope for iOS v1.
-- **Buttons.** `home`, `power`, `volumeUp` and `volumeDown` use
-  `IndigoHIDMessageForButton`.
+- **Buttons.** `home`, `power`, `volumeUp` and `volumeDown` are
+  `IndigoButtonEvent`s on usage page 0x0C, with usages 0x40, 0x30, 0xE9 and
+  0xEA.
 - **Keys and text.**
-  - Keys use HID keyboard usages through `IndigoHIDMessageForKeyboardArbitrary`.
+  - Keys are `IndigoKeyboardButtonEvent`s with HID keyboard usages.
   - Text in the US-layout printable set is sent as key down/up pairs, with
     Shift where needed.
   - Any other text goes through `xcrun simctl pbcopy <udid>` followed by
     Cmd+V. The pane notes that iOS may show its paste prompt.
   - The existing per-chunk limit (≤1000 UTF-16 units) still applies.
-- **Rotation.** Uses the S2 result. If none was found, `rotate` returns
-  `DeviceInputError` ("Rotation isn't available for iOS simulators yet.") and
-  the catalog reports `canRotate: false` on the device snapshot. This field is
-  added to `DeviceSnapshot`; Android always sets it `true`.
-- **Send path.** Messages go through
-  `-[SimDeviceLegacyHIDClient sendWithMessage:freeWhenDone:completionQueue:completion:]`.
-  Completions resolve a oneshot. A send failure surfaces as `DeviceInputError`
-  and is logged at `warn`.
+- **Rotation.** This uses S2's Purple GSEvent to `PurpleWorkspacePort`, and
+  `canRotate` is `true`.
+  - The catalog follows `uiOrientation` (§4), never what was asked.
+  - Whether the UI turns depends on the foreground app; the iPhone home screen
+    does not rotate.
+  - The mapping of `landscape`/`reverseLandscape` to Purple values 4 and 3 is
+    fixed by a real-simulator test against Android's convention.
+  - `canRotate` stays on `DeviceSnapshot` (`true` on both platforms today) so
+    a future runtime without the Purple port can report `false`.
+- **Send failures.** A failed send surfaces as `DeviceInputError` and is
+  logged at `warn` without text content.
 
 ## 6. Availability and the private-API guard
 

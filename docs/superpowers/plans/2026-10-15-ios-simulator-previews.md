@@ -591,6 +591,16 @@ async fn close_shuts_down_only_what_bibcode_booted() {
 
 ### Task 6: CoreSimulator loader, private-API guard and live JPEG frames
 
+> **Amended after Task 1 (spike results, spec §0 and amended §4).** These amendments override the text below wherever they differ.
+> - `Screen::attach` registers the `SimScreen` callbacks instead of the damage and surface-change ones:
+>   - `frameCallback` sends `()` on `damage`;
+>   - `surfacesChanged` replaces the surface;
+>   - `propertiesChanged` publishes `uiOrientation` on a `watch::Sender<Orientation>`. Add `Screen::orientation() -> watch::Receiver<Orientation>`.
+> - `read_bgra` honours the surface's bytes-per-row (4864 on the iPhone 17 Pro, not width × 4). It returns pixels **rotated into the current UI orientation**, so landscape returns width > height.
+> - The device reports orientation changes to the manager through `RunningDevice::rotate`'s `report` path or an equivalent watch the manager follows. The catalog shows `uiOrientation`.
+> - Every Objective-C send to a proxy is gated by `conformsToProtocol:`/`respondsToSelector:` and wrapped in `objc2::exception::catch`. Add a test that the guard reports `xcodeUnsupported` when a gating check fails.
+> - Name `IosOrientation::from_ui(u32)` and test it for values 1–4. Map portrait=1 and reversePortrait=2. Task 8's real-simulator test confirms which of 3 and 4 is `landscape`; until then use 3 → `landscape` and 4 → `reverseLandscape`, with a comment pointing at Task 8.
+
 **Files:**
 - Create: `device/ios/coresim.rs`.
 - Modify: `device/ios/guard.rs`, `device/ios/mod.rs`, `apps/server/Cargo.toml` (macOS deps), `docs/dependency-upgrades/2026-07-17-ledger.json`, `Cargo.lock`.
@@ -698,6 +708,11 @@ Run `BIBCODE_IOS_SIM_TESTS=1 cargo test -p bibcode-server --test ios_simulator -
 
 ### Task 7: VideoToolbox H.264 source
 
+> **Amended after Task 1.** These amendments override the text below wherever they differ.
+> - The surface never changes size on rotation. Before encoding, rotate each `CVPixelBuffer` into the current UI orientation with `VTPixelRotationSession`, using a pixel-buffer pool at the rotated size.
+> - The encoder's output size is the rotated size, so an orientation change is a size change. It rebuilds the session, then emits config before key: `size_change_emits_config_before_frames` still pins it.
+> - Frames are paced by `frameCallback` (Task 6's `damage` channel), capped at 60 fps.
+
 **Files:**
 - Create: `device/ios/encoder.rs`, `device/ios/fixtures/vt-*.bin` (recorded encoder output).
 - Modify: `device/ios/mod.rs` (`RunningSimulator::video`).
@@ -790,6 +805,21 @@ Run it with `BIBCODE_IOS_SIM_TESTS=1` and expect PASS.
 ---
 
 ### Task 8: iOS input, text and rotation
+
+> **Amended after Task 1 (spec §0 and amended §5).** These amendments override the text below wherever they differ.
+> - **Send path is DTUHID first.** `HidClient` becomes a `DtuHid` connection:
+>   - `-[SimDevice lookup:error:]` for `com.apple.coredevice.feature.remote.hid.digitizer`;
+>   - `xpc_endpoint_create_mach_port_4sim`, then `xpc_connection_create_from_endpoint`, then `xpc_connection_enable_sim2host_4sim` before resume;
+>   - messages `IndigoDigitizerEvent`, `IndigoButtonEvent` and `IndigoKeyboardButtonEvent` with §0's payload keys;
+>   - the barrier liveness check (5 attempts × 4 s reply timeout × 4 s backoff).
+>
+>   The legacy `SimDeviceLegacyHIDClient` Indigo path is the fallback for touch and buttons only. With no DTUHID, keys and text return `DeviceOpError::InvalidInput("The simulator is not accepting keyboard input yet. Try again in a few seconds.")`.
+> - **Buttons** are `IndigoButtonEvent` on usage page 0x0C: Home 0x40, Lock 0x30, Volume up 0xE9, Volume down 0xEA.
+> - **Touch ratios** are mapped into portrait-surface space for the current orientation (§0: at `uiOrientation` 3, (u, v) → (v, 1 − u)). Replace the `landscape_ratios_map_to_portrait_space` expectation with the value that rule gives for whichever orientation Task 6 mapped to `landscape`, and add one case per orientation.
+> - **Rotation is supported.** Send the Purple GSEvent (`PurpleWorkspacePort`, `msgh_id` 0x7B, type `50 | 0x20000`, the record at 0x48/0x4C, `mach_msg` with a 2000 ms send timeout). `can_rotate()` is `true`.
+>   - `rotate_left`/`right` map onto Orientation values. A new real-simulator test, `rotation_matches_android_convention`, sends `landscape`, checks the reported orientation and frame size, and fixes the 3/4 mapping in both `IosOrientation::from_ui` and the Purple value table if Task 6's provisional choice was wrong.
+>   - Drop `rotation_changes_the_screen_size`'s "only if S2 found a call" condition.
+> - Add a pure test of the DTUHID message builders: keys and nested payload types (u64/double/bool/string) for each message, built as a Rust-side description before conversion to `xpc_object_t`.
 
 **Files:**
 - Create: `device/ios/hid.rs`, `device/ios/keymap.rs`.
