@@ -424,6 +424,11 @@ pub(crate) async fn stop(running: RunningEmulator) {
 
 /// The first even console port whose adb neighbour is also free on loopback, and `grpc`
 /// or else an OS-assigned gRPC port.
+///
+/// The ports are probed and released before the emulator binds them (time of check to
+/// time of use): another server on this host, or an emulator started at the same moment,
+/// can take one first. The emulator then exits, the device fails with that reason, and a
+/// new start probes again; there is no automatic retry.
 fn pick_ports(grpc: Option<u16>) -> Result<EmulatorPorts, String> {
     let free = |port: u16| TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok();
     let console = CONSOLE_PORTS

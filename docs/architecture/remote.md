@@ -1554,6 +1554,16 @@ performed on the machine that owns that server and filesystem.
 - Device previews run only Android emulators (no physical devices), one
   running device per environment. Two clients watching one device both drive
   it, and their input interleaves.
+- Emulators are stopped on close, on the setting turning off, and on server
+  shutdown. A server that crashes or is killed (`SIGKILL`) leaves its running
+  emulator behind, and the next server neither sees nor stops it; it keeps
+  its RAM and console port until it is stopped by hand (`adb -s <serial> emu
+  kill`), and a new launch takes the next free port.
+- The emulator's console, adb, and gRPC ports are probed free and released
+  before the emulator binds them, so two servers on one host, or another
+  emulator started at the same moment, can pick the same port. The emulator
+  then fails to start and the device shows **Failed:** with the reason;
+  starting it again picks fresh ports.
 - A provider's MCP `tools/list` reflects the device-preview setting when the
   provider asks for it; a provider that cached its list keeps showing the
   `device_*` tools after the setting turns off, and their calls then fail
