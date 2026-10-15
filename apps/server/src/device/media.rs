@@ -763,6 +763,8 @@ mod tests {
         hub: Arc<MediaHub>,
         units: mpsc::Sender<VideoUnit>,
         fed: std::cell::Cell<u64>,
+        /// `RESET_VIDEO` writes the source received.
+        written: Arc<AtomicUsize>,
     }
 
     struct Watcher {
@@ -773,15 +775,17 @@ mod tests {
         fn new() -> Self {
             let hub = MediaHub::new(CancellationToken::new());
             let (units, receiver) = mpsc::channel(64);
+            let written = Arc::<AtomicUsize>::default();
             let source = ChannelSource {
                 units: receiver,
-                resets: Arc::default(),
+                resets: written.clone(),
             };
             tokio::spawn(run(hub.clone(), async move { Ok(source) }));
             Self {
                 hub,
                 units,
                 fed: std::cell::Cell::new(0),
+                written,
             }
         }
 
@@ -958,6 +962,44 @@ mod tests {
             [("config", 0), ("key", 1), ("key", 5), ("delta", 6)]
         );
         assert!(hub.resets() >= 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn overflow_asks_the_encoder_for_a_key_unit() {
+        let hub = HubFixture::new();
+        let _fast = hub.subscribe();
+        let _slow = hub.subscribe_with_capacity(1);
+        assert_eq!(hub.resets(), 1);
+        tokio::time::advance(RESET_MIN_INTERVAL).await;
+        // The config fills the slow queue, so the key unit overflows it.
+        hub.feed([config(), key(1)]).await;
+        assert_eq!(hub.resets(), 2);
+        while hub.written.load(Ordering::Acquire) < 2 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_full_byte_budget_skips_to_the_next_key_unit() {
+        let large = |kind, pts_us| VideoUnit {
+            kind,
+            pts_us,
+            data: Bytes::from(vec![0_u8; 900 * 1024]),
+        };
+        let hub = HubFixture::new();
+        let mut watcher = hub.subscribe();
+        // Two large units fit in the 2 MiB budget; the third does not.
+        hub.feed([
+            config(),
+            large(UnitKind::Key, 1),
+            large(UnitKind::Delta, 2),
+            large(UnitKind::Delta, 3),
+        ])
+        .await;
+        assert_eq!(watcher.received().await, [("config", 0), ("key", 1)]);
+        hub.feed([large(UnitKind::Delta, 4), large(UnitKind::Key, 5)])
+            .await;
+        assert_eq!(watcher.received().await, [("key", 5)]);
     }
 
     #[tokio::test]
