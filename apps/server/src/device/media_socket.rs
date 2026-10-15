@@ -1,31 +1,71 @@
 //! `GET /api/device-media`: a plain WebSocket that carries one device's H.264 frames (spec
 //! §4.2–4.3). It takes no cookie or bearer credential: the first message is a single-use
 //! ticket from `device.createMediaTicket`, never the URL. Rejections close with code 4400
-//! and a reason the client acts on.
+//! and a reason the client acts on:
+//!
+//! | Reason | Cause |
+//! | --- | --- |
+//! | `expired` | the ticket expired, is unknown or malformed, or did not arrive within 5 s |
+//! | `reused` | the ticket was already used |
+//! | `wrongChannel` | the ticket was minted over E2EE |
+//! | `wrongDevice` | the ticket's device is no longer known |
+//! | `limit` | the device already has four media sockets |
+//! | `disabled` | device previews were turned off |
+//! | `stopped` | the device stopped, failed, or is not ready |
+//! | `failed` | the device's video stream failed |
+//! | `unauthorized` | the ticket's session was revoked or expired |
+//! | `slow` | the client accepted no frame for 10 s |
+//!
+//! Before the upgrade, connections are admitted against the same global, per-peer, and
+//! per-network pre-auth budgets as the E2EE route, from a separate pool so media sockets
+//! cannot starve E2EE handshakes; a refused one gets `503` and is never upgraded.
 
-use std::time::Duration;
+use std::{net::IpAddr, time::Duration};
 
 use axum::{
-    extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
-    response::Response,
+    extract::ws::{CloseFrame, Message, WebSocketUpgrade},
+    http::StatusCode,
+    response::{IntoResponse, Response},
 };
+use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use super::{DeviceManager, media::MediaChannel};
-use crate::auth::AuthService;
+use crate::{auth::AuthService, rpc::E2eePreauthAdmission};
 
 /// How long a socket may take to send its ticket.
 pub(crate) const TICKET_WAIT: Duration = Duration::from_secs(5);
+/// How long one frame may wait for the client before the socket closes as `slow`.
+pub(crate) const SEND_STALL_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a close frame may take; the socket is dropped after it either way.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 /// Inbound messages are only the ticket and `{"type":"keyframe"}`.
 const MAX_INBOUND_BYTES: usize = 1024;
+const READ_BUFFER_BYTES: usize = 4 * 1024;
+const WRITE_BUFFER_BYTES: usize = 16 * 1024;
 const CLOSE_CODE: u16 = 4400;
 
-/// What the media route needs: the devices, and the sessions tickets are bound to.
+/// What the media route needs: the devices, the sessions tickets are bound to, and its own
+/// pre-auth admission pool.
 #[derive(Clone)]
 pub(crate) struct MediaSocketState {
     pub devices: DeviceManager,
     pub auth: AuthService,
+    pub admission: E2eePreauthAdmission,
+    /// [`SEND_STALL_TIMEOUT`] outside tests.
+    pub send_stall: Duration,
+}
+
+impl MediaSocketState {
+    pub(crate) fn new(devices: DeviceManager, auth: AuthService) -> Self {
+        Self {
+            devices,
+            auth,
+            admission: E2eePreauthAdmission::new(),
+            send_stall: SEND_STALL_TIMEOUT,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -35,16 +75,40 @@ enum Inbound {
     Keyframe,
 }
 
-/// Upgrades a plain media socket; the ticket is checked once it is open.
-pub(crate) fn upgrade_plain(state: MediaSocketState, upgrade: WebSocketUpgrade) -> Response {
+/// Admits and upgrades a plain media socket from `peer_ip` (see
+/// `crate::rpc::effective_preauth_peer`); the ticket is checked once it is open.
+pub(crate) fn upgrade_plain(
+    state: MediaSocketState,
+    peer_ip: IpAddr,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    let lease = match state
+        .admission
+        .try_admit(peer_ip, tokio::time::Instant::now())
+    {
+        Ok(lease) => lease,
+        Err(reason) => {
+            tracing::warn!(reason, "device media socket refused before upgrade");
+            return (StatusCode::SERVICE_UNAVAILABLE, reason).into_response();
+        }
+    };
     upgrade
         .max_message_size(MAX_INBOUND_BYTES)
         .max_frame_size(MAX_INBOUND_BYTES)
-        .on_upgrade(move |socket| serve(socket, state, MediaChannel::Plain))
+        .read_buffer_size(READ_BUFFER_BYTES)
+        .write_buffer_size(WRITE_BUFFER_BYTES)
+        .on_upgrade(move |socket| serve(socket, state, MediaChannel::Plain, lease))
 }
 
-async fn serve(mut socket: WebSocket, state: MediaSocketState, channel: MediaChannel) {
-    let ticket = match tokio::time::timeout(TICKET_WAIT, socket.recv()).await {
+async fn serve<S>(
+    mut socket: S,
+    state: MediaSocketState,
+    channel: MediaChannel,
+    lease: crate::rpc::E2eePreauthLease,
+) where
+    S: Sink<Message, Error = axum::Error> + Stream<Item = Result<Message, axum::Error>> + Unpin,
+{
+    let ticket = match tokio::time::timeout(TICKET_WAIT, socket.next()).await {
         Err(_) => {
             tracing::warn!("device media socket sent no ticket in time");
             return close(socket, "expired").await;
@@ -73,6 +137,8 @@ async fn serve(mut socket: WebSocket, state: MediaSocketState, channel: MediaCha
         }
     };
     drop(ticket);
+    // A redeemed ticket authenticates the socket; it leaves the pre-auth pool.
+    drop(lease);
     // The session the ticket was minted for must still be live, and the socket ends with
     // it, as `/ws` does.
     let Some(expires_at_ms) = state.auth.active_session_expiry(&principal).await else {
@@ -92,7 +158,14 @@ async fn serve(mut socket: WebSocket, state: MediaSocketState, channel: MediaCha
         crate::http::spawn_session_expiration_guard(expires_at_ms, session_shutdown.clone());
     match state.devices.attach_media(&device_id) {
         Ok(subscriber) => {
-            let reason = stream(&mut socket, subscriber, &state.devices, &session_shutdown).await;
+            let reason = stream(
+                &mut socket,
+                subscriber,
+                &state.devices,
+                &session_shutdown,
+                state.send_stall,
+            )
+            .await;
             if let Some(reason) = reason {
                 close(socket, reason).await;
             }
@@ -108,14 +181,18 @@ async fn serve(mut socket: WebSocket, state: MediaSocketState, channel: MediaCha
     connection_guard.close().await;
 }
 
-/// Sends frames until the stream or the session ends (`Some` close reason) or the client
-/// leaves (`None`).
-async fn stream(
-    socket: &mut WebSocket,
+/// Sends frames until the stream or the session ends, or a frame waits longer than
+/// `send_stall` (`Some` close reason), or the client leaves (`None`).
+async fn stream<S>(
+    socket: &mut S,
     mut subscriber: super::media::MediaSubscriber,
     devices: &DeviceManager,
     session_shutdown: &CancellationToken,
-) -> Option<&'static str> {
+    send_stall: Duration,
+) -> Option<&'static str>
+where
+    S: Sink<Message, Error = axum::Error> + Stream<Item = Result<Message, axum::Error>> + Unpin,
+{
     let closed = subscriber.closed.clone();
     let end_reason = |subscriber: &super::media::MediaSubscriber| {
         if subscriber.failed() {
@@ -131,7 +208,7 @@ async fn stream(
             biased;
             () = closed.cancelled() => return Some(end_reason(&subscriber)),
             () = session_shutdown.cancelled() => return Some("unauthorized"),
-            inbound = socket.recv() => match inbound {
+            inbound = socket.next() => match inbound {
                 Some(Ok(Message::Text(text))) => {
                     if matches!(serde_json::from_str(&text), Ok(Inbound::Keyframe)) {
                         subscriber.request_keyframe();
@@ -144,25 +221,40 @@ async fn stream(
                 let Some(frame) = frame else {
                     return Some(end_reason(&subscriber));
                 };
-                // A stalled client must not keep the socket open after its stream ended.
+                // A stalled client must not keep the socket, or its slot, past the end of
+                // its stream or session.
                 tokio::select! {
                     () = closed.cancelled() => return Some(end_reason(&subscriber)),
-                    sent = socket.send(Message::Binary(frame)) => if sent.is_err() {
-                        return None;
-                    },
+                    () = session_shutdown.cancelled() => return Some("unauthorized"),
+                    sent = tokio::time::timeout(send_stall, socket.send(Message::Binary(frame))) => {
+                        match sent {
+                            Ok(Ok(())) => {}
+                            Ok(Err(_)) => return None,
+                            Err(_) => {
+                                tracing::warn!("device media client accepted no frame in time");
+                                return Some("slow");
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-async fn close(mut socket: WebSocket, reason: &'static str) {
-    let _ = socket
-        .send(Message::Close(Some(CloseFrame {
+/// Sends the close frame, giving up after [`CLOSE_TIMEOUT`] on a client that reads nothing.
+async fn close<S>(mut socket: S, reason: &'static str)
+where
+    S: Sink<Message, Error = axum::Error> + Unpin,
+{
+    let _ = tokio::time::timeout(
+        CLOSE_TIMEOUT,
+        socket.send(Message::Close(Some(CloseFrame {
             code: CLOSE_CODE,
             reason: reason.into(),
-        })))
-        .await;
+        }))),
+    )
+    .await;
 }
 
 #[cfg(all(test, unix))]
@@ -222,16 +314,13 @@ mod tests {
                 )
                 .await
                 .expect("authorized session");
-            let state = MediaSocketState {
-                devices: fixture.manager.clone(),
-                auth: auth.clone(),
-            };
+            let state = MediaSocketState::new(fixture.manager.clone(), auth.clone());
             let app = Router::new()
                 .route(
                     "/api/device-media",
                     get(
                         |State(state): State<MediaSocketState>, upgrade: WebSocketUpgrade| async move {
-                            upgrade_plain(state, upgrade)
+                            upgrade_plain(state, IpAddr::from([127, 0, 0, 1]), upgrade)
                         },
                     ),
                 )
@@ -440,6 +529,119 @@ mod tests {
             .wait_state(&harness.device_id, DeviceState::Failed)
             .await;
         wait_until(|| harness.fixture.sdk.adb_log().contains("forward --remove")).await;
+        harness.fixture.manager.shutdown().await;
+    }
+
+    /// A client that never accepts a frame and never sends anything.
+    struct StalledSocket;
+
+    impl Sink<Message> for StalledSocket {
+        type Error = axum::Error;
+
+        fn poll_ready(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Pending
+        }
+
+        fn start_send(self: std::pin::Pin<&mut Self>, _: Message) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Pending
+        }
+
+        fn poll_close(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    impl Stream for StalledSocket {
+        type Item = Result<Message, axum::Error>;
+
+        fn poll_next(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Self::Item>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stalled_socket_closes_as_slow_and_frees_its_slot() {
+        let harness = Harness::start().await;
+        let subscriber = harness
+            .fixture
+            .manager
+            .attach_media(&harness.device_id)
+            .expect("attach");
+        let started = std::time::Instant::now();
+        let reason = tokio::time::timeout(
+            Duration::from_secs(10),
+            stream(
+                &mut StalledSocket,
+                subscriber,
+                &harness.fixture.manager,
+                &CancellationToken::new(),
+                Duration::from_millis(200),
+            ),
+        )
+        .await
+        .expect("the stalled socket ends");
+        assert_eq!(reason, Some("slow"));
+        assert!(started.elapsed() >= Duration::from_millis(200));
+        // Its slot is free again: the hub stopped with its only socket.
+        wait_until(|| harness.fixture.sdk.adb_log().contains("forward --remove")).await;
+        harness.fixture.manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn revoking_the_session_closes_a_stalled_socket() {
+        let harness = Harness::start().await;
+        let session_shutdown = CancellationToken::new();
+        let _connection = harness
+            .auth
+            .mark_connected_guard(&harness.session_id, session_shutdown.clone())
+            .await
+            .expect("live session");
+        let subscriber = harness
+            .fixture
+            .manager
+            .attach_media(&harness.device_id)
+            .expect("attach");
+        let devices = harness.fixture.manager.clone();
+        let streaming = tokio::spawn(async move {
+            stream(
+                &mut StalledSocket,
+                subscriber,
+                &devices,
+                &session_shutdown,
+                SEND_STALL_TIMEOUT,
+            )
+            .await
+        });
+        // Let the first frame reach the stalled send.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            harness
+                .auth
+                .revoke_client("administrator", &harness.session_id)
+                .await
+                .expect("revoke")
+        );
+        let reason = tokio::time::timeout(Duration::from_secs(5), streaming)
+            .await
+            .expect("revocation ends the stalled socket")
+            .expect("stream task");
+        assert_eq!(reason, Some("unauthorized"));
         harness.fixture.manager.shutdown().await;
     }
 

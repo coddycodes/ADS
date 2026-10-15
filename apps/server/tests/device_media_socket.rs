@@ -116,3 +116,32 @@ async fn oversized_first_message_is_refused() {
     handle.shutdown();
     handle.join().await.expect("server joins");
 }
+
+#[tokio::test]
+async fn connections_beyond_the_preauth_limit_are_refused_before_upgrade() {
+    let (handle, _temp) = start().await;
+    let request = || {
+        let mut request = format!("ws://{}/api/device-media", handle.local_addr())
+            .into_client_request()
+            .expect("request");
+        // As forwarded by a proxy on this machine for one public client.
+        request
+            .headers_mut()
+            .insert("x-forwarded-for", HeaderValue::from_static("203.0.113.5"));
+        request
+    };
+    // Each holds its pre-auth slot while it waits to send a ticket.
+    let mut held = Vec::new();
+    for _ in 0..4 {
+        held.push(connect_async(request()).await.expect("admitted").0);
+    }
+    match connect_async(request()).await {
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+            assert_eq!(response.status(), 503);
+        }
+        other => panic!("expected a refusal before the upgrade, got {other:?}"),
+    }
+    drop(held);
+    handle.shutdown();
+    handle.join().await.expect("server joins");
+}

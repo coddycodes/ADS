@@ -186,7 +186,8 @@ struct E2eePreauthNetworkState {
     last_activity: tokio::time::Instant,
 }
 
-struct E2eePreauthLease {
+/// A pre-auth admission slot; released on drop.
+pub(crate) struct E2eePreauthLease {
     inner: Arc<E2eePreauthAdmissionInner>,
     peer_key: E2eePreauthPeerKey,
     network_key: Option<E2eePreauthNetworkKey>,
@@ -203,7 +204,9 @@ impl E2eePreauthAdmission {
         }
     }
 
-    fn try_admit(
+    /// Admits one pre-auth connection from `peer_ip` against the global, per-peer, and
+    /// per-network budgets; the error is the refusal reason (`busy` or `rate`).
+    pub(crate) fn try_admit(
         &self,
         peer_ip: IpAddr,
         now: tokio::time::Instant,

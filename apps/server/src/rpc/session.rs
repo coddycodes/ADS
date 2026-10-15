@@ -316,6 +316,9 @@ impl PairingConfirmationLatch {
     }
 }
 
+// Every constructor starts on `MediaChannel::Plain`, so media tickets minted on the
+// connection redeem only on the plain media route. A transport that is not a plaintext
+// WebSocket must call `with_channel` (`rpc/e2ee.rs` sets `MediaChannel::E2ee`).
 impl RpcSessionContext {
     #[must_use]
     pub(crate) fn unauthenticated() -> Self {

@@ -31,9 +31,13 @@ pub(crate) const TICKET_TTL: Duration = Duration::from_secs(60);
 const SOCKET_QUEUE_FRAMES: usize = 256;
 /// Tickets kept at once; the oldest is dropped to make room.
 const MAX_OUTSTANDING_TICKETS: usize = 256;
-/// How long a `RESET_VIDEO` write may take before the hub gives up on it, so a stalled
-/// control socket never holds up the unit stream behind it.
-const RESET_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+/// Tickets one session may hold at once, so a single client cannot flush everyone else's
+/// out of the book; its own oldest is dropped first.
+const MAX_TICKETS_PER_PRINCIPAL: usize = 8;
+/// How long a `RESET_VIDEO` write may take before the hub gives up on it. The write is one
+/// byte, so this only bites on a stalled control socket, and keeps it from holding up the
+/// unit stream for long.
+const RESET_WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 const FRAME_HEADER_BYTES: usize = 9;
 
 /// The connection a ticket was minted on, and the only one that may redeem it.
@@ -124,6 +128,21 @@ struct TicketTable {
     next_issue: u64,
 }
 
+impl TicketTable {
+    /// Drops the oldest ticket that `matches`.
+    fn remove_oldest(&mut self, matches: impl Fn(&TicketRecord) -> bool) {
+        let oldest = self
+            .by_hash
+            .iter()
+            .filter(|(_, record)| matches(record))
+            .min_by_key(|(_, record)| record.issued)
+            .map(|(hash, _)| *hash);
+        if let Some(oldest) = oldest {
+            self.by_hash.remove(&oldest);
+        }
+    }
+}
+
 fn ticket_hash(ticket: &str) -> [u8; 32] {
     Sha256::digest(ticket.as_bytes()).into()
 }
@@ -149,14 +168,17 @@ impl TicketBook {
         let expires = now + TICKET_TTL;
         let mut table = self.table();
         table.by_hash.retain(|_, record| record.expires > now);
+        while table
+            .by_hash
+            .values()
+            .filter(|record| record.principal == principal)
+            .count()
+            >= MAX_TICKETS_PER_PRINCIPAL
+        {
+            table.remove_oldest(|record| record.principal == principal);
+        }
         while table.by_hash.len() >= MAX_OUTSTANDING_TICKETS {
-            let oldest = table
-                .by_hash
-                .iter()
-                .min_by_key(|(_, record)| record.issued)
-                .map(|(hash, _)| *hash)
-                .expect("a full book has an oldest ticket");
-            table.by_hash.remove(&oldest);
+            table.remove_oldest(|_| true);
         }
         let issued = table.next_issue;
         table.next_issue += 1;
@@ -436,8 +458,11 @@ impl MediaHub {
                     true
                 }
                 Offer::Overflow => {
+                    // Only a socket that newly falls behind asks for a key unit: one that
+                    // stays stalled must not make the encoder restart every second for
+                    // everyone else.
+                    overflowed |= !slot.waiting_for_key;
                     slot.skip_to_key();
-                    overflowed = true;
                     true
                 }
                 Offer::Closed => false,
@@ -484,7 +509,11 @@ pub(super) async fn run<S: VideoSource>(
     start: impl Future<Output = Result<S, DeviceError>> + Send,
 ) {
     let mut source = tokio::select! {
-        () = hub.cancel.cancelled() => return,
+        () = hub.cancel.cancelled() => {
+            // Dropping `start` stops whatever it started.
+            hub.close(false);
+            return;
+        }
         started = start => match started {
             Ok(source) => source,
             Err(error) => {
@@ -917,9 +946,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(decoded.len(), 32);
-        for _ in 0..MAX_OUTSTANDING_TICKETS {
+        for index in 0..MAX_OUTSTANDING_TICKETS {
             tickets
-                .issue("dev", "session-a", MediaChannel::Plain, now())
+                .issue(
+                    "dev",
+                    &format!("session-{index}"),
+                    MediaChannel::Plain,
+                    now(),
+                )
                 .unwrap();
         }
         assert_eq!(tickets.table().by_hash.len(), MAX_OUTSTANDING_TICKETS);
@@ -928,6 +962,32 @@ mod tests {
             tickets.redeem(&first, MediaChannel::Plain, now()),
             Err(TicketError::Unknown)
         );
+    }
+
+    #[test]
+    fn one_session_cannot_flood_the_ticket_book() {
+        let tickets = TicketBook::default();
+        let (other, _) = tickets
+            .issue("dev", "session-b", MediaChannel::Plain, now())
+            .unwrap();
+        let (first, _) = tickets
+            .issue("dev", "session-a", MediaChannel::Plain, now())
+            .unwrap();
+        let mut latest = String::new();
+        for _ in 0..MAX_OUTSTANDING_TICKETS {
+            latest = tickets
+                .issue("dev", "session-a", MediaChannel::Plain, now())
+                .unwrap()
+                .0;
+        }
+        assert_eq!(tickets.table().by_hash.len(), MAX_TICKETS_PER_PRINCIPAL + 1);
+        // The flooding session lost its own oldest ticket, never another session's.
+        assert_eq!(
+            tickets.redeem(&first, MediaChannel::Plain, now()),
+            Err(TicketError::Unknown)
+        );
+        assert!(tickets.redeem(&latest, MediaChannel::Plain, now()).is_ok());
+        assert!(tickets.redeem(&other, MediaChannel::Plain, now()).is_ok());
     }
 
     #[tokio::test]
@@ -968,15 +1028,36 @@ mod tests {
     async fn overflow_asks_the_encoder_for_a_key_unit() {
         let hub = HubFixture::new();
         let _fast = hub.subscribe();
-        let _slow = hub.subscribe_with_capacity(1);
+        // Room for the config and the key unit, which ends its wait; delta 2 overflows.
+        let _slow = hub.subscribe_with_capacity(2);
         assert_eq!(hub.resets(), 1);
-        tokio::time::advance(RESET_MIN_INTERVAL).await;
-        // The config fills the slow queue, so the key unit overflows it.
         hub.feed([config(), key(1)]).await;
+        tokio::time::advance(RESET_MIN_INTERVAL).await;
+        hub.feed([delta(2)]).await;
         assert_eq!(hub.resets(), 2);
         while hub.written.load(Ordering::Acquire) < 2 {
             tokio::task::yield_now().await;
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_socket_asks_for_one_reset_and_never_holds_up_the_rest() {
+        let hub = HubFixture::new();
+        let mut fast = hub.subscribe();
+        // Never read: the config and key 1 fill it for good.
+        let _stalled = hub.subscribe_with_capacity(2);
+        hub.feed([config(), key(1)]).await;
+        let mut expected = vec!["config", "key"];
+        for second in 0..5_u64 {
+            tokio::time::advance(RESET_MIN_INTERVAL).await;
+            let base = second * 10 + 10;
+            hub.feed([delta(base), key(base + 1), delta(base + 2), delta(base + 3)])
+                .await;
+            expected.extend(["delta", "key", "delta", "delta"]);
+        }
+        // One reset at subscribe, one when it fell behind, none while it stays stalled.
+        assert_eq!(hub.resets(), 2);
+        assert_eq!(fast.kinds().await, expected);
     }
 
     #[tokio::test]

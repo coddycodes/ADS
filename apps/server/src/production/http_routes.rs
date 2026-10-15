@@ -335,10 +335,26 @@ where
 
 async fn device_media(
     State(state): State<HttpRoutesState>,
+    connection: Result<
+        axum::extract::ConnectInfo<crate::http::ConnectionAddrs>,
+        axum::extract::rejection::ExtensionRejection,
+    >,
+    headers: HeaderMap,
     upgrade: axum::extract::ws::WebSocketUpgrade,
 ) -> Response {
+    // The same peer the E2EE route admits: a loopback forwarder's last `X-Forwarded-For` hop.
+    let socket_peer = connection.map_or(
+        std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+        |axum::extract::ConnectInfo(addrs)| addrs.peer.ip(),
+    );
+    let peer_ip = crate::rpc::effective_preauth_peer(
+        socket_peer,
+        headers
+            .get("x-forwarded-for")
+            .and_then(|value| value.to_str().ok()),
+    );
     match state.device_media {
-        Some(media) => crate::device::media_socket::upgrade_plain(media, upgrade),
+        Some(media) => crate::device::media_socket::upgrade_plain(media, peer_ip, upgrade),
         None => json_response(
             StatusCode::SERVICE_UNAVAILABLE,
             BTreeMap::new(),

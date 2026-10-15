@@ -13,7 +13,8 @@ pub use methods::{ACTIVE_RPC_METHODS, MethodMode, RpcMethodSpec};
 pub use session::{RpcRegistry, RpcResult, RpcStreamChunk};
 
 pub(crate) use e2ee::{
-    E2eePreauthAdmission, MAX_E2EE_CIPHERTEXT_BYTES, effective_preauth_peer, run_e2ee_session,
+    E2eePreauthAdmission, E2eePreauthLease, MAX_E2EE_CIPHERTEXT_BYTES, effective_preauth_peer,
+    run_e2ee_session,
 };
 pub(crate) use methods::{MethodMutability, method_mutability};
 #[cfg(test)]

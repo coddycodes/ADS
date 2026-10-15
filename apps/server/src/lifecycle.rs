@@ -571,10 +571,9 @@ fn core_http_routes(
     runtime: Arc<ProductionRuntime>,
     connect: Arc<ConnectMcpService>,
 ) -> HttpRoutesState {
-    let device_media = crate::device::media_socket::MediaSocketState {
-        devices: runtime.device_manager(),
-        auth: auth.clone(),
-    };
+    // Its own pre-auth pool, so media sockets cannot starve E2EE handshakes.
+    let device_media =
+        crate::device::media_socket::MediaSocketState::new(runtime.device_manager(), auth.clone());
     let authorize = authorize_handler(auth);
     let json_runtime = runtime.clone();
     let json_connect = connect.clone();
