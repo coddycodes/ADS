@@ -6,10 +6,19 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+const atoms = vi.hoisted(() => ({
+  subscribed: [] as unknown[],
+  videoMode: { kind: "jpeg", reason: "unsupported" } as VideoMode,
+}));
+
 vi.mock("@effect/atom-react", () => ({
-  useAtomSubscribe: () => undefined,
+  useAtomSubscribe: (atom: unknown) => {
+    atoms.subscribed.push(atom);
+  },
   useAtomRefresh: () => () => undefined,
 }));
+
+vi.mock("./useDeviceVideo", () => ({ useDeviceVideo: () => atoms.videoMode }));
 
 vi.mock("../../state/device", () => ({
   deviceEnvironment: { frames: (args: unknown) => ({ __q: "frames", args }) },
@@ -17,6 +26,7 @@ vi.mock("../../state/device", () => ({
 
 import { DeviceInputQueue } from "./deviceInputQueue";
 import { DeviceScreen } from "./DeviceScreen";
+import type { VideoMode } from "./useDeviceVideo";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-work");
 const device: DeviceSnapshot = {
@@ -67,6 +77,8 @@ const settle = () =>
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   sent = [];
+  atoms.subscribed = [];
+  atoms.videoMode = { kind: "jpeg", reason: "unsupported" };
   // A 1000×800 screen area, so a portrait device sits at x 320..680.
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
@@ -87,6 +99,30 @@ afterEach(async () => {
 });
 
 describe("DeviceScreen", () => {
+  it("subscribes to JPEG frames only in JPEG mode", async () => {
+    atoms.videoMode = { kind: "h264" };
+    await render();
+    expect(atoms.subscribed).toEqual([]);
+    expect(container!.querySelector("[data-video-fallback]")).toBeNull();
+    expect(container!.textContent).not.toContain("Waiting for the screen");
+  });
+
+  it("waits for the screen while video is starting", async () => {
+    atoms.videoMode = { kind: "probing" };
+    await render();
+    expect(atoms.subscribed).toEqual([]);
+    expect(container!.textContent).toContain("Waiting for the screen");
+  });
+
+  it("marks the JPEG fallback with its reason", async () => {
+    atoms.videoMode = { kind: "jpeg", reason: "decoderError" };
+    await render();
+    expect(atoms.subscribed).not.toEqual([]);
+    const badge = container!.querySelector("[data-video-fallback]");
+    expect(badge?.textContent).toBe("Low-bandwidth mode");
+    expect(badge?.getAttribute("data-video-fallback")).toBe("decoderError");
+  });
+
   it("lifts a held key when the screen loses focus", async () => {
     const canvas = await render();
     await act(async () => {

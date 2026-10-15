@@ -11,6 +11,10 @@
       "types": "./src/authorization/index.ts",
       "default": "./src/authorization/index.ts"
     },
+    "./device": {
+      "types": "./src/device/index.ts",
+      "default": "./src/device/index.ts"
+    },
     "./environment": {
       "types": "./src/environment/index.ts",
       "default": "./src/environment/index.ts"

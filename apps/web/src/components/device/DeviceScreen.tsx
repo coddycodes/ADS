@@ -19,10 +19,13 @@ import {
 } from "react";
 
 import { deviceEnvironment } from "../../state/device";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { clampToBox, displaySize, letterbox, toNormalized } from "./deviceGeometry";
 import { keyboardEventToDeviceInput, splitDeviceText } from "./deviceKeyMap";
 import { JpegRenderer } from "./jpegRenderer";
+import { useDeviceVideo, type VideoMode } from "./useDeviceVideo";
 
 interface Size {
   readonly width: number;
@@ -44,10 +47,104 @@ function freeTouchId(used: ReadonlyMap<number, number>): number {
   return id;
 }
 
+const waitingForScreen = (
+  <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+    <p className="text-xs text-muted-foreground">Waiting for the screen…</p>
+  </div>
+);
+
+/** Why the screen shows still images instead of video, for the badge's tooltip. */
+const JPEG_REASONS: Record<Extract<VideoMode, { kind: "jpeg" }>["reason"], string> = {
+  unsupported:
+    "Video needs the desktop app or an HTTPS connection, so the screen updates as still images.",
+  noFirstFrame:
+    "Video did not start, so the screen updates as still images. Reopen the device panel to try video again.",
+  decoderError:
+    "Video could not be decoded, so the screen updates as still images. Reopen the device panel to try video again.",
+  rejected:
+    "The video connection kept failing, so the screen updates as still images. Reopen the device panel to try video again.",
+};
+
 /**
- * The running device's screen: JPEG frames drawn to a letterboxed canvas outside React state,
- * and pointer and keyboard input handed to `onInput`, which queues it for the device. Held keys
- * are released when focus leaves the screen or the window, and everything held when it unmounts.
+ * JPEG frames for the screen, mounted only in JPEG mode: the server captures them only while
+ * someone subscribes. Each frame goes to the renderer outside React state.
+ */
+function JpegFeed({
+  environmentId,
+  deviceId,
+  rendererRef,
+  waiting,
+  onFrameSize,
+  onFirstFrame,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly deviceId: string;
+  readonly rendererRef: { readonly current: JpegRenderer | null };
+  /** No frame has arrived yet. */
+  readonly waiting: boolean;
+  readonly onFrameSize: (size: Size) => void;
+  readonly onFirstFrame: () => void;
+}) {
+  const [streamFailed, setStreamFailed] = useState(false);
+  const streamFailedRef = useRef(false);
+  const hasFrameRef = useRef(false);
+  const framesAtom = deviceEnvironment.frames({ environmentId, input: { deviceId } });
+  const refreshFrames = useAtomRefresh(framesAtom);
+  const lastSeqRef = useRef<number | null>(null);
+  const frameSizeRef = useRef<Size | null>(null);
+  const onFrame = useCallback(
+    (result: AsyncResult.AsyncResult<DeviceJpegFrame, unknown>) => {
+      if (result._tag === "Failure") {
+        streamFailedRef.current = true;
+        setStreamFailed(true);
+        return;
+      }
+      if (!AsyncResult.isSuccess(result)) return;
+      const frame = result.value;
+      if (frame.seq === lastSeqRef.current) return;
+      lastSeqRef.current = frame.seq;
+      // Only a new size or orientation re-renders; every other frame goes straight to the canvas.
+      const size = displaySize(frame.width, frame.height, frame.orientation);
+      if (!sameSize(frameSizeRef.current, size)) {
+        frameSizeRef.current = size;
+        onFrameSize(size);
+      }
+      if (!hasFrameRef.current) {
+        hasFrameRef.current = true;
+        onFirstFrame();
+      }
+      if (streamFailedRef.current) {
+        streamFailedRef.current = false;
+        setStreamFailed(false);
+      }
+      rendererRef.current?.push(frame.jpegBase64);
+    },
+    [onFirstFrame, onFrameSize, rendererRef],
+  );
+  useAtomSubscribe(framesAtom, onFrame, { immediate: true });
+
+  const retryFrames = () => {
+    streamFailedRef.current = false;
+    setStreamFailed(false);
+    refreshFrames();
+  };
+
+  if (!streamFailed) return waiting ? waitingForScreen : null;
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
+      <p className="text-xs text-foreground">The screen stopped updating.</p>
+      <Button size="xs" variant="outline" onClick={retryFrames}>
+        Reconnect screen
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * The running device's screen, letterboxed on one canvas: H.264 video from a WebCodecs worker
+ * where the client can decode it, else JPEG frames, drawn outside React state either way.
+ * Pointer and keyboard input go to `onInput`, which queues it for the device. Held keys are
+ * released when focus leaves the screen or the window, and everything held when it unmounts.
  */
 export function DeviceScreen({
   environmentId,
@@ -62,13 +159,17 @@ export function DeviceScreen({
   readonly onRelease: (scope: "keys" | "all") => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Also in state, so the video hook starts once the canvas exists.
+  const [canvas, setCanvas] = useState<HTMLCanvasElement | null>(null);
+  const attachCanvas = useCallback((node: HTMLCanvasElement | null) => {
+    canvasRef.current = node;
+    setCanvas(node);
+  }, []);
   const [containerSize, setContainerSize] = useState<Size>({ width: 0, height: 0 });
   const [frameSize, setFrameSize] = useState<Size | null>(null);
-  const [hasFrame, setHasFrame] = useState(false);
-  const [streamFailed, setStreamFailed] = useState(false);
-  const hasFrameRef = useRef(false);
-  const streamFailedRef = useRef(false);
+  const [videoSize, setVideoSize] = useState<Size | null>(null);
+  const [hasJpegFrame, setHasJpegFrame] = useState(false);
   // Browser pointer id → the touch id the device sees, for pointers held down on the screen.
   const touchesRef = useRef(new Map<number, number>());
 
@@ -102,61 +203,41 @@ export function DeviceScreen({
     return () => observer.disconnect();
   }, []);
 
+  const onVideoSize = useCallback((width: number, height: number) => {
+    const next = { width, height };
+    setVideoSize((current) => (sameSize(current, next) ? current : next));
+  }, []);
+  const video = useDeviceVideo({
+    environmentId,
+    deviceId: device.deviceId,
+    canvas,
+    onFrameSize: onVideoSize,
+  });
+  const jpeg = video.kind === "jpeg";
+  const onJpegFrameSize = useCallback((size: Size) => setFrameSize(size), []);
+  const onFirstJpegFrame = useCallback(() => setHasJpegFrame(true), []);
+
   const reported =
     device.width !== undefined && device.height !== undefined
       ? displaySize(device.width, device.height, device.orientation)
       : null;
-  const deviceSize = frameSize ?? reported ?? PLACEHOLDER_SIZE;
+  // Video and JPEG sizes both arrive oriented; neither is swapped again.
+  const deviceSize = (jpeg ? frameSize : videoSize) ?? reported ?? PLACEHOLDER_SIZE;
   const box = useMemo(
     () => letterbox(containerSize.width, containerSize.height, deviceSize.width, deviceSize.height),
     [containerSize.width, containerSize.height, deviceSize.width, deviceSize.height],
   );
 
-  // The canvas backing store follows the box at the screen's pixel density; resizing clears
-  // it, so the next frame repaints it.
+  // In JPEG mode the canvas backing store follows the box at the screen's pixel density;
+  // resizing clears it, so the last frame is drawn again. Video sizes it to the picture.
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
-    if (canvas === null) return;
+    if (canvas === null || !jpeg) return;
     const ratio = window.devicePixelRatio || 1;
     canvas.width = Math.max(1, Math.round(box.width * ratio));
     canvas.height = Math.max(1, Math.round(box.height * ratio));
     rendererRef.current?.redraw();
-  }, [box.width, box.height]);
-
-  const framesAtom = deviceEnvironment.frames({
-    environmentId,
-    input: { deviceId: device.deviceId },
-  });
-  const refreshFrames = useAtomRefresh(framesAtom);
-  const lastSeqRef = useRef<number | null>(null);
-  const frameSizeRef = useRef<Size | null>(null);
-  const onFrame = useCallback((result: AsyncResult.AsyncResult<DeviceJpegFrame, unknown>) => {
-    if (result._tag === "Failure") {
-      streamFailedRef.current = true;
-      setStreamFailed(true);
-      return;
-    }
-    if (!AsyncResult.isSuccess(result)) return;
-    const frame = result.value;
-    if (frame.seq === lastSeqRef.current) return;
-    lastSeqRef.current = frame.seq;
-    // Only a new size or orientation re-renders; every other frame goes straight to the canvas.
-    const size = displaySize(frame.width, frame.height, frame.orientation);
-    if (!sameSize(frameSizeRef.current, size)) {
-      frameSizeRef.current = size;
-      setFrameSize(size);
-    }
-    if (!hasFrameRef.current) {
-      hasFrameRef.current = true;
-      setHasFrame(true);
-    }
-    if (streamFailedRef.current) {
-      streamFailedRef.current = false;
-      setStreamFailed(false);
-    }
-    rendererRef.current?.push(frame.jpegBase64);
-  }, []);
-  useAtomSubscribe(framesAtom, onFrame, { immediate: true });
+  }, [box.width, box.height, jpeg]);
 
   // A key released while another window has focus never reaches the canvas; lift it on blur.
   useEffect(() => {
@@ -234,16 +315,10 @@ export function DeviceScreen({
     for (const part of splitDeviceText(text)) onInput({ type: "text", text: part });
   };
 
-  const retryFrames = () => {
-    streamFailedRef.current = false;
-    setStreamFailed(false);
-    refreshFrames();
-  };
-
   return (
     <div ref={containerRef} className="relative min-h-0 flex-1 overflow-hidden" data-device-screen>
       <canvas
-        ref={canvasRef}
+        ref={attachCanvas}
         tabIndex={0}
         aria-label={`${device.avdName} screen. Click or drag to touch; type to send keys; Shift+Tab to leave.`}
         className="absolute touch-none rounded-2xl bg-black outline-none ring-4 ring-foreground/80 focus-visible:ring-primary"
@@ -259,16 +334,30 @@ export function DeviceScreen({
         onBlur={() => onRelease("keys")}
         onContextMenu={(event) => event.preventDefault()}
       />
-      {streamFailed ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
-          <p className="text-xs text-foreground">The screen stopped updating.</p>
-          <Button size="xs" variant="outline" onClick={retryFrames}>
-            Reconnect screen
-          </Button>
-        </div>
-      ) : !hasFrame ? (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <p className="text-xs text-muted-foreground">Waiting for the screen…</p>
+      {jpeg ? (
+        <JpegFeed
+          environmentId={environmentId}
+          deviceId={device.deviceId}
+          rendererRef={rendererRef}
+          waiting={!hasJpegFrame}
+          onFrameSize={onJpegFrameSize}
+          onFirstFrame={onFirstJpegFrame}
+        />
+      ) : video.kind === "probing" ? (
+        waitingForScreen
+      ) : null}
+      {video.kind === "jpeg" ? (
+        <div className="absolute top-2 right-2">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Badge variant="outline" size="sm" tabIndex={0} data-video-fallback={video.reason}>
+                  Low-bandwidth mode
+                </Badge>
+              }
+            />
+            <TooltipPopup>{JPEG_REASONS[video.reason]}</TooltipPopup>
+          </Tooltip>
         </div>
       ) : null}
     </div>

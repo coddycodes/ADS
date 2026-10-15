@@ -931,6 +931,23 @@ must also reassemble a fragmented request and reject a bad pairing token.
 Without `BIBCODE_E2EE_SERVER_BIN`, the same file intentionally reports skipped
 so ordinary `vp test` does not depend on a prebuilt binary.
 
+When the device media socket routes, their Noise prologue, or the client in
+`packages/client-runtime/src/device/` change, run the media suite with the same
+binary from `packages/client-runtime`:
+
+```sh
+BIBCODE_E2EE_SERVER_BIN="$(git rev-parse --show-toplevel)/target/debug/bibcode" vp test run src/device/mediaSocketInterop.test.ts
+```
+
+No device runs there, so the suite proves the boundary without streaming:
+- a bogus ticket closes `expired` well inside the server's ticket wait, on the
+  plain route and after a media-prologue handshake on the E2EE route;
+- a wrong pinned key closes `host-identity`;
+- a handshake without the media prologue closes 4403.
+
+Video streaming is covered by the native device run. Without the variable,
+this suite also reports skipped.
+
 ### Cross-container remote-server gate
 
 When remote authentication, pairing, E2EE, share-state derivation, revocation,
