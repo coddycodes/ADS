@@ -756,6 +756,69 @@ describe("SourceControlPanel", () => {
     expect(testState.runAction).toHaveBeenCalledTimes(1);
   });
 
+  const OPEN_MR = {
+    number: 89,
+    title: "Fix it",
+    url: "https://gitlab.test/team/repo/-/merge_requests/89",
+    baseRef: "main",
+    headRef: "feature/test",
+    state: "open",
+  } as const;
+
+  it("opens the branch's open merge request in the thread's panel from the menu", () => {
+    testState.statusQuery.data = status({
+      sourceControlProvider: { kind: "gitlab", name: "GitLab", baseUrl: "https://gitlab.test" },
+      pr: OPEN_MR,
+    });
+    const props = buildProps();
+    render(props);
+    menuItemByText("Open MR in panel")?.onClick?.();
+    expect(testState.openPullRequest).toHaveBeenCalledWith(props.threadRef, {
+      number: 89,
+      provider: "gitlab",
+    });
+    expect(testState.openPullRequestLink).not.toHaveBeenCalled();
+  });
+
+  it("opens the open merge request in the thread's panel from the legacy menu", () => {
+    testState.statusQuery.data = legacyStatus({
+      sourceControlProvider: { kind: "gitlab", name: "GitLab", baseUrl: "https://gitlab.test" },
+      pr: OPEN_MR,
+    });
+    const props = buildProps();
+    render(props);
+    menuItemByText("Open MR in panel")?.onClick?.();
+    expect(testState.openPullRequest).toHaveBeenCalledWith(props.threadRef, {
+      number: 89,
+      provider: "gitlab",
+    });
+  });
+
+  it.each([
+    ["Pull Requests is turned off", false, "gitlab"],
+    ["the host is Bitbucket", true, "bitbucket"],
+    ["the host is Azure DevOps", true, "azure-devops"],
+  ] as const)("does not offer the in-panel action when %s", (_name, enabled, kind) => {
+    testState.pullRequestsEnabled = enabled;
+    for (const data of [
+      status({
+        sourceControlProvider: { kind, name: "Host", baseUrl: "https://host.test" },
+        pr: OPEN_MR,
+      }),
+      legacyStatus({
+        sourceControlProvider: { kind, name: "Host", baseUrl: "https://host.test" },
+        pr: OPEN_MR,
+      }),
+    ]) {
+      testState.statusQuery.data = data;
+      render(buildProps());
+      expect(captured.menuItems.map((item) => flattenText(item.children))).not.toContainEqual(
+        expect.stringContaining("in panel"),
+      );
+      expect(menuItemByText("View")).toBeDefined();
+    }
+  });
+
   it("opens the created merge request beside the thread on Done", async () => {
     testState.statusQuery.data = status({
       refName: "feature/test",

@@ -15,11 +15,11 @@ export type GitActionIconName = "commit" | "push" | "pr";
 export type GitDialogAction = "commit" | "push" | "create_pr";
 
 export interface GitActionMenuItem {
-  id: "commit" | "push" | "pr";
+  id: "commit" | "push" | "pr" | "pr_panel";
   label: string;
   disabled: boolean;
   icon: GitActionIconName;
-  kind: "open_dialog" | "open_pr";
+  kind: "open_dialog" | "open_pr" | "open_pr_panel";
   dialogAction?: GitDialogAction;
 }
 
@@ -95,6 +95,7 @@ export function buildMenuItems(
   gitStatus: VcsStatusResult | null,
   isBusy: boolean,
   hasPrimaryRemote = true,
+  canOpenInPanel = false,
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
   const terminology = resolveChangeRequestTerminology(gitStatus);
@@ -135,7 +136,7 @@ export function buildMenuItems(
     return [commitItem];
   }
 
-  return [
+  const items: GitActionMenuItem[] = [
     commitItem,
     {
       id: "push",
@@ -162,6 +163,16 @@ export function buildMenuItems(
           dialogAction: "create_pr",
         },
   ];
+  if (canOpenInPanel && hasOpenPr) {
+    items.push({
+      id: "pr_panel",
+      label: `Open ${terminology.shortLabel} in panel`,
+      disabled: !canOpenPr,
+      icon: "pr",
+      kind: "open_pr_panel",
+    });
+  }
+  return items;
 }
 
 export function resolveQuickAction(
