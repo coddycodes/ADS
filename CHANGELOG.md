@@ -6,6 +6,10 @@
 
 - A pull or merge request can open as a tab in a thread's right panel, beside the conversation. **Done** after creating one from the Source Control panel opens it there, **Open MR in panel** (**Open PR in panel** on GitHub) opens the branch's open request, and the full Pull Requests page offers **Open beside a thread…**.
 
+### Responsiveness and memory
+
+- A view of a deleted thread no longer makes the server use several CPU cores after a few hours. Each failed subscription to the thread left a task on the server that received every agent event until the app restarted, and the client retried every 250 ms. A failed subscription now ends with its request, and the client waits longer between retries, up to 30 s. (#113)
+
 ## [v0.9.3] - 2026-10-14
 
 BiBCode v0.9.3 ends the macOS freezes caused by a page-wide label scan after every render, keeps long conversations smooth to scroll, stops terminals from losing output, stops the server from growing while threads stay open during agent turns, opens remote development servers at their real address on the Linux desktop, exits cleanly when Windows shuts down, and makes the Profiler's findings more accurate. This release includes the changes since v0.9.2.
