@@ -510,6 +510,11 @@ pub enum ProviderRuntimeError {
     /// Only absent/cursorless matching runtime state; conflicting identities remain rejected.
     #[error("{provider} provider operation failed: {detail}")]
     FrozenSessionUnavailable { provider: String, detail: String },
+    /// The configured provider cannot be driven by this BiBCode, such as an unsupported major
+    /// version. Every launch is refused the same way until the user changes the provider's
+    /// settings, so a delivery fails once with `detail` instead of being retried.
+    #[error("{provider} provider operation failed: {detail}")]
+    IncompatibleProvider { provider: String, detail: String },
     /// The selected model or session refuses one of the request's own options, so the same
     /// request is refused again on every retry. Raised by:
     /// - the shape checks of Claude, Codex and OpenCode: an option without an id, and a value of
@@ -1919,13 +1924,16 @@ fn frozen_failure_outcome(
 }
 
 /// A durable turn is replayed unchanged, so a launch refused for the turn's own options fails the
-/// delivery once. Every other launch failure, such as a spawn error, is retried.
+/// delivery once, and so does a provider this BiBCode cannot drive (it is refused again until its
+/// settings change). Every other launch failure, such as a spawn error, is retried.
 fn launch_failure_outcome(error: &ProviderRuntimeError, label: &str) -> ProviderDeliveryOutcome {
     let detail = delivery_detail(error, Some(label));
-    if matches!(error, ProviderRuntimeError::InvalidOption { .. }) {
-        ProviderDeliveryOutcome::Refused { detail }
-    } else {
-        ProviderDeliveryOutcome::DefinitelyNotSent { detail }
+    match error {
+        ProviderRuntimeError::InvalidOption { .. } => ProviderDeliveryOutcome::Refused { detail },
+        ProviderRuntimeError::IncompatibleProvider { .. } => {
+            ProviderDeliveryOutcome::Rejected { detail }
+        }
+        _ => ProviderDeliveryOutcome::DefinitelyNotSent { detail },
     }
 }
 
@@ -1945,6 +1953,41 @@ mod delivery_failure_tests {
         };
         assert_eq!(frozen_failure_outcome(&error, Some("Work Codex")), expected);
         assert_eq!(launch_failure_outcome(&error, "Work Codex"), expected);
+    }
+
+    /// An unsupported provider version is refused the same way on every attempt, so the launch
+    /// fails the delivery once with the actionable detail instead of retrying it.
+    #[test]
+    fn incompatible_providers_fail_the_delivery_once_with_their_detail() {
+        let detail = "OpenCode 3.0.0 isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x executable.";
+        let error = ProviderRuntimeError::IncompatibleProvider {
+            provider: "opencode".to_owned(),
+            detail: detail.to_owned(),
+        };
+        let expected = ProviderDeliveryOutcome::Rejected {
+            detail: detail.to_owned(),
+        };
+        assert_eq!(launch_failure_outcome(&error, "Work OpenCode"), expected);
+        assert_eq!(
+            frozen_failure_outcome(&error, Some("Work OpenCode")),
+            expected
+        );
+        // A server that is merely slow to start, or lost its port to a race, is retried.
+        for transient in [
+            "server did not become ready within 5 seconds",
+            "server process exited before claiming its reserved port",
+        ] {
+            let error = ProviderRuntimeError::Provider {
+                provider: "opencode".to_owned(),
+                detail: transient.to_owned(),
+            };
+            assert_eq!(
+                launch_failure_outcome(&error, "Work OpenCode"),
+                ProviderDeliveryOutcome::DefinitelyNotSent {
+                    detail: transient.to_owned()
+                }
+            );
+        }
     }
 
     #[test]
@@ -1984,7 +2027,8 @@ pub(crate) fn delivery_detail(
         // Drivers and BiBCode's own delivery ordering both raise this one, so its detail, without
         // the "{driver id} provider operation failed:" prefix, is what it says.
         ProviderRuntimeError::Provider { detail, .. }
-        | ProviderRuntimeError::FrozenSessionUnavailable { detail, .. } => detail.clone(),
+        | ProviderRuntimeError::FrozenSessionUnavailable { detail, .. }
+        | ProviderRuntimeError::IncompatibleProvider { detail, .. } => detail.clone(),
         ProviderRuntimeError::Spawn { provider, detail } => {
             format!("{} could not start: {detail}", label(provider))
         }
@@ -6963,7 +7007,8 @@ fn normalize_agent_activity_transition_error(error: ProviderRuntimeError) -> Pro
         ProviderRuntimeError::Spawn { .. } => "provider spawn failure",
         ProviderRuntimeError::Provider { .. }
         | ProviderRuntimeError::InvalidOption { .. }
-        | ProviderRuntimeError::FrozenSessionUnavailable { .. } => "provider operation failure",
+        | ProviderRuntimeError::FrozenSessionUnavailable { .. }
+        | ProviderRuntimeError::IncompatibleProvider { .. } => "provider operation failure",
         ProviderRuntimeError::Persistence(_) => "persistence failure",
         ProviderRuntimeError::Orchestration(_) => "projection failure",
     };
@@ -11324,7 +11369,7 @@ impl OpenCodeDriver {
                 .await
             {
                 tracing::warn!(%version, "configured OpenCode server is OpenCode 2; launch refused");
-                return Err(ProviderRuntimeError::Provider {
+                return Err(ProviderRuntimeError::IncompatibleProvider {
                     provider: "opencode".to_owned(),
                     detail: crate::provider::opencode::unsupported_server_message(&version, false),
                 });
@@ -15494,7 +15539,7 @@ async fn wait_for_endpoint(
             if let OpenCodeServerApi::Unsupported { version } = api {
                 tracing::warn!(%version, "managed OpenCode server is OpenCode 2; launch refused");
                 kill_child(child).await;
-                return Err(ProviderRuntimeError::Provider {
+                return Err(ProviderRuntimeError::IncompatibleProvider {
                     provider: "opencode".to_owned(),
                     detail: unsupported_server_message(&version, true),
                 });
@@ -25639,7 +25684,7 @@ done
             started.elapsed() < Duration::from_secs(4),
             "the version is known from the first answer; do not wait out the deadline"
         );
-        let super::ProviderRuntimeError::Provider { provider, detail } = &error else {
+        let super::ProviderRuntimeError::IncompatibleProvider { provider, detail } = &error else {
             panic!("expected a provider error, got {error:?}");
         };
         assert_eq!(provider, "opencode");
@@ -25699,7 +25744,7 @@ done
         };
         server.abort();
 
-        let super::ProviderRuntimeError::Provider { detail, .. } = &error else {
+        let super::ProviderRuntimeError::IncompatibleProvider { detail, .. } = &error else {
             panic!("expected a provider error, got {error:?}");
         };
         assert_eq!(

@@ -1955,8 +1955,11 @@ A launch refused because the selected model or session does not accept the
 turn's own options fails the delivery once, because the unchanged durable
 payload would be refused on every attempt. Its failed delivery carries the
 optional reason `modelSelectionRefused`, also used when a frozen turn's model
-or options are refused before delivery. Other launch failures, such as a
-spawn error, stay definitely not sent and retry with backoff. The delivery
+or options are refused before delivery. A launch refused because the provider
+itself cannot be driven, such as an unsupported version, fails the delivery
+once without a reason; a retry after the setting is fixed launches normally.
+Other launch failures, such as a spawn error, stay definitely not sent and
+retry with backoff. The delivery
 detail is what the turn shows, so every one is plain text from a single
 formatter that names the provider by its instance label, never by a driver id:
 the refusal itself, such as "Fast Mode is not supported by the selected model.";

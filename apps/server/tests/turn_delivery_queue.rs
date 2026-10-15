@@ -583,6 +583,168 @@ impl ProviderDriver for SteerDriver {
     }
 }
 
+/// Refuses every launch as an incompatible provider version while `incompatible` is set, as the
+/// OpenCode driver does for a version BiBCode cannot drive, and launches `driver` otherwise.
+struct VersionGateFactory {
+    driver: Arc<SteerDriver>,
+    incompatible: AtomicBool,
+    creates: AtomicUsize,
+}
+const UNSUPPORTED_VERSION: &str = "OpenCode 3.0.0 isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x executable.";
+impl ProviderDriverFactory for VersionGateFactory {
+    fn create(
+        &self,
+        request: ProviderLaunchRequest,
+    ) -> BoxRuntimeFuture<'_, Result<Arc<dyn ProviderDriver>, ProviderRuntimeError>> {
+        self.creates.fetch_add(1, Ordering::SeqCst);
+        let incompatible = self.incompatible.load(Ordering::SeqCst);
+        Box::pin(async move {
+            if incompatible {
+                return Err(ProviderRuntimeError::IncompatibleProvider {
+                    provider: request.provider,
+                    detail: UNSUPPORTED_VERSION.to_owned(),
+                });
+            }
+            Ok(self.driver.clone() as Arc<dyn ProviderDriver>)
+        })
+    }
+}
+
+async fn settled_row(
+    engine: &OrchestrationEngine,
+    id: &str,
+) -> bibcode_server::orchestration::ProviderTurnDelivery {
+    let settled = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let row = engine
+                .repositories()
+                .get_provider_turn_delivery(id.into())
+                .await
+                .unwrap()
+                .unwrap();
+            if !matches!(
+                row.state,
+                TurnDeliveryState::Pending | TurnDeliveryState::Sending | TurnDeliveryState::Queued
+            ) {
+                break row;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    match settled {
+        Ok(row) => row,
+        Err(_) => {
+            let row = engine
+                .repositories()
+                .get_provider_turn_delivery(id.into())
+                .await
+                .unwrap();
+            panic!("delivery {id} did not settle: {row:?}")
+        }
+    }
+}
+
+async fn seed_frozen_message(engine: &OrchestrationEngine, settings: &TempDir, id: &str) {
+    let mut payload = seed_queued_message(engine, id).await;
+    let command = decode(payload.clone());
+    freeze_delivery_route(
+        engine,
+        &settings.path().to_path_buf(),
+        &command,
+        &mut payload,
+    )
+    .await
+    .unwrap();
+    let id = id.to_owned();
+    engine
+        .repositories()
+        .database()
+        .call(move |connection| {
+            connection.execute(
+                "UPDATE provider_turn_outbox SET payload_json = ? WHERE command_id = ?",
+                [payload.to_string(), id],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+/// A launch refused for an unsupported provider version fails its delivery once, visibly, and
+/// does not relaunch the provider in a retry loop. Once the provider is fixed, retrying the
+/// message launches it normally.
+#[tokio::test]
+async fn an_incompatible_provider_fails_the_delivery_once_and_a_retry_after_the_fix_launches() {
+    let engine = queue_engine(TestHooks::default()).await;
+    let settings = TempDir::new().unwrap();
+    let factory = Arc::new(VersionGateFactory {
+        driver: Arc::new(SteerDriver::default()),
+        incompatible: AtomicBool::new(true),
+        creates: AtomicUsize::new(0),
+    });
+    let supervisor = Arc::new(ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        factory.clone(),
+        ActivityProjection::new(ActivityRepository::new(
+            engine.repositories().database().clone(),
+        )),
+        SupervisorOptions::default(),
+    ));
+    seed_frozen_message(&engine, &settings, "head").await;
+    engine
+        .dispatch(promote("start-head", "head"))
+        .await
+        .unwrap();
+    unhold_fixture(&engine).await;
+    let delivery = TurnDeliveryService::start(
+        engine.clone(),
+        supervisor.clone(),
+        settings.path().to_path_buf(),
+    );
+
+    let failed = settled_row(&engine, "head").await;
+    assert_eq!(failed.state, TurnDeliveryState::Failed);
+    assert_eq!(failed.last_error.as_deref(), Some(UNSUPPORTED_VERSION));
+    let message = engine
+        .repositories()
+        .get_message("head".into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(message.delivery_state.as_deref(), Some("failed"));
+    // The delivery loop's retry backoff is capped at one second; outlast it.
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    assert_eq!(
+        factory.creates.load(Ordering::SeqCst),
+        1,
+        "an incompatible provider must be launched exactly once"
+    );
+    assert!(factory.driver.calls.lock().unwrap().is_empty());
+
+    // A failed delivery holds its thread's later messages until the user resolves it. The user
+    // points the provider at a supported version and retries: the provider launches normally.
+    // Only the RPC layer can wake a running delivery service, so a fresh one claims the retry.
+    delivery.shutdown().await;
+    factory.incompatible.store(false, Ordering::SeqCst);
+    engine.dispatch(decode(json!({"type":"thread.turn-delivery.resolve", "commandId":"retry-head", "threadId":"t1", "messageId":"head", "action":"retry", "createdAt":TIME}))).await.unwrap();
+    let delivery = TurnDeliveryService::start(
+        engine.clone(),
+        supervisor.clone(),
+        settings.path().to_path_buf(),
+    );
+    let delivered = settled_row(&engine, "head").await;
+    assert_eq!(delivered.state, TurnDeliveryState::Delivered);
+    assert_eq!(factory.creates.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        factory.driver.calls.lock().unwrap().clone(),
+        vec![("start".into(), "saved prompt".into(), "head".into())]
+    );
+    delivery.shutdown().await;
+    supervisor.shutdown().await.unwrap();
+    engine.shutdown().await;
+}
+
 struct SteerFixture {
     engine: OrchestrationEngine,
     supervisor: Arc<ProviderRuntimeSupervisor>,
