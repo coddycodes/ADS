@@ -298,6 +298,41 @@ describe("RightPanelTabs mounted interactions", () => {
     expect(document.body.textContent).not.toContain("Activity");
   });
 
+  it("hides the device surface until device previews are on", async () => {
+    await mount(<RightPanelTabs {...tabsProps({ surfaces: [], activeSurfaceId: null })} />);
+    expect(document.body.textContent).not.toContain("Device");
+  });
+
+  it("offers the device surface and titles its tab", async () => {
+    const onAddDevice = vi.fn();
+    await mount(
+      <RightPanelTabs
+        {...tabsProps({
+          surfaces: [{ id: "device", kind: "device" }],
+          activeSurfaceId: "device",
+          onAddDevice,
+        })}
+      />,
+    );
+    expect(document.querySelector('[aria-label="Close Device"]')).not.toBeNull();
+    await click(document.querySelector<HTMLButtonElement>('[aria-label="Add panel surface"]')!);
+    // The tab itself is also titled "Device"; the menu item comes after it.
+    const menuItem = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).findLast(
+      (candidate) => candidate.textContent?.trim() === "Device",
+    )!;
+    await click(menuItem);
+    expect(onAddDevice).toHaveBeenCalledOnce();
+  });
+
+  it("offers the device surface in the empty state", async () => {
+    const onAddDevice = vi.fn();
+    await mount(
+      <RightPanelTabs {...tabsProps({ surfaces: [], activeSurfaceId: null, onAddDevice })} />,
+    );
+    await click(buttonWithText("DeviceRun an Android emulator."));
+    expect(onAddDevice).toHaveBeenCalledOnce();
+  });
+
   it("can suppress generic add-surface controls for an activity-only panel", async () => {
     await mount(<RightPanelTabs {...tabsProps({ allowAddSurfaces: false })} />);
 

@@ -1338,3 +1338,93 @@ describe("rightPanelStore", () => {
     ).toBeNull();
   });
 });
+
+describe("rightPanelStore device surface", () => {
+  async function hydrate(persisted: { state: unknown; version: number }) {
+    const originalStorage = useRightPanelStore.persist.getOptions().storage;
+    const serialized = new Map([["bibcode:right-panel-state:v2", JSON.stringify(persisted)]]);
+    const storage = createJSONStorage(() => ({
+      getItem: (name: string) => serialized.get(name) ?? null,
+      setItem: (name: string, value: string) => {
+        serialized.set(name, value);
+      },
+      removeItem: (name: string) => {
+        serialized.delete(name);
+      },
+    }));
+    try {
+      useRightPanelStore.persist.setOptions({
+        storage: storage as NonNullable<typeof originalStorage>,
+      });
+      await useRightPanelStore.persist.rehydrate();
+      return { byThreadKey: useRightPanelStore.getState().byThreadKey, serialized };
+    } finally {
+      if (originalStorage) useRightPanelStore.persist.setOptions({ storage: originalStorage });
+    }
+  }
+
+  it("migrates a v9 state to v10 unchanged", async () => {
+    const byThreadKey = {
+      "env-1:thread-A": {
+        isOpen: true,
+        activeSurfaceId: "browser:tab-a",
+        surfaces: [
+          { id: "plan", kind: "plan" },
+          { id: "browser:tab-a", kind: "preview", resourceId: "tab-a" },
+          {
+            id: "terminal:term-1",
+            kind: "terminal",
+            resourceId: "term-1",
+            terminalIds: ["term-1"],
+            activeTerminalId: "term-1",
+          },
+        ],
+      },
+    };
+    const { byThreadKey: hydrated } = await hydrate({ state: { byThreadKey }, version: 9 });
+    expect(hydrated).toEqual(byThreadKey);
+  });
+
+  it("round-trips the device surface at v10", async () => {
+    useRightPanelStore.getState().open(refA, "device");
+    useRightPanelStore.getState().open(refA, "device");
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state).toEqual({
+      isOpen: true,
+      activeSurfaceId: "device",
+      surfaces: [{ id: "device", kind: "device" }],
+    });
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("device");
+
+    const persisted = { byThreadKey: useRightPanelStore.getState().byThreadKey };
+    useRightPanelStore.setState({ byThreadKey: {} });
+    const { byThreadKey: hydrated } = await hydrate({ state: persisted, version: 10 });
+    expect(hydrated).toEqual(persisted.byThreadKey);
+  });
+
+  it("drops unknown kinds and a device surface with the wrong id", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "device",
+            surfaces: [
+              { id: "device", kind: "device" },
+              { id: "device:1", kind: "device" },
+              { id: "phone", kind: "phone" },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "device",
+          surfaces: [{ id: "device", kind: "device" }],
+        },
+      },
+    });
+  });
+});
