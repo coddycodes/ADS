@@ -72,7 +72,8 @@ implementation starts.
 
 Environment: macOS 27.0.1, Xcode 27.0, CoreSimulator **1171.7**, iPhone 17 Pro
 on the iOS **26.5** runtime, booted with `simctl` and Simulator.app **not
-running**. The probes were scratch Objective-C programs that `dlopen` the two
+running**. **Only the iOS 26.5 runtime was exercised.** Every result below is
+UNCONFIRMED on the installed iOS 27.0 runtime. The probes were scratch Objective-C programs that `dlopen` the two
 frameworks and use `objc_msgSend` and `dlsym`. Later tasks take names from
 this subsection. Anything marked UNCONFIRMED was not observed here.
 
@@ -92,13 +93,15 @@ this subsection. Anything marked UNCONFIRMED was not observed here.
 
 **Lookup (CoreSimulator, `/Library/Developer/PrivateFrameworks/CoreSimulator.framework/CoreSimulator`)**
 
-- `+[SimServiceContext sharedServiceContextForDeveloperDir:error:]` takes
-  `(NSString *, NSError **)` and returns `id`. The developer dir is
-  `xcode-select -p`.
-- `-[SimServiceContext defaultDeviceSetWithError:]` returns `id`.
-- `-[SimDeviceSet devices]` returns `NSArray<SimDevice *>`. Match on
-  `-[SimDevice UDID]` (`NSUUID`). `-[SimDevice state]`: 3 means booted.
-- `-[SimDevice io]` returns a `SimDeviceIOClient`. Call
+- `+[SimServiceContext sharedServiceContextForDeveloperDir:error:]`
+  (`@32@0:8@16^@24`) takes `(NSString *, NSError **)` and returns `id`. The
+  developer dir is `xcode-select -p`.
+- `-[SimServiceContext defaultDeviceSetWithError:]` (`@24@0:8^@16`) returns
+  `id`.
+- `-[SimDeviceSet devices]` (`@16@0:8`) returns `NSArray<SimDevice *>`. Match on
+  `-[SimDevice UDID]` (`@16@0:8`, an `NSUUID`). `-[SimDevice state]`
+  (`Q16@0:8`): 3 means booted.
+- `-[SimDevice io]` (`@16@0:8`) returns a `SimDeviceIOClient`. Call
   `-[SimDeviceIOClient ioPorts]` (`@16@0:8`), which returns an `NSArray` of
   `SimDeviceIOPortInterface` proxies.
 - `-[port descriptor]` (`@16@0:8`) returns the descriptor. The main display is
@@ -134,6 +137,9 @@ this subsection. Anything marked UNCONFIRMED was not observed here.
   - `void (^)(void)` for frames
   - `void (^)(id fb, id masked)` for surfaces
   - `void (^)(id props)` for properties
+
+  The runtime encodes each block only as `@?`, so the block parameter types
+  above are inferred from idb's headers and from what the probe received.
 
   How they behaved:
   - `surfacesChanged` fired once, immediately, with the current surface.
@@ -192,16 +198,37 @@ this subsection. Anything marked UNCONFIRMED was not observed here.
         `p` is a ratio), and edge 0.
       - It returns a 384-byte multi-payload message (`innerSize` 0xA0,
         eventType 2, eventKind 0xB).
-      - The probe re-enveloped it as idb's 320-byte single-touch message:
-        - `innerSize` 0x90 at 0x18, `eventType` 2 at 0x1C, `eventKind` 0xB
-          at 0x20, `mach_absolute_time()` at 0x24.
-        - Copy the 0x70-byte touch from 0x30.
-        - Duplicate the 0x90 payload from 0x20 to 0xB0. In the copy, set
-          `field1` (0xC0) to 1 and `field2` (0xC4) to 2.
-        - The touch struct holds `xRatio` (double) at 0x3C and `yRatio`
-          (double) at 0x44.
+      - The builder's touch fields:
+
+        | Field                    | Down     | Up       |
+        | ------------------------ | -------- | -------- |
+        | `field1` (0x30)          | 0x400002 | 0x400002 |
+        | `field2` (0x34)          | 1        | 1        |
+        | `eventMask` (0x38)       | 0x3      | 0x3      |
+        | `range` (0x64)           | 1        | 0        |
+        | `touch` (0x68)           | 1        | 0        |
+      - The probe re-enveloped it as idb's 320-byte (0x140) single-touch
+        message. All offsets are bytes from the **start of the message**, in
+        both the builder's buffer and the new one, and multi-byte fields are
+        little-endian:
+        1. In the builder's buffer, write the ratio point as doubles:
+           `xRatio` at 0x3C and `yRatio` at 0x44.
+        2. `calloc` 0x140 bytes. The mach header at 0x00–0x17 stays **all
+           zero**. `sendWithMessage:` filled in whatever it needs; the probe
+           wrote nothing there.
+        3. Write `innerSize` (u32) 0x90 at 0x18, `eventType` (u8) 2 at 0x1C,
+           and `eventKind` (u32) 0xB at 0x20. Write `mach_absolute_time()`
+           (u64, at a 4-byte-aligned offset) at 0x24. Leave 0x1D–0x1F and
+           0x2C–0x2F zero.
+        4. Copy 0x70 bytes from **source offset 0x30 to destination offset
+           0x30**. This is the touch struct and includes `xRatio` and
+           `yRatio`. Then `free` the builder's buffer.
+        5. Copy the 0x90-byte payload at 0x20–0xAF to 0xB0–0x13F. In the copy,
+           set `field1` (u32 at 0xC0) to 1 and `field2` (u32 at 0xC4) to 2.
+        6. Send 0x140 bytes with `freeWhenDone:YES`.
     - `IndigoHIDMessageForButton(int32_t source, int32_t direction, int32_t target)`
-      - Sources: home is 0x0, lock is 0x1, side is 0xBB8.
+      - Sources: home is 0x0 and lock is 0x1, both tested. Side is 0xBB8,
+        which comes from idb and was not tested.
       - Direction: 1 is down, 2 is up. Target: 0x33.
       - The message is 192 bytes.
     - `IndigoHIDMessageForHIDArbitrary(int32_t target, uint32_t usagePage, uint32_t usage, int32_t direction)`
@@ -214,7 +241,7 @@ this subsection. Anything marked UNCONFIRMED was not observed here.
     | Touch on the Settings icon at ratio (0.848, 0.483)                        | **Works**, 5 of 5 cycles       | Settings opened. The screen centre is empty wallpaper, so it was not used. |
     | Home button (source 0)                                                    | **Works**, 5 of 5 cycles       | Returned to the home screen.                                |
     | Lock button (source 1)                                                    | **Works**                      | The device locked.                                          |
-    | Volume up via `HIDArbitrary(0x32, 0x0C, 0xE9)`                            | **Works**, +1/16 per press     | Read `sim_volume` in `data/var/run/simulatoraudio/audiosettings.plist`. |
+    | Volume up via `HIDArbitrary(0x32, 0x0C, 0xE9)`                            | **Works**: one step per press  | `sim_volume` in `data/var/run/simulatoraudio/audiosettings.plist` went 6→12→18. Each step is about 100/16. |
     | `KeyboardArbitrary`, HID usages 0x04–0x08 or HIToolbox code 0x02          | **Dropped**: no text appeared  | A focused search field showed no text.                      |
 - **DTUHID path (`dtuhidd` in the guest, in-process XPC with no helper):**
   - Symbols (`dlsym(RTLD_DEFAULT)`, libxpc):
@@ -226,6 +253,18 @@ this subsection. Anything marked UNCONFIRMED was not observed here.
   - Get the port from `-[SimDevice lookup:error:]` (`I32@0:8@16^@24`, which
     returns `mach_port_t`). The service is
     `com.apple.coredevice.feature.remote.hid.digitizer`.
+  - Connect in this order:
+    1. `xpc_endpoint_create_mach_port_4sim(port, 0, 0)`
+    2. `xpc_connection_create_from_endpoint`
+    3. `xpc_connection_enable_sim2host_4sim`
+    4. `xpc_connection_set_event_handler`
+    5. `xpc_connection_resume`
+  - **One connection carries all three message types.** Touch, buttons and
+    keys all went over the digitizer-service connection.
+    `featureIdentifier` is always
+    `"com.apple.coredevice.feature.remote.hid.digitizer"`.
+  - Each probe run opened its own connection and sent one gesture. A single
+    long-lived connection used across many gestures was not tested.
   - Every message is an XPC dictionary with these keys:
     - `messageType` (string)
     - `isBarrier` (bool)
@@ -241,6 +280,18 @@ this subsection. Anything marked UNCONFIRMED was not observed here.
     still exists after that, and sends to it are silently discarded.
     Connecting must round-trip the barrier and retry with backoff after boot.
     idb makes 5 attempts, each with a 4 s reply timeout and a 4 s backoff.
+  - **Send sequence for every event:** `xpc_connection_send_message(conn, msg)`,
+    then `xpc_connection_send_barrier(conn, block)`, and wait for the block.
+    Tested gestures:
+    - Tap: start, 60 ms, end.
+    - Button: down, 60 ms, up.
+    - Key: down, 30 ms, up.
+
+    After the last event the probe waited about 300 ms before exiting. idb
+    drains for 80 ms before disconnecting.
+  - The exact `messageType` strings are `"IndigoDigitizerEvent"`,
+    `"IndigoButtonEvent"` and `"IndigoKeyboardButtonEvent"`. All payload
+    integers are XPC `uint64`. Coordinates are XPC `double`.
   - Results:
 
     | Message                                                               | Payload                                                                          | Result                                                        |
@@ -248,16 +299,28 @@ this subsection. Anything marked UNCONFIRMED was not observed here.
     | `IndigoDigitizerEvent`                                                | `pointOne {x: double, y: double}`, `eventType` u64 (0 start, 1 position, 2 end), `edge` u64 0, `target` u64 0 | **Works**: opened Settings; opened a Safari tab in landscape. |
     | `IndigoButtonEvent`                                                   | `usagePage` u64, `usageCode` u64, `state` u64 (1 down, 2 up)                     | **Works**: Home (0x0C, 0x40), Power/lock (0x0C, 0x30), Volume up/down (0x0C, 0xE9 / 0xEA). |
     | `IndigoKeyboardButtonEvent`                                           | `usageCode` u64 (HID usage), `state` u64 (1 down, 2 up)                          | **Works**: typed "Abc" into the Settings search field.        |
-- **Coordinates:** both paths take ratios in the **portrait framebuffer**
-  space whatever the `uiOrientation`. At `uiOrientation` 3, a point at view
-  ratio (u, v) in the landscape image is sent as (v, 1 − u).
+- **Coordinates:** touch ratios are in the **portrait framebuffer** space,
+  not the rotated view. Each check was a tap on Safari's "+" or URL field,
+  confirmed by an extra tab or a focused field. (u, v) is the view ratio in
+  the landscape screenshot.
+
+  | `uiOrientation` | Mapping sent           | Indigo                   | DTUHID                   |
+  | --------------- | ---------------------- | ------------------------ | ------------------------ |
+  | 1 (portrait)    | identity               | confirmed                | confirmed                |
+  | 3               | (u, v) → (v, 1 − u)    | confirmed (fix round 1)  | confirmed                |
+  | 4               | (u, v) → (1 − v, u)    | confirmed (fix round 1)  | confirmed (fix round 1)  |
+  | 2               | (1 − u, 1 − v)         | UNCONFIRMED, inferred    | UNCONFIRMED, inferred    |
+
+  At `uiOrientation` 3, sending the unmapped (0.5, 0.08) did nothing.
 - **Consequence for §5:** keys and text must use DTUHID
   `IndigoKeyboardButtonEvent`, because legacy keyboard input is dropped on
   CoreSimulator 1171.7. Touch and buttons work on either path. idb treats
   legacy touch as unreliable from CoreSimulator 1155.4 on, so prefer DTUHID
   for all input and keep Indigo touch/buttons as the fallback.
-- **Headless:**
-  - Booting, the callbacks and HID all work without Simulator.app.
+- **Headless: only the no-Simulator.app case was tested.**
+  - With a GUI session logged in at the console and Simulator.app not
+    running, booting, the callbacks and HID all work.
+  - The case with **no GUI session at all** was not tested.
   - **S1 over SSH: NOT CONFIRMED (no key auth).** `ssh -o BatchMode=yes localhost`
     returned "Permission denied (publickey,password,keyboard-interactive)".
   - **Logged-out console: NOT CONFIRMED.** The probe could not log the GUI
@@ -280,7 +343,9 @@ The options were tried in the brief's order:
    - Get the port with `-[SimDevice lookup:@"PurpleWorkspacePort" error:]`.
    - Send a 112-byte buffer with
      `mach_msg(MACH_SEND_MSG | MACH_SEND_TIMEOUT, size 108, timeout 2000 ms)`.
-     The buffer holds:
+     The buffer is 112 bytes for 8-byte alignment, but the message size is
+     108. Every byte not listed below is zero, including `msgh_local_port`
+     (0x0C) and `msgh_voucher_port` (0x10). The buffer holds:
 
      | Offset | Value                                          |
      | ------ | ---------------------------------------------- |
@@ -292,13 +357,19 @@ The options were tried in the brief's order:
      | 0x48   | record size 4                                  |
      | 0x4C   | orientation value                              |
 
-   - The orientation value is 1 for portrait and 2 for upside-down. idb
-     names 3 "landscape-right" and 4 "landscape-left". Those names are
-     UNCONFIRMED here; only the effect was observed. After Purple 4
-     (`uiOrientation` 3), the UI's top edge lies along the **physical left**
-     edge of the portrait surface. Purple 3 (`uiOrientation` 4) is the
-     opposite. Task 8 must map the user's rotate left/right onto these
-     observed effects, not onto idb's names.
+   - Orientation values:
+     - **Observed:** 1 returns to portrait.
+     - **Observed:** after Purple 4 (`uiOrientation` 3), the UI's top edge
+       lies along the **physical left** edge of the portrait surface.
+     - **Observed in fix round 1:** after Purple 3 (`uiOrientation` 4), the
+       UI's top edge lies along the **physical right** edge. Both were seen
+       by dumping the surface.
+     - **From idb, untested:** 2 means upside-down. It had no effect here.
+       idb's names for 3 and 4, "landscape-right" and "landscape-left", are
+       UNCONFIRMED.
+
+     Task 8 must map the user's rotate left/right onto the observed effects,
+     not onto idb's names.
    - Measured with Safari in the foreground:
 
      | Purple value sent | `uiOrientation` read back | Screenshot |
@@ -317,9 +388,11 @@ The options were tried in the brief's order:
      `IndigoVendorDefinedEvent {usagePage 0xff61, usage 0x5b, version 0, data: IOCFSerialize(binary)}`.
    - The serialized dictionary is
      `{provider: com.apple.Virtualization.VirtualMachines, source: orientation-picker-control, type: enum, value: landscape-left}`.
-   - idb uses this path only when `querymotioncapabilities` reports
-     `deviceMotionState`. The probe did not check that on iOS 27.0, so it is
-     UNCONFIRMED.
+   - idb uses this path only when the
+     `com.apple.coredevice.feature.monitormotion` /
+     `querymotioncapabilities` query reports `deviceMotionState`. The probe
+     **never ran that query** on any runtime, and it never tried this path on
+     iOS 27.0. Both are UNCONFIRMED.
 
 Rotate is therefore **enabled**, and `canRotate` is `true` for iOS.
 
