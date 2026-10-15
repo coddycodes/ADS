@@ -46,6 +46,30 @@
       "mode": "stream"
     },
     {
+      "name": "device.close",
+      "mode": "unary"
+    },
+    {
+      "name": "device.input",
+      "mode": "unary"
+    },
+    {
+      "name": "device.open",
+      "mode": "unary"
+    },
+    {
+      "name": "device.rotate",
+      "mode": "unary"
+    },
+    {
+      "name": "device.subscribeCatalog",
+      "mode": "stream"
+    },
+    {
+      "name": "device.subscribeFrames",
+      "mode": "stream"
+    },
+    {
       "name": "filesystem.browse",
       "mode": "unary"
     },
@@ -594,12 +618,14 @@
       "mode": "unary"
     }
   ],
-  "streamMethodCount": 21,
-  "expectedTopLevelStreamShapes": 74,
+  "streamMethodCount": 23,
+  "expectedTopLevelStreamShapes": 76,
   "expectedOrchestrationEventShapes": 24,
   "streamShapeFixtures": [
     "stream-shapes/cloud__installRelayClient-00.json",
     "stream-shapes/cloud__installRelayClient-01.json",
+    "stream-shapes/device__subscribeCatalog-00.json",
+    "stream-shapes/device__subscribeFrames-00.json",
     "stream-shapes/git__runStackedAction-00.json",
     "stream-shapes/git__runStackedAction-01.json",
     "stream-shapes/git__runStackedAction-02.json",
@@ -695,6 +721,14 @@
     "typed-failures/auth__confirmPairing-00.json",
     "typed-failures/cloud__getRelayClientStatus-00.json",
     "typed-failures/cloud__getRelayClientStatus-01.json",
+    "typed-failures/device__close-00.json",
+    "typed-failures/device__close-01.json",
+    "typed-failures/device__input-00.json",
+    "typed-failures/device__input-01.json",
+    "typed-failures/device__open-00.json",
+    "typed-failures/device__open-01.json",
+    "typed-failures/device__rotate-00.json",
+    "typed-failures/device__rotate-01.json",
     "typed-failures/filesystem__browse-00.json",
     "typed-failures/filesystem__browse-01.json",
     "typed-failures/filesystem__browse-02.json",
@@ -1020,6 +1054,16 @@
     "typed-failures/cloud__getRelayClientStatus-01.json": "67fe28f9afa4f2e8a20948477a9e72996dd013c6e33b3a768d31eb3a49061509",
     "stream-shapes/cloud__installRelayClient-00.json": "d72984e6ed66012583831425f7858d43663cca51511d232cca4cf9b38e69dab0",
     "stream-shapes/cloud__installRelayClient-01.json": "2eecaf787815a8b34e25922d2645c0f8418e5586da295614f657084176cc1c24",
+    "typed-failures/device__close-00.json": "819e45959aeb68bcdfbf987418d7719fbf28041d06397ef2799970ecf614b5b5",
+    "typed-failures/device__close-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
+    "typed-failures/device__input-00.json": "819e45959aeb68bcdfbf987418d7719fbf28041d06397ef2799970ecf614b5b5",
+    "typed-failures/device__input-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
+    "typed-failures/device__open-00.json": "819e45959aeb68bcdfbf987418d7719fbf28041d06397ef2799970ecf614b5b5",
+    "typed-failures/device__open-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
+    "typed-failures/device__rotate-00.json": "819e45959aeb68bcdfbf987418d7719fbf28041d06397ef2799970ecf614b5b5",
+    "typed-failures/device__rotate-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
+    "stream-shapes/device__subscribeCatalog-00.json": "537dec3326f97c52149920739576c3e3cc9665eeb791fcc791fba415291a8519",
+    "stream-shapes/device__subscribeFrames-00.json": "d3123bc3db4e3f4cd3dca236e547d840a18fd397c297ae3e0dc4d21334d76888",
     "typed-failures/filesystem__browse-00.json": "cf92d3187235fcd3f7b9dd2c85f9b6124fea971d61ea9e4bb74d0085d3bc22ae",
     "typed-failures/filesystem__browse-01.json": "d30145df2096df3675ffde7a840acb67a4f2e26cb8d9a607b828688560d2ca82",
     "typed-failures/filesystem__browse-02.json": "b2fbde91e8a8ad7b3e8fce9b4d378041efef24ffd25156a058c7cb69f6fd91e9",
@@ -1433,6 +1477,8 @@
     "request.json",
     "stream-shapes/cloud__installRelayClient-00.json",
     "stream-shapes/cloud__installRelayClient-01.json",
+    "stream-shapes/device__subscribeCatalog-00.json",
+    "stream-shapes/device__subscribeFrames-00.json",
     "stream-shapes/gitManager__runOperation-00.json",
     "stream-shapes/gitManager__runOperation-01.json",
     "stream-shapes/gitManager__runOperation-02.json",
@@ -1526,6 +1572,14 @@
     "typed-failures/auth__confirmPairing-00.json",
     "typed-failures/cloud__getRelayClientStatus-00.json",
     "typed-failures/cloud__getRelayClientStatus-01.json",
+    "typed-failures/device__close-00.json",
+    "typed-failures/device__close-01.json",
+    "typed-failures/device__input-00.json",
+    "typed-failures/device__input-01.json",
+    "typed-failures/device__open-00.json",
+    "typed-failures/device__open-01.json",
+    "typed-failures/device__rotate-00.json",
+    "typed-failures/device__rotate-01.json",
     "typed-failures/filesystem__browse-00.json",
     "typed-failures/filesystem__browse-01.json",
     "typed-failures/filesystem__browse-02.json",

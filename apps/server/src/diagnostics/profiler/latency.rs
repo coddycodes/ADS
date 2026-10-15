@@ -139,6 +139,11 @@ pub fn is_long_running(method: &str) -> bool {
             // included.
             | "worktree.remove"
             | "agentSessions.import"
+            // Wait on the emulator: stopping it (up to 10 s), a stalled input stream (up to
+            // 5 s), and reading back a rotation (about 1.5 s).
+            | "device.close"
+            | "device.input"
+            | "device.rotate"
     )
 }
 
@@ -1104,6 +1109,9 @@ mod tests {
             "pullRequests.list",
             "gitManager.commit",
             "worktree.remove",
+            "device.close",
+            "device.input",
+            "device.rotate",
         ] {
             book.observe(method, "success", 1_500.0, 0.0, None);
         }

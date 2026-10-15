@@ -3,6 +3,7 @@ pub mod agent_sessions_rpc;
 pub(crate) mod clone_operations;
 pub mod connect_mcp;
 pub mod control;
+pub mod device_rpc;
 pub(crate) mod editor_launch;
 pub mod git_manager_rpc;
 pub mod git_vcs;

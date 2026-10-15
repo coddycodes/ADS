@@ -67,6 +67,9 @@ pub enum DeviceOpError {
     UnknownAvd(String),
     #[error("{0}")]
     InvalidInput(String),
+    /// An emulator call failed on a `Ready` device; the message says what to do.
+    #[error("{0}")]
+    Emulator(String),
 }
 
 fn not_ready_message(state: DeviceState) -> &'static str {
@@ -114,6 +117,10 @@ impl DeviceOpError {
             }),
             Self::InvalidInput(_) => serde_json::json!({
                 "_tag": "DeviceInputError",
+                "message": message,
+            }),
+            Self::Emulator(_) => serde_json::json!({
+                "_tag": "DeviceEmulatorError",
                 "message": message,
             }),
         }
@@ -380,6 +387,11 @@ impl DeviceManager {
     ) {
         self.inner
             .set_reported_orientation(device_id, orientation, width, height);
+    }
+
+    /// Whether `enableDevicePreviews` is on and the manager is not shutting down.
+    pub fn enabled(&self) -> bool {
+        self.inner.accepting()
     }
 
     /// Refuses new devices, stops every device, and waits for the manager's tasks.
@@ -794,11 +806,17 @@ fn launch_failure(error: &LaunchError) -> (&'static str, String) {
     }
 }
 
-/// The error for an emulator call that failed on a `Ready` device: it is logged, and the
-/// caller is told to try again.
+/// The error for an emulator call that failed on a `Ready` device: the cause is logged, and
+/// the caller is told what to do.
 fn emulator_failure(operation: &'static str, error: &DeviceError) -> DeviceOpError {
     tracing::warn!(operation, %error, "device emulator call failed");
-    DeviceOpError::NotReady(DeviceState::Ready)
+    let what = match operation {
+        "rotate" => "did not rotate",
+        _ => "did not accept the input",
+    };
+    DeviceOpError::Emulator(format!(
+        "The emulator {what}. Try again; if it keeps failing, stop the device and start it again."
+    ))
 }
 
 /// A `device.lifecycle` profiler event; it never names the AVD or its paths.
@@ -1076,6 +1094,14 @@ mod tests {
             serde_json::json!({
                 "_tag": "DeviceInputError",
                 "message": "Send at least one input event.",
+            })
+        );
+        let emulator = emulator_failure("input", &DeviceError::Grpc("unavailable".into()));
+        assert_eq!(
+            emulator.to_rpc_error(),
+            serde_json::json!({
+                "_tag": "DeviceEmulatorError",
+                "message": "The emulator did not accept the input. Try again; if it keeps failing, stop the device and start it again.",
             })
         );
     }

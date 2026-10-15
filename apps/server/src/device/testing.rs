@@ -6,7 +6,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -51,9 +51,15 @@ pub(crate) struct FakeHandle {
     screenshot_streams: Arc<AtomicUsize>,
     input_streams: Arc<AtomicUsize>,
     input_resets: watch::Sender<u64>,
+    fail_rotation: Arc<AtomicBool>,
 }
 
 impl FakeHandle {
+    /// Makes every `setPhysicalModel` call fail from now on.
+    pub(crate) fn fail_rotation(&self) {
+        self.fail_rotation.store(true, Ordering::SeqCst);
+    }
+
     /// Reports `rotation` on every served image from now on, with the display's width and
     /// height swapped to match it, and streams one frame.
     pub(crate) fn report_rotation(&self, rotation: SkinRotation) {
@@ -111,6 +117,7 @@ pub(crate) struct FakeController {
     screenshot_streams: Arc<AtomicUsize>,
     input_streams: Arc<AtomicUsize>,
     input_resets: watch::Receiver<u64>,
+    fail_rotation: Arc<AtomicBool>,
 }
 
 /// Counts one open stream until dropped.
@@ -148,6 +155,7 @@ impl FakeController {
             screenshot_streams: Arc::default(),
             input_streams: Arc::default(),
             input_resets: input_resets_tx,
+            fail_rotation: Arc::default(),
         };
         let service = EmulatorControllerServer::with_interceptor(
             Self {
@@ -159,6 +167,7 @@ impl FakeController {
                 screenshot_streams: handle.screenshot_streams.clone(),
                 input_streams: handle.input_streams.clone(),
                 input_resets,
+                fail_rotation: handle.fail_rotation.clone(),
             },
             require_token,
         );
@@ -326,6 +335,9 @@ impl EmulatorController for FakeController {
         &self,
         request: Request<proto::PhysicalModelValue>,
     ) -> Result<Response<()>, Status> {
+        if self.fail_rotation.load(Ordering::SeqCst) {
+            return Err(Status::unavailable("fake rotation failure"));
+        }
         let data = request
             .into_inner()
             .value

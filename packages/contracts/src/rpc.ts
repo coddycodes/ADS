@@ -12,6 +12,16 @@ import {
   TerminalStageImagePasteResult,
 } from "./uploads.ts";
 import * as Schema from "effect/Schema";
+import {
+  DeviceCatalog,
+  DeviceIdInput,
+  DeviceInputInput,
+  DeviceJpegFrame,
+  DeviceOpenInput,
+  DeviceOpenResult,
+  DeviceRotateInput,
+  DeviceRpcError,
+} from "./device.ts";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
@@ -545,6 +555,14 @@ export const WS_METHODS = {
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
+
+  // Device preview methods
+  deviceSubscribeCatalog: "device.subscribeCatalog",
+  deviceOpen: "device.open",
+  deviceClose: "device.close",
+  deviceInput: "device.input",
+  deviceRotate: "device.rotate",
+  deviceSubscribeFrames: "device.subscribeFrames",
 
   // Server meta
   serverGetConfig: "server.getConfig",
@@ -1571,6 +1589,43 @@ export const WsPreviewGatewayOpenRpc = Rpc.make(WS_METHODS.previewGatewayOpen, {
   error: Schema.Union([PreviewGatewayError, EnvironmentRpcError]),
 });
 
+const DeviceRpcFailure = Schema.Union([DeviceRpcError, EnvironmentRpcError]);
+
+export const WsDeviceSubscribeCatalogRpc = Rpc.make(WS_METHODS.deviceSubscribeCatalog, {
+  payload: Schema.Struct({}),
+  success: DeviceCatalog,
+  error: DeviceRpcFailure,
+  stream: true,
+});
+
+export const WsDeviceOpenRpc = Rpc.make(WS_METHODS.deviceOpen, {
+  payload: DeviceOpenInput,
+  success: DeviceOpenResult,
+  error: DeviceRpcFailure,
+});
+
+export const WsDeviceCloseRpc = Rpc.make(WS_METHODS.deviceClose, {
+  payload: DeviceIdInput,
+  error: DeviceRpcFailure,
+});
+
+export const WsDeviceInputRpc = Rpc.make(WS_METHODS.deviceInput, {
+  payload: DeviceInputInput,
+  error: DeviceRpcFailure,
+});
+
+export const WsDeviceRotateRpc = Rpc.make(WS_METHODS.deviceRotate, {
+  payload: DeviceRotateInput,
+  error: DeviceRpcFailure,
+});
+
+export const WsDeviceSubscribeFramesRpc = Rpc.make(WS_METHODS.deviceSubscribeFrames, {
+  payload: DeviceIdInput,
+  success: DeviceJpegFrame,
+  error: DeviceRpcFailure,
+  stream: true,
+});
+
 export const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
   payload: PreviewAutomationHost,
   success: PreviewAutomationStreamEvent,
@@ -1899,6 +1954,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,
+  WsDeviceSubscribeCatalogRpc,
+  WsDeviceOpenRpc,
+  WsDeviceCloseRpc,
+  WsDeviceInputRpc,
+  WsDeviceRotateRpc,
+  WsDeviceSubscribeFramesRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsSubscribeServerConfigRpc,

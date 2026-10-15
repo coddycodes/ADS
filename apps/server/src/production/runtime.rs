@@ -584,6 +584,7 @@ impl ProductionRuntime {
             config.state_dir(),
         );
         register_workspace_preview_rpc(&mut registry, workspace_preview);
+        crate::production::device_rpc::register_device_rpc(&mut registry, device_manager.clone());
         let git_manager = GitManagerRpcServices::with_dependencies(
             git_repository.clone(),
             status_broadcaster.clone(),

@@ -698,6 +698,27 @@ mod device_tests {
     }
 
     #[tokio::test]
+    async fn a_failed_emulator_call_is_an_emulator_error() {
+        let fixture = ManagerFixture::ready_device().await;
+        fixture.controller.fail_rotation();
+        let error = fixture
+            .manager
+            .rotate(&fixture.id, Orientation::Landscape)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, DeviceOpError::Emulator(message) if message.contains("did not rotate")),
+            "{error:?}"
+        );
+        assert_eq!(error.to_rpc_error()["_tag"], "DeviceEmulatorError");
+        // The device itself is still running.
+        assert_eq!(
+            fixture.snapshot().state,
+            crate::device::catalog::DeviceState::Ready
+        );
+    }
+
+    #[tokio::test]
     async fn input_and_rotate_need_a_ready_device() {
         let fixture = ManagerFixture::ready_device().await;
         fixture.manager.close(&fixture.id).await.unwrap();

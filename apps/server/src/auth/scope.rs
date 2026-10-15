@@ -20,6 +20,8 @@ pub(crate) fn required_scope(method: &str) -> Option<&'static str> {
     }
     match method {
         "assets.createUrl"
+        | "device.subscribeCatalog"
+        | "device.subscribeFrames"
         | "filesystem.browse"
         | "gitManager.getCommits"
         | "gitManager.getDiff"
@@ -94,6 +96,10 @@ pub(crate) fn required_scope(method: &str) -> Option<&'static str> {
         | "pullRequests.checkout"
         | "activity.cancelSubtree"
         | "activity.retrySubtreeCancellation"
+        | "device.close"
+        | "device.input"
+        | "device.open"
+        | "device.rotate"
         | "uploads.begin"
         | "uploads.append"
         | "uploads.get"
@@ -296,6 +302,16 @@ mod tests {
                 Some(SCOPE_ORCHESTRATION_READ),
                 "wrong worktree catalog read scope for {method}"
             );
+        }
+        for (method, scope) in [
+            ("device.subscribeCatalog", SCOPE_ORCHESTRATION_READ),
+            ("device.subscribeFrames", SCOPE_ORCHESTRATION_READ),
+            ("device.open", SCOPE_ORCHESTRATION_OPERATE),
+            ("device.close", SCOPE_ORCHESTRATION_OPERATE),
+            ("device.input", SCOPE_ORCHESTRATION_OPERATE),
+            ("device.rotate", SCOPE_ORCHESTRATION_OPERATE),
+        ] {
+            assert_eq!(required_scope(method), Some(scope), "{method}");
         }
         assert_eq!(
             required_scope("worktree.updateDiscoveryPolicy"),

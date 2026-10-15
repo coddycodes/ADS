@@ -68,7 +68,9 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeVcsStatus
   | typeof WS_METHODS.subscribeVcsStatusSummary
   | typeof WS_METHODS.projectsSubscribeEntries
-  | typeof WS_METHODS.terminalAttach;
+  | typeof WS_METHODS.terminalAttach
+  | typeof WS_METHODS.deviceSubscribeCatalog
+  | typeof WS_METHODS.deviceSubscribeFrames;
 
 export type EnvironmentStreamCommandRpcTag =
   | typeof WS_METHODS.cloudInstallRelayClient
