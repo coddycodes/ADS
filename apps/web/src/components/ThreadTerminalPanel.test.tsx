@@ -287,7 +287,6 @@ function viewportProps(overrides: Partial<ViewportProps> = {}): ViewportProps {
     onAddTerminalContext: () => {},
     focusRequestId: 0,
     autoFocus: false,
-    resizeEpoch: 0,
     keybindings: EMPTY_KEYBINDINGS,
     ...overrides,
   };

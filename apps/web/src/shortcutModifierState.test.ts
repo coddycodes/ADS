@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { act, createElement } from "react";
+import { act, createElement, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -174,7 +174,10 @@ describe("shortcutModifierState", () => {
     const root = createRoot(container);
     let latestState: ShortcutModifierState | null = null;
     const Probe = () => {
-      latestState = useShortcutModifierState();
+      const state = useShortcutModifierState();
+      useEffect(() => {
+        latestState = state;
+      });
       return null;
     };
 
