@@ -27,6 +27,13 @@ equivalent status source; clients keep the control visible but disabled.
 steering; Cursor, Grok, and OpenCode omit it. The server checks the same driver
 capability when admitting a steer of the oldest queued message.
 
+`supportsConversationRewind` comes from the same driver capability: `true`
+for Codex and OpenCode, `false` for the others. A checkpoint revert on a
+provider without it restores only the files. The supervisor checks the same
+capability before it asks a provider to rewind. Every snapshot carries the
+flag, so the revert confirmation can say which outcome to expect. It reads an
+absent flag, from an older server, as unknown and keeps the full warning.
+
 ## Workspace capability discovery
 
 The composer reads `server.getProviderCapabilities({ instanceId, cwd })` for its
@@ -154,13 +161,15 @@ not list. Fast Mode off asks for nothing and is never refused.
 Each driver translates between the common orchestration model and its native
 protocol:
 
-| Provider | Native integration                             | Steer                 | Activity support                                                                           |
-| -------- | ---------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------ |
-| Codex    | Codex App Server JSON-RPC                      | `turn/steer`          | Structured chat and managed-terminal observation.                                          |
-| Claude   | Claude stream-JSON CLI and authenticated hooks | Stream-JSON user line | Structured chat and managed-terminal observation when required capabilities are available. |
-| Cursor   | Agent Client Protocol                          | Unsupported           | Normal chat only in activity protocol v2.                                                  |
-| Grok     | Agent Client Protocol                          | Unsupported           | No structured Activity observation.                                                        |
-| OpenCode | OpenCode server/events API                     | Unsupported           | Structured chat and managed-terminal observation.                                          |
+| Provider | Native integration                             | Steer                 | Checkpoint revert       | Activity support                                                                           |
+| -------- | ---------------------------------------------- | --------------------- | ----------------------- | ------------------------------------------------------------------------------------------ |
+| Codex    | Codex App Server JSON-RPC                      | `turn/steer`          | Rewinds, then files     | Structured chat and managed-terminal observation.                                          |
+| Claude   | Claude stream-JSON CLI and authenticated hooks | Stream-JSON user line | Files only, with notice | Structured chat and managed-terminal observation when required capabilities are available. |
+| Cursor   | Agent Client Protocol                          | Unsupported           | Files only, with notice | Normal chat only in activity protocol v2.                                                  |
+| Grok     | Agent Client Protocol                          | Unsupported           | Files only, with notice | No structured Activity observation.                                                        |
+| OpenCode | OpenCode server/events API                     | Unsupported           | Rewinds, then files     | Structured chat and managed-terminal observation.                                          |
+
+See [Checkpoint revert](./rpc-and-orchestration.md#checkpoint-revert).
 
 The OpenCode driver speaks the V1 server API of OpenCode 1.x. OpenCode 2
 replaced it with `/api/*` routes and answers V1 GET paths with its web UI as

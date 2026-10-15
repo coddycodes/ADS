@@ -1735,6 +1735,10 @@ fn snapshot_owned_message(
     if crate::provider::supports_turn_steer(&definition.driver) {
         result["supportsTurnSteer"] = json!(true);
     }
+    // Always present: a client reads an absent flag (an older server) as unknown.
+    result["supportsConversationRewind"] = json!(crate::provider::supports_conversation_rewind(
+        &definition.driver
+    ));
     if matches!(definition.driver.as_str(), "codex" | "claudeAgent") {
         result["supportsMcpStatus"] = json!(true);
     }
@@ -2348,6 +2352,11 @@ mod tests {
         let grok = snapshot_for("grok");
         let opencode = snapshot_for("opencode");
 
+        assert_eq!(codex["supportsConversationRewind"], true);
+        assert_eq!(opencode["supportsConversationRewind"], true);
+        assert_eq!(claude["supportsConversationRewind"], false);
+        assert_eq!(cursor["supportsConversationRewind"], false);
+        assert_eq!(grok["supportsConversationRewind"], false);
         assert_eq!(codex["supportsTurnSteer"], true);
         assert_eq!(claude["supportsTurnSteer"], true);
         assert!(cursor.get("supportsTurnSteer").is_none());

@@ -2250,6 +2250,19 @@ keep a failure from leaving the files and the conversation out of step:
 3. It restores the files from the checkpoint ref, deletes the newer checkpoint
    refs, and dispatches `thread.revert.complete`.
 
+Only Codex and OpenCode can rewind a conversation. This is the driver-owned
+`supportsConversationRewind` capability (see
+[Providers](./providers.md)), so the supervisor never asks Claude, Cursor or
+Grok to rewind. For them, step 2 reports `FilesOnly`. The effect then restores
+the files and keeps the thread's messages, checkpoints and turn count, because
+the provider keeps its conversation. It adds an informational
+`checkpoint.revert.files-only` activity that says the conversation was not
+rewound.
+
+The effect also refuses a revert while the thread's session is `running`,
+whichever client asked for it. A running turn would write over the restored
+files, or the rewind would cut it off.
+
 Once the provider has rewound, the revert must be recorded, or a retry would
 rewind the provider again. Shutdown therefore waits for step 3 instead of
 interrupting it, and a restore that fails is still recorded: the work log

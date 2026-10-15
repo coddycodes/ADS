@@ -207,6 +207,7 @@ export const ServerProvider = Schema.Struct({
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   supportsMcpStatus: Schema.optional(Schema.Boolean),
   supportsTurnSteer: Schema.optional(Schema.Boolean),
+  supportsConversationRewind: Schema.optional(Schema.Boolean),
   supportsContextWindowUsage: Schema.optional(Schema.Boolean),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,

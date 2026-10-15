@@ -51,8 +51,9 @@ use crate::{
         wrap_launch_program,
     },
     production::{
-        connect_mcp::ConnectMcpService, operational_logs::ProviderOperationalLog,
-        orchestration_effects::process_compatible_path,
+        connect_mcp::ConnectMcpService,
+        operational_logs::ProviderOperationalLog,
+        orchestration_effects::{ProviderRewind, process_compatible_path},
     },
     provider::{
         OptionRefusal,
@@ -573,6 +574,11 @@ enum SupervisorMessage {
     Handle {
         command: Box<OrchestrationCommand>,
         response: oneshot::Sender<Result<(), ProviderRuntimeError>>,
+    },
+    Rewind {
+        thread_id: String,
+        turn_count: i64,
+        response: oneshot::Sender<Result<ProviderRewind, ProviderRuntimeError>>,
     },
     CaptureSessionIdentity {
         thread_id: String,
@@ -1159,6 +1165,21 @@ impl ProviderRuntimeSupervisor {
             context_handoff,
             frozen_delivery: frozen_delivery.map(Box::new),
             abort_on_lost_resume,
+            response,
+        })
+        .await
+    }
+
+    /// Drops the newest `turn_count` turns from the thread's live provider conversation for a
+    /// checkpoint revert. A provider that cannot rewind is not asked: `FilesOnly`.
+    pub async fn rewind(
+        &self,
+        thread_id: &str,
+        turn_count: i64,
+    ) -> Result<ProviderRewind, ProviderRuntimeError> {
+        self.request(|response| SupervisorMessage::Rewind {
+            thread_id: thread_id.to_owned(),
+            turn_count,
             response,
         })
         .await
@@ -5334,6 +5355,14 @@ async fn run_supervisor(
                 .await;
                 let _ = response.send(result);
             }
+            SupervisorMessage::Rewind {
+                thread_id,
+                turn_count,
+                response,
+            } => {
+                let result = rewind_session(&sessions, &thread_id, turn_count).await;
+                let _ = response.send(result);
+            }
             SupervisorMessage::CaptureSessionIdentity {
                 thread_id,
                 response,
@@ -7555,11 +7584,29 @@ async fn handle_command(
             model_selection: Some(_),
             ..
         } => Ok(()),
-        OrchestrationCommand::ThreadCheckpointRevert { turn_count, .. } => {
-            entry.driver.rollback(turn_count).await
-        }
         _ => Ok(()),
     }
+}
+
+/// Asks a live session's provider to drop the newest turns. A provider that cannot rewind is
+/// not asked.
+async fn rewind_session(
+    sessions: &HashMap<String, SessionEntry>,
+    thread_id: &str,
+    turn_count: i64,
+) -> Result<ProviderRewind, ProviderRuntimeError> {
+    let entry = sessions
+        .get(thread_id)
+        .ok_or_else(|| ProviderRuntimeError::SessionNotFound {
+            thread_id: thread_id.to_owned(),
+        })?;
+    if !crate::provider::supports_conversation_rewind(&entry.launch.provider) {
+        return Ok(ProviderRewind::FilesOnly {
+            provider_label: entry.launch.provider_label.clone(),
+        });
+    }
+    entry.driver.rollback(turn_count).await?;
+    Ok(ProviderRewind::Rewound)
 }
 
 async fn reconcile_model_selection(
@@ -7926,7 +7973,6 @@ fn command_thread_id(command: &OrchestrationCommand) -> Option<&str> {
         | OrchestrationCommand::ThreadTurnInterrupt { thread_id, .. }
         | OrchestrationCommand::ThreadApprovalRespond { thread_id, .. }
         | OrchestrationCommand::ThreadUserInputRespond { thread_id, .. }
-        | OrchestrationCommand::ThreadCheckpointRevert { thread_id, .. }
         | OrchestrationCommand::ThreadSessionStop { thread_id, .. }
         | OrchestrationCommand::ThreadSessionSet { thread_id, .. }
         | OrchestrationCommand::ThreadMessageAssistantDelta { thread_id, .. }
@@ -15559,7 +15605,7 @@ async fn wait_for_endpoint(
 
 #[cfg(test)]
 mod tests {
-    use super::{ProviderDriver, ProviderDriverFactory, ProviderEvent};
+    use super::{ProviderDriver, ProviderDriverFactory, ProviderEvent, ProviderRewind};
     use crate::{
         activity::{
             ACTIVITY_ID_MAX_LENGTH, ActivityCancellationDispatcher, ActivityCancellationError,
@@ -24982,13 +25028,27 @@ done
             json!({"type":"thread.runtime-mode.set","commandId":"mode","threadId":"t1","runtimeMode":"approval-required","createdAt":"2026-07-16T00:00:00Z"}),
             json!({"type":"thread.interaction-mode.set","commandId":"interaction","threadId":"t1","interactionMode":"plan","createdAt":"2026-07-16T00:00:00Z"}),
             json!({"type":"thread.meta.update","commandId":"model","threadId":"t1","modelSelection":{"instanceId":"codex","model":"gpt-5.2"}}),
-            json!({"type":"thread.checkpoint.revert","commandId":"revert","threadId":"t1","turnCount":2,"createdAt":"2026-07-16T00:00:00Z"}),
         ] {
             supervisor
                 .handle_orchestration(serde_json::from_value(command).unwrap())
                 .await
                 .unwrap();
         }
+        assert_eq!(
+            supervisor.rewind("t1", 2).await.unwrap(),
+            ProviderRewind::Rewound
+        );
+        let revert_command: OrchestrationCommand = serde_json::from_value(json!({
+            "type":"thread.checkpoint.revert","commandId":"revert","threadId":"t1","turnCount":2,"createdAt":"2026-07-16T00:00:00Z"
+        }))
+        .unwrap();
+        assert!(
+            supervisor
+                .handle_orchestration(revert_command)
+                .await
+                .is_err(),
+            "a revert goes through `rewind`, never the generic command path"
+        );
 
         let project_command: OrchestrationCommand = serde_json::from_value(json!({
             "type":"project.create","commandId":"unsupported","projectId":"p2","title":"Project","workspaceRoot":"/tmp/p2","createdAt":"2026-07-16T00:00:00Z"

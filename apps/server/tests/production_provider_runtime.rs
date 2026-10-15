@@ -62,7 +62,7 @@ use bibcode_server::{
     production::{
         orchestration_effects::{
             self, BoxEffectFuture, EffectsOptions, OrchestrationEffectCallbacks,
-            OrchestrationEffects,
+            OrchestrationEffects, ProviderRewind,
         },
         orchestration_rpc::register_orchestration_rpc_with_delivery,
         turn_delivery::TurnDeliveryService,
@@ -1305,15 +1305,14 @@ impl OrchestrationEffectCallbacks for SupervisorEffectsCallbacks {
         Box::pin(async move { Ok(Some(self.workspace.clone())) })
     }
 
-    fn rollback_provider<'a>(&'a self, thread_id: &'a str, turns: i64) -> BoxEffectFuture<'a, ()> {
+    fn rollback_provider<'a>(
+        &'a self,
+        thread_id: &'a str,
+        turns: i64,
+    ) -> BoxEffectFuture<'a, ProviderRewind> {
         Box::pin(async move {
             self.supervisor
-                .handle_orchestration(OrchestrationCommand::ThreadCheckpointRevert {
-                    command_id: format!("effects:provider-rollback:{thread_id}:{turns}"),
-                    thread_id: thread_id.to_owned(),
-                    turn_count: turns,
-                    created_at: NOW.to_owned(),
-                })
+                .rewind(thread_id, turns)
                 .await
                 .map_err(|error| error.to_string())
         })
@@ -11132,6 +11131,110 @@ async fn checkpoint_rpc_reports_effect_failure_without_a_direct_or_second_rollba
     handle.shutdown();
     handle.join().await.unwrap();
     delivery.shutdown().await;
+    supervisor.shutdown().await.unwrap();
+    engine.shutdown().await;
+}
+
+/// A provider that cannot rewind its conversation (Claude here) gets its files restored and a
+/// notice that the conversation was not rewound; its messages, checkpoints and turn count stay.
+#[tokio::test]
+async fn checkpoint_revert_on_a_provider_that_cannot_rewind_restores_files_only() {
+    let repository = initialize_repository();
+    let engine = engine().await;
+    for (turn_count, content) in [(0, "baseline\n"), (1, "one\n"), (2, "two\n")] {
+        project_checkpoint(&engine, repository.path(), turn_count, content).await;
+    }
+    let state = Arc::new(StdMutex::new(DriverState::default()));
+    let (_events_tx, events_rx) = mpsc::channel(8);
+    let supervisor = Arc::new(ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        Arc::new(FakeFactory {
+            state: state.clone(),
+            events: StdMutex::new(VecDeque::from([events_rx])),
+        }),
+        activity_projection(&engine),
+        SupervisorOptions::default(),
+    ));
+    let mut provider_launch = launch();
+    provider_launch.provider = "claude".to_owned();
+    provider_launch.provider_label = "Claude".to_owned();
+    provider_launch.provider_instance_id = Some("claude".to_owned());
+    provider_launch.codex_home = None;
+    provider_launch.cwd = repository.path().to_path_buf();
+    supervisor.launch(provider_launch).await.unwrap();
+    let effects = OrchestrationEffects::start(
+        engine.clone(),
+        Arc::new(GitRepository::default()),
+        Arc::new(SupervisorEffectsCallbacks {
+            supervisor: supervisor.clone(),
+            workspace: repository.path().to_path_buf(),
+        }),
+        EffectsOptions::default(),
+    )
+    .await
+    .unwrap();
+    let mut events = engine.subscribe_events();
+
+    engine
+        .dispatch(
+            serde_json::from_value(json!({
+                "type":"thread.checkpoint.revert",
+                "commandId":"files-only-revert",
+                "threadId":"t1",
+                "turnCount":1,
+                "createdAt":NOW
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    wait_for_event(&mut events, |event| {
+        event.event.event_type == "thread.activity-appended"
+            && event.event.payload["activity"]["kind"] == "checkpoint.revert.files-only"
+    })
+    .await;
+
+    effects.shutdown().await;
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("tracked.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "one\n",
+        "the checkpoint files are restored"
+    );
+    assert!(
+        state.lock().unwrap().rollbacks.is_empty(),
+        "a provider that cannot rewind is never asked to"
+    );
+    let events = engine.read_events(0).await.unwrap();
+    let notice = events
+        .iter()
+        .find(|event| event.event.payload["activity"]["kind"] == "checkpoint.revert.files-only")
+        .expect("files-only notice");
+    assert_eq!(notice.event.payload["activity"]["tone"], "info");
+    assert!(
+        notice.event.payload["activity"]["payload"]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("Claude can't rewind its conversation")),
+        "{notice:?}"
+    );
+    assert!(
+        !events.iter().any(|event| {
+            event.event.event_type == "thread.reverted"
+                || event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+        }),
+        "the conversation is kept and the revert is not an error"
+    );
+    assert!(git_succeeds(
+        repository.path(),
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &orchestration_effects::checkpoint_ref("t1", 2),
+        ]
+    ));
+
     supervisor.shutdown().await.unwrap();
     engine.shutdown().await;
 }

@@ -15,7 +15,7 @@ use bibcode_server::{
 };
 use orchestration_effects::{
     BoxEffectFuture, EffectsOptions, OrchestrationEffectCallbacks, OrchestrationEffects,
-    SetupScriptLaunch, normalize_project_workspace_root,
+    ProviderRewind, SetupScriptLaunch, normalize_project_workspace_root,
 };
 use serde_json::json;
 use tempfile::TempDir;
@@ -54,13 +54,17 @@ impl OrchestrationEffectCallbacks for CallbackState {
         Box::pin(async move { Ok(self.cwd.lock().unwrap().clone()) })
     }
 
-    fn rollback_provider<'a>(&'a self, thread_id: &'a str, turns: i64) -> BoxEffectFuture<'a, ()> {
+    fn rollback_provider<'a>(
+        &'a self,
+        thread_id: &'a str,
+        turns: i64,
+    ) -> BoxEffectFuture<'a, ProviderRewind> {
         Box::pin(async move {
             self.rollbacks
                 .lock()
                 .unwrap()
                 .push((thread_id.to_owned(), turns));
-            Ok(())
+            Ok(ProviderRewind::Rewound)
         })
     }
 
@@ -783,6 +787,86 @@ async fn reverts_workspace_provider_history_and_stale_checkpoint_refs() {
     engine.shutdown().await;
 }
 
+/// A running turn would write over the restored files, so the server refuses the revert itself,
+/// whichever client asked for it.
+#[tokio::test]
+async fn revert_during_a_running_turn_changes_nothing() {
+    let repository = initialize_repository().await;
+    let engine = engine(repository.path()).await;
+    let callbacks = Arc::new(CallbackState::default());
+    *callbacks.cwd.lock().unwrap() = Some(repository.path().to_path_buf());
+    let effects = OrchestrationEffects::start(
+        engine.clone(),
+        Arc::new(GitRepository::default()),
+        callbacks.clone(),
+        EffectsOptions::default(),
+    )
+    .await
+    .unwrap();
+    for (turn_count, content) in [(0, None), (1, Some("one\n")), (2, Some("two\n"))] {
+        if let Some(content) = content {
+            std::fs::write(repository.path().join("tracked.txt"), content).unwrap();
+        }
+        orchestration_effects::capture_checkpoint(repository.path(), "t1", turn_count)
+            .await
+            .unwrap();
+    }
+    for turn_count in 1..=2 {
+        dispatch(
+            &engine,
+            json!({
+                "type":"thread.turn.diff.complete", "commandId":format!("diff-{turn_count}"),
+                "threadId":"t1", "turnId":format!("turn-{turn_count}"),
+                "checkpointTurnCount":turn_count,
+                "checkpointRef":orchestration_effects::checkpoint_ref("t1", turn_count),
+                "status":"ready", "files":[], "assistantMessageId":format!("a-{turn_count}"),
+                "completedAt":NOW, "createdAt":NOW
+            }),
+        )
+        .await;
+    }
+    dispatch(
+        &engine,
+        json!({
+            "type":"thread.session.set", "commandId":"running", "threadId":"t1",
+            "session":{"threadId":"t1","status":"running","providerName":"claude",
+                "activeTurnId":"turn-3","lastError":null,"updatedAt":NOW},
+            "createdAt":NOW
+        }),
+    )
+    .await;
+
+    let mut events = engine.subscribe_events();
+    dispatch(
+        &engine,
+        json!({
+            "type":"thread.checkpoint.revert", "commandId":"revert", "threadId":"t1",
+            "turnCount":1, "createdAt":NOW
+        }),
+    )
+    .await;
+    let failure = wait_for_event(&mut events, "thread.activity-appended", |event| {
+        event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+    })
+    .await;
+    assert!(
+        failure.event.payload["activity"]["payload"]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("Interrupt the current turn")),
+        "{failure:?}"
+    );
+    assert!(callbacks.rollbacks.lock().unwrap().is_empty());
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("tracked.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "two\n"
+    );
+
+    effects.shutdown().await;
+    engine.shutdown().await;
+}
+
 /// The provider rewind cannot be undone, so a revert whose files cannot be restored fails
 /// before the provider is asked to rewind.
 #[tokio::test]
@@ -878,7 +962,7 @@ async fn revert_records_a_completed_rewind_when_files_fail_to_restore() {
             &'a self,
             thread_id: &'a str,
             turns: i64,
-        ) -> BoxEffectFuture<'a, ()> {
+        ) -> BoxEffectFuture<'a, ProviderRewind> {
             Box::pin(async move {
                 self.rollbacks
                     .lock()
@@ -886,7 +970,7 @@ async fn revert_records_a_completed_rewind_when_files_fail_to_restore() {
                     .push((thread_id.to_owned(), turns));
                 // Another Git process holds the index, so the restore that follows fails.
                 std::fs::write(self.workspace.join(".git").join("index.lock"), "").unwrap();
-                Ok(())
+                Ok(ProviderRewind::Rewound)
             })
         }
         fn stop_provider<'a>(&'a self, _: &'a str) -> BoxEffectFuture<'a, ()> {
@@ -994,8 +1078,12 @@ async fn thread_deletion_attempts_provider_and_terminal_cleanup_independently() 
         fn workspace_for_thread<'a>(&'a self, _: &'a str) -> BoxEffectFuture<'a, Option<PathBuf>> {
             Box::pin(async { Ok(None) })
         }
-        fn rollback_provider<'a>(&'a self, _: &'a str, _: i64) -> BoxEffectFuture<'a, ()> {
-            Box::pin(async { Ok(()) })
+        fn rollback_provider<'a>(
+            &'a self,
+            _: &'a str,
+            _: i64,
+        ) -> BoxEffectFuture<'a, ProviderRewind> {
+            Box::pin(async { Ok(ProviderRewind::Rewound) })
         }
         fn stop_provider<'a>(&'a self, thread_id: &'a str) -> BoxEffectFuture<'a, ()> {
             Box::pin(async move {

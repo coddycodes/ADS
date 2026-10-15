@@ -312,6 +312,7 @@ import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/Compos
 import {
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
+  buildRevertCheckpointConfirmation,
   buildThreadTurnInterruptInput,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
@@ -4971,11 +4972,10 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
       const confirmed = await localApi.dialogs.confirm(
-        [
-          `Revert this thread to checkpoint ${turnCount}?`,
-          "This will discard newer messages and turn diffs in this thread.",
-          "This action cannot be undone.",
-        ].join("\n"),
+        buildRevertCheckpointConfirmation({
+          turnCount,
+          provider: activeProviderStatus,
+        }),
       );
       if (!confirmed) {
         return;
@@ -5003,6 +5003,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeThread,
       activeEnvironmentUnavailable,
       activeEnvironmentUnavailableLabel,
+      activeProviderStatus,
       environmentId,
       isConnecting,
       isRevertingCheckpoint,

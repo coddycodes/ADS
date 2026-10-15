@@ -57,13 +57,26 @@ pub struct SetupScriptLaunch {
     pub env: BTreeMap<String, String>,
 }
 
+/// What the provider did when a checkpoint revert asked it to drop the newest turns.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProviderRewind {
+    /// The provider dropped the turns from its conversation.
+    Rewound,
+    /// The provider cannot rewind its conversation, so the revert restores only the files.
+    FilesOnly { provider_label: String },
+}
+
 pub trait OrchestrationEffectCallbacks: Send + Sync {
     fn workspace_for_thread<'a>(
         &'a self,
         thread_id: &'a str,
     ) -> BoxEffectFuture<'a, Option<PathBuf>>;
 
-    fn rollback_provider<'a>(&'a self, thread_id: &'a str, turns: i64) -> BoxEffectFuture<'a, ()>;
+    fn rollback_provider<'a>(
+        &'a self,
+        thread_id: &'a str,
+        turns: i64,
+    ) -> BoxEffectFuture<'a, ProviderRewind>;
 
     fn stop_provider<'a>(&'a self, thread_id: &'a str) -> BoxEffectFuture<'a, ()>;
 
@@ -869,6 +882,18 @@ async fn revert_checkpoint(
         .get("turnCount")
         .and_then(Value::as_i64)
         .ok_or_else(|| OrchestrationEffectsError::Effect("missing turnCount".to_owned()))?;
+    // A running turn would write over the restored files or be cut off by the rewind, and the
+    // client's own guard does not cover another client.
+    if engine
+        .repositories()
+        .get_thread_session(thread_id.to_owned())
+        .await?
+        .is_some_and(|session| session.status == "running")
+    {
+        return Err(OrchestrationEffectsError::Effect(
+            "Interrupt the current turn before reverting checkpoints.".to_owned(),
+        ));
+    }
     let cwd = resolve_workspace(engine, callbacks, thread_id)
         .await?
         .ok_or_else(|| {
@@ -929,11 +954,54 @@ async fn revert_checkpoint(
         return Err(missing_checkpoint());
     }
     let rolled_back_turns = current_turn_count.saturating_sub(turn_count);
-    if rolled_back_turns > 0 {
-        callbacks
+    if rolled_back_turns > 0
+        && let ProviderRewind::FilesOnly { provider_label } = callbacks
             .rollback_provider(thread_id, rolled_back_turns)
             .await
+            .map_err(OrchestrationEffectsError::Effect)?
+    {
+        // The provider keeps its conversation, so the thread keeps its messages, checkpoints and
+        // turn count too. Only the files go back, and the work log says so.
+        if !restore_checkpoint(
+            &cwd,
+            Path::new("git"),
+            &target_ref,
+            turn_count == 0,
+            cancellation,
+        )
+        .await?
+        {
+            return Err(missing_checkpoint());
+        }
+        callbacks
+            .refresh_workspace(&cwd)
+            .await
             .map_err(OrchestrationEffectsError::Effect)?;
+        let created_at = now_iso();
+        return engine
+            .dispatch(OrchestrationCommand::ThreadActivityAppend {
+                command_id: server_id("checkpoint-revert-files-only"),
+                thread_id: thread_id.to_owned(),
+                activity: ActivityInput {
+                    id: Uuid::new_v4().to_string(),
+                    tone: "info".to_owned(),
+                    kind: "checkpoint.revert.files-only".to_owned(),
+                    summary: "Files restored, conversation not rewound".to_owned(),
+                    payload: json!({
+                        "turnCount": turn_count,
+                        "detail": format!(
+                            "{provider_label} can't rewind its conversation, so it still has the later messages."
+                        ),
+                    }),
+                    turn_id: None,
+                    sequence: None,
+                    created_at: created_at.clone(),
+                },
+                created_at,
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| OrchestrationEffectsError::Effect(error.to_string()));
     }
     // Once the provider has rewound, the revert must be recorded, or a retry would rewind the
     // provider a second time. Shutdown therefore waits for the restore instead of interrupting
@@ -1873,9 +1941,13 @@ mod tests {
                 Box::pin(async { Ok(None) })
             }
 
-            fn rollback_provider<'a>(&'a self, _: &'a str, _: i64) -> BoxEffectFuture<'a, ()> {
+            fn rollback_provider<'a>(
+                &'a self,
+                _: &'a str,
+                _: i64,
+            ) -> BoxEffectFuture<'a, ProviderRewind> {
                 self.0.fetch_add(1, Ordering::Relaxed);
-                Box::pin(async { Ok(()) })
+                Box::pin(async { Ok(ProviderRewind::Rewound) })
             }
 
             fn stop_provider<'a>(&'a self, _: &'a str) -> BoxEffectFuture<'a, ()> {
@@ -2101,8 +2173,12 @@ mod tests {
                 Box::pin(async { Ok(None) })
             }
 
-            fn rollback_provider<'a>(&'a self, _: &'a str, _: i64) -> BoxEffectFuture<'a, ()> {
-                Box::pin(async { Ok(()) })
+            fn rollback_provider<'a>(
+                &'a self,
+                _: &'a str,
+                _: i64,
+            ) -> BoxEffectFuture<'a, ProviderRewind> {
+                Box::pin(async { Ok(ProviderRewind::Rewound) })
             }
 
             fn stop_provider<'a>(&'a self, _: &'a str) -> BoxEffectFuture<'a, ()> {

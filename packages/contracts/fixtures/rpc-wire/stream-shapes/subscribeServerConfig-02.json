@@ -12,18 +12,18 @@
             "driver": "L",
             "displayName": "T-\\E6i^RH.",
             "showInteractionModeToggle": false,
-            "supportsContextWindowUsage": true,
+            "supportsConversationRewind": true,
             "enabled": true,
             "installed": true,
             "version": null,
-            "status": "warning",
+            "status": "disabled",
             "auth": {
               "status": "unknown",
-              "label": "0eQ}%qw!",
-              "email": "N"
+              "type": "0eQ}%qw!",
+              "label": "N"
             },
-            "checkedAt": "+P/z",
-            "message": ":r|O!Qpm]?\\7",
+            "checkedAt": "/zDTE:",
+            "message": "!Qpm]?\\7",
             "availability": "available",
             "unavailableReason": "\\6MdjTKN>",
             "models": [

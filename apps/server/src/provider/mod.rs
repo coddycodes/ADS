@@ -14,6 +14,13 @@ pub(crate) fn supports_turn_steer(provider: &str) -> bool {
     matches!(provider, "codex" | "claudeAgent")
 }
 
+/// Driver-owned capability used by both inventory and checkpoint revert: the driver's
+/// `rollback` drops the newest turns from its conversation. A revert on any other provider
+/// restores only the files.
+pub(crate) fn supports_conversation_rewind(provider: &str) -> bool {
+    matches!(provider, "codex" | "opencode")
+}
+
 // The one refusal policy. Every driver builds the sentence an undelivered turn shows from these
 // helpers. `option` is the option's label where the driver has one, otherwise its id.
 

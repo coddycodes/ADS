@@ -63,7 +63,7 @@ use crate::{
         operational_logs::{OperationalLogOptions, OperationalLogs},
         orchestration_effects::{
             BoxEffectFuture, EffectsOptions, OrchestrationEffectCallbacks, OrchestrationEffects,
-            SetupScriptLaunch, process_compatible_path,
+            ProviderRewind, SetupScriptLaunch, process_compatible_path,
         },
         orchestration_rpc::register_orchestration_rpc_with_delivery_and_availability,
         provider_runtime::{
@@ -864,15 +864,14 @@ impl OrchestrationEffectCallbacks for RuntimeEffectCallbacks {
         })
     }
 
-    fn rollback_provider<'a>(&'a self, thread_id: &'a str, turns: i64) -> BoxEffectFuture<'a, ()> {
+    fn rollback_provider<'a>(
+        &'a self,
+        thread_id: &'a str,
+        turns: i64,
+    ) -> BoxEffectFuture<'a, ProviderRewind> {
         Box::pin(async move {
             self.provider
-                .handle_orchestration(OrchestrationCommand::ThreadCheckpointRevert {
-                    command_id: format!("effects:provider-rollback:{}", uuid::Uuid::new_v4()),
-                    thread_id: thread_id.to_owned(),
-                    turn_count: turns,
-                    created_at: now_iso(),
-                })
+                .rewind(thread_id, turns)
                 .await
                 .map_err(|error| error.to_string())
         })
