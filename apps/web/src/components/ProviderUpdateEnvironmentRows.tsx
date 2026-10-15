@@ -172,7 +172,7 @@ export function ProviderUpdateEnvironmentRows({
   );
 
   // Only surface results that land after this popover opened.
-  const visibleAfterIsoRef = useRef<string>(new Date().toISOString());
+  const [visibleAfterIso] = useState(() => new Date().toISOString());
 
   // Synchronous re-entry guard. setPendingEnvironments is an async state update,
   // and PENDING_EXPIRY_MS can clear the spinner while a request is still in
@@ -371,7 +371,7 @@ export function ProviderUpdateEnvironmentRows({
         // another was interrupted) makes the pill report success and hides the
         // Update action for candidates that are still outdated.
         pill: getProviderUpdateSidebarPillView(group.candidates, {
-          visibleAfterIso: visibleAfterIsoRef.current,
+          visibleAfterIso,
         }),
         isPending: pendingEnvironments.has(group.environmentId),
       }),

@@ -354,10 +354,11 @@ export default function DiffPanel({
         })
       : null,
   );
+  const revalidateBranchDiffPreview = branchDiffPreview.revalidate;
   useEffect(() => {
     if (workspaceUnavailable || gitRefreshRequestId === 0 || selectedTurnId !== null) return;
-    branchDiffPreview.revalidate();
-  }, [branchDiffPreview.revalidate, gitRefreshRequestId, selectedTurnId, workspaceUnavailable]);
+    revalidateBranchDiffPreview();
+  }, [revalidateBranchDiffPreview, gitRefreshRequestId, selectedTurnId, workspaceUnavailable]);
   const selectedGitSource = branchDiffPreview.data?.sources.find(
     (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
   );
@@ -453,12 +454,22 @@ export default function DiffPanel({
     [collapsedDiffFileKeys, renderableFiles],
   );
 
+  // Each reveal request is its own object, so asking for the same file again scrolls to it again.
+  const selectedFileReveal = useMemo(
+    () =>
+      selectedFilePath
+        ? { filePath: selectedFilePath, requestId: selectedFileRevealRequestId }
+        : null,
+    [selectedFilePath, selectedFileRevealRequestId],
+  );
   useEffect(() => {
-    if (!selectedFilePath) return;
-    const file = codeViewFiles.find((candidate) => candidate.filePath === selectedFilePath);
+    if (!selectedFileReveal) return;
+    const file = codeViewFiles.find(
+      (candidate) => candidate.filePath === selectedFileReveal.filePath,
+    );
     if (!file) return;
     codeViewRef.current?.scrollTo({ type: "item", id: file.fileKey, align: "start" });
-  }, [codeViewFiles, selectedFilePath, selectedFileRevealRequestId]);
+  }, [codeViewFiles, selectedFileReveal]);
 
   const openDiffFile = useCallback(
     (filePath: string) => {

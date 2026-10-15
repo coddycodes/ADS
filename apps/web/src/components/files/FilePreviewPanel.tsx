@@ -704,6 +704,7 @@ export default function FilePreviewPanel({
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
 
   useEffect(() => {
+    if (!relativePath) return;
     const currentCrumb = breadcrumbRef.current?.querySelector<HTMLElement>(
       "[data-current-file-crumb='true']",
     );

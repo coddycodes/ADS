@@ -97,11 +97,11 @@ function ProviderUpdateEnvironmentsNotification() {
 
   // Defer while any local backend is still connecting, up to the grace period.
   const [settleGraceElapsed, setSettleGraceElapsed] = useState(false);
+  if (!isAnySettling && settleGraceElapsed) {
+    setSettleGraceElapsed(false);
+  }
   useEffect(() => {
-    if (!isAnySettling) {
-      setSettleGraceElapsed(false);
-      return;
-    }
+    if (!isAnySettling) return;
     const timer = setTimeout(() => setSettleGraceElapsed(true), SETTLING_GRACE_MS);
     return () => clearTimeout(timer);
   }, [isAnySettling]);

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { act, useState } from "react";
+import { act, useLayoutEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
@@ -75,7 +75,9 @@ describe("labelled form controls", () => {
     let rerender: (() => void) | null = null;
     function Harness() {
       const [tick, setTick] = useState(0);
-      rerender = () => setTick((value) => value + 1);
+      useLayoutEffect(() => {
+        rerender = () => setTick((value) => value + 1);
+      }, []);
       return <Controls tick={tick} />;
     }
     await act(async () => root.render(<Harness />));

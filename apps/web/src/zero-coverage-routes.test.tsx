@@ -544,17 +544,27 @@ describe("browser surface and progress lifecycles", () => {
   it("seeds, advances, completes, and resets loading progress", async () => {
     vi.useFakeTimers();
     let progress = -1;
-    const Harness = ({ loading }: { loading: boolean }) => {
-      progress = useLoadingProgress(loading);
-      return <span>{progress}</span>;
+    const onProgress = (value: number) => {
+      progress = value;
     };
-    const mounted = await mount(<Harness loading={false} />);
+    const Harness = ({
+      loading,
+      onProgress,
+    }: {
+      loading: boolean;
+      onProgress: (value: number) => void;
+    }) => {
+      const value = useLoadingProgress(loading);
+      onProgress(value);
+      return <span>{value}</span>;
+    };
+    const mounted = await mount(<Harness loading={false} onProgress={onProgress} />);
     expect(progress).toBe(0);
-    await rerender(mounted, <Harness loading />);
+    await rerender(mounted, <Harness loading onProgress={onProgress} />);
     expect(progress).toBe(4);
     await act(async () => vi.advanceTimersByTime(120));
     expect(progress).toBeGreaterThan(4);
-    await rerender(mounted, <Harness loading={false} />);
+    await rerender(mounted, <Harness loading={false} onProgress={onProgress} />);
     expect(progress).toBe(100);
     await act(async () => vi.advanceTimersByTime(220));
     expect(progress).toBe(0);
@@ -565,13 +575,16 @@ describe("command palette presentation", () => {
   it("provides command-palette actions and reads live DOM state", async () => {
     const open = vi.fn();
     const captured: { current?: () => void } = {};
-    const Consumer = () => {
-      captured.current = useOpenAddProjectCommandPalette();
+    const capture = (next: () => void) => {
+      captured.current = next;
+    };
+    const Consumer = ({ onOpen }: { onOpen: (open: () => void) => void }) => {
+      onOpen(useOpenAddProjectCommandPalette());
       return null;
     };
     const mounted = await mount(
       <OpenAddProjectCommandPaletteProvider openAddProject={open}>
-        <Consumer />
+        <Consumer onOpen={capture} />
       </OpenAddProjectCommandPaletteProvider>,
     );
     captured.current?.();
@@ -584,7 +597,7 @@ describe("command palette presentation", () => {
 
     await act(async () => mounted.root.unmount());
     mountedTrees.splice(mountedTrees.indexOf(mounted), 1);
-    expect(() => renderToStaticMarkup(<Consumer />)).toThrow(
+    expect(() => renderToStaticMarkup(<Consumer onOpen={capture} />)).toThrow(
       "Command palette actions must be used inside CommandPalette",
     );
   });
