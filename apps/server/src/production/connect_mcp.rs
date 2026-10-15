@@ -1079,7 +1079,11 @@ impl ConnectMcpService {
             // A valid MCP credential is the operate grant here, as for `preview_*`: see
             // `DeviceTools`.
             return match &self.devices {
-                Some(devices) => devices.call(operation, arguments, cancellation).await,
+                Some(devices) => {
+                    devices
+                        .call(&scope, operation, arguments, cancellation)
+                        .await
+                }
                 None => tool_failure("McpUnknownToolError", "Unknown tool."),
             };
         }

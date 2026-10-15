@@ -7,7 +7,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use super::{snapshot_tool_result, tool_failure};
+use super::{PreviewScope, snapshot_tool_result, tool_failure};
 use crate::device::{
     DeviceManager, DeviceOpError,
     catalog::{DeviceSnapshot, DeviceState},
@@ -51,14 +51,23 @@ impl DeviceTools {
         self.manager.enabled()
     }
 
-    /// Runs `operation` (the tool name without `device_`) and returns the MCP tool result.
-    /// `cancellation` ends a wait for boot; the device stays with the manager and keeps booting.
+    /// Runs `operation` (the tool name without `device_`) for the thread `scope` names, and
+    /// returns the MCP tool result. `cancellation` ends a wait for boot; the device stays
+    /// with the manager and keeps booting.
     pub(super) async fn call(
         &self,
+        scope: &PreviewScope,
         operation: &str,
         arguments: Value,
         cancellation: CancellationToken,
     ) -> Value {
+        // Which thread drove the device; never the arguments, which name AVDs and devices.
+        tracing::debug!(
+            environment_id = %scope.environment_id,
+            thread_id = %scope.thread_id,
+            operation,
+            "device MCP tool call"
+        );
         if !self.enabled() {
             return failure(&DeviceOpError::Disabled);
         }

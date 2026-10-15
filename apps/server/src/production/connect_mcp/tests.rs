@@ -2056,8 +2056,17 @@ mod device_tools {
 
     use tokio_util::sync::CancellationToken;
 
-    use super::DeviceTools;
+    use super::{DeviceTools, PreviewScope};
     use crate::device::testing::{LaunchStub, ManagerFixture, process_alive, wait_until};
+
+    fn scope() -> PreviewScope {
+        PreviewScope {
+            environment_id: "environment".into(),
+            thread_id: "thread".into(),
+            provider_session_id: "provider-session".into(),
+            provider_instance_id: "provider-instance".into(),
+        }
+    }
 
     struct DeviceToolsFixture {
         tools: DeviceTools,
@@ -2076,7 +2085,7 @@ mod device_tools {
             let fixture = Self::ready_sdk(&["Pixel"]).await;
             let result = fixture
                 .tools
-                .call("open", json!({}), CancellationToken::new())
+                .call(&scope(), "open", json!({}), CancellationToken::new())
                 .await;
             assert_eq!(result["isError"], false, "{result}");
             fixture
@@ -2102,7 +2111,7 @@ mod device_tools {
         let fixture = DeviceToolsFixture::ready_device().await;
         let result = fixture
             .tools
-            .call("screenshot", json!({}), CancellationToken::new())
+            .call(&scope(), "screenshot", json!({}), CancellationToken::new())
             .await;
         assert_eq!(result["isError"], false, "{result}");
         let image = result["content"]
@@ -2122,7 +2131,7 @@ mod device_tools {
         let fixture = DeviceToolsFixture::ready_device().await;
         let result = fixture
             .tools
-            .call("list", json!({}), CancellationToken::new())
+            .call(&scope(), "list", json!({}), CancellationToken::new())
             .await;
         assert_eq!(result["isError"], false);
         assert_eq!(result["structuredContent"]["avds"][0]["name"], "Pixel");
@@ -2137,7 +2146,7 @@ mod device_tools {
             .clone();
         let missing = fixture
             .tools
-            .call("close", json!({}), CancellationToken::new())
+            .call(&scope(), "close", json!({}), CancellationToken::new())
             .await;
         assert_eq!(
             missing["structuredContent"]["error"]["_tag"],
@@ -2145,12 +2154,17 @@ mod device_tools {
         );
         let closed = fixture
             .tools
-            .call("close", json!({"deviceId": id}), CancellationToken::new())
+            .call(
+                &scope(),
+                "close",
+                json!({"deviceId": id}),
+                CancellationToken::new(),
+            )
             .await;
         assert_eq!(closed["isError"], false, "{closed}");
         let after = fixture
             .tools
-            .call("screenshot", json!({}), CancellationToken::new())
+            .call(&scope(), "screenshot", json!({}), CancellationToken::new())
             .await;
         assert_eq!(
             after["structuredContent"]["error"]["_tag"],
@@ -2166,6 +2180,7 @@ mod device_tools {
             async move {
                 tools
                     .call(
+                        &scope(),
                         "open",
                         json!({"avdName": "Pixel"}),
                         CancellationToken::new(),
@@ -2203,7 +2218,7 @@ mod device_tools {
         let fixture = DeviceToolsFixture::disabled().await;
         let result = fixture
             .tools
-            .call("list", json!({}), CancellationToken::new())
+            .call(&scope(), "list", json!({}), CancellationToken::new())
             .await;
         assert_eq!(
             result["structuredContent"]["error"]["_tag"],
@@ -2216,14 +2231,14 @@ mod device_tools {
         let one = DeviceToolsFixture::ready_sdk(&["Pixel"]).await;
         assert_eq!(
             one.tools
-                .call("open", json!({}), CancellationToken::new())
+                .call(&scope(), "open", json!({}), CancellationToken::new())
                 .await["isError"],
             false
         );
         let two = DeviceToolsFixture::ready_sdk(&["Pixel", "Tablet"]).await;
         let result = two
             .tools
-            .call("open", json!({}), CancellationToken::new())
+            .call(&scope(), "open", json!({}), CancellationToken::new())
             .await;
         assert_eq!(result["isError"], true);
         assert!(
@@ -2249,7 +2264,7 @@ mod device_tools {
         );
         let result = fixture
             .tools
-            .call("open", json!({}), CancellationToken::new())
+            .call(&scope(), "open", json!({}), CancellationToken::new())
             .await;
         assert_eq!(result["isError"], true);
         assert!(
@@ -2267,7 +2282,7 @@ mod device_tools {
             .clone()
             .with_boot_timeout(Duration::from_millis(300));
         let result = tools
-            .call("open", json!({}), CancellationToken::new())
+            .call(&scope(), "open", json!({}), CancellationToken::new())
             .await;
         assert_eq!(result["isError"], true);
         assert!(text(&result).contains("still booting"), "{result}");
@@ -2280,7 +2295,7 @@ mod device_tools {
         let cancellation = CancellationToken::new();
         let call = tokio::spawn({
             let (tools, cancellation) = (fixture.tools.clone(), cancellation.clone());
-            async move { tools.call("open", json!({}), cancellation).await }
+            async move { tools.call(&scope(), "open", json!({}), cancellation).await }
         });
         tokio::time::sleep(Duration::from_millis(200)).await;
         cancellation.cancel();
@@ -2302,7 +2317,7 @@ mod device_tools {
         ] {
             let result = fixture
                 .tools
-                .call(operation, arguments, CancellationToken::new())
+                .call(&scope(), operation, arguments, CancellationToken::new())
                 .await;
             assert_eq!(
                 result["structuredContent"]["error"]["_tag"], "DeviceInputError",

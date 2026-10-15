@@ -1987,6 +1987,9 @@ invariant: a valid provider MCP credential is issued only by `provider_runtime`
 when it launches a thread's provider, so holding it is the operate grant, as
 for the `preview_*` tools. If MCP credentials are ever issued to
 lower-privileged principals, both tool families need a real scope check.
+`DeviceTools::call` receives the calling thread's `PreviewScope` and logs its
+environment and thread ids with the operation at `debug`, never the
+arguments.
 
 **Ownership and shutdown.** `ProductionRuntime` calls
 `DeviceManager::shutdown` after the preview gateway and before process
