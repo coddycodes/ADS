@@ -484,11 +484,11 @@ mod tests {
         ServerConfig,
         auth::{ClientMetadata, SessionTransport},
         device::{
-            catalog::DeviceState,
-            testing::{
+            android::testing::{
                 FakeScrcpySource, ManagerFixture, config_unit, delta_unit, key_unit, key_unit_of,
                 kill_process, process_alive, wait_until,
             },
+            catalog::DeviceState,
         },
         rpc::MAX_E2EE_CIPHERTEXT_BYTES,
     };

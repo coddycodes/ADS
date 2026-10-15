@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     DeviceError, DeviceManager, DeviceOpError, Inner,
-    scrcpy::{UnitKind, VideoUnit},
+    video::{UnitKind, VideoUnit},
 };
 
 pub(crate) const SOCKET_QUEUE_BYTES: usize = 2 * 1024 * 1024;
@@ -495,7 +495,7 @@ pub(super) trait VideoSource: Send + 'static {
     fn stop(self, device_ended: bool) -> impl Future<Output = ()> + Send;
 }
 
-impl VideoSource for super::scrcpy::ScrcpySession {
+impl VideoSource for super::android::scrcpy::ScrcpySession {
     async fn next_unit(&mut self) -> Option<VideoUnit> {
         self.units.recv().await
     }
@@ -505,7 +505,10 @@ impl VideoSource for super::scrcpy::ScrcpySession {
     }
 
     fn failed(&self) -> bool {
-        matches!(self.ended(), Some(super::scrcpy::StreamEnd::Failed(_)))
+        matches!(
+            self.ended(),
+            Some(super::android::scrcpy::StreamEnd::Failed(_))
+        )
     }
 
     async fn stop(self, device_ended: bool) {
@@ -718,7 +721,8 @@ impl DeviceManager {
                 self.inner.tasks.spawn(async move {
                     let start = async move {
                         let session =
-                            super::scrcpy::ScrcpySession::start(&adb, &serial, &registry).await?;
+                            super::android::scrcpy::ScrcpySession::start(&adb, &serial, &registry)
+                                .await?;
                         tracing::debug!(
                             width = session.codec.width,
                             height = session.codec.height,

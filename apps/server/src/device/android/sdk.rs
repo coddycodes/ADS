@@ -9,7 +9,7 @@ use std::{
 
 use tokio_util::sync::CancellationToken;
 
-use super::catalog::{Availability, AvailabilityKind, Avd};
+use crate::device::catalog::{Availability, AvailabilityKind, Avd};
 use crate::process::supervised::{SupervisedOverflow, SupervisedRunRequest, run_supervised};
 
 const LIST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -227,7 +227,7 @@ async fn run_tool(program: &Path, args: &[&str]) -> Result<ToolOutput, String> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::device::testing::FakeSdk;
+    use crate::device::android::testing::FakeSdk;
 
     #[tokio::test]
     async fn reports_sdk_missing_with_actionable_message() {

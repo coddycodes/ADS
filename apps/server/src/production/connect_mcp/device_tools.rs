@@ -10,8 +10,8 @@ use tokio_util::sync::CancellationToken;
 use super::{PreviewScope, snapshot_tool_result, tool_failure};
 use crate::device::{
     DeviceManager, DeviceOpError,
+    android::grpc::proto::image_format::ImgFormat,
     catalog::{DeviceSnapshot, DeviceState},
-    grpc::proto::image_format::ImgFormat,
     input::oriented_size,
 };
 

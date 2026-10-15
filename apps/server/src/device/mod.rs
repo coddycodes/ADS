@@ -1,16 +1,12 @@
 //! Server-hosted Android device previews; see docs/architecture/overview.md#device-previews.
+pub(crate) mod android;
 pub mod catalog;
-pub(crate) mod emulator;
 pub mod frames;
-pub(crate) mod grpc;
 pub mod input;
 pub mod media;
 pub(crate) mod media_socket;
-pub(crate) mod scrcpy;
-pub(crate) mod sdk;
 pub(crate) mod stderr_tail;
-#[cfg(test)]
-pub(crate) mod testing;
+pub mod video;
 
 use std::{
     collections::HashMap,
@@ -23,16 +19,18 @@ use tokio::sync::watch;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use self::{
+    android::{
+        emulator::{self, EmulatorLauncher, LaunchError, RunningEmulator},
+        grpc::EmulatorClient,
+        sdk::{self, AndroidSdk, SdkEnv},
+    },
     catalog::{
         Availability, AvailabilityKind, Avd, DeviceCatalog, DeviceSnapshot, DeviceState,
         Orientation,
     },
-    emulator::{EmulatorLauncher, LaunchError, RunningEmulator},
     frames::FrameHub,
-    grpc::EmulatorClient,
     input::InputState,
     media::{MediaHub, TicketBook},
-    sdk::{AndroidSdk, SdkEnv},
 };
 use crate::diagnostics::ProcessAttributionRegistry;
 
@@ -870,7 +868,7 @@ fn record_lifecycle(phase: &'static str, started: Instant, failure_kind: Option<
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::device::testing::{ManagerFixture, kill_process, process_alive};
+    use crate::device::android::testing::{ManagerFixture, kill_process, process_alive};
 
     #[tokio::test]
     async fn open_publishes_states_and_enforces_one_device() {
@@ -911,7 +909,7 @@ mod tests {
         let pid = fixture.pid_of(&id);
         kill_process(pid);
         // The moment the manager stops serving the device, the catalog already says Failed.
-        crate::device::testing::wait_until(|| fixture.manager.client(&id).is_err()).await;
+        crate::device::android::testing::wait_until(|| fixture.manager.client(&id).is_err()).await;
         assert!(matches!(
             fixture.manager.client(&id),
             Err(DeviceOpError::NotReady(DeviceState::Failed))
@@ -930,7 +928,7 @@ mod tests {
         let snapshot = fixture.wait_state(&id, DeviceState::Failed).await;
         assert!(snapshot.failure.unwrap().contains("exited"));
         // Cleanup runs after the Failed publish and reaps the process.
-        crate::device::testing::wait_until(|| !process_alive(pid)).await;
+        crate::device::android::testing::wait_until(|| !process_alive(pid)).await;
         assert!(fixture.manager.open("Pixel").await.is_ok());
         fixture.manager.shutdown().await;
     }
@@ -1002,7 +1000,7 @@ mod tests {
         )
         .await
         .expect("the stop finishes without its caller");
-        crate::device::testing::wait_until(|| !process_alive(pid)).await;
+        crate::device::android::testing::wait_until(|| !process_alive(pid)).await;
         let next = fixture.manager.open("Pixel").await.unwrap();
         fixture.wait_state(&next, DeviceState::Ready).await;
         tokio::time::timeout(Duration::from_secs(20), fixture.manager.shutdown())
@@ -1017,7 +1015,7 @@ mod tests {
         fixture.wait_state(&id, DeviceState::Ready).await;
         let pid = fixture.pid_of(&id);
         kill_process(pid);
-        crate::device::testing::wait_until(|| fixture.manager.client(&id).is_err()).await;
+        crate::device::android::testing::wait_until(|| fixture.manager.client(&id).is_err()).await;
         tokio::time::timeout(Duration::from_secs(20), fixture.manager.close(&id))
             .await
             .expect("close ends")
@@ -1029,11 +1027,12 @@ mod tests {
     #[tokio::test]
     async fn wait_ready_returns_a_launch_failure_without_waiting() {
         let fixture = ManagerFixture::with_sdk(|sdk| {
-            sdk.avds(&["Pixel"])
-                .launch_stub(crate::device::testing::LaunchStub::ExitsWith(
+            sdk.avds(&["Pixel"]).launch_stub(
+                crate::device::android::testing::LaunchStub::ExitsWith(
                     1,
                     "PANIC: Missing emulator engine",
-                ))
+                ),
+            )
         })
         .await;
         let id = fixture.manager.open("Pixel").await.unwrap();
@@ -1098,7 +1097,7 @@ mod tests {
         let fixture =
             ManagerFixture::with_sdk(|sdk| sdk.avds(&["Pixel"]).list_avds_delay_secs(60)).await;
         // The setting is on, so the follower is already listing AVDs.
-        crate::device::testing::wait_until(|| fixture.sdk.list_avds_calls() == 1).await;
+        crate::device::android::testing::wait_until(|| fixture.sdk.list_avds_calls() == 1).await;
         let started = Instant::now();
         fixture.manager.shutdown().await;
         assert!(

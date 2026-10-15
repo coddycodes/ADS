@@ -1976,7 +1976,7 @@ reads back the reported orientation; the screen turns only when auto-rotate is
 on and the foreground app allows it.
 
 **H.264 video.** Device video is the only application traffic outside typed
-RPC. On the first media subscriber, `device/scrcpy.rs` pushes the embedded
+RPC. On the first media subscriber, `device/android/scrcpy.rs` pushes the embedded
 scrcpy-server v4.1 jar to `/data/local/tmp/bibcode-scrcpy-server-v4.1.jar`
 unless `sha256sum` on the device already matches, runs it through
 `adb shell` as a registered helper (`android-scrcpy`) with

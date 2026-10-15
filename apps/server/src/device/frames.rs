@@ -12,8 +12,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     DeviceError, DeviceManager, DeviceOpError, Inner,
+    android::grpc::proto,
     catalog::{DeviceState, Orientation},
-    grpc::proto,
     input::{oriented_size, reported_orientation},
 };
 
@@ -203,7 +203,7 @@ struct Producer {
 
 impl Producer {
     /// The client and native display size, while the device is `Ready`.
-    fn client(&self) -> Option<(super::grpc::EmulatorClient, (u32, u32))> {
+    fn client(&self) -> Option<(super::android::grpc::EmulatorClient, (u32, u32))> {
         let inner = self.inner.upgrade()?;
         let (client, _, native, _) = inner.client(&self.device_id).ok()?;
         Some((client, native))
@@ -334,7 +334,7 @@ mod tests {
 #[cfg(all(test, unix))]
 mod device_tests {
     use super::*;
-    use crate::device::{
+    use crate::device::android::{
         grpc::proto::rotation::SkinRotation,
         testing::{ManagerFixture, wait_until},
     };

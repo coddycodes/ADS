@@ -260,7 +260,7 @@ mod tests {
     use super::*;
     use crate::{
         ServerConfig, ServerHandle, ServerRuntime,
-        device::{catalog::DeviceState, testing::ManagerFixture},
+        device::{android::testing::ManagerFixture, catalog::DeviceState},
     };
 
     type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;

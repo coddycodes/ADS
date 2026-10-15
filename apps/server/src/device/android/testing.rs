@@ -877,8 +877,8 @@ impl FakeSdk {
         self.dir.path()
     }
 
-    pub(crate) fn env(&self) -> crate::device::sdk::SdkEnv {
-        crate::device::sdk::SdkEnv {
+    pub(crate) fn env(&self) -> crate::device::android::sdk::SdkEnv {
+        crate::device::android::sdk::SdkEnv {
             vars: std::collections::HashMap::from([(
                 "ANDROID_HOME".to_owned(),
                 self.root().into(),
@@ -898,9 +898,9 @@ impl FakeSdk {
 
     /// A launcher for this SDK that searches `discovery_dirs()` and requests the stub's
     /// gRPC port, where the fake controller listens.
-    pub(crate) fn launcher(&self) -> crate::device::emulator::EmulatorLauncher {
-        let mut launcher = crate::device::emulator::EmulatorLauncher::new(
-            crate::device::sdk::locate_sdk(&self.env()).expect("fake sdk is complete"),
+    pub(crate) fn launcher(&self) -> crate::device::android::emulator::EmulatorLauncher {
+        let mut launcher = crate::device::android::emulator::EmulatorLauncher::new(
+            crate::device::android::sdk::locate_sdk(&self.env()).expect("fake sdk is complete"),
             self.discovery_dirs(),
             crate::diagnostics::ProcessAttributionRegistry::new(),
             false,
@@ -954,11 +954,11 @@ pub(crate) fn kill_process(pid: u32) {
     unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
 }
 
-/// A [`DeviceManager`](super::DeviceManager) on a fake SDK whose emulators talk to one
+/// A [`DeviceManager`](crate::device::DeviceManager) on a fake SDK whose emulators talk to one
 /// [`FakeController`]; device previews start enabled.
 #[cfg(unix)]
 pub(crate) struct ManagerFixture {
-    pub(crate) manager: super::DeviceManager,
+    pub(crate) manager: crate::device::DeviceManager,
     pub(crate) enabled: watch::Sender<bool>,
     pub(crate) controller: FakeHandle,
     pub(crate) sdk: FakeSdk,
@@ -980,7 +980,7 @@ impl ManagerFixture {
         }))
         .write();
         let (enabled, signal) = watch::channel(true);
-        let manager = super::DeviceManager::start(super::DeviceManagerConfig {
+        let manager = crate::device::DeviceManager::start(crate::device::DeviceManagerConfig {
             env: sdk.env(),
             discovery_dirs: sdk.discovery_dirs(),
             registry: crate::diagnostics::ProcessAttributionRegistry::new(),
@@ -1000,8 +1000,8 @@ impl ManagerFixture {
     pub(crate) async fn wait_state(
         &self,
         device_id: &str,
-        state: super::catalog::DeviceState,
-    ) -> super::catalog::DeviceSnapshot {
+        state: crate::device::catalog::DeviceState,
+    ) -> crate::device::catalog::DeviceSnapshot {
         let mut catalog = self.manager.catalog();
         let snapshot = tokio::time::timeout(
             std::time::Duration::from_secs(20),
@@ -1025,7 +1025,7 @@ impl ManagerFixture {
         .find(|device| device.device_id == device_id)
         .cloned()
         .expect("device in catalog");
-        if state == super::catalog::DeviceState::Ready {
+        if state == crate::device::catalog::DeviceState::Ready {
             *self.controller.vm_state.lock().expect("fake vm state lock") = None;
             self.controller.exit_on_shutdown(self.pid_of(device_id));
         }
@@ -1063,7 +1063,7 @@ impl ManagerFixture {
         let fixture = Self::ready(&["Pixel"]).await;
         let id = fixture.manager.open("Pixel").await.expect("open Pixel");
         fixture
-            .wait_state(&id, super::catalog::DeviceState::Ready)
+            .wait_state(&id, crate::device::catalog::DeviceState::Ready)
             .await;
         DeviceFixture { fixture, id }
     }
@@ -1072,7 +1072,7 @@ impl ManagerFixture {
 #[cfg(unix)]
 impl DeviceFixture {
     /// The device's catalog entry.
-    pub(crate) fn snapshot(&self) -> super::catalog::DeviceSnapshot {
+    pub(crate) fn snapshot(&self) -> crate::device::catalog::DeviceSnapshot {
         self.manager
             .catalog()
             .borrow()
@@ -1084,7 +1084,7 @@ impl DeviceFixture {
     }
 
     /// Waits up to ten seconds for the catalog to report `orientation`.
-    pub(crate) async fn wait_orientation(&self, orientation: super::catalog::Orientation) {
+    pub(crate) async fn wait_orientation(&self, orientation: crate::device::catalog::Orientation) {
         let mut catalog = self.manager.catalog();
         tokio::time::timeout(
             std::time::Duration::from_secs(10),

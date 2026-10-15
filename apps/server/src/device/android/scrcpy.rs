@@ -28,11 +28,12 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use super::{
-    DeviceError,
-    stderr_tail::{STDERR_DRAIN_GRACE, StderrTail},
-};
 use crate::{
+    device::{
+        DeviceError,
+        stderr_tail::{STDERR_DRAIN_GRACE, StderrTail},
+        video::{UnitKind, VideoUnit},
+    },
     diagnostics::{ProcessAttributionRegistry, profiler::exits},
     process::{
         HelperSpawnError, RegisteredHelper, configure_supervised_background_command_wrap,
@@ -78,20 +79,6 @@ const ADB_MAX_OUTPUT_BYTES: usize = 4 * 1024;
 /// How long a server whose stream broke may take to be seen exiting before a stop.
 const SERVER_EXIT_GRACE: Duration = Duration::from_secs(1);
 const SERVER_EXIT_POLL: Duration = Duration::from_millis(50);
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum UnitKind {
-    Config,
-    Key,
-    Delta,
-}
-
-#[derive(Clone, Debug)]
-pub struct VideoUnit {
-    pub kind: UnitKind,
-    pub pts_us: u64,
-    pub data: bytes::Bytes,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CodecInfo {
@@ -690,7 +677,7 @@ async fn run_adb(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device::testing::{config_unit, delta_unit, key_unit, session_packet};
+    use crate::device::android::testing::{config_unit, delta_unit, key_unit, session_packet};
 
     fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -849,7 +836,7 @@ mod tests {
     #[tokio::test]
     async fn session_streams_units_and_sends_reset() {
         use crate::{
-            device::testing::{FAKE_SCRCPY_SIZE, FakeScrcpySource, FakeSdk},
+            device::android::testing::{FAKE_SCRCPY_SIZE, FakeScrcpySource, FakeSdk},
             diagnostics::ProcessAttributionRegistry,
         };
         let source = FakeScrcpySource::spawn(vec![config_unit(), key_unit(1), delta_unit(2)]).await;
@@ -880,7 +867,7 @@ mod tests {
         assert_eq!(source.control_bytes().await, vec![17]);
         let pid = session.helper.pid;
         session.stop(false).await;
-        assert!(!crate::device::testing::process_alive(pid));
+        assert!(!crate::device::android::testing::process_alive(pid));
 
         let log = sdk.adb_log();
         assert!(log.contains("forward --remove tcp:"), "{log}");
@@ -916,13 +903,13 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn stopping_for_an_ended_device_leaves_the_forward_to_adb() {
-        use crate::device::testing::{FakeScrcpySource, FakeSdk};
+        use crate::device::android::testing::{FakeScrcpySource, FakeSdk};
         let source = FakeScrcpySource::spawn(vec![config_unit()]).await;
         let sdk = FakeSdk::new().adb_forwards_to(source.port).write();
         let session = session_on(&sdk).await.unwrap();
         let pid = session.helper.pid;
         session.stop(true).await;
-        assert!(!crate::device::testing::process_alive(pid));
+        assert!(!crate::device::android::testing::process_alive(pid));
         // Give a background removal (a dropped `Forward`) time to show up in the log.
         tokio::time::sleep(Duration::from_millis(200)).await;
         let log = sdk.adb_log();
@@ -933,7 +920,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn start_fails_and_removes_the_forward_when_nothing_listens() {
-        use crate::{device::testing::FakeSdk, diagnostics::ProcessAttributionRegistry};
+        use crate::{device::android::testing::FakeSdk, diagnostics::ProcessAttributionRegistry};
         // A port nobody listens on: bind, read it, release it.
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .unwrap()
@@ -960,7 +947,7 @@ mod tests {
 
     #[cfg(unix)]
     async fn session_on(
-        sdk: &crate::device::testing::FakeSdk,
+        sdk: &crate::device::android::testing::FakeSdk,
     ) -> Result<ScrcpySession, DeviceError> {
         ScrcpySession::start(
             &sdk.adb(),
@@ -983,7 +970,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn matching_remote_jar_is_not_pushed() {
-        use crate::device::testing::{FakeScrcpySource, FakeSdk};
+        use crate::device::android::testing::{FakeScrcpySource, FakeSdk};
         let source = FakeScrcpySource::spawn(vec![config_unit()]).await;
         let sdk = FakeSdk::new()
             .adb_forwards_to(source.port)
@@ -1000,7 +987,7 @@ mod tests {
     #[tokio::test]
     async fn server_dying_mid_stream_is_reported_as_unrequested() {
         use crate::{
-            device::testing::{FakeScrcpySource, FakeSdk, ScrcpyStub},
+            device::android::testing::{FakeScrcpySource, FakeSdk, ScrcpyStub},
             diagnostics::profiler::exits::CapturedExits,
         };
         let captured = CapturedExits::start();
@@ -1029,7 +1016,7 @@ mod tests {
     #[tokio::test]
     async fn stream_failing_while_the_server_runs_is_a_requested_stop() {
         use crate::{
-            device::testing::{FakeScrcpySource, FakeSdk},
+            device::android::testing::{FakeScrcpySource, FakeSdk},
             diagnostics::profiler::exits::CapturedExits,
         };
         let captured = CapturedExits::start();
@@ -1042,14 +1029,14 @@ mod tests {
         assert!(matches!(session.ended(), Some(StreamEnd::Failed(_))));
         let pid = session.helper.pid;
         session.stop(false).await;
-        assert!(!crate::device::testing::process_alive(pid));
+        assert!(!crate::device::android::testing::process_alive(pid));
         assert!(captured.take().is_empty());
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn start_failure_carries_the_server_stderr() {
-        use crate::device::testing::{FakeSdk, ScrcpyStub};
+        use crate::device::android::testing::{FakeSdk, ScrcpyStub};
         let port = closed_port();
         let sdk = FakeSdk::new()
             .adb_forwards_to(port)
@@ -1071,7 +1058,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn cancelled_start_removes_the_forward() {
-        use crate::device::testing::{FakeSdk, wait_until};
+        use crate::device::android::testing::{FakeSdk, wait_until};
         let port = closed_port();
         let sdk = FakeSdk::new().adb_forwards_to(port).write();
         // Cancelled while it retries the connection.
@@ -1084,7 +1071,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn dropped_session_removes_the_forward() {
-        use crate::device::testing::{FakeScrcpySource, FakeSdk, wait_until};
+        use crate::device::android::testing::{FakeScrcpySource, FakeSdk, wait_until};
         let source = FakeScrcpySource::spawn(vec![config_unit()]).await;
         let sdk = FakeSdk::new().adb_forwards_to(source.port).write();
         let session = session_on(&sdk).await.unwrap();
@@ -1092,6 +1079,6 @@ mod tests {
         drop(session);
         let removed = format!("forward --remove tcp:{}", source.port);
         wait_until(|| sdk.adb_log().contains(&removed)).await;
-        wait_until(|| !crate::device::testing::process_alive(pid)).await;
+        wait_until(|| !crate::device::android::testing::process_alive(pid)).await;
     }
 }

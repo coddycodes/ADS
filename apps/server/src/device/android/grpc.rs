@@ -15,7 +15,7 @@ use tonic::{
     transport::{Channel, Endpoint},
 };
 
-use super::DeviceError;
+use crate::device::DeviceError;
 
 #[derive(Clone)]
 pub(crate) struct TokenInterceptor(Option<MetadataValue<tonic::metadata::Ascii>>);
@@ -161,7 +161,7 @@ mod tests {
 
     #[tokio::test]
     async fn client_authenticates_and_reads_status_and_frames() {
-        let fake = crate::device::testing::FakeController::spawn().await;
+        let fake = crate::device::android::testing::FakeController::spawn().await;
         let client = EmulatorClient::connect(fake.port, Some("test-token".into()))
             .await
             .unwrap();
@@ -183,7 +183,7 @@ mod tests {
 
     #[tokio::test]
     async fn client_with_wrong_token_is_rejected() {
-        let fake = crate::device::testing::FakeController::spawn().await;
+        let fake = crate::device::android::testing::FakeController::spawn().await;
         let client = EmulatorClient::connect(fake.port, Some("nope".into()))
             .await
             .unwrap();
@@ -195,7 +195,7 @@ mod tests {
 
     #[tokio::test]
     async fn client_streams_frames_and_forwards_input_rotation_and_shutdown() {
-        let fake = crate::device::testing::FakeController::spawn().await;
+        let fake = crate::device::android::testing::FakeController::spawn().await;
         let client = EmulatorClient::connect(fake.port, Some("test-token".into()))
             .await
             .unwrap();

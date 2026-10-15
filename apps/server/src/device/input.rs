@@ -8,11 +8,11 @@ use tokio_util::task::TaskTracker;
 
 use super::{
     DeviceError, DeviceManager, DeviceOpError,
-    catalog::Orientation,
-    grpc::{
+    android::grpc::{
         EmulatorClient,
         proto::{self, image_format::ImgFormat, rotation::SkinRotation},
     },
+    catalog::Orientation,
 };
 
 /// The most events one `device.input` batch may carry.
@@ -587,7 +587,7 @@ mod device_tests {
     use super::*;
     use crate::device::{
         DeviceOpError,
-        testing::{ManagerFixture, wait_until},
+        android::testing::{ManagerFixture, wait_until},
     };
 
     fn touch(action: TouchAction, x: f64, y: f64) -> DeviceInputEvent {

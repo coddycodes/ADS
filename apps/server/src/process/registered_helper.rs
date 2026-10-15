@@ -198,7 +198,7 @@ mod tests {
         assert!(helper_is_live(&*helper.child).unwrap());
         assert!(helper.exited().is_none());
         helper.terminate().await;
-        assert!(!crate::device::testing::process_alive(pid));
+        assert!(!crate::device::android::testing::process_alive(pid));
     }
 
     #[tokio::test]
@@ -211,7 +211,7 @@ mod tests {
         let helper = spawn_registered_helper(command, "sh".into(), "test helper", &registry)
             .await
             .unwrap();
-        crate::device::testing::wait_until(|| helper.exited().is_some()).await;
+        crate::device::android::testing::wait_until(|| helper.exited().is_some()).await;
         // Observed twice: the first read did not consume the exit.
         assert_eq!(helper.exited().and_then(|status| status.code()), Some(3));
         assert!(!helper_is_live(&*helper.child).unwrap());

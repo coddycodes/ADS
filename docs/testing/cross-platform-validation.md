@@ -3053,7 +3053,7 @@ Record each client's OS, app or browser version, and profile type.
    command leaves the screen and the catalog in portrait.
 7. **scrcpy session (native item 4).** After the first video session, record
    `adb -s <serial> shell sha256sum /data/local/tmp/bibcode-scrcpy-server-v4.1.jar`
-   (it equals `SCRCPY_SERVER_SHA256` in `device/scrcpy.rs`) and
+   (it equals `SCRCPY_SERVER_SHA256` in `device/android/scrcpy.rs`) and
    `adb -s <serial> shell stat -c %Y` of the same file. Close every Device
    panel showing the device and wait 5 s: `adb forward --list` has no
    `localabstract:scrcpy_` entry and

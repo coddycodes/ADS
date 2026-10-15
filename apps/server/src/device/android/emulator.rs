@@ -13,12 +13,14 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    catalog::DeviceState,
     grpc::{EmulatorClient, proto::image_format::ImgFormat},
     sdk::{AndroidSdk, SdkEnv},
-    stderr_tail::{STDERR_DRAIN_GRACE, StderrTail},
 };
 use crate::{
+    device::{
+        catalog::DeviceState,
+        stderr_tail::{STDERR_DRAIN_GRACE, StderrTail},
+    },
     diagnostics::{ProcessAttributionRegistry, profiler::exits},
     process::{
         HelperSpawnError, RegisteredHelper, configure_supervised_background_command_wrap,
@@ -491,7 +493,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::device::{
+    use crate::device::android::{
         grpc::proto::vm_run_state::RunState,
         testing::{FakeController, FakeSdk, LaunchStub, process_alive, wait_until},
     };

@@ -2057,7 +2057,7 @@ mod device_tools {
     use tokio_util::sync::CancellationToken;
 
     use super::{DeviceTools, PreviewScope};
-    use crate::device::testing::{LaunchStub, ManagerFixture, process_alive, wait_until};
+    use crate::device::android::testing::{LaunchStub, ManagerFixture, process_alive, wait_until};
 
     fn scope() -> PreviewScope {
         PreviewScope {
