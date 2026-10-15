@@ -179,6 +179,8 @@ export default defineConfig({
       "bibcode/namespace-node-imports": "error",
     },
     options: {
+      // Zero warnings: any lint warning fails `vp check`.
+      denyWarnings: true,
       // Revisit once Oxlint's tsgolint path can integrate with @effect/tsgo diagnostics.
       typeAware: false,
       typeCheck: false,
