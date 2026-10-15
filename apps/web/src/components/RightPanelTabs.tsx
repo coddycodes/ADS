@@ -1,10 +1,12 @@
 import type { ContextMenuItem, PreviewSessionSnapshot } from "@bibcode/contracts";
+import { formatChangeRequestNumber } from "@bibcode/shared/sourceControl";
 import { getTerminalLabel } from "@bibcode/shared/terminalLabels";
 import {
   Bot,
   ClipboardList,
   FileDiff,
   Files,
+  GitPullRequest,
   GitPullRequestArrow,
   Globe2,
   Plus,
@@ -233,6 +235,8 @@ function surfaceTitle(
       );
     case "plan":
       return "Plan";
+    case "pullRequest":
+      return formatChangeRequestNumber(surface.provider, surface.number);
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       const desktop = surface.resourceId ? desktopByTabId[surface.resourceId] : null;
@@ -278,6 +282,8 @@ function SurfaceIcon({ surface, theme }: { surface: RightPanelSurface; theme: "l
       return <TerminalSquare className="size-3.5 shrink-0" />;
     case "plan":
       return <ClipboardList className="size-3.5 shrink-0" />;
+    case "pullRequest":
+      return <GitPullRequest className="size-3.5 shrink-0" />;
   }
 }
 

@@ -1337,4 +1337,130 @@ describe("rightPanelStore", () => {
       selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
     ).toBeNull();
   });
+
+  it("opens one pull request surface per number and keeps its tab on reopen", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "sourceControl");
+    store.openPullRequest(refA, { number: 89, provider: "gitlab" });
+    store.setPullRequestTab(refA, 89, "checks");
+    store.openPullRequest(refA, { number: 89, provider: "gitlab" });
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "pullRequest:89",
+      surfaces: [
+        { id: "sourceControl", kind: "sourceControl" },
+        {
+          id: "pullRequest:89",
+          kind: "pullRequest",
+          number: 89,
+          provider: "gitlab",
+          tab: "checks",
+        },
+      ],
+    });
+  });
+
+  it("opens a second request as another tab and honours an explicit tab", () => {
+    const store = useRightPanelStore.getState();
+    store.openPullRequest(refA, { number: 89, provider: "gitlab" });
+    store.openPullRequest(refA, { number: 90, provider: "gitlab" }, "files");
+    store.openPullRequest(refA, { number: 89, provider: "gitlab" }, "commits");
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.activeSurfaceId).toBe("pullRequest:89");
+    expect(state.surfaces).toEqual([
+      { id: "pullRequest:89", kind: "pullRequest", number: 89, provider: "gitlab", tab: "commits" },
+      { id: "pullRequest:90", kind: "pullRequest", number: 90, provider: "gitlab", tab: "files" },
+    ]);
+  });
+
+  it("ignores a tab change for a request that is not open", () => {
+    useRightPanelStore.getState().setPullRequestTab(refA, 7, "files");
+    expect(useRightPanelStore.getState().byThreadKey).toEqual({});
+  });
+
+  it("keeps valid pull request surfaces and drops corrupted ones on load", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "pullRequest:89",
+            surfaces: [
+              {
+                id: "pullRequest:89",
+                kind: "pullRequest",
+                number: 89,
+                provider: "gitlab",
+                tab: "files",
+              },
+              {
+                id: "pullRequest:5",
+                kind: "pullRequest",
+                number: 5,
+                provider: "github",
+                tab: "nope",
+              },
+              {
+                id: "pullRequest:6",
+                kind: "pullRequest",
+                number: 7,
+                provider: "github",
+                tab: "files",
+              },
+              {
+                id: "pullRequest:0",
+                kind: "pullRequest",
+                number: 0,
+                provider: "github",
+                tab: "files",
+              },
+              {
+                id: "pullRequest:8",
+                kind: "pullRequest",
+                number: 8,
+                provider: "svn",
+                tab: "files",
+              },
+              { id: "diff", kind: "diff" },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "pullRequest:89",
+          surfaces: [
+            {
+              id: "pullRequest:89",
+              kind: "pullRequest",
+              number: 89,
+              provider: "gitlab",
+              tab: "files",
+            },
+            {
+              id: "pullRequest:5",
+              kind: "pullRequest",
+              number: 5,
+              provider: "github",
+              tab: "conversation",
+            },
+            { id: "diff", kind: "diff" },
+          ],
+        },
+      },
+    });
+  });
+
+  it("statically excludes pull requests from generic open and toggle actions", () => {
+    const genericPullRequestCallsMustFail = () => {
+      // @ts-expect-error Pull request surfaces open through openPullRequest.
+      useRightPanelStore.getState().open(refA, "pullRequest");
+      // @ts-expect-error Pull request surfaces must not use the generic toggle action.
+      useRightPanelStore.getState().toggle(refA, "pullRequest");
+    };
+    void genericPullRequestCallsMustFail;
+    expect(true).toBe(true);
+  });
 });
