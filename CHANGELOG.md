@@ -9,6 +9,8 @@
 ### Responsiveness and memory
 
 - A view of a deleted thread no longer makes the server use several CPU cores after a few hours. Each failed subscription to the thread left a task on the server that received every agent event until the app restarted, and the client retried every 250 ms. A failed subscription now ends with its request, and the client waits longer between retries, up to 30 s. (#113)
+- Reconnecting to a long thread no longer leaves another full copy of the thread in the app's memory. The app keeps the parts of a resent thread that did not change; in a test with a 200-message thread, six reconnects grew the web view's memory by 20 MB instead of 58 MB. (#96)
+- The Files panel no longer re-reads the whole file list when a formatter or editor saves files without adding or removing any. A burst of new files costs one read when it ends, or one about every 10 s while it lasts, instead of one every few seconds. (#111)
 
 ### Left panel and Git Manager
 
