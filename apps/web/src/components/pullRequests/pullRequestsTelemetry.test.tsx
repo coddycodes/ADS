@@ -54,6 +54,7 @@ vi.mock("../../state/worktrees", () => ({
 vi.mock("../../state/entities", () => ({
   useProject: () => ({ id: "project", workspaceRoot: "/opaque/repo" }),
   useServerConfigs: () => new Map([["env", h.data.config]]),
+  useThreadShellsForProjectRefs: () => [],
 }));
 vi.mock("../../state/environments", () => ({
   useEnvironmentConnectionState: () => ({ data: h.data.connection }),

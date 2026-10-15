@@ -34,6 +34,7 @@ const h = vi.hoisted(() => ({
   listRefresh: vi.fn(),
   listProps: null as Record<string, unknown> | null,
   detailProps: null as Record<string, unknown> | null,
+  besideProps: null as Record<string, unknown> | null,
   dialogProps: null as Record<string, unknown> | null,
 }));
 vi.mock("../../state/entities", () => ({
@@ -91,6 +92,12 @@ vi.mock("./detail/PullRequestsDetailView", () => ({
     return <div>Detail content</div>;
   },
 }));
+vi.mock("./OpenBesideThreadButton", () => ({
+  OpenBesideThreadButton: (props: Record<string, unknown>) => {
+    h.besideProps = props;
+    return <button type="button">Open beside a thread…</button>;
+  },
+}));
 vi.mock("../gitManager/provider/GitManagerCreatePullRequestDialog", () => ({
   GitManagerCreatePullRequestDialog: (props: Record<string, unknown>) => {
     h.dialogProps = props;
@@ -134,6 +141,7 @@ beforeEach(() => {
   h.catalogData = { worktrees: [] };
   h.catalogError = null;
   h.listProps = null;
+  h.besideProps = null;
   h.dialogProps = null;
   h.getContext.mockClear();
   h.list.mockClear();
@@ -371,6 +379,28 @@ describe("PullRequestsPanel", () => {
     });
     expect(h.listProps).toBeNull();
     expect(usePullRequestsStore.getState().selectViewState(ref).lastNumber).toBe(14);
+  });
+  it("offers to open the request beside a thread of the project", async () => {
+    await act(async () =>
+      root.render(<PullRequestsPanel projectRef={ref} number={14} tab="files" />),
+    );
+    const headerActions = h.detailProps!.headerActions as (detail: {
+      number: number;
+      headBranch: string;
+    }) => React.ReactElement;
+    const host = document.createElement("div");
+    const actionsRoot = createRoot(host);
+    await act(async () =>
+      actionsRoot.render(headerActions({ number: 14, headBranch: "feature/x" })),
+    );
+    expect(host.textContent).toBe("Open beside a thread…");
+    expect(h.besideProps).toEqual({
+      projectRef: ref,
+      number: 14,
+      provider: context.provider,
+      headBranch: "feature/x",
+    });
+    await act(async () => actionsRoot.unmount());
   });
   it("explains disabled mutations and shows custom host vocabulary", async () => {
     h.config = {

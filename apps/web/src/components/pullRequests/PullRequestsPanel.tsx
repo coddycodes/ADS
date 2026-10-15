@@ -1,7 +1,7 @@
 import { resolveChangeRequestPresentationForKind } from "@bibcode/shared/sourceControl";
 import { projectKey } from "@bibcode/client-runtime/state/entities";
 import { environmentRpcKey } from "@bibcode/client-runtime/state/runtime";
-import type { ScopedProjectRef } from "@bibcode/contracts";
+import type { PullRequestsDetail, ScopedProjectRef } from "@bibcode/contracts";
 import { RefreshCwIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -31,6 +31,7 @@ import {
 } from "./pullRequestsAvailability";
 import { PullRequestsContextRefresh } from "./pullRequestsContextRefresh";
 import { pullRequestsHostAddress } from "./pullRequestsHost.logic";
+import { OpenBesideThreadButton } from "./OpenBesideThreadButton";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import { usePullRequestsContextQuery } from "./usePullRequestsContextQuery";
 import { PullRequestsDetailView } from "./detail/PullRequestsDetailView";
@@ -67,6 +68,15 @@ function AvailablePullRequests({
   const [createOpen, setCreateOpen] = useState(false);
   const openPrLink = useOpenPrLink();
   const presentation = resolveChangeRequestPresentationForKind(context.provider);
+  // Not a component: the detail view calls this while rendering its header.
+  const renderDetailActions = (detail: PullRequestsDetail) => (
+    <OpenBesideThreadButton
+      projectRef={projectRef}
+      number={detail.number}
+      provider={context.provider}
+      headBranch={detail.headBranch}
+    />
+  );
   const Icon = context.provider === "github" ? GitHubIcon : GitLabIcon;
   const customHost = context.host !== "github.com" && context.host !== "gitlab.com";
   const refresh = () => (number === undefined ? listRef.current?.refresh() : onRescan());
@@ -156,6 +166,7 @@ function AvailablePullRequests({
             number={number}
             tab={tab}
             mutationsDisabledReason={mutationsDisabledReason}
+            headerActions={renderDetailActions}
           />
         </PullRequestsRouteNavigation>
       )}
