@@ -77,14 +77,15 @@ pub fn register_device_rpc(registry: &mut RpcRegistry, devices: DeviceManager) {
     let frames = devices.clone();
     registry.register_latest_stream("device.subscribeFrames", move |request, cancellation| {
         let (sender, receiver) = watch::channel(None);
-        let subscription = decode::<DeviceIdInput>(request.payload).and_then(|input| {
-            if !frames.enabled() {
-                return Err(DeviceOpError::Disabled.to_rpc_error());
-            }
-            frames
-                .subscribe_frames(&input.device_id)
-                .map_err(|error| error.to_rpc_error())
-        });
+        let subscription = if frames.enabled() {
+            decode::<DeviceIdInput>(request.payload).and_then(|input| {
+                frames
+                    .subscribe_frames(&input.device_id)
+                    .map_err(|error| error.to_rpc_error())
+            })
+        } else {
+            Err(DeviceOpError::Disabled.to_rpc_error())
+        };
         let subscription: FrameSubscription = match subscription {
             Ok(subscription) => subscription,
             Err(error) => {
@@ -107,13 +108,10 @@ pub fn register_device_rpc(registry: &mut RpcRegistry, devices: DeviceManager) {
                         if changed.is_err() {
                             break;
                         }
-                        let frame = subscription
-                            .frames
-                            .borrow_and_update()
-                            .as_ref()
-                            .map(serde_json::to_value);
+                        // Cloned out so the producer's next send never waits on encoding.
+                        let frame = subscription.frames.borrow_and_update().clone();
                         if let Some(frame) = frame {
-                            publish(&sender, frame);
+                            publish(&sender, serde_json::to_value(frame));
                         }
                     }
                 }
@@ -148,9 +146,8 @@ pub fn register_device_rpc(registry: &mut RpcRegistry, devices: DeviceManager) {
         &devices,
         |devices, payload| async move {
             // A serde message can quote the payload, which may hold typed text.
-            let input: DeviceInputInput = serde_json::from_value(payload).map_err(|_| {
-            json!({ "_tag": "Defect", "message": "device.input payload does not match the contract" })
-        })?;
+            let input: DeviceInputInput =
+                serde_json::from_value(payload).map_err(|_| redacted_defect())?;
             devices
                 .input(&input.device_id, input.events)
                 .await
@@ -210,6 +207,11 @@ fn publish(sender: &watch::Sender<Option<RpcStreamChunk>>, value: serde_json::Re
 /// Payloads are validated by the client's schema, so one that does not decode is a defect.
 fn decode<T: for<'de> Deserialize<'de>>(payload: Value) -> Result<T, Value> {
     serde_json::from_value(payload).map_err(|error| defect(&error))
+}
+
+/// A decode failure for a payload whose values must not be quoted.
+fn redacted_defect() -> Value {
+    json!({ "_tag": "Defect", "message": "device.input payload does not match the contract" })
 }
 
 fn defect(error: &serde_json::Error) -> Value {
@@ -514,6 +516,12 @@ mod tests {
                 "{method}"
             );
         }
+        // The setting is checked before the payload is decoded.
+        let error = harness
+            .call("device.subscribeFrames", json!({ "deviceId": 7 }))
+            .await
+            .unwrap_err();
+        assert_eq!(error["_tag"], "DevicePreviewsDisabledError");
         harness.stop().await;
     }
 }
