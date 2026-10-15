@@ -26,6 +26,10 @@ pub(crate) const NO_SIMULATORS_MESSAGE: &str =
 pub(crate) const HEADLESS_MESSAGE: &str =
     "Live input needs someone logged in on this Mac. Simulators open as screenshots.";
 
+/// `GuardResult::ViewOnly::missing` when another Xcode's frameworks are already loaded.
+pub(crate) const RESTART_NEEDED: &str = "a server restart (another Xcode is loaded)";
+pub(crate) const XCODE_CHANGED_MESSAGE: &str = "Xcode changed while the server was running. Restart the server to use live simulators; until then they open as screenshots without touch input.";
+
 /// Why simulators of this Xcode open view-only.
 pub(crate) fn unsupported_message(version: &str) -> String {
     format!(
@@ -304,6 +308,10 @@ type Prober = Box<dyn Fn(&Path) -> GuardResult + Send + Sync>;
 pub(crate) struct GuardCache {
     prober: Prober,
     last: Mutex<Option<(PathBuf, String, GuardResult)>>,
+    /// The developer directory and version whose frameworks are loaded into this process.
+    /// They cannot be unloaded, and loading a second SimulatorKit would duplicate its
+    /// classes, so no other Xcode goes live until the server restarts.
+    loaded: Mutex<Option<(PathBuf, String)>>,
     probes: AtomicUsize,
 }
 
@@ -317,6 +325,7 @@ impl GuardCache {
         Self {
             prober,
             last: Mutex::new(None),
+            loaded: Mutex::new(None),
             probes: AtomicUsize::new(0),
         }
     }
@@ -341,8 +350,30 @@ impl GuardCache {
         {
             return result.clone();
         }
-        self.probes.fetch_add(1, Ordering::Relaxed);
-        let result = (self.prober)(developer_dir);
+        let mut loaded = lock(&self.loaded);
+        let result = match loaded.as_ref() {
+            Some((dir, loaded_version)) if dir != developer_dir || loaded_version != version => {
+                tracing::warn!(
+                    loaded = %dir.display(),
+                    %loaded_version,
+                    developer_dir = %developer_dir.display(),
+                    %version,
+                    "Xcode changed while the server ran; restart the server to use live simulators with it"
+                );
+                GuardResult::ViewOnly {
+                    kind: AvailabilityKind::XcodeUnsupported,
+                    missing: RESTART_NEEDED.to_owned(),
+                }
+            }
+            _ => {
+                self.probes.fetch_add(1, Ordering::Relaxed);
+                let result = (self.prober)(developer_dir);
+                if matches!(result, GuardResult::Live(_)) {
+                    *loaded = Some((developer_dir.clone(), version.clone()));
+                }
+                result
+            }
+        };
         *last = Some((developer_dir.clone(), version.clone(), result.clone()));
         result
     }
@@ -436,6 +467,14 @@ pub(crate) fn availability_for(
             AvailabilityKind::ViewOnlyHeadless,
             HEADLESS_MESSAGE.to_owned(),
         ),
+        (XcodeStatus::Ready { .. }, Some(GuardResult::ViewOnly { missing, .. }))
+            if missing == RESTART_NEEDED =>
+        {
+            (
+                AvailabilityKind::XcodeUnsupported,
+                XCODE_CHANGED_MESSAGE.to_owned(),
+            )
+        }
         (XcodeStatus::Ready { version, .. }, Some(GuardResult::ViewOnly { .. })) => (
             AvailabilityKind::XcodeUnsupported,
             unsupported_message(version),
@@ -744,6 +783,44 @@ mod tests {
             GuardResult::ViewOnly { .. }
         ));
         assert_eq!(cache.probes(), 2);
+    }
+
+    #[test]
+    fn a_second_xcode_never_loads_while_one_is_live() {
+        let cache = GuardCache::with_prober(Box::new(|_| GuardResult::Live(CoreSim::fake())));
+        let ready = |dir: &str, version: &str| XcodeStatus::Ready {
+            developer_dir: dir.into(),
+            version: version.into(),
+        };
+        assert!(matches!(
+            cache.get(&ready("/X1", "27.0")),
+            GuardResult::Live(_)
+        ));
+        for other in [ready("/X2", "27.0"), ready("/X1", "27.1")] {
+            match cache.get(&other) {
+                GuardResult::ViewOnly { kind, missing } => {
+                    assert_eq!(kind, AvailabilityKind::XcodeUnsupported);
+                    assert_eq!(missing, RESTART_NEEDED);
+                }
+                GuardResult::Live(_) => panic!("a second Xcode must not load"),
+            }
+            let device = SimDevice {
+                udid: "U".into(),
+                name: "iPhone".into(),
+                runtime: "iOS 27.0".into(),
+                state: crate::device::ios::simctl::SimState::Shutdown,
+            };
+            assert_eq!(
+                availability_for(&other, &[device], Some(&cache.get(&other))).message,
+                XCODE_CHANGED_MESSAGE
+            );
+        }
+        assert_eq!(cache.probes(), 1, "only the first Xcode was probed");
+        // Switching back to the loaded Xcode is live again.
+        assert!(matches!(
+            cache.get(&ready("/X1", "27.0")),
+            GuardResult::Live(_)
+        ));
     }
 
     #[tokio::test]

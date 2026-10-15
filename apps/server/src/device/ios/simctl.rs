@@ -197,6 +197,20 @@ pub(crate) fn jpeg_size(jpeg: &[u8]) -> Option<(u32, u32)> {
     }
 }
 
+/// A temporary file, removed when dropped: also when a screenshot's future is dropped
+/// mid-await.
+struct RemovedOnDrop(PathBuf);
+
+impl Drop for RemovedOnDrop {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_file(&self.0)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(%error, "could not remove a simulator screenshot");
+        }
+    }
+}
+
 /// The screenshot `simctl` wrote to `path`, refused when it is larger than one full-size
 /// JPEG should be.
 async fn read_screenshot(path: &std::path::Path) -> Result<Vec<u8>, SimctlError> {
@@ -268,11 +282,11 @@ impl SimctlRunner {
     /// A JPEG screenshot. Xcode 27's `simctl io screenshot` no longer writes to stdout (it
     /// takes `-` as a file name), so it writes to a temporary file that is read and removed.
     pub(crate) async fn screenshot_jpeg(&self, udid: &str) -> Result<Vec<u8>, SimctlError> {
-        let path = std::env::temp_dir().join(format!(
+        let path = RemovedOnDrop(std::env::temp_dir().join(format!(
             "bibcode-simulator-{}.jpg",
             uuid::Uuid::new_v4().simple()
-        ));
-        let target = path.to_string_lossy().into_owned();
+        )));
+        let target = path.0.to_string_lossy().into_owned();
         let taken = self
             .simctl(
                 &["io", udid, "screenshot", "--type=jpeg", &target],
@@ -281,16 +295,10 @@ impl SimctlRunner {
                 SMALL_OUTPUT_BYTES,
             )
             .await;
-        let read = match taken {
-            Ok(_) => read_screenshot(&path).await,
+        match taken {
+            Ok(_) => read_screenshot(&path.0).await,
             Err(error) => Err(error),
-        };
-        if let Err(error) = tokio::fs::remove_file(&path).await
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(%error, "could not remove a simulator screenshot");
         }
-        read
     }
 
     /// Puts `text` on the simulator's pasteboard.
@@ -644,6 +652,19 @@ mod tests {
                 .iter()
                 .all(|call| !call.starts_with("bootstatus"))
         );
+    }
+
+    #[test]
+    fn a_temporary_screenshot_is_removed_on_drop() {
+        let path = std::env::temp_dir().join(format!(
+            "bibcode-simulator-test-{}.jpg",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::write(&path, b"jpeg").unwrap();
+        drop(RemovedOnDrop(path.clone()));
+        assert!(!path.exists());
+        // A file simctl never wrote is no error.
+        drop(RemovedOnDrop(path));
     }
 
     #[test]

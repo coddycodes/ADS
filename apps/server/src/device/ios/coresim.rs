@@ -120,6 +120,25 @@ pub(crate) struct CoreSim {
     pub hid: HidSymbols,
 }
 
+#[cfg(test)]
+impl CoreSim {
+    /// A `CoreSim` whose symbols must never be called, for guard tests.
+    pub(crate) fn fake() -> Arc<Self> {
+        let symbol = Symbol(NonNull::dangling());
+        Arc::new(Self {
+            developer_dir: PathBuf::from("/nonexistent"),
+            hid: HidSymbols {
+                mouse_event: symbol,
+                button: symbol,
+                hid_arbitrary: symbol,
+                endpoint_create_mach_port: symbol,
+                connection_from_endpoint: symbol,
+                enable_sim2host: symbol,
+            },
+        })
+    }
+}
+
 /// The guard's view of the loaded frameworks.
 struct DlsymResolver {
     developer_dir: PathBuf,
@@ -384,6 +403,12 @@ impl Object {
 
     /// The elements of an `NSArray`.
     fn elements(&self) -> Result<Vec<Self>, DeviceError> {
+        if !self.responds(c"count") {
+            return Err(missing(c"count"));
+        }
+        if !self.responds(c"objectAtIndex:") {
+            return Err(missing(c"objectAtIndex:"));
+        }
         // SAFETY: `count` returns NSUInteger.
         let count = guarded(c"count", || unsafe {
             send0::<usize>(self.ptr(), sel(c"count"))
@@ -399,6 +424,24 @@ impl Object {
             })
             .collect()
     }
+}
+
+/// Whether `object`'s real class (its `isa`, read without sending a message, so a proxy
+/// cannot answer for its target) is `class` or a subclass of it.
+fn is_instance_of(object: Id, class: &CStr) -> bool {
+    let (Some(object), Some(class)) = (NonNull::new(object), AnyClass::get(class)) else {
+        return false;
+    };
+    // SAFETY: `object` is a live object the callee handed us; reading its class sends no
+    // message.
+    let mut current = Some(unsafe { object.as_ref() }.class());
+    while let Some(candidate) = current {
+        if std::ptr::eq(candidate, class) {
+            return true;
+        }
+        current = candidate.superclass();
+    }
+    false
 }
 
 fn missing(selector: &CStr) -> DeviceError {
@@ -453,9 +496,16 @@ fn find_device(sim: &CoreSim, udid: &str) -> Result<Object, DeviceError> {
         let Ok(uuid) = device.get(c"UDID") else {
             continue;
         };
-        // SAFETY: `-UDID` returns an `NSUUID` (§0).
+        if !is_instance_of(uuid.ptr(), c"NSUUID") {
+            tracing::warn!("a simulator's UDID is not an NSUUID");
+            continue;
+        }
+        // SAFETY: the object's own class was just checked to be `NSUUID`.
         let uuid = unsafe { Retained::cast_unchecked::<NSUUID>(uuid.0) };
-        if uuid.UUIDString().to_string().eq_ignore_ascii_case(udid) {
+        let Ok(text) = guarded(c"UUIDString", || uuid.UUIDString().to_string()) else {
+            continue;
+        };
+        if text.eq_ignore_ascii_case(udid) {
             return Ok(device);
         }
     }
@@ -497,13 +547,23 @@ unsafe impl Send for IoSurface {}
 unsafe impl Sync for IoSurface {}
 
 impl IoSurface {
-    /// Retains `object` when it is an IOSurface (toll-free bridged with `IOSurfaceRef`).
+    /// Retains `object` when it is a real IOSurface (toll-free bridged with
+    /// `IOSurfaceRef`). Anything else, a remote proxy included, is refused before any
+    /// CoreFoundation call; an exception raised anyway is caught and refuses it too.
     fn retain(object: Id) -> Option<Self> {
+        if !is_instance_of(object, c"IOSurface") {
+            return None;
+        }
         let object = NonNull::new(object)?;
-        // SAFETY: `object` is a live object, and every Objective-C object is a CFType that
-        // `CFGetTypeID` accepts; `downcast` then checks it is an IOSurface.
-        let object = unsafe { CFRetained::retain(object.cast::<CFType>()) };
-        object.downcast::<IOSurfaceRef>().ok().map(Self)
+        guarded(c"CFRetain", || {
+            // SAFETY: `object`'s own class is `IOSurface` (checked above without a message),
+            // which is toll-free bridged with `IOSurfaceRef`, so it is a CFType;
+            // `downcast` confirms the CF type id.
+            let object = unsafe { CFRetained::retain(object.cast::<CFType>()) };
+            object.downcast::<IOSurfaceRef>().ok().map(Self)
+        })
+        .ok()
+        .flatten()
     }
 
     /// The surface's portrait size.
@@ -614,6 +674,8 @@ struct ScreenState {
     /// Counts frames; consumers wait for it to change.
     damage: watch::Sender<u64>,
     orientation: watch::Sender<IosOrientation>,
+    /// Set once a callback handed over something that is not an IOSurface.
+    refused_surface: AtomicBool,
 }
 
 // The callbacks run on the dispatch queue's threads, so what they capture must be shareable.
@@ -698,6 +760,7 @@ impl Screen {
             surface: Mutex::new(None),
             damage: watch::Sender::new(0),
             orientation: watch::Sender::new(orientation),
+            refused_surface: AtomicBool::new(false),
         });
         if let Ok(surface) = descriptor.get(c"framebufferSurface")
             && let Some(surface) = IoSurface::retain(surface.ptr())
@@ -715,8 +778,15 @@ impl Screen {
         let surfaces = {
             let state = state.clone();
             RcBlock::with_encoding::<_, _, _, SurfacesBlock>(move |framebuffer: Id, _masked: Id| {
-                if let Some(surface) = IoSurface::retain(framebuffer) {
-                    state.set_surface(surface);
+                match IoSurface::retain(framebuffer) {
+                    Some(surface) => state.set_surface(surface),
+                    None => {
+                        if !state.refused_surface.swap(true, Ordering::Relaxed) {
+                            tracing::warn!(
+                                "the simulator handed over a framebuffer that is not an IOSurface; ignoring it"
+                            );
+                        }
+                    }
                 }
             })
         };
@@ -744,7 +814,7 @@ impl Screen {
         // SAFETY: §0 records `v56@0:8@16@24@?32@?40@?48`: an NSUUID, a dispatch queue and
         // three blocks, which the callee copies. The blocks capture only an `Arc` of state
         // that is `Send + Sync`.
-        guarded(register, || unsafe {
+        let registered = guarded(register, || unsafe {
             send5(
                 descriptor.ptr(),
                 sel(register),
@@ -754,14 +824,18 @@ impl Screen {
                 surfaces,
                 properties,
             );
-        })?;
-        Ok(Self {
+        });
+        let screen = Self {
             descriptor,
             uuid,
             _queue: queue,
             state,
             detached: AtomicBool::new(false),
-        })
+        };
+        // The send may have raised after CoreSimulator stored the callbacks: dropping the
+        // screen unregisters them, best effort.
+        registered?;
+        Ok(screen)
     }
 
     /// Unregisters the callbacks once; later calls do nothing. Callbacks already queued may
@@ -861,6 +935,19 @@ mod tests {
             }
             GuardResult::Live(_) => panic!("no frameworks there"),
         }
+    }
+
+    #[test]
+    fn only_a_real_iosurface_is_retained_as_one() {
+        let string = NSString::from_str("not a surface");
+        let string: Id = Retained::as_ptr(&string).cast::<AnyObject>().cast_mut();
+        assert!(IoSurface::retain(string).is_none());
+        assert!(IoSurface::retain(null_mut()).is_none());
+        assert!(is_instance_of(string, c"NSString"), "a subclass counts");
+        assert!(!is_instance_of(string, c"NSUUID"));
+        let uuid = NSUUID::new();
+        let uuid: Id = Retained::as_ptr(&uuid).cast::<AnyObject>().cast_mut();
+        assert!(is_instance_of(uuid, c"NSUUID"));
     }
 
     #[test]
