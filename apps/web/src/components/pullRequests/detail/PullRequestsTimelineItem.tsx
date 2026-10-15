@@ -118,7 +118,7 @@ function PullRequestsFileLink({ path, children }: { path: string; children: Reac
   return (
     <button
       type="button"
-      className="break-all text-left font-mono text-primary underline underline-offset-4"
+      className="cursor-pointer break-all text-left font-mono text-primary underline underline-offset-4"
       onClick={() => navigation.showFile(path)}
     >
       {children}

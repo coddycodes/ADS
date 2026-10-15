@@ -154,8 +154,10 @@ thread's checkout.
 request was created or an existing one was found, when the host returned a
 number (`GitRunStackedActionResult.pr.number`), then closes the dialog. Without
 a number, Done only closes, as today. Only `SourceControlPanel` passes `onDone`;
-it calls `openPullRequest(threadRef, number)`. The Git actions control, the Pull
-Requests page and the git manager keep today's Done.
+it calls `openPullRequest(threadRef, { number, provider })` only when
+`canOpenPullRequestInPanel` allows it (Pull Requests is on and the host is not
+Bitbucket or Azure DevOps). The Git actions control, the Pull Requests page and
+the git manager keep today's Done.
 
 ### "Open {MR/PR} in panel" in the thread
 
@@ -172,7 +174,8 @@ menu is never shown.
 ### "Open beside a thread…" on the full page
 
 An action in the full-page detail view's `headerActions` slot opens a picker
-listing the project's threads that are not archived:
+listing the project's threads that are neither archived nor center-panel
+threads (`kind: "panel"`, which the sidebar hides too):
 
 - threads whose `branch` equals the request's `headBranch` first, marked
   "On this branch";
@@ -223,10 +226,11 @@ Test-first, at the public seams:
   the router adapter.
 - Create dialog: Done calls `onDone` with the number only after the request was
   created or found, and does not call it when the outcome has no number.
-- `SourceControlPanel`: Done opens the panel surface; "Open in panel" is listed
+- `SourceControlPanel`: Done opens the panel surface only where
+  `canOpenPullRequestInPanel` allows it; "Open in panel" is listed
   only for an open request in a thread and opens the surface.
-- Picker ordering: branch matches first, then most recent; archived threads
-  excluded; disabled with a reason when the project has no thread.
+- Picker ordering: branch matches first, then most recent; archived and
+  center-panel threads excluded; disabled with a reason when the project has no thread.
 - `PullRequestPanelSurface`: each unavailable reason, the header's two actions,
   and the detail view rendered with the thread's scope.
 

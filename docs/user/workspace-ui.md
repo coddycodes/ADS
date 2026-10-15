@@ -946,8 +946,8 @@ Plan surfaces can also appear when the active provider/session supplies them.
 ### Pull and merge requests in the panel
 
 A pull or merge request can open as a right-panel tab beside a thread, with its
-Conversation, Commits, Pipelines and Changes and every action, against the
-thread's checkout:
+Conversation, Commits, Checks/Pipelines and Files changed/Changes and every
+action, against the thread's checkout:
 
 - **Done** in the Source Control panel's create dialog opens the request it
   created or found.

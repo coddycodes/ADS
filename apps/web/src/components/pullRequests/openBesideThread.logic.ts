@@ -14,7 +14,7 @@ export function rankBesideThreadCandidates(
   headBranch: string,
 ): BesideThreadCandidate[] {
   return threads
-    .filter((thread) => thread.archivedAt === null)
+    .filter((thread) => thread.archivedAt === null && thread.kind !== "panel")
     .map((thread) => ({ thread, onBranch: thread.branch === headBranch }))
     .toSorted(
       (left, right) =>

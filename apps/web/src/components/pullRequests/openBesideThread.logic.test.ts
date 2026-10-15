@@ -8,6 +8,7 @@ const thread = (
   branch: string | null,
   updatedAt: string,
   archivedAt: string | null = null,
+  kind: "default" | "workspace" | "panel" = "workspace",
 ) =>
   ({
     id,
@@ -16,10 +17,11 @@ const thread = (
     branch,
     updatedAt,
     archivedAt,
+    kind,
   }) as unknown as EnvironmentThreadShell;
 
 describe("rankBesideThreadCandidates", () => {
-  it("lists threads on the request's branch first, then the most recent, without archived ones", () => {
+  it("lists threads on the request's branch first, then the most recent, without archived or center-panel ones", () => {
     const ranked = rankBesideThreadCandidates(
       [
         thread("old", "main", "2026-10-01T00:00:00.000Z"),
@@ -27,6 +29,7 @@ describe("rankBesideThreadCandidates", () => {
         thread("new", null, "2026-10-14T00:00:00.000Z"),
         thread("archived", "feature/x", "2026-10-15T00:00:00.000Z", "2026-10-15T01:00:00.000Z"),
         thread("branch-new", "feature/x", "2026-10-10T00:00:00.000Z"),
+        thread("panel", "feature/x", "2026-10-15T00:00:00.000Z", null, "panel"),
       ],
       "feature/x",
     );

@@ -4,7 +4,7 @@
 
 ### Pull and merge requests
 
-- A pull or merge request can open as a tab in a thread's right panel, beside the conversation. **Done** after creating one from the Source Control panel opens it there, **Open MR in panel** opens the branch's open request, and the full Pull Requests page offers **Open beside a thread…**.
+- A pull or merge request can open as a tab in a thread's right panel, beside the conversation. **Done** after creating one from the Source Control panel opens it there, **Open MR in panel** (**Open PR in panel** on GitHub) opens the branch's open request, and the full Pull Requests page offers **Open beside a thread…**.
 
 ## [v0.9.3] - 2026-10-14
 

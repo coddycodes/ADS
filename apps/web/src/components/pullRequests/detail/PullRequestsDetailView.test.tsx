@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { usePullRequestsStore, type PullRequestsDetailTab } from "../../../pullRequestsStore";
 import { recordPrefetch, resetPrefetchGates } from "../hoverPrefetch.logic";
 import { PullRequestsContextRefresh } from "../pullRequestsContextRefresh";
-import { context, detail, gitlabContext } from "./testFixtures";
+import { context, detail, fakeNavigation, gitlabContext } from "./testFixtures";
 import { click, allowed } from "../review/testHelpers";
 const h = vi.hoisted(() => ({
   command: vi.fn(),
@@ -92,7 +92,12 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
 }));
 import { PullRequestsDetailView } from "./PullRequestsDetailView";
-import { PullRequestsRouteNavigation } from "./pullRequestsNavigation";
+import {
+  PullRequestsFileAnchorContext,
+  PullRequestsNavigationContext,
+  PullRequestsRouteNavigation,
+  type PullRequestsNavigation,
+} from "./pullRequestsNavigation";
 function setVisibility(state: DocumentVisibilityState) {
   Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
   document.dispatchEvent(new Event("visibilitychange"));
@@ -120,6 +125,32 @@ async function render(
             mutationsDisabledReason={mutationsDisabledReason}
           />
         </PullRequestsRouteNavigation>
+      </PullRequestsContextRefresh>,
+    ),
+  );
+}
+/** The view as a thread's right panel hosts it: its own navigation, no list to go back to. */
+async function renderInPanel(
+  navigation: PullRequestsNavigation,
+  headerActions: (loaded: PullRequestsDetail) => React.ReactNode,
+  host = context,
+) {
+  await act(async () =>
+    root.render(
+      <PullRequestsContextRefresh value={h.contextRefresh}>
+        <PullRequestsNavigationContext value={navigation}>
+          <PullRequestsFileAnchorContext value={null}>
+            <PullRequestsDetailView
+              scope={scope}
+              projectRef={projectRef}
+              context={host}
+              number={14}
+              tab="conversation"
+              mutationsDisabledReason={null}
+              headerActions={headerActions}
+            />
+          </PullRequestsFileAnchorContext>
+        </PullRequestsNavigationContext>
       </PullRequestsContextRefresh>,
     ),
   );
@@ -476,6 +507,29 @@ describe("PullRequestsDetailView", () => {
       to: "/project/$environmentId/$projectId/pull-requests",
       params: projectRef,
     });
+  });
+  it("shows no list link in a panel, renders its header action once loaded, and discards a deleted request", async () => {
+    const discardDeleted = vi.fn();
+    const navigation = fakeNavigation({ back: null, discardDeleted });
+    const headerAction = (loaded: PullRequestsDetail) => (
+      <span data-testid="panel-action">{`Action for ${loaded.title}`}</span>
+    );
+    h.data.get = null;
+    await renderInPanel(navigation, headerAction, gitlabContext);
+    expect(container.querySelector('[data-testid="panel-action"]')).toBeNull();
+    h.data.get = { ...detail, permissions: { ...detail.permissions, delete: allowed } };
+    h.command.mockResolvedValue({ _tag: "Success", value: { kind: "deleted" } });
+    await renderInPanel(navigation, headerAction, gitlabContext);
+    expect(container.textContent).not.toContain("Back to");
+    const actions = container.querySelectorAll('[data-testid="panel-action"]');
+    expect(actions).toHaveLength(1);
+    expect(actions[0]!.textContent).toBe(`Action for ${detail.title}`);
+    await click("More actions");
+    await click("Delete");
+    await click("Delete merge request", document.querySelector('[role="alertdialog"]')!);
+    expect(discardDeleted).toHaveBeenCalledOnce();
+    expect(navigation.requestGone).toHaveBeenCalledOnce();
+    expect(h.navigate).not.toHaveBeenCalled();
   });
   it("lays out the side column by its own width, not the window's", async () => {
     await render();
