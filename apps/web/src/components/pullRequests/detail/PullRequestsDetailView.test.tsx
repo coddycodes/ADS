@@ -477,6 +477,14 @@ describe("PullRequestsDetailView", () => {
       params: projectRef,
     });
   });
+  it("lays out the side column by its own width, not the window's", async () => {
+    await render();
+    const root = container.querySelector('[data-text-surface="background"]')!;
+    expect(root.className).toContain("@container/pull-request");
+    const aside = container.querySelector('[data-pull-request-side-column="wide"]')!;
+    expect(aside.className).toContain("@3xl/pull-request:block");
+    expect(aside.className).not.toContain("lg:block");
+  });
   it("refreshes a reopened cached tab and never dispatches reads on focus", async () => {
     await render("checks");
     await render("commits");

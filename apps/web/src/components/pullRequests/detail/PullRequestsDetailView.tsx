@@ -306,7 +306,10 @@ export function PullRequestsDetailView({
       refresh={actionRefresh}
       disabledReason={mutationsDisabledReason}
     >
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-text-surface="background">
+      <div
+        className="@container/pull-request flex min-h-0 min-w-0 flex-1 flex-col"
+        data-text-surface="background"
+      >
         {navigation.back !== null || (headerActions && detail) ? (
           <div className="flex shrink-0 items-center justify-between gap-2 px-4 pt-2">
             {navigation.back !== null ? (
@@ -403,7 +406,10 @@ export function PullRequestsDetailView({
                       ) : null}
                     </PullRequestsQueryState>
                   </TabsPanel>
-                  <div className="hidden w-64 shrink-0 overflow-auto border-l border-border lg:block">
+                  <div
+                    data-pull-request-side-column="wide"
+                    className="hidden w-64 shrink-0 overflow-auto border-l border-border @3xl/pull-request:block"
+                  >
                     <PullRequestsSideColumn
                       detail={detail}
                       live={liveDetail}

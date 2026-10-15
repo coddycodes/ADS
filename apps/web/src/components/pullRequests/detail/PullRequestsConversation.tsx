@@ -132,7 +132,7 @@ export const PullRequestsConversation = memo(function PullRequestsConversation({
               number={detail.number}
               live={live}
             />
-            <div className="lg:hidden">
+            <div className="@3xl/pull-request:hidden">
               <PullRequestsSideColumn
                 detail={detail}
                 live={liveDetail}
