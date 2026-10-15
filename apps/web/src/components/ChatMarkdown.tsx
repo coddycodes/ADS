@@ -1659,6 +1659,7 @@ function ChatMarkdown({
     }),
     [
       diffThemeName,
+      environmentId,
       fileLinkParentSuffixByPath,
       isStreaming,
       markdownFileLinkMetaByHref,

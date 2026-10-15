@@ -428,37 +428,39 @@ function useBoundedActivityQuery<Page extends ActivityPageData>(
     readonly key: string | null;
     readonly cursor: string | null;
     readonly pages: ReadonlyArray<KeyedActivityPage<Page>>;
-  }>({ key: queryKey, cursor: null, pages: [] });
-  const current = state.key === queryKey ? state : { key: queryKey, cursor: null, pages: [] };
+    /** The query page last folded into `pages` for this key and cursor. */
+    readonly reconciled: Page | null;
+  }>({ key: queryKey, cursor: null, pages: [], reconciled: null });
+  const current =
+    state.key === queryKey ? state : { key: queryKey, cursor: null, pages: [], reconciled: null };
   const queryAtom = useMemo(
     () => (queryKey === null ? null : atomForCursor(current.cursor)),
     [atomForCursor, current.cursor, queryKey],
   );
   const query = useEnvironmentQuery<Page, unknown>(queryAtom);
+  const { refresh: refreshQuery, revalidate: revalidateQuery } = query;
   const newestRefreshKeyRef = useRef<{ key: string; retry: boolean } | null>(null);
 
-  useEffect(() => {
-    if (queryKey === null || query.data === null) {
-      return;
-    }
-    const data = query.data;
+  const data = query.data;
+  if (queryKey !== null && data !== null && current.reconciled !== data) {
     setState((previous) => {
       const pages = previous.key === queryKey ? previous.pages : [];
       return {
         key: queryKey,
         cursor: current.cursor,
         pages: reconcileBoundedActivityPages<Page>(pages, current.cursor, data),
+        reconciled: data,
       };
     });
-  }, [current.cursor, query.data, queryKey]);
+  }
 
   useEffect(() => {
     const pending = newestRefreshKeyRef.current;
     if (queryKey === null || current.cursor !== null || pending?.key !== queryKey) return;
     newestRefreshKeyRef.current = null;
-    if (pending.retry) query.refresh();
-    else query.revalidate();
-  }, [current.cursor, query.refresh, query.revalidate, queryKey]);
+    if (pending.retry) refreshQuery();
+    else revalidateQuery();
+  }, [current.cursor, queryKey, refreshQuery, revalidateQuery]);
 
   const pages = useMemo(() => current.pages.map((entry) => entry.page), [current.pages]);
   const failure = Option.getOrNull(AsyncResult.error(query.emission));
@@ -471,23 +473,24 @@ function useBoundedActivityQuery<Page extends ActivityPageData>(
         failed: failure !== null,
       }) === "refresh"
     ) {
-      query.refresh();
+      refreshQuery();
       return;
     }
     setState((previous) => ({
       key: queryKey,
       cursor: nextCursor,
       pages: previous.key === queryKey ? previous.pages : [],
+      reconciled: null,
     }));
-  }, [current.cursor, failure, pages, query.refresh, queryKey]);
+  }, [current.cursor, failure, pages, queryKey, refreshQuery]);
   // Returning to the newest page keeps whether the initiating action was an
   // explicit Retry or an automatic re-read.
   const refreshNewest = useCallback(
     (retry: boolean) => {
       if (queryKey === null) return;
       if (current.cursor === null) {
-        if (retry) query.refresh();
-        else query.revalidate();
+        if (retry) refreshQuery();
+        else revalidateQuery();
         return;
       }
       newestRefreshKeyRef.current = { key: queryKey, retry };
@@ -495,9 +498,10 @@ function useBoundedActivityQuery<Page extends ActivityPageData>(
         key: queryKey,
         cursor: null,
         pages: previous.key === queryKey ? previous.pages : [],
+        reconciled: null,
       }));
     },
-    [current.cursor, query.refresh, query.revalidate, queryKey],
+    [current.cursor, queryKey, refreshQuery, revalidateQuery],
   );
   const refresh = useCallback(() => refreshNewest(true), [refreshNewest]);
   const revalidate = useCallback(() => refreshNewest(false), [refreshNewest]);
@@ -641,7 +645,6 @@ const ActivityPanelBinding = memo(function ActivityPanelBinding({
     readonly message: string;
     readonly targetKey: string;
     readonly controlRevision: number;
-    readonly invocation: number;
   } | null>(null);
   const snapshot = useMemo(() => activitySnapshotForState(activityState), [activityState]);
   const section = surface.section;
@@ -713,15 +716,26 @@ const ActivityPanelBinding = memo(function ActivityPanelBinding({
     [selectedRecordId, selectedRecordKind, snapshot, threadRef.environmentId],
   );
   const detailQuery = useBoundedActivityQuery(detailQueryKey, detailAtomForCursor);
+  const revalidateActiveRoster = activeRoster.revalidate;
+  const revalidateDoneRoster = doneRoster.revalidate;
+  const revalidateDetail = detailQuery.revalidate;
   const refreshQueriesRef = useRef<() => void>(() => undefined);
-  refreshQueriesRef.current = () => {
-    activeRoster.revalidate();
-    doneRoster.revalidate();
-    detailQuery.revalidate();
-  };
+  useLayoutEffect(() => {
+    refreshQueriesRef.current = () => {
+      revalidateActiveRoster();
+      revalidateDoneRoster();
+      revalidateDetail();
+    };
+  }, [revalidateActiveRoster, revalidateDetail, revalidateDoneRoster]);
+  // Every change to the queried scope, record, or snapshot revision schedules
+  // one coalesced revalidation.
+  const queryRevalidationKey =
+    snapshot === null
+      ? null
+      : JSON.stringify([queryBaseKey, detailQueryKey, snapshot.revision, snapshot.scopeId]);
   const refreshTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
   useEffect(() => {
-    if (snapshot === null) {
+    if (queryRevalidationKey === null) {
       return;
     }
     if (refreshTimerRef.current !== null) {
@@ -731,7 +745,7 @@ const ActivityPanelBinding = memo(function ActivityPanelBinding({
       refreshTimerRef.current = null;
       refreshQueriesRef.current();
     }, 100);
-  }, [detailQueryKey, queryBaseKey, snapshot?.revision, snapshot?.scopeId]);
+  }, [queryRevalidationKey]);
   useEffect(
     () => () => {
       if (refreshTimerRef.current !== null) {
@@ -771,10 +785,12 @@ const ActivityPanelBinding = memo(function ActivityPanelBinding({
     ) => useRightPanelStore.getState().navigateActivity(threadRef, route),
     [threadRef],
   );
+  const loadMoreActiveRoster = activeRoster.loadMore;
+  const loadMoreDoneRoster = doneRoster.loadMore;
   const onLoadMoreRoster = useCallback(
     (bucket: "active" | "done") =>
-      bucket === "active" ? activeRoster.loadMore() : doneRoster.loadMore(),
-    [activeRoster.loadMore, doneRoster.loadMore],
+      bucket === "active" ? loadMoreActiveRoster() : loadMoreDoneRoster(),
+    [loadMoreActiveRoster, loadMoreDoneRoster],
   );
   const cancellationTarget = useMemo(
     () =>
@@ -819,13 +835,16 @@ const ActivityPanelBinding = memo(function ActivityPanelBinding({
       }
     };
   }, [currentCancellationControlRevision, currentCancellationTargetKey]);
-  const cancellationError =
+  const cancellationFailureIsCurrent =
     cancellationFailure !== null &&
     cancellationFailure.targetKey === currentCancellationTargetKey &&
-    cancellationFailure.controlRevision === currentCancellationControlRevision &&
-    cancellationFailure.invocation === cancellationOwnershipRef.current.invocation
-      ? cancellationFailure.message
-      : null;
+    cancellationFailure.controlRevision === currentCancellationControlRevision;
+  // A failure belongs to the target and revision it was raised for; drop it as
+  // soon as either changes so returning to that target cannot resurface it.
+  if (cancellationFailure !== null && !cancellationFailureIsCurrent) {
+    setCancellationFailure(null);
+  }
+  const cancellationError = cancellationFailureIsCurrent ? cancellationFailure.message : null;
   const onCancelActor = useCallback(
     async (actorId: ActivityRecordId, expectedControlRevision: number) => {
       if (cancellationTarget === null) {
@@ -858,7 +877,6 @@ const ActivityPanelBinding = memo(function ActivityPanelBinding({
           message: activityCancellationFailureMessage(squashAtomCommandFailure(result)),
           targetKey,
           controlRevision,
-          invocation,
         });
       }
     },
@@ -896,7 +914,6 @@ const ActivityPanelBinding = memo(function ActivityPanelBinding({
           message: activityCancellationFailureMessage(squashAtomCommandFailure(result)),
           targetKey,
           controlRevision,
-          invocation,
         });
       }
     },
@@ -1015,6 +1032,18 @@ function resetRestoredComposerCursor(
   prompt: string,
 ) {
   composer.current?.resetCursorState({ cursor: prompt.length, prompt, detectTrigger: true });
+}
+
+// The composer handle can come from context, which React Compiler cannot see is
+// a ref; reading it here keeps callbacks keyed on the ref, not its contents.
+function readComposerHandle(composer: RefObject<ChatComposerHandle | null>) {
+  return composer.current;
+}
+
+// Snapshot read of the composer draft store for render-time fallbacks that
+// deliberately do not subscribe to it.
+function readComposerDraftStore() {
+  return useComposerDraftStore.getState();
 }
 
 function useLocalDispatchState(input: {
@@ -1490,7 +1519,7 @@ function ChatViewContent(props: ChatViewProps) {
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const { environments } = useEnvironments();
-  const presentation = useMemo(readCurrentEnvironmentPresentationPolicy, []);
+  const presentation = useMemo(() => readCurrentEnvironmentPresentationPolicy(), []);
   const primaryEnvironment = usePrimaryEnvironment();
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const environmentById = useMemo(
@@ -1558,7 +1587,9 @@ function ChatViewContent(props: ChatViewProps) {
   // app-level and host-owned. A panel must use its OWN local handle so mounting
   // it beside the host does not clobber the ref that host shortcuts drive.
   const composerRef = isPanel ? localComposerRef : (sharedComposerHandle ?? localComposerRef);
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  // The thread the scroll-to-bottom pill was shown on: it shows only there, so a thread switch
+  // hides it without a reset, and a show scheduled before the switch lands on the old thread.
+  const [scrollPillThreadId, setScrollPillThreadId] = useState<ThreadId | null>(null);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const [attachmentUploads, setAttachmentUploads] = useState<
@@ -1610,7 +1641,9 @@ function ChatViewContent(props: ChatViewProps) {
     [routeThreadKey],
   );
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
-  optimisticUserMessagesRef.current = optimisticUserMessages;
+  useLayoutEffect(() => {
+    optimisticUserMessagesRef.current = optimisticUserMessages;
+  }, [optimisticUserMessages]);
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
     Record<string, string | null>
   >({});
@@ -1644,9 +1677,8 @@ function ChatViewContent(props: ChatViewProps) {
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
     Record<string, string[]>
   >({});
-  const [pendingServerThreadEnvMode, setPendingServerThreadEnvMode] =
-    useState<DraftThreadEnvMode | null>(null);
-  const [pendingServerThreadBranch, setPendingServerThreadBranch] = useState<string | null>();
+  const [pendingServerThreadEnvMode] = useState<DraftThreadEnvMode | null>(null);
+  const [pendingServerThreadBranch] = useState<string | null>();
   const [pendingServerThreadStartFromOriginByThreadId] = useState<Record<string, boolean>>({});
   const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useLocalStorage(
     LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
@@ -1688,7 +1720,7 @@ function ChatViewContent(props: ChatViewProps) {
     if (!draftThread) return null;
     const targetInstanceId =
       fallbackDraftProject?.defaultModelSelection?.instanceId ??
-      useComposerDraftStore.getState().stickyActiveProvider ??
+      readComposerDraftStore().stickyActiveProvider ??
       defaultInstanceIdForDriver(ProviderDriverKind.make("codex"));
     const providers = environmentById.get(draftThread.environmentId)?.serverConfig?.providers ?? [];
     return resolveProviderSessionSelectionForInstance({
@@ -1701,7 +1733,7 @@ function ChatViewContent(props: ChatViewProps) {
   const fallbackDraftModelSelection = fallbackDraftResolution?.modelSelection ?? null;
   const legacyDraftMissingStoredModelSelection = useMemo(() => {
     if (!draftThread) return false;
-    const composerDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+    const composerDraft = readComposerDraftStore().getComposerDraft(composerDraftTarget);
     return Object.keys(composerDraft?.modelSelectionByProvider ?? {}).length === 0;
   }, [composerDraftTarget, draftThread]);
   const warnedLegacyDraftFallbacksRef = useRef(new Set<string>());
@@ -2015,9 +2047,12 @@ function ChatViewContent(props: ChatViewProps) {
       ),
     [rightPanelState.surfaces],
   );
-  const hasTerminalSurface =
+  // Boolean() tells React Compiler this is a primitive rather than a value that
+  // may alias the center panel state.
+  const hasTerminalSurface = Boolean(
     centerPanelState.surfaces.some((surface) => surface.kind === "terminal") ||
-    panelTerminalIds.size > 0;
+    panelTerminalIds.size > 0,
+  );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;
   const effectiveRightPanelOpen = rightPanelOpen && rightPanelSurfaceEligible;
@@ -2125,10 +2160,19 @@ function ChatViewContent(props: ChatViewProps) {
         activeThread?.worktreePath ?? activeProject.workspaceRoot,
       ])
     : null;
-  const fileEditingSessions = useMemo(
-    () => new FileEditingSessionRegistry<FileEditingSession<FileCommentAnnotationGroup>>(),
-    [activeProjectKey],
-  );
+  // Each project workspace gets its own registry, replaced while rendering when
+  // the workspace changes.
+  const [fileEditingSessionsByProject, setFileEditingSessionsByProject] = useState(() => ({
+    projectKey: activeProjectKey,
+    registry: new FileEditingSessionRegistry<FileEditingSession<FileCommentAnnotationGroup>>(),
+  }));
+  if (fileEditingSessionsByProject.projectKey !== activeProjectKey) {
+    setFileEditingSessionsByProject({
+      projectKey: activeProjectKey,
+      registry: new FileEditingSessionRegistry<FileEditingSession<FileCommentAnnotationGroup>>(),
+    });
+  }
+  const fileEditingSessions = fileEditingSessionsByProject.registry;
   const openFileRelativePaths = useMemo(
     () =>
       rightPanelState.surfaces.flatMap((surface) =>
@@ -2284,7 +2328,10 @@ function ChatViewContent(props: ChatViewProps) {
       const resolution = resolveProviderSessionSelectionForInstance({
         instanceId: targetInstanceId,
         providers: activeEnvironment?.serverConfig?.providers ?? [],
-        settings,
+        settings: {
+          providerInstances: settings.providerInstances,
+          providerSessionDefaults: settings.providerSessionDefaults,
+        },
         projectSelection: activeProject.defaultModelSelection,
       });
       setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
@@ -2547,6 +2594,7 @@ function ChatViewContent(props: ChatViewProps) {
     navigate,
     presentation,
     providerBinding.conflict,
+    setDismissedVersionMismatchKey,
     showVersionMismatchBanner,
     versionMismatch,
     versionMismatchDismissKey,
@@ -2735,13 +2783,7 @@ function ChatViewContent(props: ChatViewProps) {
         void releaseStagedAttachments({ environmentId, input: retained.attachments });
       }
     },
-    [
-      environmentId,
-      releaseStagedAttachments,
-      routeThreadKey,
-      routeThreadRef,
-      stagedAttachmentAttempts,
-    ],
+    [environmentId, releaseStagedAttachments, routeThreadKey, routeThreadRef],
   );
   const previousQueueMessagesRef = useRef({ threadKey: routeThreadKey, messages: queuedMessages });
   useEffect(() => {
@@ -3182,7 +3224,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
 
   const focusComposer = useCallback(() => {
-    composerRef.current?.focusAtEnd();
+    readComposerHandle(composerRef)?.focusAtEnd();
   }, [composerRef]);
   const scheduleComposerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -3191,7 +3233,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [focusComposer]);
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
-      composerRef.current?.addTerminalContext(selection);
+      readComposerHandle(composerRef)?.addTerminalContext(selection);
     },
     [composerRef],
   );
@@ -3473,26 +3515,22 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
       void (async () => {
-        try {
-          await openTerminal({
-            environmentId: activeThreadRef.environmentId,
-            input: {
-              threadId: activeThreadId,
-              terminalId: reservation.terminalId,
-              cwd,
-              ...(activeThreadWorktreePath != null
-                ? { worktreePath: activeThreadWorktreePath }
-                : {}),
-              env: projectScriptRuntimeEnv({
-                project: { cwd: activeProject.workspaceRoot },
-                worktreePath: activeThreadWorktreePath,
-              }),
-            },
-          });
-        } finally {
-          reservation.release();
-        }
-      })();
+        await openTerminal({
+          environmentId: activeThreadRef.environmentId,
+          input: {
+            threadId: activeThreadId,
+            terminalId: reservation.terminalId,
+            cwd,
+            ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
+            env: projectScriptRuntimeEnv({
+              project: { cwd: activeProject.workspaceRoot },
+              worktreePath: activeThreadWorktreePath,
+            }),
+          },
+        });
+      })().finally(() => {
+        reservation.release();
+      });
     },
     [activeProject, activeThreadId, activeThreadRef, activeThreadWorktreePath, openTerminal],
   );
@@ -3873,9 +3911,16 @@ function ChatViewContent(props: ChatViewProps) {
   // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
   // thread switches. LegendList fires scroll events with isAtEnd=false while
   // initialScrollAtEnd is settling; hiding is always immediate.
+  const scrollPillThreadIdRef = useRef(activeThreadId);
+  useLayoutEffect(() => {
+    scrollPillThreadIdRef.current = activeThreadId;
+  }, [activeThreadId]);
   const showScrollDebouncer = useRef(
-    new Debouncer(() => setShowScrollToBottom(true), { wait: 150 }),
+    new Debouncer((threadId: ThreadId | null) => setScrollPillThreadId(threadId), {
+      wait: 150,
+    }),
   );
+  const showScrollToBottom = scrollPillThreadId !== null && scrollPillThreadId === activeThreadId;
   const timelineScrollModeRef = useRef<TimelineScrollMode>("following-end");
   const pendingTimelineAnchorRef = useRef<MessageId | null>(null);
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
@@ -3967,10 +4012,15 @@ function ChatViewContent(props: ChatViewProps) {
     pendingTimelineAnchorRef.current = null;
     activeTimelineAnchorIndexRef.current = null;
     showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
+    setScrollPillThreadId(null);
     void legendListRef.current?.scrollToEnd?.({ animated });
   }, []);
+  // The timeline remounts per thread (it is keyed by thread id), so bind to
+  // each thread's scroll node; without a thread there is no timeline.
   useEffect(() => {
+    if (activeThreadId === null) {
+      return;
+    }
     let removeListeners: (() => void) | null = null;
     const frame = requestAnimationFrame(() => {
       const scrollNode = legendListRef.current?.getScrollableNode();
@@ -4000,7 +4050,7 @@ function ChatViewContent(props: ChatViewProps) {
       cancelAnimationFrame(frame);
       removeListeners?.();
     };
-  }, [activeThread?.id]);
+  }, [activeThreadId]);
 
   const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
     if (pendingTimelineAnchorRef.current === messageId) {
@@ -4100,7 +4150,7 @@ function ChatViewContent(props: ChatViewProps) {
       liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current
     ) {
       showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
+      setScrollPillThreadId(null);
       return;
     }
     if (isAtEndRef.current === isAtEnd) return;
@@ -4109,16 +4159,17 @@ function ChatViewContent(props: ChatViewProps) {
       timelineScrollModeRef.current = "following-end";
       liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
       showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
+      setScrollPillThreadId(null);
     } else {
       timelineScrollModeRef.current = "free-scrolling";
       liveFollowUserScrollGenerationRef.current = null;
-      showScrollDebouncer.current.maybeExecute();
+      showScrollDebouncer.current.maybeExecute(scrollPillThreadIdRef.current);
     }
   }, []);
 
+  // Follows the end after new timeline entries render; an empty timeline has nothing to follow.
   useEffect(() => {
-    if (!activeThread?.id) {
+    if (!activeThread?.id || timelineEntries.length === 0) {
       return;
     }
     if (liveFollowUserScrollGenerationRef.current !== anchorUserScrollGenerationRef.current) {
@@ -4183,8 +4234,16 @@ function ChatViewContent(props: ChatViewProps) {
     timelineRealContentOverflowsViewport,
   ]);
 
-  useEffect(() => {
+  // Per-thread view state resets while rendering the newly active thread.
+  const [viewStateThreadId, setViewStateThreadId] = useState(activeThreadId);
+  if (viewStateThreadId !== activeThreadId) {
+    setViewStateThreadId(activeThreadId);
     setPullRequestDialogState(null);
+    setScrollPillThreadId(null);
+    setIsRevertingCheckpoint(false);
+  }
+
+  useEffect(() => {
     isAtEndRef.current = true;
     timelineScrollModeRef.current = "following-end";
     liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
@@ -4193,7 +4252,6 @@ function ChatViewContent(props: ChatViewProps) {
     settledTimelineAnchorRef.current = null;
     activeTimelineAnchorIndexRef.current = null;
     showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
     if (planSidebarOpenOnNextThreadRef.current) {
       planSidebarOpenOnNextThreadRef.current = false;
       if (activeThreadRef) {
@@ -4201,8 +4259,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
     planSidebarDismissedForTurnRef.current = null;
-    // activeThreadRef resets transitively with the active thread.
-  }, [activeThread?.id]);
+  }, [activeThreadRef]);
 
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
   // Don't auto-open for plans carried over from a previous turn (the user can open manually).
@@ -4225,10 +4282,6 @@ function ChatViewContent(props: ChatViewProps) {
     planSidebarOpen,
     sidebarProposedPlan?.turnId,
   ]);
-
-  useEffect(() => {
-    setIsRevertingCheckpoint(false);
-  }, [activeThread?.id]);
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -4258,16 +4311,26 @@ function ChatViewContent(props: ChatViewProps) {
     };
   }, [activeThread?.id, activeThread?.messages, handoffAttachmentPreviews, optimisticUserMessages]);
 
-  useEffect(() => {
-    setOptimisticUserMessages((existing) => {
-      for (const message of existing) {
-        revokeUserMessagePreviewUrls(message);
-      }
-      return [];
-    });
+  // Route-scoped send state resets while rendering the new route.
+  const [sendStateRoute, setSendStateRoute] = useState({ draftId, threadId });
+  if (sendStateRoute.draftId !== draftId || sendStateRoute.threadId !== threadId) {
+    setSendStateRoute({ draftId, threadId });
+    setOptimisticUserMessages([]);
     resetLocalDispatch();
     setExpandedImage(null);
-  }, [draftId, resetLocalDispatch, threadId]);
+  }
+  // The previous route's previews are released once the new route commits: a route switch
+  // whose render is discarded must leave the still-visible thread's images intact.
+  const committedOptimisticRef = useRef({ draftId, threadId, messages: optimisticUserMessages });
+  useEffect(() => {
+    const previous = committedOptimisticRef.current;
+    if (previous.draftId !== draftId || previous.threadId !== threadId) {
+      for (const message of previous.messages) {
+        revokeUserMessagePreviewUrls(message);
+      }
+    }
+    committedOptimisticRef.current = { draftId, threadId, messages: optimisticUserMessages };
+  }, [draftId, optimisticUserMessages, threadId]);
 
   const closeExpandedImage = useCallback(() => {
     setExpandedImage(null);
@@ -4319,9 +4382,10 @@ function ChatViewContent(props: ChatViewProps) {
       if (!activeThread || !activeThreadRef || !centerPanelLaunchContext || workspaceUnavailable)
         return;
       const configuredDefault = settings.providerSessionDefaults[entry.driverKind];
+      const projectDefaultModelSelection = activeProject?.defaultModelSelection;
       const projectSelection =
-        activeProject?.defaultModelSelection?.instanceId === entry.instanceId
-          ? activeProject.defaultModelSelection
+        projectDefaultModelSelection?.instanceId === entry.instanceId
+          ? projectDefaultModelSelection
           : null;
       const resolution = resolveProviderSessionDefault({
         driver: entry.driverKind,
@@ -4419,7 +4483,7 @@ function ChatViewContent(props: ChatViewProps) {
             ...(options?.command !== undefined ? { command: options.command } : {}),
           }
         : null;
-      try {
+      return (async () => {
         const result = await createCenterTerminal(
           {
             threadRef: activeThreadRef,
@@ -4507,9 +4571,9 @@ function ChatViewContent(props: ChatViewProps) {
           );
         }
         return result;
-      } finally {
+      })().finally(() => {
         reservation.release();
-      }
+      });
     },
     [
       activeThreadRef,
@@ -4703,19 +4767,6 @@ function ChatViewContent(props: ChatViewProps) {
     requestedEnvMode: envMode,
     isGitRepo,
   });
-
-  useEffect(() => {
-    setPendingServerThreadEnvMode(null);
-    setPendingServerThreadBranch(undefined);
-  }, [activeThread?.id]);
-
-  useEffect(() => {
-    if (canOverrideServerThreadEnvMode) {
-      return;
-    }
-    setPendingServerThreadEnvMode(null);
-    setPendingServerThreadBranch(undefined);
-  }, [canOverrideServerThreadEnvMode]);
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
@@ -4998,6 +5049,7 @@ function ChatViewContent(props: ChatViewProps) {
       resolveTurnDelivery,
       resolvingTurnDeliveryMessageId,
       instanceLabels,
+      setResolvingTurnDeliveryMessageId,
       setThreadError,
     ],
   );
@@ -5588,7 +5640,7 @@ function ChatViewContent(props: ChatViewProps) {
         pendingTimelineAnchorRef.current = messageIdForSend;
         activeTimelineAnchorIndexRef.current = null;
         showScrollDebouncer.current.cancel();
-        setShowScrollToBottom(false);
+        setScrollPillThreadId(null);
         setTimelineAnchor({
           threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
           messageId: messageIdForSend,
@@ -6016,11 +6068,10 @@ function ChatViewContent(props: ChatViewProps) {
       if (!activePendingUserInput) {
         return;
       }
+      const activeQuestion = activePendingProgress?.activeQuestion;
       setPendingUserInputAnswersByRequestId((existing) => {
         const question =
-          (activePendingProgress?.activeQuestion?.id === questionId
-            ? activePendingProgress.activeQuestion
-            : undefined) ??
+          (activeQuestion?.id === questionId ? activeQuestion : undefined) ??
           activePendingUserInput.questions.find((entry) => entry.id === questionId);
         if (!question) {
           return existing;
@@ -6039,7 +6090,7 @@ function ChatViewContent(props: ChatViewProps) {
         };
       });
       promptRef.current = "";
-      composerRef.current?.resetCursorState({ cursor: 0 });
+      readComposerHandle(composerRef)?.resetCursorState({ cursor: 0 });
     },
     [activePendingProgress?.activeQuestion, activePendingUserInput, composerRef],
   );
@@ -6066,13 +6117,14 @@ function ChatViewContent(props: ChatViewProps) {
           ),
         },
       }));
-      const snapshot = composerRef.current?.readSnapshot();
+      const composer = readComposerHandle(composerRef);
+      const snapshot = composer?.readSnapshot();
       if (
         snapshot?.value !== value ||
         snapshot.cursor !== nextCursor ||
         snapshot.expandedCursor !== expandedCursor
       ) {
-        composerRef.current?.focusAt(nextCursor);
+        composer?.focusAt(nextCursor);
       }
     },
     [activePendingUserInput, composerRef],
@@ -6165,7 +6217,7 @@ function ChatViewContent(props: ChatViewProps) {
       pendingTimelineAnchorRef.current = messageIdForSend;
       activeTimelineAnchorIndexRef.current = null;
       showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
+      setScrollPillThreadId(null);
       setTimelineAnchor({
         threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
         messageId: messageIdForSend,
@@ -6259,6 +6311,7 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [
       activeThread,
+      activeThreadRef,
       activeProposedPlan,
       beginLocalDispatch,
       isConnecting,
@@ -6424,7 +6477,6 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     activeProject,
     activeProposedPlan,
-    activeThreadBranch,
     activeThread,
     beginLocalDispatch,
     activeEnvironmentUnavailable,
@@ -6561,9 +6613,11 @@ function ChatViewContent(props: ChatViewProps) {
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
   const revertTurnCountRef = useRef(revertTurnCountByUserMessageId);
-  revertTurnCountRef.current = revertTurnCountByUserMessageId;
   const onRevertToTurnCountRef = useRef(onRevertToTurnCount);
-  onRevertToTurnCountRef.current = onRevertToTurnCount;
+  useLayoutEffect(() => {
+    revertTurnCountRef.current = revertTurnCountByUserMessageId;
+    onRevertToTurnCountRef.current = onRevertToTurnCount;
+  }, [onRevertToTurnCount, revertTurnCountByUserMessageId]);
   const onRevertUserMessage = useCallback((messageId: MessageId) => {
     const targetTurnCount = revertTurnCountRef.current.get(messageId);
     if (typeof targetTurnCount !== "number") {

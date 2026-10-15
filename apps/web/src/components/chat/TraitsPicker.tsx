@@ -99,9 +99,21 @@ export function useProviderOptionUpdater(
 ): ProviderOptionUpdater {
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
   const mountedRef = useRef(true);
-  const pendingDescriptorIdsRef = useRef(new Set<string>());
-  const pendingIdentityRef = useRef(0);
+  // Each provider, instance and model gets a fresh pending scope. An update that settles after
+  // the scope changed leaves the new scope's pending markers alone.
+  const [pendingScope, setPendingScope] = useState(() => ({ provider, instanceId, model }));
+  const committedPendingScopeRef = useRef(pendingScope);
+  const pendingDescriptorIdsRef = useRef({ scope: pendingScope, ids: new Set<string>() });
   const [pendingDescriptorIds, setPendingDescriptorIds] = useState<ReadonlySet<string>>(new Set());
+
+  if (
+    pendingScope.provider !== provider ||
+    pendingScope.instanceId !== instanceId ||
+    pendingScope.model !== model
+  ) {
+    setPendingScope({ provider, instanceId, model });
+    setPendingDescriptorIds(new Set());
+  }
 
   useEffect(() => {
     mountedRef.current = true;
@@ -111,17 +123,19 @@ export function useProviderOptionUpdater(
   }, []);
 
   useEffect(() => {
-    pendingIdentityRef.current += 1;
-    pendingDescriptorIdsRef.current.clear();
-    setPendingDescriptorIds(new Set());
-  }, [instanceId, model, provider]);
+    committedPendingScopeRef.current = pendingScope;
+  }, [pendingScope]);
 
   const updateDescriptor: UpdateDescriptor = useCallback(
     async (descriptors, descriptorId, currentValue) => {
-      if (pendingDescriptorIdsRef.current.size > 0) return;
-      const pendingIdentity = pendingIdentityRef.current;
-      pendingDescriptorIdsRef.current.add(descriptorId);
-      setPendingDescriptorIds(new Set(pendingDescriptorIdsRef.current));
+      const scope = committedPendingScopeRef.current;
+      if (pendingDescriptorIdsRef.current.scope !== scope) {
+        pendingDescriptorIdsRef.current = { scope, ids: new Set() };
+      }
+      const pending = pendingDescriptorIdsRef.current;
+      if (pending.ids.size > 0) return;
+      pending.ids.add(descriptorId);
+      setPendingDescriptorIds(new Set(pending.ids));
       try {
         const nextOptions = buildProviderOptionSelectionsFromDescriptors(
           replaceDescriptorCurrentValue(descriptors, descriptorId, currentValue),
@@ -145,10 +159,10 @@ export function useProviderOptionUpdater(
             error instanceof Error ? error.message : "The provider rejected this option.",
         });
       } finally {
-        if (pendingIdentityRef.current === pendingIdentity) {
-          pendingDescriptorIdsRef.current.delete(descriptorId);
+        if (committedPendingScopeRef.current === scope) {
+          pending.ids.delete(descriptorId);
           if (mountedRef.current) {
-            setPendingDescriptorIds(new Set(pendingDescriptorIdsRef.current));
+            setPendingDescriptorIds(new Set(pending.ids));
           }
         }
       }
