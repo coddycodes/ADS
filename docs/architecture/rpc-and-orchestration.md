@@ -249,6 +249,10 @@ labels such as the sidebar branch follow a checkout without waiting for the
 deadline; status reads, including watcher-driven reads, also nudge it when
 repository availability (`isRepo` or `repositoryUnavailableReason`) changes, so
 the sidebar follows a break or repair at once.
+The left panel names a card's branch from the latest summary even when it is
+stale, since a failed PR lookup marks a just-read base stale; only the PR and
+dirty indicators wait for a fresh value. A thread's recorded `branch` is the
+fallback when no summary names one.
 Each successful base cycle publishes current local and provider state. A same-ref/provider PR from the immediately prior cycle may be carried
 only into cycle N+1 while enrichment runs or fails, preserving its original
 `observedAt` with `stale: true`; cycle N+2 expires it unless enrichment refreshes

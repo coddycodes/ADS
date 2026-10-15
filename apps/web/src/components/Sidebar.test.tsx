@@ -434,18 +434,23 @@ staticDescribe("Sidebar full render", () => {
     expect(markup).toContain("abc1234");
   });
 
-  it("does not present a stale passive branch as the current primary branch", () => {
+  // After a Git Manager checkout the summary names the new branch, then a failed
+  // PR lookup republishes it as stale. The default thread still records the branch
+  // its chat header last synced, so falling back to it showed the old branch.
+  it("titles the primary card with a stale summary's branch, not the recorded one", () => {
     baseScenario();
+    h.state.threads = [{ ...threadDefault, branch: "main" }];
     h.state.vcsStatusByCwd["C:/repo-a"] = {
-      refName: "feature/stale-only",
+      refName: "feature",
       detachedHead: null,
       stale: true,
     };
 
     const markup = render(<Sidebar />);
 
-    expect(markup).not.toContain("feature/stale-only");
-    expect(markup).toContain("Repo A");
+    expect(markup.match(/data-testid="primary-card-title-project-a"[^>]*>([^<]+)/)?.[1]).toBe(
+      "feature",
+    );
   });
 
   it("renders the settings navigation when routed to /settings", () => {
