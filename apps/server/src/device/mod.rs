@@ -1,5 +1,6 @@
 //! Server-hosted Android device previews; see docs/architecture/overview.md#device-previews.
 pub(crate) mod android;
+pub(crate) mod backend;
 pub mod catalog;
 pub mod frames;
 pub mod input;
@@ -10,7 +11,6 @@ pub mod video;
 
 use std::{
     collections::HashMap,
-    path::PathBuf,
     sync::{Arc, Mutex, MutexGuard, PoisonError, Weak},
     time::{Duration, Instant},
 };
@@ -19,20 +19,14 @@ use tokio::sync::watch;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use self::{
-    android::{
-        emulator::{self, EmulatorLauncher, LaunchError, RunningEmulator},
-        grpc::EmulatorClient,
-        sdk::{self, AndroidSdk, SdkEnv},
-    },
+    backend::{DeviceBackend, LaunchFailure, PlatformDiscovery, Png, RunningDevice},
     catalog::{
-        Availability, AvailabilityKind, Avd, DeviceCatalog, DeviceSnapshot, DeviceState,
-        Orientation,
+        Availability, AvailabilityKind, DeviceCatalog, DeviceSnapshot, DeviceState, Orientation,
     },
     frames::FrameHub,
-    input::InputState,
+    input::oriented_size,
     media::{MediaHub, TicketBook},
 };
-use crate::diagnostics::ProcessAttributionRegistry;
 
 /// How long a discovery result serves `refresh` before it reruns.
 const DISCOVERY_TTL: Duration = Duration::from_secs(30);
@@ -40,6 +34,9 @@ const DISCOVERY_TTL: Duration = Duration::from_secs(30);
 const EXIT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// Stopped and failed devices the catalog keeps, newest first, so their reason stays visible.
 const RETAINED_ENDED_DEVICES: usize = 4;
+/// How long a stop waits for in-flight calls to let go of a device before stopping it anyway.
+const STOP_RELEASE_TIMEOUT: Duration = Duration::from_secs(5);
+const STOP_RELEASE_POLL: Duration = Duration::from_millis(50);
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum DeviceError {
@@ -140,16 +137,15 @@ impl DeviceOpError {
 }
 
 pub(crate) struct DeviceManagerConfig {
-    pub env: SdkEnv,
-    /// Where emulators publish their gRPC discovery files (`emulator::default_discovery_dirs`).
-    pub discovery_dirs: Vec<PathBuf>,
-    pub registry: ProcessAttributionRegistry,
+    /// The platform whose devices this manager runs.
+    pub backend: Box<dyn DeviceBackend>,
     /// The committed `enableDevicePreviews` setting.
     pub enabled: watch::Receiver<bool>,
-    /// A fixed gRPC port for every launch; `None` picks a free one. Tests pin the fake
-    /// controller's port.
-    pub grpc_port: Option<u16>,
 }
+
+/// A running device as its slot holds it: the slot is the only lasting owner, and frame,
+/// input, and media tasks clone it for one call at a time.
+type SharedDevice = Arc<Box<dyn RunningDevice>>;
 
 /// Owns every emulator of this environment and the catalog that describes them: at most one
 /// running device, stopped when the setting turns off and on shutdown.
@@ -163,11 +159,7 @@ struct Inner {
     devices: Mutex<DeviceTable>,
     discovery: tokio::sync::Mutex<Option<Discovery>>,
     enabled: watch::Receiver<bool>,
-    env: SdkEnv,
-    discovery_dirs: Vec<PathBuf>,
-    registry: ProcessAttributionRegistry,
-    software_gpu: bool,
-    grpc_port: Option<u16>,
+    backend: Box<dyn DeviceBackend>,
     shutdown: CancellationToken,
     tasks: TaskTracker,
     /// Outstanding media-socket tickets.
@@ -183,7 +175,7 @@ struct DeviceTable {
 struct Slot {
     snapshot: DeviceSnapshot,
     /// Set while the device is `Ready`; taken by whoever stops it.
-    running: Option<RunningEmulator>,
+    running: Option<SharedDevice>,
     /// Cancels the launch and the exit watcher.
     cancel: CancellationToken,
     /// Cancelled once the device has ended and its emulator process is gone.
@@ -193,36 +185,28 @@ struct Slot {
     seq: u64,
     /// The JPEG frame producer while anyone subscribes.
     frames: Option<Arc<FrameHub>>,
-    /// The input stream, opened by the first `input` call.
-    input: Arc<tokio::sync::Mutex<Option<InputState>>>,
     /// The H.264 fan-out while any media socket watches the device.
     media: Option<Arc<MediaHub>>,
-    /// The SDK's `adb`, which runs the device's scrcpy-server.
-    adb: PathBuf,
 }
 
 impl Slot {
-    /// Stops the frame producer and the media hub, and drops the input stream, of a device
-    /// that stops running.
+    /// Stops the frame producer and the media hub of a device that stops running; its
+    /// input stream ends with the device.
     fn end_streams(&mut self) {
         if let Some(frames) = self.frames.take() {
             frames.stop();
         }
-        // Closes every media socket and stops the scrcpy session.
+        // Closes every media socket and stops the video source.
         if let Some(media) = self.media.take() {
             media.stop_device_ended();
         }
-        // An `input` call still holding the old state finishes its batch, then drops it.
-        self.input = Arc::default();
     }
 }
 
 #[derive(Clone)]
 struct Discovery {
     at: Instant,
-    availability: Availability,
-    avds: Vec<Avd>,
-    sdk: Option<AndroidSdk>,
+    found: PlatformDiscovery,
 }
 
 fn ended(state: DeviceState) -> bool {
@@ -233,8 +217,6 @@ impl DeviceManager {
     /// Starts the manager and the task that follows the setting: on, it discovers the SDK;
     /// off, it stops every device.
     pub(crate) fn start(config: DeviceManagerConfig) -> Self {
-        let software_gpu =
-            emulator::software_gpu_for(config.env.os, |key| config.env.vars.get(key).cloned());
         let (catalog, _) = watch::channel(DeviceCatalog {
             availability: Availability {
                 kind: AvailabilityKind::SdkMissing,
@@ -248,11 +230,7 @@ impl DeviceManager {
             devices: Mutex::default(),
             discovery: tokio::sync::Mutex::new(None),
             enabled: config.enabled,
-            env: config.env,
-            discovery_dirs: config.discovery_dirs,
-            registry: config.registry,
-            software_gpu,
-            grpc_port: config.grpc_port,
+            backend: config.backend,
             shutdown: CancellationToken::new(),
             tasks: TaskTracker::new(),
             tickets: TicketBook::default(),
@@ -286,14 +264,13 @@ impl DeviceManager {
             return Err(DeviceOpError::Disabled);
         }
         let mut found = self.inner.discover(false).await;
-        if found.availability.kind != AvailabilityKind::Ready || !found.lists(avd_name) {
+        if found.found.availability.kind != AvailabilityKind::Ready || !found.lists(avd_name) {
             found = self.inner.discover(true).await;
         }
-        let sdk = match (found.availability.kind, found.sdk) {
-            (AvailabilityKind::Ready, Some(sdk)) => sdk,
-            _ => return Err(DeviceOpError::Sdk(found.availability)),
-        };
-        if !found.avds.iter().any(|avd| avd.name == avd_name) {
+        if found.found.availability.kind != AvailabilityKind::Ready {
+            return Err(DeviceOpError::Sdk(found.found.availability));
+        }
+        if !found.lists(avd_name) {
             return Err(DeviceOpError::UnknownAvd(avd_name.to_owned()));
         }
         let started = Instant::now();
@@ -335,25 +312,15 @@ impl DeviceManager {
                     started,
                     seq,
                     frames: None,
-                    input: Arc::default(),
                     media: None,
-                    adb: sdk.adb.clone(),
                 },
             );
             self.inner.publish(&mut table);
         }
         record_lifecycle("start", started, None);
-        let mut launcher = EmulatorLauncher::new(
-            sdk,
-            self.inner.discovery_dirs.clone(),
-            self.inner.registry.clone(),
-            self.inner.software_gpu,
-        );
-        launcher.grpc_port = self.inner.grpc_port;
         self.inner.tasks.spawn(self.inner.clone().launch(
             device_id.clone(),
             avd_name.to_owned(),
-            launcher,
             cancel,
         ));
         Ok(device_id)
@@ -398,17 +365,23 @@ impl DeviceManager {
         self.inner.close(device_id).await
     }
 
-    /// The gRPC client, adb serial, native (portrait) display size, and current orientation
-    /// of a `Ready` device; `input::oriented_size` gives the current display size.
-    pub(crate) fn client(
-        &self,
-        device_id: &str,
-    ) -> Result<(EmulatorClient, String, (u32, u32), Orientation), DeviceOpError> {
-        self.inner.client(device_id)
+    /// A PNG of a `Ready` device's screen, at most `max_width` wide in its current
+    /// orientation.
+    pub(crate) async fn png(&self, device_id: &str, max_width: u32) -> Result<Png, DeviceOpError> {
+        let (device, orientation) = self.inner.running(device_id)?;
+        let (native_width, native_height) = device.native_size();
+        let (width, _) = oriented_size(native_width, native_height, orientation);
+        device.png(width.min(max_width)).await.map_err(|error| {
+            tracing::warn!(%error, "device screenshot failed");
+            DeviceOpError::Emulator(
+                "The emulator did not return a screenshot. Try again in a moment.".into(),
+            )
+        })
     }
 
-    /// Records the orientation the emulator reported and the display size in it; never what
+    /// Records the orientation the device reported and the display size in it; never what
     /// a rotate command asked for.
+    #[cfg(test)]
     pub(crate) fn set_reported_orientation(
         &self,
         device_id: &str,
@@ -436,30 +409,24 @@ impl DeviceManager {
     /// Whether the device has no open input stream.
     #[cfg(all(test, unix))]
     pub(crate) fn input_stream_closed(&self, device_id: &str) -> bool {
-        let input = self
-            .inner
-            .table()
+        let table = self.inner.table();
+        table
             .slots
             .get(device_id)
-            .map(|slot| slot.input.clone());
-        input.is_none_or(|input| {
-            input
-                .try_lock()
-                .is_ok_and(|state| state.as_ref().is_none_or(InputState::closed))
-        })
+            .and_then(|slot| slot.running.as_ref())
+            .is_none_or(|device| device.input_stream_closed())
     }
 
     #[cfg(all(test, unix))]
     pub(crate) fn pid(&self, device_id: &str) -> Option<u32> {
         let table = self.inner.table();
-        let running = table.slots.get(device_id)?.running.as_ref()?;
-        Some(running.helper.pid)
+        table.slots.get(device_id)?.running.as_ref()?.pid()
     }
 }
 
 impl Discovery {
     fn lists(&self, avd_name: &str) -> bool {
-        self.avds.iter().any(|avd| avd.name == avd_name)
+        self.found.images.iter().any(|avd| avd.name == avd_name)
     }
 }
 
@@ -468,32 +435,12 @@ impl Inner {
         self.devices.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn client(
-        &self,
-        device_id: &str,
-    ) -> Result<(EmulatorClient, String, (u32, u32), Orientation), DeviceOpError> {
+    /// A `Ready` device, for one call, and the orientation the catalog shows for it.
+    fn running(&self, device_id: &str) -> Result<(SharedDevice, Orientation), DeviceOpError> {
         let table = self.table();
         let slot = table.slots.get(device_id).ok_or(DeviceOpError::NotFound)?;
         match (&slot.running, slot.snapshot.state) {
-            (Some(running), DeviceState::Ready) => Ok((
-                running.client.clone(),
-                running.serial.clone(),
-                (running.width, running.height),
-                slot.snapshot.orientation,
-            )),
-            (_, state) => Err(DeviceOpError::NotReady(state)),
-        }
-    }
-
-    /// The input state of a `Ready` device.
-    fn input_state(
-        &self,
-        device_id: &str,
-    ) -> Result<Arc<tokio::sync::Mutex<Option<InputState>>>, DeviceOpError> {
-        let table = self.table();
-        let slot = table.slots.get(device_id).ok_or(DeviceOpError::NotFound)?;
-        match (&slot.running, slot.snapshot.state) {
-            (Some(_), DeviceState::Ready) => Ok(slot.input.clone()),
+            (Some(running), DeviceState::Ready) => Ok((running.clone(), slot.snapshot.orientation)),
             (_, state) => Err(DeviceOpError::NotReady(state)),
         }
     }
@@ -572,23 +519,19 @@ impl Inner {
         {
             return discovery.clone();
         }
-        let (availability, avds, sdk) = sdk::discover(&self.env).await;
-        if availability.kind != AvailabilityKind::Ready {
-            tracing::debug!(kind = ?availability.kind, "android sdk unavailable");
-        }
+        let found = self.backend.discover().await;
         self.catalog.send_if_modified(|catalog| {
-            let changed = catalog.availability != availability || catalog.avds != avds;
+            let changed =
+                catalog.availability != found.availability || catalog.avds != found.images;
             if changed {
-                catalog.availability = availability.clone();
-                catalog.avds = avds.clone();
+                catalog.availability = found.availability.clone();
+                catalog.avds = found.images.clone();
             }
             changed
         });
         let discovery = Discovery {
             at: Instant::now(),
-            availability,
-            avds,
-            sdk,
+            found,
         };
         *cached = Some(discovery.clone());
         discovery
@@ -611,26 +554,21 @@ impl Inner {
         });
     }
 
-    async fn launch(
-        self: Arc<Self>,
-        device_id: String,
-        avd: String,
-        launcher: EmulatorLauncher,
-        cancel: CancellationToken,
-    ) {
+    async fn launch(self: Arc<Self>, device_id: String, avd: String, cancel: CancellationToken) {
         let phases = self.clone();
         let phase_device = device_id.clone();
-        let on_phase = move |phase: DeviceState| {
+        let on_phase = Box::new(move |phase: DeviceState| {
             phases.update(&phase_device, |slot| {
                 if slot.snapshot.state == DeviceState::Starting {
                     slot.snapshot.state = phase;
                 }
             });
-        };
-        let result = launcher.launch(&avd, on_phase, &cancel).await;
+        });
+        let result = self.backend.launch(&avd, on_phase, &cancel).await;
         let started = self.started(&device_id);
         let error = match result {
             Ok(running) => {
+                let (width, height) = running.native_size();
                 let unwanted = {
                     let mut table = self.table();
                     match table.slots.get_mut(&device_id) {
@@ -641,9 +579,9 @@ impl Inner {
                             ) =>
                         {
                             slot.snapshot.state = DeviceState::Ready;
-                            slot.snapshot.width = Some(running.width);
-                            slot.snapshot.height = Some(running.height);
-                            slot.running = Some(running);
+                            slot.snapshot.width = Some(width);
+                            slot.snapshot.height = Some(height);
+                            slot.running = Some(Arc::new(running));
                             self.publish(&mut table);
                             None
                         }
@@ -658,7 +596,7 @@ impl Inner {
                     }
                     // Closed while it booted: whoever closed it waits for this stop.
                     Some(running) => {
-                        emulator::stop(running).await;
+                        running.stop().await;
                         self.finish(&device_id, DeviceState::Stopped, None);
                         record_lifecycle("stop", started, None);
                     }
@@ -667,8 +605,8 @@ impl Inner {
             }
             Err(error) => error,
         };
-        // `launch` already stopped the emulator and removed its discovery file.
-        if matches!(error, LaunchError::Cancelled) || cancel.is_cancelled() {
+        // The backend already stopped what it started.
+        if matches!(error, LaunchFailure::Cancelled) || cancel.is_cancelled() {
             self.finish(&device_id, DeviceState::Stopped, None);
             record_lifecycle("stop", started, None);
             return;
@@ -678,41 +616,38 @@ impl Inner {
         record_lifecycle("fail", started, Some(failure_kind));
     }
 
-    /// Polls a `Ready` device's emulator; an exit nobody asked for fails the device.
+    /// Polls a `Ready` device; an exit nobody asked for fails the device.
     async fn watch_exit(self: Arc<Self>, device_id: String, cancel: CancellationToken) {
         loop {
             tokio::select! {
                 () = cancel.cancelled() => return,
                 () = tokio::time::sleep(EXIT_POLL_INTERVAL) => {}
             }
-            let (running, status, started, reaped) = {
+            let (running, reason, started, reaped) = {
                 let mut table = self.table();
                 let Some(slot) = table.slots.get_mut(&device_id) else {
                     return;
                 };
-                let Some(status) = slot.running.as_ref().map(|running| running.helper.exited())
-                else {
+                let Some(reason) = slot.running.as_ref().map(|running| running.exited()) else {
                     return;
                 };
-                let Some(status) = status else {
+                let Some(reason) = reason else {
                     continue;
                 };
                 let running = slot.running.take().expect("checked above");
                 slot.end_streams();
                 // Published before the cleanup below, so nobody sees a dead device as Ready.
                 slot.snapshot.state = DeviceState::Failed;
-                slot.snapshot.failure = Some(format!("exited: {status}"));
+                slot.snapshot.failure = Some(reason.clone());
                 let started = slot.started;
                 let reaped = slot.reaped.clone();
                 self.publish(&mut table);
-                (running, status, started, reaped)
+                (running, reason, started, reaped)
             };
             // Before `stop`, which marks the exit as requested.
-            running
-                .helper
-                .report_unrequested_exit(emulator::HELPER_LABEL, &status);
+            running.report_unrequested_exit(&reason);
             record_lifecycle("fail", started, Some("exited"));
-            emulator::stop(running).await;
+            stop_device(running).await;
             // A close of the Failed device waits for this.
             reaped.cancel();
             return;
@@ -749,7 +684,7 @@ impl Inner {
                     let this = self.clone();
                     let id = device_id.to_owned();
                     self.tasks.spawn(async move {
-                        emulator::stop(running).await;
+                        stop_device(running).await;
                         this.finish(&id, DeviceState::Stopped, None);
                         record_lifecycle("stop", started, None);
                     });
@@ -820,34 +755,42 @@ impl Drop for Inner {
     }
 }
 
-/// The profiler failure kind and the catalog's failure reason for a failed launch.
-fn launch_failure(error: &LaunchError) -> (&'static str, String) {
-    match error {
-        LaunchError::Exited(message) => ("exited", format!("exited: {message}")),
-        LaunchError::BootTimeout => (
-            "bootTimeout",
-            "did not finish booting within 3 minutes".to_owned(),
-        ),
-        LaunchError::Spawn(message) => ("spawn", format!("could not start: {message}")),
-        LaunchError::Unresponsive(message) => (
-            "unresponsive",
-            format!("did not report its display: {message}"),
-        ),
-        LaunchError::Cancelled => ("cancelled", "cancelled".to_owned()),
+/// Stops a device taken out of its slot once no call holds it any more; one still held
+/// after [`STOP_RELEASE_TIMEOUT`] is stopped anyway. Runs on the manager's tasks, never on a
+/// caller's future.
+async fn stop_device(mut device: SharedDevice) {
+    let deadline = Instant::now() + STOP_RELEASE_TIMEOUT;
+    loop {
+        match Arc::try_unwrap(device) {
+            Ok(device) => return device.stop().await,
+            Err(shared) if Instant::now() >= deadline => {
+                tracing::warn!("a device call still held the device after 5 s; stopping it anyway");
+                return shared.stop_shared().await;
+            }
+            Err(shared) => {
+                device = shared;
+                tokio::time::sleep(STOP_RELEASE_POLL).await;
+            }
+        }
     }
 }
 
-/// The error for an emulator call that failed on a `Ready` device: the cause is logged, and
-/// the caller is told what to do.
-fn emulator_failure(operation: &'static str, error: &DeviceError) -> DeviceOpError {
-    tracing::warn!(operation, %error, "device emulator call failed");
-    let what = match operation {
-        "rotate" => "did not rotate",
-        _ => "did not accept the input",
-    };
-    DeviceOpError::Emulator(format!(
-        "The emulator {what}. Try again; if it keeps failing, stop the device and start it again."
-    ))
+/// The profiler failure kind and the catalog's failure reason for a failed launch.
+fn launch_failure(error: &LaunchFailure) -> (&'static str, String) {
+    match error {
+        LaunchFailure::Exited(message) => ("exited", format!("exited: {message}")),
+        LaunchFailure::BootTimeout => (
+            "bootTimeout",
+            "did not finish booting within 3 minutes".to_owned(),
+        ),
+        LaunchFailure::Spawn(message) => ("spawn", format!("could not start: {message}")),
+        LaunchFailure::Unresponsive(message) => (
+            "unresponsive",
+            format!("did not report its display: {message}"),
+        ),
+        LaunchFailure::Cancelled => ("cancelled", "cancelled".to_owned()),
+        LaunchFailure::Busy => ("busy", "is in use outside BiBCode".to_owned()),
+    }
 }
 
 /// A `device.lifecycle` profiler event; it never names the AVD or its paths.
@@ -868,7 +811,10 @@ fn record_lifecycle(phase: &'static str, started: Instant, failure_kind: Option<
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::device::android::testing::{ManagerFixture, kill_process, process_alive};
+    use crate::device::android::{
+        emulator, emulator_failure,
+        testing::{ManagerFixture, kill_process, process_alive},
+    };
 
     #[tokio::test]
     async fn open_publishes_states_and_enforces_one_device() {
@@ -909,9 +855,10 @@ mod tests {
         let pid = fixture.pid_of(&id);
         kill_process(pid);
         // The moment the manager stops serving the device, the catalog already says Failed.
-        crate::device::android::testing::wait_until(|| fixture.manager.client(&id).is_err()).await;
+        crate::device::android::testing::wait_until(|| fixture.manager.inner.running(&id).is_err())
+            .await;
         assert!(matches!(
-            fixture.manager.client(&id),
+            fixture.manager.inner.running(&id),
             Err(DeviceOpError::NotReady(DeviceState::Failed))
         ));
         let state = |catalog: &DeviceCatalog| {
@@ -1015,7 +962,8 @@ mod tests {
         fixture.wait_state(&id, DeviceState::Ready).await;
         let pid = fixture.pid_of(&id);
         kill_process(pid);
-        crate::device::android::testing::wait_until(|| fixture.manager.client(&id).is_err()).await;
+        crate::device::android::testing::wait_until(|| fixture.manager.inner.running(&id).is_err())
+            .await;
         tokio::time::timeout(Duration::from_secs(20), fixture.manager.close(&id))
             .await
             .expect("close ends")
@@ -1060,7 +1008,7 @@ mod tests {
         let fixture = ManagerFixture::ready(&["Pixel"]).await;
         let id = fixture.manager.open("Pixel").await.unwrap();
         assert!(matches!(
-            fixture.manager.client(&id),
+            fixture.manager.inner.running(&id),
             Err(DeviceOpError::NotReady(_))
         ));
         let ready = fixture
@@ -1070,10 +1018,10 @@ mod tests {
             .unwrap();
         assert_eq!(ready.state, DeviceState::Ready);
         fixture.wait_state(&id, DeviceState::Ready).await;
-        let (_, serial, size, orientation) = fixture.manager.client(&id).unwrap();
-        assert!(serial.starts_with("emulator-"));
-        assert_eq!(size, (1080, 2400));
+        let (running, orientation) = fixture.manager.inner.running(&id).unwrap();
+        assert_eq!(running.native_size(), (1080, 2400));
         assert_eq!(orientation, Orientation::Portrait);
+        drop(running);
         fixture
             .manager
             .set_reported_orientation(&id, Orientation::Landscape, 2400, 1080);
@@ -1083,10 +1031,14 @@ mod tests {
             (Orientation::Landscape, Some(2400), Some(1080))
         );
         // The native size stays what input maps against.
-        let (_, _, size, orientation) = fixture.manager.client(&id).unwrap();
-        assert_eq!((size, orientation), ((1080, 2400), Orientation::Landscape));
+        let (running, orientation) = fixture.manager.inner.running(&id).unwrap();
+        assert_eq!(
+            (running.native_size(), orientation),
+            ((1080, 2400), Orientation::Landscape)
+        );
+        drop(running);
         assert!(matches!(
-            fixture.manager.client("missing"),
+            fixture.manager.inner.running("missing"),
             Err(DeviceOpError::NotFound)
         ));
         fixture.manager.shutdown().await;
@@ -1188,19 +1140,19 @@ mod tests {
     #[test]
     fn launch_failures_name_their_reason() {
         assert_eq!(
-            launch_failure(&LaunchError::Exited("boom".into())),
+            launch_failure(&LaunchFailure::Exited("boom".into())),
             ("exited", "exited: boom".to_owned())
         );
         assert_eq!(
-            launch_failure(&LaunchError::BootTimeout),
+            launch_failure(&LaunchFailure::BootTimeout),
             (
                 "bootTimeout",
                 "did not finish booting within 3 minutes".to_owned()
             )
         );
-        assert_eq!(launch_failure(&LaunchError::Spawn("x".into())).0, "spawn");
+        assert_eq!(launch_failure(&LaunchFailure::Spawn("x".into())).0, "spawn");
         assert_eq!(
-            launch_failure(&LaunchError::Unresponsive("x".into())).0,
+            launch_failure(&LaunchFailure::Unresponsive("x".into())).0,
             "unresponsive"
         );
     }

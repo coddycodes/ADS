@@ -10,9 +10,7 @@ use tokio_util::sync::CancellationToken;
 use super::{PreviewScope, snapshot_tool_result, tool_failure};
 use crate::device::{
     DeviceManager, DeviceOpError,
-    android::grpc::proto::image_format::ImgFormat,
     catalog::{DeviceSnapshot, DeviceState},
-    input::oriented_size,
 };
 
 /// Matches the manager's 180 s emulator boot timeout.
@@ -158,28 +156,14 @@ impl DeviceTools {
 
     async fn screenshot(&self, arguments: &Value) -> Result<Value, DeviceOpError> {
         let device_id = self.device_id(arguments)?;
-        let (client, _serial, (width, height), orientation) = self.manager.client(&device_id)?;
-        let (width, _) = oriented_size(width, height, orientation);
-        let image = client
-            .screenshot(ImgFormat::Png, width.min(SCREENSHOT_MAX_WIDTH))
-            .await
-            .map_err(|error| {
-                tracing::warn!(%error, "device screenshot failed");
-                DeviceOpError::Emulator(
-                    "The emulator did not return a screenshot. Try again in a moment.".into(),
-                )
-            })?;
-        let size = image
-            .format
-            .as_ref()
-            .map_or((0, 0), |format| (format.width, format.height));
+        let image = self.manager.png(&device_id, SCREENSHOT_MAX_WIDTH).await?;
         Ok(snapshot_tool_result(json!({
             "deviceId": device_id,
             "screenshot": {
-                "data": STANDARD.encode(&image.image),
+                "data": STANDARD.encode(&image.png),
                 "mimeType": "image/png",
-                "width": size.0,
-                "height": size.1,
+                "width": image.width,
+                "height": image.height,
             },
         })))
     }

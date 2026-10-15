@@ -561,6 +561,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!((running.width, running.height), (1080, 2400));
+        assert!(running.serial.starts_with("emulator-"));
         assert_eq!(*phases.lock().unwrap(), [DeviceState::Booting]);
         let pid = running.helper.pid;
         let discovery_file = running.discovery_file.clone();

@@ -1,4 +1,4 @@
-//! H.264 media fan-out: one scrcpy session per device while any media socket watches it, and
+//! H.264 media fan-out: one video source per device while any media socket watches it, and
 //! the single-use tickets that admit those sockets (spec §4).
 
 use std::{
@@ -11,6 +11,7 @@ use std::{
 };
 
 use bytes::Bytes;
+use futures_util::future::BoxFuture;
 use sha2::{Digest, Sha256};
 use tokio::{
     sync::{Notify, mpsc},
@@ -20,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     DeviceError, DeviceManager, DeviceOpError, Inner,
+    backend::ErasedVideoSource,
     video::{UnitKind, VideoUnit},
 };
 
@@ -484,7 +486,7 @@ impl MediaHub {
     }
 }
 
-/// What feeds a hub: the scrcpy session, or a channel in tests.
+/// What feeds a hub: a backend's video source, or a channel in tests.
 pub(super) trait VideoSource: Send + 'static {
     /// The next unit; `None` once the stream ended.
     fn next_unit(&mut self) -> impl Future<Output = Option<VideoUnit>> + Send;
@@ -495,24 +497,40 @@ pub(super) trait VideoSource: Send + 'static {
     fn stop(self, device_ended: bool) -> impl Future<Output = ()> + Send;
 }
 
-impl VideoSource for super::android::scrcpy::ScrcpySession {
-    async fn next_unit(&mut self) -> Option<VideoUnit> {
-        self.units.recv().await
+impl<S: VideoSource> ErasedVideoSource for S {
+    fn next_unit(&mut self) -> BoxFuture<'_, Option<VideoUnit>> {
+        Box::pin(VideoSource::next_unit(self))
     }
 
-    async fn reset_video(&mut self) -> Result<(), DeviceError> {
-        Self::reset_video(self).await
+    fn reset_video(&mut self) -> BoxFuture<'_, Result<(), DeviceError>> {
+        Box::pin(VideoSource::reset_video(self))
     }
 
     fn failed(&self) -> bool {
-        matches!(
-            self.ended(),
-            Some(super::android::scrcpy::StreamEnd::Failed(_))
-        )
+        VideoSource::failed(self)
     }
 
-    async fn stop(self, device_ended: bool) {
-        Self::stop(self, device_ended).await;
+    fn stop(self: Box<Self>, device_ended: bool) -> BoxFuture<'static, ()> {
+        Box::pin(VideoSource::stop(*self, device_ended))
+    }
+}
+
+/// A backend's source, whatever its concrete type.
+impl VideoSource for Box<dyn ErasedVideoSource> {
+    fn next_unit(&mut self) -> impl Future<Output = Option<VideoUnit>> + Send {
+        ErasedVideoSource::next_unit(&mut **self)
+    }
+
+    fn reset_video(&mut self) -> impl Future<Output = Result<(), DeviceError>> + Send {
+        ErasedVideoSource::reset_video(&mut **self)
+    }
+
+    fn failed(&self) -> bool {
+        ErasedVideoSource::failed(&**self)
+    }
+
+    fn stop(self, device_ended: bool) -> impl Future<Output = ()> + Send {
+        ErasedVideoSource::stop(self, device_ended)
     }
 }
 
@@ -656,7 +674,7 @@ impl DeviceManager {
         if !self.enabled() {
             return Err(DeviceOpError::Disabled);
         }
-        self.client(device_id)?;
+        self.inner.running(device_id)?;
         let issued_ms = now_ms();
         let (ticket, _) = self
             .inner
@@ -686,7 +704,7 @@ impl DeviceManager {
         Ok((device_id, principal))
     }
 
-    /// Joins a `Ready` device's H.264 stream, starting its scrcpy session for the first
+    /// Joins a `Ready` device's H.264 stream, starting its video source for the first
     /// socket.
     pub(crate) fn attach_media(
         &self,
@@ -700,11 +718,10 @@ impl DeviceManager {
             .slots
             .get_mut(device_id)
             .ok_or(MediaAttachError::NotReady)?;
-        let Some(serial) = slot
+        let Some(device) = slot
             .running
-            .as_ref()
+            .clone()
             .filter(|_| slot.snapshot.state == super::catalog::DeviceState::Ready)
-            .map(|running| running.serial.clone())
         else {
             return Err(MediaAttachError::NotReady);
         };
@@ -713,24 +730,15 @@ impl DeviceManager {
             _ => {
                 let hub = MediaHub::new(slot.cancel.child_token());
                 slot.media = Some(hub.clone());
-                let adb = slot.adb.clone();
-                let registry = self.inner.registry.clone();
                 let task_hub = hub.clone();
                 let inner = Arc::downgrade(&self.inner);
                 let task_device = device_id.to_owned();
+                // Holds the device only until its source starts; a stop drops `start`. Boxed
+                // here, where the source type is concrete, so the task below stays `Send`.
+                let start = async move { device.video().await };
+                let feed: BoxFuture<'static, ()> = Box::pin(run(task_hub.clone(), start));
                 self.inner.tasks.spawn(async move {
-                    let start = async move {
-                        let session =
-                            super::android::scrcpy::ScrcpySession::start(&adb, &serial, &registry)
-                                .await?;
-                        tracing::debug!(
-                            width = session.codec.width,
-                            height = session.codec.height,
-                            "device media stream started"
-                        );
-                        Ok(session)
-                    };
-                    run(task_hub.clone(), start).await;
+                    feed.await;
                     // A hub that ended on its own makes room for a fresh one.
                     if let Some(inner) = inner.upgrade() {
                         let mut table = inner.table();
@@ -906,6 +914,33 @@ mod tests {
                 .map(|(kind, _)| kind)
                 .collect()
         }
+    }
+
+    #[tokio::test]
+    async fn an_erased_source_feeds_the_hub_like_the_concrete_one() {
+        let (units, receiver) = mpsc::channel(8);
+        let stopped = Arc::<std::sync::OnceLock<bool>>::default();
+        let source = ChannelSource {
+            units: receiver,
+            resets: Arc::default(),
+            stopped: stopped.clone(),
+        };
+        let erased: Box<dyn crate::device::backend::ErasedVideoSource> = Box::new(source);
+        let hub = MediaHub::new(CancellationToken::new());
+        // Subscribed first, so the socket sees the config and the key, not only the cache.
+        let mut watcher = Watcher {
+            subscriber: hub
+                .subscribe(SOCKET_QUEUE_FRAMES, Weak::new(), "dev")
+                .expect("subscribe"),
+        };
+        let task = tokio::spawn(run(hub.clone(), async move { Ok(erased) }));
+        units.send(config()).await.unwrap();
+        units.send(key(1)).await.unwrap();
+        assert_eq!(watcher.received().await, vec![("config", 0), ("key", 1)]);
+        hub.stop();
+        task.await.unwrap();
+        // The erased source was stopped through its concrete `stop`.
+        assert_eq!(stopped.get(), Some(&false));
     }
 
     #[test]

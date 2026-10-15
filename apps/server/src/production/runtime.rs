@@ -250,15 +250,20 @@ impl ProductionRuntime {
         // Built before the profiler, whose sampler reads it; it has no dependencies.
         let process_attribution = ProcessAttributionRegistry::new();
         let device_env = crate::device::android::sdk::SdkEnv::from_process();
-        let device_manager =
-            crate::device::DeviceManager::start(crate::device::DeviceManagerConfig {
+        let android_devices = crate::device::android::AndroidBackend::new(
+            crate::device::android::AndroidBackendConfig {
                 discovery_dirs: crate::device::android::emulator::default_discovery_dirs(
                     &device_env,
                 ),
                 env: device_env,
                 registry: process_attribution.clone(),
-                enabled: control.device_previews_enabled_signal(),
                 grpc_port: None,
+            },
+        );
+        let device_manager =
+            crate::device::DeviceManager::start(crate::device::DeviceManagerConfig {
+                backend: Box::new(android_devices),
+                enabled: control.device_previews_enabled_signal(),
             });
         // Starting replays and compacts the findings file, so it runs off the async workers.
         let profiler_state_dir = config.state_dir();

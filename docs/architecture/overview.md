@@ -1921,6 +1921,14 @@ setting is off, every `device.*` method fails with
 `DevicePreviewsDisabledError` (a stream fails at subscribe), media sockets close
 with `disabled`, and turning it off stops the running device.
 
+The manager in `device/mod.rs` names no platform type: it drives a
+`DeviceBackend` (`device/backend.rs`) that discovers images and launches a
+`RunningDevice`, which supplies JPEG frames, an H.264 source, input, rotation,
+its unrequested exit, and its stop. The Android backend (SDK, emulator, gRPC
+controller, input mapping, and scrcpy) lives in `device/android/`. A slot is
+the only lasting owner of its running device; frame, input, and media tasks
+hold it for one call, and a stop waits up to 5 s for those calls to let go.
+
 **Discovery.** The server looks for the SDK in `ANDROID_HOME`, then
 `ANDROID_SDK_ROOT`, then the platform default (`~/Library/Android/sdk`,
 `%LOCALAPPDATA%\Android\Sdk`, or `~/Android/Sdk`), and needs both

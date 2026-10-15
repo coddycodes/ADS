@@ -1,4 +1,4 @@
-//! JPEG preview frames: one `streamScreenshot` per device while anyone watches it.
+//! JPEG preview frames: one device frame stream per device while anyone watches it.
 
 use std::{
     sync::{Arc, Weak},
@@ -6,15 +6,16 @@ use std::{
 };
 
 use base64::Engine;
+use futures_util::StreamExt as _;
 use serde::Serialize;
-use tokio::{sync::watch, time::Instant};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use super::{
     DeviceError, DeviceManager, DeviceOpError, Inner,
-    android::grpc::proto,
+    backend::{JpegStream, RawJpeg},
     catalog::{DeviceState, Orientation},
-    input::{oriented_size, reported_orientation},
+    input::oriented_size,
 };
 
 pub(crate) const JPEG_MAX_WIDTH: u32 = 720;
@@ -162,17 +163,14 @@ async fn produce(
         device_id,
         frames,
         seq: 0,
-        warned_malformed: false,
     };
     loop {
-        let Some((client, native)) = producer.client() else {
+        let Some((stream, native)) = (tokio::select! {
+            () = cancel.cancelled() => return,
+            opened = producer.open() => opened,
+        }) else {
             return;
         };
-        let stream = tokio::select! {
-            () = cancel.cancelled() => return,
-            stream = client.stream_screenshot(JPEG_MAX_WIDTH) => stream,
-        };
-        producer.warned_malformed = false;
         let ended = match stream {
             Ok(stream) => producer.pump(stream, native, &cancel).await,
             Err(error) => Err(error),
@@ -181,8 +179,8 @@ async fn produce(
             return;
         }
         match ended {
-            Ok(()) => tracing::warn!("emulator screenshot stream ended"),
-            Err(error) => tracing::warn!(%error, "emulator screenshot stream failed"),
+            Ok(()) => tracing::warn!("device frame stream ended"),
+            Err(error) => tracing::warn!(%error, "device frame stream failed"),
         }
         tokio::select! {
             () = cancel.cancelled() => return,
@@ -196,107 +194,50 @@ struct Producer {
     device_id: String,
     frames: watch::Sender<Option<JpegFrame>>,
     seq: u64,
-    /// Whether this stream already warned about a frame it could not encode; the rest are
-    /// logged at debug.
-    warned_malformed: bool,
 }
 
 impl Producer {
-    /// The client and native display size, while the device is `Ready`.
-    fn client(&self) -> Option<(super::android::grpc::EmulatorClient, (u32, u32))> {
-        let inner = self.inner.upgrade()?;
-        let (client, _, native, _) = inner.client(&self.device_id).ok()?;
-        Some((client, native))
+    /// Opens the device's frame stream, with its native display size, while it is `Ready`.
+    /// The device is held only while the stream opens.
+    async fn open(&self) -> Option<(Result<JpegStream, DeviceError>, (u32, u32))> {
+        let (device, _) = self.inner.upgrade()?.running(&self.device_id).ok()?;
+        let native = device.native_size();
+        Some((device.jpeg_stream(JPEG_MAX_WIDTH).await, native))
     }
 
-    /// Publishes the stream's newest image at most every [`JPEG_MIN_INTERVAL`] until it ends
-    /// or `cancel`.
+    /// Publishes each frame of the stream until it ends or `cancel`.
     async fn pump(
         &mut self,
-        mut stream: tonic::Streaming<proto::Image>,
+        mut stream: JpegStream,
         native: (u32, u32),
         cancel: &CancellationToken,
     ) -> Result<(), DeviceError> {
-        let mut pending: Option<proto::Image> = None;
-        let mut next = Instant::now();
         loop {
             tokio::select! {
                 () = cancel.cancelled() => return Ok(()),
-                message = stream.message() => match message {
-                    Ok(Some(image)) => pending = Some(image),
-                    Ok(None) => return Ok(()),
-                    Err(status) => {
-                        return Err(DeviceError::Grpc(format!(
-                            "{:?}: {}",
-                            status.code(),
-                            status.message()
-                        )));
-                    }
+                frame = stream.next() => match frame {
+                    Some(Ok(frame)) => self.publish(frame, native),
+                    Some(Err(error)) => return Err(error),
+                    None => return Ok(()),
                 },
-                () = tokio::time::sleep_until(next), if pending.is_some() => {
-                    let image = pending.take().expect("checked by the branch condition");
-                    if let Some(frame) = self.encode(image, cancel).await {
-                        self.publish(frame, native);
-                    }
-                    next = Instant::now() + JPEG_MIN_INTERVAL;
-                }
             }
         }
     }
 
-    /// Encodes `image` off the runtime; `None` (logged) when it cannot be encoded.
-    async fn encode(
-        &mut self,
-        image: proto::Image,
-        cancel: &CancellationToken,
-    ) -> Option<(u32, u32, Option<Orientation>, Vec<u8>)> {
-        let format = image.format.unwrap_or_default();
-        let (width, height) = (format.width, format.height);
-        let reported = format
-            .rotation
-            .and_then(|rotation| reported_orientation(rotation.rotation));
-        let rgb = image.image;
-        let encoding = tokio::task::spawn_blocking(move || encode_rgb888(&rgb, width, height));
-        let encoded = tokio::select! {
-            () = cancel.cancelled() => return None,
-            encoded = encoding => encoded,
-        };
-        match encoded {
-            Ok(Ok(jpeg)) => Some((width, height, reported, jpeg)),
-            Ok(Err(error)) => {
-                if self.warned_malformed {
-                    tracing::debug!(%error, width, height, "device frame could not be encoded");
-                } else {
-                    self.warned_malformed = true;
-                    tracing::warn!(%error, width, height, "device frame could not be encoded");
-                }
-                None
-            }
-            Err(error) => {
-                tracing::warn!(%error, "device frame encoder failed");
-                None
-            }
-        }
-    }
-
-    fn publish(
-        &mut self,
-        (width, height, reported, jpeg): (u32, u32, Option<Orientation>, Vec<u8>),
-        native: (u32, u32),
-    ) {
-        let inner = self.inner.upgrade();
-        // A frame without a rotation keeps the catalog's, which `rotate` may have changed.
-        let current = inner
-            .as_ref()
-            .and_then(|inner| inner.reported_orientation(&self.device_id));
-        let orientation = reported.or(current).unwrap_or(Orientation::Portrait);
-        if let (Some(inner), Some(reported)) = (inner, reported)
-            && current != Some(reported)
+    fn publish(&mut self, frame: RawJpeg, native: (u32, u32)) {
+        let RawJpeg {
+            jpeg,
+            width,
+            height,
+            orientation,
+        } = frame;
+        if let Some(inner) = self.inner.upgrade()
+            && inner.reported_orientation(&self.device_id) != Some(orientation)
         {
-            let (display_width, display_height) = oriented_size(native.0, native.1, reported);
+            let (display_width, display_height) = oriented_size(native.0, native.1, orientation);
             inner.set_reported_orientation(
                 &self.device_id,
-                reported,
+                orientation,
                 display_width,
                 display_height,
             );

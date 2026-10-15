@@ -980,12 +980,15 @@ impl ManagerFixture {
         }))
         .write();
         let (enabled, signal) = watch::channel(true);
-        let manager = crate::device::DeviceManager::start(crate::device::DeviceManagerConfig {
+        let backend = super::AndroidBackend::new(super::AndroidBackendConfig {
             env: sdk.env(),
             discovery_dirs: sdk.discovery_dirs(),
             registry: crate::diagnostics::ProcessAttributionRegistry::new(),
-            enabled: signal,
             grpc_port: Some(controller.port),
+        });
+        let manager = crate::device::DeviceManager::start(crate::device::DeviceManagerConfig {
+            backend: Box::new(backend),
+            enabled: signal,
         });
         Self {
             manager,
