@@ -17143,9 +17143,6 @@ lines.on("line", (line) => {
     case "turn/interrupt":
       result = {};
       break;
-    case "thread/rollback":
-      result = { thread: { id: "native-codex-thread", turns: [] } };
-      break;
     case "shutdown":
       if (process.env.BIBCODE_TEST_CODEX_SHUTDOWN_REQUEST_READY_MARKER) {
         fs.writeFileSync(process.env.BIBCODE_TEST_CODEX_SHUTDOWN_REQUEST_READY_MARKER, request.method);
@@ -20058,7 +20055,6 @@ while IFS= read -r line; do
     *'"method":"thread/goal/set"'*) printf '{"id":%s,"result":{"goal":{"status":"active"}}}\n' "$id" ;;
     *'"method":"turn/start"'*) printf '{"id":%s,"result":{"turn":{"id":"native-codex-turn"}}}\n' "$id" ;;
     *'"method":"turn/interrupt"'*) printf '{"id":%s,"result":{}}\n' "$id" ;;
-    *'"method":"thread/rollback"'*) printf '{"id":%s,"result":{"thread":{"id":"native-codex-thread","turns":[]}}}\n' "$id" ;;
     *'"method":"shutdown"'*)
       [ -z "$BIBCODE_TEST_CODEX_SHUTDOWN_REQUEST_READY_MARKER" ] || : > "$BIBCODE_TEST_CODEX_SHUTDOWN_REQUEST_READY_MARKER"
       [ -n "$BIBCODE_TEST_CODEX_IGNORE_SHUTDOWN_RESPONSE" ] || printf '{"id":%s,"result":null}\n' "$id"
