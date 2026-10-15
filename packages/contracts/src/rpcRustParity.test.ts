@@ -26,6 +26,7 @@ const StreamSchemaTypeId = "~effect/rpc/RpcSchema/StreamSchema";
 const decodeProcessDiagnostics = Schema.decodeUnknownSync(ServerProcessDiagnosticsResult);
 const decodeProcessResourceHistory = Schema.decodeUnknownSync(ServerProcessResourceHistoryResult);
 const decodeSignalProcessInput = Schema.decodeUnknownSync(ServerSignalProcessInput);
+const decodeOrchestrationReadModel = Schema.decodeUnknownSync(OrchestrationReadModel);
 
 interface Manifest {
   readonly methods: ReadonlyArray<{
@@ -64,7 +65,7 @@ describe("Rust RPC fixture parity", () => {
         "utf8",
       ),
     );
-    const decoded = Schema.decodeUnknownSync(OrchestrationReadModel)(fixture);
+    const decoded = decodeOrchestrationReadModel(fixture);
 
     expect(decoded.snapshotSequence).toBe(42);
     expect(decoded.projects.map((project) => project.id)).toEqual([
