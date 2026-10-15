@@ -41,6 +41,17 @@ function isSingleCodePoint(value: string): boolean {
   return value.length === (codePoint > 0xffff ? 2 : 1);
 }
 
+/** Printable ASCII plus Return and Tab: what the server types on an iOS simulator's US layout. */
+const US_TYPEABLE = /^[\x20-\x7E\n\r\t]*$/;
+
+/**
+ * Whether an iOS simulator gets `text` typed as keys. Any other text is pasted through the
+ * simulator's pasteboard, where iOS may ask to Allow Paste.
+ */
+export function isUsTypeable(text: string): boolean {
+  return US_TYPEABLE.test(text);
+}
+
 /** Splits text into parts the server accepts, never between the halves of a surrogate pair. */
 export function splitDeviceText(text: string, maxLength = MAX_DEVICE_TEXT_LENGTH): string[] {
   const parts: string[] = [];

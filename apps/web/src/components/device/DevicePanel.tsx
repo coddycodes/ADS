@@ -26,7 +26,7 @@ import { Button } from "../ui/button";
 import { RetryButton } from "../ui/retry-button";
 import { useDevicePreviewsAvailability } from "./deviceAvailability";
 import { DeviceInputQueue } from "./deviceInputQueue";
-import { splitDeviceText } from "./deviceKeyMap";
+import { isUsTypeable, splitDeviceText } from "./deviceKeyMap";
 import {
   availabilityTitle,
   CLIPBOARD_UNREADABLE_MESSAGE,
@@ -245,6 +245,9 @@ function UnavailablePlatforms({
     <div className="flex min-h-0 flex-1 items-center justify-center p-6">
       <div className="flex max-w-sm flex-col items-center gap-4 text-center">
         <SmartphoneIcon aria-hidden className="size-5 text-muted-foreground" />
+        {platforms.length === 0 ? (
+          <p className="text-xs text-muted-foreground">This server can't run device previews.</p>
+        ) : null}
         {platforms.map((listed) => (
           <div key={listed.platform} className="flex flex-col gap-1">
             <h3 className="text-sm font-medium text-foreground">
@@ -375,13 +378,8 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
     [environmentId, runInput, shownDeviceId, showInputError],
   );
 
-  const releaseInput = useCallback((scope: "keys" | "all") => {
-    const queue = laneRef.current?.queue;
-    if (scope === "keys") queue?.releaseKeys();
-    else queue?.releaseAll();
-  }, []);
-
-  // iOS may hold a paste behind its "Allow Paste" prompt; said once per simulator.
+  // Text an iOS simulator cannot type is pasted, and iOS may hold it behind its "Allow Paste"
+  // prompt; said once per simulator.
   const shownPlatform = device?.platform ?? null;
   const notePaste = useCallback(() => {
     if (shownPlatform !== "ios" || shownDeviceId === null) return;
@@ -389,6 +387,24 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
       current?.deviceId === shownDeviceId ? current : { deviceId: shownDeviceId, open: true },
     );
   }, [shownDeviceId, shownPlatform]);
+  const sendInput = useCallback(
+    (event: DeviceInputEvent) => {
+      pushInput(event);
+      if (event.type === "text" && !isUsTypeable(event.text)) notePaste();
+    },
+    [notePaste, pushInput],
+  );
+  // The device shown now, for work that finishes after an await.
+  const shownDeviceIdRef = useRef(shownDeviceId);
+  useEffect(() => {
+    shownDeviceIdRef.current = shownDeviceId;
+  }, [shownDeviceId]);
+
+  const releaseInput = useCallback((scope: "keys" | "all") => {
+    const queue = laneRef.current?.queue;
+    if (scope === "keys") queue?.releaseKeys();
+    else queue?.releaseAll();
+  }, []);
 
   const start = async () => {
     if (selectedImage === null) return;
@@ -399,8 +415,10 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
     if (!mountedRef.current) return;
     setStartPending(false);
     if (result._tag === "Success") {
+      // The pick stays on the started image: until the catalog lists the new device, the
+      // fallbacks would select another platform's device or the first image.
       setFollowedDeviceId(result.value.deviceId);
-      setPickedImage(null);
+      setPickedImage({ platform, imageId });
       return;
     }
     reportFailure(result, "Could not start the device. Try again.", platform);
@@ -426,6 +444,7 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
     pushInput({ type: "key", key, action: "up" });
   };
   const pasteClipboard = async () => {
+    const target = shownDeviceId;
     let text: string;
     try {
       // Absent outside secure contexts; browsers may also ask, or refuse.
@@ -434,9 +453,9 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
       if (mountedRef.current) showInputError(CLIPBOARD_UNREADABLE_MESSAGE);
       return;
     }
-    if (!mountedRef.current || text.length === 0) return;
-    for (const part of splitDeviceText(text)) pushInput({ type: "text", text: part });
-    notePaste();
+    // Reading can wait on the browser's own Paste prompt; the text belongs to that device only.
+    if (!mountedRef.current || text.length === 0 || shownDeviceIdRef.current !== target) return;
+    for (const part of splitDeviceText(text)) sendInput({ type: "text", text: part });
   };
 
   if (catalog === null) {
@@ -590,10 +609,9 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
             device={device}
             name={shownName ?? device.imageId}
             inputDisabledReason={inputDisabledReason}
-            onInput={pushInput}
+            onInput={sendInput}
             onRelease={releaseInput}
             onStillImages={setStillImages}
-            onPasted={notePaste}
           />
         ) : device === null ? (
           otherDevice !== null && otherName !== null ? (

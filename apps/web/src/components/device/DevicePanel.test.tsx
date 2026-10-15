@@ -503,7 +503,8 @@ describe("DevicePanel with iOS simulators", () => {
     expect(groups.map((label) => label.textContent)).toEqual(["Android", "iOS"]);
     const android = group(container, "Android");
     expect(android.textContent).toContain("Install the Android SDK on the server.");
-    expect(android.querySelector("[role='option']")?.getAttribute("aria-disabled")).toBe("true");
+    // The reason is text under the heading, not an unavailable option.
+    expect(android.querySelector("[role='option']")).toBeNull();
     const iphone = option(container, "iPhone 17 Pro · iOS 27.0");
     expect(iphone.getAttribute("aria-disabled")).toBeNull();
     expect(group(container, "iOS").contains(iphone)).toBe(true);
@@ -760,18 +761,105 @@ describe("DevicePanel with iOS simulators", () => {
     expect(container.textContent).toContain("Stopping iPhone 17 Pro · iOS 27.0…");
   });
 
-  it("notes the Allow Paste prompt once, on the first iOS paste", async () => {
+  it("notes the Allow Paste prompt once, on the first iOS text that is pasted", async () => {
     withCatalog(readyIosDevice());
     const container = await render();
     expect(reasonOf(button(container, "Paste"))).toContain("Allow Paste");
-    expect(container.textContent).not.toContain("Allow Paste");
-    const onPasted = h.screenProps?.onPasted as () => void;
-    await act(async () => onPasted());
+    const onInput = h.screenProps?.onInput as (event: unknown) => void;
+    // US-typeable text is typed as keys, so iOS never asks.
+    await act(async () => onInput({ type: "text", text: "Hello, world!\n" }));
+    expect(container.querySelector("[data-paste-note]")).toBeNull();
+    await act(async () => onInput({ type: "text", text: "héllo" }));
     expect(container.querySelector("[data-paste-note]")?.textContent).toContain("Allow Paste");
     await click(button(container, "Dismiss"));
     expect(container.querySelector("[data-paste-note]")).toBeNull();
-    await act(async () => onPasted());
+    await act(async () => onInput({ type: "text", text: "ü" }));
     expect(container.querySelector("[data-paste-note]")).toBeNull();
+  });
+
+  it("does not note Allow Paste on Android", async () => {
+    withCatalog(catalog({ devices: [snapshot()] }));
+    const container = await render();
+    const onInput = h.screenProps?.onInput as (event: unknown) => void;
+    await act(async () => onInput({ type: "text", text: "héllo" }));
+    expect(container.querySelector("[data-paste-note]")).toBeNull();
+  });
+
+  it("drops clipboard text when the shown device changed while reading it", async () => {
+    let resolveText!: (text: string) => void;
+    const readText = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveText = resolve;
+        }),
+    );
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { readText } });
+    try {
+      const both = (iosState: DeviceSnapshot["state"]) =>
+        catalog({
+          platforms: [
+            platform("android", "ready", "Ready.", [PIXEL]),
+            platform("ios", "ready", "Ready.", [IPHONE]),
+          ],
+          devices: [
+            snapshot({ deviceId: "a-1" }),
+            snapshot({ deviceId: "i-1", platform: "ios", imageId: "UDID-1", state: iosState }),
+          ],
+        });
+      withCatalog(both("ready"));
+      const container = await render();
+      await click(option(container, "iPhone 17 Pro · iOS 27.0"));
+      await click(button(container, "Paste"));
+      // The simulator stops and the user switches to the Android device meanwhile.
+      await act(async () => withCatalog(both("stopped")));
+      await click(option(container, "Pixel 8"));
+      await act(async () => resolveText("héllo"));
+      await flushInput();
+      expect(h.calls.filter((call) => call.command === "input")).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps the started image selected until the catalog lists its device", async () => {
+    const platforms = [
+      platform("android", "ready", "Ready.", [PIXEL]),
+      platform("ios", "ready", "Ready.", [IPHONE]),
+    ];
+    withCatalog(catalog({ platforms, devices: [snapshot({ deviceId: "a-1" })] }));
+    h.results.open = { _tag: "Success", value: { deviceId: "i-new" } };
+    const container = await render();
+    await click(option(container, "iPhone 17 Pro · iOS 27.0"));
+    await click(button(container, "Start"));
+    // The next catalog does not list the new simulator yet.
+    await act(async () =>
+      withCatalog(catalog({ platforms, devices: [snapshot({ deviceId: "a-1" })] })),
+    );
+    expect(container.querySelector("[data-select]")?.getAttribute("data-value")).toBe("ios:UDID-1");
+    expect(container.querySelector("[data-device-screen]")).toBeNull();
+    expect(button(container, "Home").disabled).toBe(true);
+    await click(button(container, "Home"));
+    await flushInput();
+    expect(h.calls.filter((call) => call.command !== "open")).toEqual([]);
+    // Once it is listed, the pane shows it.
+    await act(async () =>
+      withCatalog(
+        catalog({
+          platforms,
+          devices: [
+            snapshot({ deviceId: "a-1" }),
+            snapshot({ deviceId: "i-new", platform: "ios", imageId: "UDID-1" }),
+          ],
+        }),
+      ),
+    );
+    expect(h.screens.at(-1)).toMatchObject({ deviceId: "i-new" });
+  });
+
+  it("says so when the server lists no platforms", async () => {
+    withCatalog(catalog({ platforms: [] }));
+    const container = await render();
+    expect(container.textContent).toContain("This server can't run device previews.");
   });
 
   it("pastes the clipboard from the Paste button", async () => {

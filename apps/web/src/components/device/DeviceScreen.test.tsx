@@ -52,7 +52,7 @@ let container: HTMLDivElement | null = null;
 let sent: DeviceInputEvent[] = [];
 let queue: DeviceInputQueue;
 
-async function render(props: { inputDisabledReason?: string | null; onPasted?: () => void } = {}) {
+async function render(props: { inputDisabledReason?: string | null } = {}) {
   queue = new DeviceInputQueue(
     (events) => {
       sent.push(...events);
@@ -72,7 +72,6 @@ async function render(props: { inputDisabledReason?: string | null; onPasted?: (
         device={device}
         name="Pixel 8"
         inputDisabledReason={props.inputDisabledReason ?? null}
-        onPasted={props.onPasted ?? (() => undefined)}
         onInput={(event) => queue.push(event)}
         onRelease={onRelease}
         onStillImages={(still) => atoms.stillImages.push(still)}
@@ -248,8 +247,7 @@ describe("DeviceScreen", () => {
   it("view-only shows why above the screen and sends no input", async () => {
     const reason =
       "Live input needs someone logged in on this Mac. Simulators open as screenshots.";
-    const onPasted = vi.fn();
-    const canvas = await render({ inputDisabledReason: reason, onPasted });
+    const canvas = await render({ inputDisabledReason: reason });
     const notice = container!.querySelector("[data-view-only]");
     expect(notice?.textContent).toBe(reason);
     // The notice sits above the screen, outside the canvas's box.
@@ -277,19 +275,5 @@ describe("DeviceScreen", () => {
     });
     await settle();
     expect(sent).toEqual([]);
-    expect(onPasted).not.toHaveBeenCalled();
-  });
-
-  it("reports a paste after sending its text", async () => {
-    const onPasted = vi.fn();
-    const canvas = await render({ onPasted });
-    await act(async () => {
-      const paste = new Event("paste", { bubbles: true, cancelable: true });
-      Object.assign(paste, { clipboardData: { getData: () => "hello" } });
-      canvas.dispatchEvent(paste);
-    });
-    await settle();
-    expect(sent).toEqual([{ type: "text", text: "hello" }]);
-    expect(onPasted).toHaveBeenCalledTimes(1);
   });
 });

@@ -147,7 +147,6 @@ export function DeviceScreen({
   onInput,
   onRelease,
   onStillImages,
-  onPasted,
 }: {
   readonly environmentId: EnvironmentId;
   readonly device: DeviceSnapshot;
@@ -160,8 +159,6 @@ export function DeviceScreen({
   readonly onRelease: (scope: "keys" | "all") => void;
   /** Why the screen shows still images instead of video; `null` while it shows video. */
   readonly onStillImages?: (still: StillImages | null) => void;
-  /** Called after pasted text was queued for the device. */
-  readonly onPasted?: () => void;
 }) {
   const inputDisabled = inputDisabledReason !== null;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -336,7 +333,6 @@ export function DeviceScreen({
     if (text.length === 0) return;
     event.preventDefault();
     for (const part of splitDeviceText(text)) onInput({ type: "text", text: part });
-    onPasted?.();
   };
 
   return (

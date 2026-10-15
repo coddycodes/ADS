@@ -54,9 +54,6 @@ export interface DeviceImageSelection {
 /** The picker's string value for an image. A platform name never contains `:`. */
 const pickerValue = (platform: DevicePlatform, id: string) => `${platform}:${id}`;
 
-/** A platform's availability message in the picker; not a platform, so never an image's value. */
-const noticeValue = (platform: DevicePlatform) => `notice:${platform}`;
-
 /** A control that is either usable or says why not, in its tooltip and to screen readers. */
 function ToolbarButton({
   label,
@@ -134,14 +131,10 @@ function PlatformGroup({ listed }: { readonly listed: DevicePlatformCatalog }) {
           })
         : null}
       {availability.kind === "ready" ? null : (
-        <SelectItem
-          hideIndicator
-          disabled
-          value={noticeValue(platform)}
-          className="whitespace-normal text-xs text-muted-foreground"
-        >
+        // Text under the heading, not an option: nothing here can be picked.
+        <div data-platform-notice className="px-3 py-1 text-xs text-muted-foreground">
           {availability.message}
-        </SelectItem>
+        </div>
       )}
     </SelectGroup>
   );
