@@ -1677,7 +1677,10 @@ it.
   record that matches the pid and executable name; when `coredumpctl --json`
   fails or is missing (systemd before 250), it queries the journal for
   systemd-coredump's `MESSAGE_ID` and the pid alone, and matches the
-  executable there. Windows reads Application log
+  executable there. At every start Linux also lists the coredumps of this
+  executable that no session covered: the same path or, for an AppImage,
+  another or detached mount of it, never a same-named binary elsewhere (#110).
+  Windows reads Application log
   Event 1000 through `wevtutil`, in both the named and positional event-data
   forms. macOS reads `~/Library/Logs/DiagnosticReports/*.ips` crash reports
   (`bug_type` 309) matched by process name and time. Frames and modules are

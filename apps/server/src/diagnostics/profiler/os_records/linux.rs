@@ -72,7 +72,8 @@ pub fn coredumpctl_list_outcome(
     }
 }
 
-/// The entries for processes running `exe` (by file name), other than `skip_pids`.
+/// The entries for processes running `exe`, this process's executable (see
+/// [`runs_executable`]), other than `skip_pids`.
 pub fn unrecorded_entries(
     entries: Vec<CoredumpEntry>,
     exe: &str,
@@ -80,7 +81,7 @@ pub fn unrecorded_entries(
 ) -> Vec<super::UnrecordedCrash> {
     entries
         .into_iter()
-        .filter(|entry| !skip_pids.contains(&entry.pid) && same_executable(&entry.exe, exe))
+        .filter(|entry| !skip_pids.contains(&entry.pid) && runs_executable(&entry.exe, exe))
         .map(|entry| super::UnrecordedCrash {
             pid: entry.pid,
             signal: entry.sig,
@@ -88,6 +89,29 @@ pub fn unrecorded_entries(
             exe: entry.exe,
         })
         .collect()
+}
+
+/// Whether a crashed process ran `exe`, both as `/proc/<pid>/exe` names them: the same path,
+/// or, when `exe` is in an AppImage's mount (`<dir>/.mount_<id>/<rest>`, a new `<id>` every
+/// run), `<rest>` in another mount in `<dir>` or at `/<rest>`, which is how the kernel names it
+/// once that mount was detached, as stopping an updated app's unit does. A file of the same
+/// name elsewhere, such as an extracted AppImage run by hand, is another program (#110); a
+/// system install at exactly `/<rest>` cannot be told from a detached mount.
+fn runs_executable(crashed: &str, exe: &str) -> bool {
+    let (crashed, exe) = (
+        crashed.trim_end_matches(" (deleted)"),
+        exe.trim_end_matches(" (deleted)"),
+    );
+    crashed == exe
+        || appimage_mount(exe).is_some_and(|(dir, rest)| {
+            appimage_mount(crashed) == Some((dir, rest)) || crashed.strip_prefix('/') == Some(rest)
+        })
+}
+
+/// `<dir>` and `<rest>` of an executable at `<dir>/.mount_<id>/<rest>`.
+fn appimage_mount(exe: &str) -> Option<(&str, &str)> {
+    let (dir, mounted) = exe.split_once("/.mount_")?;
+    Some((dir, mounted.split_once('/')?.1))
 }
 
 #[cfg(target_os = "linux")]
@@ -390,6 +414,9 @@ mod tests {
         assert_eq!(coredumpctl_list_outcome(None, "", ""), None);
     }
 
+    /// Only this app's executable counts, not another binary of the same name, such as an
+    /// extracted AppImage run by hand (#110). An AppImage mounts at a new `.mount_<id>` every
+    /// run, and a crash recorded after its mount was detached names `/usr/bin/…`.
     #[test]
     fn unrecorded_entries_keep_this_executable_other_than_skipped_pids() {
         let entry = |pid, exe: &str| CoredumpEntry {
@@ -398,21 +425,46 @@ mod tests {
             sig: 7,
             exe: exe.to_owned(),
         };
-        let crashes = unrecorded_entries(
-            vec![
-                entry(10, "/tmp/.mount_old/usr/bin/bibcode-desktop"),
-                entry(11, "/usr/bin/bibcode-desktop"),
-                entry(12, "/usr/bin/firefox"),
-                entry(13, "/usr/bin/bibcode-desktop"),
-            ],
-            "/tmp/.mount_new/usr/bin/bibcode-desktop",
-            &[13],
-        );
+        let pids = |exe: &str, entries| {
+            unrecorded_entries(entries, exe, &[13])
+                .iter()
+                .map(|crash| crash.pid)
+                .collect::<Vec<_>>()
+        };
+        let appimage = "/tmp/.mount_bibcodcDBndf/usr/bin/bibcode-desktop";
         assert_eq!(
-            crashes.iter().map(|crash| crash.pid).collect::<Vec<_>>(),
-            [10, 11]
+            pids(
+                appimage,
+                vec![
+                    entry(10, "/tmp/.mount_bibcodEBCJgP/usr/bin/bibcode-desktop"),
+                    entry(11, "/usr/bin/bibcode-desktop"),
+                    entry(
+                        12,
+                        "/home/u/.cache/leak/appimage/squashfs-root/usr/bin/bibcode-desktop"
+                    ),
+                    entry(13, "/tmp/.mount_bibcodEBCJgP/usr/bin/bibcode-desktop"),
+                    entry(14, "/usr/bin/firefox"),
+                    entry(15, "/var/tmp/.mount_bibcodX/usr/bin/bibcode-desktop"),
+                    entry(16, appimage),
+                ]
+            ),
+            [10, 11, 16]
         );
-        assert_eq!(crashes[0].signal, 7);
+        let built = "/home/u/src/bibcode/target/release/bibcode-desktop";
+        assert_eq!(
+            pids(
+                built,
+                vec![
+                    entry(20, &format!("{built} (deleted)")),
+                    entry(21, "/usr/bin/bibcode-desktop"),
+                    entry(22, "/tmp/.mount_bibcodEBCJgP/usr/bin/bibcode-desktop"),
+                    entry(23, built),
+                ]
+            ),
+            [20, 23]
+        );
+        let crashes = unrecorded_entries(vec![entry(30, built)], built, &[]);
+        assert_eq!((crashes[0].signal, crashes[0].exe.as_str()), (7, built));
     }
 
     #[test]
