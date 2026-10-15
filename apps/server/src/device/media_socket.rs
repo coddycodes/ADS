@@ -4,15 +4,19 @@
 //!
 //! The plain route sends the ticket as a text message and frames as binary messages. The
 //! E2EE route, for profiles that pin the host key, first runs Noise_NK with that key as
-//! `/ws-e2ee` does; from then on every message, the ticket included, is a logical message
-//! in encrypted records (the `/ws-e2ee` record format), and only a ticket minted over E2EE
-//! is accepted. A client that pinned another key is closed with code 4403 `host-identity`.
+//! `/ws-e2ee` does, under the prologue [`DEVICE_MEDIA_NOISE_PROLOGUE`]; from then on every
+//! message, the ticket included, is a logical message in encrypted records (the `/ws-e2ee`
+//! record format), and only a ticket minted over E2EE is accepted. A client that pinned
+//! another key or prologue is closed with code 4403 `host-identity`.
+//!
+//! A plain socket has 5 s for its ticket; an E2EE socket has 10 s for the handshake and the
+//! ticket together.
 //!
 //! Rejections close with code 4400 and a reason the client acts on:
 //!
 //! | Reason | Cause |
 //! | --- | --- |
-//! | `expired` | the ticket expired, is unknown or malformed, or did not arrive within 5 s |
+//! | `expired` | the ticket expired, is unknown or malformed, or did not arrive in time |
 //! | `reused` | the ticket was already used |
 //! | `wrongChannel` | the ticket was minted over the other channel |
 //! | `wrongDevice` | the ticket's device is no longer known |
@@ -41,19 +45,24 @@ use futures_util::{
     stream::{SplitSink, SplitStream},
 };
 use serde::Deserialize;
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use super::{DeviceManager, media::MediaChannel};
 use crate::{
     auth::AuthService,
     rpc::{
-        E2EE_HANDSHAKE_TIMEOUT, E2EE_HOST_IDENTITY_CLOSE_CODE, E2eeChannel, E2eePreauthAdmission,
-        E2eePreauthLease, E2eeSessionError, next_binary_frame,
+        E2EE_HANDSHAKE_TIMEOUT, E2eeChannel, E2eePreauthAdmission, E2eePreauthLease,
+        E2eeSessionError, accept_noise_nk, next_binary_frame,
     },
 };
 
-/// How long a socket may take to send its ticket (after the handshake on the E2EE route).
+/// How long a plain socket may take to send its ticket.
 pub(crate) const TICKET_WAIT: Duration = Duration::from_secs(5);
+/// The E2EE route's Noise prologue. It binds a handshake to this route, so a media
+/// handshake cannot be replayed into `/ws-e2ee` or the reverse; clients must use the same
+/// bytes.
+pub(crate) const DEVICE_MEDIA_NOISE_PROLOGUE: &[u8] = b"bibcode-device-media/1";
 /// How long one frame may wait for the client before the socket closes as `slow`.
 pub(crate) const SEND_STALL_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long a close frame may take; the socket is dropped after it either way.
@@ -77,6 +86,9 @@ pub(crate) struct MediaSocketState {
     pub admission: E2eePreauthAdmission,
     /// [`SEND_STALL_TIMEOUT`] outside tests.
     pub send_stall: Duration,
+    /// How long an E2EE socket has for the handshake and its ticket together;
+    /// [`E2EE_HANDSHAKE_TIMEOUT`] outside tests.
+    pub e2ee_preauth: Duration,
 }
 
 impl MediaSocketState {
@@ -86,6 +98,7 @@ impl MediaSocketState {
             auth,
             admission: E2eePreauthAdmission::new(),
             send_stall: SEND_STALL_TIMEOUT,
+            e2ee_preauth: E2EE_HANDSHAKE_TIMEOUT,
         }
     }
 }
@@ -196,7 +209,16 @@ pub(crate) fn upgrade_plain(
         peer_ip,
         upgrade,
         MAX_INBOUND_BYTES,
-        |socket, state, lease| serve(PlainTransport(socket), state, MediaChannel::Plain, lease),
+        |socket, state, lease| {
+            let ticket_deadline = Instant::now() + TICKET_WAIT;
+            serve(
+                PlainTransport(socket),
+                state,
+                MediaChannel::Plain,
+                lease,
+                ticket_deadline,
+            )
+        },
     )
 }
 
@@ -248,64 +270,56 @@ where
         .on_upgrade(move |socket| serve(socket, state, lease))
 }
 
-/// Answers the client's Noise_NK handshake within [`E2EE_HANDSHAKE_TIMEOUT`], then serves
-/// the socket over the channel.
+/// Answers the client's Noise_NK handshake under [`DEVICE_MEDIA_NOISE_PROLOGUE`], then
+/// serves the socket over the channel. The handshake and the ticket share one pre-auth
+/// deadline, as the handshake and credential do on `/ws-e2ee`.
 async fn serve_e2ee(socket: WebSocket, state: MediaSocketState, lease: E2eePreauthLease) {
+    let deadline = Instant::now() + state.e2ee_preauth;
     let (mut writer, mut reader) = socket.split();
-    let handshake = tokio::time::timeout(E2EE_HANDSHAKE_TIMEOUT, async {
-        let message_a = next_binary_frame(&mut reader)
-            .await
-            .ok_or(E2eeSessionError::Closed)?;
-        let (channel, message_b) =
-            E2eeChannel::respond_to_message_a(state.auth.host_identity(), &message_a)?;
-        writer
-            .send(Message::Binary(message_b.into()))
-            .await
-            .map_err(|_| E2eeSessionError::Closed)?;
-        Ok(channel)
-    })
+    let handshake = accept_noise_nk(
+        &mut writer,
+        &mut reader,
+        state.auth.host_identity(),
+        DEVICE_MEDIA_NOISE_PROLOGUE,
+        deadline,
+    )
     .await;
     match handshake {
-        Ok(Ok(channel)) => {
+        Ok(channel) => {
             let transport = E2eeTransport {
                 writer,
                 reader,
                 channel,
             };
-            serve(transport, state, MediaChannel::E2ee, lease).await;
+            serve(transport, state, MediaChannel::E2ee, lease, deadline).await;
         }
-        Ok(Err(E2eeSessionError::Handshake)) => {
-            tracing::warn!("device media client pinned another host key");
-            let _ = tokio::time::timeout(
-                CLOSE_TIMEOUT,
-                writer.send(Message::Close(Some(CloseFrame {
-                    code: E2EE_HOST_IDENTITY_CLOSE_CODE,
-                    reason: "host-identity".into(),
-                }))),
-            )
-            .await;
+        // Already closed with `host-identity`.
+        Err(E2eeSessionError::Handshake) => {
+            tracing::warn!("device media client pinned another host key or prologue");
         }
-        Ok(Err(E2eeSessionError::Closed)) => {}
-        Ok(Err(_)) => {
-            tracing::warn!("device media E2EE handshake failed");
-            let _ = tokio::time::timeout(CLOSE_TIMEOUT, writer.close()).await;
-        }
-        Err(_) => {
-            tracing::warn!("device media E2EE handshake timed out");
+        Err(E2eeSessionError::Closed) => {}
+        Err(error) => {
+            if matches!(error, E2eeSessionError::Timeout) {
+                tracing::warn!("device media E2EE handshake timed out");
+            } else {
+                tracing::warn!("device media E2EE handshake failed");
+            }
             let _ = tokio::time::timeout(CLOSE_TIMEOUT, writer.close()).await;
         }
     }
 }
 
 /// Redeems the socket's ticket for `channel`, then streams the device until either side
-/// ends. `lease` holds the socket's pre-auth slot until the ticket is redeemed.
+/// ends. `lease` holds the socket's pre-auth slot until the ticket is redeemed, which must
+/// arrive before `ticket_deadline`.
 async fn serve<T: MediaTransport>(
     mut socket: T,
     state: MediaSocketState,
     channel: MediaChannel,
     lease: E2eePreauthLease,
+    ticket_deadline: Instant,
 ) {
-    let ticket = match tokio::time::timeout(TICKET_WAIT, socket.recv()).await {
+    let ticket = match tokio::time::timeout_at(ticket_deadline, socket.recv()).await {
         Err(_) => {
             tracing::warn!("device media socket sent no ticket in time");
             return socket.close("expired").await;
@@ -492,6 +506,11 @@ mod tests {
         }
 
         async fn start_with(packets: Vec<Vec<u8>>) -> Self {
+            Self::start_custom(packets, E2EE_HANDSHAKE_TIMEOUT).await
+        }
+
+        /// `e2ee_preauth` bounds the E2EE handshake and ticket together.
+        async fn start_custom(packets: Vec<Vec<u8>>, e2ee_preauth: Duration) -> Self {
             let source = FakeScrcpySource::spawn(packets).await;
             let fixture =
                 ManagerFixture::with_sdk(|sdk| sdk.avds(&["Pixel"]).adb_forwards_to(source.port))
@@ -513,7 +532,8 @@ mod tests {
                 )
                 .await
                 .expect("authorized session");
-            let state = MediaSocketState::new(fixture.manager.clone(), auth.clone());
+            let mut state = MediaSocketState::new(fixture.manager.clone(), auth.clone());
+            state.e2ee_preauth = e2ee_preauth;
             let app = Router::new()
                 .route(
                     "/api/device-media",
@@ -575,12 +595,26 @@ mod tests {
 
         /// Runs Noise_NK pinned to `host_key` on the E2EE route; the close code on refusal.
         async fn handshake(&self, host_key: &[u8]) -> Result<E2eeClient, Option<u16>> {
+            self.handshake_with(host_key, DEVICE_MEDIA_NOISE_PROLOGUE, Duration::ZERO)
+                .await
+        }
+
+        /// Opens the E2EE route, waits `delay`, then runs Noise_NK under `prologue`.
+        async fn handshake_with(
+            &self,
+            host_key: &[u8],
+            prologue: &[u8],
+            delay: Duration,
+        ) -> Result<E2eeClient, Option<u16>> {
             let (mut socket, _) = connect_async(&self.e2ee_url)
                 .await
                 .expect("E2EE media socket");
+            tokio::time::sleep(delay).await;
             let mut initiator = snow::Builder::new(crate::auth::NOISE_NK_PARAMS.parse().unwrap())
                 .remote_public_key(host_key)
                 .expect("host key")
+                .prologue(prologue)
+                .expect("prologue")
                 .build_initiator()
                 .expect("Noise initiator");
             let mut message_a = vec![0_u8; MAX_E2EE_CIPHERTEXT_BYTES];
@@ -871,8 +905,11 @@ mod tests {
         );
         assert_eq!(client.recv().await.0[0], 2);
         assert_eq!(harness.source.control_bytes().await, [17]);
-        // Inbound messages are encrypted too.
+        // Inbound messages are encrypted too: past the 1 s reset limit, a keyframe request
+        // asks the encoder for another key unit.
+        tokio::time::sleep(crate::device::media::RESET_MIN_INTERVAL).await;
         client.send(br#"{"type":"keyframe"}"#).await;
+        harness.source.wait_control_bytes(&[17, 17]).await;
         client.socket.close(None).await.expect("close");
         wait_until(|| harness.fixture.sdk.adb_log().contains("forward --remove")).await;
         harness.fixture.manager.shutdown().await;
@@ -912,6 +949,51 @@ mod tests {
         // No ticket was consumed: it still opens the stream over the right key.
         let mut client = harness.connect_e2ee(&ticket).await;
         assert_eq!(client.recv().await.0[0], 0);
+        harness.fixture.manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn e2ee_handshake_needs_the_media_prologue() {
+        let harness = Harness::start().await;
+        assert_eq!(
+            harness
+                .handshake_with(
+                    harness.auth.host_identity().public_key_bytes(),
+                    b"",
+                    Duration::ZERO
+                )
+                .await
+                .err()
+                .expect("the handshake fails"),
+            Some(crate::rpc::E2EE_HOST_IDENTITY_CLOSE_CODE)
+        );
+        harness.fixture.manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn e2ee_handshake_and_ticket_share_one_deadline() {
+        let preauth = Duration::from_millis(1500);
+        let harness = Harness::start_custom(vec![config_unit(), key_unit(1)], preauth).await;
+        let started = std::time::Instant::now();
+        // A late but successful handshake leaves only the rest of the deadline for the
+        // ticket, not a fresh ticket wait.
+        let mut client = harness
+            .handshake_with(
+                harness.auth.host_identity().public_key_bytes(),
+                DEVICE_MEDIA_NOISE_PROLOGUE,
+                Duration::from_millis(1200),
+            )
+            .await
+            .expect("E2EE handshake");
+        assert_eq!(
+            close_reason(&mut client.socket).await,
+            (CLOSE_CODE, "expired".to_owned())
+        );
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= preauth && elapsed < preauth + Duration::from_secs(1),
+            "{elapsed:?}"
+        );
         harness.fixture.manager.shutdown().await;
     }
 

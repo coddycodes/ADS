@@ -1173,6 +1173,11 @@ impl FakeScrcpySource {
         self.close_video.notify_one();
     }
 
+    /// Waits up to ten seconds until the control bytes received are exactly `expected`.
+    pub(crate) async fn wait_control_bytes(&self, expected: &[u8]) {
+        wait_until(|| *self.control.lock().expect("fake control lock") == expected).await;
+    }
+
     /// Waits up to ten seconds for the first control bytes and returns all received so far.
     pub(crate) async fn control_bytes(&self) -> Vec<u8> {
         wait_until(|| !self.control.lock().expect("fake control lock").is_empty()).await;

@@ -21,6 +21,8 @@ const NOISE_NK_PARAMS: &str = "Noise_NK_25519_ChaChaPoly_SHA256";
 const MAX_CIPHERTEXT_BYTES: usize = 65_535;
 const RECORD_FINAL: u8 = 0;
 const RECORD_CONTINUATION: u8 = 1;
+/// The media route's Noise prologue; the TS client sends the same bytes.
+const MEDIA_PROLOGUE: &[u8] = b"bibcode-device-media/1";
 
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -167,15 +169,24 @@ fn host_public_key(root: &std::path::Path) -> Vec<u8> {
 
 /// Opens the E2EE media route and sends Noise_NK message A pinned to `host_key`.
 async fn send_message_a(handle: &ServerHandle, host_key: &[u8]) -> (Socket, snow::HandshakeState) {
-    let (mut socket, _) = connect_async(format!(
-        "ws://{}/api/device-media-e2ee",
-        handle.local_addr()
-    ))
-    .await
-    .expect("E2EE media socket upgrades");
+    send_message_a_to(handle, "/api/device-media-e2ee", host_key, MEDIA_PROLOGUE).await
+}
+
+/// Opens `path` and sends Noise_NK message A pinned to `host_key` under `prologue`.
+async fn send_message_a_to(
+    handle: &ServerHandle,
+    path: &str,
+    host_key: &[u8],
+    prologue: &[u8],
+) -> (Socket, snow::HandshakeState) {
+    let (mut socket, _) = connect_async(format!("ws://{}{path}", handle.local_addr()))
+        .await
+        .expect("socket upgrades");
     let mut initiator = snow::Builder::new(NOISE_NK_PARAMS.parse().expect("Noise parameters"))
         .remote_public_key(host_key)
         .expect("host key")
+        .prologue(prologue)
+        .expect("prologue")
         .build_initiator()
         .expect("Noise initiator");
     let mut message_a = vec![0_u8; MAX_CIPHERTEXT_BYTES];
@@ -305,7 +316,7 @@ async fn e2ee_handshake_times_out() {
     let started = Instant::now();
     let _ = closed(&mut socket).await;
     assert!(
-        (Duration::from_secs(9)..Duration::from_secs(15)).contains(&started.elapsed()),
+        (Duration::from_secs(9)..Duration::from_secs(11)).contains(&started.elapsed()),
         "{:?}",
         started.elapsed()
     );
@@ -362,6 +373,24 @@ async fn both_media_routes_share_one_preauth_pool() {
         .expect("an answer within 5 s");
     assert!(matches!(answer, Some(Ok(Message::Binary(_)))), "{answer:?}");
     drop(held);
+    handle.shutdown();
+    handle.join().await.expect("server joins");
+}
+
+#[tokio::test]
+async fn media_prologue_fails_on_ws_e2ee() {
+    let (handle, temp) = start().await;
+    let (mut socket, _) = send_message_a_to(
+        &handle,
+        "/ws-e2ee",
+        &host_public_key(temp.path()),
+        MEDIA_PROLOGUE,
+    )
+    .await;
+    assert_eq!(
+        closed(&mut socket).await,
+        Some((4403, "host-identity".to_owned()))
+    );
     handle.shutdown();
     handle.join().await.expect("server joins");
 }

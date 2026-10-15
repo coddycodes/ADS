@@ -13,13 +13,14 @@ pub use methods::{ACTIVE_RPC_METHODS, MethodMode, RpcMethodSpec};
 pub use session::{RpcRegistry, RpcResult, RpcStreamChunk};
 
 pub(crate) use e2ee::{
-    E2EE_HANDSHAKE_TIMEOUT, E2EE_HOST_IDENTITY_CLOSE_CODE, E2eeChannel, E2eePreauthAdmission,
-    E2eePreauthLease, E2eeSessionError, MAX_E2EE_CIPHERTEXT_BYTES, effective_preauth_peer,
-    next_binary_frame, run_e2ee_session,
+    E2EE_HANDSHAKE_TIMEOUT, E2eeChannel, E2eePreauthAdmission, E2eePreauthLease, E2eeSessionError,
+    MAX_E2EE_CIPHERTEXT_BYTES, accept_noise_nk, effective_preauth_peer, next_binary_frame,
+    run_e2ee_session,
 };
 #[cfg(test)]
 pub(crate) use e2ee::{
-    E2EE_RECORD_FLAG_CONTINUATION, E2EE_RECORD_FLAG_FINAL, MAX_E2EE_CHUNK_BYTES,
+    E2EE_HOST_IDENTITY_CLOSE_CODE, E2EE_RECORD_FLAG_CONTINUATION, E2EE_RECORD_FLAG_FINAL,
+    MAX_E2EE_CHUNK_BYTES,
 };
 pub(crate) use methods::{MethodMutability, method_mutability};
 #[cfg(test)]

@@ -627,15 +627,16 @@ impl E2eeChannel {
         Tx: AsyncFnMut(Vec<u8>) -> Result<(), E2eeSessionError>,
     {
         let message_a = recv_binary_frame().await.ok_or(E2eeSessionError::Closed)?;
-        let (channel, message_b) = Self::respond_to_message_a(host_identity, &message_a)?;
+        let (channel, message_b) = Self::respond_to_message_a(host_identity, &[], &message_a)?;
         send_binary_frame(message_b).await?;
         Ok(channel)
     }
 
-    /// Answers the client's Noise_NK message A: the channel and message B to send back.
-    /// `Handshake` means the client pinned another host key.
-    pub(crate) fn respond_to_message_a(
+    /// Answers the client's Noise_NK message A under `prologue`: the channel and message B
+    /// to send back. `Handshake` means the client pinned another host key or prologue.
+    fn respond_to_message_a(
         host_identity: &HostIdentity,
+        prologue: &[u8],
         message_a: &[u8],
     ) -> Result<(Self, Vec<u8>), E2eeSessionError> {
         if message_a.len() > MAX_E2EE_CIPHERTEXT_BYTES {
@@ -649,6 +650,8 @@ impl E2eeChannel {
         let mut responder = snow::Builder::new(params)
             .local_private_key(host_identity.private_key_bytes())
             .map_err(|error| E2eeSessionError::Protocol(format!("local key: {error:?}")))?
+            .prologue(prologue)
+            .map_err(|error| E2eeSessionError::Protocol(format!("prologue: {error:?}")))?
             .build_responder()
             .map_err(|error| E2eeSessionError::Protocol(format!("responder: {error:?}")))?;
 
@@ -1011,16 +1014,14 @@ pub(crate) async fn run_e2ee_session(
     };
 
     let (mut ws_writer, mut ws_reader) = socket.split();
-    let established = timeout(E2EE_HANDSHAKE_TIMEOUT, async {
-        let message_a = next_binary_frame(&mut ws_reader)
-            .await
-            .ok_or(E2eeSessionError::Closed)?;
-        let (mut channel, message_b) =
-            E2eeChannel::respond_to_message_a(auth.host_identity(), &message_a)?;
-        send_frame_before(
+    let deadline = Instant::now() + E2EE_HANDSHAKE_TIMEOUT;
+    let established = timeout_at(deadline, async {
+        let mut channel = accept_noise_nk(
             &mut ws_writer,
-            Message::Binary(message_b.into()),
-            Instant::now() + SOCKET_WRITE_TIMEOUT,
+            &mut ws_reader,
+            auth.host_identity(),
+            &[],
+            deadline,
         )
         .await?;
 
@@ -1156,15 +1157,8 @@ pub(crate) async fn run_e2ee_session(
             let _ = ws_writer.close().await;
             return;
         }
-        Ok(Err(E2eeSessionError::Handshake)) => {
-            let _ = ws_writer
-                .send(Message::Close(Some(CloseFrame {
-                    code: E2EE_HOST_IDENTITY_CLOSE_CODE,
-                    reason: "host-identity".into(),
-                })))
-                .await;
-            return;
-        }
+        // `accept_noise_nk` already closed with `host-identity`.
+        Ok(Err(E2eeSessionError::Handshake)) => return,
         Ok(Err(_)) | Err(_) => {
             let _ = ws_writer.close().await;
             return;
@@ -1183,6 +1177,46 @@ pub(crate) async fn run_e2ee_session(
         session_shutdown,
     )
     .await;
+}
+
+/// Answers a Noise_NK handshake as `identity` under `prologue`: reads message A, writes
+/// message B, and returns the channel, all before `deadline`. A client that pinned another
+/// key (or prologue) gets close code 4403 `host-identity` and `Handshake`.
+pub(crate) async fn accept_noise_nk(
+    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    reader: &mut futures_util::stream::SplitStream<WebSocket>,
+    identity: &HostIdentity,
+    prologue: &[u8],
+    deadline: Instant,
+) -> Result<E2eeChannel, E2eeSessionError> {
+    let message_a = timeout_at(deadline, next_binary_frame(reader))
+        .await
+        .map_err(|_| E2eeSessionError::Timeout)?
+        .ok_or(E2eeSessionError::Closed)?;
+    let (channel, message_b) =
+        match E2eeChannel::respond_to_message_a(identity, prologue, &message_a) {
+            Ok(accepted) => accepted,
+            Err(E2eeSessionError::Handshake) => {
+                let _ = send_frame_before(
+                    writer,
+                    Message::Close(Some(CloseFrame {
+                        code: E2EE_HOST_IDENTITY_CLOSE_CODE,
+                        reason: "host-identity".into(),
+                    })),
+                    Instant::now() + SOCKET_WRITE_TIMEOUT,
+                )
+                .await;
+                return Err(E2eeSessionError::Handshake);
+            }
+            Err(error) => return Err(error),
+        };
+    send_frame_before(
+        writer,
+        Message::Binary(message_b.into()),
+        deadline.min(Instant::now() + SOCKET_WRITE_TIMEOUT),
+    )
+    .await?;
+    Ok(channel)
 }
 
 /// The next binary frame; `None` once the client closes, errs, or sends text.
