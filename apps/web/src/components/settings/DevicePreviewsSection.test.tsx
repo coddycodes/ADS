@@ -78,9 +78,23 @@ import { DevicePreviewsSection } from "./DevicePreviewsSection";
 const ENVIRONMENT_ID = EnvironmentId.make("environment-work");
 
 const runningCatalog: DeviceCatalog = {
-  availability: { kind: "ready", message: "Ready." },
-  avds: [{ name: "Pixel_8", displayName: "Pixel 8" }],
-  devices: [{ deviceId: "d-1", avdName: "Pixel_8", state: "ready", orientation: "portrait" }],
+  platforms: [
+    {
+      platform: "android",
+      availability: { kind: "ready", message: "Ready." },
+      images: [{ id: "Pixel_8", displayName: "Pixel 8" }],
+    },
+  ],
+  devices: [
+    {
+      deviceId: "d-1",
+      platform: "android",
+      imageId: "Pixel_8",
+      state: "ready",
+      orientation: "portrait",
+      canRotate: true,
+    },
+  ],
 };
 
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];

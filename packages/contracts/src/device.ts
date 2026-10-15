@@ -1,11 +1,24 @@
 import * as Schema from "effect/Schema";
 
+/** The platform a device image runs. */
+export const DevicePlatform = Schema.Literals(["android", "ios"]);
+export type DevicePlatform = typeof DevicePlatform.Type;
+
+/**
+ * Why a platform can or cannot run devices. `sdkMissing` through `accelerationUnavailable`
+ * are Android's; `xcodeMissing` through `viewOnlyHeadless` are iOS's.
+ */
 export const DeviceAvailabilityKind = Schema.Literals([
   "ready",
   "sdkMissing",
   "adbMissing",
   "noAvds",
   "accelerationUnavailable",
+  "xcodeMissing",
+  "xcodeSetupIncomplete",
+  "noSimulators",
+  "xcodeUnsupported",
+  "viewOnlyHeadless",
 ]);
 export type DeviceAvailabilityKind = typeof DeviceAvailabilityKind.Type;
 
@@ -27,21 +40,44 @@ export const DeviceOrientation = Schema.Literals([
 ]);
 export type DeviceOrientation = typeof DeviceOrientation.Type;
 
-/** `width` and `height` are the display size in the current orientation. */
+/** A device a platform can start: an Android AVD or an iOS simulator. */
+export const DeviceImage = Schema.Struct({
+  /** The AVD name or the simulator UDID. */
+  id: Schema.String,
+  displayName: Schema.String,
+  /** Present, and only ever `true`, when the image already runs outside BiBCode. */
+  inUseElsewhere: Schema.optionalKey(Schema.Literal(true)),
+});
+export type DeviceImage = typeof DeviceImage.Type;
+
+/** One platform's availability and the images it can start. */
+export const DevicePlatformCatalog = Schema.Struct({
+  platform: DevicePlatform,
+  availability: Schema.Struct({ kind: DeviceAvailabilityKind, message: Schema.String }),
+  images: Schema.Array(DeviceImage),
+});
+export type DevicePlatformCatalog = typeof DevicePlatformCatalog.Type;
+
+/**
+ * `width` and `height` are the display size in the current orientation. `canRotate` is whether
+ * the running device turns.
+ */
 export const DeviceSnapshot = Schema.Struct({
   deviceId: Schema.String,
-  avdName: Schema.String,
+  platform: DevicePlatform,
+  imageId: Schema.String,
   state: DeviceState,
   failure: Schema.optionalKey(Schema.String),
   width: Schema.optionalKey(Schema.Number),
   height: Schema.optionalKey(Schema.Number),
   orientation: DeviceOrientation,
+  canRotate: Schema.Boolean,
 });
 export type DeviceSnapshot = typeof DeviceSnapshot.Type;
 
+/** One entry per platform the server runs, in its order, and every device it knows. */
 export const DeviceCatalog = Schema.Struct({
-  availability: Schema.Struct({ kind: DeviceAvailabilityKind, message: Schema.String }),
-  avds: Schema.Array(Schema.Struct({ name: Schema.String, displayName: Schema.String })),
+  platforms: Schema.Array(DevicePlatformCatalog),
   devices: Schema.Array(DeviceSnapshot),
 });
 export type DeviceCatalog = typeof DeviceCatalog.Type;
@@ -85,7 +121,7 @@ export const DeviceInputEvent = Schema.Union([
 ]);
 export type DeviceInputEvent = typeof DeviceInputEvent.Type;
 
-export const DeviceOpenInput = Schema.Struct({ avdName: Schema.String });
+export const DeviceOpenInput = Schema.Struct({ platform: DevicePlatform, imageId: Schema.String });
 export type DeviceOpenInput = typeof DeviceOpenInput.Type;
 export const DeviceOpenResult = Schema.Struct({ deviceId: Schema.String });
 export type DeviceOpenResult = typeof DeviceOpenResult.Type;
@@ -127,8 +163,15 @@ export class DeviceSdkUnavailableError extends Schema.TaggedError<DeviceSdkUnava
   { kind: DeviceAvailabilityKind, message: Schema.String },
 ) {}
 
+/** The platform already runs a device; `running` is that device's display name. */
 export class DeviceLimitError extends Schema.TaggedError<DeviceLimitError>()("DeviceLimitError", {
   running: Schema.String,
+  message: Schema.String,
+}) {}
+
+/** The image already runs outside BiBCode, such as a simulator booted from Simulator. */
+export class DeviceBusyError extends Schema.TaggedError<DeviceBusyError>()("DeviceBusyError", {
+  imageId: Schema.String,
   message: Schema.String,
 }) {}
 
@@ -162,6 +205,7 @@ export const DeviceRpcError = Schema.Union([
   DevicePreviewsDisabledError,
   DeviceSdkUnavailableError,
   DeviceLimitError,
+  DeviceBusyError,
   DeviceNotFoundError,
   DeviceNotReadyError,
   DeviceInputError,

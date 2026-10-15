@@ -3,6 +3,7 @@ import type {
   DeviceInputEvent,
   DeviceKey,
   DeviceOrientation,
+  DevicePlatform,
   DeviceSnapshot,
   EnvironmentId,
 } from "@bibcode/contracts";
@@ -14,7 +15,7 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { SmartphoneIcon, TriangleAlertIcon } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { deviceEnvironment } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
@@ -34,7 +35,12 @@ import {
   type StillImagesReason,
 } from "./deviceMessages";
 import { DeviceScreen } from "./DeviceScreen";
-import { DeviceToolbar, type RotateDirection } from "./DeviceToolbar";
+import {
+  type DeviceImageSelection,
+  type DevicePickerImage,
+  DeviceToolbar,
+  type RotateDirection,
+} from "./DeviceToolbar";
 
 /** Turning the device left goes portrait → landscape → reverse portrait → reverse landscape. */
 const ORIENTATIONS_LEFT: ReadonlyArray<DeviceOrientation> = [
@@ -55,6 +61,17 @@ export function rotatedOrientation(
 
 const isRunning = (device: DeviceSnapshot) =>
   device.state !== "stopped" && device.state !== "failed";
+
+/** Every platform's images in catalog order, each with the platform that runs it. */
+export function catalogImages(catalog: DeviceCatalog | null): ReadonlyArray<DevicePickerImage> {
+  if (catalog === null) return [];
+  return catalog.platforms.flatMap((listed) =>
+    listed.images.map((image) => ({ ...image, platform: listed.platform })),
+  );
+}
+
+const isImage = (image: DevicePickerImage, platform: DevicePlatform, imageId: string) =>
+  image.platform === platform && image.id === imageId;
 
 /**
  * The device the pane shows: the environment's running one (there is at most one), else the
@@ -116,7 +133,7 @@ function OpenSettingsButton({ environmentId }: { readonly environmentId: Environ
   );
 }
 
-/** The right-panel device pane for one environment's Android emulator. */
+/** The right-panel device pane for one environment's running device. */
 export function DevicePanel({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const availability = useDevicePreviewsAvailability(environmentId);
   if (!availability.known) {
@@ -170,7 +187,7 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
   const runInput = useAtomCommand(deviceEnvironment.input, { reportFailure: false });
 
   const [followedDeviceId, setFollowedDeviceId] = useState<string | null>(null);
-  const [pickedAvd, setPickedAvd] = useState<string | null>(null);
+  const [pickedImage, setPickedImage] = useState<DeviceImageSelection | null>(null);
   const [startPending, setStartPending] = useState(false);
   const [actionError, setActionError] = useState<DeviceErrorView | null>(null);
   const [inputError, setInputError] = useState<string | null>(null);
@@ -184,13 +201,22 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
   }, []);
 
   const device = selectShownDevice(catalog, followedDeviceId);
-  const avds = catalog?.avds ?? [];
-  const selectedAvd =
+  const images = useMemo(() => catalogImages(catalog), [catalog]);
+  const firstImage = images[0];
+  const selectedImage: DeviceImageSelection | null =
     device !== null && isRunning(device)
-      ? device.avdName
-      : pickedAvd !== null && avds.some((avd) => avd.name === pickedAvd)
-        ? pickedAvd
-        : (device?.avdName ?? avds[0]?.name ?? null);
+      ? { platform: device.platform, imageId: device.imageId }
+      : pickedImage !== null &&
+          images.some((image) => isImage(image, pickedImage.platform, pickedImage.imageId))
+        ? pickedImage
+        : device !== null
+          ? { platform: device.platform, imageId: device.imageId }
+          : firstImage === undefined
+            ? null
+            : { platform: firstImage.platform, imageId: firstImage.id };
+  const selectImage = useCallback((platform: DevicePlatform, imageId: string) => {
+    setPickedImage({ platform, imageId });
+  }, []);
 
   const reportFailure = useCallback(
     (result: AtomCommandResult<unknown, unknown>, fallback: string) => {
@@ -261,10 +287,13 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
   }, []);
 
   const start = async () => {
-    if (selectedAvd === null) return;
+    if (selectedImage === null) return;
     setStartPending(true);
     setActionError(null);
-    const result = await runOpen({ environmentId, input: { avdName: selectedAvd } });
+    const result = await runOpen({
+      environmentId,
+      input: { platform: selectedImage.platform, imageId: selectedImage.imageId },
+    });
     if (!mountedRef.current) return;
     setStartPending(false);
     if (result._tag === "Success") {
@@ -315,29 +344,41 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
     return <PanelMessage>Looking for devices…</PanelMessage>;
   }
 
-  if (catalog.availability.kind !== "ready" && device === null) {
+  // With no platform ready and nothing running, the first platform says why in its own words.
+  const unavailable = catalog.platforms.some((listed) => listed.availability.kind === "ready")
+    ? undefined
+    : catalog.platforms[0];
+  if (unavailable !== undefined && device === null) {
     return (
-      <PanelMessage title={availabilityTitle(catalog.availability.kind)}>
-        {catalog.availability.message}
+      <PanelMessage title={availabilityTitle(unavailable.availability.kind)}>
+        {unavailable.availability.message}
       </PanelMessage>
     );
   }
 
+  // A device limit names the running device by display name; find it through its image.
+  const runningName = actionError?.runningName ?? null;
   const limitDevice =
-    actionError === null || actionError.runningAvd === null
+    runningName === null
       ? null
       : (catalog.devices.find(
-          (candidate) => candidate.avdName === actionError.runningAvd && isRunning(candidate),
+          (candidate) =>
+            isRunning(candidate) &&
+            images.some(
+              (image) =>
+                isImage(image, candidate.platform, candidate.imageId) &&
+                image.displayName === runningName,
+            ),
         ) ?? null);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <DeviceToolbar
-        avds={avds}
-        selectedAvd={selectedAvd}
+        images={images}
+        selectedImage={selectedImage}
         device={device}
         startPending={startPending}
-        onSelectAvd={setPickedAvd}
+        onSelectImage={selectImage}
         onStart={() => void start()}
         onStop={() => {
           if (device !== null) void stop(device.deviceId);
@@ -355,7 +396,7 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
           <span className="min-w-0 flex-1">{actionError.message}</span>
           {limitDevice === null ? null : (
             <Button size="xs" variant="outline" onClick={() => void stop(limitDevice.deviceId)}>
-              Stop {limitDevice.avdName}
+              Stop {runningName}
             </Button>
           )}
           {actionError.disabled ? <OpenSettingsButton environmentId={environmentId} /> : null}
@@ -384,7 +425,7 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
           />
         ) : device === null ? (
           <PanelMessage>
-            {avds.length === 0
+            {images.length === 0
               ? "Create a virtual device in Android Studio's Device Manager, then come back."
               : "Pick a virtual device and press Start."}
           </PanelMessage>
@@ -393,10 +434,10 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
             Press Start to try again, or pick another virtual device.
           </PanelMessage>
         ) : device.state === "stopping" ? (
-          <PanelMessage>Stopping {device.avdName}…</PanelMessage>
+          <PanelMessage>Stopping {device.imageId}…</PanelMessage>
         ) : (
           <PanelMessage>
-            Starting {device.avdName}. The first boot can take a few minutes.
+            Starting {device.imageId}. The first boot can take a few minutes.
           </PanelMessage>
         )}
       </div>

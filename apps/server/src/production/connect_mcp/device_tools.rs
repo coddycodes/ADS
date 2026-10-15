@@ -1,5 +1,5 @@
-//! The `device_*` MCP tools: list, open, screenshot, and close Android emulators on this
-//! server. They exist only while `enableDevicePreviews` is on.
+//! The `device_*` MCP tools: list, open, screenshot, and close Android emulators and iOS
+//! simulators on this server. They exist only while `enableDevicePreviews` is on.
 
 use std::time::Duration;
 
@@ -59,7 +59,7 @@ impl DeviceTools {
         arguments: Value,
         cancellation: CancellationToken,
     ) -> Value {
-        // Which thread drove the device; never the arguments, which name AVDs and devices.
+        // Which thread drove the device; never the arguments, which name images and devices.
         tracing::debug!(
             environment_id = %scope.environment_id,
             thread_id = %scope.thread_id,
@@ -91,11 +91,29 @@ impl DeviceTools {
         arguments: &Value,
         cancellation: &CancellationToken,
     ) -> Result<Value, DeviceOpError> {
-        let avd_name = match string_argument(arguments, "avdName")? {
-            Some(name) => name.to_owned(),
-            None => self.only_avd().await?,
+        if let Some(unknown) = arguments.as_object().and_then(|arguments| {
+            arguments
+                .keys()
+                .find(|key| !matches!(key.as_str(), "platform" | "imageId"))
+        }) {
+            return Err(DeviceOpError::InvalidInput(format!(
+                "device_open has no {unknown} argument. Pass platform (android or ios) and imageId."
+            )));
+        }
+        let platform = match string_argument(arguments, "platform")? {
+            None | Some("android") => Platform::Android,
+            Some("ios") => Platform::Ios,
+            Some(_) => {
+                return Err(DeviceOpError::InvalidInput(
+                    "platform must be android or ios.".into(),
+                ));
+            }
         };
-        let device_id = self.manager.open(Platform::Android, &avd_name).await?;
+        let image_id = match string_argument(arguments, "imageId")? {
+            Some(id) => id.to_owned(),
+            None => self.only_image(platform).await?,
+        };
+        let device_id = self.manager.open(platform, &image_id).await?;
         let ready = tokio::select! {
             ready = self.manager.wait_ready(&device_id, self.boot_timeout) => ready,
             () = cancellation.cancelled() => {
@@ -135,28 +153,33 @@ impl DeviceTools {
             .and_then(|device| device.failure.clone())
     }
 
-    async fn only_avd(&self) -> Result<String, DeviceOpError> {
+    /// The id of the platform's only image, for a `device_open` without `imageId`.
+    async fn only_image(&self, platform: Platform) -> Result<String, DeviceOpError> {
+        let (devices, images) = match platform {
+            Platform::Android => ("Android emulators", "virtual devices"),
+            Platform::Ios => ("iOS simulators", "simulators"),
+        };
         self.manager.refresh().await;
-        let Some(android) = self
+        let Some(listed) = self
             .manager
             .catalog()
             .borrow()
             .platforms
             .iter()
-            .find(|listed| listed.platform == Platform::Android)
+            .find(|listed| listed.platform == platform)
             .cloned()
         else {
-            return Err(DeviceOpError::InvalidInput(
-                "This server cannot run Android emulators.".into(),
-            ));
+            return Err(DeviceOpError::InvalidInput(format!(
+                "This server cannot run {devices}."
+            )));
         };
-        let mut names = android.images.iter().map(|image| image.id.as_str());
-        match (names.next(), names.next()) {
-            (Some(name), None) => Ok(name.to_owned()),
-            (None, _) => Err(DeviceOpError::Sdk(android.availability)),
+        let mut ids = listed.images.iter().map(|image| image.id.as_str());
+        match (ids.next(), ids.next()) {
+            (Some(id), None) => Ok(id.to_owned()),
+            (None, _) => Err(DeviceOpError::Sdk(listed.availability)),
             _ => Err(DeviceOpError::InvalidInput(format!(
-                "Several virtual devices exist. Pass avdName as one of: {}.",
-                android
+                "Several {images} exist. Pass imageId as one of: {}.",
+                listed
                     .images
                     .iter()
                     .map(|image| image.id.as_str())
@@ -171,6 +194,7 @@ impl DeviceTools {
         let image = self.manager.png(&device_id, SCREENSHOT_MAX_WIDTH).await?;
         Ok(snapshot_tool_result(json!({
             "deviceId": device_id,
+            "platform": self.platform_of(&device_id),
             "screenshot": {
                 "data": STANDARD.encode(&image.png),
                 "mimeType": "image/png",
@@ -186,8 +210,21 @@ impl DeviceTools {
                 "deviceId is required. Call device_list to see the running device.".into(),
             ));
         };
+        let platform = self.platform_of(device_id);
         self.manager.close(device_id).await?;
-        Ok(success(json!({ "deviceId": device_id, "closed": true })))
+        Ok(success(
+            json!({ "deviceId": device_id, "platform": platform, "closed": true }),
+        ))
+    }
+
+    fn platform_of(&self, device_id: &str) -> Option<Platform> {
+        self.manager
+            .catalog()
+            .borrow()
+            .devices
+            .iter()
+            .find(|device| device.device_id == device_id)
+            .map(|device| device.platform)
     }
 
     /// The `deviceId` argument, or the only device that is not stopped.
@@ -243,6 +280,7 @@ fn failure(error: &DeviceOpError) -> Value {
 
 pub(super) fn device_tool_descriptors() -> Vec<Value> {
     let on_server = "The device runs on the BiBCode server, not on this machine.";
+    let kinds = "Android emulators and iOS simulators (macOS servers)";
     let tool = |name: &str, title: &str, description: String, schema: Value, read_only: bool| {
         json!({
             "name": name,
@@ -260,29 +298,38 @@ pub(super) fn device_tool_descriptors() -> Vec<Value> {
     vec![
         tool(
             "device_list",
-            "List Android devices",
-            "List the Android virtual devices available to start and the device that is running."
-                .into(),
+            "List devices",
+            format!(
+                "List the {kinds}: per platform, whether it can run devices and the images it can start, and the running devices."
+            ),
             json!({"type": "object", "properties": {}, "additionalProperties": false}),
             true,
         ),
         tool(
             "device_open",
-            "Start an Android device",
-            "Start an Android emulator and wait until it has booted. Only one device runs at a time. Omit avdName when exactly one virtual device exists."
-                .into(),
+            "Start a device",
+            format!(
+                "Start one of the {kinds} and wait until it has booted. One device runs per platform. platform defaults to android. Omit imageId when the platform has exactly one image; device_list shows the ids."
+            ),
             json!({
                 "type": "object",
-                "properties": {"avdName": {"type": "string"}},
+                "properties": {
+                    "platform": {"type": "string", "enum": ["android", "ios"], "default": "android"},
+                    "imageId": {
+                        "type": "string",
+                        "description": "The AVD name or simulator UDID, as device_list reports it."
+                    }
+                },
                 "additionalProperties": false
             }),
             false,
         ),
         tool(
             "device_screenshot",
-            "Screenshot an Android device",
-            "Take a PNG screenshot (at most 1080 px wide) of the running Android device. Omit deviceId when one device is running."
-                .into(),
+            "Screenshot a device",
+            format!(
+                "Take a PNG screenshot (at most 1080 px wide) of a running device, one of the {kinds}. Omit deviceId when one device is running."
+            ),
             json!({
                 "type": "object",
                 "properties": {"deviceId": {"type": "string"}},
@@ -292,8 +339,8 @@ pub(super) fn device_tool_descriptors() -> Vec<Value> {
         ),
         tool(
             "device_close",
-            "Stop an Android device",
-            "Stop a running Android emulator.".into(),
+            "Stop a device",
+            format!("Stop a running device, one of the {kinds}."),
             json!({
                 "type": "object",
                 "properties": {"deviceId": {"type": "string"}},

@@ -27,7 +27,11 @@ async fn device_methods_are_refused_while_device_previews_are_off() {
         .expect("WebSocket connects");
 
     for (id, method, payload) in [
-        ("1", "device.open", json!({ "avdName": "Pixel" })),
+        (
+            "1",
+            "device.open",
+            json!({ "platform": "android", "imageId": "Pixel" }),
+        ),
         ("2", "device.subscribeCatalog", json!({})),
         ("3", "device.subscribeFrames", json!({ "deviceId": "d" })),
         ("4", "device.close", json!({ "deviceId": "d" })),

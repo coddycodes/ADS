@@ -2047,6 +2047,35 @@ fn device_tools_are_listed_only_when_enabled() {
     assert!(names(false).contains(&"preview_snapshot".to_owned()));
 }
 
+#[test]
+fn device_open_takes_a_platform_and_an_image() {
+    let tools = tool_descriptors(true);
+    let open = tools
+        .iter()
+        .find(|tool| tool["name"] == "device_open")
+        .expect("device_open is listed");
+    let properties = &open["inputSchema"]["properties"];
+    assert_eq!(
+        properties["platform"]["enum"],
+        serde_json::json!(["android", "ios"])
+    );
+    assert_eq!(properties["platform"]["default"], "android");
+    assert_eq!(properties["imageId"]["type"], "string");
+    assert!(properties.get("avdName").is_none());
+    for tool in tools
+        .iter()
+        .filter(|tool| tool["name"].as_str().unwrap().starts_with("device_"))
+    {
+        assert!(
+            tool["description"]
+                .as_str()
+                .unwrap()
+                .contains("Android emulators and iOS simulators (macOS servers)"),
+            "{tool}"
+        );
+    }
+}
+
 #[cfg(unix)]
 mod device_tools {
     use std::time::Duration;
@@ -2124,6 +2153,7 @@ mod device_tools {
         let bytes = STANDARD.decode(image["data"].as_str().unwrap()).unwrap();
         assert!(bytes.starts_with(b"\x89PNG"));
         assert_eq!(result["structuredContent"]["screenshot"]["width"], 1080);
+        assert_eq!(result["structuredContent"]["platform"], "android");
     }
 
     #[tokio::test]
@@ -2139,6 +2169,14 @@ mod device_tools {
             "Pixel"
         );
         assert_eq!(result["structuredContent"]["devices"][0]["state"], "ready");
+        assert_eq!(
+            result["structuredContent"]["platforms"][0]["platform"],
+            "android"
+        );
+        assert_eq!(
+            result["structuredContent"]["devices"][0]["platform"],
+            "android"
+        );
     }
 
     #[tokio::test]
@@ -2165,6 +2203,7 @@ mod device_tools {
             )
             .await;
         assert_eq!(closed["isError"], false, "{closed}");
+        assert_eq!(closed["structuredContent"]["platform"], "android");
         let after = fixture
             .tools
             .call(&scope(), "screenshot", json!({}), CancellationToken::new())
@@ -2185,7 +2224,7 @@ mod device_tools {
                     .call(
                         &scope(),
                         "open",
-                        json!({"avdName": "Pixel"}),
+                        json!({"platform": "android", "imageId": "Pixel"}),
                         CancellationToken::new(),
                     )
                     .await
@@ -2248,7 +2287,77 @@ mod device_tools {
             result["content"][0]["text"]
                 .as_str()
                 .unwrap()
-                .contains("Pixel, Tablet")
+                .contains("Pass imageId as one of: Pixel, Tablet")
+        );
+    }
+
+    #[tokio::test]
+    async fn device_open_defaults_to_android() {
+        let fixture = DeviceToolsFixture::ready_sdk(&["Pixel", "Tablet"]).await;
+        let result = fixture
+            .tools
+            .call(
+                &scope(),
+                "open",
+                json!({"imageId": "Tablet"}),
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(result["isError"], false, "{result}");
+        assert_eq!(result["structuredContent"]["device"]["platform"], "android");
+        assert_eq!(result["structuredContent"]["device"]["imageId"], "Tablet");
+    }
+
+    #[tokio::test]
+    async fn device_open_rejects_an_unknown_platform_and_the_old_argument() {
+        let fixture = DeviceToolsFixture::ready_sdk(&["Pixel"]).await;
+        let unknown = fixture
+            .tools
+            .call(
+                &scope(),
+                "open",
+                json!({"platform": "windows", "imageId": "Pixel"}),
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(
+            unknown["structuredContent"]["error"]["_tag"], "DeviceInputError",
+            "{unknown}"
+        );
+        assert!(text(&unknown).contains("android or ios"), "{unknown}");
+        // No iOS backend runs here, so naming iOS says so instead of starting anything.
+        let ios = fixture
+            .tools
+            .call(
+                &scope(),
+                "open",
+                json!({"platform": "ios"}),
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(ios["isError"], true, "{ios}");
+        assert!(text(&ios).contains("iOS simulators"), "{ios}");
+        let old = fixture
+            .tools
+            .call(
+                &scope(),
+                "open",
+                json!({"avdName": "Pixel"}),
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(
+            old["structuredContent"]["error"]["_tag"], "DeviceInputError",
+            "{old}"
+        );
+        assert!(
+            fixture
+                .fixture
+                .manager
+                .catalog()
+                .borrow()
+                .devices
+                .is_empty()
         );
     }
 
@@ -2314,7 +2423,8 @@ mod device_tools {
     async fn non_string_arguments_are_invalid_input() {
         let fixture = DeviceToolsFixture::ready_sdk(&["Pixel"]).await;
         for (operation, arguments) in [
-            ("open", json!({"avdName": 7})),
+            ("open", json!({"imageId": 7})),
+            ("open", json!({"platform": 7})),
             ("screenshot", json!({"deviceId": ["x"]})),
             ("close", json!({"deviceId": 1})),
         ] {

@@ -38,11 +38,13 @@ import type { VideoMode } from "./useDeviceVideo";
 const ENVIRONMENT_ID = EnvironmentId.make("environment-work");
 const device: DeviceSnapshot = {
   deviceId: "d-1",
-  avdName: "Pixel_8",
+  platform: "android",
+  imageId: "Pixel_8",
   state: "ready",
   orientation: "portrait",
   width: 1080,
   height: 2400,
+  canRotate: true,
 };
 
 let root: Root | null = null;

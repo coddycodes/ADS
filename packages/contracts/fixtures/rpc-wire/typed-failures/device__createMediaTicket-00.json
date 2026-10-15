@@ -7,9 +7,8 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "DeviceNotReadyError",
-          "state": "stopped",
-          "message": "]1|dGBh"
+          "_tag": "DeviceNotFoundError",
+          "message": "%!}# \">"
         }
       }
     ]

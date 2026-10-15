@@ -50,11 +50,16 @@ export const STILL_IMAGES_REASONS: Readonly<Record<StillImagesReason, string>> =
 };
 
 const AVAILABILITY_TITLES: Readonly<Record<DeviceAvailabilityKind, string>> = {
-  ready: "Android emulator ready",
+  ready: "Devices ready",
   sdkMissing: "Android SDK not found",
   adbMissing: "Android platform-tools missing",
   noAvds: "No virtual devices",
   accelerationUnavailable: "Hardware acceleration unavailable",
+  xcodeMissing: "Xcode not found",
+  xcodeSetupIncomplete: "Xcode setup incomplete",
+  noSimulators: "No simulators",
+  xcodeUnsupported: "Xcode version not supported",
+  viewOnlyHeadless: "View only",
 };
 
 /** The heading above the server's own explanation of why no device can start. */
@@ -83,8 +88,8 @@ export function deviceStateLabel(device: DeviceSnapshot): string {
 /** A device RPC failure, as the pane shows it. */
 export interface DeviceErrorView {
   readonly message: string;
-  /** For a device limit: the AVD already running, which the pane offers to stop. */
-  readonly runningAvd: string | null;
+  /** For a device limit: the running device's display name; the pane offers to stop it. */
+  readonly runningName: string | null;
   /** Device previews were turned off meanwhile; the pane offers Settings. */
   readonly disabled: boolean;
 }
@@ -107,12 +112,12 @@ export function describeDeviceError(error: unknown, fallback: string): DeviceErr
   const message = taggedField(error, "message");
   const plain = (text: string): DeviceErrorView => ({
     message: text,
-    runningAvd: null,
+    runningName: null,
     disabled: false,
   });
   switch (tag) {
     case "DevicePreviewsDisabledError":
-      return { message: DEVICE_PREVIEWS_OFF_MESSAGE, runningAvd: null, disabled: true };
+      return { message: DEVICE_PREVIEWS_OFF_MESSAGE, runningName: null, disabled: true };
     case "DeviceLimitError": {
       const running = taggedField(error, "running");
       return {
@@ -120,10 +125,15 @@ export function describeDeviceError(error: unknown, fallback: string): DeviceErr
           running === null
             ? "Another device is already running. Stop it before starting another."
             : `${running} is already running. Stop it before starting another device.`,
-        runningAvd: running,
+        runningName: running,
         disabled: false,
       };
     }
+    case "DeviceBusyError":
+      return plain(
+        message ??
+          "This device is already running outside BiBCode. Shut it down there, then open it here.",
+      );
     case "DeviceSdkUnavailableError":
       return plain(message ?? "The Android SDK is not available on this server.");
     case "DeviceNotFoundError":

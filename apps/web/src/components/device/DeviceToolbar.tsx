@@ -1,4 +1,4 @@
-import type { DeviceKey, DeviceSnapshot } from "@bibcode/contracts";
+import type { DeviceKey, DevicePlatform, DeviceSnapshot } from "@bibcode/contracts";
 import {
   ChevronLeftIcon,
   CircleIcon,
@@ -27,6 +27,23 @@ import {
 } from "./deviceMessages";
 
 export type RotateDirection = "left" | "right";
+
+/** An image the picker offers, with the platform that runs it. */
+export interface DevicePickerImage {
+  readonly platform: DevicePlatform;
+  readonly id: string;
+  readonly displayName: string;
+  readonly inUseElsewhere?: true;
+}
+
+/** Which image the picker shows; ids are unique only within a platform. */
+export interface DeviceImageSelection {
+  readonly platform: DevicePlatform;
+  readonly imageId: string;
+}
+
+/** The picker's string value for an image. A platform name never contains `:`. */
+const pickerValue = (platform: DevicePlatform, id: string) => `${platform}:${id}`;
 
 /** A control that is either usable or says why not, in its tooltip and to screen readers. */
 function ToolbarButton({
@@ -78,23 +95,23 @@ const PILL_TONES: Readonly<Record<DeviceSnapshot["state"], string>> = {
 };
 
 export function DeviceToolbar({
-  avds,
-  selectedAvd,
+  images,
+  selectedImage,
   device,
   startPending,
-  onSelectAvd,
+  onSelectImage,
   onStart,
   onStop,
   onRotate,
   onKey,
   stillImagesReason = null,
 }: {
-  readonly avds: ReadonlyArray<{ readonly name: string; readonly displayName: string }>;
-  readonly selectedAvd: string | null;
+  readonly images: ReadonlyArray<DevicePickerImage>;
+  readonly selectedImage: DeviceImageSelection | null;
   /** The device this pane shows; `null` before one is started. */
   readonly device: DeviceSnapshot | null;
   readonly startPending: boolean;
-  readonly onSelectAvd: (avdName: string) => void;
+  readonly onSelectImage: (platform: DevicePlatform, imageId: string) => void;
   readonly onStart: () => void;
   readonly onStop: () => void;
   readonly onRotate: (direction: RotateDirection) => void;
@@ -105,7 +122,7 @@ export function DeviceToolbar({
   const state = device?.state ?? null;
   const running = state === "starting" || state === "booting" || state === "ready";
   const startReason =
-    avds.length === 0
+    images.length === 0
       ? DEVICE_DISABLED_REASONS.noAvd
       : startPending
         ? DEVICE_DISABLED_REASONS.starting
@@ -127,8 +144,12 @@ export function DeviceToolbar({
         : state === "stopping"
           ? DEVICE_DISABLED_REASONS.stopping
           : DEVICE_DISABLED_REASONS.startFirst;
+  const selectedValue =
+    selectedImage === null ? "" : pickerValue(selectedImage.platform, selectedImage.imageId);
   const selectedLabel =
-    avds.find((avd) => avd.name === selectedAvd)?.displayName ?? selectedAvd ?? "No device";
+    images.find((image) => pickerValue(image.platform, image.id) === selectedValue)?.displayName ??
+    selectedImage?.imageId ??
+    "No device";
   const pickerLocked = running || state === "stopping" || startPending;
 
   return (
@@ -138,10 +159,11 @@ export function DeviceToolbar({
       aria-label="Device controls"
     >
       <Select
-        value={selectedAvd ?? ""}
-        disabled={pickerLocked || avds.length === 0}
+        value={selectedValue}
+        disabled={pickerLocked || images.length === 0}
         onValueChange={(value) => {
-          if (typeof value === "string" && value.length > 0) onSelectAvd(value);
+          const picked = images.find((image) => pickerValue(image.platform, image.id) === value);
+          if (picked !== undefined) onSelectImage(picked.platform, picked.id);
         }}
       >
         <SelectTrigger
@@ -153,11 +175,14 @@ export function DeviceToolbar({
           <SelectValue>{selectedLabel}</SelectValue>
         </SelectTrigger>
         <SelectPopup align="start" alignItemWithTrigger={false}>
-          {avds.map((avd) => (
-            <SelectItem hideIndicator key={avd.name} value={avd.name}>
-              {avd.displayName}
-            </SelectItem>
-          ))}
+          {images.map((image) => {
+            const value = pickerValue(image.platform, image.id);
+            return (
+              <SelectItem hideIndicator key={value} value={value}>
+                {image.displayName}
+              </SelectItem>
+            );
+          })}
         </SelectPopup>
       </Select>
       <ToolbarButton label="Start" disabledReason={startReason} onClick={onStart} iconOnly={false}>

@@ -1934,13 +1934,18 @@ hold it for one call, and a stop waits up to 5 s for those calls to let go.
 `%LOCALAPPDATA%\Android\Sdk`, or `~/Android/Sdk`), and needs both
 `emulator/emulator` and `platform-tools/adb`. It lists AVDs with
 `emulator -list-avds` and checks acceleration with `emulator -accel-check`.
-Each failure becomes the catalog's `availability` (`sdkMissing`, `adbMissing`,
-`noAvds`, or `accelerationUnavailable`) with an actionable message. A
+Each failure becomes the `availability` of the catalog's Android entry
+(`sdkMissing`, `adbMissing`, `noAvds`, or `accelerationUnavailable`) with an
+actionable message. The catalog lists one entry per platform, each with its
+own `availability` and `images` (`{ id, displayName, inUseElsewhere? }`), and
+every device as `{ deviceId, platform, imageId, state, orientation, canRotate }`. A
 discovery result serves for 30 s; the MCP `device_list` tool always reruns it.
 
 **Lifecycle.** `DeviceManager` owns the catalog (`device.subscribeCatalog`) and
-allows one running device; a second `device.open` fails with `DeviceLimitError`
-naming the running AVD. A device moves `starting → booting → ready →
+allows one running device per platform; a second `device.open` on that
+platform fails with `DeviceLimitError` naming the running device's display
+name, and an image already running outside BiBCode fails with
+`DeviceBusyError`. A device moves `starting → booting → ready →
 stopping → stopped`, or to `failed` with a reason (`exited`, `bootTimeout`,
 `spawn`, or `unresponsive`). The four most recent ended devices stay in the
 catalog so their reason stays visible.
@@ -2041,8 +2046,8 @@ groups:
   backoff, before falling back to still images.
 
 **Agents.** Coding agents reach the same device through four MCP tools on the
-provider MCP endpoint: `device_list`, `device_open` (waits up to 180 s for
-`ready`), `device_screenshot` (PNG, at most 1080 px wide), and `device_close`.
+provider MCP endpoint: `device_list`, `device_open` (takes `platform`, which
+defaults to `android`, and `imageId`; waits up to 180 s for `ready`), `device_screenshot` (PNG, at most 1080 px wide), and `device_close`.
 They are listed and callable only while `DeviceManager::enabled()` is true;
 with the setting off the tools disappear from `tools/list` and a call fails
 with `DevicePreviewsDisabledError`. There is no per-call scope check, by

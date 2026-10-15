@@ -128,7 +128,7 @@ function DevicePreviewsToggle({ environmentId }: { readonly environmentId: Envir
               <span>{saveError}</span>
             </div>
           ) : running === null ? null : (
-            `${running.avdName} is running on ${label}.`
+            `${running.imageId} is running on ${label}.`
           )
         }
         control={
@@ -145,7 +145,7 @@ function DevicePreviewsToggle({ environmentId }: { readonly environmentId: Envir
           <AlertDialogHeader>
             <AlertDialogTitle>Turn off device previews?</AlertDialogTitle>
             <AlertDialogDescription>
-              This stops {running?.avdName ?? "the running device"} on {label}.
+              This stops {running?.imageId ?? "the running device"} on {label}.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -157,7 +157,7 @@ function DevicePreviewsToggle({ environmentId }: { readonly environmentId: Envir
                 void setEnabled(false);
               }}
             >
-              Stop {running?.avdName ?? "device"} and turn off
+              Stop {running?.imageId ?? "device"} and turn off
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

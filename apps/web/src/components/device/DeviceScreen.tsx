@@ -324,7 +324,7 @@ export function DeviceScreen({
       <canvas
         ref={attachCanvas}
         tabIndex={0}
-        aria-label={`${device.avdName} screen. Click or drag to touch; type to send keys; Shift+Tab to leave.`}
+        aria-label={`${device.imageId} screen. Click or drag to touch; type to send keys; Shift+Tab to leave.`}
         className="absolute touch-none rounded-2xl bg-black outline-none ring-4 ring-foreground/80 focus-visible:ring-primary"
         style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
         onPointerDown={handlePointerDown}

@@ -21,7 +21,8 @@ use crate::{
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeviceOpenInput {
-    avd_name: String,
+    platform: Platform,
+    image_id: String,
 }
 
 #[derive(Deserialize)]
@@ -138,9 +139,8 @@ pub fn register_device_rpc(registry: &mut RpcRegistry, devices: DeviceManager) {
         &devices,
         |devices, payload| async move {
             let input: DeviceOpenInput = decode(payload)?;
-            // Task 4 moves the input to `{ platform, imageId }`; until then it opens an AVD.
             let device_id = devices
-                .open(Platform::Android, &input.avd_name)
+                .open(input.platform, &input.image_id)
                 .await
                 .map_err(rpc_error)?;
             Ok(json!({ "deviceId": device_id }))
@@ -401,7 +401,10 @@ mod tests {
         assert_eq!(ready["platforms"][0]["platform"], "android");
         assert_eq!(ready["platforms"][0]["images"][0]["id"], "Pixel");
         let opened = harness
-            .call("device.open", json!({ "avdName": "Pixel" }))
+            .call(
+                "device.open",
+                json!({ "platform": "android", "imageId": "Pixel" }),
+            )
             .await
             .expect("device opens");
         let id = opened["deviceId"].as_str().expect("device id").to_owned();
@@ -412,10 +415,21 @@ mod tests {
         assert_eq!(device["devices"][0]["orientation"], "portrait");
         assert_eq!(
             harness
-                .call("device.open", json!({ "avdName": "Pixel" }))
+                .call(
+                    "device.open",
+                    json!({ "platform": "android", "imageId": "Pixel" })
+                )
                 .await
                 .unwrap_err()["_tag"],
             "DeviceLimitError"
+        );
+        // The Android-only payload is gone: it no longer decodes.
+        assert_eq!(
+            harness
+                .call("device.open", json!({ "avdName": "Pixel" }))
+                .await
+                .unwrap_err()["_tag"],
+            "Defect"
         );
         fixture.wait_state(&id, DeviceState::Ready).await;
         harness
@@ -603,7 +617,10 @@ mod tests {
         for (method, payload) in [
             ("device.subscribeCatalog", json!({})),
             ("device.subscribeFrames", json!({ "deviceId": "d" })),
-            ("device.open", json!({ "avdName": "Pixel" })),
+            (
+                "device.open",
+                json!({ "platform": "android", "imageId": "Pixel" }),
+            ),
             ("device.close", json!({ "deviceId": "d" })),
             (
                 "device.input",

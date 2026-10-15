@@ -1,6 +1,11 @@
 // @vitest-environment happy-dom
 
-import type { DeviceCatalog, DeviceSnapshot } from "@bibcode/contracts";
+import type {
+  DeviceCatalog,
+  DeviceImage,
+  DevicePlatformCatalog,
+  DeviceSnapshot,
+} from "@bibcode/contracts";
 import { EnvironmentId } from "@bibcode/contracts";
 import * as Cause from "effect/Cause";
 import { act, type ReactNode } from "react";
@@ -108,25 +113,39 @@ vi.mock("../ui/select", () => ({
 import { DevicePanel, rotatedOrientation, selectShownDevice } from "./DevicePanel";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-work");
-const PIXEL = { name: "Pixel_8", displayName: "Pixel 8" };
+const PIXEL: DeviceImage = { id: "Pixel_8", displayName: "Pixel 8" };
+const TABLET: DeviceImage = { id: "Tablet", displayName: "Tablet" };
 
-function catalog(overrides: Partial<DeviceCatalog> = {}): DeviceCatalog {
+/** An Android-only catalog, as a server without iOS support serializes it. */
+function catalog(
+  overrides: {
+    readonly availability?: DevicePlatformCatalog["availability"];
+    readonly images?: ReadonlyArray<DeviceImage>;
+    readonly devices?: ReadonlyArray<DeviceSnapshot>;
+  } = {},
+): DeviceCatalog {
   return {
-    availability: { kind: "ready", message: "Ready." },
-    avds: [PIXEL],
-    devices: [],
-    ...overrides,
+    platforms: [
+      {
+        platform: "android",
+        availability: overrides.availability ?? { kind: "ready", message: "Ready." },
+        images: overrides.images ?? [PIXEL],
+      },
+    ],
+    devices: overrides.devices ?? [],
   };
 }
 
 function snapshot(overrides: Partial<DeviceSnapshot> = {}): DeviceSnapshot {
   return {
     deviceId: "d-1",
-    avdName: "Pixel_8",
+    platform: "android",
+    imageId: "Pixel_8",
     state: "ready",
     orientation: "portrait",
     width: 1080,
     height: 2400,
+    canRotate: true,
     ...overrides,
   };
 }
@@ -196,7 +215,7 @@ describe("DevicePanel", () => {
           kind: "sdkMissing",
           message: "No Android SDK found on this server. Set ANDROID_HOME and restart it.",
         },
-        avds: [],
+        images: [],
       }),
     );
     const container = await render();
@@ -207,16 +226,37 @@ describe("DevicePanel", () => {
     expect(() => button(container, "Start")).toThrow();
   });
 
-  it("offers the AVDs and an enabled Start when no device runs", async () => {
+  it("offers the images and an enabled Start when no device runs", async () => {
     const container = await render();
     expect(container.querySelector("[aria-label='Virtual device']")?.textContent).toBe("Pixel 8");
-    expect(container.querySelector("[data-item='Pixel_8']")).not.toBeNull();
+    expect(container.querySelector("[data-item='android:Pixel_8']")).not.toBeNull();
+    expect(container.querySelector("[data-select]")?.getAttribute("data-value")).toBe(
+      "android:Pixel_8",
+    );
     const start = button(container, "Start");
     expect(start.disabled).toBe(false);
     await click(start);
     expect(h.calls).toEqual([
-      { command: "open", input: { environmentId: ENVIRONMENT_ID, input: { avdName: "Pixel_8" } } },
+      {
+        command: "open",
+        input: {
+          environmentId: ENVIRONMENT_ID,
+          input: { platform: "android", imageId: "Pixel_8" },
+        },
+      },
     ]);
+  });
+
+  it("shows the server's message when the image already runs outside BiBCode", async () => {
+    const message =
+      "This simulator is already running outside BiBCode. Shut it down in Simulator, then open it here.";
+    h.results.open = {
+      _tag: "Failure",
+      error: { _tag: "DeviceBusyError", imageId: "Pixel_8", message },
+    };
+    const container = await render();
+    await click(button(container, "Start"));
+    expect(container.querySelector("[role='alert']")?.textContent).toContain(message);
   });
 
   it("shows a booting device with Stop enabled and rotate explaining why it waits", async () => {
@@ -256,16 +296,12 @@ describe("DevicePanel", () => {
     expect(button(container, "Start").disabled).toBe(false);
   });
 
-  it("names the running AVD on a device limit and offers to stop it", async () => {
-    withCatalog(
-      catalog({
-        avds: [PIXEL, { name: "Tablet", displayName: "Tablet" }],
-        devices: [],
-      }),
-    );
+  it("names the running device on a device limit and offers to stop it", async () => {
+    withCatalog(catalog({ images: [PIXEL, TABLET] }));
+    // `running` is the display name, not the image id.
     h.results.open = {
       _tag: "Failure",
-      error: { _tag: "DeviceLimitError", running: "Pixel_8", message: "busy" },
+      error: { _tag: "DeviceLimitError", running: "Pixel 8", message: "busy" },
     };
     const container = await render();
     await click(button(container, "Start"));
@@ -273,15 +309,15 @@ describe("DevicePanel", () => {
     await act(async () => {
       withCatalog(
         catalog({
-          avds: [PIXEL, { name: "Tablet", displayName: "Tablet" }],
+          images: [PIXEL, TABLET],
           devices: [snapshot({ deviceId: "d-9", state: "ready" })],
         }),
       );
     });
     expect(container.querySelector("[role='alert']")?.textContent).toContain(
-      "Pixel_8 is already running. Stop it before starting another device.",
+      "Pixel 8 is already running. Stop it before starting another device.",
     );
-    await click(button(container, "Stop Pixel_8"));
+    await click(button(container, "Stop Pixel 8"));
     expect(h.calls.at(-1)).toEqual({
       command: "close",
       input: { environmentId: ENVIRONMENT_ID, input: { deviceId: "d-9" } },

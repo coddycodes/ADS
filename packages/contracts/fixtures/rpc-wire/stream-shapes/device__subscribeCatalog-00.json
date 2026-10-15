@@ -3,53 +3,70 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "availability": {
-        "kind": "ready",
-        "message": "T "
-      },
-      "avds": [
+      "platforms": [],
+      "devices": [
         {
-          "name": "GR1S(c':Li",
-          "displayName": "8"
+          "deviceId": "ref",
+          "platform": "android",
+          "imageId": "R1S(c':Li!",
+          "state": "starting",
+          "failure": "}ho",
+          "width": -3.402820018375656e38,
+          "orientation": "portrait",
+          "canRotate": false
         },
         {
-          "name": "",
-          "displayName": "}ho"
+          "deviceId": "B(!5",
+          "platform": "ios",
+          "imageId": "#isPrototy",
+          "state": "failed",
+          "width": -3.4028230607370965e38,
+          "height": -8.407790785948902e-45,
+          "orientation": "landscape",
+          "canRotate": false
         },
         {
-          "name": "#%",
-          "displayName": "FOjXxB"
+          "deviceId": "V",
+          "platform": "ios",
+          "imageId": "  ",
+          "state": "failed",
+          "failure": "u{p|%x!}|",
+          "width": 4.1546918628978385e-14,
+          "height": 8.407790785948902e-45,
+          "orientation": "portrait",
+          "canRotate": true
         },
         {
-          "name": "5#:*",
-          "displayName": "oW+b#;_ra*"
+          "deviceId": "",
+          "platform": "android",
+          "imageId": "",
+          "state": "ready",
+          "failure": "v",
+          "width": 5.3952952809620605e-14,
+          "height": -1.0729633776317012e-28,
+          "orientation": "reversePortrait",
+          "canRotate": false
         },
         {
-          "name": "J",
-          "displayName": "|"
+          "deviceId": "",
+          "platform": "ios",
+          "imageId": "",
+          "state": "failed",
+          "failure": "(",
+          "height": -31808829440,
+          "orientation": "portrait",
+          "canRotate": false
         },
         {
-          "name": "q0;WLv'/vU",
-          "displayName": "V2<w`$^9N<"
-        },
-        {
-          "name": "2#;",
-          "displayName": "H*u7{Xpf:"
-        },
-        {
-          "name": "zd>",
-          "displayName": "w"
-        },
-        {
-          "name": "<",
-          "displayName": "2S#"
-        },
-        {
-          "name": "2]knCq)",
-          "displayName": "x="
+          "deviceId": "4Y\"2')8J",
+          "platform": "ios",
+          "imageId": "9*gSu]8/x,",
+          "state": "starting",
+          "failure": "ZU3He'!jy",
+          "orientation": "portrait",
+          "canRotate": false
         }
-      ],
-      "devices": []
+      ]
     }
   ]
 }
