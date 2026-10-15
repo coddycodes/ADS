@@ -122,13 +122,19 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       if ($env:BIBCODE_TEST_CODEX_THREAD_RESPONSE_READY_MARKER) {
         [IO.File]::WriteAllText($env:BIBCODE_TEST_CODEX_THREAD_RESPONSE_READY_MARKER, "ready")
       }
-      $response = '{"id":' + $id + ',"result":{"cwd":"C:\\tmp","model":"gpt-5","thread":{"id":"native-codex-thread"}}}'
+      $response = '{"id":' + $id + ',"result":{"cwd":"C:\\tmp","model":"gpt-5","thread":{"id":"native-codex-thread","historyMode":"paginated"}}}'
     }
     "mcpServerStatus/list" { $response = '{"id":' + $id + ',"result":{"data":[],"nextCursor":null}}' }
     "thread/goal/set" { $response = '{"id":' + $id + ',"result":{"goal":{"status":"active"}}}' }
     "turn/start" { $response = '{"id":' + $id + ',"result":{"turn":{"id":"native-codex-turn"}}}' + [Environment]::NewLine + '{"method":"item/started","emittedAtMs":1001,"params":{"threadId":"native-codex-thread","turnId":"native-codex-turn","item":{"id":"spawn-1","type":"collabAgentToolCall","tool":"spawnAgent","status":"inProgress","senderThreadId":"native-codex-thread","receiverThreadIds":["native-child"],"agentsStates":{"native-child":{"status":"running","message":null}}},"startedAtMs":1001}}' + [Environment]::NewLine + '{"method":"turn/started","emittedAtMs":1002,"params":{"threadId":"native-child","turn":{"id":"native-child-turn","status":"inProgress","startedAt":1}}}' }
     "turn/interrupt" { $response = '{"id":' + $id + ',"result":{}}' }
-    "thread/rollback" { $response = '{"id":' + $id + ',"result":{"thread":{"id":"native-codex-thread","turns":[]}}}' }
+    "thread/turns/list" { $response = '{"id":' + $id + ',"result":{"data":[{"id":"native-codex-turn","items":[]}],"nextCursor":null}}' }
+    "thread/revert" {
+      if ([string]$request.params.beforeTurnId -eq "native-codex-turn") {
+        $response = '{"id":' + $id + ',"result":{"thread":{"id":"native-codex-thread","historyMode":"paginated","turns":[]}}}'
+      }
+    }
+    "thread/rollback" { $response = '{"id":' + $id + ',"error":{"code":-32600,"message":"Invalid request: unknown variant thread/rollback"}}' }
     "shutdown" { $response = '{"id":' + $id + ',"result":null}' }
   }
   if ($null -ne $response) {
@@ -14806,13 +14812,15 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/start"'*)
       [ -z "$BIBCODE_TEST_CODEX_THREAD_RESPONSE_READY_MARKER" ] || : > "$BIBCODE_TEST_CODEX_THREAD_RESPONSE_READY_MARKER"
-      printf '{"id":%s,"result":{"cwd":"/tmp","model":"gpt-5","thread":{"id":"native-codex-thread"}}}\n' "$id"
+      printf '{"id":%s,"result":{"cwd":"/tmp","model":"gpt-5","thread":{"id":"native-codex-thread","historyMode":"paginated"}}}\n' "$id"
       ;;
     *'"method":"mcpServerStatus/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$id" ;;
     *'"method":"thread/goal/set"'*) printf '{"id":%s,"result":{"goal":{"status":"active"}}}\n' "$id" ;;
     *'"method":"turn/start"'*) printf '{"id":%s,"result":{"turn":{"id":"native-codex-turn"}}}\n{"method":"item/started","emittedAtMs":1001,"params":{"threadId":"native-codex-thread","turnId":"native-codex-turn","item":{"id":"spawn-1","type":"collabAgentToolCall","tool":"spawnAgent","status":"inProgress","senderThreadId":"native-codex-thread","receiverThreadIds":["native-child"],"agentsStates":{"native-child":{"status":"running","message":null}}},"startedAtMs":1001}}\n{"method":"turn/started","emittedAtMs":1002,"params":{"threadId":"native-child","turn":{"id":"native-child-turn","status":"inProgress","startedAt":1}}}\n' "$id" ;;
     *'"method":"turn/interrupt"'*) printf '{"id":%s,"result":{}}\n' "$id" ;;
-    *'"method":"thread/rollback"'*) printf '{"id":%s,"result":{"thread":{"id":"native-codex-thread","turns":[]}}}\n' "$id" ;;
+    *'"method":"thread/turns/list"'*) printf '{"id":%s,"result":{"data":[{"id":"native-codex-turn","items":[]}],"nextCursor":null}}\n' "$id" ;;
+    *'"method":"thread/revert"'*'"beforeTurnId":"native-codex-turn"'*) printf '{"id":%s,"result":{"thread":{"id":"native-codex-thread","historyMode":"paginated","turns":[]}}}\n' "$id" ;;
+    *'"method":"thread/rollback"'*) printf '{"id":%s,"error":{"code":-32600,"message":"Invalid request: unknown variant thread/rollback"}}\n' "$id" ;;
     *'"method":"shutdown"'*) printf '{"id":%s,"result":null}\n' "$id" ;;
   esac
 done
@@ -14945,7 +14953,12 @@ done
             .is_some()
     );
     driver.interrupt(None).await.unwrap();
-    driver.rollback(0).await.unwrap();
+    // Like Codex 0.162.1, the fixture starts a paginated thread, rejects the removed
+    // `thread/rollback`, and answers `thread/revert` only before the listed turn.
+    timeout(Duration::from_secs(10), driver.rollback(1))
+        .await
+        .expect("Codex should answer the revert")
+        .expect("Codex should revert the paginated thread");
     assert!(matches!(
         driver.rollback(-1).await,
         Err(ProviderRuntimeError::Provider { provider, .. }) if provider == "codex"

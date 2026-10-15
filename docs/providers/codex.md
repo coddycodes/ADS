@@ -129,6 +129,27 @@ is ready; interruptions and errors keep queued messages on hold until you use
 **Send now**. See [Queued messages](../user/workspace-ui.md#queued-messages) for
 cancellation, attachments, and reload behavior.
 
+## Reverting to a checkpoint
+
+**Revert to this message** restores the workspace files from BiBCode's own Git
+checkpoint refs first, then asks Codex to drop the newer turns from its
+conversation history. Codex never restores files.
+
+Codex reports a `historyMode` for each thread in its `thread/start` and
+`thread/resume` responses, and that mode decides how BiBCode rewinds it:
+
+- `paginated` threads, which Codex creates by default from 0.151: BiBCode
+  pages newest-first through `thread/turns/list`, then sends `thread/revert`
+  with the ID of the oldest turn to drop as `beforeTurnId`. When Codex holds
+  fewer turns than BiBCode is dropping, every remaining turn is dropped.
+- `legacy` threads, and responses without `historyMode`: BiBCode sends
+  `thread/rollback` with the number of turns to drop.
+
+Codex 0.156 removed `thread/rollback`, so it cannot rewind a legacy thread that
+an older Codex created. That revert fails with an error saying so. The files
+are already restored, but the conversation keeps its newer messages; start a
+new thread to continue from that point.
+
 ## Activity observation
 
 Structured Codex chats run through `codex app-server`. BiBCode uses App Server

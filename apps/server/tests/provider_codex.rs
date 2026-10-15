@@ -8600,10 +8600,176 @@ async fn reconnect_resume_fallback_and_shutdown_stay_correlated() {
             ..
         }
     )));
-    let rollback = runtime.rollback_thread(1).await.expect("rollback");
-    assert_eq!(rollback.thread_id, "provider-thread-2");
+    runtime.rollback_thread(1).await.expect("rollback");
     runtime.shutdown().await.expect("shutdown");
     peer_b_task.await.expect("peer b");
+}
+
+fn rewind_runtime(
+    connection: JsonRpcConnection,
+    incoming: mpsc::UnboundedReceiver<IncomingEvent>,
+) -> CodexSessionRuntime {
+    CodexSessionRuntime::new(
+        CodexSessionOptions {
+            version: "0.1.1".to_owned(),
+            thread_id: "fixture-thread".to_owned(),
+            cwd: "/tmp/project".to_owned(),
+            runtime_mode: CodexRuntimeMode::FullAccess,
+            model: Some("gpt-5.3-codex".to_owned()),
+            service_tier: None,
+            effort: None,
+            resume_cursor: None,
+        },
+        connection,
+        incoming,
+    )
+}
+
+/// Codex 0.162.1 starts every new thread with paginated history, rejects the removed
+/// `thread/rollback` and rewinds through `thread/revert` before a turn ID.
+fn expect_rewind_session_start(peer: &mut ScriptedPeer, history_mode: &str) {
+    let reconnect_fixture = fixture("reconnect-scenario.json");
+    peer.expect_request("initialize", fixture("initialize-params.json"))
+        .respond(json!({ "userAgent": "bibcode_desktop/0.162.1" }));
+    peer.expect_notification("initialized");
+    peer.expect_request(
+        "thread/start",
+        reconnect_fixture["initialThreadStartRequest"].clone(),
+    )
+    .respond(json!({
+        "cwd": "/tmp/project",
+        "model": "gpt-5.3-codex",
+        "thread": {
+            "id": "provider-thread-1",
+            "historyMode": history_mode,
+            "turns": []
+        }
+    }));
+}
+
+#[tokio::test]
+async fn paginated_thread_rollback_reverts_before_the_oldest_rolled_back_turn() {
+    let (connection, incoming, mut peer) = scripted_peer();
+    let runtime = rewind_runtime(connection, incoming);
+    expect_rewind_session_start(&mut peer, "paginated");
+    // Three turns back, across two newest-first pages.
+    peer.expect_request(
+        "thread/turns/list",
+        json!({
+            "threadId": "provider-thread-1",
+            "limit": 3,
+            "sortDirection": "desc",
+            "itemsView": "notLoaded"
+        }),
+    )
+    .respond(json!({
+        "data": [{ "id": "turn-5", "items": [] }, { "id": "turn-4", "items": [] }],
+        "nextCursor": "page-2",
+        "backwardsCursor": "turn-5"
+    }));
+    peer.expect_request(
+        "thread/turns/list",
+        json!({
+            "threadId": "provider-thread-1",
+            "limit": 1,
+            "sortDirection": "desc",
+            "itemsView": "notLoaded",
+            "cursor": "page-2"
+        }),
+    )
+    .respond(json!({
+        "data": [{ "id": "turn-3", "items": [] }],
+        "nextCursor": "page-3",
+        "backwardsCursor": "turn-3"
+    }));
+    let revert_response = json!({
+        "thread": {
+            "id": "provider-thread-1",
+            "historyMode": "paginated",
+            "turns": []
+        },
+        "turnsBackwardsCursor": null,
+        "itemsBackwardsCursor": null
+    });
+    peer.expect_request(
+        "thread/revert",
+        json!({ "threadId": "provider-thread-1", "beforeTurnId": "turn-3" }),
+    )
+    .respond(revert_response.clone());
+    // Codex holds fewer turns than requested: rewind everything it still has.
+    peer.expect_request(
+        "thread/turns/list",
+        json!({
+            "threadId": "provider-thread-1",
+            "limit": 5,
+            "sortDirection": "desc",
+            "itemsView": "notLoaded"
+        }),
+    )
+    .respond(json!({
+        "data": [{ "id": "turn-2", "items": [] }, { "id": "turn-1", "items": [] }],
+        "nextCursor": null,
+        "backwardsCursor": "turn-2"
+    }));
+    peer.expect_request(
+        "thread/revert",
+        json!({ "threadId": "provider-thread-1", "beforeTurnId": "turn-1" }),
+    )
+    .respond(revert_response);
+    peer.expect_request("shutdown", Value::Null)
+        .respond(Value::Null);
+    let peer_task = tokio::spawn(peer.run());
+
+    runtime.start().await.expect("start");
+    runtime
+        .rollback_thread(0)
+        .await
+        .expect("rolling back no turns sends nothing");
+    runtime
+        .rollback_thread(3)
+        .await
+        .expect("paginated rollback reverts three turns");
+    runtime
+        .rollback_thread(5)
+        .await
+        .expect("paginated rollback reverts every remaining turn");
+    runtime.shutdown().await.expect("shutdown");
+    peer_task.await.expect("peer");
+}
+
+#[tokio::test]
+async fn legacy_thread_rollback_without_thread_rollback_support_is_actionable() {
+    let (connection, incoming, mut peer) = scripted_peer();
+    let runtime = rewind_runtime(connection, incoming);
+    expect_rewind_session_start(&mut peer, "legacy");
+    peer.expect_request(
+        "thread/rollback",
+        json!({ "threadId": "provider-thread-1", "numTurns": 1 }),
+    )
+    .respond_error(json!({
+        "code": -32600,
+        "message": "Invalid request: unknown variant `thread/rollback`, expected one of `initialize`, `thread/start`, `thread/revert`"
+    }));
+    peer.expect_request("shutdown", Value::Null)
+        .respond(Value::Null);
+    let peer_task = tokio::spawn(peer.run());
+
+    runtime.start().await.expect("start");
+    let error = runtime
+        .rollback_thread(1)
+        .await
+        .expect_err("a legacy thread cannot be rewound once thread/rollback is gone")
+        .to_string();
+    assert!(
+        error.contains("older Codex") && error.contains("Start a new thread"),
+        "the error must say what failed and what to do next: {error}"
+    );
+    assert!(
+        !error.contains("unknown variant"),
+        "the raw method list must not reach the user: {error}"
+    );
+    runtime.shutdown().await.expect("shutdown");
+    peer_task.await.expect("peer");
 }
 
 #[tokio::test]
