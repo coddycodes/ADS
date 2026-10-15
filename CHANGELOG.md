@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Pull and merge requests
+
+- A pull or merge request can open as a tab in a thread's right panel, beside the conversation. **Done** after creating one from the Source Control panel opens it there, **Open MR in panel** opens the branch's open request, and the full Pull Requests page offers **Open beside a thread…**.
+
 ## [v0.9.3] - 2026-10-14
 
 BiBCode v0.9.3 ends the macOS freezes caused by a page-wide label scan after every render, keeps long conversations smooth to scroll, stops terminals from losing output, stops the server from growing while threads stay open during agent turns, opens remote development servers at their real address on the Linux desktop, exits cleanly when Windows shuts down, and makes the Profiler's findings more accurate. This release includes the changes since v0.9.2.

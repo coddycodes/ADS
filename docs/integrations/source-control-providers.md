@@ -242,6 +242,9 @@ A retry never
 duplicates a pull request because the server resolves an existing open pull
 request for the branch (`opened_existing`) before creating one. Plain **Push**
 continues to publish without creating a request.
+**Done** after creating or finding a request from the Source Control panel opens
+it as a right-panel tab beside the thread for GitHub and GitLab (while Pull
+Requests is on in Settings), and only closes the dialog everywhere else.
 
 ### Pull Requests command inventory
 

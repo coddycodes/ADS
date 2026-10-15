@@ -81,8 +81,15 @@ interface PullRequestsNavigation {
   setFileAnchor(path: string): void;
   /** An action created another request (a revert request). */
   openRequest(number: number): void;
-  /** The request was deleted. */
+  /** The request was deleted while its view was shown. */
   requestGone(): void;
+  /**
+   * The request was deleted, whether or not its view is still shown: a panel
+   * closes the deleted request's tab even after the user switched tabs. Called
+   * on delete even after the view unmounted; null on the full page, which never
+   * navigates once the user has left.
+   */
+  readonly discardDeleted: (() => void) | null;
   /** "Back to merge requests", or null where there is no list to go back to. */
   readonly back: (() => void) | null;
 }
@@ -108,8 +115,8 @@ rather than every action consumer.
     anchor, which the host keeps in component state.
   - `openRequest(n)` calls `openPullRequest(thread, n)`, so a revert request
     opens as a new tab beside the original.
-  - `requestGone` closes this surface; the existing "Request deleted" toast
-    remains.
+  - `requestGone` and `discardDeleted` close this surface; the existing
+    "Request deleted" toast remains.
   - `back` is `null`.
 
 ### `PullRequestPanelSurface`

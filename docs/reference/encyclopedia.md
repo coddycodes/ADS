@@ -96,9 +96,9 @@ an adjacent group without closing them.
 ### Right Panel
 
 The tool surface area for the active thread. Its supported surface kinds are
-Plan, Diff, Source Control, Files, an individual file, Preview, Terminal, and
-Activity. Singleton tools and resource-backed file/browser/terminal tabs share
-one ordered, persisted surface rail.
+Plan, Diff, Source Control, Files, an individual file, Preview, Terminal,
+Activity, and a pull or merge request. Singleton tools and resource-backed
+file/browser/terminal/request tabs share one ordered, persisted surface rail.
 
 ### Source Control
 

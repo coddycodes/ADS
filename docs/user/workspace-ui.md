@@ -908,7 +908,9 @@ Title, description and merge-message drafts survive navigation and reload.
 (or the host's equivalent wording) reuses the Git Manager creation dialog:
 opening it creates nothing, and only its explicit primary action publishes.
 Git Manager's current-branch pane also links each row to **Open in Pull Requests**,
-selecting that pane's checkout before navigation.
+selecting that pane's checkout before navigation. **Open beside a thread…** in
+the detail's header opens the request in a thread's right panel instead (see
+[Pull and merge requests in the panel](#pull-and-merge-requests-in-the-panel)).
 The local `bibcode:pull-requests-state:v1` cache retains the two most recently
 used physical projects (LRU), including checkout, filters, tab, sort, scroll
 position, viewed files, and unsent per-review drafts. This module does not fetch avatar images or refresh on a timer or
@@ -937,6 +939,38 @@ Plan surfaces can also appear when the active provider/session supplies them.
 - **Diff** reviews branch or worktree changes.
 - **Activity** shows structured provider activity when available.
 - **Plan** displays the active agent plan when available.
+- **Pull request** shows one pull or merge request beside the thread (see
+  [Pull and merge requests in the panel](#pull-and-merge-requests-in-the-panel)).
+  It has no entry in the `+` menu; it opens from the places listed there.
+
+### Pull and merge requests in the panel
+
+A pull or merge request can open as a right-panel tab beside a thread, with its
+Conversation, Commits, Pipelines and Changes and every action, against the
+thread's checkout:
+
+- **Done** in the Source Control panel's create dialog opens the request it
+  created or found.
+- **Open MR in panel** (**Open PR in panel** on GitHub) next to **View MR** in
+  the Source Control panel's menu opens the branch's open request.
+- **Open beside a thread…** on the full Pull Requests page lists the project's
+  threads, those on the request's branch first, and opens the request in the
+  one you choose. With no thread to choose, it is disabled and says why.
+
+**Done** only closes the dialog when it was opened from the chat Git actions,
+the Pull Requests page or the Git Manager. Nothing opens in the panel while
+**Settings → Source Control → Pull requests** is off, or for a Bitbucket or
+Azure DevOps repository, which Pull Requests does not support.
+
+Each request is its own tab, labelled `!N` (`#N` on GitHub); opening one that is
+already open selects its tab. The tab and its selected section survive a reload.
+**Open full page** shows the request on the Pull Requests page for the thread's
+checkout. Deleting the request closes its tab, and a revert request opens in a
+new one. A tab whose Pull Requests setting is off, environment is
+disconnected, workspace was removed or host is unsupported explains what to do
+instead of showing an error, and recovers when the workspace returns. The detail
+switches to its narrow layout, with the request's details above the merge box,
+when the panel is narrow, not only when the window is.
 
 ### Opening links
 
