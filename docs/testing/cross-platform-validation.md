@@ -940,6 +940,7 @@ BIBCODE_E2EE_SERVER_BIN="$(git rev-parse --show-toplevel)/target/debug/bibcode" 
 ```
 
 No device runs there, so the suite proves the boundary without streaming:
+
 - a bogus ticket closes `expired` well inside the server's ticket wait, on the
   plain route and after a media-prologue handshake on the E2EE route;
 - a wrong pinned key closes `host-identity`;

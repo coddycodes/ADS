@@ -56,7 +56,7 @@ const waitingForScreen = (
 /** Why the screen shows still images instead of video, for the badge's tooltip. */
 const JPEG_REASONS: Record<Extract<VideoMode, { kind: "jpeg" }>["reason"], string> = {
   unsupported:
-    "Video needs the desktop app or an HTTPS connection, so the screen updates as still images.",
+    "Video isn't available in this browser or on this connection, so the screen updates as still images. The desktop app or an HTTPS connection usually shows video.",
   noFirstFrame:
     "Video did not start, so the screen updates as still images. Reopen the device panel to try video again.",
   decoderError:

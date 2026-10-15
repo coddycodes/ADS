@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const hookDeps = vi.hoisted(() => ({
+  socketUrl: "wss://h.example/ws",
   mintTicket: vi.fn(async (_input: unknown) => ({ _tag: "Success", value: { ticket: "H1" } })),
 }));
 
@@ -13,7 +14,7 @@ vi.mock("../../state/device", () => ({ deviceEnvironment: { createMediaTicket: {
 vi.mock("../../state/session", async () => {
   const { some } = await import("effect/Option");
   return {
-    usePreparedConnection: () => some({ socketUrl: "wss://h.example/ws", e2ee: null }),
+    usePreparedConnection: () => some({ socketUrl: hookDeps.socketUrl, e2ee: null }),
   };
 });
 vi.mock("../../state/use-atom-command", () => ({
@@ -259,6 +260,17 @@ describe("useDeviceVideo", () => {
   beforeEach(() => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     hookDeps.mintTicket.mockClear();
+    hookDeps.socketUrl = "wss://h.example/ws";
+  });
+
+  it("uses jpeg when the connection's socket URL does not parse", async () => {
+    hookDeps.socketUrl = "not a url";
+    vi.stubGlobal("VideoDecoder", { isConfigSupported: async () => ({ supported: true }) });
+    const { modes, unmount } = await renderHook(document.createElement("canvas"));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(modes.at(-1)).toEqual({ kind: "jpeg", reason: "unsupported" });
+    expect(hookDeps.mintTicket).not.toHaveBeenCalled();
+    await unmount();
   });
 
   it("uses jpeg without minting a ticket where VideoDecoder is missing", async () => {

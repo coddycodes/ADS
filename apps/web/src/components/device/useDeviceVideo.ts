@@ -194,6 +194,18 @@ export class DeviceVideoSession {
 
 const hasWebCodecs = () => typeof VideoDecoder !== "undefined" && typeof Worker !== "undefined";
 
+/** The media target for a prepared connection; `"invalid"` when its socket URL does not parse. */
+function mediaTargetOf(
+  prepared: Option.Option<Parameters<typeof deviceMediaTarget>[0]>,
+): DeviceMediaTarget | "invalid" | null {
+  if (Option.isNone(prepared)) return null;
+  try {
+    return deviceMediaTarget(prepared.value);
+  } catch {
+    return "invalid";
+  }
+}
+
 const initialMode = (): VideoMode =>
   hasWebCodecs() ? { kind: "probing" } : { kind: "jpeg", reason: "unsupported" };
 
@@ -241,7 +253,8 @@ export function useDeviceVideo(input: {
 }): VideoMode {
   const { environmentId, deviceId, canvas, onFrameSize } = input;
   const prepared = usePreparedConnection(environmentId);
-  const target = Option.isSome(prepared) ? deviceMediaTarget(prepared.value) : null;
+  const resolved = mediaTargetOf(prepared);
+  const target = resolved === "invalid" ? null : resolved;
   const targetUrl = target?.url ?? null;
   const hostKey = target?.hostKey ?? null;
   const mintTicket = useAtomCommand(deviceEnvironment.createMediaTicket, { reportFailure: false });
@@ -249,7 +262,12 @@ export function useDeviceVideo(input: {
   // The mode belongs to one device; another device starts over.
   const sessionKey = `${environmentId}\u0000${deviceId ?? ""}`;
   const [state, setState] = useState(() => ({ key: sessionKey, mode: initialMode() }));
-  const mode = state.key === sessionKey ? state.mode : initialMode();
+  const mode: VideoMode =
+    resolved === "invalid"
+      ? { kind: "jpeg", reason: "unsupported" }
+      : state.key === sessionKey
+        ? state.mode
+        : initialMode();
   const fellBack = mode.kind === "jpeg";
 
   const onFrameSizeRef = useRef(onFrameSize);
