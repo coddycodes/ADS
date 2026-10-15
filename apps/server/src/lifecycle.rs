@@ -384,6 +384,9 @@ impl ServerRuntime {
                         endpoint.endpoint(),
                         pairing,
                         preview,
+                        Some(crate::production::connect_mcp::DeviceTools::new(
+                            runtime.device_manager(),
+                        )),
                     )
                     .await
                     .map_err(|error| ServerError::ProductionInitialize(format!("{error:?}")))?,
