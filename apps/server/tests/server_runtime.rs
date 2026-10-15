@@ -287,6 +287,8 @@ async fn binds_an_ephemeral_port_and_serves_the_environment_descriptor() {
     let descriptor: Value = response.json().await.expect("environment JSON");
     assert_eq!(descriptor["environmentId"], "local");
     assert_eq!(descriptor["capabilities"]["repositoryIdentity"], true);
+    // What a remote client reads before routing its previews through tunnels (#69).
+    assert_eq!(descriptor["capabilities"]["previewTunnels"], true);
     assert_eq!(descriptor["remoteProtocolVersion"], 1);
     assert_eq!(descriptor["minCompatibleRemoteProtocol"], 1);
     assert!(descriptor["capabilities"].get("worktreeCatalog").is_none());

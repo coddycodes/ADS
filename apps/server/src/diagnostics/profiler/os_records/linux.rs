@@ -232,6 +232,63 @@ pub fn user_service_events(proc_self_cgroup: &str) -> Option<PathBuf> {
     None
 }
 
+/// The systemd user unit a process runs in, from its `/proc/<pid>/cgroup`: the innermost
+/// `.service` or `.scope` below the user manager, such as `bibcode-desktop.service` for a run
+/// started with `systemd-run --user --unit=bibcode-desktop`. `None` outside a user unit.
+pub fn unit_of(proc_self_cgroup: &str) -> Option<String> {
+    let path = proc_self_cgroup
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))?;
+    let mut parts = path.split('/').filter(|part| !part.is_empty());
+    parts
+        .by_ref()
+        .find(|part| part.starts_with("user@") && part.ends_with(".service"))?;
+    parts
+        .rfind(|part| part.ends_with(".service") || part.ends_with(".scope"))
+        .filter(|unit| *unit != "init.scope")
+        .map(ToOwned::to_owned)
+}
+
+/// systemd's own messages about a unit ending, from `journalctl -o cat` output: how its main
+/// process exited, the result it failed with, and what it consumed. The last five, oldest
+/// first.
+pub fn unit_exit_lines_of(journal: &str) -> Vec<String> {
+    const ENDINGS: [&str; 4] = [
+        "Main process exited",
+        "Failed with result",
+        "Killing process",
+        "Consumed ",
+    ];
+    let lines: Vec<String> = journal
+        .lines()
+        .map(str::trim)
+        .filter(|line| ENDINGS.iter().any(|ending| line.contains(ending)))
+        .map(ToOwned::to_owned)
+        .collect();
+    lines[lines.len().saturating_sub(5)..].to_vec()
+}
+
+/// [`unit_exit_lines_of`] for `unit` since `since`, from the user journal. Empty when the
+/// journal could not be read.
+#[cfg(target_os = "linux")]
+pub(super) async fn unit_exit_lines(unit: &str, since: time::OffsetDateTime) -> Vec<String> {
+    let unit = format!("--unit={unit}");
+    let since = format!("--since=@{}", since.unix_timestamp());
+    let args = [
+        "--user",
+        &unit,
+        "--identifier=systemd",
+        &since,
+        "--output=cat",
+        "--no-pager",
+        "--quiet",
+    ];
+    super::query("journalctl", &args)
+        .await
+        .map(|journal| unit_exit_lines_of(&journal))
+        .unwrap_or_default()
+}
+
 /// Looks up a systemd-coredump entry for the previous run's pid and executable, then its
 /// journal record with the backtrace. When `coredumpctl --json` is missing (systemd before
 /// 250) or fails, the journal is queried for the pid directly. Neither tool reads as no record.
@@ -267,6 +324,53 @@ pub(super) async fn harvest(previous: &super::SessionRecord) -> Option<OsCrashRe
 
 #[cfg(test)]
 mod tests {
+    use super::{unit_exit_lines_of, unit_of};
+
+    #[test]
+    fn the_unit_is_the_innermost_user_service_or_scope() {
+        let cgroup = |path: &str| format!("0::{path}\n");
+        assert_eq!(
+            unit_of(&cgroup(
+                "/user.slice/user-1000.slice/user@1000.service/app.slice/bibcode-desktop.service"
+            ))
+            .as_deref(),
+            Some("bibcode-desktop.service")
+        );
+        assert_eq!(
+            unit_of(&cgroup(
+                "/user.slice/user-1000.slice/user@1000.service/app.slice/app-x.scope"
+            ))
+            .as_deref(),
+            Some("app-x.scope")
+        );
+        assert_eq!(
+            unit_of(&cgroup(
+                "/user.slice/user-1000.slice/user@1000.service/init.scope"
+            )),
+            None
+        );
+        assert_eq!(unit_of(&cgroup("/system.slice/bibcode.service")), None);
+        assert_eq!(unit_of("garbage"), None);
+    }
+
+    #[test]
+    fn unit_exit_lines_keep_systemds_account_of_the_ending() {
+        let journal = "Started [systemd-run] /opt/bibcode.appimage.\n\
+            bibcode-desktop.service: Main process exited, code=killed, status=9/KILL\n\
+            bibcode-desktop.service: Failed with result 'signal'.\n\
+            bibcode-desktop.service: Consumed 1h CPU time, 8G memory peak.\n\
+            Started [systemd-run] /opt/bibcode.appimage.\n";
+        assert_eq!(
+            unit_exit_lines_of(journal),
+            vec![
+                "bibcode-desktop.service: Main process exited, code=killed, status=9/KILL",
+                "bibcode-desktop.service: Failed with result 'signal'.",
+                "bibcode-desktop.service: Consumed 1h CPU time, 8G memory peak.",
+            ]
+        );
+        assert!(unit_exit_lines_of("").is_empty());
+    }
+
     use super::*;
 
     const LIST: &str = include_str!("../../../../tests/fixtures/profiler/coredumpctl-list.json");

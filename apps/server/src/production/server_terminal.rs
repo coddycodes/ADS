@@ -32,9 +32,9 @@ use crate::{
     },
     rpc::{RpcRegistry, RpcResult, RpcStreamChunk},
     terminal::{
-        InputReadmissionScope, TerminalAttachInput, TerminalError, TerminalInputAdmission,
-        TerminalLaunchCommand, TerminalManager, TerminalMetadataEvent, TerminalOpenInput,
-        TerminalSessionIdentity,
+        AttachmentItem, InputReadmissionScope, TerminalAttachInput, TerminalError, TerminalEvent,
+        TerminalInputAdmission, TerminalLaunchCommand, TerminalManager, TerminalMetadataEvent,
+        TerminalOpenInput, TerminalSessionIdentity,
     },
     worktree_catalog::{
         WorkspaceAdmissionCancellation, WorkspaceAdmissionLease, WorkspaceAvailabilityRegistry,
@@ -765,17 +765,28 @@ fn register_terminal_rpcs(registry: &mut RpcRegistry, services: &ServerTerminalS
         spawn_stream(cancellation, move |sender, cancellation| async move {
             let input: TerminalAttachPayload = match decode_payload(&request.payload) {
                 Ok(input) => input,
-                Err(error) => { let _ = sender.send(Err(error)).await; return; }
+                Err(error) => {
+                    let _ = sender.send(Err(error)).await;
+                    return;
+                }
             };
             let workspace_admission = if input.restart_if_not_running {
                 match acquire_terminal_attach(availability.as_ref(), &input).await {
                     Ok(admission) => admission,
-                    Err(error) => { let _ = sender.send(Err(error)).await; return; }
+                    Err(error) => {
+                        let _ = sender.send(Err(error)).await;
+                        return;
+                    }
                 }
-            } else { None };
+            } else {
+                None
+            };
             let input = match input.into_attach(request.payload.get("sizeClaim")) {
                 Ok(input) => input,
-                Err(error) => { let _ = sender.send(Err(error)).await; return; }
+                Err(error) => {
+                    let _ = sender.send(Err(error)).await;
+                    return;
+                }
             };
             let publication_cancellation = workspace_admission
                 .as_ref()
@@ -784,27 +795,61 @@ fn register_terminal_rpcs(registry: &mut RpcRegistry, services: &ServerTerminalS
                 });
             let mut attachment = match await_terminal_publication(
                 workspace_admission,
-                terminal.attach_with_publication_cancellation(
-                    input,
-                    publication_cancellation,
-                ),
-            ).await {
+                terminal.attach_with_publication_cancellation(input, publication_cancellation),
+            )
+            .await
+            {
                 Ok(attachment) => attachment,
-                Err(error) => { let _ = sender.send(Err(error)).await; return; }
+                Err(error) => {
+                    let _ = sender.send(Err(error)).await;
+                    return;
+                }
             };
-            if sender.send(Ok(vec![json!({
-                "type": "snapshot",
-                "snapshot": attachment.initial,
-            })])).await.is_err() {
+            if sender
+                .send(Ok(vec![json!({
+                    "type": "snapshot",
+                    "snapshot": attachment.initial,
+                })]))
+                .await
+                .is_err()
+            {
                 return;
             }
             loop {
-                tokio::select! {
+                let first = tokio::select! {
                     () = cancellation.cancelled() => return,
-                    event = attachment.recv() => match event {
-                        Some(event) => if sender.send(Ok(vec![serde_json::to_value(event).expect("terminal event serializes")])).await.is_err() { return; },
+                    item = attachment.recv() => match item {
+                        Some(item) => item,
                         None => return,
                     }
+                };
+                // Output already waiting goes in the same chunk: one acknowledged chunk per
+                // event let a burst of output outrun the shared event channel.
+                let mut bytes = 0;
+                let mut resync = matches!(first, AttachmentItem::Resync { .. });
+                let mut values = vec![attach_item_value(first, &mut bytes)];
+                while values.len() < MAX_ATTACH_BATCH_ITEMS && bytes < MAX_ATTACH_BATCH_BYTES {
+                    // A resync can wait for a restart in progress: leave when the stream does.
+                    let item = tokio::select! {
+                        () = cancellation.cancelled() => return,
+                        item = attachment.try_recv() => item,
+                    };
+                    let Some(item) = item else {
+                        break;
+                    };
+                    resync |= matches!(item, AttachmentItem::Resync { .. });
+                    values.push(attach_item_value(item, &mut bytes));
+                }
+                // A catch-up snapshot carries up to the whole 1 MiB history: it waits until the
+                // chunks already queued have gone out, so a slow client never holds several.
+                while resync && sender.capacity() < sender.max_capacity() {
+                    tokio::select! {
+                        () = cancellation.cancelled() => return,
+                        () = tokio::time::sleep(std::time::Duration::from_millis(20)) => {}
+                    }
+                }
+                if sender.send(Ok(values)).await.is_err() {
+                    return;
                 }
             }
         })
@@ -972,6 +1017,39 @@ async fn acquire_terminal_attach(
             .map_err(workspace_admission_error);
     }
     acquire_terminal_thread(Some(admission), &input.thread_id).await
+}
+
+/// The most items and output bytes one `terminal.attach` chunk carries. The stream queues up
+/// to 64 chunks ahead of the client's acknowledgements, so this bounds that queue at about
+/// 2 MiB per attachment.
+const MAX_ATTACH_BATCH_ITEMS: usize = 64;
+const MAX_ATTACH_BATCH_BYTES: usize = 32 * 1024;
+
+/// One `terminal.attach` stream item; a resync is a fresh `snapshot` marked `resync`, which
+/// the client replaces its transcript with.
+fn attach_item_value(item: AttachmentItem, bytes: &mut usize) -> Value {
+    match item {
+        AttachmentItem::Event(event) => {
+            if let TerminalEvent::Output { data, .. } = &event {
+                *bytes += data.len();
+            }
+            serde_json::to_value(event).expect("terminal event serializes")
+        }
+        AttachmentItem::Resync {
+            snapshot,
+            same_process,
+        } => {
+            *bytes += snapshot.history.len();
+            // `resync`: the same process, so the client replaces its transcript but keeps the
+            // attachment, and input still waiting to be written survives. A process that
+            // restarted meanwhile gets a plain snapshot, as a new attachment would.
+            if same_process {
+                json!({ "type": "snapshot", "snapshot": snapshot, "resync": true })
+            } else {
+                json!({ "type": "snapshot", "snapshot": snapshot })
+            }
+        }
+    }
 }
 
 fn register_ordered_input_rpcs(registry: &mut RpcRegistry, services: &ServerTerminalServices) {

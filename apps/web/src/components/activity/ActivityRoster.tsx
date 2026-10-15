@@ -149,8 +149,8 @@ export function projectActivityRosterHierarchy(
 }
 
 export function reconcileActivityRosterRecords(
-  activeQuery: ActivityQueryResult<ActivityRosterPageData>,
-  doneQuery: ActivityQueryResult<ActivityRosterPageData>,
+  activeQuery: Pick<ActivityQueryResult<ActivityRosterPageData>, "pages">,
+  doneQuery: Pick<ActivityQueryResult<ActivityRosterPageData>, "pages">,
   section: ActivitySection,
 ): ReconciledActivityRoster {
   const expectedTag = section === "subagents" ? "actor" : "workItem";
@@ -284,6 +284,11 @@ function providerIcon(provider: string): ComponentType<{ className?: string }> {
   return typeof icon === "function" ? icon : BotIcon;
 }
 
+function renderProviderIcon(provider: string, className: string) {
+  const ProviderIcon = providerIcon(provider);
+  return <ProviderIcon aria-hidden="true" className={className} />;
+}
+
 function recordTime(record: ActivityRecordSummary, now: string): string {
   if (isActivityLifecycleActive(record.status) || record.terminalAt === null) {
     return `Elapsed ${activityElapsedLabel(record.startedAt, now)}`;
@@ -317,7 +322,6 @@ function ActivityRecordRow({
   registerRow,
 }: ActivityRecordRowProps) {
   const recordProvider = providerForRecord(record, provider);
-  const ProviderIcon = providerIcon(recordProvider);
   const typeLabel = record._tag === "actor" ? (record.role ?? "Actor") : record.workKind;
   const stopping = control?.state === "requested";
   const activeDescendants = control?.activeDescendantCount ?? 0;
@@ -358,7 +362,7 @@ function ActivityRecordRow({
             data-activity-provider-glyph={recordProvider}
             title={recordProvider}
           >
-            <ProviderIcon aria-hidden="true" className="size-3.5" />
+            {renderProviderIcon(recordProvider, "size-3.5")}
           </span>
         ) : (
           <span

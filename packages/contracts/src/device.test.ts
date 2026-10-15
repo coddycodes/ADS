@@ -8,6 +8,15 @@ import {
   DeviceRpcError,
 } from "./device.ts";
 
+const decodeCatalog = Schema.decodeUnknownSync(DeviceCatalog);
+const isCatalog = Schema.is(DeviceCatalog);
+const decodeInput = Schema.decodeUnknownSync(DeviceInputInput);
+const isInput = Schema.is(DeviceInputInput);
+const decodeRotate = Schema.decodeUnknownSync(DeviceRotateInput);
+const isRotate = Schema.is(DeviceRotateInput);
+const decodeFrame = Schema.decodeUnknownSync(DeviceJpegFrame);
+const decodeError = Schema.decodeUnknownSync(DeviceRpcError);
+
 describe("device preview contracts", () => {
   it("decodes a catalog as the server serializes it", () => {
     const catalog = {
@@ -27,15 +36,15 @@ describe("device preview contracts", () => {
         },
       ],
     };
-    expect(Schema.decodeUnknownSync(DeviceCatalog)(catalog)).toEqual(catalog);
+    expect(decodeCatalog(catalog)).toEqual(catalog);
     expect(
-      Schema.is(DeviceCatalog)({
+      isCatalog({
         ...catalog,
         availability: { kind: "sdkMissing", message: "Looking for the Android SDK on the server." },
       }),
     ).toBe(true);
     expect(
-      Schema.is(DeviceCatalog)({
+      isCatalog({
         ...catalog,
         devices: [{ ...catalog.devices[0], width: null }],
       }),
@@ -52,16 +61,16 @@ describe("device preview contracts", () => {
         { type: "text", text: "hi" },
       ],
     };
-    expect(Schema.decodeUnknownSync(DeviceInputInput)(input)).toEqual(input);
-    expect(Schema.is(DeviceInputInput)({ deviceId: "d-1", events: [] })).toBe(false);
+    expect(decodeInput(input)).toEqual(input);
+    expect(isInput({ deviceId: "d-1", events: [] })).toBe(false);
     expect(
-      Schema.is(DeviceInputInput)({
+      isInput({
         deviceId: "d-1",
         events: Array.from({ length: 64 }, () => touch),
       }),
     ).toBe(true);
     expect(
-      Schema.is(DeviceInputInput)({
+      isInput({
         deviceId: "d-1",
         events: Array.from({ length: 65 }, () => touch),
       }),
@@ -70,10 +79,10 @@ describe("device preview contracts", () => {
       deviceId: "d-1",
       events: [{ type: "text", text: "a".repeat(length) }],
     });
-    expect(Schema.is(DeviceInputInput)(text(1000))).toBe(true);
-    expect(Schema.is(DeviceInputInput)(text(1001))).toBe(false);
+    expect(isInput(text(1000))).toBe(true);
+    expect(isInput(text(1001))).toBe(false);
     expect(
-      Schema.is(DeviceInputInput)({
+      isInput({
         deviceId: "d-1",
         events: [{ type: "key", key: "escape", action: "down" }],
       }),
@@ -81,14 +90,13 @@ describe("device preview contracts", () => {
   });
 
   it("decodes rotation requests and frames", () => {
-    expect(
-      Schema.decodeUnknownSync(DeviceRotateInput)({ deviceId: "d-1", orientation: "landscape" }),
-    ).toEqual({ deviceId: "d-1", orientation: "landscape" });
-    expect(Schema.is(DeviceRotateInput)({ deviceId: "d-1", orientation: "upsideDown" })).toBe(
-      false,
-    );
+    expect(decodeRotate({ deviceId: "d-1", orientation: "landscape" })).toEqual({
+      deviceId: "d-1",
+      orientation: "landscape",
+    });
+    expect(isRotate({ deviceId: "d-1", orientation: "upsideDown" })).toBe(false);
     const frame = { seq: 3, width: 720, height: 1600, orientation: "portrait", jpegBase64: "/9j/" };
-    expect(Schema.decodeUnknownSync(DeviceJpegFrame)(frame)).toEqual(frame);
+    expect(decodeFrame(frame)).toEqual(frame);
   });
 
   it("decodes each tagged error", () => {
@@ -102,11 +110,12 @@ describe("device preview contracts", () => {
       { _tag: "DeviceEmulatorError", message: "The emulator did not respond." },
       { _tag: "DeviceMediaUnavailableError", message: "Video needs a signed-in session." },
     ];
-    const decode = Schema.decodeUnknownSync(DeviceRpcError);
     for (const error of errors) {
-      expect(decode(error)).toMatchObject(error);
+      expect(decodeError(error)).toMatchObject(error);
     }
-    expect(() => decode({ _tag: "DeviceNotReadyError", state: "asleep", message: "x" })).toThrow();
-    expect(() => decode({ _tag: "DeviceEmulatorError" })).toThrow();
+    expect(() =>
+      decodeError({ _tag: "DeviceNotReadyError", state: "asleep", message: "x" }),
+    ).toThrow();
+    expect(() => decodeError({ _tag: "DeviceEmulatorError" })).toThrow();
   });
 });

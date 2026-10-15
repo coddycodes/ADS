@@ -12,7 +12,7 @@ import {
 import { ThreadId, type EnvironmentId, type TerminalAttachInput } from "@bibcode/contracts";
 import { useAtomRefresh, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "./query";
 import { terminalEnvironment } from "./terminal";
@@ -66,24 +66,27 @@ export function useAttachedTerminalSession(input: {
           target.input.threadId,
           target.input.terminalId ?? null,
         ]);
-  const retainedTranscriptRuntimeRef = useRef<{
+  const [retainedTranscript, setRetainedTranscript] = useState<{
     readonly targetKey: string;
     readonly runtime: TerminalTranscriptRuntime;
   } | null>(null);
+  let nextRetainedTranscript = retainedTranscript;
   if (targetKey === null) {
-    retainedTranscriptRuntimeRef.current = null;
+    nextRetainedTranscript = null;
   } else if (attachSnapshot.transcriptRuntime !== null) {
-    retainedTranscriptRuntimeRef.current = {
-      targetKey,
-      runtime: attachSnapshot.transcriptRuntime,
-    };
-  } else if (retainedTranscriptRuntimeRef.current?.targetKey !== targetKey) {
-    retainedTranscriptRuntimeRef.current = null;
+    if (
+      retainedTranscript?.targetKey !== targetKey ||
+      retainedTranscript.runtime !== attachSnapshot.transcriptRuntime
+    ) {
+      nextRetainedTranscript = { targetKey, runtime: attachSnapshot.transcriptRuntime };
+    }
+  } else if (retainedTranscript?.targetKey !== targetKey) {
+    nextRetainedTranscript = null;
   }
-  const retainedTranscriptRuntime =
-    retainedTranscriptRuntimeRef.current?.targetKey === targetKey
-      ? retainedTranscriptRuntimeRef.current.runtime
-      : null;
+  if (nextRetainedTranscript !== retainedTranscript) {
+    setRetainedTranscript(nextRetainedTranscript);
+  }
+  const retainedTranscriptRuntime = nextRetainedTranscript?.runtime ?? null;
   const [producerError, setProducerError] = useState<AttachProducerError>({
     atom: null,
     error: null,

@@ -63,17 +63,25 @@ describe("useClientSettings selector subscription", () => {
     let renderCount = 0;
     let updateSettings: ReturnType<typeof useUpdateClientSettings> | null = null;
 
-    function Probe() {
+    function Probe({ onRender }: { onRender: () => void }) {
       const wordWrap = useClientSettings((settings) => settings.wordWrap);
       const update = useUpdateClientSettings();
-      renderCount += 1;
+      onRender();
       useLayoutEffect(() => {
         updateSettings = update;
       }, [update]);
       return <span>{String(wordWrap)}</span>;
     }
 
-    await act(async () => root.render(<Probe />));
+    await act(async () =>
+      root.render(
+        <Probe
+          onRender={() => {
+            renderCount += 1;
+          }}
+        />,
+      ),
+    );
     expect(renderCount).toBe(1);
 
     await act(async () => updateSettings?.({ statusBarUsageMode: "compact" }));

@@ -2,7 +2,7 @@
 
 import { scopeThreadRef } from "@bibcode/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@bibcode/contracts";
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -20,7 +20,9 @@ let renderCount: number;
 
 function Probe() {
   const hasTerminal = useThreadHasTerminalSurface(ref);
-  renderCount += 1;
+  useEffect(() => {
+    renderCount += 1;
+  });
   return <output>{String(hasTerminal)}</output>;
 }
 

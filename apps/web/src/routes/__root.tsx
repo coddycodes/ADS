@@ -37,6 +37,7 @@ import {
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { startClientCollector } from "../profiler/startClientCollector";
+import { startPreviewTunnelBroker } from "../browser/previewTunnelBroker";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
@@ -102,19 +103,11 @@ function RootRouteView() {
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
 
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      syncBrowserChromeTheme();
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [pathname]);
-
   if (pathname === "/pair") {
     return (
       <>
         <DocumentTitleSync />
+        <BrowserChromeThemeSync key={pathname} />
         <Outlet />
       </>
     );
@@ -124,6 +117,7 @@ function RootRouteView() {
     return (
       <>
         <DocumentTitleSync />
+        <BrowserChromeThemeSync key={pathname} />
         <Outlet />
       </>
     );
@@ -146,6 +140,7 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <DocumentTitleSync />
+        <BrowserChromeThemeSync key={pathname} />
         {presentation.showRemoteDeviceControls ? <RelayClientInstallDialog /> : null}
         {presentation.showRemoteDeviceControls ? <SshPasswordPromptDialog /> : null}
         <DesktopDeepLinkRouter />
@@ -159,6 +154,20 @@ function RootRouteView() {
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+/** Keyed by pathname: each route resyncs the chrome theme once its surface has painted. */
+function BrowserChromeThemeSync() {
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      syncBrowserChromeTheme();
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  return null;
 }
 
 function DocumentTitleSync() {
@@ -181,6 +190,7 @@ function DocumentTitleSync() {
 /** Measures client responsiveness for every environment whose profiler is on. */
 function ProfilerClientCollector() {
   useEffect(() => startClientCollector(appAtomRegistry), []);
+  useEffect(() => startPreviewTunnelBroker(appAtomRegistry), []);
   return null;
 }
 

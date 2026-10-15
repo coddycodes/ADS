@@ -80,6 +80,14 @@ From a source checkout:
 cargo run -p bibcode-server -- serve
 ```
 
+On Linux, starting the desktop in its own user unit makes systemd record how
+every run ended, which the Profiler then attaches to an unexplained
+`crash.unclean-exit` (a forced kill reads `code=killed, status=9/KILL`):
+
+```bash
+systemd-run --user --unit=bibcode-desktop ~/Applications/bibcode.appimage
+```
+
 Desktop diagnostics come from the shared in-process Rust runtime and the same
 `server.log`; no child server process is involved. The old `server-child.log`
 belonged to the removed Node sidecar and is not part of the final architecture.

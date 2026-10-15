@@ -33,6 +33,7 @@ export function makeTestExecutionEnvironmentCapabilities(
     attachmentStaging: false,
     profiler: false,
     devicePreviews: false,
+    previewTunnels: false,
     ...overrides,
   };
 }

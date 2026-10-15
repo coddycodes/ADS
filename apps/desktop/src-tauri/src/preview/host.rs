@@ -839,11 +839,24 @@ pub fn forget_environment(app: &AppHandle, environment_id: &str) -> Result<(), S
     })
 }
 
+/// `tunnel` asks to route a remote environment's previews through its SOCKS server (#69,
+/// Linux). Returns whether they do: the environment's first preview host decided.
 pub fn create_tab(
     app: &AppHandle,
     tab_id: &str,
     environment_id: Option<&str>,
-) -> Result<(), String> {
+    tunnel: bool,
+) -> Result<bool, String> {
+    #[cfg(target_os = "linux")]
+    let tunnel = environment_id.is_some_and(|environment_id| {
+        app.state::<super::socks::PreviewTunnels>()
+            .mode(environment_id, tunnel)
+    });
+    #[cfg(not(target_os = "linux"))]
+    let tunnel = {
+        let _ = tunnel;
+        false
+    };
     #[cfg(target_os = "macos")]
     ensure_macos_isolated_profile_available(is_supported())?;
 
@@ -884,14 +897,14 @@ pub fn create_tab(
                                 .unwrap_or(false)
                     });
                 return created
-                    .then_some(())
+                    .then_some(tunnel)
                     .ok_or_else(|| format!("preview tab {tab_id} creation did not complete"));
             }
             BeginCreation::AlreadyCreated { incarnation } => {
                 let created =
                     entry.created && host_coordinator().is_created(tab_id, &label, incarnation)?;
                 return created
-                    .then_some(())
+                    .then_some(tunnel)
                     .ok_or_else(|| format!("preview tab {tab_id} lifecycle is inconsistent"));
             }
         }
@@ -980,6 +993,16 @@ pub fn create_tab(
     {
         builder = builder.data_directory(profile_dir);
     }
+    // The proxy belongs to the environment's profile, fixed by its first preview host.
+    #[cfg(target_os = "linux")]
+    if tunnel && let Some(environment_id) = environment_id {
+        let tunnels = app.state::<super::socks::PreviewTunnels>();
+        let port = tauri::async_runtime::block_on(tunnels.ensure_server(environment_id))
+            .map_err(|error| format!("failed to start the preview tunnel: {error}"))?;
+        let proxy =
+            Url::parse(&format!("socks5://127.0.0.1:{port}")).map_err(|error| error.to_string())?;
+        builder = builder.proxy_url(proxy);
+    }
 
     reserve_preview_profile(profiles_in_use(), environment_id);
     creation_lease.mark_creation_attempted();
@@ -994,6 +1017,19 @@ pub fn create_tab(
         )
         .map_err(|error| error.to_string())?;
     creation_lease.attach_child(&webview);
+    // Names a tunneled page prefetches would be looked up here, not by its environment.
+    #[cfg(target_os = "linux")]
+    if tunnel {
+        let disabled = webview.with_webview(|platform| {
+            use webkit2gtk::{SettingsExt, WebViewExt};
+            if let Some(settings) = WebViewExt::settings(&platform.inner()) {
+                settings.set_enable_dns_prefetching(false);
+            }
+        });
+        if let Err(error) = disabled {
+            tracing::warn!("failed to turn off DNS prefetching for a tunneled preview: {error}");
+        }
+    }
 
     loop {
         let snapshot = match (|| -> Result<Option<_>, String> {
@@ -1074,7 +1110,7 @@ pub fn create_tab(
         match commit {
             Ok(CreationCommit::Committed) => {
                 creation_lease.disarm();
-                return Ok(());
+                return Ok(tunnel);
             }
             Ok(CreationCommit::Retry) => {}
             Ok(CreationCommit::Cancelled) => {

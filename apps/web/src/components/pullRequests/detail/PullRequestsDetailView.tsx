@@ -172,13 +172,13 @@ export function PullRequestsDetailView({
     payload: PullRequestsDetail;
     observedAt: number;
   } | null>(null);
-  useEffect(() => {
-    const row = snapshotQuery.data?.detail ?? null;
-    if (!row) return;
-    setPaintedDetail((previous) =>
-      newerObservedAt(previous?.observedAt ?? null, row.observedAt) ? row : previous,
-    );
-  }, [snapshotQuery.data]);
+  const snapshotDetail = snapshotQuery.data?.detail ?? null;
+  if (
+    snapshotDetail !== null &&
+    newerObservedAt(paintedDetail?.observedAt ?? null, snapshotDetail.observedAt)
+  ) {
+    setPaintedDetail(snapshotDetail);
+  }
   const [paintedTab, setPaintedTab] = useState<{
     tab: PullRequestsDetailTab;
     payload:
@@ -188,17 +188,19 @@ export function PullRequestsDetailView({
       | PullRequestsFilesData;
     observedAt: number;
   } | null>(null);
-  useEffect(() => {
-    const row = snapshotQuery.data?.tab ?? null;
-    if (!row) return;
-    setPaintedTab((previous) =>
-      previous === null ||
-      previous.tab !== row.kind ||
-      newerObservedAt(previous.observedAt, row.observedAt)
-        ? { tab: row.kind, payload: row.payload, observedAt: row.observedAt }
-        : previous,
-    );
-  }, [snapshotQuery.data]);
+  const snapshotTab = snapshotQuery.data?.tab ?? null;
+  if (
+    snapshotTab !== null &&
+    (paintedTab === null ||
+      paintedTab.tab !== snapshotTab.kind ||
+      newerObservedAt(paintedTab.observedAt, snapshotTab.observedAt))
+  ) {
+    setPaintedTab({
+      tab: snapshotTab.kind,
+      payload: snapshotTab.payload,
+      observedAt: snapshotTab.observedAt,
+    });
+  }
   const applySubscribedChange = useEffectEvent(
     (changed: NonNullable<typeof subscribeQuery.data>) => {
       if (changed.detail) detailQuery.revalidate();

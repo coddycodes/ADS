@@ -1,5 +1,5 @@
 import { Code2, Eye, LoaderCircle, Redo2, Save, Undo2 } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { Button } from "../ui/button";
 import { Toggle } from "../ui/toggle";
@@ -81,37 +81,27 @@ export function FileEditorToolbar({
   onUndo,
   onRedo,
 }: FileEditorToolbarProps) {
-  const lastConfirmedRevisionRef = useRef(confirmedRevision);
-  const savedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [showSaved, setShowSaved] = useState(false);
+  const [observedSave, setObservedSave] = useState({ confirmedRevision, savePhase });
+  // The revision whose save the notice shows; each newer save restarts its countdown.
+  const [savedRevision, setSavedRevision] = useState<number | null>(null);
+  if (
+    observedSave.confirmedRevision !== confirmedRevision ||
+    observedSave.savePhase !== savePhase
+  ) {
+    setObservedSave({ confirmedRevision, savePhase });
+    if (savePhase !== "clean") {
+      setSavedRevision(null);
+    } else if (confirmedRevision > observedSave.confirmedRevision) {
+      setSavedRevision(confirmedRevision);
+    }
+  }
 
   useEffect(() => {
-    const clearSavedTimeout = () => {
-      if (savedTimeoutRef.current !== null) {
-        clearTimeout(savedTimeoutRef.current);
-        savedTimeoutRef.current = null;
-      }
-    };
-
-    const revisionIncreased = confirmedRevision > lastConfirmedRevisionRef.current;
-    lastConfirmedRevisionRef.current = confirmedRevision;
-    clearSavedTimeout();
-
-    if (savePhase !== "clean" || !revisionIncreased) {
-      if (savePhase !== "clean") {
-        setShowSaved(false);
-      }
-      return clearSavedTimeout;
-    }
-
-    setShowSaved(true);
-    savedTimeoutRef.current = setTimeout(() => {
-      savedTimeoutRef.current = null;
-      setShowSaved(false);
-    }, SAVED_INDICATOR_DURATION_MS);
-
-    return clearSavedTimeout;
-  }, [confirmedRevision, savePhase]);
+    if (savedRevision === null) return;
+    const timeout = setTimeout(() => setSavedRevision(null), SAVED_INDICATOR_DURATION_MS);
+    return () => clearTimeout(timeout);
+  }, [savedRevision]);
+  const showSaved = savedRevision !== null;
 
   const status =
     savePhase === "pending"

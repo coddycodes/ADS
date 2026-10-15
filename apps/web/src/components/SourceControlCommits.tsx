@@ -1,6 +1,6 @@
 import type { ScopedThreadRef, VcsCommit } from "@bibcode/contracts";
 import { ChevronDownIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { useEnvironmentQuery } from "~/state/query";
@@ -51,12 +51,24 @@ export function SourceControlCommits({
 
   // Refetch from the first page whenever a commit is made in the panel
   // (reloadToken bumps) or the section is (re)expanded.
-  useEffect(() => {
-    if (!expanded) return;
+  const resetPages = () => {
     setPreviousPages([]);
     setCursor(null);
-    query.revalidate();
-  }, [reloadToken, expanded]);
+  };
+  const [seenReloadToken, setSeenReloadToken] = useState(reloadToken);
+  if (seenReloadToken !== reloadToken) {
+    setSeenReloadToken(reloadToken);
+    if (expanded) resetPages();
+  }
+  const toggleExpanded = () => {
+    if (!expanded) resetPages();
+    setExpanded((value) => !value);
+  };
+  const revalidateCommits = useEffectEvent(() => query.revalidate());
+  const reloadKey = expanded ? reloadToken : null;
+  useEffect(() => {
+    if (reloadKey !== null) revalidateCommits();
+  }, [reloadKey]);
 
   const currentPage = query.data?.commits ?? [];
   const commits = [...previousPages, ...currentPage];
@@ -72,7 +84,7 @@ export function SourceControlCommits({
     <div className="border-t border-border/60">
       <button
         type="button"
-        onClick={() => setExpanded((value) => !value)}
+        onClick={toggleExpanded}
         className="flex w-full items-center gap-1 px-2 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground"
       >
         <ChevronDownIcon

@@ -160,14 +160,11 @@ const BodyTargetHarness = forwardRef<
   { readonly groups?: ThreadCenterPanelState["groups"]; readonly targetKey?: string }
 >(function BodyTargetHarness({ groups = stateWithTerminalInLeft.groups, targetKey = "body" }, ref) {
   const registry = useCenterPanelBodyTargets(groups);
+  const { registerBodyTarget, rootRef } = registry;
   useImperativeHandle(ref, () => registry, [registry]);
   return (
-    <div ref={registry.rootRef} data-target="root">
-      <div
-        key={targetKey}
-        ref={registry.registerBodyTarget("group-left")}
-        data-target="group-left"
-      />
+    <div ref={rootRef} data-target="root">
+      <div key={targetKey} ref={registerBodyTarget("group-left")} data-target="group-left" />
     </div>
   );
 });

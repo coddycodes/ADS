@@ -68,6 +68,9 @@ const decodeDeliveryResolutionAction = Schema.decodeUnknownSync(TurnDeliveryReso
 const decodeOrchestrationEventSync = Schema.decodeUnknownSync(OrchestrationEvent);
 const encodeOrchestrationEventSync = Schema.encodeSync(OrchestrationEvent);
 const decodeClientOrchestrationCommandSync = Schema.decodeUnknownSync(ClientOrchestrationCommand);
+const decodeUploadChatAttachment = Schema.decodeUnknownSync(UploadChatAttachment);
+const isUploadChatAttachment = Schema.is(UploadChatAttachment);
+const isInlineUploadChatAttachment = Schema.is(InlineUploadChatAttachment);
 const decodeReplayEventsInput = Schema.decodeUnknownSync(OrchestrationReplayEventsInput);
 const decodeReplayEventsResult = Schema.decodeUnknownSync(
   OrchestrationRpcSchemas.replayEvents.output,
@@ -1484,17 +1487,17 @@ it("decodes staged image and file inputs and refuses two byte sources", () => {
     ["file", "text/plain"],
   ]) {
     const staged = { type, id: "a-1", name: "a", mimeType, sizeBytes: 3, uploadId: "stage-1" };
-    expect(Schema.decodeUnknownSync(UploadChatAttachment)(staged)).toEqual(staged);
+    expect(decodeUploadChatAttachment(staged)).toEqual(staged);
     for (const dataUrl of [null, `data:${mimeType};base64,YWJj`]) {
-      expect(Schema.is(UploadChatAttachment)({ ...staged, dataUrl })).toBe(false);
+      expect(isUploadChatAttachment({ ...staged, dataUrl })).toBe(false);
     }
     const { uploadId: _uploadId, ...metadata } = staged;
     expect(
-      Schema.is(InlineUploadChatAttachment)({
+      isInlineUploadChatAttachment({
         ...metadata,
         dataUrl: `data:${mimeType};base64,YWJj`,
       }),
     ).toBe(true);
-    expect(Schema.is(UploadChatAttachment)({ ...staged, uploadId: null })).toBe(false);
+    expect(isUploadChatAttachment({ ...staged, uploadId: null })).toBe(false);
   }
 });

@@ -464,7 +464,6 @@ describe("clone re-attach contracts", () => {
 });
 
 describe("GitRunStackedActionInput pullRequestOptions", () => {
-  const decode = Schema.decodeUnknownSync(GitRunStackedActionInput);
   const base = { actionId: "a", cwd: "/repo", action: "create_pr", pullRequestBaseBranch: "main" };
   const options = {
     draft: true,
@@ -476,20 +475,24 @@ describe("GitRunStackedActionInput pullRequestOptions", () => {
     squash: null,
   };
   it("accepts reviewed options", () => {
-    expect(decode({ ...base, pullRequestOptions: options }).pullRequestOptions).toEqual(options);
+    expect(
+      decodeRunStackedActionInput({ ...base, pullRequestOptions: options }).pullRequestOptions,
+    ).toEqual(options);
   });
   it("caps assignees at 20 and labels at 50", () => {
     const ids = (n: number) => Array.from({ length: n }, (_, i) => `u${i}`);
     expect(() =>
-      decode({ ...base, pullRequestOptions: { ...options, assignees: ids(21) } }),
+      decodeRunStackedActionInput({
+        ...base,
+        pullRequestOptions: { ...options, assignees: ids(21) },
+      }),
     ).toThrow();
     expect(() =>
-      decode({ ...base, pullRequestOptions: { ...options, labels: ids(51) } }),
+      decodeRunStackedActionInput({ ...base, pullRequestOptions: { ...options, labels: ids(51) } }),
     ).toThrow();
   });
   it("reports a partial-create warning on the pull request step", () => {
-    const decodeResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
-    const result = decodeResult({
+    const result = decodeRunStackedActionResult({
       action: "create_pr",
       branch: { status: "skipped_not_requested" },
       commit: { status: "skipped_not_requested" },

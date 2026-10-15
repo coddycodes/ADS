@@ -26,7 +26,7 @@ export interface RemoteDirectoryBrowserProps {
   readonly environmentId: EnvironmentId;
   readonly initialPath: string;
   /**
-   * Re-runs the reset effect (path, hidden toggle, warnings, pending create) when this
+   * Resets the browser (path, hidden toggle, warnings, pending create) when this
    * value changes. Pass a value that stays stable while the component is visible — for
    * example the browsing target's `environmentId` — not one that flips during a host
    * dialog's exit transition, since the browser typically stays mounted through it.
@@ -56,22 +56,28 @@ function createFolderErrorMessage(error: unknown): string {
   return "Unable to create folder.";
 }
 
-interface PickerContextIdentity {
+/**
+ * What the browser is showing. Every change to the target or the path starts a new
+ * generation, and work started under an older generation must not land on it.
+ */
+interface PickerIdentity {
   readonly environmentId: EnvironmentId;
   readonly resetKey: unknown;
   readonly initialPath: string;
-  readonly path: string;
   readonly createEntry: unknown;
-  readonly refreshRequestId: symbol | null;
-  readonly key: symbol;
+  readonly path: string;
+  readonly generation: number;
 }
 
-interface RefreshAfterNavigation {
-  readonly environmentId: EnvironmentId;
-  readonly createEntry: unknown;
-  readonly path: string;
-  readonly requestId: symbol;
-  readonly contextKey: symbol;
+type CreateFolderOutcome =
+  | { readonly kind: "created"; readonly path: string }
+  /** `message` is null for an interrupted request, which needs no error. */
+  | { readonly kind: "failed"; readonly message: string | null };
+
+interface CreateFolderCompletion {
+  /** The picker generation the request started under. */
+  readonly generation: number;
+  readonly outcome: CreateFolderOutcome;
 }
 
 export function RemoteDirectoryBrowser({
@@ -84,47 +90,47 @@ export function RemoteDirectoryBrowser({
   selectLabel,
 }: RemoteDirectoryBrowserProps) {
   const createEntry = useAtomCommand(projectEnvironment.createEntry, { reportFailure: false });
-  const [path, setPath] = useState(initialPath || "~");
+  const [picker, setPicker] = useState<PickerIdentity>(() => ({
+    environmentId,
+    resetKey,
+    initialPath,
+    createEntry,
+    path: initialPath || "~",
+    generation: 0,
+  }));
   const [fallbackWarning, setFallbackWarning] = useState<string | null>(null);
   const [showHiddenFolders, setShowHiddenFolders] = useState(false);
   const [newFolderName, setNewFolderName] = useState<string | null>(null);
   const [createPending, setCreatePending] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const currentContextRef = useRef<PickerContextIdentity | null>(null);
-  const activeCreateRef = useRef<symbol | null>(null);
-  const mountedRef = useRef(false);
-  const refreshAfterNavigationRef = useRef<RefreshAfterNavigation | null>(null);
+  // A completion is judged while rendering, against the picker it would land on, so one that
+  // resolves while a replacement renders is rejected by that replacement.
+  const [createCompletion, setCreateCompletion] = useState<CreateFolderCompletion | null>(null);
+  /** The generation of a created folder whose listing is revalidated once it is shown. */
+  const [refreshGeneration, setRefreshGeneration] = useState<number | null>(null);
+  const refreshedGenerationRef = useRef<number | null>(null);
 
-  const previousContext = currentContextRef.current;
-  if (
-    previousContext === null ||
-    previousContext.environmentId !== environmentId ||
-    previousContext.resetKey !== resetKey ||
-    previousContext.initialPath !== initialPath ||
-    previousContext.path !== path ||
-    previousContext.createEntry !== createEntry
-  ) {
-    currentContextRef.current = {
+  const pickerTargetChanged =
+    picker.environmentId !== environmentId ||
+    picker.resetKey !== resetKey ||
+    picker.initialPath !== initialPath ||
+    picker.createEntry !== createEntry;
+  if (pickerTargetChanged) {
+    setPicker({
       environmentId,
       resetKey,
       initialPath,
-      path,
       createEntry,
-      refreshRequestId: null,
-      key: Symbol("picker-context"),
-    };
-  }
-
-  useEffect(() => {
-    activeCreateRef.current = null;
-    refreshAfterNavigationRef.current = null;
+      path: initialPath || "~",
+      generation: picker.generation + 1,
+    });
     setNewFolderName(null);
     setCreatePending(false);
     setCreateError(null);
-    setPath(initialPath || "~");
     setFallbackWarning(null);
     setShowHiddenFolders(false);
-  }, [createEntry, environmentId, initialPath, resetKey]);
+  }
+  const path = picker.path;
 
   const query = useEnvironmentQuery(
     filesystemEnvironment.browse({
@@ -147,81 +153,60 @@ export function RemoteDirectoryBrowser({
   const canCreateInCurrentDirectory =
     directoryPath !== null && !query.isPending && query.error === null;
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      activeCreateRef.current = null;
-      refreshAfterNavigationRef.current = null;
-    };
-  }, []);
-
-  const invalidateCreateContext = useCallback(
-    (overrides: Partial<Pick<PickerContextIdentity, "path">> = {}) => {
-      const context = currentContextRef.current;
-      if (context !== null) {
-        currentContextRef.current = {
-          ...context,
-          ...overrides,
-          refreshRequestId: null,
-          key: Symbol("picker-context"),
-        };
+  // After a reset, wait for the re-render so the checks below see the new picker.
+  if (!pickerTargetChanged) {
+    if (createCompletion !== null) {
+      setCreateCompletion(null);
+      if (createCompletion.generation === picker.generation && createPending) {
+        setCreatePending(false);
+        const { outcome } = createCompletion;
+        if (outcome.kind === "failed") {
+          if (outcome.message !== null) setCreateError(outcome.message);
+        } else {
+          const generation = picker.generation + 1;
+          setPicker({ ...picker, path: outcome.path, generation });
+          setNewFolderName(null);
+          setCreateError(null);
+          setRefreshGeneration(generation);
+        }
       }
-      activeCreateRef.current = null;
-      refreshAfterNavigationRef.current = null;
-      setNewFolderName(null);
+    } else if (newFolderName === null && query.error && path !== "~" && fallbackWarning === null) {
+      setFallbackWarning("The previous folder is unavailable. Showing the server home directory.");
+      setPicker({ ...picker, path: "~", generation: picker.generation + 1 });
       setCreatePending(false);
       setCreateError(null);
-    },
-    [],
-  );
+    }
+  }
 
-  const navigateTo = useCallback(
-    (nextPath: string) => {
-      invalidateCreateContext({ path: nextPath });
-      setPath(nextPath);
-    },
-    [invalidateCreateContext],
-  );
+  const navigateTo = useCallback((nextPath: string) => {
+    setPicker((current) => ({ ...current, path: nextPath, generation: current.generation + 1 }));
+    setNewFolderName(null);
+    setCreatePending(false);
+    setCreateError(null);
+  }, []);
 
+  const revalidateQuery = query.revalidate;
+  const pickerGeneration = picker.generation;
   useEffect(() => {
-    const marker = refreshAfterNavigationRef.current;
-    if (marker === null) return;
-    const context = currentContextRef.current;
     if (
-      context?.key === marker.contextKey &&
-      environmentId === marker.environmentId &&
-      createEntry === marker.createEntry &&
-      path === marker.path &&
-      context.refreshRequestId === marker.requestId
+      refreshGeneration === null ||
+      refreshGeneration !== pickerGeneration ||
+      refreshedGenerationRef.current === refreshGeneration
     ) {
-      refreshAfterNavigationRef.current = null;
-      query.revalidate();
       return;
     }
-    refreshAfterNavigationRef.current = null;
-  }, [createEntry, environmentId, path, query.revalidate]);
-
-  useEffect(() => {
-    if (newFolderName === null && query.error && path !== "~" && fallbackWarning === null) {
-      setFallbackWarning("The previous folder is unavailable. Showing the server home directory.");
-      navigateTo("~");
-    }
-  }, [fallbackWarning, navigateTo, newFolderName, path, query.error]);
+    refreshedGenerationRef.current = refreshGeneration;
+    revalidateQuery();
+  }, [pickerGeneration, refreshGeneration, revalidateQuery]);
 
   const closeNewFolder = () => {
     if (createPending) return;
-    activeCreateRef.current = null;
     setNewFolderName(null);
     setCreateError(null);
   };
 
   const submitNewFolder = () => {
-    if (
-      activeCreateRef.current !== null ||
-      !canCreateInCurrentDirectory ||
-      directoryPath === null
-    ) {
+    if (createPending || !canCreateInCurrentDirectory || directoryPath === null) {
       return;
     }
     if (folderNameError !== null) {
@@ -229,66 +214,45 @@ export function RemoteDirectoryBrowser({
       return;
     }
 
-    const requestContext = currentContextRef.current;
-    if (requestContext === null) return;
+    const { generation } = picker;
     const parentPath = directoryPath;
-    const request = Symbol("create-folder");
-    activeCreateRef.current = request;
     setCreatePending(true);
     setCreateError(null);
 
-    const isCurrentRequest = () =>
-      mountedRef.current &&
-      activeCreateRef.current === request &&
-      currentContextRef.current === requestContext;
+    const complete = (outcome: CreateFolderOutcome) =>
+      // Only one request runs per generation, so the newest generation is the only one that
+      // can still be current.
+      setCreateCompletion((current) =>
+        current !== null && current.generation > generation ? current : { generation, outcome },
+      );
 
     void createEntry({
       environmentId,
       input: { cwd: parentPath, relativePath: trimmedFolderName, kind: "directory" },
     }).then(
       (result) => {
-        if (!isCurrentRequest()) return;
-        activeCreateRef.current = null;
-        setCreatePending(false);
-
         if (result._tag === "Failure") {
-          if (!isAtomCommandInterrupted(result)) {
-            setCreateError(createFolderErrorMessage(squashAtomCommandFailure(result)));
-          }
+          complete({
+            kind: "failed",
+            message: isAtomCommandInterrupted(result)
+              ? null
+              : createFolderErrorMessage(squashAtomCommandFailure(result)),
+          });
           return;
         }
 
         const normalizedParentPath = joinHostPath(parentPath, "");
         const createdPath = joinHostPath(parentPath, result.value.relativePath);
         if (result.value.relativePath.trim().length === 0 || createdPath === normalizedParentPath) {
-          setCreateError("The server did not return a valid created folder path.");
+          complete({
+            kind: "failed",
+            message: "The server did not return a valid created folder path.",
+          });
           return;
         }
-
-        const targetContext: PickerContextIdentity = {
-          ...requestContext,
-          path: createdPath,
-          refreshRequestId: request,
-          key: Symbol("picker-context"),
-        };
-        currentContextRef.current = targetContext;
-        setNewFolderName(null);
-        setCreateError(null);
-        refreshAfterNavigationRef.current = {
-          environmentId,
-          createEntry,
-          path: createdPath,
-          requestId: request,
-          contextKey: targetContext.key,
-        };
-        setPath(createdPath);
+        complete({ kind: "created", path: createdPath });
       },
-      (error: unknown) => {
-        if (!isCurrentRequest()) return;
-        activeCreateRef.current = null;
-        setCreatePending(false);
-        setCreateError(createFolderErrorMessage(error));
-      },
+      (error: unknown) => complete({ kind: "failed", message: createFolderErrorMessage(error) }),
     );
   };
 

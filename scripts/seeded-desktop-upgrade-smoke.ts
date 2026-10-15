@@ -1177,7 +1177,12 @@ export async function observeWindowsInstalledCandidate(input: {
   readonly tasklistMs: number | null;
 }> {
   const productName = input.productName ?? "BiBCode";
-  const expectedExe = `${productName}-${input.candidateVersion}-installer.exe`;
+  // tauri-plugin-updater writes the downloaded NSIS bytes as
+  // `{package}-{version}-installer.exe`, the package being `bibcode-desktop`.
+  const expectedExes = [
+    `bibcode-desktop-${input.candidateVersion}-installer.exe`,
+    `${productName}-${input.candidateVersion}-installer.exe`,
+  ];
   const readFile =
     input.readFile ??
     ((path: string) =>
@@ -1222,7 +1227,10 @@ export async function observeWindowsInstalledCandidate(input: {
   let tasklistMs: number | null = null;
   const listStarted = Date.now();
   try {
-    installers = windowsInstallerProcesses(await listProcesses(), expectedExe);
+    const listing = await listProcesses();
+    installers = expectedExes.flatMap((expectedExe) =>
+      windowsInstallerProcesses(listing, expectedExe),
+    );
     tasklistMs = Date.now() - listStarted;
   } catch (cause) {
     tasklistMs = Date.now() - listStarted;
@@ -1337,6 +1345,92 @@ export async function waitForWindowsRelaunchedApplication(input: {
       }
     },
   });
+}
+
+/**
+ * What Windows showed when a wait timed out: every process with its window title, and the
+ * text of each top-level window (an NSIS file-in-use dialog shows its message here). Written
+ * as text so the bounded evidence copy keeps it. Failures are recorded, never thrown.
+ */
+export async function captureWindowsTimeoutEvidence(evidenceDirectory: string): Promise<void> {
+  const run = (command: string, args: ReadonlyArray<string>, timeout = 30_000) =>
+    new Promise<string>((resolve) => {
+      NodeChildProcess.execFile(
+        command,
+        [...args],
+        { timeout, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+        (error, stdout, stderr) =>
+          resolve(error ? `${stdout}\n[${String(error)}] ${stderr}` : stdout),
+      );
+    });
+  const windows = String.raw`Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$all = [System.Windows.Automation.Condition]::TrueCondition
+foreach ($window in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $all)) {
+  $processId = $window.Current.ProcessId
+  $name = (Get-Process -Id $processId -ErrorAction SilentlyContinue).ProcessName
+  "WINDOW pid=$processId process=$name title=$($window.Current.Name)"
+  try {
+    $shown = 0
+    foreach ($child in $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $all)) {
+      if ($shown -ge 40) { break }
+      if ($child.Current.Name) {
+        "  $($child.Current.ControlType.ProgrammaticName): $($child.Current.Name)"
+        $shown++
+      }
+    }
+  } catch { "  [descendants unavailable: $($_.Exception.Message)]" }
+}`;
+  // The updater's temporary directories, the BiBCode uninstall entries, then process starts
+  // and exits from the Security log of the last 20 minutes, newest first and capped (5000
+  // read, 300 shown), so the 64 KiB evidence bound keeps the installer handoff. The workflow
+  // turns this auditing on. Processes are matched by file name; command lines are kept only
+  // for BiBCode's own executables.
+  const audit = String.raw`"--- updater temp directories"
+Get-ChildItem $env:TEMP -Directory -Filter '*-updater-*' -ErrorAction SilentlyContinue | ForEach-Object {
+  $_.FullName
+  Get-ChildItem $_.FullName -ErrorAction SilentlyContinue | ForEach-Object { "  $($_.Name) $($_.Length)" }
+}
+"--- uninstall entries"
+Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+  Where-Object { $_.DisplayName -like '*BiBCode*' } |
+  ForEach-Object { "$($_.PSChildName) version=$($_.DisplayVersion) location=$($_.InstallLocation)" }
+"--- process starts and exits, newest first"
+$events = Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4688, 4689; StartTime = (Get-Date).AddMinutes(-20) } -MaxEvents 5000 -ErrorAction SilentlyContinue
+if (-not $events) { "[no process audit events: auditing is off or the log is unreadable]" }
+$shown = 0
+foreach ($event in $events) {
+  if ($shown -ge 300) { "[older events omitted]"; break }
+  $data = @{}
+  foreach ($field in ([xml]$event.ToXml()).Event.EventData.Data) { $data[$field.Name] = $field.'#text' }
+  if ($event.Id -eq 4688) { $name = $data.NewProcessName; $processId = $data.NewProcessId } else { $name = $data.ProcessName; $processId = $data.ProcessId }
+  $leaf = Split-Path $name -Leaf
+  if ($leaf -notmatch '^(bibcode|msedgedriver\.exe$|tauri-driver\.exe$)') { continue }
+  $shown++
+  $time = $event.TimeCreated.ToUniversalTime().ToString('o')
+  $processId = [Convert]::ToInt64($processId, 16)
+  if ($event.Id -eq 4688) {
+    $line = "$time START pid=$processId parent=$([Convert]::ToInt64($data.ProcessId, 16)) $leaf"
+    if ($leaf -match '^bibcode-desktop(-.+-installer)?\.exe$') { $line += " | $($data.CommandLine)" }
+    $line
+  } else { "$time EXIT pid=$processId status=$($data.Status) $leaf" }
+}`;
+  await NodeFS.promises.writeFile(
+    NodePath.join(evidenceDirectory, "windows-processes-at-timeout.txt"),
+    await run("tasklist.exe", ["/V", "/FO", "CSV", "/NH"]),
+    { mode: 0o600 },
+  );
+  await NodeFS.promises.writeFile(
+    NodePath.join(evidenceDirectory, "windows-ui-at-timeout.txt"),
+    await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windows]),
+    { mode: 0o600 },
+  );
+  await NodeFS.promises.writeFile(
+    NodePath.join(evidenceDirectory, "windows-process-audit-at-timeout.txt"),
+    // The Security log also holds the build's processes: reading recent events takes a while.
+    await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", audit], 180_000),
+    { mode: 0o600 },
+  );
 }
 
 export class ManagedProcessRegistry {
@@ -2415,16 +2509,21 @@ const runUpgradeLane = async (input: {
   } as const;
   await runWebDriverPhase({ ...shared, phase: "seed-and-install", resultPath: beforePath });
   if (input.platform === "win") {
-    await waitForWindowsInstalledCandidate({
-      appBinaryPath: input.appBinaryPath,
-      candidateVersion: input.candidateVersion,
-      evidenceDirectory: input.layout.evidenceDirectory,
-      timeoutMs: input.restartTimeoutMs,
-    });
-    await waitForWindowsRelaunchedApplication({
-      appBinaryPath: input.appBinaryPath,
-      timeoutMs: input.restartTimeoutMs,
-    });
+    try {
+      await waitForWindowsInstalledCandidate({
+        appBinaryPath: input.appBinaryPath,
+        candidateVersion: input.candidateVersion,
+        evidenceDirectory: input.layout.evidenceDirectory,
+        timeoutMs: input.restartTimeoutMs,
+      });
+      await waitForWindowsRelaunchedApplication({
+        appBinaryPath: input.appBinaryPath,
+        timeoutMs: input.restartTimeoutMs,
+      });
+    } catch (error) {
+      await captureWindowsTimeoutEvidence(input.layout.evidenceDirectory);
+      throw error;
+    }
   }
   if (input.lane === "remote-install") {
     const remotePath = NodePath.join(input.layout.evidenceDirectory, "remote-rpc.json");

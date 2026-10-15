@@ -1055,13 +1055,11 @@ export function ShareTab({
 
   const handleConfirmTailscaleServeDisable = useCallback(async () => {
     if (!desktopBridge) return;
+    const port = desktopServerExposureState?.tailscaleServePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
     setIsUpdatingTailscaleServe(true);
     setDesktopServerExposureMutationError(null);
     try {
-      await desktopBridge.setTailscaleServeEnabled({
-        enabled: false,
-        port: desktopServerExposureState?.tailscaleServePort ?? DEFAULT_TAILSCALE_SERVE_PORT,
-      });
+      await desktopBridge.setTailscaleServeEnabled({ enabled: false, port });
       refreshDesktopNetworkAccessState();
       setDisableTailscaleServeDialogOpen(false);
     } catch (error) {

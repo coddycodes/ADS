@@ -167,13 +167,13 @@ describe("list-wide card lookups", () => {
       pinnedKeys: [] as string[],
       unreadKeys: [] as string[],
     };
-    let cardRenders = 0;
+    const cardRendered = vi.fn();
     const Card = memo(function Card(props: {
       terminals: readonly string[];
       ports: readonly unknown[];
       adopted: unknown;
     }) {
-      cardRenders += 1;
+      cardRendered();
       return <li>{props.terminals.length + props.ports.length + (props.adopted ? 1 : 0)}</li>;
     });
     const seen: ReturnType<typeof useWorkspaceCardLookups>[] = [];
@@ -205,7 +205,7 @@ describe("list-wide card lookups", () => {
       expect(second.terminals.get(key)).toBe(first.terminals.get(key));
       expect(second.ports.get(key)).toBe(first.ports.get(key));
       expect(second.adopted.get(key)).toBe(first.adopted.get(key));
-      expect(cardRenders).toBe(1);
+      expect(cardRendered).toHaveBeenCalledTimes(1);
       // Another thread's terminal starts: the map rebuilds, this card's array is reused.
       fixture.sources = {
         ...fixture.sources,
@@ -214,7 +214,7 @@ describe("list-wide card lookups", () => {
       await act(async () => root.render(<List />));
       expect(terminalBuild).toHaveBeenCalledTimes(2);
       expect(seen.at(-1)!.terminals.get(key)).toBe(first.terminals.get(key));
-      expect(cardRenders).toBe(1);
+      expect(cardRendered).toHaveBeenCalledTimes(1);
       // The same terminal snapshot, freshly decoded: new row objects, equal content.
       fixture.sources = {
         ...fixture.sources,
@@ -223,7 +223,7 @@ describe("list-wide card lookups", () => {
       await act(async () => root.render(<List />));
       expect(terminalBuild).toHaveBeenCalledTimes(3);
       expect(seen.at(-1)!.terminals.get(key)).toBe(first.terminals.get(key));
-      expect(cardRenders).toBe(1);
+      expect(cardRendered).toHaveBeenCalledTimes(1);
       // The same port snapshot, freshly decoded: new port and terminal objects.
       fixture.sources = {
         ...fixture.sources,
@@ -232,7 +232,7 @@ describe("list-wide card lookups", () => {
       await act(async () => root.render(<List />));
       expect(portBuild).toHaveBeenCalledTimes(2);
       expect(seen.at(-1)!.ports.get(key)).toBe(first.ports.get(key));
-      expect(cardRenders).toBe(1);
+      expect(cardRendered).toHaveBeenCalledTimes(1);
       // A field the card reads changes (the port's terminal): the card gets new input.
       fixture.sources = {
         ...fixture.sources,
@@ -241,7 +241,7 @@ describe("list-wide card lookups", () => {
       await act(async () => root.render(<List />));
       expect(seen.at(-1)!.ports.get(key)).not.toBe(first.ports.get(key));
       expect(seen.at(-1)!.ports.get(key)?.[0]?.terminal?.terminalId).toBe("t9");
-      expect(cardRenders).toBe(2);
+      expect(cardRendered).toHaveBeenCalledTimes(2);
     } finally {
       await act(async () => root.unmount());
     }

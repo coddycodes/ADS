@@ -1,5 +1,5 @@
 import type { DesktopProjectDataEnvironmentStatus } from "@bibcode/contracts";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "../ui/button";
 import {
@@ -48,12 +48,10 @@ export function ProjectDataRecoveryDialog({
   const [selectedBackupId, setSelectedBackupId] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation>(null);
 
-  useEffect(() => {
-    if (!open) {
-      setSelectedBackupId(null);
-      setConfirmation(null);
-    }
-  }, [open]);
+  if (!open && (selectedBackupId !== null || confirmation !== null)) {
+    setSelectedBackupId(null);
+    setConfirmation(null);
+  }
 
   return (
     <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>

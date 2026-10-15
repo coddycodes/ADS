@@ -72,26 +72,17 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     onToggleOptionRef.current = onToggleOption;
   }, [onAdvance, onToggleOption]);
 
-  useEffect(() => {
-    if (!activeQuestion || activeQuestion.multiSelect || !optimisticSingleSelect) {
-      return;
-    }
-    if (optimisticSingleSelect.questionId !== activeQuestion.id) {
-      setOptimisticSingleSelect(null);
-      return;
-    }
-    if (
-      progress.customAnswer.trim().length === 0 &&
-      progress.selectedOptionLabels.includes(optimisticSingleSelect.optionLabel)
-    ) {
-      setOptimisticSingleSelect(null);
-    }
-  }, [
-    activeQuestion,
-    optimisticSingleSelect,
-    progress.customAnswer,
-    progress.selectedOptionLabels,
-  ]);
+  // Drop the optimistic pick once the question moves on or the draft answer confirms it.
+  if (
+    activeQuestion &&
+    !activeQuestion.multiSelect &&
+    optimisticSingleSelect &&
+    (optimisticSingleSelect.questionId !== activeQuestion.id ||
+      (progress.customAnswer.trim().length === 0 &&
+        progress.selectedOptionLabels.includes(optimisticSingleSelect.optionLabel)))
+  ) {
+    setOptimisticSingleSelect(null);
+  }
 
   // Clear auto-advance timer on unmount
   useEffect(() => {

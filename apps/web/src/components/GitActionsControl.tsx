@@ -147,6 +147,11 @@ interface RunGitActionWithToastInput {
   filePaths?: string[];
 }
 
+type RerunGitActionWithToast = (
+  input: RunGitActionWithToastInput,
+  rerun: RerunGitActionWithToast,
+) => Promise<void>;
+
 const GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS = 250;
 
 type RefreshVcsStatus = (target: {
@@ -519,8 +524,6 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     })();
   }, [
     canSubmitPublishRepository,
-    props.environmentId,
-    props.gitCwd,
     publishProtocol,
     publishProvider,
     publishRemoteName,
@@ -1024,7 +1027,6 @@ export default function GitActionsControl({
     () => ({ environmentId: activeEnvironmentId, cwd: gitCwd }),
     [activeEnvironmentId, gitCwd],
   );
-  let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<void>;
 
   const updateActiveProgressToast = useCallback(() => {
     const progress = activeGitActionProgressRef.current;
@@ -1259,17 +1261,22 @@ export default function GitActionsControl({
     });
   }, [gitStatusForActions, threadToastData]);
 
-  runGitActionWithToast = useEffectEvent(
-    async ({
-      action,
-      commitMessage,
-      onConfirmed,
-      skipDefaultBranchPrompt = false,
-      statusOverride,
-      featureBranch = false,
-      progressToastId,
-      filePaths,
-    }: RunGitActionWithToastInput) => {
+  // `rerun` is this Effect Event itself, so a result toast's follow-up action
+  // runs the latest render's logic.
+  const runGitActionWithToastEvent = useEffectEvent(
+    async (
+      {
+        action,
+        commitMessage,
+        onConfirmed,
+        skipDefaultBranchPrompt = false,
+        statusOverride,
+        featureBranch = false,
+        progressToastId,
+        filePaths,
+      }: RunGitActionWithToastInput,
+      rerun: RerunGitActionWithToast,
+    ) => {
       const actionStatus = statusOverride ?? gitStatusForActions;
       const actionBranch = actionStatus?.refName ?? null;
       const actionIsDefaultBranch = featureBranch ? false : isDefaultRef;
@@ -1461,9 +1468,7 @@ export default function GitActionsControl({
           children: toastCta.label,
           onClick: () => {
             closeResultToast();
-            void runGitActionWithToast({
-              action: toastCta.action.kind,
-            });
+            void rerun({ action: toastCta.action.kind }, rerun);
           },
         };
       } else if (toastCta.kind === "open_pr") {
@@ -1506,6 +1511,8 @@ export default function GitActionsControl({
       }
     },
   );
+  const runGitActionWithToast = (input: RunGitActionWithToastInput) =>
+    runGitActionWithToastEvent(input, runGitActionWithToastEvent);
 
   const continuePendingDefaultBranchAction = () => {
     if (!pendingDefaultBranchAction) return;
@@ -1889,6 +1896,7 @@ export default function GitActionsControl({
                   <div className="flex items-center gap-2">
                     {isEditingFiles && allFiles.length > 0 && (
                       <Checkbox
+                        aria-label="Include all files"
                         checked={allSelected}
                         indeterminate={!allSelected && !noneSelected}
                         onCheckedChange={() => {
@@ -1930,6 +1938,7 @@ export default function GitActionsControl({
                             >
                               {isEditingFiles && (
                                 <Checkbox
+                                  aria-label={`Include ${file.path}`}
                                   checked={!excludedFiles.has(file.path)}
                                   onCheckedChange={() => {
                                     setExcludedFiles((prev) => {

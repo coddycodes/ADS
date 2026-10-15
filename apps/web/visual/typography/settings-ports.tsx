@@ -20,7 +20,7 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
-import { useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
 import type * as ServerPorts from "../../src/state/server";
 import type * as EnvironmentPorts from "../../src/state/environments";
@@ -358,6 +358,12 @@ function previewState(controller: "agent" | "human"): ThreadPreviewState {
   };
 }
 
+const FixtureChildrenContext = createContext<ReactNode>(null);
+
+function FixtureRootRoute() {
+  return <>{useContext(FixtureChildrenContext)}</>;
+}
+
 export function SettingsFixtureFrame({
   children,
   previewController,
@@ -372,7 +378,7 @@ export function SettingsFixtureFrame({
         previewStateAtom(scopedThreadKey(fixtureThreadRef)),
         previewState(previewController),
       );
-    const rootRoute = createRootRoute({ component: () => <>{children}</> });
+    const rootRoute = createRootRoute({ component: FixtureRootRoute });
     return createRouter({
       routeTree: rootRoute,
       history: createMemoryHistory({ initialEntries: ["/"] }),
@@ -381,7 +387,9 @@ export function SettingsFixtureFrame({
   useEffect(() => () => registry.dispose(), [registry]);
   return (
     <RegistryContext.Provider value={registry}>
-      <RouterProvider router={router} />
+      <FixtureChildrenContext.Provider value={children}>
+        <RouterProvider router={router} />
+      </FixtureChildrenContext.Provider>
     </RegistryContext.Provider>
   );
 }

@@ -446,7 +446,12 @@ impl PortablePtyBackend {
         };
         #[cfg(not(windows))]
         let killer = child.child().clone_killer();
-        let (output, initial_output) = broadcast::channel(256);
+        // Reads the manager has not published yet. A program printing thousands of short lines
+        // writes faster than one read per publication; 256 slots overflowed within
+        // milliseconds and dropped output from the terminal. The manager now publishes the
+        // reads waiting together, and 1024 slots of at most 8 KiB bound a stalled backlog at
+        // 8 MiB.
+        let (output, initial_output) = broadcast::channel(1024);
         let (exit, _) = watch::channel(None);
         let (resize, resize_requests) = mpsc::channel();
 
@@ -1167,6 +1172,7 @@ fn kill_unix_target(target: i32) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::ffi::OsString;
     #[cfg(not(windows))]
     use std::io::{Error, ErrorKind};

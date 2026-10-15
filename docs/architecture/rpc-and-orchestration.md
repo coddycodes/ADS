@@ -1885,7 +1885,11 @@ first of a burst of its events, and the shell stream re-reads the shell
 changed fields are replaced, removed fields listed, and each changed array
 sends its new length and only the entries that differ, by index, so an
 appended activity or a message updated in place costs one entry instead of
-the whole thread. The client decodes only the changed fields with the thread's field
+the whole thread. To compute the next patch the server keeps, per subscription,
+a 64-bit fingerprint of each field of the snapshot it last sent and of each
+array entry, never the thread itself: a held copy grew the server by about
+twice the thread's content for as long as the thread stayed open (#101). The
+client decodes only the changed fields with the thread's field
 schemas, and `packages/contracts/fixtures/thread-stream/lifecycle.json` pins
 that patches rebuild the server's snapshot exactly. Older clients omit
 `patches` and keep receiving whole snapshots; older servers ignore it.

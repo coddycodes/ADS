@@ -224,10 +224,11 @@ export const CenterPanelSurfaceHosts = forwardRef<
     if (node) hostElementsRef.current.set(surfaceId, node);
     else hostElementsRef.current.delete(surfaceId);
   }, []);
+  const { readBodyRect } = props;
   const syncRects = useCallback(() => {
     for (const element of hostElementsRef.current.values()) {
       const groupId = element.dataset.centerSurfaceGroupId;
-      const rect = groupId ? props.readBodyRect(groupId) : null;
+      const rect = groupId ? readBodyRect(groupId) : null;
       if (!rect) {
         element.dataset.centerSurfaceGeometry = "invalid";
         element.style.left = "";
@@ -251,7 +252,7 @@ export const CenterPanelSurfaceHosts = forwardRef<
         element.style.pointerEvents = "none";
       }
     }
-  }, [props.readBodyRect]);
+  }, [readBodyRect]);
   useImperativeHandle(ref, () => ({ syncRects }), [syncRects]);
   useLayoutEffect(syncRects, [props.rects, props.state, syncRects]);
 

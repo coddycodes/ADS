@@ -88,8 +88,7 @@ export const GitManagerCommitBox = memo(function GitManagerCommitBox({
   workingTreeDirty = false,
   onUndo,
 }: GitManagerCommitBoxProps) {
-  const draft = useSourceControlDraft(scope);
-  const { summary, description } = splitDraftMessage(draft.message);
+  const { message, setMessage, clear: clearDraft } = useSourceControlDraft(scope);
   const [coAuthors, setCoAuthors] = useState<ReadonlyArray<GitManagerCoAuthor>>([]);
   const [coAuthorInput, setCoAuthorInput] = useState("");
   const [coAuthorError, setCoAuthorError] = useState<string | null>(null);
@@ -99,6 +98,7 @@ export const GitManagerCommitBox = memo(function GitManagerCommitBox({
   const [isAmending, setIsAmending] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submittingRef = useRef(false);
+  const { summary, description } = splitDraftMessage(message);
   const placeholderSummary = buildPlaceholderSummary(includedPaths);
   const busy = isBusy || isSubmitting;
   const enabled =
@@ -114,15 +114,15 @@ export const GitManagerCommitBox = memo(function GitManagerCommitBox({
 
   const handleSummaryChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
-      draft.setMessage(draftMessage(event.target.value, description));
+      setMessage(draftMessage(event.target.value, description));
     },
-    [description, draft.setMessage],
+    [description, setMessage],
   );
   const handleDescriptionChange = useCallback(
     (event: ChangeEvent<HTMLTextAreaElement>) => {
-      draft.setMessage(draftMessage(summary, event.target.value));
+      setMessage(draftMessage(summary, event.target.value));
     },
-    [draft.setMessage, summary],
+    [setMessage, summary],
   );
   const handleCoAuthorInputChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setCoAuthorInput(event.target.value);
@@ -167,7 +167,7 @@ export const GitManagerCommitBox = memo(function GitManagerCommitBox({
         allowEmpty,
         amend: isAmending,
       });
-      draft.clear();
+      clearDraft();
       setCoAuthors([]);
       setCoAuthorInput("");
       setIsAmending(false);
@@ -179,9 +179,9 @@ export const GitManagerCommitBox = memo(function GitManagerCommitBox({
     }
   }, [
     allowEmpty,
+    clearDraft,
     coAuthors,
     description,
-    draft.clear,
     enabled,
     isAmending,
     noVerify,
@@ -209,9 +209,9 @@ export const GitManagerCommitBox = memo(function GitManagerCommitBox({
     if (onUndo === undefined) return;
     const restored = await onUndo();
     if (restored === null) return;
-    draft.setMessage(draftMessage(restored.summary, restored.description));
+    setMessage(draftMessage(restored.summary, restored.description));
     setCoAuthors(restored.coAuthors);
-  }, [draft.setMessage, onUndo]);
+  }, [onUndo, setMessage]);
 
   return (
     <>

@@ -110,21 +110,20 @@ async function click(element: HTMLElement): Promise<void> {
 }
 
 /**
- * Code fences render a plain <pre> fallback until the shared shiki highlighter
- * promise resolves; once it does, re-rendering emits highlighted markup
- * synchronously. Poll re-renders until the highlighted path is taken so the
- * assertion does not depend on module-level promise timing.
+ * A finished code fence renders a plain <pre> when it mounts and is highlighted
+ * afterwards, between frames (#103). Mounts the markdown and waits until the
+ * highlighted path is taken, so the assertion does not depend on module-level
+ * promise timing.
  */
 async function renderMarkdownUntilHighlighted(text: string, options: RenderOptions = {}) {
-  let markup = "";
+  const container = await mountMarkdown(text, options);
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    markup = await renderMarkdown(text, options);
-    if (markup.includes("chat-markdown-shiki")) {
-      return markup;
+    if (container.innerHTML.includes("chat-markdown-shiki")) {
+      return container.innerHTML;
     }
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
   }
-  throw new Error(`highlighter never resolved; last markup: ${markup}`);
+  throw new Error(`highlighter never resolved; last markup: ${container.innerHTML}`);
 }
 
 describe("ChatMarkdown", () => {
@@ -642,6 +641,26 @@ describe("ChatMarkdown", () => {
 
       expect(markup).toContain('data-language="ts"');
       expect(markup).toContain("streaming");
+    });
+
+    it("shows a finished block plain until it is highlighted, then reuses the highlight", async () => {
+      const text = ["```ts", "const deferred = 103;", "```"].join("\n");
+      const ChatMarkdown = ChatMarkdownComponent ?? (await import("./ChatMarkdown")).default;
+      // Warm the highlighter, so only the deferral can keep the block plain.
+      await renderMarkdownUntilHighlighted(["```ts", "const warm = 1;", "```"].join("\n"));
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      mountedTrees.push({ container, root });
+      // Committed synchronously, before any task runs: mounting a timeline row must not
+      // wait for highlighting (#103).
+      act(() => root.render(<ChatMarkdown text={text} cwd={undefined} />));
+      expect(container.innerHTML).not.toContain("chat-markdown-shiki");
+      expect(container.querySelector("pre code")?.textContent).toContain("const deferred = 103;");
+
+      await renderMarkdownUntilHighlighted(text);
+      // Highlighted once, the block mounts highlighted, as when scrolling back to it.
+      expect(await renderMarkdown(text)).toContain("chat-markdown-shiki");
     });
 
     it("emits highlighted markup once the shared highlighter resolves", async () => {

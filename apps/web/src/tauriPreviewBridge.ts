@@ -3,6 +3,8 @@ import type {
   DesktopPreviewBridge,
   DesktopPreviewScreenshotArtifact,
   DesktopPreviewTabState,
+  DesktopPreviewTunnelBridge,
+  DesktopPreviewTunnelRequest,
 } from "@bibcode/contracts";
 
 import { TauriDesktopCapabilityUnsupportedError } from "./tauriDesktopBridge";
@@ -11,6 +13,8 @@ import { registerPreviewRuntimeCapabilities } from "./previewRuntimeCapabilities
 interface PreviewBridgeDeps {
   readonly invoke: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
   readonly listen: <T>(event: string, listener: (payload: T) => void) => () => void;
+  /** The desktop routes remote environments' previews through SOCKS (#69). */
+  readonly tunnels?: boolean;
 }
 
 interface PreviewStateEventPayload {
@@ -44,6 +48,8 @@ export function createTauriPreviewBridge(deps: PreviewBridgeDeps): DesktopPrevie
   // Keep one native child per preview storage partition (one per environment) for the
   // desktop process lifetime and rebind its logical tabs to it.
   const hostByPartition = new Map<string, string>();
+  /** Environment -> whether its preview host routes through SOCKS, from its creation (#69). */
+  const tunneledByEnvironment = new Map<string, boolean>();
   const partitionOfTab = new Map<string, string>();
   /** Native host -> the logical tab it shows (`null` while hidden with none). */
   const activeByHost = new Map<string, string | null>();
@@ -130,7 +136,7 @@ export function createTauriPreviewBridge(deps: PreviewBridgeDeps): DesktopPrevie
     });
 
   const bridge: DesktopPreviewBridge = {
-    createTab: (tabId, environmentId) =>
+    createTab: (tabId, environmentId, options) =>
       enqueueTabOperation(tabId, async () => {
         // Only an absent environment is the local one: any id, even a falsy one,
         // gets its own storage, so isolation never fails open.
@@ -153,8 +159,19 @@ export function createTauriPreviewBridge(deps: PreviewBridgeDeps): DesktopPrevie
         }
         // While other hosts exist, setBounds held this tab's bounds back.
         const boundsHeldBack = hostByPartition.size > 0;
-        await invoke("desktop_preview_create_tab", isLocal ? { tabId } : { tabId, environmentId });
+        const tunnel = !isLocal && deps.tunnels === true && options?.tunnel === true;
+        // The desktop answers with the environment's real mode: its first host decided, maybe
+        // before this renderer reloaded.
+        const tunneled = await invoke<boolean | null | undefined>(
+          "desktop_preview_create_tab",
+          isLocal
+            ? { tabId }
+            : tunnel
+              ? { tabId, environmentId, tunnel }
+              : { tabId, environmentId },
+        );
         hostByPartition.set(partition, tabId);
+        if (!isLocal) tunneledByEnvironment.set(environmentId, tunneled === true);
         activeByHost.set(tabId, tabId);
         // The latest bounds: a resize or occlusion may have landed during creation.
         const latest = boundsByTab.get(tabId);
@@ -305,6 +322,20 @@ export function createTauriPreviewBridge(deps: PreviewBridgeDeps): DesktopPrevie
     onPointerEvent: () => () => {},
   };
 
+  if (deps.tunnels) {
+    bridge.tunnels = createTunnelBridge(deps, async (environmentId, requested) => {
+      const known = tunneledByEnvironment.get(environmentId);
+      if (known !== undefined) return known;
+      const decided =
+        (await invoke<boolean | null>("desktop_preview_tunnel_mode", {
+          environmentId,
+          requested,
+        })) === true;
+      tunneledByEnvironment.set(environmentId, decided);
+      return decided;
+    });
+  }
+
   registerPreviewRuntimeCapabilities(bridge, {
     picker: false,
     recording: false,
@@ -314,4 +345,20 @@ export function createTauriPreviewBridge(deps: PreviewBridgeDeps): DesktopPrevie
     pageTools: true,
   });
   return bridge;
+}
+
+function createTunnelBridge(
+  { invoke, listen }: PreviewBridgeDeps,
+  mode: DesktopPreviewTunnelBridge["mode"],
+): DesktopPreviewTunnelBridge {
+  return {
+    mode,
+    onRequest: (listener) =>
+      listen<DesktopPreviewTunnelRequest>("preview://tunnel-request", listener),
+    answer: (connectionId, outcome) =>
+      invoke("desktop_preview_tunnel_answer", { connectionId, outcome }),
+    read: (connectionId) => invoke<string | null>("desktop_preview_tunnel_read", { connectionId }),
+    write: (connectionId, data) => invoke("desktop_preview_tunnel_write", { connectionId, data }),
+    close: (connectionId) => invoke("desktop_preview_tunnel_close", { connectionId }),
+  };
 }

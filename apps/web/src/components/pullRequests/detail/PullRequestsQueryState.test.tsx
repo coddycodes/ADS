@@ -2,15 +2,10 @@
 import { PullRequestsOperationError } from "@bibcode/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentQueryView } from "../../../state/query";
 import { mount } from "../review/testHelpers";
 import { PullRequestsQueryState } from "./PullRequestsQueryState";
-
-const h = vi.hoisted(() => ({
-  contextRefresh: vi.fn(),
-}));
 
 function queryView(
   overrides: Partial<EnvironmentQueryView<unknown>> = {},

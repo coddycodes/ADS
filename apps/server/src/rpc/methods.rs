@@ -106,6 +106,11 @@ pub const ACTIVE_RPC_METHODS: &[RpcMethodSpec] = &[
     mutation_unary("preview.refresh"),
     mutation_unary("preview.reportStatus"),
     mutation_unary("preview.resize"),
+    // Tunnel traffic changes nothing BiBCode keeps, and a tunnel lives as long as its page:
+    // like `previewAutomation.connect`, it must neither hold nor wait for a mutation permit.
+    read_unary("preview.tunnelClose"),
+    read_stream("preview.tunnelOpen"),
+    read_unary("preview.tunnelWrite"),
     // The desktop shell holds this for the window lifetime. It only registers an
     // in-memory automation host, so a mutation permit would make update drain
     // time out and the installer would never start.

@@ -672,7 +672,9 @@ swipe, onion-skin, or difference without loading an external image.
 The **History** tab pages a flat commit list and shows the selected commit's
 metadata, changed files, and diff. New repository generations are spliced above
 the loaded tip-pinned snapshot; repositories beyond the pin limit show the
-less-stable paging warning. Author circles use only locally derived initials and
+less-stable paging warning. A next page that fails to load shows its error at
+the end of the list and is requested again only when you scroll back to the end
+or choose **Refresh**. Author circles use only locally derived initials and
 color. Right-click a commit to access reset, revert, cherry-pick, reorder,
 branch or tag creation, and SHA-copy actions. Contiguous multi-commit selections
 also offer cherry-pick, squash, and reorder. History actions use the panel's

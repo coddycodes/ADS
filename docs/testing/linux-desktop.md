@@ -434,6 +434,18 @@ GDK_BACKEND=wayland cargo test -p bibcode-desktop --lib preview_child_follows --
 GDK_BACKEND=x11 cargo test -p bibcode-desktop --lib preview_child_follows -- --ignored --test-threads=1
 ```
 
+#### Preview tunnels
+
+On Linux, a remote environment (LAN, SSH, or BiBCode Connect) whose server
+advertises `previewTunnels` previews its loopback dev servers through
+[preview tunnels](../architecture/remote.md#preview-tunnels), not the gateway.
+Run [Preview tunnels over SSH](ssh-environments.md#preview-tunnels-over-ssh-linux-desktop)
+for an SSH environment; for a LAN environment, the same rows apply except the
+file-preview row, and no gateway listener opens on the server for the preview
+(`ss -ltnp` on the server). An environment whose server lacks the capability,
+or whose first preview this session was created before it gained it, keeps the
+gateway.
+
 ### GTK light/dark theme
 
 Use an isolated test session with a working desktop portal settings backend.

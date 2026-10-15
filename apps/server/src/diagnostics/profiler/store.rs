@@ -17,6 +17,8 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use super::event::ProfilerEvent;
 
 pub const CHANNEL_CAPACITY: usize = 2048;
+/// The event that names the host, OS and architecture of a recording; see `SessionHeader`.
+pub const SESSION_START: &str = "session.start";
 
 pub(super) const FINDINGS_FILE: &str = "findings.ndjson";
 const FINDINGS_TMP_FILE: &str = "findings.ndjson.tmp";
@@ -377,6 +379,9 @@ impl Writer {
     /// writer session. `eventId` (`"<sid>-<number>"`) is unique too, and known to the sender.
     fn write_line(&mut self, number: u64, mut line: Map<String, Value>, is_event: bool) -> bool {
         line.insert("v".into(), 1.into());
+        // Every line names its build, so no retention or failed write can part events from it
+        // (#98).
+        line.insert("bibcode".into(), env!("CARGO_PKG_VERSION").into());
         line.insert("seq".into(), self.seq.into());
         let id = EventId {
             sid: self.counters.sid,
@@ -816,7 +821,7 @@ mod tests {
 
     fn config(dir: &std::path::Path) -> StoreConfig {
         StoreConfig {
-            max_file_bytes: 300,
+            max_file_bytes: 340,
             flush_every: std::time::Duration::from_millis(10),
             ..StoreConfig::new(dir.to_path_buf())
         }
@@ -844,10 +849,11 @@ mod tests {
             .filter(|n| n.starts_with("events-"))
             .collect();
         files.sort();
-        assert!(files.len() > 1, "300-byte cap must rotate: {files:?}");
+        assert!(files.len() > 1, "340-byte cap must rotate: {files:?}");
         let first = std::fs::read_to_string(dir.path().join(&files[0])).unwrap();
         let line: serde_json::Value = serde_json::from_str(first.lines().next().unwrap()).unwrap();
         assert_eq!(line["v"], 1);
+        assert_eq!(line["bibcode"], env!("CARGO_PKG_VERSION"));
         assert_eq!(line["kind"], "test.event");
         assert_eq!(line["seq"], 0);
         assert_eq!(
@@ -1304,7 +1310,7 @@ mod tests {
         writer.flush();
         let live = dir.path().join("events-000000.ndjson");
         let before = std::fs::metadata(&live).unwrap().len();
-        assert!(before > 200, "two events nearly fill the 300-byte cap");
+        assert!(before > 200, "two events nearly fill the 340-byte cap");
         writer.out = None; // as after a failed flush: the handle is gone, the file is not
 
         writer.write(0, event(2));

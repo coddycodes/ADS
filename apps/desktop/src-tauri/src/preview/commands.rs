@@ -2,12 +2,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Url};
+use tauri::{AppHandle, State, Url};
 use uuid::Uuid;
 
 use super::PendingBounds;
 use super::host;
 use super::platform::{ClearDataKinds, Platform, PlatformWebviewOps};
+use super::socks::{Answer, PreviewTunnels};
 
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -71,8 +72,62 @@ pub async fn desktop_preview_create_tab(
     app: AppHandle,
     tab_id: String,
     environment_id: Option<String>,
+    tunnel: Option<bool>,
+) -> Result<bool, String> {
+    let tunnel = tunnel.unwrap_or(false);
+    run_on_worker(move || host::create_tab(&app, &tab_id, environment_id.as_deref(), tunnel)).await
+}
+
+/// Whether an environment's preview hosts route through SOCKS (#69): the first call or the
+/// first preview host decides, for the app's lifetime.
+#[tauri::command]
+pub fn desktop_preview_tunnel_mode(
+    tunnels: State<'_, PreviewTunnels>,
+    environment_id: String,
+    requested: bool,
+) -> bool {
+    cfg!(target_os = "linux") && tunnels.mode(&environment_id, requested)
+}
+
+/// Answers a preview tunnel request (#69): `opened`, `direct` or `refused`.
+#[tauri::command]
+pub async fn desktop_preview_tunnel_answer(
+    tunnels: State<'_, PreviewTunnels>,
+    connection_id: String,
+    outcome: String,
 ) -> Result<(), String> {
-    run_on_worker(move || host::create_tab(&app, &tab_id, environment_id.as_deref())).await
+    let answer = Answer::parse(&outcome)
+        .ok_or_else(|| format!("unknown preview tunnel answer: {outcome}"))?;
+    tunnels.answer(&connection_id, answer).await;
+    Ok(())
+}
+
+/// The next bytes the page sent, base64; `null` once it closed its side.
+#[tauri::command]
+pub async fn desktop_preview_tunnel_read(
+    tunnels: State<'_, PreviewTunnels>,
+    connection_id: String,
+) -> Result<Option<String>, String> {
+    Ok(tunnels.read(&connection_id).await)
+}
+
+/// Writes base64 bytes from the environment to the page.
+#[tauri::command]
+pub async fn desktop_preview_tunnel_write(
+    tunnels: State<'_, PreviewTunnels>,
+    connection_id: String,
+    data: String,
+) -> Result<(), String> {
+    tunnels.write(&connection_id, &data).await
+}
+
+#[tauri::command]
+pub async fn desktop_preview_tunnel_close(
+    tunnels: State<'_, PreviewTunnels>,
+    connection_id: String,
+) -> Result<(), String> {
+    tunnels.close(&connection_id).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -264,8 +319,8 @@ mod tests {
     fn create_tab_command_is_async() {
         fn assert_async_command<Command, CommandFuture>(_: Command)
         where
-            Command: Fn(tauri::AppHandle, String, Option<String>) -> CommandFuture,
-            CommandFuture: Future<Output = Result<(), String>>,
+            Command: Fn(tauri::AppHandle, String, Option<String>, Option<bool>) -> CommandFuture,
+            CommandFuture: Future<Output = Result<bool, String>>,
         {
         }
 

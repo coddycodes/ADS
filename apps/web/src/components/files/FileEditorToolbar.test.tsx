@@ -147,6 +147,34 @@ describe("FileEditorToolbar", () => {
     expect(container.textContent).not.toContain("Saved");
   });
 
+  it("still clears Saved when another file with a lower revision opens during it", () => {
+    vi.useFakeTimers();
+    const render = (confirmedRevision: number) => {
+      act(() => {
+        root.render(
+          <FileEditorToolbar
+            savePhase="clean"
+            confirmedRevision={confirmedRevision}
+            canSave={false}
+            canUndo={false}
+            canRedo={false}
+            cleanStatus={null}
+            onSave={vi.fn()}
+            onUndo={vi.fn()}
+            onRedo={vi.fn()}
+          />,
+        );
+      });
+    };
+
+    render(4);
+    render(5);
+    expect(container.textContent).toContain("Saved");
+    render(2);
+    act(() => vi.advanceTimersByTime(1_500));
+    expect(container.textContent).not.toContain("Saved");
+  });
+
   it("keeps native disabled buttons inside focusable hover tooltip triggers", async () => {
     act(() => {
       root.render(

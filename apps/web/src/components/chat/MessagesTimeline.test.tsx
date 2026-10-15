@@ -30,6 +30,7 @@ interface MountedTree {
 const mountedTrees: MountedTree[] = [];
 
 vi.mock("@legendapp/list/react", async () => {
+  const { useEffect } = await import("react");
   const legendListTestId = "legend-list";
 
   const LegendList = (props: {
@@ -68,7 +69,9 @@ vi.mock("@legendapp/list/react", async () => {
         };
     ref?: Ref<LegendListRef>;
   }) => {
-    h.legendListProps = props as unknown as Record<string, unknown>;
+    useEffect(() => {
+      h.legendListProps = props as unknown as Record<string, unknown>;
+    });
     if (props.anchoredEndSpace) {
       props.anchoredEndSpace.onSizeChanged?.(240);
       props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });

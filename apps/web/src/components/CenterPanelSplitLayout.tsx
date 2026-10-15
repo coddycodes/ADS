@@ -172,16 +172,16 @@ function GroupLeaf(
     props.rootProps.terminalLabelsById,
   );
   const registeredTargetRef = props.rootProps.registerBodyTarget(group.id);
-  const droppable = useDroppable({
+  const { isOver: dropOver, setNodeRef: setDropNodeRef } = useDroppable({
     id: `center-pane:${group.id}`,
     data: { type: "center-panel-pane", groupId: group.id },
   });
   const bodyTargetRef = useCallback(
     (node: HTMLDivElement | null) => {
       registeredTargetRef(node);
-      droppable.setNodeRef(node);
+      setDropNodeRef(node);
     },
-    [droppable.setNodeRef, registeredTargetRef],
+    [registeredTargetRef, setDropNodeRef],
   );
   const focusGroup = useCallback(() => {
     if (!focused) props.rootProps.onFocusGroup(group.id);
@@ -291,7 +291,7 @@ function GroupLeaf(
       <div
         ref={bodyTargetRef}
         data-center-panel-body-target={group.id}
-        data-drop-over={droppable.isOver}
+        data-drop-over={dropOver}
         className="pointer-events-none relative min-h-0 min-w-0 flex-1"
       />
     </section>

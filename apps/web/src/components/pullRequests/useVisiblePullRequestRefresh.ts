@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { shouldRefreshOnShow, visibleRefreshDelay } from "./visibleRefresh.logic";
 
 export function useVisiblePullRequestRefresh({
@@ -15,10 +15,12 @@ export function useVisiblePullRequestRefresh({
 }): void {
   const lastSuccessAt = useRef<number | null>(null);
   const revalidateRef = useRef(revalidate);
-  revalidateRef.current = revalidate;
-  if (succeeded && lastSuccessAt.current === null) lastSuccessAt.current = Date.now();
+  useLayoutEffect(() => {
+    revalidateRef.current = revalidate;
+  }, [revalidate]);
 
   useEffect(() => {
+    if (succeeded && lastSuccessAt.current === null) lastSuccessAt.current = Date.now();
     if (!enabled || paused) return;
     let timer: number | null = null;
     const clear = () => {

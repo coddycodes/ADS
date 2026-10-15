@@ -21,7 +21,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use super::{
     findings::{Finding, FindingsBook},
-    persisted_enabled,
+    persisted_enabled, sentinel,
     store::{self, CRASHES_DIR, FINDINGS_FILE, event_file_index},
 };
 
@@ -75,6 +75,7 @@ impl StatusLive {
 pub(super) fn status_json(dir: &Path, live: StatusLive) -> Value {
     json!({
         "enabled": live.enabled,
+        "version": sentinel::recorded_version(dir),
         "recordingSince": live.recording_since,
         "diskBytes": store::disk_bytes(dir),
         "eventCount": live.event_count,
@@ -869,10 +870,17 @@ mod tests {
             &dir.join("findings.ndjson"),
             &[finding_line("crash.native", "aaaaaaaaaaaa", 1, at)],
         );
+        assert!(Reader::new(&dir).status()["version"].is_null());
+        fs::write(
+            dir.join("session.json"),
+            r#"{"state":"running","pid":1,"bootId":null,"exe":"bibcode","version":"0.9.1","startedAt":"2026-10-09T09:00:00Z","oomKillBaseline":null}"#,
+        )
+        .unwrap();
 
         let status = Reader::new(&dir).status();
 
         assert_eq!(status["enabled"], true);
+        assert_eq!(status["version"], "0.9.1", "the latest run's version");
         assert!(status["recordingSince"].is_null());
         assert_eq!(status["eventCount"], 2);
         assert_eq!(status["droppedEvents"], 7);

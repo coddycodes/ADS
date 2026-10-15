@@ -2353,21 +2353,19 @@ async fn next_terminal_event_and_ack<F>(
 where
     F: Fn(&Value) -> bool,
 {
+    // A chunk carries every event that was waiting, in order.
     loop {
         let values = next_chunk_for(socket, request_id, expected).await;
-        let [value] = values.as_slice() else {
-            panic!("expected one terminal event while waiting for {expected}, got {values:?}");
-        };
-        if matches(value) {
-            let value = value.clone();
-            send_ack(socket, request_id).await;
-            return value;
-        }
-        assert!(
-            matches!(value["type"].as_str(), Some("output" | "activity")),
-            "expected {expected}, got unexpected terminal lifecycle event {value:?}"
-        );
         send_ack(socket, request_id).await;
+        for value in values {
+            if matches(&value) {
+                return value;
+            }
+            assert!(
+                matches!(value["type"].as_str(), Some("output" | "activity")),
+                "expected {expected}, got unexpected terminal lifecycle event {value:?}"
+            );
+        }
     }
 }
 
@@ -2379,27 +2377,24 @@ async fn next_restart_event_and_ack(
 ) -> (Value, bool) {
     let mut saw_exit = false;
 
+    // A chunk carries every event that was waiting, in order.
     loop {
         let values = next_chunk_for(socket, request_id, "restarted terminal event").await;
-        let [value] = values.as_slice() else {
-            panic!("expected one terminal event while waiting for restarted, got {values:?}");
-        };
-        let matching_terminal =
-            value["threadId"] == thread_id && value["terminalId"] == terminal_id;
-
-        match value["type"].as_str() {
-            Some("output" | "activity") => {}
-            Some("exited") if matching_terminal => saw_exit = true,
-            Some("restarted") if matching_terminal => {
-                let restarted = value.clone();
-                send_ack(socket, request_id).await;
-                return (restarted, saw_exit);
-            }
-            _ => {
-                panic!("expected exited or restarted for {thread_id}/{terminal_id}, got {value:?}")
+        send_ack(socket, request_id).await;
+        for value in values {
+            let matching_terminal =
+                value["threadId"] == thread_id && value["terminalId"] == terminal_id;
+            match value["type"].as_str() {
+                Some("output" | "activity") => {}
+                Some("exited") if matching_terminal => saw_exit = true,
+                Some("restarted") if matching_terminal => return (value, saw_exit),
+                _ => {
+                    panic!(
+                        "expected exited or restarted for {thread_id}/{terminal_id}, got {value:?}"
+                    )
+                }
             }
         }
-        send_ack(socket, request_id).await;
     }
 }
 

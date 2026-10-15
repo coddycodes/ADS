@@ -32,6 +32,7 @@ import React, {
   memo,
   useMemo,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -1037,16 +1038,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const handleRenameInputClick = useCallback((event: React.MouseEvent<HTMLInputElement>) => {
     event.stopPropagation();
   }, []);
-  const handleConfirmArchiveRef = useCallback(
-    (element: HTMLButtonElement | null) => {
-      if (element) {
-        confirmArchiveButtonRefs.current.set(threadKey, element);
-      } else {
-        confirmArchiveButtonRefs.current.delete(threadKey);
-      }
-    },
-    [confirmArchiveButtonRefs, threadKey],
-  );
+  const handleConfirmArchiveRef = (element: HTMLButtonElement | null) => {
+    if (element) {
+      confirmArchiveButtonRefs.current.set(threadKey, element);
+    } else {
+      confirmArchiveButtonRefs.current.delete(threadKey);
+    }
+  };
   const stopPropagationOnPointerDown = useCallback(
     (event: React.PointerEvent<HTMLButtonElement>) => {
       event.stopPropagation();
@@ -1062,17 +1060,14 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     },
     [attemptArchiveThread, clearConfirmingArchive, threadRef],
   );
-  const handleStartArchiveConfirmation = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>) => {
-      event.preventDefault();
-      event.stopPropagation();
-      setConfirmingArchiveThreadKey(threadKey);
-      requestAnimationFrame(() => {
-        confirmArchiveButtonRefs.current.get(threadKey)?.focus();
-      });
-    },
-    [confirmArchiveButtonRefs, setConfirmingArchiveThreadKey, threadKey],
-  );
+  const handleStartArchiveConfirmation = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setConfirmingArchiveThreadKey(threadKey);
+    requestAnimationFrame(() => {
+      confirmArchiveButtonRefs.current.get(threadKey)?.focus();
+    });
+  };
   const handleArchiveImmediateClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
@@ -1939,7 +1934,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   // dependency arrays (avoids invalidating every thread-row memo on each
   // thread-list change).
   const sidebarThreadByKeyRef = useRef(sidebarThreadByKey);
-  sidebarThreadByKeyRef.current = sidebarThreadByKey;
+  useLayoutEffect(() => {
+    sidebarThreadByKeyRef.current = sidebarThreadByKey;
+  }, [sidebarThreadByKey]);
   const projectThreads = sidebarThreads;
   const projectPreferenceKeys = useMemo(() => projectExpansionPreferenceKeys(project), [project]);
   const projectToggleKeys = useMemo(() => projectExpansionToggleKeys(project), [project]);
@@ -4529,7 +4526,7 @@ export default function Sidebar() {
         : allProjects.filter((project) => visibleEnvironmentIds.has(project.environmentId)),
     [allProjects, repositoriesView, visibleEnvironmentIds],
   );
-  const presentation = useMemo(readCurrentEnvironmentPresentationPolicy, []);
+  const presentation = useMemo(() => readCurrentEnvironmentPresentationPolicy(), []);
   const shellSummary = useEnvironmentShellSummary();
   const allSidebarThreads = useThreadShells();
   const sidebarThreads = useMemo(
@@ -5115,28 +5112,15 @@ export default function Sidebar() {
     () => [...threadJumpCommandByKey.keys()],
     [threadJumpCommandByKey],
   );
-  const sidebarShortcutContext = {
-    terminalFocus: false,
-    terminalOpen: routeTerminalOpen,
-    modelPickerOpen: isModelPickerOpen(),
-  };
   const threadJumpLabelByKey = useMemo(
     () =>
       buildThreadJumpLabelMap({
         keybindings,
         platform,
-        terminalOpen: sidebarShortcutContext.terminalOpen,
+        terminalOpen: routeTerminalOpen,
         threadJumpCommandByKey,
       }),
-    [keybindings, platform, sidebarShortcutContext.terminalOpen, threadJumpCommandByKey],
-  );
-  const shouldShowThreadJumpHintsNow = shouldShowThreadJumpHintsForModifiers(
-    shortcutModifiers,
-    keybindings,
-    {
-      platform,
-      context: sidebarShortcutContext,
-    },
+    [keybindings, platform, routeTerminalOpen, threadJumpCommandByKey],
   );
   const visibleThreadJumpLabelByKey = showThreadJumpHints
     ? threadJumpLabelByKey
@@ -5155,9 +5139,26 @@ export default function Sidebar() {
     [prewarmedSidebarThreadKeys],
   );
 
+  // The model picker's state lives in the DOM, so it is read here on every modifier change:
+  // read while rendering, the compiled component would keep its first answer.
   useEffect(() => {
-    updateThreadJumpHintsVisibility(shouldShowThreadJumpHintsNow);
-  }, [shouldShowThreadJumpHintsNow, updateThreadJumpHintsVisibility]);
+    updateThreadJumpHintsVisibility(
+      shouldShowThreadJumpHintsForModifiers(shortcutModifiers, keybindings, {
+        platform,
+        context: {
+          terminalFocus: false,
+          terminalOpen: routeTerminalOpen,
+          modelPickerOpen: isModelPickerOpen(),
+        },
+      }),
+    );
+  }, [
+    keybindings,
+    platform,
+    routeTerminalOpen,
+    shortcutModifiers,
+    updateThreadJumpHintsVisibility,
+  ]);
 
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {

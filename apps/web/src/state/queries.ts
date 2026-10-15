@@ -4,7 +4,7 @@ import {
 } from "@bibcode/client-runtime/state/threads";
 import type { EnvironmentId, OrchestrationThread, ThreadId } from "@bibcode/contracts";
 import * as Option from "effect/Option";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { orchestrationEnvironment } from "./orchestration";
 import { projectEnvironment } from "./projects";
@@ -84,8 +84,9 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
   // A refreshed search for the same workspace target keeps the last loaded entries
   // visible until its result arrives, so the menu never unmounts its rows between
   // keystrokes. Entries never carry over to another environment or cwd.
-  const retainedEntriesRef = useRef<{
+  const [retained, setRetained] = useState<{
     readonly key: string;
+    readonly source: NonNullable<typeof result.data>;
     readonly entries: NonNullable<typeof result.data>["entries"];
   } | null>(null);
   const targetKey =
@@ -94,11 +95,14 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
       : `${normalizedTarget.environmentId}\0${normalizedTarget.cwd}`;
   const loadedEntries = result.data?.entries.slice(0, COMPOSER_PATH_SEARCH_LIMIT) ?? null;
   if (targetKey === null) {
-    retainedEntriesRef.current = null;
-  } else if (loadedEntries !== null) {
-    retainedEntriesRef.current = { key: targetKey, entries: loadedEntries };
+    if (retained !== null) setRetained(null);
+  } else if (
+    result.data !== null &&
+    loadedEntries !== null &&
+    (retained?.key !== targetKey || retained.source !== result.data)
+  ) {
+    setRetained({ key: targetKey, source: result.data, entries: loadedEntries });
   }
-  const retained = retainedEntriesRef.current;
   const entries =
     loadedEntries ??
     (isPending && targetKey !== null && retained !== null && retained.key === targetKey

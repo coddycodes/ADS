@@ -26,7 +26,6 @@ import React, {
   type ReactNode,
   type SetStateAction,
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -166,6 +165,13 @@ interface ProjectScriptsControllerState extends ProjectScriptsController {
   readonly confirmDeleteScript: () => void;
 }
 
+function projectActionsUnavailableReason(
+  enabled: boolean,
+  disabledReason: string | null,
+): string | null {
+  return enabled ? null : (disabledReason ?? "Project actions are unavailable.");
+}
+
 export function useProjectScriptsController({
   scripts,
   keybindings,
@@ -188,7 +194,9 @@ export function useProjectScriptsController({
   const [keybinding, setKeybinding] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
   const [autoOpenPreview, setAutoOpenPreview] = useState(false);
-  const [validationError, setValidationError] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(() =>
+    projectActionsUnavailableReason(enabled, disabledReason),
+  );
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const availabilityRef = useRef({ enabled, disabledReason });
   useLayoutEffect(() => {
@@ -196,19 +204,23 @@ export function useProjectScriptsController({
   }, [disabledReason, enabled]);
   const currentDisabledReason = useCallback(() => {
     const availability = availabilityRef.current;
-    return availability.enabled
-      ? null
-      : (availability.disabledReason ?? "Project actions are unavailable.");
+    return projectActionsUnavailableReason(availability.enabled, availability.disabledReason);
   }, []);
 
-  useEffect(() => {
-    const reason = currentDisabledReason();
-    if (reason === null) return;
-    setDialogOpen(false);
-    setIconPickerOpen(false);
-    setDeleteConfirmOpen(false);
-    setValidationError(reason);
-  }, [currentDisabledReason, disabledReason, enabled]);
+  const [shownAvailability, setShownAvailability] = useState({ enabled, disabledReason });
+  if (
+    shownAvailability.enabled !== enabled ||
+    shownAvailability.disabledReason !== disabledReason
+  ) {
+    setShownAvailability({ enabled, disabledReason });
+    const reason = projectActionsUnavailableReason(enabled, disabledReason);
+    if (reason !== null) {
+      setDialogOpen(false);
+      setIconPickerOpen(false);
+      setDeleteConfirmOpen(false);
+      setValidationError(reason);
+    }
+  }
 
   const primaryScript = useMemo(() => {
     if (preferredScriptId) {

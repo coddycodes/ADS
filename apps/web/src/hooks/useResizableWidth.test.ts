@@ -142,11 +142,11 @@ function pointerTarget(
   } = {},
 ): PointerTarget {
   const element = document.createElement("div");
-  const setPointerCapture = vi.fn((_: number) => {
+  const setPointerCapture = vi.fn((_pointerId: number) => {
     if (overrides.captureError) throw overrides.captureError;
   });
-  const hasPointerCapture = vi.fn((_: number) => overrides.captured ?? true);
-  const releasePointerCapture = vi.fn((_: number) => {
+  const hasPointerCapture = vi.fn((_pointerId: number) => overrides.captured ?? true);
+  const releasePointerCapture = vi.fn((_pointerId: number) => {
     if (overrides.releaseError) throw overrides.releaseError;
   });
   Object.assign(element, { setPointerCapture, hasPointerCapture, releasePointerCapture });

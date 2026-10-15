@@ -2594,6 +2594,7 @@ fn environment_descriptor(config: &ServerConfig, activity_protocol_registered: b
             "vcsCloneReattach": true,
             "attachmentStaging": true,
             "profiler": true,
+            "previewTunnels": true,
         },
     })
 }
@@ -6650,6 +6651,7 @@ mod tests {
         assert_eq!(descriptor["capabilities"]["remoteUpdateProgress"], true);
         assert_eq!(descriptor["capabilities"]["terminalOrderedInput"], true);
         assert_eq!(descriptor["capabilities"]["terminalSizeOwnership"], true);
+        assert_eq!(descriptor["capabilities"]["previewTunnels"], true);
         assert_eq!(descriptor["capabilities"]["terminalImagePaste"], true);
         assert_eq!(descriptor["capabilities"]["pullRequestCreateOptions"], true);
         assert_eq!(descriptor["capabilities"]["vcsCloneReattach"], true);

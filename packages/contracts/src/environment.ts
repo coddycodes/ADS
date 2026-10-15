@@ -78,6 +78,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   profiler: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** `device.*` methods, the device media socket, and `enableDevicePreviews`. */
   devicePreviews: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** `preview.tunnelOpen`, `preview.tunnelWrite` and `preview.tunnelClose` (#69). */
+  previewTunnels: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

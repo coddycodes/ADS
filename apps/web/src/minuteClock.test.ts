@@ -31,7 +31,7 @@ function fakeEnvironment(start: number) {
     },
     advanceTo(time: number) {
       now = time;
-      for (const [handle, timer] of [...timers]) {
+      for (const [handle, timer] of Array.from(timers)) {
         if (timer.at <= now) {
           timers.delete(handle);
           timer.callback();
@@ -41,7 +41,7 @@ function fakeEnvironment(start: number) {
     pendingTimers: () => timers.size,
     visibilityListenerCount: () => visibilityListeners.size,
     becomeVisible() {
-      for (const listener of [...visibilityListeners]) listener();
+      for (const listener of Array.from(visibilityListeners)) listener();
     },
   };
 }

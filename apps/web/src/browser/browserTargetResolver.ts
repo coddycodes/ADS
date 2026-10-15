@@ -138,6 +138,37 @@ function classifyEnvironmentReach(environmentId: EnvironmentId): EnvironmentReac
   return { kind: "unreachable", reason: "public-host", label };
 }
 
+/**
+ * Whether a new preview host for `environmentId` should route through the desktop's SOCKS
+ * server (#69): the desktop offers tunnels, the environment's server serves them, and the
+ * environment is on another machine.
+ */
+const previewTunnels = () =>
+  typeof window === "undefined" ? undefined : window.desktopBridge?.preview?.tunnels;
+
+/** Whether this desktop routes any previews through SOCKS (#69); answered without waiting. */
+export const hasPreviewTunnels = (): boolean => previewTunnels() !== undefined;
+
+export function wantsPreviewTunnel(environmentId: EnvironmentId): boolean {
+  if (previewTunnels() === undefined) return false;
+  const capabilities = readPreparedConnection(environmentId)?.descriptor?.capabilities;
+  if (capabilities?.previewTunnels !== true) return false;
+  const reach = classifyEnvironmentReach(environmentId).kind;
+  return reach === "host" || reach === "ssh" || reach === "relay";
+}
+
+/**
+ * Whether `environmentId`'s preview tabs load loopback pages through a tunnel. The desktop
+ * decides once and remembers, so the URL a tab loads and the environment's preview host always
+ * agree, also after this renderer reloads. Only the native preview has the SOCKS proxy; a
+ * system browser keeps the gateway.
+ */
+export async function routesThroughTunnel(environmentId: EnvironmentId): Promise<boolean> {
+  const tunnels = previewTunnels();
+  if (tunnels === undefined) return false;
+  return tunnels.mode(environmentId, wantsPreviewTunnel(environmentId));
+}
+
 /** Brackets an IPv6 literal for use in a URL authority. */
 export const formatHost = (host: string) => (host.includes(":") ? `[${host}]` : host);
 

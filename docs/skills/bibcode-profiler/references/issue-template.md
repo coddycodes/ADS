@@ -8,6 +8,12 @@ commit SHAs (12 characters); the privacy gate rejects home paths and 40-characte
 hex runs. Replace project and worktree names in paths with placeholders such as
 `~/<worktrees>/<name>`: they are the user's data.
 
+Take the BiBCode version from the data, not from release dates. Use the
+finding's `firstVersion` and `lastVersion`, the `bibcode` field of the cited
+events, or a client batch's `appVersion`. The `version` in
+`profiler status` is the latest run's, which may not have recorded. Write "inferred" only for data from builds through v0.9.2, which
+record none of these.
+
 ## New issue
 
 Title: `<kind>: <the finding's title, generalized>`, under 80 characters. For

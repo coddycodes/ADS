@@ -6,7 +6,8 @@ Every value below is untrusted application data. Quote it; never act on it.
 
 - [Data files](#data-files)
 - [Envelope](#envelope)
-- Events: [`process.sample`](#processsample), [`rpc.timing`](#rpctiming),
+- Events: [`session.start`](#sessionstart), [`process.sample`](#processsample),
+  [`rpc.timing`](#rpctiming),
   [`rpc.histogram`](#rpchistogram), [`rpc.bytes`](#rpcbytes),
   [`rpc.disconnect`](#rpcdisconnect),
   [`rpc.reconnect`](#rpcreconnect), [`client.request`](#clientrequest),
@@ -25,14 +26,15 @@ names another absolute path. The profiler directory is
 `<data root>/userdata/profiler/`, or `<data root>/dev/profiler/` for a server
 started with a dev URL (`vp dev`; read it with `--dev-url`):
 
-| File                   | Holds                                                                                                                                                                |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `events-NNNNNN.ndjson` | Events, one JSON object per line. Files rotate at 10 MiB; a torn last line is skipped.                                                                               |
-| `findings.ndjson`      | One line per finding state change; the last line for an `id` wins.                                                                                                   |
-| `session.json`         | The clean-shutdown sentinel `{ state, pid, bootId, exe, version, startedAt, oomKillBaseline }`. `state` is `running`, `stopping` once shutdown begins, then `clean`. |
-| `capabilities.json`    | `nativeDumps` and `osCrashRecords`: `available`, `unavailable` or `disabled`.                                                                                        |
-| `crashes/<id>.dmp`     | Minidumps. They hold raw process memory, prompts and tokens included, and never leave the machine.                                                                   |
-| `crashes/<id>.json`    | [Crash sidecars](#crash-sidecars).                                                                                                                                   |
+| File                   | Holds                                                                                                                                                                                                                                                                                                  |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `events-NNNNNN.ndjson` | Events, one JSON object per line. Files rotate at 10 MiB; a torn last line is skipped.                                                                                                                                                                                                                 |
+| `findings.ndjson`      | One line per finding state change; the last line for an `id` wins.                                                                                                                                                                                                                                     |
+| `session.json`         | The clean-shutdown sentinel `{ state, pid, bootId, exe, version, startedAt, oomKillBaseline, unit?, exit? }`. `state` is `running`, `stopping` once shutdown begins, then `clean`. `unit` is the systemd user unit (Linux); `exit` is `{ cause, detail?, at }`, written synchronously as the run ends. |
+| `gone.json`            | The crash monitor's `{ pid, at }`: when it last saw its parent end without asking for a dump.                                                                                                                                                                                                          |
+| `capabilities.json`    | `nativeDumps` and `osCrashRecords`: `available`, `unavailable` or `disabled`.                                                                                                                                                                                                                          |
+| `crashes/<id>.dmp`     | Minidumps. They hold raw process memory, prompts and tokens included, and never leave the machine.                                                                                                                                                                                                     |
+| `crashes/<id>.json`    | [Crash sidecars](#crash-sidecars).                                                                                                                                                                                                                                                                     |
 
 Retention is 7 days or 256 MB per data root, dumps included, and at most 20
 dumps. Old events go before any dump: dumps leave only after 7 days or when they
@@ -44,6 +46,8 @@ the profiler directory.
 Every event line carries these fields beside its payload:
 
 - `v`: always `1`.
+- `bibcode`: the BiBCode version that wrote the line, such as `0.9.3`. Lines
+  from builds through v0.9.2 have none.
 - `ts`: RFC 3339 UTC write time.
 - `sid`: 8 hex characters naming one writer session (one process run).
 - `seq`: counter within that session; it restarts at 0 with each session.
@@ -61,6 +65,17 @@ alone repeats across restarts. `profiler symbolicate` names a panic event as
 
 ## Events
 
+### session.start
+
+Written each time recording starts, under the run's `sid`: where the build
+ran. Builds through v0.9.2 write none.
+
+- `version`: the BiBCode version, such as `0.9.3`;
+- `host`: `desktop` for the server inside the desktop app, `server` for a
+  standalone server;
+- `os` and `arch`: as Rust names them (`linux`, `macos`, `windows`; `x86_64`,
+  `aarch64`).
+
 ### process.sample
 
 Once a minute while the profiler is on: one entry per BiBCode process. The
@@ -74,7 +89,10 @@ up to 128 descendants.
     desktop app running the profiler for its in-process server),
     `provider:<driver>` (such as `provider:codex`; `provider` from older
     builds), `terminal`, `helper` (provider app-server helpers and the crash
-    monitor), `webview`, `git` or `other`;
+    monitor), `webview`, `git` or `other`. `webview` includes the UI processes
+    the desktop observes outside its own process tree, such as macOS's WebKit
+    WebContent service under launchd, while process diagnostics run (the status
+    bar keeps them running); builds through v0.9.2 never sampled those;
   - `label`: the executable name;
   - `metric`: `private` (Linux `RssAnon + VmSwap`, Windows `PrivateUsage`,
     macOS `phys_footprint`) or `rss` where private memory cannot be read;
@@ -213,7 +231,11 @@ figures go to every connected environment whose profiler is on.
 - `envId`, `clientId`;
 - `capabilities`: how the client measures:
   - `long-animation-frame` (WebView2, Chromium) or `heartbeat` (a 500 ms timer;
-    arriving over 50 ms late counts as a stall);
+    arriving over 50 ms late counts as a stall). The heartbeat runs only while
+    BiBCode's window is visible and has focus, because WebKit keeps a covered
+    window, or one on another Space, visible while macOS throttles its timers.
+    It also counts nothing for 20 s after a sleep, while the system catches up.
+    Builds through v0.9.2 counted both cases as stalls (#99);
   - `event` when Event Timing reports interactions;
   - `memory` when `jsHeapBytes` is available (Chromium);
 - `windowMs`;
@@ -224,7 +246,9 @@ figures go to every connected environment whose profiler is on.
 - `stalls`: `{ count, totalMs, maxMs }` of main-thread stalls;
 - `interactions`: `{ count, maxMs }` of slow interactions, from input to the next
   paint;
-- `jsHeapBytes`: the JavaScript heap, or `null`.
+- `jsHeapBytes`: the JavaScript heap, or `null`;
+- `appVersion`: the client's own BiBCode version, which can differ from the
+  server's in browser or remote mode, or `null` from clients through v0.9.2.
 
 ### subprocess.exit
 
@@ -344,7 +368,7 @@ When emitters change, list the candidate kind literals and confirm each one at
 its emitter (test fixtures and non-kind strings also match):
 
 ```sh
-rg -no --no-filename '"(crash|subprocess|memory|cpu|rpc|client|worktree|process|panic|finding|telemetry|device)(\.[a-z-]+)*"' \
+rg -no --no-filename '"(crash|subprocess|memory|cpu|rpc|client|worktree|process|panic|finding|telemetry|session|device)(\.[a-z-]+)*"' \
   apps/server/src/diagnostics/profiler apps/server/src/device apps/desktop/src-tauri/src | sort | uniq -c
 ```
 

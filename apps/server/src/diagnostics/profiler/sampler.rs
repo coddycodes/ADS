@@ -468,7 +468,16 @@ impl Sampler {
     /// registration outlives its process until the owner drops it, so its pid may since name
     /// another process, or another registration.
     fn registered_kinds(&self) -> HashMap<ProcessIdentity, Arc<str>> {
-        self.registry
+        // UI processes outside the tree, such as macOS's WebKit XPC services (#104), first:
+        // a registration of the same process names it more exactly.
+        let webview: Arc<str> = Arc::from("webview");
+        let observed_ui = self
+            .registry
+            .observed_ui()
+            .into_iter()
+            .map(|identity| (identity, webview.clone()));
+        let registered = self
+            .registry
             .registered_kinds()
             .into_iter()
             .map(|(identity, source, driver)| {
@@ -483,7 +492,8 @@ impl Sampler {
                 };
                 (identity, kind)
             })
-            .collect()
+            .collect::<Vec<_>>();
+        observed_ui.chain(registered).collect()
     }
 }
 
@@ -1102,6 +1112,26 @@ mod tests {
         sampler.tick(BASE_INTERVAL);
         assert!(!sampler.series.contains_key(&identities[0]));
         assert!(sampler.series.contains_key(&identities[1]));
+    }
+
+    /// #104: on macOS the WebKit process that runs the UI is an XPC service under launchd,
+    /// outside BiBCode's tree. The UI processes process diagnostics observed are sampled as
+    /// `webview` all the same.
+    #[cfg(unix)]
+    #[test]
+    fn observed_ui_processes_outside_the_tree_are_sampled_as_webview() {
+        // Our parent is no descendant of ours, like a launchd XPC service.
+        let outside = NativeProcessSampler::process_identity(std::os::unix::process::parent_id())
+            .expect("the parent process");
+        let registry = ProcessAttributionRegistry::new();
+        registry.set_observed_ui(vec![outside]);
+        let mut sampler = Sampler::new(registry, std::process::id(), MINUTE);
+        sampler.tick(BASE_INTERVAL);
+        let series = sampler
+            .series
+            .get(&outside)
+            .expect("the observed UI process is sampled");
+        assert_eq!(&*series.kind, "webview");
     }
 
     #[cfg(target_os = "linux")]

@@ -33,6 +33,8 @@ const PERSIST_INTERVAL: Duration = Duration::seconds(60);
 /// The crash dumps a finding's `evidence.crashIds` keeps, newest first. A repeat's evidence
 /// names only its own dump, so the earlier ones are carried over, up to this many.
 const MAX_CRASH_IDS: usize = 64;
+/// The BiBCode build that records findings in this process.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -85,6 +87,13 @@ pub struct Finding {
     pub title: String,
     pub summary: String,
     pub state: FindingState,
+    /// The BiBCode versions that recorded the first and the latest occurrence (#98). Not part of
+    /// the fingerprint, so one finding spans upgrades. `None` on lines from builds through
+    /// v0.9.2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_version: Option<String>,
     pub evidence: Value,
 }
 
@@ -276,6 +285,8 @@ impl FindingsBook {
         let (finding, persist) = if let Some(known) = self.by_id.get_mut(&id) {
             let reopened = known.state == FindingState::Resolved;
             let severity_rose = input.severity > known.severity;
+            let upgraded = known.last_version.as_deref() != Some(VERSION);
+            known.last_version = Some(VERSION.to_owned());
             known.count += 1;
             known.severity = known.severity.max(input.severity);
             if seen > known.last_seen {
@@ -295,6 +306,7 @@ impl FindingsBook {
             let persist = force
                 || reopened
                 || severity_rose
+                || upgraded
                 || known.count.is_power_of_two()
                 || interval_passed;
             (known.clone(), persist)
@@ -313,6 +325,8 @@ impl FindingsBook {
                 title: input.title,
                 summary: input.summary,
                 state: FindingState::Open,
+                first_version: Some(VERSION.to_owned()),
+                last_version: Some(VERSION.to_owned()),
                 evidence: input.evidence,
             };
             self.by_id.insert(id, finding.clone());
@@ -530,6 +544,46 @@ mod tests {
         );
     }
 
+    /// #98: a finding names the versions that saw it; one an older build wrote keeps its
+    /// first version unknown, and the next occurrence is persisted at once.
+    #[test]
+    fn findings_record_the_versions_that_saw_them() {
+        let (_dir, store) = scratch_sender();
+        let mut book = FindingsBook::default();
+        let first = book.record(input("a"), datetime!(2026-10-09 12:00 UTC), &store.sender());
+        assert_eq!(first.first_version.as_deref(), Some(VERSION));
+        assert_eq!(first.last_version.as_deref(), Some(VERSION));
+        assert!(
+            !serde_json::to_string(&first)
+                .unwrap()
+                .contains("Version\":null")
+        );
+
+        let older: Finding =
+            serde_json::from_str(&stored_line(1, "rpc.slow", "2026-10-09T12:00:00Z", "open"))
+                .unwrap();
+        assert_eq!((older.first_version, older.last_version), (None, None));
+        // A third occurrence a second later: neither a power of two nor a minute on.
+        book.record(input("a"), datetime!(2026-10-09 12:00 UTC), &store.sender());
+        let known = book.by_id.get_mut(&first.id).unwrap();
+        known.first_version = None;
+        known.last_version = None;
+        book.persisted_at
+            .insert(first.id.clone(), datetime!(2026-10-09 12:00 UTC));
+        let repeat = book.record(
+            input("a"),
+            datetime!(2026-10-09 12:00:01 UTC),
+            &store.sender(),
+        );
+        assert_eq!(repeat.first_version, None);
+        assert_eq!(repeat.last_version.as_deref(), Some(VERSION));
+        assert_eq!(
+            book.persisted_at.get(&first.id),
+            Some(&datetime!(2026-10-09 12:00:01 UTC)),
+            "an upgrade persists the finding without waiting out the throttle"
+        );
+    }
+
     fn stored_line(n: usize, kind: &str, last_seen: &str, state: &str) -> String {
         format!(
             r#"{{"id":"{kind}-{n:012}","fingerprint":"{n:012}","kind":"{kind}","severity":"warn","firstSeen":"{last_seen}","lastSeen":"{last_seen}","count":1,"source":"server","title":"t{n}","summary":"s","state":"{state}","evidence":{{}}}}"#
@@ -566,9 +620,11 @@ mod tests {
                 "count",
                 "fingerprint",
                 "firstSeen",
+                "firstVersion",
                 "id",
                 "kind",
                 "lastSeen",
+                "lastVersion",
                 "severity",
                 "source",
                 "state",
@@ -993,6 +1049,11 @@ mod tests {
             stored_line(1, "rpc.slow", "2026-10-09T11:00:00Z", state)
                 .replace("000000000001", &fp)
                 .replace(r#""count":1"#, r#""count":4"#)
+                // Written by this build: an upgrade would persist at once.
+                .replace(
+                    r#""evidence""#,
+                    &format!(r#""firstVersion":"{VERSION}","lastVersion":"{VERSION}","evidence""#),
+                )
         };
         let record_once = |state: &str, at: OffsetDateTime| {
             std::fs::write(dir.path().join("findings.ndjson"), stored(state) + "\n").unwrap();

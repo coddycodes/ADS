@@ -78,6 +78,11 @@ macro_rules! desktop_preview_commands {
             desktop_preview_forget_environment,
             desktop_preview_capture_screenshot,
             desktop_preview_reveal_artifact,
+            desktop_preview_tunnel_mode,
+            desktop_preview_tunnel_answer,
+            desktop_preview_tunnel_read,
+            desktop_preview_tunnel_write,
+            desktop_preview_tunnel_close,
         ]
     };
 }
@@ -95,6 +100,9 @@ pub fn run() {
     let shell_path_hydration = shell_environment::hydrate_process_path();
     // After the PATH hydration, which must run before any thread exists, and before Tauri.
     crash_monitor::start();
+    // Before GTK starts: GLib takes one log writer per process.
+    #[cfg(target_os = "linux")]
+    display_loss::install();
     bibcode_server::allocator::start_heap_trimmer();
     let builder = tauri::Builder::<bridge::DesktopRuntime>::new()
         .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}))
@@ -132,6 +140,14 @@ pub fn run() {
         // Built here (not from config) so it can route new-window requests;
         // first, so everything below still runs after the main window exists.
         window::build_main_window(app.handle())?;
+        // Remote environments' preview tunnels (#69): each request goes to the renderer.
+        let tunnel_requests = app.handle().clone();
+        app.manage(preview::socks::PreviewTunnels::new(move |request| {
+            use tauri::Emitter;
+            if let Err(error) = tunnel_requests.emit(preview::socks::REQUEST_EVENT, request) {
+                tracing::warn!("failed to hand a preview tunnel request to the renderer: {error}");
+            }
+        }));
         #[cfg(target_os = "linux")]
         {
             linux_text_rendering::apply_webview_hinting_override();
@@ -255,6 +271,11 @@ pub fn run() {
         preview::commands::desktop_preview_forget_environment,
         preview::commands::desktop_preview_capture_screenshot,
         preview::commands::desktop_preview_reveal_artifact,
+        preview::commands::desktop_preview_tunnel_mode,
+        preview::commands::desktop_preview_tunnel_answer,
+        preview::commands::desktop_preview_tunnel_read,
+        preview::commands::desktop_preview_tunnel_write,
+        preview::commands::desktop_preview_tunnel_close,
         #[cfg(feature = "desktop-e2e")]
         desktop_e2e_prepare_for_exit,
     ]);
@@ -262,18 +283,51 @@ pub fn run() {
         .build(desktop_context())
         .expect("error while building BiBCode Tauri application")
         .run(|app_handle, event| {
-            if matches!(event, tauri::RunEvent::ExitRequested { .. })
-                && let Err(error) =
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                #[cfg(windows)]
+                EXIT_REQUESTED.store(true, std::sync::atomic::Ordering::Relaxed);
+                // So a quit that never finishes shutting down says so on the next start.
+                bibcode_server::diagnostics::profiler::note_exit("quit", None);
+                if let Err(error) =
                     tauri::async_runtime::block_on(prepare_desktop_runtime_for_exit(app_handle))
-            {
-                tracing::warn!("failed to stop Tauri desktop runtime during exit: {error}");
+                {
+                    tracing::warn!("failed to stop Tauri desktop runtime during exit: {error}");
+                }
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                if crate::relaunch::exit_takes_mount_from_children() {
+                    crash_monitor::stop();
+                }
                 // Mark after backend shutdown, at the last callback before Tauri's relaunch spawn.
                 crate::relaunch::prepare_descriptors_for_relaunch();
                 crate::relaunch::relaunch_outside_service_unit(app_handle);
+                #[cfg(windows)]
+                if !EXIT_REQUESTED.load(std::sync::atomic::Ordering::Relaxed) {
+                    end_session(app_handle);
+                }
             }
         });
+}
+
+/// Set once Tauri asks to exit: a quit, the last window closing, or an update's restart. Every
+/// exit Tauri starts asks first.
+#[cfg(windows)]
+static EXIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Windows ended the session (shut down, signed out, or Restart Manager closed the app) with
+/// BiBCode open. Tao destroys its event loop on `WM_ENDSESSION`, which is how `Exit` arrives
+/// without `ExitRequested`, then keeps dispatching messages until Windows ends the process,
+/// and the next one panics with "cannot move state from Destroyed" (#102). Tao 0.36 exits here
+/// (tauri-apps/tao#1157), but Tauri 2.11 still requires tao 0.35, so BiBCode does it.
+#[cfg(windows)]
+fn end_session<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) -> ! {
+    bibcode_server::diagnostics::profiler::note_exit(
+        bibcode_server::diagnostics::profiler::sentinel::SESSION_END,
+        None,
+    );
+    // What Tauri does after this callback returns: tray icons and the like.
+    app_handle.cleanup_before_exit();
+    std::process::exit(0);
 }
 
 async fn prepare_desktop_runtime_for_exit<R: tauri::Runtime>(
@@ -334,6 +388,8 @@ mod crash_monitor;
 mod data_safety;
 #[cfg(any(feature = "desktop-e2e", test))]
 mod desktop_e2e_page_load;
+#[cfg(target_os = "linux")]
+mod display_loss;
 mod firewall;
 #[cfg(target_os = "linux")]
 mod linux_text_rendering;

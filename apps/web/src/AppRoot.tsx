@@ -57,14 +57,12 @@ export function ProjectDataRecoveryCoordinator() {
       (status) =>
         status.status === "recovery-required" && localEnvironmentIds.has(status.environmentId),
     )?.environmentId ?? null;
-  const automaticEnvironmentId = shellRecoveryEnvironmentId ?? bridgeRecoveryEnvironmentId;
+  const automaticEnvironmentId =
+    shellRecoveryEnvironmentId ?? (hasDesktopRecovery ? bridgeRecoveryEnvironmentId : null);
   const lastAutomaticEnvironmentId = useRef<string | null>(null);
 
   useEffect(() => {
-    if (bridge?.getProjectDataStatuses === undefined) {
-      setBridgeRecoveryEnvironmentId(null);
-      return;
-    }
+    if (bridge?.getProjectDataStatuses === undefined) return;
 
     let active = true;
     const inspect = async () => {

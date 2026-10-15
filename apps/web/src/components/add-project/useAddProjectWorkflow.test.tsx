@@ -81,17 +81,30 @@ let currentWorkflow: AddProjectWorkflow;
 let workflowRoot: Root | null = null;
 let workflowContainer: HTMLDivElement | null = null;
 
-function WorkflowProbe({ open }: { readonly open: boolean }) {
-  currentWorkflow = useAddProjectWorkflowState({
+function captureWorkflow(workflow: AddProjectWorkflow) {
+  currentWorkflow = workflow;
+}
+
+function WorkflowProbe({
+  open,
+  state,
+  onWorkflow,
+}: {
+  readonly open: boolean;
+  readonly state: typeof testState;
+  readonly onWorkflow: (workflow: AddProjectWorkflow) => void;
+}) {
+  const workflow = useAddProjectWorkflowState({
     open,
-    onOpenChange: testState.onOpenChange,
-    hosts: testState.hosts,
-    locationLabel: testState.locationLabel,
+    onOpenChange: state.onOpenChange,
+    hosts: state.hosts,
+    locationLabel: state.locationLabel,
     primaryEnvironmentId: ENV_PRIMARY,
-    initialEnvironmentId: testState.initialEnvironmentId,
-    operations: testState.operationOverride ?? testState.operations,
-    pickFolder: testState.pickFolder,
+    initialEnvironmentId: state.initialEnvironmentId,
+    operations: state.operationOverride ?? state.operations,
+    pickFolder: state.pickFolder,
   });
+  onWorkflow(workflow);
   return null;
 }
 
@@ -104,7 +117,11 @@ async function mountWorkflow({ open }: { readonly open: boolean }) {
     hosts: ReadonlyArray<AddProjectHostOption> = testState.hosts,
   ) => {
     testState.hosts = hosts;
-    await act(async () => workflowRoot?.render(<WorkflowProbe open={nextOpen} />));
+    await act(async () =>
+      workflowRoot?.render(
+        <WorkflowProbe open={nextOpen} state={testState} onWorkflow={captureWorkflow} />,
+      ),
+    );
   };
   await rerender(open);
   return {

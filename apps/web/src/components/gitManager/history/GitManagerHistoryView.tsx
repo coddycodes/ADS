@@ -16,6 +16,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -221,22 +222,25 @@ export const GitManagerHistoryView = memo(function GitManagerHistoryView({
   const storeKey = projectKey(projectRef);
   const viewId = useId();
   const [pages, setPages] = useState<HistoryPagesState>(emptyHistoryPages);
+  // The page the user asked for; persisted cursors load without it.
   const [loadingOffset, setLoadingOffset] = useState<number | null>(null);
-  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [refreshEpoch, setRefreshEpoch] = useState(0);
+  // The last next-page request whose pinned tips no longer resolved.
+  const [tipsResetRequest, setTipsResetRequest] = useState<string | null>(null);
   const [refresh, setRefresh] = useState<FirstPageRefresh>(() => ({
     sequence: signalPending ? null : 0,
     signalGeneration,
     repositoryGeneration: null,
     deferNextSignal: signalGeneration === 0,
   }));
+  // Every `setPages` writes this first, so callbacks and later effects in the
+  // same flush read the latest pages.
   const pagesRef = useRef(pages);
-  const loadingOffsetRef = useRef(loadingOffset);
-  const firstPageRef = useRef<GitManagerCommitPage | null>(null);
-  const nextPageRef = useRef<GitManagerCommitPage | null>(null);
   const processedNextPageSignatureRef = useRef<string | null>(null);
-  const explicitRefreshRef = useRef(false);
+  // An explicit refresh is pending while `refreshEpoch` is ahead of this.
+  const consumedRefreshEpochRef = useRef(0);
+  const handledTipsResetRequestRef = useRef<string | null>(null);
   const retainedSequenceRef = useRef(0);
   const [commitLookup] = useState(() =>
     createCommitLookup<GitManagerCommitEntry>(
@@ -244,8 +248,6 @@ export const GitManagerHistoryView = memo(function GitManagerHistoryView({
       COMMIT_LOOKUP_MAX_MEMORY_BYTES,
     ),
   );
-  pagesRef.current = pages;
-  loadingOffsetRef.current = loadingOffset;
 
   const selectSelectedCommitSha = useCallback(
     (state: ReturnType<typeof useGitManagerStore.getState>) =>
@@ -288,8 +290,9 @@ export const GitManagerHistoryView = memo(function GitManagerHistoryView({
   const setLoadedPageCursors = useGitManagerStore((state) => state.setLoadedPageCursors);
   const setScrollAnchor = useGitManagerStore((state) => state.setScrollAnchor);
   const loadedPageCursorsRef = useRef(loadedPageCursors);
-  loadedPageCursorsRef.current = loadedPageCursors;
-  const loadedPageCursorSignature = loadedPageCursors.join(",");
+  useLayoutEffect(() => {
+    loadedPageCursorsRef.current = loadedPageCursors;
+  }, [loadedPageCursors]);
 
   // Advance the first-page read from the triggers during render (React's
   // "store information from previous renders" pattern), so a new read starts in
@@ -332,7 +335,6 @@ export const GitManagerHistoryView = memo(function GitManagerHistoryView({
   const firstPageQuery = useEnvironmentQuery(firstPageAtom);
   const refreshFirstPage = firstPageQuery.refresh;
   const revalidateFirstPage = firstPageQuery.revalidate;
-  firstPageRef.current = firstPageQuery.data;
   const firstPage = firstPageQuery.data;
   // A repository generation past everything loaded or returned (the loaded
   // pages lag the latest response by one effect) refreshes once no first-page
@@ -354,26 +356,46 @@ export const GitManagerHistoryView = memo(function GitManagerHistoryView({
     });
   }
 
+  // Pages loaded before a remount reload one after another. A failed page stays
+  // the current request, so its cached failure is shown instead of asked again.
+  const persistedNextOffset =
+    pages.nextOffset !== null && !pages.exhausted && loadedPageCursors.includes(pages.nextOffset)
+      ? pages.nextOffset
+      : null;
+  const pageLoadOffset = loadingOffset ?? persistedNextOffset;
   const nextPageAtom = useMemo(() => {
-    if (loadingOffset === null) return null;
+    if (pageLoadOffset === null) return null;
     const pinnedTips = pages.pinnedTips;
     return gitManagerEnvironment.getCommits({
       environmentId,
       input: {
         cwd,
-        offset: loadingOffset,
+        offset: pageLoadOffset,
         limit: HISTORY_PAGE_SIZE,
         ...(pinnedTips.length > 0 ? { pinnedTips } : {}),
       },
     });
-  }, [cwd, environmentId, loadingOffset, pages.pinnedTips]);
+  }, [cwd, environmentId, pageLoadOffset, pages.pinnedTips]);
   const nextPageQuery = useEnvironmentQuery(nextPageAtom);
-  nextPageRef.current = nextPageQuery.data;
+  const nextPage = nextPageQuery.data;
+  const retryNextPage = nextPageQuery.refresh;
   const nextPageSignature = useMemo(
-    () => pageSignature(nextPageQuery.data, loadingOffset ?? 0),
-    [nextPageQuery.data, loadingOffset],
+    () => pageSignature(nextPage, pageLoadOffset ?? 0),
+    [nextPage, pageLoadOffset],
   );
   const nextPageTipsUnresolvable = isTipsUnresolvableFailure(nextPageQuery.emission);
+  const nextPageFailed =
+    pageLoadOffset !== null && nextPageQuery.error !== null && !nextPageQuery.emission.waiting;
+  const isLoadingMore = pageLoadOffset !== null && !nextPageFailed;
+  const loadMoreError = nextPageFailed && !nextPageTipsUnresolvable ? nextPageQuery.error : null;
+  // Pinned tips that no longer resolve restart history from the first page,
+  // once per failed request (adjusted while rendering).
+  const nextPageRequest = `${pageLoadOffset}:${pages.pinnedTips.join(",")}`;
+  if (nextPageFailed && nextPageTipsUnresolvable && tipsResetRequest !== nextPageRequest) {
+    setTipsResetRequest(nextPageRequest);
+    setRefreshEpoch(refreshEpoch + 1);
+    setLoadingOffset(null);
+  }
 
   const retainedRefresh = pages.retainedRefresh;
   const retainedAtom = useMemo(
@@ -410,11 +432,34 @@ export const GitManagerHistoryView = memo(function GitManagerHistoryView({
     setPages(next);
   }, [commitLookup, retainedPages, retainedQuery.emission.waiting]);
 
+  // Runs before the first-page effect below, which consumes the refresh.
   useEffect(() => {
-    const page = firstPageRef.current;
+    if (tipsResetRequest === null || handledTipsResetRequestRef.current === tipsResetRequest) {
+      return;
+    }
+    handledTipsResetRequestRef.current = tipsResetRequest;
+    const currentProjectRef = {
+      environmentId: projectEnvironmentId,
+      projectId,
+    } as ScopedProjectRef;
+    setLoadedPageCursors(currentProjectRef, []);
+    setLoadedPageCount(currentProjectRef, 0);
+    revalidateFirstPage();
+  }, [
+    projectEnvironmentId,
+    projectId,
+    revalidateFirstPage,
+    setLoadedPageCount,
+    setLoadedPageCursors,
+    tipsResetRequest,
+  ]);
+
+  useEffect(() => {
+    const page = firstPage;
     if (page === null) return;
     const current = pagesRef.current;
-    if (current.processedFirstPage === page && !explicitRefreshRef.current) {
+    const explicitRefresh = refreshEpoch !== consumedRefreshEpochRef.current;
+    if (current.processedFirstPage === page && !explicitRefresh) {
       return;
     }
     if (current.generation === null || page.generation >= current.generation) {
@@ -424,10 +469,10 @@ export const GitManagerHistoryView = memo(function GitManagerHistoryView({
     let next: HistoryPagesState;
     let resetCursors = false;
     let preserveStoredCursors = false;
-    if (explicitRefreshRef.current || current.generation === null || current.commits.length === 0) {
+    if (explicitRefresh || current.generation === null || current.commits.length === 0) {
       next = historyFromFirstPage(page);
       resetCursors = true;
-      preserveStoredCursors = current.generation === null && !explicitRefreshRef.current;
+      preserveStoredCursors = current.generation === null && !explicitRefresh;
     } else if (page.generation < current.generation) {
       // A first page that resolved behind the loaded generation is a stale
       // in-flight response (an older read completing after a newer one).
@@ -484,7 +529,7 @@ export const GitManagerHistoryView = memo(function GitManagerHistoryView({
       }
       next = { ...next, retainedRefresh: retained };
     }
-    explicitRefreshRef.current = false;
+    consumedRefreshEpochRef.current = refreshEpoch;
     pagesRef.current = next;
     setPages(next);
     if (resetCursors) {
@@ -511,9 +556,9 @@ export const GitManagerHistoryView = memo(function GitManagerHistoryView({
   ]);
 
   useEffect(() => {
-    if (loadingOffset === null || nextPageSignature === null) return;
+    if (pageLoadOffset === null || nextPageSignature === null) return;
     if (processedNextPageSignatureRef.current === nextPageSignature) return;
-    const page = nextPageRef.current;
+    const page = nextPage;
     if (page === null) return;
     processedNextPageSignatureRef.current = nextPageSignature;
     for (const commit of page.commits) commitLookup.set(commit);
@@ -527,14 +572,12 @@ export const GitManagerHistoryView = memo(function GitManagerHistoryView({
       degradedToAllPaging: current.degradedToAllPaging || page.degradedToAllPaging,
     };
     pagesRef.current = next;
-    loadingOffsetRef.current = null;
     setPages(next);
     setLoadingOffset(null);
-    setLoadMoreError(null);
     const currentCursors = loadedPageCursorsRef.current;
-    const nextCursors = currentCursors.includes(loadingOffset)
+    const nextCursors = currentCursors.includes(pageLoadOffset)
       ? currentCursors
-      : [...currentCursors, loadingOffset];
+      : [...currentCursors, pageLoadOffset];
     const currentProjectRef = {
       environmentId: projectEnvironmentId,
       projectId,
@@ -543,59 +586,14 @@ export const GitManagerHistoryView = memo(function GitManagerHistoryView({
     setLoadedPageCount(currentProjectRef, nextCursors.length);
   }, [
     commitLookup,
-    loadedPageCursorSignature,
-    loadingOffset,
+    nextPage,
     nextPageSignature,
+    pageLoadOffset,
     projectEnvironmentId,
     projectId,
     setLoadedPageCount,
     setLoadedPageCursors,
   ]);
-
-  useEffect(() => {
-    if (loadingOffset === null || nextPageQuery.error === null) return;
-    loadingOffsetRef.current = null;
-    setLoadingOffset(null);
-    if (nextPageTipsUnresolvable) {
-      explicitRefreshRef.current = true;
-      const reset = emptyHistoryPages();
-      pagesRef.current = reset;
-      setPages(reset);
-      const currentProjectRef = {
-        environmentId: projectEnvironmentId,
-        projectId,
-      } as ScopedProjectRef;
-      setLoadedPageCursors(currentProjectRef, []);
-      setLoadedPageCount(currentProjectRef, 0);
-      setRefreshEpoch((epoch) => epoch + 1);
-      revalidateFirstPage();
-      return;
-    }
-    setLoadMoreError(nextPageQuery.error);
-  }, [
-    revalidateFirstPage,
-    loadingOffset,
-    nextPageQuery.error,
-    nextPageTipsUnresolvable,
-    projectEnvironmentId,
-    projectId,
-    setLoadedPageCount,
-    setLoadedPageCursors,
-  ]);
-
-  useEffect(() => {
-    const nextOffset = pages.nextOffset;
-    if (
-      nextOffset === null ||
-      pages.exhausted ||
-      loadingOffset !== null ||
-      !loadedPageCursorsRef.current.includes(nextOffset)
-    ) {
-      return;
-    }
-    loadingOffsetRef.current = nextOffset;
-    setLoadingOffset(nextOffset);
-  }, [loadedPageCursorSignature, loadingOffset, pages.exhausted, pages.nextOffset]);
 
   const loadedCommitIndex = useMemo(
     () => new Map(pages.commits.map((commit) => [commit.sha, commit])),
@@ -832,24 +830,24 @@ export const GitManagerHistoryView = memo(function GitManagerHistoryView({
     [projectEnvironmentId, projectId, setSelectedFile],
   );
   const handleReachEnd = useCallback(() => {
-    const current = pagesRef.current;
-    if (loadingOffsetRef.current !== null || current.exhausted || current.nextOffset === null) {
+    if (pageLoadOffset !== null) {
+      // Reaching the end again is how the user retries a failed page.
+      if (loadMoreError !== null) retryNextPage();
       return;
     }
-    setLoadMoreError(null);
-    loadingOffsetRef.current = current.nextOffset;
+    const current = pagesRef.current;
+    if (current.exhausted || current.nextOffset === null) return;
     setLoadingOffset(current.nextOffset);
-  }, []);
+  }, [loadMoreError, pageLoadOffset, retryNextPage]);
   const handleRefresh = useCallback(() => {
-    explicitRefreshRef.current = true;
     commitLookup.clear();
     const reset = emptyHistoryPages();
     pagesRef.current = reset;
-    loadingOffsetRef.current = null;
     processedNextPageSignatureRef.current = null;
+    handledTipsResetRequestRef.current = null;
     setPages(reset);
     setLoadingOffset(null);
-    setLoadMoreError(null);
+    setTipsResetRequest(null);
     const currentProjectRef = {
       environmentId: projectEnvironmentId,
       projectId,
@@ -956,7 +954,7 @@ export const GitManagerHistoryView = memo(function GitManagerHistoryView({
             selectedSha={effectiveSelectedSha}
             onSelect={handleSelectCommit}
             onReachEnd={handleReachEnd}
-            isLoadingMore={loadingOffset !== null}
+            isLoadingMore={isLoadingMore}
             multiCommitSelection={multiCommitSelection}
             onCommitDrop={handleCommitDrop}
             onContextMenu={handleContextMenu}

@@ -699,10 +699,9 @@ const codexProvider: ServerProvider = {
 // seeding helper verifies the initial value shape and fails loudly if the
 // component's hook order changes). ─────────────────────────────────────
 const isNull = (value: unknown) => value === null;
-const isFalse = (value: unknown) => value === false;
 const isEmptyArray = (value: unknown) => Array.isArray(value) && value.length === 0;
 const HOST_STATE = {
-  showScrollToBottom: { index: 0, expectInitial: isFalse },
+  scrollPillThreadId: { index: 0, expectInitial: isNull },
   expandedImage: { index: 1, expectInitial: isNull },
   optimisticUserMessages: { index: 2, expectInitial: isEmptyArray },
   attachmentUploads: {
@@ -1618,7 +1617,23 @@ describe("ChatView center panel variant", () => {
 
 describe("ChatView effects (captured and run manually)", () => {
   it("runs the mount effects for a connected server thread and cleans up", () => {
-    seedConnectedServerThread();
+    // One message: an empty timeline has nothing for live-follow to follow.
+    seedConnectedServerThread(
+      makeThread({
+        messages: [
+          {
+            id: MessageId.make("mounted-message"),
+            role: "user",
+            text: "hello",
+            attachments: [],
+            turnId: null,
+            createdAt: now,
+            updatedAt: now,
+            streaming: false,
+          },
+        ],
+      }),
+    );
     h.queryDataByKey.set(`shell:${environmentId}`, { snapshot: { _tag: "Some" } });
 
     renderServerRoute();
@@ -5973,7 +5988,7 @@ describe("ChatView banners and dialogs", () => {
 
   it("shows the scroll-to-end pill and scrolls on click", () => {
     seedConnectedServerThread();
-    seedHostState("showScrollToBottom", true);
+    seedHostState("scrollPillThreadId", threadId);
 
     const markup = renderServerRoute();
     expect(markup).toContain("Scroll to end");

@@ -1,5 +1,5 @@
 import { LegendList } from "@legendapp/list/react";
-import { memo, useCallback, useMemo, useRef } from "react";
+import { memo, useCallback, useState } from "react";
 
 import { GitManagerChangeRow } from "./GitManagerChangeRow";
 import type { ChangeRow } from "./changesList.logic";
@@ -33,6 +33,27 @@ function changeRowsEqual(left: ChangeRow, right: ChangeRow): boolean {
   );
 }
 
+interface StableChangeRows {
+  readonly source: ReadonlyArray<ChangeRow>;
+  readonly rows: ReadonlyArray<ChangeRow>;
+  readonly byPath: ReadonlyMap<string, ChangeRow>;
+}
+
+// Reuses the previous row object for every path whose row is unchanged.
+function stabilizeChangeRows(
+  rows: ReadonlyArray<ChangeRow>,
+  previousByPath: ReadonlyMap<string, ChangeRow>,
+): StableChangeRows {
+  const byPath = new Map<string, ChangeRow>();
+  const stableRows = rows.map((row) => {
+    const previous = previousByPath.get(row.path);
+    const stable = previous !== undefined && changeRowsEqual(previous, row) ? previous : row;
+    byPath.set(row.path, stable);
+    return stable;
+  });
+  return { source: rows, rows: stableRows, byPath };
+}
+
 export const GitManagerChangesList = memo(function GitManagerChangesList({
   rows,
   selectedPath,
@@ -41,18 +62,15 @@ export const GitManagerChangesList = memo(function GitManagerChangesList({
   onContextMenu,
   onOpenExternal,
 }: GitManagerChangesListProps) {
-  const previousRows = useRef(new Map<string, ChangeRow>());
-  const stableRows = useMemo(() => {
-    const nextRows = new Map<string, ChangeRow>();
-    const result = rows.map((row) => {
-      const previous = previousRows.current.get(row.path);
-      const stable = previous !== undefined && changeRowsEqual(previous, row) ? previous : row;
-      nextRows.set(row.path, stable);
-      return stable;
-    });
-    previousRows.current = nextRows;
-    return result;
-  }, [rows]);
+  // React's "store information from previous renders" pattern: a new rows array
+  // restarts this render with rows that keep the previous objects where unchanged.
+  const [storedRows, setStoredRows] = useState(() => stabilizeChangeRows(rows, new Map()));
+  let stable = storedRows;
+  if (stable.source !== rows) {
+    stable = stabilizeChangeRows(rows, stable.byPath);
+    setStoredRows(stable);
+  }
+  const stableRows = stable.rows;
   const renderItem = useCallback(
     ({ item }: { item: ChangeRow }) => (
       <GitManagerChangeRow

@@ -437,6 +437,61 @@ describe("tauriDesktopBridge", () => {
     expect(window.desktopBridge?.getLocalEnvironmentBootstraps()).toEqual([primaryBootstrap]);
   });
 
+  // Every IPC call is a request WebKitGTK keeps native memory for, and readers poll the
+  // topology every few seconds (#96).
+  it("refreshes a known topology at most every 30 seconds however often it is read", async () => {
+    const harness = installTauriHarness();
+    const bridge = await installBridge();
+    const topologyReads = () =>
+      harness.invoke.mock.calls.filter(
+        ([command]) => command === "desktop_bridge_get_local_environment_bootstraps",
+      ).length;
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    bridge.getLocalEnvironmentBootstraps();
+    const afterFirstRead = topologyReads();
+    for (let read = 0; read < 20; read += 1) {
+      now.mockReturnValue(1_000_000 + read * 1_000);
+      bridge.getLocalEnvironmentBootstraps();
+      await Promise.resolve();
+    }
+    expect(topologyReads()).toBe(afterFirstRead);
+
+    now.mockReturnValue(1_030_000);
+    bridge.getLocalEnvironmentBootstraps();
+    expect(topologyReads()).toBe(afterFirstRead + 1);
+  });
+
+  it("keeps asking on every read while the primary bootstrap is unknown", async () => {
+    let primaryKnown = true;
+    const primaryBootstrap = {
+      id: "primary",
+      label: "Local",
+      httpBaseUrl: "http://127.0.0.1:3773",
+      wsBaseUrl: "ws://127.0.0.1:3773",
+      bootstrapToken: "bootstrap-token",
+    };
+    const harness = installTauriHarness({
+      localEnvironmentBootstraps: () => (primaryKnown ? [primaryBootstrap] : []),
+    });
+    const bridge = await installBridge();
+    const topologyReads = () =>
+      harness.invoke.mock.calls.filter(
+        ([command]) => command === "desktop_bridge_get_local_environment_bootstraps",
+      ).length;
+    primaryKnown = false;
+    vi.spyOn(Date, "now").mockReturnValue(2_000_000);
+    harness.listeners.get("desktop:backend-ready")?.({
+      payload: { reason: "restarted", bootstraps: [] },
+    });
+    const before = topologyReads();
+    for (let read = 0; read < 3; read += 1) {
+      bridge.getLocalEnvironmentBootstraps();
+      // The in-flight refresh settles before the next read.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(topologyReads()).toBe(before + 3);
+  });
+
   it("routes SSH remote API helpers through Tauri commands", async () => {
     const harness = installTauriHarness();
     const bridge = await installBridge();

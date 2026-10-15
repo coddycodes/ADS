@@ -1184,6 +1184,17 @@ describe("seeded packaged desktop upgrade harness", () => {
     expect(productVersionFromExecutableBytes(Buffer.from("ProductVersion"))).toBeNull();
   });
 
+  it("sees the updater's bibcode-desktop installer while it runs", async () => {
+    const observation = await observeWindowsInstalledCandidate({
+      appBinaryPath: "C:\\BiBCode\\bibcode-desktop.exe",
+      candidateVersion: "0.7.3-upgrade.223",
+      readFile: async () => Buffer.from(""),
+      listProcesses: async () =>
+        `"bibcode-desktop-0.7.3-upg","4200","Console","1","9,000 K"\r\n"explorer.exe","1","Console","1","1 K"`,
+    });
+    expect(observation.installers).toEqual([{ pid: 4200, parentPid: null, path: null }]);
+  });
+
   it("matches a truncated installer image without treating a short prefix as that installer", () => {
     const expected = "BiBCode-0.8.3-upgrade.194-installer.exe";
     const truncated = expected.slice(0, 25);

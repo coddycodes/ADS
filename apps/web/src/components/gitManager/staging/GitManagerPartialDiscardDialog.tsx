@@ -48,8 +48,6 @@ export const GitManagerPartialDiscardDialog = memo(function GitManagerPartialDis
   const [isConfirming, setIsConfirming] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const confirmingRef = useRef(false);
-  const selectionRef = useRef(selection);
-  selectionRef.current = selection;
   const discardPartial = useAtomCommand(gitManagerEnvironment.discardPartial, {
     reportFailure: false,
   });
@@ -65,7 +63,7 @@ export const GitManagerPartialDiscardDialog = memo(function GitManagerPartialDis
   );
   const confirm = useCallback(async () => {
     if (confirmingRef.current) return;
-    const snapshot = selectionRef.current;
+    const snapshot = selection;
     const wire = toWireSelection(snapshot, path, generation);
     const [firstLine, ...remainingLines] = wire.selectedLines;
     if (firstLine === undefined) return;
@@ -110,6 +108,7 @@ export const GitManagerPartialDiscardDialog = memo(function GitManagerPartialDis
     onStale,
     path,
     projectRef.projectId,
+    selection,
   ]);
 
   return (

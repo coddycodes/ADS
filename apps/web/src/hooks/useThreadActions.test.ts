@@ -205,14 +205,20 @@ type Actions = ReturnType<typeof useThreadActions>;
 
 let hookResult: Actions | null = null;
 
-function Harness() {
-  hookResult = useThreadActions();
+function Harness({ onResult }: { onResult: (result: Actions) => void }) {
+  onResult(useThreadActions());
   return null;
 }
 
 function renderActions(): Actions {
   hookResult = null;
-  renderToStaticMarkup(createElement(Harness));
+  renderToStaticMarkup(
+    createElement(Harness, {
+      onResult: (result) => {
+        hookResult = result;
+      },
+    }),
+  );
   if (!hookResult) throw new Error("hook did not produce a result");
   return hookResult;
 }

@@ -34,6 +34,10 @@ const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResul
 const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationError = Schema.decodeUnknownSync(PreviewAutomationError);
 const decodeAutomationStatus = Schema.decodeUnknownSync(PreviewAutomationStatus);
+const decodeClaimOpenRequestInput = Schema.decodeSync(PreviewClaimOpenRequestInput);
+const decodeClaimOpenRequestResult = Schema.decodeSync(PreviewClaimOpenRequestResult);
+const decodeGatewayOpenResult = Schema.decodeUnknownSync(PreviewGatewayOpenResult);
+const decodeGatewayError = Schema.decodeUnknownSync(PreviewGatewayError);
 
 describe("PreviewNavStatus", () => {
   it("decodes Idle", () => {
@@ -305,10 +309,9 @@ describe("PreviewEvent", () => {
 
 describe("preview.claimOpenRequest", () => {
   it("decodes its input and result", () => {
-    const decodeInput = Schema.decodeSync(PreviewClaimOpenRequestInput);
-    expect(decodeInput({ requestId: "open_1" })).toEqual({ requestId: "open_1" });
-    expect(() => decodeInput({ requestId: "" })).toThrow();
-    expect(Schema.decodeSync(PreviewClaimOpenRequestResult)({ claimed: false })).toEqual({
+    expect(decodeClaimOpenRequestInput({ requestId: "open_1" })).toEqual({ requestId: "open_1" });
+    expect(() => decodeClaimOpenRequestInput({ requestId: "" })).toThrow();
+    expect(decodeClaimOpenRequestResult({ claimed: false })).toEqual({
       claimed: false,
     });
   });
@@ -316,15 +319,13 @@ describe("preview.claimOpenRequest", () => {
 
 describe("preview.gatewayOpen", () => {
   it("decodes results from older servers and Connect origins with relay reasons", () => {
-    const decodeResult = Schema.decodeUnknownSync(PreviewGatewayOpenResult);
     const legacy = { gatewayPort: 43_210, capability: "cap", expiresAtMs: 1 };
-    expect(decodeResult(legacy)).toEqual(legacy);
-    expect(decodeResult({ ...legacy, origin: "https://env-p1.zone.test" }).origin).toBe(
+    expect(decodeGatewayOpenResult(legacy)).toEqual(legacy);
+    expect(decodeGatewayOpenResult({ ...legacy, origin: "https://env-p1.zone.test" }).origin).toBe(
       "https://env-p1.zone.test",
     );
-    const decodeError = Schema.decodeUnknownSync(PreviewGatewayError);
     for (const reason of ["relay-not-provisioned", "relay-busy"] as const) {
-      expect(decodeError({ _tag: "PreviewGatewayError", reason, message: "m" }).reason).toBe(
+      expect(decodeGatewayError({ _tag: "PreviewGatewayError", reason, message: "m" }).reason).toBe(
         reason,
       );
     }

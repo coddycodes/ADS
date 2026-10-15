@@ -500,6 +500,9 @@ struct EnvironmentCapabilities {
     remote_update_progress: bool,
     terminal_ordered_input: bool,
     terminal_size_ownership: bool,
+    /// `preview.tunnelOpen`, `preview.tunnelWrite` and `preview.tunnelClose` (#69): what a
+    /// desktop reads before routing an environment's previews through SOCKS.
+    preview_tunnels: bool,
 }
 
 async fn environment_descriptor(State(state): State<AppState>) -> Json<EnvironmentDescriptor> {
@@ -526,6 +529,7 @@ async fn environment_descriptor(State(state): State<AppState>) -> Json<Environme
             remote_update_progress: true,
             terminal_ordered_input: true,
             terminal_size_ownership: true,
+            preview_tunnels: true,
         },
     })
 }

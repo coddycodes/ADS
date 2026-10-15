@@ -110,12 +110,13 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   const tabId = requestedTabId ?? previewState.activeTabId;
 
   // A submission or reload still resolving belongs to the tab it started on.
-  useEffect(
-    () => () => {
-      submissionRef.current += 1;
-    },
-    [tabId, threadRef.environmentId, threadRef.threadId],
-  );
+  const submissionScope = JSON.stringify([threadRef.environmentId, threadRef.threadId, tabId]);
+  const submissionScopeRef = useRef(submissionScope);
+  useEffect(() => {
+    if (submissionScopeRef.current === submissionScope) return;
+    submissionScopeRef.current = submissionScope;
+    submissionRef.current += 1;
+  }, [submissionScope]);
   const snapshot = tabId ? (previewState.sessions[tabId] ?? null) : null;
   const desktopOverlay = tabId ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };

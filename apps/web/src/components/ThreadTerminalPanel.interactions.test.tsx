@@ -752,7 +752,6 @@ function viewportProps(overrides: Partial<ViewportProps> = {}): ViewportProps {
     onAddTerminalContext: vi.fn(),
     focusRequestId: 0,
     autoFocus: false,
-    resizeEpoch: 0,
     keybindings: EMPTY_KEYBINDINGS,
     ...overrides,
   };
@@ -984,6 +983,19 @@ async function flushAnimationFrames(): Promise<void> {
   });
 }
 
+/** Fires each viewport's container ResizeObserver, as a layout change of the terminal element does. */
+async function resizeTerminalMounts(root: ParentNode): Promise<void> {
+  await act(async () => {
+    for (const mount of root.querySelectorAll("[data-terminal-xterm-mount]")) {
+      const observer = resizeObserverInstances.findLast((candidate) =>
+        candidate.observe.mock.calls.some(([target]) => target === mount),
+      );
+      expect(observer).toBeDefined();
+      observer!.callback([], observer as never);
+    }
+  });
+}
+
 async function flushTerminalWrites(): Promise<void> {
   await act(async () => {
     while (xtermState.pendingWrites.length > 0) {
@@ -1146,9 +1158,8 @@ async function mountViewport(
       props = { ...props, autoFocus } as ViewportProps;
       await rerender();
     },
-    async triggerResizeEpoch() {
-      props = { ...props, resizeEpoch: props.resizeEpoch + 1 } as ViewportProps;
-      await rerender();
+    async resizeContainer() {
+      await resizeTerminalMounts(mounted.container);
     },
     setFitDimensions(cols: number, rows: number) {
       const terminal = this.fakeTerminal;
@@ -1686,7 +1697,7 @@ describe("TerminalViewport mounted lifecycle", () => {
       input: { threadId: THREAD_ID, terminalId: "term-1", cols: 80, rows: 24 },
     });
 
-    await view.triggerResizeEpoch();
+    await view.resizeContainer();
     await view.flushFrame();
 
     expect(view.resizeSpy).toHaveBeenCalledOnce();
@@ -1779,7 +1790,7 @@ describe("TerminalViewport mounted lifecycle", () => {
     expect(view.mounted.container.textContent).not.toContain("Fit to this window");
     xtermState.proposedDimensions = { cols: 91, rows: 42 };
     view.resizeSpy.mockClear();
-    await view.triggerResizeEpoch();
+    await view.resizeContainer();
     await view.flushFrame();
     expect(view.resizeSpy).toHaveBeenCalledWith({
       environmentId: ENVIRONMENT_ID,
@@ -1794,7 +1805,7 @@ describe("TerminalViewport mounted lifecycle", () => {
       }),
     );
     view.resizeSpy.mockClear();
-    await view.triggerResizeEpoch();
+    await view.resizeContainer();
     await view.flushFrame();
     expect(view.resizeSpy).not.toHaveBeenCalled();
     expect(view.fakeTerminal?.cols).toBe(151);
@@ -2058,7 +2069,7 @@ describe("TerminalViewport mounted lifecycle", () => {
       }),
     );
     xtermState.proposedDimensions = { cols: 91, rows: 42 };
-    await view.triggerResizeEpoch();
+    await view.resizeContainer();
     await view.flushFrame();
     expect(view.resizeSpy).toHaveBeenCalledTimes(2);
     await act(async () => settle(AsyncResult.success(undefined)));
@@ -2245,7 +2256,7 @@ describe("TerminalViewport mounted lifecycle", () => {
     expect(dismiss()).not.toBeNull();
     await act(async () => dismiss()!.click());
     expect(view.mounted.container.textContent).not.toContain("Sized for another window.");
-    await view.triggerResizeEpoch();
+    await view.resizeContainer();
     await view.flushFrame();
     await resized(151, "other");
     expect(dismiss()).toBeNull();
@@ -2386,13 +2397,13 @@ describe("TerminalViewport mounted lifecycle", () => {
     await view.flushMountFit();
 
     view.setFitDimensions(120, 24);
-    await view.triggerResizeEpoch();
+    await view.resizeContainer();
     await view.flushFrame();
     view.setFitDimensions(120, 40);
-    await view.triggerResizeEpoch();
+    await view.resizeContainer();
     await view.flushFrame();
     view.setFitDimensions(80, 24);
-    await view.triggerResizeEpoch();
+    await view.resizeContainer();
     await view.flushFrame();
 
     expect(view.resizeSpy.mock.calls.map(([request]) => request.input)).toEqual([
@@ -2410,7 +2421,7 @@ describe("TerminalViewport mounted lifecycle", () => {
     const view = await mountViewport({ visible: true });
 
     await view.flushFrame();
-    await view.triggerResizeEpoch();
+    await view.resizeContainer();
     await view.flushFrame();
     await view.flushMountFit();
 
@@ -2434,12 +2445,12 @@ describe("TerminalViewport mounted lifecycle", () => {
     await view.flushFrame();
 
     view.setFitDimensions(120, 40);
-    await view.triggerResizeEpoch();
+    await view.resizeContainer();
     await view.flushFrame();
     resolveFirst(AsyncResult.failure(Cause.fail(new Error("stale resize rejected"))));
     await act(async () => Promise.resolve());
 
-    await view.triggerResizeEpoch();
+    await view.resizeContainer();
     await view.flushFrame();
 
     expect(view.resizeSpy).toHaveBeenCalledTimes(2);
@@ -2456,12 +2467,12 @@ describe("TerminalViewport mounted lifecycle", () => {
     await view.flushFrame();
     expect(view.resizeSpy).toHaveBeenCalledOnce();
 
-    await view.triggerResizeEpoch();
+    await view.resizeContainer();
     const staleResizeFrame = Array.from(animationFrames.values())[0]!;
     await view.setDocumentVisible(false);
     staleResizeFrame(0);
     await act(async () => Promise.resolve());
-    await view.triggerResizeEpoch();
+    await view.resizeContainer();
     await view.flushFrame();
 
     expect(view.resizeSpy).toHaveBeenCalledOnce();
@@ -2503,7 +2514,7 @@ describe("TerminalViewport mounted lifecycle", () => {
     await view.flushFrame();
     resolveFirst(AsyncResult.failure(Cause.fail(new Error("old renderer rejected"))));
     await act(async () => Promise.resolve());
-    await view.triggerResizeEpoch();
+    await view.resizeContainer();
     await view.flushFrame();
 
     expect(view.resizeSpy).toHaveBeenCalledTimes(2);
@@ -2526,14 +2537,7 @@ describe("TerminalViewport mounted lifecycle", () => {
     );
 
     xtermState.terminals[0]!.cols = 132;
-    await act(async () =>
-      mounted.root.render(
-        <>
-          <TerminalViewport {...firstProps} resizeEpoch={1} />
-          <TerminalViewport {...secondProps} resizeEpoch={1} />
-        </>,
-      ),
-    );
+    await resizeTerminalMounts(mounted.container);
     await flushAnimationFrames();
 
     expect(
@@ -4822,7 +4826,7 @@ describe("TerminalViewport mounted lifecycle", () => {
       withCapabilities({ terminalImagePaste: true });
       const event = pasteEvent("echo hi", [png()]);
 
-      const { terminal, xtermPaste } = await pasteInto(event);
+      const { xtermPaste } = await pasteInto(event);
 
       expect(event.defaultPrevented).toBe(false);
       expect(xtermPaste).toHaveBeenCalledOnce();
@@ -4960,7 +4964,7 @@ describe("TerminalViewport mounted lifecycle", () => {
     }
     expect(terminal.refresh).toHaveBeenCalledWith(0, 23);
 
-    await act(async () => mounted.root.render(<TerminalViewport {...props} resizeEpoch={1} />));
+    await resizeTerminalMounts(mounted.container);
     await act(async () => {
       for (const callback of animationFrames.values()) callback(0);
       animationFrames.clear();

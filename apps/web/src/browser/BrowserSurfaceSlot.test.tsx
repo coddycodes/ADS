@@ -280,7 +280,7 @@ describe("NativePreviewTabHost native lifecycle", () => {
     await mount(hosts(Hosts, surfaces, sessions, "browser:tab-b"));
     await flush();
 
-    expect(h.createTab.mock.calls).toEqual([["tab-b", null]]);
+    expect(h.createTab.mock.calls).toEqual([["tab-b", null, { tunnel: false }]]);
     expect(h.navigate.mock.calls).toEqual([["tab-b", "https://b.test/"]]);
     expect(h.listeners).toHaveLength(1);
   });
@@ -305,14 +305,14 @@ describe("NativePreviewTabHost native lifecycle", () => {
     await flush();
 
     expect(h.closeTab).toHaveBeenCalledExactlyOnceWith("tab-a");
-    expect(h.createTab.mock.calls).toEqual([["tab-a", null]]);
+    expect(h.createTab.mock.calls).toEqual([["tab-a", null, { tunnel: false }]]);
 
     closing.resolve();
     await flush();
 
     expect(h.createTab.mock.calls).toEqual([
-      ["tab-a", null],
-      ["tab-b", null],
+      ["tab-a", null, { tunnel: false }],
+      ["tab-b", null, { tunnel: false }],
     ]);
     expect(h.navigate).toHaveBeenLastCalledWith("tab-b", "https://b.test/");
   });
@@ -358,7 +358,7 @@ describe("NativePreviewTabHost native lifecycle", () => {
     const mounted = await mount(hosts(Hosts, surfaces, sessions, "browser:tab-a"));
     await flush();
 
-    expect(h.createTab.mock.calls).toEqual([["tab-a", null]]);
+    expect(h.createTab.mock.calls).toEqual([["tab-a", null, { tunnel: false }]]);
     expect(h.listeners).toHaveLength(1);
 
     await rerender(mounted, hosts(Hosts, surfaces, sessions, null));
@@ -407,9 +407,9 @@ describe("NativePreviewTabHost native lifecycle", () => {
     await flush();
 
     expect(h.createTab.mock.calls).toEqual([
-      ["tab-a", null],
-      ["tab-b", null],
-      ["tab-a", null],
+      ["tab-a", null, { tunnel: false }],
+      ["tab-b", null, { tunnel: false }],
+      ["tab-a", null, { tunnel: false }],
     ]);
     expect(h.navigate.mock.calls).toEqual([
       ["tab-a", "https://a.test/"],
@@ -440,7 +440,7 @@ describe("NativePreviewTabHost native lifecycle", () => {
     );
     await flush();
 
-    expect(h.createTab.mock.calls).toEqual([["tab-idle", null]]);
+    expect(h.createTab.mock.calls).toEqual([["tab-idle", null, { tunnel: false }]]);
     expect(h.navigate).not.toHaveBeenCalled();
     expect(h.listeners).toHaveLength(1);
 

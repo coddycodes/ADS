@@ -45,8 +45,11 @@ function PairRouteView() {
   const search = Route.useSearch();
   const [retainedCode, setRetainedCode] = useState(search.code);
   const scrubbedQueryCodeRef = useRef<string | null>(null);
-  const consumedCodesRef = useRef(new Set<string>());
+  const [consumedCodes, setConsumedCodes] = useState<ReadonlySet<string>>(() => new Set());
   const navigate = Route.useNavigate();
+  if (search.code !== undefined && search.code !== retainedCode) {
+    setRetainedCode(search.code);
+  }
   const code = search.code ?? retainedCode;
 
   useEffect(() => {
@@ -54,7 +57,6 @@ function PairRouteView() {
       scrubbedQueryCodeRef.current = null;
       return;
     }
-    setRetainedCode(search.code);
     if (scrubbedQueryCodeRef.current === search.code) return;
     scrubbedQueryCodeRef.current = search.code;
     void navigate({
@@ -75,9 +77,7 @@ function PairRouteView() {
   }
 
   const initialCredential =
-    code === undefined || consumedCodesRef.current.has(code)
-      ? null
-      : extractEmbeddedPairingToken(code);
+    code === undefined || consumedCodes.has(code) ? null : extractEmbeddedPairingToken(code);
 
   return (
     <PairingRouteSurface
@@ -88,7 +88,9 @@ function PairRouteView() {
         ? {}
         : {
             onInitialCredentialConsumed: () => {
-              consumedCodesRef.current.add(code);
+              setConsumedCodes((current) =>
+                current.has(code) ? current : new Set(current).add(code),
+              );
             },
           })}
       onAuthenticated={() => {

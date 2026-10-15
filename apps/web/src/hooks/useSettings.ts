@@ -215,28 +215,36 @@ function useMergedSettings<T>(
   return useMemo(() => (selector ? selector(merged) : (merged as T)), [merged, selector]);
 }
 
+function createSelectedClientSettingsSnapshot<T>(
+  selector: ((settings: ClientSettings) => T) | undefined,
+  isEqual: (previous: T, next: T) => boolean,
+): () => T {
+  let previousSettings: ClientSettings | null = null;
+  let previousSelection: T;
+  let hasSelection = false;
+
+  return () => {
+    const settings = getClientSettingsSnapshot();
+    if (hasSelection && settings === previousSettings) return previousSelection;
+
+    const nextSelection = selector ? selector(settings) : (settings as T);
+    previousSettings = settings;
+    if (hasSelection && isEqual(previousSelection, nextSelection)) return previousSelection;
+
+    hasSelection = true;
+    previousSelection = nextSelection;
+    return nextSelection;
+  };
+}
+
 export function useClientSettings<T = ClientSettings>(
   selector?: (settings: ClientSettings) => T,
   isEqual: (previous: T, next: T) => boolean = Object.is,
 ): T {
-  const getSelectedSnapshot = useMemo(() => {
-    let previousSettings: ClientSettings | null = null;
-    let previousSelection: T;
-    let hasSelection = false;
-
-    return () => {
-      const settings = getClientSettingsSnapshot();
-      if (hasSelection && settings === previousSettings) return previousSelection;
-
-      const nextSelection = selector ? selector(settings) : (settings as T);
-      previousSettings = settings;
-      if (hasSelection && isEqual(previousSelection, nextSelection)) return previousSelection;
-
-      hasSelection = true;
-      previousSelection = nextSelection;
-      return nextSelection;
-    };
-  }, [isEqual, selector]);
+  const getSelectedSnapshot = useMemo(
+    () => createSelectedClientSettingsSnapshot(selector, isEqual),
+    [isEqual, selector],
+  );
   const getServerSnapshot = useMemo(() => {
     const selection = selector ? selector(DEFAULT_CLIENT_SETTINGS) : (DEFAULT_CLIENT_SETTINGS as T);
     return () => selection;

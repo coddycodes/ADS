@@ -1487,6 +1487,7 @@ function EnvironmentScopedProviderSettingsPanel({
     })();
   }, [primaryEnvironment, refreshServerProviders]);
 
+  const refreshProviderUsageQuery = providerUsage.refresh;
   const refreshClaudeUsage = useCallback(async () => {
     if (!primaryEnvironment) return;
     try {
@@ -1497,10 +1498,9 @@ function EnvironmentScopedProviderSettingsPanel({
     } catch {
       // Command failures are represented by the command layer. Always re-read
       // the query so the status bar observes any snapshot the server committed.
-    } finally {
-      providerUsage.refresh();
     }
-  }, [primaryEnvironment, providerUsage.refresh, refreshProviderUsage]);
+    refreshProviderUsageQuery();
+  }, [primaryEnvironment, refreshProviderUsage, refreshProviderUsageQuery]);
 
   const runProviderUpdate = useCallback(
     async (candidate: ProviderUpdateCandidate) => {

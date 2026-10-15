@@ -52,7 +52,8 @@ state kind.
   (`git diff --exit-code --stat -- packages/contracts/fixtures`). A contract
   change must therefore commit its regenerated fixtures. It does not create a
   distributable contracts build.
-- `vp check`: run the Vite+ formatting and lint checks.
+- `vp check`: run the Vite+ formatting and lint checks. Any lint warning fails
+  it (`lint.options.denyWarnings` in `vite.config.shared.ts`).
 - `vp run fmt` / `vp run fmt:check`: write or verify Vite+ formatting.
 - `vp run lint`: run Vite+ linting with unused-disable reporting.
 - `vp run typecheck` (or `vp run tc`): run package TypeScript and Rust checks.

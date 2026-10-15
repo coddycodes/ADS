@@ -326,8 +326,12 @@ for Linux ARM64/x64 AppImages, Windows ARM64/x64 NSIS installers, and macOS
 ARM64/x64 DMGs. Pull requests seed from the latest stable release. Before a
 release, also run it by hand from the oldest client still in use, so that
 client's update path is proven too:
-`gh workflow run desktop-upgrade-smoke.yml --ref <release branch> -f previous_tag=v0.7.2`
+`gh workflow run desktop-upgrade-smoke.yml --ref <release branch> -f previous_tag=v0.8.0`
 (any stable `vX.Y.Z` tag; the WSL job keeps the latest stable release).
+v0.8.0 is the oldest Windows client that installs an update itself. A v0.7.x
+Windows client exits with `0xc00000fd` (a stack overflow in its own install
+step) before it writes or starts the installer, so its Windows lanes fail
+whatever the candidate is (#95); those users install the new version by hand.
 The protected lane verifies the same storage UUID, seeded project, and a
 verified `pre-update` backup after restart. A separate Windows job exercises a
 WSL primary when the runner declares WSL plus an installed distribution; an

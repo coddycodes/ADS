@@ -3577,7 +3577,10 @@ describe("ChatView", () => {
         surface: { terminalId: activeCenterTerminalId },
         projectId,
       });
+      // The panel folds its seeded roster pages in during render and renders
+      // again; server rendering keeps no memo cache across that pass.
       expect(h.activityStateTargets).toEqual([
+        { environmentId, input: scope },
         { environmentId, input: scope },
         { environmentId, input: scope },
       ]);

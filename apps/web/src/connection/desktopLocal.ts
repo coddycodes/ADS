@@ -70,17 +70,23 @@ export function createDesktopSecondaryBootstrapsReader(
   resolveBridge: () => Pick<DesktopBridge, "getLocalEnvironmentBootstraps"> | undefined,
 ): DesktopSecondaryBootstrapsReader {
   let snapshot: ReadonlyArray<DesktopEnvironmentBootstrap> = [];
+  // The bridge's array the snapshot came from: an unchanged topology keeps the snapshot's
+  // identity, so polling readers do not re-render.
+  let source: ReadonlyArray<DesktopEnvironmentBootstrap> | undefined;
 
   const readResult = (): DesktopSecondaryBootstrapsRead => {
     const bridge = resolveBridge();
     if (bridge === undefined) {
-      snapshot = [];
+      if (snapshot.length > 0) snapshot = [];
+      source = undefined;
       return { _tag: "Success", bootstraps: snapshot };
     }
     try {
-      snapshot = bridge
-        .getLocalEnvironmentBootstraps()
-        .filter((entry) => entry.id !== PRIMARY_LOCAL_ENVIRONMENT_ID);
+      const bootstraps = bridge.getLocalEnvironmentBootstraps();
+      if (bootstraps !== source) {
+        snapshot = bootstraps.filter((entry) => entry.id !== PRIMARY_LOCAL_ENVIRONMENT_ID);
+        source = bootstraps;
+      }
       return { _tag: "Success", bootstraps: snapshot };
     } catch (cause) {
       return { _tag: "Failure", cause };

@@ -1,5 +1,45 @@
 # Changelog
 
+## [v0.9.3] - 2026-10-14
+
+BiBCode v0.9.3 ends the macOS freezes caused by a page-wide label scan after every render, keeps long conversations smooth to scroll, stops terminals from losing output, stops the server from growing while threads stay open during agent turns, opens remote development servers at their real address on the Linux desktop, exits cleanly when Windows shuts down, and makes the Profiler's findings more accurate. This release includes the changes since v0.9.2.
+
+### Responsiveness and memory
+
+- On macOS the interface no longer freezes for seconds at a time while the status bar refreshes. Every switch, checkbox and radio button scanned the whole page for its label after each render, which WebKit does by walking the document. Base UI 1.9 skips the scan for labelled controls, and the file checkboxes in the commit dialog now have labels. (#106)
+- Scrolling up a long conversation no longer holds the interface. A finished message's code blocks show at once and are colored right after, one at a time, instead of all being colored while their rows appear. In a 100-turn test thread, the time the interface stalled while scrolling to the top fell from about 2 s to under 0.7 s. (#103)
+- The server no longer keeps a full copy of each open thread for every client that shows it. During agent turns that copy grew by about twice the thread's new content, and it was kept for as long as the thread stayed open. (#101)
+- The process history behind the status bar's resource readout keeps its hour in about 0.5 MB instead of 3 to 15 MB. (#100)
+- The desktop reads the local server's connection details from memory instead of asking the app on every check, which slowed the web view's memory growth on Linux. (#96)
+
+### Terminals
+
+- A program printing many short lines quickly, such as a build or an agent's output, no longer loses lines in the terminal. The server publishes the output waiting together instead of one read at a time. A client that still falls behind gets the terminal's full state instead of a gap, and keeps the input it has not sent yet.
+
+### Git and files
+
+- In the Git manager's **History** tab, a page of older commits that fails to load no longer re-requests itself in a loop. It shows its error, and loads again when you scroll back to the end of the list or choose **Refresh**.
+- The file editor's **Saved** notice no longer stays up after you open another file right after saving.
+
+### Preview
+
+- On the Linux desktop, a remote environment's development server opens at its real address (`http://localhost:5173`, a wildcard address such as `http://0.0.0.0:5173`, HTTPS included) instead of a gateway address, through a tunnel on the environment's own connection. Only the account signed in on this computer can use the tunnel. (#69)
+
+### Windows
+
+- Shutting down or signing out of Windows with BiBCode open no longer crashes it with "cannot move state from Destroyed". It exits, and the next start reports no crash. (#102)
+- BiBCode 0.7.x on Windows closes when you choose **Install** for an update. Download the latest installer and run it; your projects and settings are kept. 0.8.0 and later update themselves. (#95)
+
+### Profiler
+
+- Events, findings and status name the BiBCode version that recorded them (`bibcode`, `firstVersion`, `lastVersion`, `version`). A `session.start` event records the host, OS and architecture, and client batches carry the client's own version. (#98)
+- On macOS, `client.stall` no longer counts the timer slowdown of a covered or background window, or the catch-up right after waking. (#99)
+- A previous run that ended without a crash record names how it ended when it recorded that: a lost display on Linux, a quit, a signal, or Windows ending the session. On Linux the finding adds systemd's own lines about the run's unit. (#87, #102)
+- On macOS the Profiler samples the WebKit process that runs the interface, so its CPU and memory can raise findings. (#104)
+- `worktree.orphan-dir` no longer reports hidden folders other tools create in a managed worktree directory, such as Orca's `.orca-worktree-trash`. (#105)
+- `server.getProviderCapabilities` waiting on a provider check right after start no longer raises `rpc.slow`. (#107)
+- On Linux, an AppImage run as a systemd service stops its crash monitor before it exits. The service's stop took the AppImage's files away while the monitor still ran, which ended it with `SIGBUS` and raised a false `crash.native` after each update. An update run by v0.9.2 or earlier can still leave one.
+
 ## [v0.9.2] - 2026-10-13
 
 BiBCode v0.9.2 keeps remote clients responsive on slow links, paints the Pull Requests panel at once, ends the Linux Git watcher's CPU loop, fixes "Delivery uncertain" on Claude messages, keeps the app alive when a Linux update relaunches it under a systemd launcher, and opens server-side development servers from BiBCode Connect clients. This release includes the changes since v0.9.1.

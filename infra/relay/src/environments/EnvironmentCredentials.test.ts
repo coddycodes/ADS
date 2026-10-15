@@ -543,7 +543,9 @@ describe("EnvironmentCredentials", () => {
                       .filter(
                         (row) => row.revokedAt === null && row.credentialHash === credentialHash,
                       )
-                      .map(({ credentialHash: _, revokedAt: __, ...row }) => row),
+                      .map(
+                        ({ credentialHash: _credentialHash, revokedAt: _revokedAt, ...row }) => row,
+                      ),
                   );
                 },
               }),
