@@ -6,6 +6,7 @@ import { openDeviceMediaSocket } from "@bibcode/client-runtime/device";
 
 import {
   createDeviceVideoWorkerRuntime,
+  workerPoster,
   type DeviceVideoWorkerEvent,
   type DeviceVideoWorkerRequest,
   webCodecsDecoder,
@@ -23,26 +24,12 @@ interface WorkerScope {
 
 const scope = self as unknown as WorkerScope;
 
-const post = (event: DeviceVideoWorkerEvent) => {
-  if (event.type !== "frame") return scope.postMessage(event);
-  try {
-    scope.postMessage(event, [event.frame]);
-  } catch {
-    // Where frames cannot be transferred they are cloned, and this copy is ours to close.
-    try {
-      scope.postMessage(event);
-    } catch {
-      scope.postMessage({ type: "error" });
-    } finally {
-      event.frame.close();
-    }
-  }
-};
-
 const handle = createDeviceVideoWorkerRuntime({
-  post,
+  post: workerPoster((message, transfer) => scope.postMessage(message, transfer)),
   openSocket: openDeviceMediaSocket,
   createDecoder: webCodecsDecoder,
+  isCodecSupported: async (codec) =>
+    (await VideoDecoder.isConfigSupported({ codec, optimizeForLatency: true })).supported === true,
   exit: () => scope.close(),
 });
 

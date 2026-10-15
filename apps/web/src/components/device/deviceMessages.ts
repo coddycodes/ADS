@@ -24,6 +24,24 @@ export const DEVICE_DISABLED_REASONS = {
   starting: "The device is starting",
 } as const;
 
+/** Why the screen shows still images (JPEG) instead of video. */
+export type StillImagesReason = "unsupported" | "noFirstFrame" | "decoderError" | "rejected";
+
+/** The toolbar badge shown while the screen updates as still images. */
+export const STILL_IMAGES_LABEL = "Still images";
+
+/** The badge's tooltip: why there is no video, and what to do about it. */
+export const STILL_IMAGES_REASONS: Readonly<Record<StillImagesReason, string>> = {
+  unsupported:
+    "Video isn't available in this browser or on this connection, so the screen updates as still images. The desktop app or an HTTPS connection usually shows video.",
+  noFirstFrame:
+    "Video did not start, so the screen updates as still images. Reopen the device panel to try video again.",
+  decoderError:
+    "Video could not be decoded, so the screen updates as still images. Reopen the device panel to try video again.",
+  rejected:
+    "The video connection kept failing, so the screen updates as still images. Reopen the device panel to try video again.",
+};
+
 const AVAILABILITY_TITLES: Readonly<Record<DeviceAvailabilityKind, string>> = {
   ready: "Android emulator ready",
   sdkMissing: "Android SDK not found",

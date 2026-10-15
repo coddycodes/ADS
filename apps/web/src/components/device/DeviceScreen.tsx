@@ -19,13 +19,12 @@ import {
 } from "react";
 
 import { deviceEnvironment } from "../../state/device";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { clampToBox, displaySize, letterbox, toNormalized } from "./deviceGeometry";
 import { keyboardEventToDeviceInput, splitDeviceText } from "./deviceKeyMap";
 import { JpegRenderer } from "./jpegRenderer";
-import { useDeviceVideo, type VideoMode } from "./useDeviceVideo";
+import type { StillImagesReason } from "./deviceMessages";
+import { useDeviceVideo } from "./useDeviceVideo";
 
 interface Size {
   readonly width: number;
@@ -53,17 +52,17 @@ const waitingForScreen = (
   </div>
 );
 
-/** Why the screen shows still images instead of video, for the badge's tooltip. */
-const JPEG_REASONS: Record<Extract<VideoMode, { kind: "jpeg" }>["reason"], string> = {
-  unsupported:
-    "Video isn't available in this browser or on this connection, so the screen updates as still images. The desktop app or an HTTPS connection usually shows video.",
-  noFirstFrame:
-    "Video did not start, so the screen updates as still images. Reopen the device panel to try video again.",
-  decoderError:
-    "Video could not be decoded, so the screen updates as still images. Reopen the device panel to try video again.",
-  rejected:
-    "The video connection kept failing, so the screen updates as still images. Reopen the device panel to try video again.",
-};
+/** The screen stopped updating, with the way to get it going again. */
+function ScreenStalled({ onReconnect }: { readonly onReconnect: () => void }) {
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
+      <p className="text-xs text-foreground">The screen stopped updating.</p>
+      <Button size="xs" variant="outline" onClick={onReconnect}>
+        Reconnect screen
+      </Button>
+    </div>
+  );
+}
 
 /**
  * JPEG frames for the screen, mounted only in JPEG mode: the server captures them only while
@@ -130,14 +129,7 @@ function JpegFeed({
   };
 
   if (!streamFailed) return waiting ? waitingForScreen : null;
-  return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
-      <p className="text-xs text-foreground">The screen stopped updating.</p>
-      <Button size="xs" variant="outline" onClick={retryFrames}>
-        Reconnect screen
-      </Button>
-    </div>
-  );
+  return <ScreenStalled onReconnect={retryFrames} />;
 }
 
 /**
@@ -151,12 +143,15 @@ export function DeviceScreen({
   device,
   onInput,
   onRelease,
+  onStillImages,
 }: {
   readonly environmentId: EnvironmentId;
   readonly device: DeviceSnapshot;
   readonly onInput: (event: DeviceInputEvent) => void;
   /** Lifts held keys (`keys`), or held keys and touches (`all`), on the device. */
   readonly onRelease: (scope: "keys" | "all") => void;
+  /** Why the screen shows still images instead of video; `null` while it shows video. */
+  readonly onStillImages?: (reason: StillImagesReason | null) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -207,13 +202,22 @@ export function DeviceScreen({
     const next = { width, height };
     setVideoSize((current) => (sameSize(current, next) ? current : next));
   }, []);
+  // Bumped by "Reconnect screen" when video stalls: a fresh session and ticket.
+  const [videoRestart, setVideoRestart] = useState(0);
   const video = useDeviceVideo({
     environmentId,
     deviceId: device.deviceId,
     canvas,
     onFrameSize: onVideoSize,
+    restart: videoRestart,
   });
   const jpeg = video.kind === "jpeg";
+  const stillImagesReason = video.kind === "jpeg" ? video.reason : null;
+  // The toolbar, not the screen, carries the still-images badge, so nothing covers the device.
+  useEffect(() => {
+    onStillImages?.(stillImagesReason);
+  }, [onStillImages, stillImagesReason]);
+  useEffect(() => () => onStillImages?.(null), [onStillImages]);
   const onJpegFrameSize = useCallback((size: Size) => setFrameSize(size), []);
   const onFirstJpegFrame = useCallback(() => setHasJpegFrame(true), []);
 
@@ -345,20 +349,8 @@ export function DeviceScreen({
         />
       ) : video.kind === "probing" ? (
         waitingForScreen
-      ) : null}
-      {video.kind === "jpeg" ? (
-        <div className="absolute top-2 right-2">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Badge variant="outline" size="sm" tabIndex={0} data-video-fallback={video.reason}>
-                  Low-bandwidth mode
-                </Badge>
-              }
-            />
-            <TooltipPopup>{JPEG_REASONS[video.reason]}</TooltipPopup>
-          </Tooltip>
-        </div>
+      ) : video.stalled ? (
+        <ScreenStalled onReconnect={() => setVideoRestart((count) => count + 1)} />
       ) : null}
     </div>
   );

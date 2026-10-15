@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const atoms = vi.hoisted(() => ({
   subscribed: [] as unknown[],
   videoMode: { kind: "jpeg", reason: "unsupported" } as VideoMode,
+  restarts: [] as number[],
+  stillImages: [] as Array<string | null>,
 }));
 
 vi.mock("@effect/atom-react", () => ({
@@ -18,7 +20,12 @@ vi.mock("@effect/atom-react", () => ({
   useAtomRefresh: () => () => undefined,
 }));
 
-vi.mock("./useDeviceVideo", () => ({ useDeviceVideo: () => atoms.videoMode }));
+vi.mock("./useDeviceVideo", () => ({
+  useDeviceVideo: (input: { restart?: number }) => {
+    atoms.restarts.push(input.restart ?? 0);
+    return atoms.videoMode;
+  },
+}));
 
 vi.mock("../../state/device", () => ({
   deviceEnvironment: { frames: (args: unknown) => ({ __q: "frames", args }) },
@@ -63,6 +70,7 @@ async function render() {
         device={device}
         onInput={(event) => queue.push(event)}
         onRelease={onRelease}
+        onStillImages={(reason) => atoms.stillImages.push(reason)}
       />,
     );
   });
@@ -78,6 +86,8 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   sent = [];
   atoms.subscribed = [];
+  atoms.restarts = [];
+  atoms.stillImages = [];
   atoms.videoMode = { kind: "jpeg", reason: "unsupported" };
   // A 1000×800 screen area, so a portrait device sits at x 320..680.
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
@@ -100,11 +110,23 @@ afterEach(async () => {
 
 describe("DeviceScreen", () => {
   it("subscribes to JPEG frames only in JPEG mode", async () => {
-    atoms.videoMode = { kind: "h264" };
+    atoms.videoMode = { kind: "h264", stalled: false };
     await render();
     expect(atoms.subscribed).toEqual([]);
-    expect(container!.querySelector("[data-video-fallback]")).toBeNull();
     expect(container!.textContent).not.toContain("Waiting for the screen");
+    expect(container!.textContent).not.toContain("stopped updating");
+  });
+
+  it("offers to reconnect when video stalls, restarting it", async () => {
+    atoms.videoMode = { kind: "h264", stalled: true };
+    await render();
+    expect(container!.textContent).toContain("The screen stopped updating.");
+    const restartsBefore = atoms.restarts.at(-1);
+    const reconnect = [...container!.querySelectorAll("button")].find(
+      (button) => button.textContent === "Reconnect screen",
+    )!;
+    await act(async () => reconnect.click());
+    expect(atoms.restarts.at(-1)).toBe((restartsBefore ?? 0) + 1);
   });
 
   it("waits for the screen while video is starting", async () => {
@@ -114,13 +136,15 @@ describe("DeviceScreen", () => {
     expect(container!.textContent).toContain("Waiting for the screen");
   });
 
-  it("marks the JPEG fallback with its reason", async () => {
+  it("reports the still-images reason to its panel and draws nothing over the screen", async () => {
     atoms.videoMode = { kind: "jpeg", reason: "decoderError" };
     await render();
     expect(atoms.subscribed).not.toEqual([]);
-    const badge = container!.querySelector("[data-video-fallback]");
-    expect(badge?.textContent).toBe("Low-bandwidth mode");
-    expect(badge?.getAttribute("data-video-fallback")).toBe("decoderError");
+    expect(atoms.stillImages.at(-1)).toBe("decoderError");
+    expect(container!.querySelector("[data-still-images]")).toBeNull();
+    await act(async () => root!.unmount());
+    root = null;
+    expect(atoms.stillImages.at(-1)).toBeNull();
   });
 
   it("lifts a held key when the screen loses focus", async () => {

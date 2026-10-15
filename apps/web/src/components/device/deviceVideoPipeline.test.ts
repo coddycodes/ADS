@@ -4,7 +4,12 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   createDecoderPipeline,
   createDeviceVideoWorkerRuntime,
+  type DecoderPipelineOptions,
   type DeviceVideoWorkerEvent,
+  FramePresenter,
+  KEYFRAME_REQUEST_INTERVAL_MS,
+  MAX_DECODE_QUEUE,
+  workerPoster,
   type EncodedChunk,
   type VideoDecoderFactory,
   type VideoDecoderHandle,
@@ -23,6 +28,7 @@ class FakeFrame {
 
 class FakeDecoder implements VideoDecoderHandle {
   state: "unconfigured" | "configured" | "closed" = "unconfigured";
+  decodeQueueSize = 0;
   readonly configured: string[] = [];
   readonly decoded: EncodedChunk[] = [];
   constructor(
@@ -66,7 +72,7 @@ const delta = (pts: number): MediaFrame => ({
   data: new Uint8Array([0, 0, 0, 1, 0x41, pts]),
 });
 
-function harness() {
+function harness(options: DecoderPipelineOptions = {}) {
   const decoders: FakeDecoder[] = [];
   const factory: VideoDecoderFactory<FakeFrame> = (init) => {
     const decoder = new FakeDecoder(init.output, init.error);
@@ -79,8 +85,9 @@ function harness() {
     firstFrame: vi.fn(),
     requestKeyframe: vi.fn(),
     failed: vi.fn(),
+    unsupported: vi.fn(),
   };
-  const pipeline = createDecoderPipeline(factory, events);
+  const pipeline = createDecoderPipeline(factory, events, options);
   return { decoders, events, pipeline, current: () => decoders.at(-1)! };
 }
 
@@ -188,6 +195,78 @@ describe("createDecoderPipeline", () => {
     expect(events.frame).not.toHaveBeenCalled();
   });
 
+  it("drops deltas and asks for a key frame when the decoder falls behind", () => {
+    const { current, events, pipeline } = harness({ now: () => 0 });
+    pipeline.push(config(SPS_PORTRAIT));
+    pipeline.push(key(1));
+    pipeline.push(delta(2));
+    current().decodeQueueSize = MAX_DECODE_QUEUE + 1;
+    pipeline.push(delta(3));
+    current().decodeQueueSize = 0;
+    // Caught up, but the GOP is broken: deltas wait for the next key frame.
+    pipeline.push(delta(4));
+    pipeline.push(key(5));
+    pipeline.push(delta(6));
+    expect(current().decoded.map((chunk) => chunk.timestamp)).toEqual([1, 2, 5, 6]);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(1);
+  });
+
+  it("never drops a key frame for backlog", () => {
+    const { current, pipeline } = harness({ now: () => 0 });
+    pipeline.push(config(SPS_PORTRAIT));
+    current().decodeQueueSize = MAX_DECODE_QUEUE + 5;
+    pipeline.push(key(1));
+    expect(current().decoded.map((chunk) => chunk.timestamp)).toEqual([1]);
+  });
+
+  it("asks for backlog key frames at most once a second", () => {
+    let now = 0;
+    const { current, events, pipeline } = harness({ now: () => now });
+    pipeline.push(config(SPS_PORTRAIT));
+    const behind = (pts: number) => {
+      pipeline.push(key(pts));
+      current().decodeQueueSize = MAX_DECODE_QUEUE + 1;
+      pipeline.push(delta(pts + 1));
+      current().decodeQueueSize = 0;
+    };
+    behind(1);
+    now = KEYFRAME_REQUEST_INTERVAL_MS - 1;
+    behind(3);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(1);
+    now = KEYFRAME_REQUEST_INTERVAL_MS;
+    behind(5);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(2);
+  });
+
+  it("checks the stream's codec once and replays the frames held meanwhile", async () => {
+    const isCodecSupported = vi.fn(async () => true);
+    const { current, decoders, events, pipeline } = harness({ isCodecSupported });
+    pipeline.push(config(SPS_PORTRAIT));
+    pipeline.push(key(1));
+    pipeline.push(delta(2));
+    expect(decoders).toHaveLength(0);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(isCodecSupported).toHaveBeenCalledWith("avc1.42c01f");
+    expect(current().decoded.map((chunk) => chunk.timestamp)).toEqual([1, 2]);
+    pipeline.push(config(SPS_PORTRAIT));
+    expect(isCodecSupported).toHaveBeenCalledTimes(1);
+    expect(events.unsupported).not.toHaveBeenCalled();
+  });
+
+  it("reports an unsupported codec rather than a decoder error", async () => {
+    const { decoders, events, pipeline } = harness({ isCodecSupported: async () => false });
+    pipeline.push(config(SPS_PORTRAIT));
+    pipeline.push(key(1));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(events.unsupported).toHaveBeenCalledTimes(1);
+    expect(events.failed).not.toHaveBeenCalled();
+    expect(decoders).toHaveLength(0);
+    pipeline.push(config(SPS_PORTRAIT));
+    expect(events.unsupported).toHaveBeenCalledTimes(1);
+  });
+
   it("gives up on a config frame without an SPS", () => {
     const { events, pipeline } = harness();
     pipeline.push({ kind: "config", ptsUs: 0n, data: new Uint8Array([0, 0, 0, 1, ...PPS]) });
@@ -198,7 +277,7 @@ describe("createDecoderPipeline", () => {
 describe("createDeviceVideoWorkerRuntime", () => {
   const target: DeviceMediaTarget = { url: "ws://h/api/device-media", hostKey: null };
 
-  function runtime() {
+  function runtime(isCodecSupported?: (codec: string) => Promise<boolean>) {
     const posted: DeviceVideoWorkerEvent<FakeFrame>[] = [];
     const sockets: Array<{
       ticket: string;
@@ -221,6 +300,7 @@ describe("createDeviceVideoWorkerRuntime", () => {
         return decoder;
       },
       exit,
+      ...(isCodecSupported === undefined ? {} : { isCodecSupported }),
     });
     return { decoders, exit, handle, posted, sockets };
   }
@@ -259,6 +339,15 @@ describe("createDeviceVideoWorkerRuntime", () => {
     expect(sockets[0]!.requestKeyframe).toHaveBeenCalledTimes(1);
   });
 
+  it("posts unsupported when the stream's codec cannot be decoded", async () => {
+    const { handle, posted, sockets } = runtime(async () => false);
+    handle({ type: "start", target, ticket: "T1" });
+    sockets[0]!.handlers.onFrame(config(SPS_PORTRAIT));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(posted).toEqual([{ type: "unsupported" }]);
+  });
+
   it("closes the socket and the decoder on stop, then exits", () => {
     const { decoders, exit, handle, posted, sockets } = runtime();
     handle({ type: "start", target, ticket: "T1" });
@@ -270,5 +359,80 @@ describe("createDeviceVideoWorkerRuntime", () => {
     expect(exit).toHaveBeenCalled();
     handle({ type: "start", target, ticket: "T2" });
     expect(sockets).toHaveLength(1);
+  });
+});
+
+describe("FramePresenter", () => {
+  it("draws only the newest frame per animation frame and closes the ones it replaces", () => {
+    const callbacks: Array<() => void> = [];
+    const drawn: FakeFrame[] = [];
+    const presenter = new FramePresenter<FakeFrame>(
+      (frame) => {
+        drawn.push(frame);
+        frame.close();
+      },
+      (callback) => callbacks.push(callback),
+    );
+    const [first, second, third] = [new FakeFrame(1, 1), new FakeFrame(1, 1), new FakeFrame(1, 1)];
+    presenter.push(first);
+    presenter.push(second);
+    presenter.push(third);
+    expect(callbacks).toHaveLength(1);
+    expect(first.closed).toBe(true);
+    expect(second.closed).toBe(true);
+    expect(third.closed).toBe(false);
+    callbacks[0]!();
+    expect(drawn).toEqual([third]);
+    expect(third.closed).toBe(true);
+  });
+
+  it("closes the waiting frame and later arrivals once disposed", () => {
+    const callbacks: Array<() => void> = [];
+    const draw = vi.fn();
+    const presenter = new FramePresenter<FakeFrame>(draw, (callback) => callbacks.push(callback));
+    const waiting = new FakeFrame(1, 1);
+    presenter.push(waiting);
+    presenter.dispose();
+    expect(waiting.closed).toBe(true);
+    const late = new FakeFrame(1, 1);
+    presenter.push(late);
+    expect(late.closed).toBe(true);
+    callbacks[0]!();
+    expect(draw).not.toHaveBeenCalled();
+  });
+});
+
+describe("workerPoster", () => {
+  it("transfers frames", () => {
+    const calls: Array<[unknown, unknown]> = [];
+    const frame = new FakeFrame(1, 1);
+    workerPoster<FakeFrame>((message, transfer) => calls.push([message, transfer]))({
+      type: "frame",
+      frame,
+    });
+    expect(calls).toEqual([[{ type: "frame", frame }, [frame]]]);
+    expect(frame.closed).toBe(false);
+  });
+
+  it("clones a frame that cannot be transferred and closes its own copy", () => {
+    const calls: Array<[unknown, unknown]> = [];
+    const frame = new FakeFrame(1, 1);
+    workerPoster<FakeFrame>((message, transfer) => {
+      if (transfer !== undefined) throw new Error("DataCloneError");
+      calls.push([message, transfer]);
+    })({ type: "frame", frame });
+    expect(calls).toEqual([[{ type: "frame", frame }, undefined]]);
+    expect(frame.closed).toBe(true);
+  });
+
+  it("ends video when a frame can be neither transferred nor cloned", () => {
+    const calls: unknown[] = [];
+    const frame = new FakeFrame(1, 1);
+    workerPoster<FakeFrame>((message) => {
+      if (message.type === "frame") throw new Error("DataCloneError");
+      calls.push(message);
+    })({ type: "frame", frame });
+    expect(calls).toEqual([{ type: "error" }]);
+    expect(frame.closed).toBe(true);
   });
 });

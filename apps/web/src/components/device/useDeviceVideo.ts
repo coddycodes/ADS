@@ -7,19 +7,24 @@ import { useEffect, useRef, useState } from "react";
 import { deviceEnvironment } from "../../state/device";
 import { usePreparedConnection } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
-import type { DeviceVideoWorkerEvent, DeviceVideoWorkerRequest } from "./deviceVideoPipeline";
+import type { StillImagesReason } from "./deviceMessages";
+import {
+  type DeviceVideoWorkerEvent,
+  type DeviceVideoWorkerRequest,
+  FramePresenter,
+} from "./deviceVideoPipeline";
 
 export type VideoMode =
   | { readonly kind: "probing" }
-  | { readonly kind: "h264" }
-  | {
-      readonly kind: "jpeg";
-      readonly reason: "unsupported" | "noFirstFrame" | "decoderError" | "rejected";
-    };
+  /** `stalled`: no frame for `STALL_TIMEOUT_MS` since the last one. */
+  | { readonly kind: "h264"; readonly stalled: boolean }
+  | { readonly kind: "jpeg"; readonly reason: StillImagesReason };
 
 /** The baseline codec probed before any ticket is minted; the stream's own is checked on use. */
 export const PROBE_CODEC = "avc1.42E01F";
 export const FIRST_FRAME_TIMEOUT_MS = 5_000;
+/** scrcpy repeats the last frame of a still screen, so a silent stream this long has stalled. */
+export const STALL_TIMEOUT_MS = 5_000;
 export const MAX_RECONNECTS_PER_WINDOW = 3;
 export const RECONNECT_WINDOW_MS = 60_000;
 const RECONNECT_BASE_DELAY_MS = 500;
@@ -58,7 +63,7 @@ export interface DeviceVideoSessionDeps {
   readonly mintTicket: () => Promise<string | null>;
   readonly target: () => DeviceMediaTarget | null;
   readonly createWorker: () => DeviceVideoWorker;
-  /** Draws a decoded frame and closes it. */
+  /** Takes a decoded frame: draws it or closes it. */
   readonly draw: (frame: VideoFrame) => void;
   readonly onFrameSize: (width: number, height: number) => void;
   readonly onMode: (mode: VideoMode) => void;
@@ -75,6 +80,9 @@ export class DeviceVideoSession {
   /** Terminates a stopping worker that never confirms the stop. */
   private killTimer: ReturnType<typeof setTimeout> | null = null;
   private firstFrameTimer: ReturnType<typeof setTimeout> | null = null;
+  private stallTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastFrameAt = 0;
+  private stalled = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly reconnects: number[] = [];
   private playing = false;
@@ -87,6 +95,8 @@ export class DeviceVideoSession {
       (supported) => {
         if (this.ended) return;
         if (!supported) return this.fallBack("unsupported");
+        // A restarted session shows "waiting" until its own first frame.
+        this.deps.onMode({ kind: "probing" });
         this.firstFrameTimer = setTimeout(
           () => this.fallBack("noFirstFrame"),
           FIRST_FRAME_TIMEOUT_MS,
@@ -122,8 +132,13 @@ export class DeviceVideoSession {
 
   private receive(worker: DeviceVideoWorker, event: DeviceVideoWorkerEvent): void {
     if (event.type === "frame") {
-      if (this.ended) event.frame.close();
-      else this.deps.draw(event.frame);
+      if (this.ended) return event.frame.close();
+      this.deps.draw(event.frame);
+      this.lastFrameAt = this.now();
+      if (this.stalled) {
+        this.stalled = false;
+        this.deps.onMode({ kind: "h264", stalled: false });
+      }
       return;
     }
     if (this.ended) {
@@ -138,13 +153,17 @@ export class DeviceVideoSession {
         this.clearFirstFrameTimer();
         if (!this.playing) {
           this.playing = true;
-          this.deps.onMode({ kind: "h264" });
+          this.lastFrameAt = this.now();
+          this.deps.onMode({ kind: "h264", stalled: false });
+          this.watchForStall(STALL_TIMEOUT_MS);
         }
         return;
       case "resize":
         return this.deps.onFrameSize(event.width, event.height);
       case "error":
         return this.fallBack("decoderError");
+      case "unsupported":
+        return this.fallBack("unsupported");
       case "closed":
         return this.closed(event.reason);
       case "stopped":
@@ -157,7 +176,7 @@ export class DeviceVideoSession {
       console.warn("device video: media ticket was minted for another channel than its socket");
     }
     if (FINAL_CLOSE_REASONS.has(reason)) return this.fallBack("rejected");
-    const now = this.deps.now?.() ?? Date.now();
+    const now = this.now();
     while (this.reconnects.length > 0 && now - this.reconnects[0]! >= RECONNECT_WINDOW_MS) {
       this.reconnects.shift();
     }
@@ -170,10 +189,29 @@ export class DeviceVideoSession {
     }, delay);
   }
 
-  private fallBack(reason: Extract<VideoMode, { kind: "jpeg" }>["reason"]): void {
+  private fallBack(reason: StillImagesReason): void {
     if (this.ended) return;
     this.end();
     this.deps.onMode({ kind: "jpeg", reason });
+  }
+
+  private now(): number {
+    return this.deps.now?.() ?? Date.now();
+  }
+
+  /** One timer for the whole stream, re-armed for the time left rather than on every frame. */
+  private watchForStall(delay: number): void {
+    this.stallTimer = setTimeout(() => {
+      this.stallTimer = null;
+      if (this.ended) return;
+      const silent = this.now() - this.lastFrameAt;
+      if (silent < STALL_TIMEOUT_MS) return this.watchForStall(STALL_TIMEOUT_MS - silent);
+      if (!this.stalled) {
+        this.stalled = true;
+        this.deps.onMode({ kind: "h264", stalled: true });
+      }
+      this.watchForStall(STALL_TIMEOUT_MS);
+    }, delay);
   }
 
   private clearFirstFrameTimer(): void {
@@ -187,6 +225,8 @@ export class DeviceVideoSession {
     this.clearFirstFrameTimer();
     if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    if (this.stallTimer !== null) clearTimeout(this.stallTimer);
+    this.stallTimer = null;
     const worker = this.worker;
     this.worker = null;
     if (worker === null) return;
@@ -255,8 +295,10 @@ export function useDeviceVideo(input: {
   readonly deviceId: string | null;
   readonly canvas: HTMLCanvasElement | null;
   readonly onFrameSize?: (width: number, height: number) => void;
+  /** Changing it restarts video with a fresh ticket, as "Reconnect screen" does. */
+  readonly restart?: number;
 }): VideoMode {
-  const { environmentId, deviceId, canvas, onFrameSize } = input;
+  const { environmentId, deviceId, canvas, onFrameSize, restart = 0 } = input;
   const prepared = usePreparedConnection(environmentId);
   const resolved = mediaTargetOf(prepared);
   const target = resolved === "invalid" ? null : resolved;
@@ -264,8 +306,8 @@ export function useDeviceVideo(input: {
   const hostKey = target?.hostKey ?? null;
   const mintTicket = useAtomCommand(deviceEnvironment.createMediaTicket, { reportFailure: false });
 
-  // The mode belongs to one device; another device starts over.
-  const sessionKey = `${environmentId}\u0000${deviceId ?? ""}`;
+  // The mode belongs to one device and attempt; another device or a restart starts over.
+  const sessionKey = `${environmentId}\u0000${deviceId ?? ""}\u0000${restart}`;
   const [state, setState] = useState(() => ({ key: sessionKey, mode: initialMode() }));
   const mode: VideoMode =
     resolved === "invalid"
@@ -282,6 +324,7 @@ export function useDeviceVideo(input: {
 
   useEffect(() => {
     if (fellBack || deviceId === null || canvas === null || targetUrl === null) return;
+    const presenter = new FramePresenter(canvasPainter(canvas));
     const session = new DeviceVideoSession({
       isSupported: isH264Supported,
       mintTicket: async () => {
@@ -290,12 +333,15 @@ export function useDeviceVideo(input: {
       },
       target: () => ({ url: targetUrl, hostKey }),
       createWorker,
-      draw: canvasPainter(canvas),
+      draw: (frame) => presenter.push(frame),
       onFrameSize: (width, height) => onFrameSizeRef.current?.(width, height),
       onMode: (next) => setState({ key: sessionKey, mode: next }),
     });
     session.start();
-    return () => session.dispose();
+    return () => {
+      session.dispose();
+      presenter.dispose();
+    };
   }, [canvas, deviceId, environmentId, fellBack, hostKey, mintTicket, sessionKey, targetUrl]);
 
   return mode;

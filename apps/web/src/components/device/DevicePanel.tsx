@@ -31,6 +31,7 @@ import {
   type DeviceErrorView,
   describeDeviceError,
   deviceStateLabel,
+  type StillImagesReason,
 } from "./deviceMessages";
 import { DeviceScreen } from "./DeviceScreen";
 import { DeviceToolbar, type RotateDirection } from "./DeviceToolbar";
@@ -173,6 +174,7 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
   const [startPending, setStartPending] = useState(false);
   const [actionError, setActionError] = useState<DeviceErrorView | null>(null);
   const [inputError, setInputError] = useState<string | null>(null);
+  const [stillImagesReason, setStillImagesReason] = useState<StillImagesReason | null>(null);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -342,6 +344,7 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
         }}
         onRotate={(direction) => void rotate(direction)}
         onKey={pressKey}
+        stillImagesReason={device?.state === "ready" ? stillImagesReason : null}
       />
       {actionError === null ? null : (
         <div
@@ -377,6 +380,7 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
             device={device}
             onInput={pushInput}
             onRelease={releaseInput}
+            onStillImages={setStillImagesReason}
           />
         ) : device === null ? (
           <PanelMessage>

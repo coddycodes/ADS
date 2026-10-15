@@ -24,6 +24,7 @@ const h = vi.hoisted(() => ({
   results: {} as Record<string, CommandResult>,
   navigations: [] as unknown[],
   screens: [] as unknown[],
+  stillImages: null as string | null,
 }));
 
 vi.mock("./deviceAvailability", () => ({
@@ -64,12 +65,17 @@ vi.mock("@tanstack/react-router", () => ({
   },
 }));
 
-vi.mock("./DeviceScreen", () => ({
-  DeviceScreen: (props: AnyProps) => {
-    h.screens.push(props.device);
-    return <div data-device-screen />;
-  },
-}));
+vi.mock("./DeviceScreen", async () => {
+  const { useEffect } = await import("react");
+  return {
+    DeviceScreen: (props: AnyProps) => {
+      h.screens.push(props.device);
+      const onStillImages = props.onStillImages as (reason: string | null) => void;
+      useEffect(() => onStillImages(h.stillImages), [onStillImages]);
+      return <div data-device-screen />;
+    },
+  };
+});
 
 vi.mock("../ui/select", () => ({
   Select: (props: AnyProps) => (
@@ -295,6 +301,23 @@ describe("DevicePanel", () => {
         },
       },
     });
+  });
+
+  it("shows why the screen is still images in the toolbar, off the screen", async () => {
+    h.stillImages = "unsupported";
+    withCatalog(catalog({ devices: [snapshot()] }));
+    const container = await render();
+    const badge = container.querySelector("[role=toolbar] [data-still-images]");
+    expect(badge?.textContent).toBe("Still images");
+    expect(badge?.getAttribute("data-still-images")).toBe("unsupported");
+    expect(container.querySelector("[data-device-screen] [data-still-images]")).toBeNull();
+    h.stillImages = null;
+  });
+
+  it("shows no still-images badge while the screen shows video", async () => {
+    withCatalog(catalog({ devices: [snapshot()] }));
+    const container = await render();
+    expect(container.querySelector("[data-still-images]")).toBeNull();
   });
 
   it("rotates a ready device to the next orientation", async () => {

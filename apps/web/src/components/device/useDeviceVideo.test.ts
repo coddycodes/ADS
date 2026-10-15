@@ -27,6 +27,7 @@ import {
   DeviceVideoSession,
   useDeviceVideo,
   FIRST_FRAME_TIMEOUT_MS,
+  STALL_TIMEOUT_MS,
   type VideoMode,
   WORKER_STOP_GRACE_MS,
 } from "./useDeviceVideo";
@@ -122,7 +123,7 @@ describe("DeviceVideoSession", () => {
     const frame = { close: vi.fn() };
     worker().emit({ type: "firstFrame" });
     worker().emit({ type: "frame", frame: frame as unknown as VideoFrame });
-    expect(modes).toEqual([{ kind: "h264" }]);
+    expect(modes).toEqual([{ kind: "probing" }, { kind: "h264", stalled: false }]);
     expect(drawn).toEqual([frame]);
   });
 
@@ -131,9 +132,9 @@ describe("DeviceVideoSession", () => {
     video.start();
     await flush();
     await advance(FIRST_FRAME_TIMEOUT_MS - 1);
-    expect(modes).toEqual([]);
+    expect(modes).toEqual([{ kind: "probing" }]);
     await advance(1);
-    expect(modes).toEqual([{ kind: "jpeg", reason: "noFirstFrame" }]);
+    expect(modes).toEqual([{ kind: "probing" }, { kind: "jpeg", reason: "noFirstFrame" }]);
     expect(worker().received.at(-1)).toEqual({ type: "stop" });
   });
 
@@ -143,7 +144,11 @@ describe("DeviceVideoSession", () => {
     await flush();
     worker().emit({ type: "firstFrame" });
     worker().emit({ type: "error" });
-    expect(modes).toEqual([{ kind: "h264" }, { kind: "jpeg", reason: "decoderError" }]);
+    expect(modes).toEqual([
+      { kind: "probing" },
+      { kind: "h264", stalled: false },
+      { kind: "jpeg", reason: "decoderError" },
+    ]);
     // The worker closes its socket and decoder on `stop`, then is terminated.
     expect(worker().received.at(-1)).toEqual({ type: "stop" });
     expect(worker().terminated).toBe(false);
@@ -177,7 +182,7 @@ describe("DeviceVideoSession", () => {
     expect(worker().tickets).toEqual(["T1", "T2"]);
     // The same worker keeps decoding; only the socket is new.
     expect(workers).toHaveLength(1);
-    expect(modes).toEqual([{ kind: "h264" }]);
+    expect(modes).toEqual([{ kind: "probing" }, { kind: "h264", stalled: false }]);
   });
 
   it("backs off and falls back after three reconnects in a minute", async () => {
@@ -207,7 +212,7 @@ describe("DeviceVideoSession", () => {
     }
     await advance(60_000);
     worker().emit({ type: "closed", reason: "slow" });
-    expect(modes).toEqual([{ kind: "h264" }]);
+    expect(modes.some((mode) => mode.kind === "jpeg")).toBe(false);
   });
 
   it("falls back at once when a new ticket cannot help", async () => {
@@ -224,12 +229,38 @@ describe("DeviceVideoSession", () => {
       await flush();
       worker().emit({ type: "closed", reason });
       await vi.advanceTimersByTimeAsync(5_000);
-      expect(modes).toEqual([{ kind: "jpeg", reason: "rejected" }]);
+      expect(modes).toEqual([{ kind: "probing" }, { kind: "jpeg", reason: "rejected" }]);
       expect(mintTicket).toHaveBeenCalledTimes(1);
     }
     // Only the channel mismatch is a client bug worth a warning.
     expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
+  });
+
+  it("marks video stalled after 5 s without a frame and clears it on the next", async () => {
+    const { advance, modes, video, worker } = session();
+    video.start();
+    await flush();
+    worker().emit({ type: "firstFrame" });
+    await advance(STALL_TIMEOUT_MS - 1);
+    worker().emit({ type: "frame", frame: { close: vi.fn() } as unknown as VideoFrame });
+    await advance(STALL_TIMEOUT_MS - 1);
+    expect(modes).toEqual([{ kind: "probing" }, { kind: "h264", stalled: false }]);
+    await advance(1);
+    expect(modes.at(-1)).toEqual({ kind: "h264", stalled: true });
+    worker().emit({ type: "frame", frame: { close: vi.fn() } as unknown as VideoFrame });
+    expect(modes.at(-1)).toEqual({ kind: "h264", stalled: false });
+    expect(modes).toHaveLength(4);
+  });
+
+  it("falls back as unsupported, without retrying, when the stream's codec is not", async () => {
+    const { advance, mintTicket, modes, video, worker } = session();
+    video.start();
+    await flush();
+    worker().emit({ type: "unsupported" });
+    await advance(10_000);
+    expect(modes).toEqual([{ kind: "probing" }, { kind: "jpeg", reason: "unsupported" }]);
+    expect(mintTicket).toHaveBeenCalledTimes(1);
   });
 
   it("retries when the server will not issue a ticket", async () => {
@@ -321,5 +352,65 @@ describe("useDeviceVideo", () => {
     ]);
     await unmount();
     expect(posted.at(-1)).toEqual({ type: "stop" });
+  });
+});
+
+describe("useDeviceVideo restarts", () => {
+  const environmentId = EnvironmentId.make("environment-work");
+
+  it("shows probing again when a restarted session has not drawn yet", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    hookDeps.mintTicket.mockClear();
+    const canvas = document.createElement("canvas");
+    const workers: Array<{ emit(event: DeviceVideoWorkerEvent): void; posted: unknown[] }> = [];
+    vi.stubGlobal("VideoDecoder", { isConfigSupported: async () => ({ supported: true }) });
+    vi.stubGlobal(
+      "Worker",
+      class {
+        readonly posted: unknown[] = [];
+        private listener: ((event: { data: DeviceVideoWorkerEvent }) => void) | null = null;
+        constructor() {
+          workers.push(this);
+        }
+        addEventListener(
+          type: string,
+          listener: (event: { data: DeviceVideoWorkerEvent }) => void,
+        ) {
+          if (type === "message") this.listener = listener;
+        }
+        emit(event: DeviceVideoWorkerEvent) {
+          this.listener?.({ data: event });
+        }
+        postMessage(message: unknown) {
+          this.posted.push(message);
+        }
+        terminate() {}
+      },
+    );
+    const modes: VideoMode[] = [];
+    function Probe({ restart }: { readonly restart: number }) {
+      modes.push(
+        useDeviceVideo({
+          environmentId,
+          deviceId: "d-1",
+          canvas,
+          restart,
+        }),
+      );
+      return null;
+    }
+    const root = createRoot(document.createElement("div"));
+    await act(async () => root.render(createElement(Probe, { restart: 0 })));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    await act(async () => workers[0]!.emit({ type: "firstFrame" }));
+    expect(modes.at(-1)).toEqual({ kind: "h264", stalled: false });
+
+    await act(async () => root.render(createElement(Probe, { restart: 1 })));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(modes.at(-1)).toEqual({ kind: "probing" });
+    expect(workers).toHaveLength(2);
+    expect(hookDeps.mintTicket).toHaveBeenCalledTimes(2);
+    expect(workers[0]!.posted.at(-1)).toEqual({ type: "stop" });
+    await act(async () => root.unmount());
   });
 });

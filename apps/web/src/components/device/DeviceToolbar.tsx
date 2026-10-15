@@ -14,9 +14,17 @@ import {
 import { type ReactNode, useId } from "react";
 
 import { cn } from "../../lib/utils";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { DEVICE_DISABLED_REASONS, deviceStateLabel } from "./deviceMessages";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import {
+  DEVICE_DISABLED_REASONS,
+  deviceStateLabel,
+  STILL_IMAGES_LABEL,
+  STILL_IMAGES_REASONS,
+  type StillImagesReason,
+} from "./deviceMessages";
 
 export type RotateDirection = "left" | "right";
 
@@ -79,6 +87,7 @@ export function DeviceToolbar({
   onStop,
   onRotate,
   onKey,
+  stillImagesReason = null,
 }: {
   readonly avds: ReadonlyArray<{ readonly name: string; readonly displayName: string }>;
   readonly selectedAvd: string | null;
@@ -90,6 +99,8 @@ export function DeviceToolbar({
   readonly onStop: () => void;
   readonly onRotate: (direction: RotateDirection) => void;
   readonly onKey: (key: DeviceKey) => void;
+  /** Set while the screen shows still images instead of video, and why. */
+  readonly stillImagesReason?: StillImagesReason | null;
 }) {
   const state = device?.state ?? null;
   const running = state === "starting" || state === "booting" || state === "ready";
@@ -202,18 +213,37 @@ export function DeviceToolbar({
       >
         <Volume2Icon />
       </ToolbarButton>
-      {device === null ? null : (
-        <span
-          role="status"
-          className={cn(
-            "ml-auto max-w-full truncate rounded-full px-2 py-0.5 text-xs font-medium",
-            PILL_TONES[device.state],
-          )}
-          title={deviceStateLabel(device)}
-        >
-          {deviceStateLabel(device)}
-        </span>
-      )}
+      <div className="ml-auto flex min-w-0 items-center gap-1.5">
+        {stillImagesReason === null ? null : (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Badge
+                  variant="outline"
+                  size="sm"
+                  tabIndex={0}
+                  data-still-images={stillImagesReason}
+                >
+                  {STILL_IMAGES_LABEL}
+                </Badge>
+              }
+            />
+            <TooltipPopup>{STILL_IMAGES_REASONS[stillImagesReason]}</TooltipPopup>
+          </Tooltip>
+        )}
+        {device === null ? null : (
+          <span
+            role="status"
+            className={cn(
+              "max-w-full truncate rounded-full px-2 py-0.5 text-xs font-medium",
+              PILL_TONES[device.state],
+            )}
+            title={deviceStateLabel(device)}
+          >
+            {deviceStateLabel(device)}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
