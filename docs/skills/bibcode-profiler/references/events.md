@@ -88,11 +88,14 @@ up to 128 descendants.
   - `kind`: `server` (the profiler's own process) or `desktop-host` (the
     desktop app running the profiler for its in-process server),
     `provider:<driver>` (such as `provider:codex`; `provider` from older
-    builds), `terminal`, `helper` (provider app-server helpers and the crash
-    monitor), `webview`, `git` or `other`. `webview` includes the UI processes
-    the desktop observes outside its own process tree, such as macOS's WebKit
-    WebContent service under launchd, while process diagnostics run (the status
-    bar keeps them running); builds through v0.9.2 never sampled those;
+    builds), `terminal`, `helper` (provider app-server helpers, the crash
+    monitor, and device preview processes, including the `launchd_sim` of
+    an iOS simulator BiBCode booted, registered under the identity
+    `ios-simulator` and sampled with the label `launchd_sim`), `webview`,
+    `git` or `other`. `webview` includes the UI processes the desktop
+    observes outside its own process tree, such as macOS's WebKit WebContent
+    service under launchd, while process diagnostics run (the status bar
+    keeps them running); builds through v0.9.2 never sampled those;
   - `label`: the executable name;
   - `metric`: `private` (Linux `RssAnon + VmSwap`, Windows `PrivateUsage`,
     macOS `phys_footprint`) or `rss` where private memory cannot be read;
@@ -267,16 +270,22 @@ which cites it.
 
 ### device.lifecycle
 
-One per Android device preview transition, from `apps/server/src/device/mod.rs`.
-It never names the AVD, its paths, or anything on the screen.
+One per device preview transition, Android emulator or iOS simulator, from
+`apps/server/src/device/mod.rs`. It never names the AVD or simulator, their
+paths, or anything on the screen.
 
-- `phase`: `start` (the emulator is being spawned), `ready`, `fail`, or `stop`;
+- `platform`: `android` or `ios`;
+- `phase`: `start` (the emulator is being spawned or the simulator booted),
+  `ready`, `fail`, or `stop`;
 - `durationMs`: time since the device was opened;
-- `failureKind`: for `fail`, `exited`, `bootTimeout`, `spawn` or
-  `unresponsive`; otherwise `null`.
+- `failureKind`: for `fail`, `exited`, `bootTimeout`, `spawn`,
+  `unresponsive`, or `busy` (the simulator was found already running outside
+  BiBCode when the launch began); otherwise `null`.
 
-An emulator that exits on its own after `ready` also raises a
-[`subprocess.crash`](findings.md#subprocesscrash) labelled `android-emulator`.
+A device that ends on its own after `ready` also raises a
+[`subprocess.crash`](findings.md#subprocesscrash): an emulator exit is
+labelled `android-emulator`; a simulator shut down or deleted outside BiBCode
+is labelled `ios-simulator` and reported as `exit 1` (see that finding).
 
 ### worktree.removal
 

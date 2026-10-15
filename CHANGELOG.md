@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Device previews
+
+- A **Device** panel shows an Android emulator running on the environment's server beside the chat, and you can touch it, type into it, paste into it, rotate it, and use its buttons. Turn it on per environment at **Settings → Diagnostics → Device previews**; the server needs the Android SDK with at least one virtual device. The screen is H.264 video, end-to-end encrypted on connections that pin the server's key, and falls back to still images, with the reason, where video can't play, such as a browser on plain HTTP. Coding agents can list, open, screenshot and close the same device. (#70)
+- On a macOS server with Xcode, the same panel runs iOS simulators, next to an Android emulator if you like. The simulator's screen is live video, takes a single touch, keys and text (text a US keyboard can't type is pasted, so iOS may ask to **Allow Paste**), and rotates. When BiBCode can't use the installed Xcode's simulator interfaces, simulators open view only, as still screenshots without touch, and the panel says why. BiBCode shuts down only the simulators it started. (#70)
+
 ## [v0.9.3] - 2026-10-14
 
 BiBCode v0.9.3 ends the macOS freezes caused by a page-wide label scan after every render, keeps long conversations smooth to scroll, stops terminals from losing output, stops the server from growing while threads stay open during agent turns, opens remote development servers at their real address on the Linux desktop, exits cleanly when Windows shuts down, and makes the Profiler's findings more accurate. This release includes the changes since v0.9.2.

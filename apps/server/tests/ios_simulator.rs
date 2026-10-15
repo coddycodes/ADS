@@ -803,10 +803,15 @@ async fn first_key_frame_decodes_to_the_screen_size() {
     assert_eq!(units[1].kind, UnitKind::Key);
     let (w, h) = sps_dimensions(&units[0].data).expect("an SPS");
     // `00 00 00 01 67 profile constraints level …`
-    println!(
-        "SPS profile_idc {} level_idc {}",
-        units[0].data[5], units[0].data[7]
+    assert_eq!(
+        units[0].data[4] & 0x1f,
+        7,
+        "the config unit starts with its SPS"
     );
+    let level_idc = units[0].data[7];
+    println!("SPS profile_idc {} level_idc {level_idc}", units[0].data[5]);
+    // Level 5.1 or above, so a full-size simulator screen at 60 fps fits the level.
+    assert!(level_idc >= 51, "SPS level_idc {level_idc} is below 5.1");
     assert_eq!((w, h), harness.screen_size());
     if let Ok(dir) = std::env::var("BIBCODE_IOS_SIM_FRAMES_DIR") {
         // Config then key as an Annex B file, for `ffprobe`.

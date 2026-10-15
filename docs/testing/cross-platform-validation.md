@@ -2970,7 +2970,8 @@ release qualification. The design is in
 [Device previews](../architecture/overview.md#device-previews) and
 [Device media sockets](../architecture/remote.md#device-media-sockets); the
 user flow is in the
-[user guide](../user/workspace-ui.md#android-device-previews).
+[user guide](../user/workspace-ui.md#device-previews). iOS simulators have
+their own section, [iOS simulator previews](#ios-simulator-previews).
 
 Run the focused coverage first. Root runs leave the component tests
 uncompiled, so also run the `apps/web` paths from `apps/web` with
@@ -2987,21 +2988,7 @@ vp test run packages/contracts/src/device.test.ts packages/client-runtime/src/de
 
 The fakes stand in for `emulator`, `adb`, the emulator gRPC service, and
 scrcpy-server, so these tests prove BiBCode's side of each boundary but not the
-real tools. On a Mac with Xcode and a `Shutdown` iPhone simulator, also run
-the opt-in real-simulator tests. They boot it through CoreSimulator and check
-live frames and the H.264 stream (a config unit whose SPS has the screen's
-size, then a key unit). They tap Settings open, type into Safari's address bar,
-and rotate Safari to each orientation, checking the reported orientation and
-size, and that `landscape` matches `simctl`'s own upright screenshot. They shut
-the simulator down from outside and expect the device `failed` within 5 s and
-the media stream closed with `stopped`. Each test shuts its simulator down
-again (`BIBCODE_IOS_SIM_UDID` picks the simulator; `BIBCODE_IOS_SIM_FRAMES_DIR`
-keeps the frames and screenshots):
-
-```sh
-BIBCODE_IOS_SIM_TESTS=1 cargo test -p bibcode-server --test ios_simulator -- --nocapture
-xcrun simctl list devices | grep Booted   # nothing the test booted is left running
-```
+real tools.
 
 Run the
 [media interop suite](#direct-e2ee-interop-gate) when the media routes or
@@ -3055,7 +3042,8 @@ Record each client's OS, app or browser version, and profile type.
    Swipe down from the top to open the notification shade, and start a drag
    on the screen that ends outside the panel: the touch ends and nothing stays
    pressed. In a text field, type, use Backspace, Enter, and the arrow keys,
-   and paste text into the focused screen: the text arrives. Use **Back**,
+   and paste text into the focused screen, then copy other text and choose
+   the toolbar's **Paste**: both arrive. Use **Back**,
    **Home**, **Recents**, **Power**, and both volume buttons.
 6. **Rotation (native items 2, 3, and 4).** Turn on auto-rotate
    (`adb -s <serial> shell settings put system accelerometer_rotation 1`) and
@@ -3107,6 +3095,47 @@ Record the results in the execution report's device previews section and mark
 each native verification item confirmed or corrected. A correction is a code
 change in the named function with its test updated, never only a runbook
 edit. A surviving `emulator` or `qemu-system` process, a stuck touch, or a
+blank screen without a fallback fails the run.
+
+## iOS simulator previews
+
+Run this when a change touches `apps/server/src/device/ios/`, the
+platform-neutral manager in `apps/server/src/device/`, the iOS parts of the
+`device.*` contracts, or the iOS paths of `apps/web/src/components/device/`,
+and for release qualification of a macOS server or desktop. iOS simulators
+run only on a macOS server with Xcode, so the Linux and Windows runbooks have
+no iOS entry; a Linux or Windows client connected to a macOS server sees the
+same devices and can repeat the client steps. The design is in
+[iOS simulators](../architecture/overview.md#ios-simulators).
+
+Run the [focused coverage](#android-device-previews) first; the fake-backend
+manager tests and the iOS planning, parsing, and orientation tests run on every
+platform. On a Mac with Xcode and a `Shutdown` iPhone simulator, also run the
+opt-in real-simulator tests. They boot it through CoreSimulator and check live
+frames and the H.264 stream (a config unit whose SPS has the screen's size and
+a level of at least 5.1, then a key unit). They tap Settings open, type into
+Safari's address bar, and rotate Safari to each orientation, checking the
+reported orientation and size, and that `landscape` matches `simctl`'s own
+upright screenshot. They shut the simulator down from outside and expect the
+device `failed` within 5 s and the media stream closed with `stopped`. Each
+test shuts its simulator down again (`BIBCODE_IOS_SIM_UDID` picks the
+simulator; `BIBCODE_IOS_SIM_FRAMES_DIR` keeps the frames and screenshots):
+
+```sh
+BIBCODE_IOS_SIM_TESTS=1 cargo test -p bibcode-server --test ios_simulator -- --nocapture
+xcrun simctl list devices | grep Booted   # nothing the test booted is left running
+```
+
+The tests are not in CI. Never run them while the same simulator is open in
+BiBCode or Simulator: they find it busy.
+
+Then run the packaged-app procedure in
+[macOS iOS Simulator previews](./macos-desktop.md#ios-simulator-previews).
+Record the Xcode version (`xcodebuild -version`), the simulator's device type
+and runtime, whether simulators opened live or view-only (and the reason), and
+the results in the execution report's device previews section. A simulator
+BiBCode booted that is still `Booted` after a stop, a setting change, or a
+quit, a simulator BiBCode did not boot that it shut down, a stuck touch, or a
 blank screen without a fallback fails the run.
 
 ## Non-native compatibility audit

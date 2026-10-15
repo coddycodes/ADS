@@ -790,7 +790,13 @@ from the user's own Android SDK: the `emulator` (registered helper label
 `android-emulator`), `adb`, and, through `adb shell`, the pinned scrcpy-server
 on the device (registered helper label `android-scrcpy`). BiBCode ships no
 Android binary on the host; the scrcpy-server jar is embedded in the server and
-pushed to the emulator.
+pushed to the emulator. On a macOS server it also runs `xcrun simctl` from the
+user's Xcode (`list`, `boot`, `bootstatus`, `shutdown`, `io screenshot`,
+`pbcopy`) as supervised children with timeouts, and loads Xcode's private
+CoreSimulator and SimulatorKit frameworks into the server process itself, where
+they stay until it exits. A booted simulator is not a BiBCode child: its
+`launchd_sim` belongs to CoreSimulator's launchd service, and BiBCode only
+registers its identity (`ios-simulator`) for the profiler's sampler.
 
 The server can also open preview gateway listeners. Each one reverse-proxies
 one loopback dev server for one thread to a client that is not on the server's
@@ -1437,9 +1443,16 @@ are listed in the
   `rpc/session.rs` only while the profiler is on.
   The exit watches are not detectors: their call sites check `is_enabled()`
   before building a report.
-  The Android device manager (`apps/server/src/device/`) likewise emits
-  `device.lifecycle` (`start`, `ready`, `fail`, `stop`) only while the profiler
-  is on, and reports an emulator that exits on its own as `subprocess.crash`.
+  The device manager (`apps/server/src/device/`) likewise emits
+  `device.lifecycle` (`start`, `ready`, `fail`, `stop`, with `platform`
+  `android` or `ios`, and a `failureKind` that includes `busy` for a simulator
+  found running outside BiBCode as its launch began) only while the profiler
+  is on. It reports an emulator that exits on its own as `subprocess.crash`
+  labelled `android-emulator`, and a simulator shut down or deleted outside
+  BiBCode as one labelled `ios-simulator`. A simulator has no exit status, so
+  that report always says `exit 1`, with the `launchd_sim` pid, or pid `0` when
+  that process was not found after boot. The sampler attributes a booted
+  simulator's `launchd_sim` to BiBCode as a `helper`.
 - `ProductionRuntime::start` starts the runtime on a blocking thread, because it
   replays `findings.ndjson`, before the orchestration engine starts.
 - **Global handle.** Hot paths reach the runtime through a process-global
@@ -1912,24 +1925,29 @@ bounded memory, and works while the server is stopped.
 
 ## Device previews
 
-`apps/server/src/device/` runs one Android emulator per environment and shows
-it in a right-panel `device` surface. Everything is off until the environment's
+`apps/server/src/device/` runs Android emulators and, on a macOS server, iOS
+simulators, at most one running device per platform per environment, and shows
+them in a right-panel `device` surface. Everything is off until the environment's
 `enableDevicePreviews` setting (default `false`, toggled at **Settings →
 Diagnostics → Device previews**) is on; servers that support it advertise the
 `devicePreviews` capability, and older servers get no device RPC. While the
 setting is off, every `device.*` method fails with
 `DevicePreviewsDisabledError` (a stream fails at subscribe), media sockets close
-with `disabled`, and turning it off stops the running device.
+with `disabled`, and turning it off stops every running device.
 
 The manager in `device/mod.rs` names no platform type: it drives a
 `DeviceBackend` (`device/backend.rs`) that discovers images and launches a
 `RunningDevice`, which supplies JPEG frames, an H.264 source, input, rotation,
 its unrequested exit, and its stop. The Android backend (SDK, emulator, gRPC
-controller, input mapping, and scrcpy) lives in `device/android/`. A slot is
+controller, input mapping, and scrcpy) lives in `device/android/`; the iOS
+backend (`simctl`, the private-API guard, CoreSimulator, VideoToolbox, and HID
+input) lives in `device/ios/`, is compiled only for macOS, and is described in
+[iOS simulators](#ios-simulators) below. A backend may also refuse an image in
+`check_available` before the manager creates a slot. A slot is
 the only lasting owner of its running device; frame, input, and media tasks
 hold it for one call, and a stop waits up to 5 s for those calls to let go.
 
-**Discovery.** The server looks for the SDK in `ANDROID_HOME`, then
+**Discovery (Android).** The server looks for the SDK in `ANDROID_HOME`, then
 `ANDROID_SDK_ROOT`, then the platform default (`~/Library/Android/sdk`,
 `%LOCALAPPDATA%\Android\Sdk`, or `~/Android/Sdk`), and needs both
 `emulator/emulator` and `platform-tools/adb`. It lists AVDs with
@@ -1947,8 +1965,8 @@ platform fails with `DeviceLimitError` naming the running device's display
 name, and an image already running outside BiBCode fails with
 `DeviceBusyError`. A device moves `starting → booting → ready →
 stopping → stopped`, or to `failed` with a reason (`exited`, `bootTimeout`,
-`spawn`, or `unresponsive`). The four most recent ended devices stay in the
-catalog so their reason stays visible.
+`spawn`, `unresponsive`, or `busy`). The four most recent ended devices stay
+in the catalog so their reason stays visible.
 
 - The emulator starts with `-avd <name>`, `-no-window`, `-no-audio`,
   `-no-boot-anim`, `-port <even console port 5554–5682>`,
@@ -2026,6 +2044,108 @@ frame for 10 s closes as `slow`. Rejections close with code 4400 and one of
 closes with 4403 `host-identity`. Pre-auth admission, deadlines, and the 503
 refusal are in [Remote architecture](./remote.md#device-media-sockets).
 
+### iOS simulators
+
+The iOS backend runs only on a macOS server with Xcode; elsewhere the catalog
+has no iOS entry. It never creates or deletes simulators.
+
+**Discovery and availability.** A refresh runs `xcode-select -p`, and, only
+when the developer directory or its Xcode's `version.plist` changed,
+`xcrun simctl help` and `xcrun xcodebuild -version`. It lists the available
+simulators of iOS runtimes with `simctl list devices available -j`, newest
+runtime first, named like `iPhone 17 Pro · iOS 26.5`. A simulator that is not
+`Shutdown` and that BiBCode did not boot is listed with `inUseElsewhere`, and
+`check_available` refuses it with `DeviceBusyError` before any slot exists; one
+found running when the launch begins fails the device with `busy`. The iOS
+entry's `availability` is `xcodeMissing`, `xcodeSetupIncomplete`,
+`noSimulators`, `xcodeUnsupported`, `viewOnlyHeadless` (reserved; nothing
+reports it yet), or `ready`, each with an actionable message.
+
+**The private-API guard.** Live simulators depend on private CoreSimulator,
+SimulatorKit, and HID names. `guard::GuardCache` checks every class, protocol,
+selector (with its type encoding), and C symbol the live path calls, on a
+blocking thread, once per developer directory and Xcode version. When all are
+present it keeps those frameworks loaded and simulators run live. When any is
+missing or changed, simulators open **view-only** and the platform's
+availability is `xcodeUnsupported` with the reason. The frameworks cannot be
+unloaded and a second SimulatorKit would duplicate its classes, so after the
+active Xcode changes, simulators stay view-only, with "Xcode changed while the
+server was running", until the server restarts. Every message send to a
+CoreSimulator proxy goes through one wrapper that checks
+`respondsToSelector:` first and catches an Objective-C exception before it
+reaches a Rust frame; FFI failures log at `warn` with the selector or symbol,
+never screen content or typed text.
+
+**Lifecycle.** `simctl boot` and `simctl bootstatus -b` together have 180 s.
+The device is `booting` from the boot until the screen is attached, then
+`ready`. BiBCode shuts down only simulators it booted (`IosBackend::booted`):
+a failed `simctl boot` leaves the simulator alone, since it may be someone
+else's, and a simulator that was shut down outside BiBCode is not shut down
+again, since someone may have booted it since. A stop releases input, detaches
+the screen, unregisters `launchd_sim`, and runs `simctl shutdown`. The
+simulator's state is polled every 2 s; one shut down or deleted outside
+BiBCode fails the device with `Shutdown outside BiBCode` or
+`Deleted outside BiBCode` and raises `subprocess.crash` (see
+[Profiler](#profiler)). Simulators left booted by a server that crashed are
+not reaped: the next start lists them as running outside BiBCode.
+
+**Live screen.** After boot, the backend attaches to the simulator's main
+display through SimulatorKit's screen (`SimDeviceIOClient` ports, the
+`registerScreenCallbacksWithUUID:…` callbacks) and reads its BGRA framebuffer
+`IOSurface`. The surface always stays portrait while the guest draws rotated
+content into it, so the server turns every frame upright for the UI's
+orientation (`pixels.rs`), and the catalog's orientation follows the
+simulator's `uiOrientation` as it changes. `device.subscribeFrames` sends a
+JPEG on each change, at most 720 px wide and 15 fps, repeating the last frame
+after 1 s without one. Video is H.264 from VideoToolbox (`encoder.rs`): one
+thread per stream wraps the current surface in a `CVPixelBuffer`, turns it
+with `VTPixelRotationSession` when the UI is not portrait, and encodes the
+screen at full size, Main profile at an automatic level (5.1 or above for a
+full-size screen), at most 60 fps, 6 bits per pixel per second clamped to
+2–12 Mbit/s, with key frames no more than 120 frames or 2 s apart. A new output size (a rotation) builds a new
+session, whose config and key units go out first. The units feed the same
+`MediaHub`, tickets, and sockets as Android.
+
+**Input.** A live simulator takes input in-process. Touches, keys, and
+buttons go to the simulator's DTUHID service over XPC
+(`com.apple.coredevice.feature.remote.hid.digitizer`) once a liveness
+handshake answers; until then, or if it never does, touches and buttons use
+the legacy Indigo client (`SimDeviceLegacyHIDClient`) and keys and text are
+refused with "not accepting keyboard input yet". One gesture never splits
+between the two paths. iOS takes a single touch: touches from any pointer but
+the first one down are dropped, and a held touch is lifted when a send fails,
+the input stream reopens, or the device stops. Home, Lock, and the volume
+buttons are HID consumer-page buttons; Back and Recents are refused. A text
+event that is all US-keyboard characters is typed as keys; any other text
+event is pasted whole: `simctl pbcopy` of the full text, then Cmd+V. One
+pasteboard write per event means a later paste never replaces text iOS has
+not read yet, but while iOS shows its **Allow Paste** prompt, keys typed
+afterwards can arrive before the pasted text.
+
+**Rotation and orientation.** `device.rotate` sends the target orientation to
+the simulator's `PurpleWorkspacePort` and then reads back the reported
+orientation for about a second; `canRotate` is true for live simulators with
+input. The orientation convention is Android's: `landscape` is the phone
+turned left (counter-clockwise), the client's **Rotate left** from portrait,
+Android's `Surface.ROTATION_90` and rotation vector `[0, 0, -90]`. On iOS that
+is `uiOrientation` 4, sent as Purple value 3 (`reverseLandscape` is 3 and
+Purple 4, `reversePortrait` Purple 2, `portrait` Purple 1). Android's −90
+vector is still an unverified native item (below); if it proves reversed, the
+Android vector changes, not iOS.
+
+**View-only.** A view-only simulator shows `simctl io screenshot` JPEGs
+about every 500 ms at full size, has no video (a media ticket is refused with
+"Video is off: …", so the client shows **Still images** with that reason),
+cannot rotate, and refuses input with "Touch input is off: …". There are
+three causes, each with its own reason: the guard's verdict for this Xcode
+(unsupported names, or Xcode changed since the frameworks loaded), which the
+platform's availability carries so the client marks the platform view-only
+before a start; a screen that would not attach at launch, which makes that
+one device view-only; and a live screen whose input would not connect, which
+keeps live frames and video but takes no input or rotation.
+
+### Client, agents, and shutdown
+
 **Client.** The device worker in `apps/web/src/components/device/` decodes
 H.264 with WebCodecs when `VideoDecoder` exists and accepts the stream's codec,
 and draws the transferred `VideoFrame`s on the main thread. It falls back to
@@ -2047,7 +2167,9 @@ groups:
 
 **Agents.** Coding agents reach the same device through four MCP tools on the
 provider MCP endpoint: `device_list`, `device_open` (takes `platform`, which
-defaults to `android`, and `imageId`; waits up to 180 s for `ready`), `device_screenshot` (PNG, at most 1080 px wide), and `device_close`.
+defaults to `android`, and `imageId`; waits up to 180 s for `ready`),
+`device_screenshot` (a PNG at most 1080 px wide; a view-only simulator's is
+its full-size `simctl` JPEG), and `device_close`.
 They are listed and callable only while `DeviceManager::enabled()` is true;
 with the setting off the tools disappear from `tools/list` and a call fails
 with `DevicePreviewsDisabledError`. There is no per-call scope check, by
@@ -2061,15 +2183,16 @@ arguments.
 
 **Ownership and shutdown.** `ProductionRuntime` calls
 `DeviceManager::shutdown` after the preview gateway and before process
-ownership is frozen, so emulators stop gracefully rather than being killed by
-ownership teardown; the profiler's teardown runs later. A close hands the stop
-to the manager's task tracker and waits for the emulator process to be gone,
+ownership is frozen, so emulators and simulators stop gracefully rather than
+being killed by ownership teardown; the profiler's teardown runs later. A close
+hands the stop to the manager's task tracker and waits for the device to be
+gone (the emulator process reaped, or `simctl shutdown` returned),
 so a dropped `device.close` or `device_close` request still stops the device,
 and closing a device that just failed waits for its process to be reaped. The
 manager emits
 `device.lifecycle` while the profiler is on (see [Profiler](#profiler)), and
 `device.close`, `device.input`, and `device.rotate` are in `is_long_running`
-because they wait on the emulator.
+because they wait on the emulator or simulator.
 
 **Native verification items.** These behaviors are coded against an
 assumption kept in one function each and have not yet been confirmed on a
@@ -2080,7 +2203,10 @@ oriented and touches use oriented display pixels (`input::oriented_size`,
 `input::to_device_pixels`, and the client's `displaySize`), and the scrcpy
 v4.1 stream after a rotation (`device::scrcpy`). The
 [device preview runbook](../testing/cross-platform-validation.md#android-device-previews)
-checks each one.
+checks each one. The iOS live path was checked on Xcode 27 with the iOS 26.5
+runtime only; the
+[iOS simulator runbook](../testing/macos-desktop.md#ios-simulator-previews)
+repeats it on each Xcode or runtime a release supports.
 
 ## Request and event flow
 

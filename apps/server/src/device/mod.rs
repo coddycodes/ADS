@@ -410,7 +410,7 @@ impl DeviceManager {
             );
             self.inner.publish(&mut table);
         }
-        record_lifecycle("start", started, None);
+        record_lifecycle(platform, "start", started, None);
         self.inner.tasks.spawn(self.inner.clone().launch(
             device_id.clone(),
             backend,
@@ -723,6 +723,7 @@ impl Inner {
                 }
             });
         });
+        let platform = backend.platform();
         let result = backend.launch(&image_id, on_phase, &cancel).await;
         let started = self.started(&device_id);
         let error = match result {
@@ -752,7 +753,7 @@ impl Inner {
                 };
                 match unwanted {
                     None => {
-                        record_lifecycle("ready", started, None);
+                        record_lifecycle(platform, "ready", started, None);
                         if let Some(changes) = orientation_changes {
                             self.tasks.spawn(self.clone().follow_orientation(
                                 device_id.clone(),
@@ -768,7 +769,7 @@ impl Inner {
                     Some(running) => {
                         running.stop().await;
                         self.finish(&device_id, DeviceState::Stopped, None);
-                        record_lifecycle("stop", started, None);
+                        record_lifecycle(platform, "stop", started, None);
                     }
                 }
                 return;
@@ -778,12 +779,12 @@ impl Inner {
         // The backend already stopped what it started.
         if matches!(error, LaunchFailure::Cancelled) || cancel.is_cancelled() {
             self.finish(&device_id, DeviceState::Stopped, None);
-            record_lifecycle("stop", started, None);
+            record_lifecycle(platform, "stop", started, None);
             return;
         }
         let (failure_kind, failure) = launch_failure(&error);
         self.finish(&device_id, DeviceState::Failed, Some(failure));
-        record_lifecycle("fail", started, Some(failure_kind));
+        record_lifecycle(platform, "fail", started, Some(failure_kind));
     }
 
     /// Shows each orientation a running device reports, with its display size in it, until
@@ -816,7 +817,7 @@ impl Inner {
                 () = cancel.cancelled() => return,
                 () = tokio::time::sleep(EXIT_POLL_INTERVAL) => {}
             }
-            let (running, reason, started, reaped) = {
+            let (running, reason, started, platform, reaped) = {
                 let mut table = self.table();
                 let Some(slot) = table.slots.get_mut(&device_id) else {
                     return;
@@ -833,13 +834,14 @@ impl Inner {
                 slot.snapshot.state = DeviceState::Failed;
                 slot.snapshot.failure = Some(reason.clone());
                 let started = slot.started;
+                let platform = slot.snapshot.platform;
                 let reaped = slot.reaped.clone();
                 self.publish(&mut table);
-                (running, reason, started, reaped)
+                (running, reason, started, platform, reaped)
             };
             // Before `stop`, which marks the exit as requested.
             running.report_unrequested_exit(&reason);
-            record_lifecycle("fail", started, Some("exited"));
+            record_lifecycle(platform, "fail", started, Some("exited"));
             stop_device(running).await;
             // A close of the Failed device waits for this.
             reaped.cancel();
@@ -874,12 +876,13 @@ impl Inner {
                 // `None` while it boots: the launch stops it and finishes the slot.
                 if let Some(running) = slot.running.take() {
                     let started = slot.started;
+                    let platform = slot.snapshot.platform;
                     let this = self.clone();
                     let id = device_id.to_owned();
                     self.tasks.spawn(async move {
                         stop_device(running).await;
                         this.finish(&id, DeviceState::Stopped, None);
-                        record_lifecycle("stop", started, None);
+                        record_lifecycle(platform, "stop", started, None);
                     });
                 }
                 let reaped = slot.reaped.clone();
@@ -986,19 +989,67 @@ fn launch_failure(error: &LaunchFailure) -> (&'static str, String) {
     }
 }
 
-/// A `device.lifecycle` profiler event; it never names the image or its paths.
-fn record_lifecycle(phase: &'static str, started: Instant, failure_kind: Option<&'static str>) {
-    if !crate::diagnostics::profiler::is_enabled() {
-        return;
-    }
-    crate::diagnostics::profiler::emit(
-        "device.lifecycle",
+/// A `device.lifecycle` profiler event; it names the platform, never the image or its paths.
+fn record_lifecycle(
+    platform: Platform,
+    phase: &'static str,
+    started: Instant,
+    failure_kind: Option<&'static str>,
+) {
+    let payload = || {
         serde_json::json!({
+            "platform": platform,
             "phase": phase,
             "durationMs": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             "failureKind": failure_kind,
-        }),
-    );
+        })
+    };
+    #[cfg(test)]
+    lifecycle_capture::record(payload);
+    if !crate::diagnostics::profiler::is_enabled() {
+        return;
+    }
+    crate::diagnostics::profiler::emit("device.lifecycle", payload());
+}
+
+/// Tests only: the `device.lifecycle` payloads recorded on this thread, whether or not the
+/// process-wide profiler is on. A `#[tokio::test]` runtime runs the manager's tasks on the
+/// test's thread, so parallel tests never see each other's events.
+#[cfg(test)]
+pub(crate) mod lifecycle_capture {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static EVENTS: RefCell<Option<Vec<serde_json::Value>>> = const { RefCell::new(None) };
+    }
+
+    /// Records this thread's lifecycle payloads until the guard drops.
+    pub(crate) fn start() -> Capture {
+        EVENTS.with(|events| *events.borrow_mut() = Some(Vec::new()));
+        Capture(())
+    }
+
+    pub(super) fn record(payload: impl FnOnce() -> serde_json::Value) {
+        EVENTS.with(|events| {
+            if let Some(events) = events.borrow_mut().as_mut() {
+                events.push(payload());
+            }
+        });
+    }
+
+    pub(crate) struct Capture(());
+
+    impl Capture {
+        pub(crate) fn events(&self) -> Vec<serde_json::Value> {
+            EVENTS.with(|events| events.borrow().clone().unwrap_or_default())
+        }
+    }
+
+    impl Drop for Capture {
+        fn drop(&mut self) {
+            EVENTS.with(|events| events.borrow_mut().take());
+        }
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -1455,6 +1506,27 @@ mod platform_tests {
     }
 
     #[tokio::test]
+    async fn lifecycle_events_name_the_platform() {
+        let capture = lifecycle_capture::start();
+        let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
+        let (manager, _enabled) = fake_manager(vec![ios]);
+        let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        wait_state(&manager, &id, DeviceState::Ready).await;
+        manager.close(&id).await.unwrap();
+        let events = capture.events();
+        let phases: Vec<_> = events.iter().map(|e| e["phase"].clone()).collect();
+        assert_eq!(phases, ["start", "ready", "stop"]);
+        assert!(events.iter().all(|e| e["platform"] == "ios"), "{events:?}");
+        assert!(
+            events
+                .iter()
+                .all(|e| e.get("imageId").is_none() && !e.to_string().contains("UDID-1")),
+            "never names the image: {events:?}"
+        );
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn a_busy_image_is_refused_and_leaves_no_slot() {
         let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
         ios.busy("UDID-1");
@@ -1480,6 +1552,7 @@ mod platform_tests {
 
     #[tokio::test]
     async fn an_unrequested_exit_fails_only_that_device() {
+        let capture = lifecycle_capture::start();
         let android = FakeBackend::new(Platform::Android, &["Pixel"]);
         let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
         let (manager, _enabled) = fake_manager(vec![android.clone(), ios.clone()]);
@@ -1490,6 +1563,9 @@ mod platform_tests {
         let failed = wait_state(&manager, &i, DeviceState::Failed).await;
         assert_eq!(failed.failure.as_deref(), Some("Shutdown outside BiBCode"));
         assert_eq!(ios.stops(), 1);
+        assert!(capture.events().iter().any(|e| e["phase"] == "fail"
+            && e["failureKind"] == "exited"
+            && e["platform"] == "ios"));
         assert_eq!(
             wait_state(&manager, &a, DeviceState::Ready).await.state,
             DeviceState::Ready

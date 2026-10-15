@@ -21,7 +21,10 @@ Android device previews need a server host with the Android SDK; their shared
 procedure is in
 [Shared cross-platform validation](./cross-platform-validation.md#android-device-previews),
 and each platform page names its acceleration check, discovery directories, and
-process check.
+process check. iOS simulator previews need a macOS server with Xcode; their
+procedure is in
+[Shared cross-platform validation](./cross-platform-validation.md#ios-simulator-previews)
+and [macOS Desktop Validation](./macos-desktop.md#ios-simulator-previews).
 
 ## Evidence classes
 
@@ -148,7 +151,12 @@ Under the guard, the production runtime's Android SDK discovery
 (`SdkEnv::from_process`) leaves out `ANDROID_HOME`, `ANDROID_SDK_ROOT`,
 `LOCALAPPDATA`, and the home directory, so a test runtime with
 `enableDevicePreviews` on finds no SDK and never runs the host's emulator or
-adb. Tests that need a device use the fake SDK in `device::testing`.
+adb. Tests that need a device use the fake SDK in `device::testing`. The iOS
+backend's `IosBackendConfig::from_process` likewise names an `xcrun` and
+`xcode-select` that do not exist, so the runtime finds no Xcode and never
+lists or boots the host's simulators. iOS tests use the fake `simctl` in
+`device::ios::testing` or the fake backend in `device::fake_backend`; only the
+opt-in `BIBCODE_IOS_SIM_TESTS=1` tests touch a real simulator.
 
 The server harnesses, including the library's `control.rs` and lifecycle tests,
 and the desktop harnesses follow these rules. Cargo dev units enable the
