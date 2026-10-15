@@ -214,6 +214,17 @@ only when help advertises both exact switches:
 If either switch is unavailable or the bounded probe fails, Claude still runs in
 its normal stream-JSON mode without structured hook activity.
 
+A launch waits up to two seconds for the probe. The probe itself may run for up
+to five seconds, so a slow first `--help` still records its answer for the next
+launch. BiBCode caches only a probe in which both commands answered, keyed by the
+executable's identity and version. A failed or timed-out probe is not cached,
+so the next launch probes again instead of running without the switches for the
+life of the server. Each probe run writes one line to `server.log`: `Claude
+activity probe finished` with `outcome` (`supported` or `unsupported`), the
+version, and the elapsed time, or a `Claude activity probe failed` warning with
+`outcome` (`failed` or `timed out`) and the reason. A launch that stops waiting
+logs `launching Claude without activity flags`.
+
 Structured chat control correlation is stricter than display observation.
 BiBCode exposes a private task target only after one session and Activity
 generation proves the complete identity chain: an Agent/legacy Task tool

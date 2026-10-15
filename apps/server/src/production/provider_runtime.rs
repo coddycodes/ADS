@@ -45,8 +45,8 @@ use crate::{
         Platform, PreparedLaunch, configure_supervised_background_command_wrap,
         launch_executable_extensions,
         supervised::{
-            SupervisedOverflow, SupervisedRunRequest, log_cleanup_failures, run_supervised,
-            terminate_and_wait,
+            SupervisedOverflow, SupervisedRunError, SupervisedRunRequest, log_cleanup_failures,
+            run_supervised, terminate_and_wait,
         },
         wrap_launch_program,
     },
@@ -12886,7 +12886,11 @@ impl ClaudeOutputHandle {
     }
 }
 
+/// How long a launch waits for the activity probe before it starts Claude without the flags.
 const CLAUDE_ACTIVITY_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long the shared probe itself may run. It outlives the launch that started it, so a slow
+/// first `--help` still caches its answer for the next launch instead of failing.
+const CLAUDE_ACTIVITY_PROBE_RUN_TIMEOUT: Duration = Duration::from_secs(5);
 /// Claude replays a written message as soon as it reads it (under two seconds from a cold
 /// start on a local machine). Without a replay by this deadline the delivery is uncertain, so
 /// a replay BiBCode cannot recognise never holds the thread's delivery slot indefinitely.
@@ -13109,6 +13113,7 @@ async fn probe_resolved_claude_activity_support(
     cache: ClaudeActivityProbeCache,
     launch_policy: ClaudeProbeLaunchPolicy,
 ) -> ClaudeActivitySupport {
+    let probed_executable = executable.clone();
     let mut receiver = {
         let mut cache_state = cache.lock();
         cache_state.tick = cache_state.tick.saturating_add(1);
@@ -13142,14 +13147,19 @@ async fn probe_resolved_claude_activity_support(
             );
             let producer_cache = cache.clone();
             tokio::spawn(async move {
-                let result =
-                    probe_claude_activity_support_uncached(&executable, deadline, launch_policy)
-                        .await
-                        .filter(|result| !result.version.is_empty())
-                        .map(|result| ClaudeCachedProbe {
-                            version: result.version,
-                            support: result.support,
-                        });
+                // Its own budget, not the launching caller's: see CLAUDE_ACTIVITY_PROBE_RUN_TIMEOUT.
+                let started = Instant::now();
+                let result = probe_claude_activity_support_uncached(
+                    &executable,
+                    started + CLAUDE_ACTIVITY_PROBE_RUN_TIMEOUT,
+                    launch_policy,
+                )
+                .await;
+                log_claude_probe_outcome(&executable, &result, started.elapsed());
+                let result = result.ok().map(|result| ClaudeCachedProbe {
+                    version: result.version,
+                    support: result.support,
+                });
                 let outcome = result
                     .clone()
                     .map_or(ClaudeProbeOutcome::Failed, ClaudeProbeOutcome::Supported);
@@ -13162,10 +13172,7 @@ async fn probe_resolved_claude_activity_support(
 
     loop {
         match receiver.borrow().clone() {
-            Some(ClaudeProbeOutcome::Supported(probe)) => {
-                let _version = probe.version;
-                return probe.support;
-            }
+            Some(ClaudeProbeOutcome::Supported(probe)) => return probe.support,
             Some(ClaudeProbeOutcome::Failed) => return ClaudeActivitySupport::default(),
             None => {}
         }
@@ -13173,8 +13180,44 @@ async fn probe_resolved_claude_activity_support(
             tokio::time::timeout_at(deadline, receiver.changed()).await,
             Ok(Ok(()))
         ) {
+            tracing::warn!(
+                executable = %probed_executable.display(),
+                "launching Claude without activity flags: its activity probe has not finished; \
+                 a later launch uses the probe's result"
+            );
             return ClaudeActivitySupport::default();
         }
+    }
+}
+
+/// One line per probe run: what a launch without activity flags needs to explain itself.
+fn log_claude_probe_outcome(
+    executable: &Path,
+    result: &Result<ClaudeProbeResult, String>,
+    elapsed: Duration,
+) {
+    let elapsed_ms = elapsed.as_millis();
+    match result {
+        Ok(probe) => {
+            let supported =
+                probe.support.include_hook_events && probe.support.forward_subagent_text;
+            tracing::info!(
+                executable = %executable.display(),
+                version = %probe.version,
+                elapsed_ms,
+                outcome = if supported { "supported" } else { "unsupported" },
+                include_hook_events = probe.support.include_hook_events,
+                forward_subagent_text = probe.support.forward_subagent_text,
+                "Claude activity probe finished"
+            );
+        }
+        Err(reason) => tracing::warn!(
+            executable = %executable.display(),
+            elapsed_ms,
+            outcome = if reason.ends_with("timed out") { "timed out" } else { "failed" },
+            reason = %reason,
+            "Claude activity probe failed; the next launch probes again"
+        ),
     }
 }
 
@@ -13234,23 +13277,19 @@ fn insert_claude_ready_probe(
     }
 }
 
+/// Fails unless both commands answer: a `--help` that fails or runs out of time says nothing about
+/// the flags, and caching it as "unsupported" would downgrade every later launch.
 async fn probe_claude_activity_support_uncached(
     executable: &Path,
     deadline: Instant,
     launch_policy: ClaudeProbeLaunchPolicy,
-) -> Option<ClaudeProbeResult> {
+) -> Result<ClaudeProbeResult, String> {
     let version =
         run_claude_probe_command(executable, "--version", deadline, launch_policy).await?;
-    let Some(help) = run_claude_probe_command(executable, "--help", deadline, launch_policy).await
-    else {
-        return Some(ClaudeProbeResult {
-            version,
-            ..ClaudeProbeResult::default()
-        });
-    };
+    let help = run_claude_probe_command(executable, "--help", deadline, launch_policy).await?;
     let has_exact_flag =
         |expected: &str| help.split_ascii_whitespace().any(|token| token == expected);
-    Some(ClaudeProbeResult {
+    Ok(ClaudeProbeResult {
         version,
         support: ClaudeActivitySupport {
             include_hook_events: has_exact_flag("--include-hook-events"),
@@ -13260,14 +13299,16 @@ async fn probe_claude_activity_support_uncached(
     })
 }
 
+/// The command's output, or why it gave none: `<argument> timed out` or another reason.
 async fn run_claude_probe_command(
     executable: &Path,
     argument: &str,
     deadline: Instant,
     launch_policy: ClaudeProbeLaunchPolicy,
-) -> Option<String> {
+) -> Result<String, String> {
     const CLEANUP_RESERVE: Duration = Duration::from_millis(400);
-    let launch = prepare_claude_probe_launch(executable, argument, launch_policy)?;
+    let launch = prepare_claude_probe_launch(executable, argument, launch_policy)
+        .ok_or_else(|| format!("{argument} could not be prepared"))?;
     let mut command = tokio::process::Command::new(launch.program);
     command
         .args(launch.args)
@@ -13278,7 +13319,7 @@ async fn run_claude_probe_command(
     let cancellation = CancellationToken::new();
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining <= CLEANUP_RESERVE {
-        return None;
+        return Err(format!("{argument} timed out"));
     }
     let operation_timeout = remaining.saturating_sub(CLEANUP_RESERVE);
     let request = SupervisedRunRequest {
@@ -13292,9 +13333,13 @@ async fn run_claude_probe_command(
     // The cache producer is detached from the deadline-bounded caller. Let the
     // supervised runner finish its reserved terminate-and-reap phase instead
     // of dropping that cleanup future at the caller's hard deadline.
-    let output = run_supervised(request, &cancellation).await.ok()?;
+    let output = match run_supervised(request, &cancellation).await {
+        Ok(output) => output,
+        Err(SupervisedRunError::Timeout) => return Err(format!("{argument} timed out")),
+        Err(error) => return Err(format!("{argument} failed: {error:?}")),
+    };
     if !output.status.success() {
-        return None;
+        return Err(format!("{argument} exited with {}", output.status));
     }
     let mut text = String::from_utf8_lossy(&output.stdout.bytes).into_owned();
     if !output.stderr.bytes.is_empty() {
@@ -13302,7 +13347,10 @@ async fn run_claude_probe_command(
         text.push_str(&String::from_utf8_lossy(&output.stderr.bytes));
     }
     let text = text.trim().to_owned();
-    (!text.is_empty()).then_some(text)
+    if text.is_empty() {
+        return Err(format!("{argument} printed nothing"));
+    }
+    Ok(text)
 }
 
 fn prepare_claude_probe_launch(

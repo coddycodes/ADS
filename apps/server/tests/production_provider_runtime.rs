@@ -13904,6 +13904,70 @@ async fn claude_activity_probe_retries_transient_failures_without_poisoning_cach
     assert_eq!(probe_context.cache_len(), 1);
 }
 
+/// The background-agent report: one `--help` that failed or ran out of time after `--version`
+/// answered was cached as "no activity flags" for the life of the server, so every later
+/// launch ran without hook events and idle suspension killed its background subagents.
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_activity_probe_retries_a_help_probe_that_failed_once() {
+    assert_claude_probe_recovers_after_one_bad_help("failed", "exit 1").await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_activity_probe_caches_a_help_probe_that_was_slow_once() {
+    // Past the launching caller's two-second wait, within the probe's own budget.
+    assert_claude_probe_recovers_after_one_bad_help("slow", "sleep 3").await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_activity_probe_retries_a_help_probe_that_timed_out_once() {
+    // Past the probe's own budget: the probe is stopped and the next launch probes again.
+    assert_claude_probe_recovers_after_one_bad_help("timed-out", "sleep 12; exit 1").await;
+}
+
+#[cfg(unix)]
+async fn assert_claude_probe_recovers_after_one_bad_help(case: &str, first_help: &str) {
+    let probe_context = ClaudeActivityProbeTestContext::new();
+    let temp = TempDir::new().unwrap();
+    let marker_path = temp.path().join("help-failed-once");
+    let script = format!(
+        "#!/bin/sh\ncase \"$1\" in\n  --version) printf '%s\\n' '2.1.300 (Claude Code)';;\n  --help) if [ ! -f '{marker}' ]; then touch '{marker}'; {first_help}; fi; printf '%s\\n' '--include-hook-events --forward-subagent-text';;\n  *) exit 1;;\nesac\n",
+        marker = marker_path.display(),
+    );
+    let executable = executable_fixture(&temp, &format!("claude-help-{case}"), &script, "");
+    let binary_path = executable.to_string_lossy().into_owned();
+
+    assert_eq!(
+        probe_context.probe(&binary_path).await,
+        ClaudeActivitySupport::default(),
+        "{case}: the launch that met the failure runs without the flags"
+    );
+    // A detached probe may still be finishing its cleanup; the next launch must not reuse
+    // the failure.
+    let later = timeout(Duration::from_secs(20), async {
+        loop {
+            let support = probe_context.probe(&binary_path).await;
+            if support != ClaudeActivitySupport::default() {
+                return support;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .unwrap_or_default();
+    assert_eq!(
+        later,
+        ClaudeActivitySupport {
+            include_hook_events: true,
+            forward_subagent_text: true,
+            transcript_recovery: false,
+        },
+        "{case}: a later launch of the same working Claude gets the activity flags"
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn claude_activity_probe_invalidates_on_executable_metadata_and_version_change() {
