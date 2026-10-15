@@ -179,6 +179,8 @@ struct Slot {
     running: Option<RunningEmulator>,
     /// Cancels the launch and the exit watcher.
     cancel: CancellationToken,
+    /// Cancelled once the device has ended and its emulator process is gone.
+    reaped: CancellationToken,
     started: Instant,
     /// Open order, which decides which ended devices the catalog keeps.
     seq: u64,
@@ -322,6 +324,7 @@ impl DeviceManager {
                     },
                     running: None,
                     cancel: cancel.clone(),
+                    reaped: CancellationToken::new(),
                     started,
                     seq,
                     frames: None,
@@ -381,7 +384,9 @@ impl DeviceManager {
         }
     }
 
-    /// Stops `device_id` and returns once it has ended; closing an ended device succeeds.
+    /// Stops `device_id` and returns once it has ended and its emulator process is gone;
+    /// closing an ended device succeeds. The stop runs on the manager's tasks, so dropping
+    /// this future never leaves the device half-stopped.
     pub async fn close(&self, device_id: &str) -> Result<(), DeviceOpError> {
         self.inner.close(device_id).await
     }
@@ -590,11 +595,12 @@ impl Inner {
         }
     }
 
-    /// Ends a device in `state`.
+    /// Ends a device whose emulator process is already gone in `state`.
     fn finish(&self, device_id: &str, state: DeviceState, failure: Option<String>) {
         self.update(device_id, |slot| {
             slot.snapshot.state = state;
             slot.snapshot.failure = failure;
+            slot.reaped.cancel();
         });
     }
 
@@ -672,7 +678,7 @@ impl Inner {
                 () = cancel.cancelled() => return,
                 () = tokio::time::sleep(EXIT_POLL_INTERVAL) => {}
             }
-            let (running, status, started) = {
+            let (running, status, started, reaped) = {
                 let mut table = self.table();
                 let Some(slot) = table.slots.get_mut(&device_id) else {
                     return;
@@ -690,8 +696,9 @@ impl Inner {
                 slot.snapshot.state = DeviceState::Failed;
                 slot.snapshot.failure = Some(format!("exited: {status}"));
                 let started = slot.started;
+                let reaped = slot.reaped.clone();
                 self.publish(&mut table);
-                (running, status, started)
+                (running, status, started, reaped)
             };
             // Before `stop`, which marks the exit as requested.
             running
@@ -699,6 +706,8 @@ impl Inner {
                 .report_unrequested_exit(emulator::HELPER_LABEL, &status);
             record_lifecycle("fail", started, Some("exited"));
             emulator::stop(running).await;
+            // A close of the Failed device waits for this.
+            reaped.cancel();
             return;
         }
     }
@@ -710,51 +719,47 @@ impl Inner {
             .map_or_else(Instant::now, |slot| slot.started)
     }
 
-    async fn close(&self, device_id: &str) -> Result<(), DeviceOpError> {
-        let (running, started) = {
+    /// Starts stopping `device_id` and waits until it has ended and its process is gone. The
+    /// stop itself runs on `tasks`, so dropping this future changes nothing.
+    async fn close(self: &Arc<Self>, device_id: &str) -> Result<(), DeviceOpError> {
+        let reaped = {
             let mut table = self.table();
             let slot = table
                 .slots
                 .get_mut(device_id)
                 .ok_or(DeviceOpError::NotFound)?;
-            match slot.snapshot.state {
-                DeviceState::Stopped | DeviceState::Failed => return Ok(()),
-                DeviceState::Stopping => (None, slot.started),
-                DeviceState::Starting | DeviceState::Booting | DeviceState::Ready => {
-                    slot.snapshot.state = DeviceState::Stopping;
-                    slot.cancel.cancel();
-                    slot.end_streams();
-                    let taken = (slot.running.take(), slot.started);
-                    self.publish(&mut table);
-                    taken
+            if matches!(
+                slot.snapshot.state,
+                DeviceState::Starting | DeviceState::Booting | DeviceState::Ready
+            ) {
+                // The streams end before the token, so the media hub sees why it stops.
+                slot.end_streams();
+                slot.snapshot.state = DeviceState::Stopping;
+                slot.cancel.cancel();
+                // `None` while it boots: the launch stops it and finishes the slot.
+                if let Some(running) = slot.running.take() {
+                    let started = slot.started;
+                    let this = self.clone();
+                    let id = device_id.to_owned();
+                    self.tasks.spawn(async move {
+                        emulator::stop(running).await;
+                        this.finish(&id, DeviceState::Stopped, None);
+                        record_lifecycle("stop", started, None);
+                    });
                 }
+                let reaped = slot.reaped.clone();
+                self.publish(&mut table);
+                reaped
+            } else {
+                // Stopping, or ended while the exit watcher may still reap the process.
+                slot.reaped.clone()
             }
         };
-        match running {
-            Some(running) => {
-                emulator::stop(running).await;
-                self.finish(device_id, DeviceState::Stopped, None);
-                record_lifecycle("stop", started, None);
-            }
-            // The launch, the exit watcher, or another close is stopping it.
-            None => self.wait_ended(device_id).await,
-        }
+        reaped.cancelled().await;
         Ok(())
     }
 
-    async fn wait_ended(&self, device_id: &str) {
-        let mut catalog = self.catalog.subscribe();
-        let _ = catalog
-            .wait_for(|catalog| {
-                !catalog
-                    .devices
-                    .iter()
-                    .any(|device| device.device_id == device_id && !ended(device.state))
-            })
-            .await;
-    }
-
-    async fn close_all(&self) {
+    async fn close_all(self: &Arc<Self>) {
         let ids: Vec<String> = self
             .table()
             .slots
@@ -970,6 +975,45 @@ mod tests {
         assert_eq!(launched.len(), 1);
         assert!(launched.iter().all(|pid| !process_alive(*pid)));
         assert!(fixture.manager.open("Pixel").await.is_ok());
+        fixture.manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_dropped_close_still_stops_the_device() {
+        use futures_util::FutureExt as _;
+        let fixture = ManagerFixture::ready(&["Pixel"]).await;
+        let id = fixture.manager.open("Pixel").await.unwrap();
+        fixture.wait_state(&id, DeviceState::Ready).await;
+        let pid = fixture.pid_of(&id);
+        // One poll starts the stop; the RPC or MCP request is then dropped mid-stop.
+        assert!(fixture.manager.close(&id).now_or_never().is_none());
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            fixture.wait_state(&id, DeviceState::Stopped),
+        )
+        .await
+        .expect("the stop finishes without its caller");
+        crate::device::testing::wait_until(|| !process_alive(pid)).await;
+        let next = fixture.manager.open("Pixel").await.unwrap();
+        fixture.wait_state(&next, DeviceState::Ready).await;
+        tokio::time::timeout(Duration::from_secs(20), fixture.manager.shutdown())
+            .await
+            .expect("shutdown ends");
+    }
+
+    #[tokio::test]
+    async fn closing_a_crashed_device_waits_for_its_process() {
+        let fixture = ManagerFixture::ready(&["Pixel"]).await;
+        let id = fixture.manager.open("Pixel").await.unwrap();
+        fixture.wait_state(&id, DeviceState::Ready).await;
+        let pid = fixture.pid_of(&id);
+        kill_process(pid);
+        crate::device::testing::wait_until(|| fixture.manager.client(&id).is_err()).await;
+        tokio::time::timeout(Duration::from_secs(20), fixture.manager.close(&id))
+            .await
+            .expect("close ends")
+            .unwrap();
+        assert!(!process_alive(pid));
         fixture.manager.shutdown().await;
     }
 

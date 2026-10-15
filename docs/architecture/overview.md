@@ -1989,7 +1989,11 @@ lower-privileged principals, both tool families need a real scope check.
 **Ownership and shutdown.** `ProductionRuntime` calls
 `DeviceManager::shutdown` after the preview gateway and before process
 ownership is frozen, so emulators stop gracefully rather than being killed by
-ownership teardown; the profiler's teardown runs later. The manager emits
+ownership teardown; the profiler's teardown runs later. A close hands the stop
+to the manager's task tracker and waits for the emulator process to be gone,
+so a dropped `device.close` or `device_close` request still stops the device,
+and closing a device that just failed waits for its process to be reaped. The
+manager emits
 `device.lifecycle` while the profiler is on (see [Profiler](#profiler)), and
 `device.close`, `device.input`, and `device.rotate` are in `is_long_running`
 because they wait on the emulator.
