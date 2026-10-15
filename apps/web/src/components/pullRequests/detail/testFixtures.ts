@@ -172,7 +172,6 @@ export function fakeNavigation(
   overrides: Partial<PullRequestsNavigation> = {},
 ): PullRequestsNavigation {
   return {
-    fileAnchor: null,
     selectTab: vi.fn(),
     showFile: vi.fn(),
     setFileAnchor: vi.fn(),

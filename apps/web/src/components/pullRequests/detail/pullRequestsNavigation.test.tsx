@@ -13,6 +13,7 @@ import {
   pathFromHash,
   type PullRequestsNavigation,
   PullRequestsRouteNavigation,
+  usePullRequestsFileAnchor,
   usePullRequestsNavigation,
 } from "./pullRequestsNavigation";
 
@@ -20,31 +21,37 @@ const projectRef = { environmentId: "env", projectId: "project" } as never;
 const detailRoute = "/project/$environmentId/$projectId/pull-requests/$number";
 const params = { environmentId: "env", projectId: "project", number: "14" };
 
-async function captureRouteNavigation(): Promise<PullRequestsNavigation> {
-  let captured: PullRequestsNavigation | null = null;
+async function mountRouteNavigation() {
+  let navigation: PullRequestsNavigation | null = null;
+  let anchor: string | null = null;
   function Probe() {
-    const navigation = usePullRequestsNavigation();
+    const currentNavigation = usePullRequestsNavigation();
+    const currentAnchor = usePullRequestsFileAnchor();
     useEffect(() => {
-      captured = navigation;
-    }, [navigation]);
+      navigation = currentNavigation;
+      anchor = currentAnchor;
+    }, [currentNavigation, currentAnchor]);
     return null;
   }
   const root = createRoot(document.createElement("div"));
-  await act(async () =>
-    root.render(
-      <PullRequestsRouteNavigation projectRef={projectRef} number={14}>
-        <Probe />
-      </PullRequestsRouteNavigation>,
-    ),
-  );
-  return captured!;
+  const render = () =>
+    act(async () =>
+      root.render(
+        <PullRequestsRouteNavigation projectRef={projectRef} number={14}>
+          <Probe />
+        </PullRequestsRouteNavigation>,
+      ),
+    );
+  await render();
+  return { render, navigation: () => navigation!, anchor: () => anchor };
 }
 
 describe("PullRequestsRouteNavigation", () => {
   it("keeps the full page's URLs for every navigation", async () => {
     h.hash = "#file=src%2Fa%20b.ts";
-    const navigation = await captureRouteNavigation();
-    expect(navigation.fileAnchor).toBe("src/a b.ts");
+    const view = await mountRouteNavigation();
+    const navigation = view.navigation();
+    expect(view.anchor()).toBe("src/a b.ts");
     navigation.selectTab("commits");
     navigation.showFile("docs/x.md");
     navigation.setFileAnchor("docs/y.md");
@@ -70,6 +77,17 @@ describe("PullRequestsRouteNavigation", () => {
       { to: "/project/$environmentId/$projectId/pull-requests", params: projectRef },
       { to: "/project/$environmentId/$projectId/pull-requests", params: projectRef },
     ]);
+  });
+
+  it("keeps the navigation object when only the file anchor changes", async () => {
+    h.hash = "#file=a.ts";
+    const view = await mountRouteNavigation();
+    const before = view.navigation();
+    expect(view.anchor()).toBe("a.ts");
+    h.hash = "#file=b.ts";
+    await view.render();
+    expect(view.anchor()).toBe("b.ts");
+    expect(view.navigation()).toBe(before);
   });
 
   it("reads no anchor from an unrelated or malformed hash", () => {

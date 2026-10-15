@@ -73,8 +73,6 @@ host provides; reading it without a provider throws.
 
 ```ts
 interface PullRequestsNavigation {
-  /** The file the Changes tab scrolls to, or null. */
-  readonly fileAnchor: string | null;
   /** The user picked another detail tab. */
   selectTab(tab: PullRequestsDetailTab): void;
   /** A conversation link to a file: the Changes tab, scrolled to that file. */
@@ -91,7 +89,11 @@ interface PullRequestsNavigation {
 ```
 
 The file anchor was the URL hash (`#file=<path>`); a panel has no URL, so the
-navigation owns it.
+host owns it. It lives in its own `PullRequestsFileAnchorContext`
+(`usePullRequestsFileAnchor()`, `null` without a provider), not on the
+navigation object: the navigation holds only methods, so its identity does not
+change when the anchor does, and an anchor change re-renders `PullRequestsFiles`
+rather than every action consumer.
 
 `usePullRequestsAction`'s `navigate(number | null)` maps onto `openRequest`
 (a number) and `requestGone` (`null`).
@@ -241,11 +243,14 @@ Found while reading the code for the plan, after approval:
 - No storage version bump: saved panel state is normalized by content on load.
 - The surface records `provider`, so the tab label needs no query; no title
   tooltip.
-- Navigation comes from React context and owns the Changes tab's file anchor,
-  because `PullRequestsFiles` and the conversation's file links used the router
-  and the URL hash.
+- Navigation comes from React context, with the Changes tab's file anchor in a
+  companion context, because `PullRequestsFiles` and the conversation's file
+  links used the router and the URL hash.
 - The panel's "Open full page" sits in a `headerActions` slot of the detail
   view; "Open in browser" was already in the detail header.
+- The conversation's file link is a button that calls `showFile`, so on the full
+  page it no longer offers Ctrl/Cmd-click, middle-click or Copy link; an optional
+  `fileHref(path)` on the navigation could restore an `<a>` there later.
 
 ## Out of scope
 

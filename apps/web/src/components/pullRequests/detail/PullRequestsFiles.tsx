@@ -25,7 +25,7 @@ import { DiffWorkerPoolProvider } from "../../DiffWorkerPoolProvider";
 import { PullRequestsExternalLink } from "../shared/PullRequestsMarkdown";
 import { fileTree, type FileTreeRow } from "./pullRequestsDetail.logic";
 import { PullRequestsReviewFile } from "../review/PullRequestsReviewFile";
-import { usePullRequestsNavigation } from "./pullRequestsNavigation";
+import { usePullRequestsFileAnchor, usePullRequestsNavigation } from "./pullRequestsNavigation";
 export interface PullRequestsFilesProps {
   files: Files;
   timeline?: PullRequestsTimeline;
@@ -192,7 +192,7 @@ export const PullRequestsFiles = memo(function PullRequestsFiles({
 }: PullRequestsFilesProps) {
   const isLive = live !== null;
   const navigation = usePullRequestsNavigation();
-  const anchorPath = navigation.fileAnchor;
+  const anchorPath = usePullRequestsFileAnchor();
   const initialIgnoreWhitespace = useClientSettings((settings) => settings.diffIgnoreWhitespace);
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(initialIgnoreWhitespace);
   const [scrollFailed, setScrollFailed] = useState(false);

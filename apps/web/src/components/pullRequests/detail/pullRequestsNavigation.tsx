@@ -4,10 +4,12 @@ import { createContext, type ReactNode, useContext, useMemo } from "react";
 
 import type { PullRequestsDetailTab } from "../../../pullRequestsStore";
 
-/** Where a request's detail view lives: the full page (router) or a thread's right panel. */
+/**
+ * Where a request's detail view lives: the full page (router) or a thread's right panel.
+ * Methods only, so its identity stays stable while the file anchor changes; the anchor is
+ * read through {@link usePullRequestsFileAnchor}.
+ */
 export interface PullRequestsNavigation {
-  /** The file the Changes tab scrolls to, or null. */
-  readonly fileAnchor: string | null;
   /** The user picked another detail tab. */
   selectTab(tab: PullRequestsDetailTab): void;
   /** A conversation link to a file: the Changes tab, scrolled to that file. */
@@ -29,6 +31,13 @@ export interface PullRequestsNavigation {
 }
 
 export const PullRequestsNavigationContext = createContext<PullRequestsNavigation | null>(null);
+
+/** The file the Changes tab scrolls to, or null. Kept apart from the navigation methods. */
+export const PullRequestsFileAnchorContext = createContext<string | null>(null);
+
+export function usePullRequestsFileAnchor(): string | null {
+  return useContext(PullRequestsFileAnchorContext);
+}
 
 export function usePullRequestsNavigation(): PullRequestsNavigation {
   const navigation = useContext(PullRequestsNavigationContext);
@@ -69,7 +78,6 @@ export function PullRequestsRouteNavigation({
     const fileHash = (path: string) => `file=${encodeURIComponent(path)}`;
     const toList = () => void navigate({ to: LIST_ROUTE, params: projectRef });
     return {
-      fileAnchor,
       selectTab: (tab) =>
         void navigate({ to: DETAIL_ROUTE, params, search: { tab }, hash: "", replace: true }),
       showFile: (path) =>
@@ -93,8 +101,10 @@ export function PullRequestsRouteNavigation({
       discardDeleted: null,
       back: toList,
     };
-  }, [fileAnchor, navigate, number, projectRef]);
+  }, [navigate, number, projectRef]);
   return (
-    <PullRequestsNavigationContext value={navigation}>{children}</PullRequestsNavigationContext>
+    <PullRequestsNavigationContext value={navigation}>
+      <PullRequestsFileAnchorContext value={fileAnchor}>{children}</PullRequestsFileAnchorContext>
+    </PullRequestsNavigationContext>
   );
 }
