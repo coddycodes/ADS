@@ -2054,8 +2054,10 @@ mod device_tools {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use serde_json::json;
 
+    use tokio_util::sync::CancellationToken;
+
     use super::DeviceTools;
-    use crate::device::testing::{ManagerFixture, process_alive, wait_until};
+    use crate::device::testing::{LaunchStub, ManagerFixture, process_alive, wait_until};
 
     struct DeviceToolsFixture {
         tools: DeviceTools,
@@ -2072,7 +2074,10 @@ mod device_tools {
 
         async fn ready_device() -> Self {
             let fixture = Self::ready_sdk(&["Pixel"]).await;
-            let result = fixture.tools.call("open", json!({}), true).await;
+            let result = fixture
+                .tools
+                .call("open", json!({}), CancellationToken::new())
+                .await;
             assert_eq!(result["isError"], false, "{result}");
             fixture
         }
@@ -2095,7 +2100,10 @@ mod device_tools {
     #[tokio::test]
     async fn device_screenshot_returns_an_image_block() {
         let fixture = DeviceToolsFixture::ready_device().await;
-        let result = fixture.tools.call("screenshot", json!({}), true).await;
+        let result = fixture
+            .tools
+            .call("screenshot", json!({}), CancellationToken::new())
+            .await;
         assert_eq!(result["isError"], false, "{result}");
         let image = result["content"]
             .as_array()
@@ -2112,7 +2120,10 @@ mod device_tools {
     #[tokio::test]
     async fn device_list_reports_the_catalog() {
         let fixture = DeviceToolsFixture::ready_device().await;
-        let result = fixture.tools.call("list", json!({}), true).await;
+        let result = fixture
+            .tools
+            .call("list", json!({}), CancellationToken::new())
+            .await;
         assert_eq!(result["isError"], false);
         assert_eq!(result["structuredContent"]["avds"][0]["name"], "Pixel");
         assert_eq!(result["structuredContent"]["devices"][0]["state"], "ready");
@@ -2124,22 +2135,23 @@ mod device_tools {
         let id = fixture.fixture.manager.catalog().borrow().devices[0]
             .device_id
             .clone();
-        let missing = fixture.tools.call("close", json!({}), true).await;
+        let missing = fixture
+            .tools
+            .call("close", json!({}), CancellationToken::new())
+            .await;
         assert_eq!(
             missing["structuredContent"]["error"]["_tag"],
             "DeviceInputError"
         );
-        let denied = fixture
-            .tools
-            .call("close", json!({"deviceId": id}), false)
-            .await;
-        assert_eq!(denied["isError"], true);
         let closed = fixture
             .tools
-            .call("close", json!({"deviceId": id}), true)
+            .call("close", json!({"deviceId": id}), CancellationToken::new())
             .await;
         assert_eq!(closed["isError"], false, "{closed}");
-        let after = fixture.tools.call("screenshot", json!({}), true).await;
+        let after = fixture
+            .tools
+            .call("screenshot", json!({}), CancellationToken::new())
+            .await;
         assert_eq!(
             after["structuredContent"]["error"]["_tag"],
             "DeviceNotFoundError"
@@ -2151,7 +2163,15 @@ mod device_tools {
         let fixture = DeviceToolsFixture::slow_boot().await;
         let call = tokio::spawn({
             let tools = fixture.tools.clone();
-            async move { tools.call("open", json!({"avdName": "Pixel"}), true).await }
+            async move {
+                tools
+                    .call(
+                        "open",
+                        json!({"avdName": "Pixel"}),
+                        CancellationToken::new(),
+                    )
+                    .await
+            }
         });
         tokio::time::sleep(Duration::from_millis(200)).await;
         fixture.fixture.enabled.send(false).unwrap();
@@ -2181,7 +2201,10 @@ mod device_tools {
     #[tokio::test]
     async fn device_call_when_disabled_is_a_tool_error() {
         let fixture = DeviceToolsFixture::disabled().await;
-        let result = fixture.tools.call("list", json!({}), true).await;
+        let result = fixture
+            .tools
+            .call("list", json!({}), CancellationToken::new())
+            .await;
         assert_eq!(
             result["structuredContent"]["error"]["_tag"],
             "DevicePreviewsDisabledError"
@@ -2192,17 +2215,108 @@ mod device_tools {
     async fn device_open_without_name_uses_the_only_avd_and_lists_choices_otherwise() {
         let one = DeviceToolsFixture::ready_sdk(&["Pixel"]).await;
         assert_eq!(
-            one.tools.call("open", json!({}), true).await["isError"],
+            one.tools
+                .call("open", json!({}), CancellationToken::new())
+                .await["isError"],
             false
         );
         let two = DeviceToolsFixture::ready_sdk(&["Pixel", "Tablet"]).await;
-        let result = two.tools.call("open", json!({}), true).await;
+        let result = two
+            .tools
+            .call("open", json!({}), CancellationToken::new())
+            .await;
         assert_eq!(result["isError"], true);
         assert!(
             result["content"][0]["text"]
                 .as_str()
                 .unwrap()
                 .contains("Pixel, Tablet")
+        );
+    }
+
+    fn text(result: &serde_json::Value) -> &str {
+        result["content"][0]["text"].as_str().unwrap()
+    }
+
+    #[tokio::test]
+    async fn device_open_reports_why_the_emulator_failed() {
+        let fixture = DeviceToolsFixture::new(
+            ManagerFixture::with_sdk(|sdk| {
+                sdk.avds(&["Pixel"])
+                    .launch_stub(LaunchStub::ExitsWith(1, "no acceleration"))
+            })
+            .await,
+        );
+        let result = fixture
+            .tools
+            .call("open", json!({}), CancellationToken::new())
+            .await;
+        assert_eq!(result["isError"], true);
+        assert!(
+            text(&result).starts_with("The device failed to start: "),
+            "{result}"
+        );
+        assert!(text(&result).contains("exited"), "{result}");
+    }
+
+    #[tokio::test]
+    async fn device_open_says_when_the_device_is_still_booting() {
+        let fixture = DeviceToolsFixture::slow_boot().await;
+        let tools = fixture
+            .tools
+            .clone()
+            .with_boot_timeout(Duration::from_millis(300));
+        let result = tools
+            .call("open", json!({}), CancellationToken::new())
+            .await;
+        assert_eq!(result["isError"], true);
+        assert!(text(&result).contains("still booting"), "{result}");
+        assert!(text(&result).contains("device_list"), "{result}");
+    }
+
+    #[tokio::test]
+    async fn device_open_returns_promptly_when_cancelled() {
+        let fixture = DeviceToolsFixture::slow_boot().await;
+        let cancellation = CancellationToken::new();
+        let call = tokio::spawn({
+            let (tools, cancellation) = (fixture.tools.clone(), cancellation.clone());
+            async move { tools.call("open", json!({}), cancellation).await }
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        cancellation.cancel();
+        let result = tokio::time::timeout(Duration::from_secs(2), call)
+            .await
+            .expect("returns promptly")
+            .unwrap();
+        assert_eq!(result["isError"], true);
+        assert!(text(&result).contains("cancelled"), "{result}");
+    }
+
+    #[tokio::test]
+    async fn non_string_arguments_are_invalid_input() {
+        let fixture = DeviceToolsFixture::ready_sdk(&["Pixel"]).await;
+        for (operation, arguments) in [
+            ("open", json!({"avdName": 7})),
+            ("screenshot", json!({"deviceId": ["x"]})),
+            ("close", json!({"deviceId": 1})),
+        ] {
+            let result = fixture
+                .tools
+                .call(operation, arguments, CancellationToken::new())
+                .await;
+            assert_eq!(
+                result["structuredContent"]["error"]["_tag"], "DeviceInputError",
+                "{operation}: {result}"
+            );
+        }
+        assert!(
+            fixture
+                .fixture
+                .manager
+                .catalog()
+                .borrow()
+                .devices
+                .is_empty()
         );
     }
 }

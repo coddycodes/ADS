@@ -1076,10 +1076,10 @@ impl ConnectMcpService {
                 .and_then(|value| value.get("arguments"))
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            // MCP credentials are issued per provider thread, and that thread already runs
-            // with operate rights; the credential carries no narrower scope to check.
+            // A valid MCP credential is the operate grant here, as for `preview_*`: see
+            // `DeviceTools`.
             return match &self.devices {
-                Some(devices) => devices.call(operation, arguments, true).await,
+                Some(devices) => devices.call(operation, arguments, cancellation).await,
                 None => tool_failure("McpUnknownToolError", "Unknown tool."),
             };
         }

@@ -1847,6 +1847,18 @@ bounded memory, and works while the server is stopped.
   server and crash monitor do not count. The passive installer's preinstall
   hook ends every same-user `bibcode-desktop.exe`, an MCP server included.
 
+## Android device previews
+
+`apps/server/src/device/` runs one Android emulator per environment while the
+`enableDevicePreviews` setting is on, and `device.*` RPC exposes it to clients.
+Coding agents reach the same device through four MCP tools on the provider MCP
+endpoint: `device_list`, `device_open`, `device_screenshot` (PNG, at most 1080 px
+wide), and `device_close`. They are listed and callable only while
+`DeviceManager::enabled()` is true; with the setting off the tools disappear
+from `tools/list` and a call fails with `DevicePreviewsDisabledError`. Like the
+`preview_*` tools, they run with the operate rights of the thread whose provider
+holds the MCP credential.
+
 ## Request and event flow
 
 1. The client runtime resolves a connection target and obtains any required
