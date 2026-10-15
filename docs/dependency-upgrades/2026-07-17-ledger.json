@@ -63,9 +63,9 @@
       "verificationDate": "2026-09-04",
       "status": "partial",
       "ledgerClosure": {
-        "rows": 232,
+        "rows": 240,
         "statuses": {
-          "green": 113,
+          "green": 121,
           "current": 73,
           "blocked": 42,
           "removed": 4
@@ -310,7 +310,7 @@
   "inventorySummary": {
     "javascriptDirect": 81,
     "javascriptLedger": 83,
-    "rustRegistry": 123,
+    "rustRegistry": 131,
     "rustPath": 3,
     "rustGit": 1,
     "actions": 9,
@@ -2987,6 +2987,102 @@
       "platforms": ["linux", "macos", "windows"],
       "status": "blocked",
       "notes": "Owned by third_party/portable-pty/Cargo.toml; update only with the vendored portable-pty release by following third_party/portable-pty/UPSTREAM.md."
+    },
+    {
+      "key": "rust:workspace:bytes",
+      "name": "bytes",
+      "current": "1.12.1",
+      "target": "1.12.1",
+      "channel": "stable",
+      "source": "https://crates.io/crates/bytes",
+      "cohort": "rust-device-previews",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "Already in the graph through hyper and tonic; a direct dependency for the zero-copy H.264 units the device media hub fans out to media sockets. Covered by the device::scrcpy and device::media tests."
+    },
+    {
+      "key": "rust:workspace:jpeg-encoder",
+      "name": "jpeg-encoder",
+      "current": "0.6",
+      "target": "0.6.1",
+      "channel": "stable",
+      "source": "https://crates.io/crates/jpeg-encoder",
+      "cohort": "rust-device-previews",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "Pure-Rust JPEG encoder for the device preview still-image stream (at most 720 px wide, quality 70); covered by the device::frames tests. Local encoding only."
+    },
+    {
+      "key": "rust:workspace:prost",
+      "name": "prost",
+      "current": "0.14",
+      "target": "0.14.4",
+      "channel": "stable",
+      "source": "https://crates.io/crates/prost",
+      "cohort": "rust-device-previews",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "Protobuf messages for the Android emulator's loopback gRPC control API; already in the graph. Covered by the device::grpc tests against the fake emulator service."
+    },
+    {
+      "key": "rust:workspace:protox",
+      "name": "protox",
+      "current": "0.9",
+      "target": "0.9.1",
+      "channel": "stable",
+      "source": "https://crates.io/crates/protox",
+      "cohort": "rust-device-previews",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "Build dependency: compiles the vendored emulator_controller.proto in pure Rust so the build needs no protoc."
+    },
+    {
+      "key": "rust:workspace:tokio-stream",
+      "name": "tokio-stream",
+      "current": "0.1",
+      "target": "0.1.19",
+      "channel": "stable",
+      "source": "https://crates.io/crates/tokio-stream",
+      "cohort": "rust-device-previews",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "Stream adapters for the emulator gRPC screenshot and input streams; covered by the device::grpc, device::frames, and device::input tests."
+    },
+    {
+      "key": "rust:workspace:tonic",
+      "name": "tonic",
+      "current": "0.14",
+      "target": "0.14.6",
+      "channel": "stable",
+      "source": "https://crates.io/crates/tonic",
+      "cohort": "rust-device-previews",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "gRPC client (default features off; router, transport, codegen) for the Android emulator control API on 127.0.0.1 only; the fake server in device::testing uses the router. No network beyond loopback and no telemetry."
+    },
+    {
+      "key": "rust:workspace:tonic-prost",
+      "name": "tonic-prost",
+      "current": "0.14",
+      "target": "0.14.6",
+      "channel": "stable",
+      "source": "https://crates.io/crates/tonic-prost",
+      "cohort": "rust-device-previews",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "Prost codec for tonic; generated emulator client code depends on it."
+    },
+    {
+      "key": "rust:workspace:tonic-prost-build",
+      "name": "tonic-prost-build",
+      "current": "0.14",
+      "target": "0.14.6",
+      "channel": "stable",
+      "source": "https://crates.io/crates/tonic-prost-build",
+      "cohort": "rust-device-previews",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "Build dependency: generates the emulator gRPC client from the protox-compiled descriptor set in apps/server/build.rs."
     }
   ]
 }
