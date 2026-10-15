@@ -1904,6 +1904,11 @@ that patches rebuild the server's snapshot exactly. Older clients omit
 `patches` and keep receiving whole snapshots; older servers ignore it.
 A thread stream ends with its first error, such as `Thread … was not found`
 for a missing or deleted thread, whose targeted load reads none of its rows.
+The client retries a failed `subscribeThread` or `subscribeActivity` with
+backoff starting at 250 ms, doubling to a 30 s cap, and resetting after the
+stream stays up for 30 s: a thread can appear just after its view subscribes,
+while a view of a deleted thread retried every 250 ms for as long as it stayed
+mounted (#113).
 Every shell snapshot, live or from `orchestration.getArchivedShellSnapshot`,
 is read in one SQLite job: projects, the undeleted live or archived threads
 whose project row exists, and per thread only its session, latest turn, the
