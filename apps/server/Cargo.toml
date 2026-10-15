@@ -91,6 +91,28 @@ tower.workspace = true
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
+# The iOS simulator backend loads CoreSimulator in-process; exact pins, see the dependency ledger.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "=0.6.2"
+dispatch2 = { version = "=0.3.1", default-features = false, features = ["std", "objc2"] }
+objc2 = { version = "=0.6.4", features = ["exception"] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = ["std"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "NSError",
+  "NSString",
+  "NSUUID",
+] }
+objc2-io-surface = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "IOSurfaceRef",
+  "IOSurfaceTypes",
+  "libc",
+  "objc2",
+  "objc2-core-foundation",
+] }
+png = "=0.18.1"
+
 [target.'cfg(windows)'.dependencies]
 junction.workspace = true
 windows-sys = { workspace = true, features = [

@@ -9,7 +9,12 @@ use std::{
 
 use tokio::sync::watch;
 
-use super::{IosBackend, IosBackendConfig, simctl::SimctlRunner};
+use super::{
+    IosBackend, IosBackendConfig,
+    guard::{GuardCache, GuardResult},
+    simctl::SimctlRunner,
+};
+use crate::device::catalog::AvailabilityKind;
 use crate::device::{DeviceManager, DeviceManagerConfig};
 
 /// The size of the JPEG every fake screenshot returns.
@@ -23,6 +28,7 @@ pub(crate) struct FakeXcrun {
     states: Vec<(String, String)>,
     boot_failure: Option<String>,
     help_failure: Option<String>,
+    bootstatus_blocks: bool,
 }
 
 impl FakeXcrun {
@@ -33,6 +39,7 @@ impl FakeXcrun {
             states: Vec::new(),
             boot_failure: None,
             help_failure: None,
+            bootstatus_blocks: false,
         }
     }
 
@@ -52,6 +59,12 @@ impl FakeXcrun {
     /// `simctl boot` prints `message` to stderr and exits 149.
     pub(crate) fn boot_fails(mut self, message: &str) -> Self {
         self.boot_failure = Some(message.to_owned());
+        self
+    }
+
+    /// `simctl bootstatus` never finishes, so a launch stays `Booting`.
+    pub(crate) fn bootstatus_blocks(mut self) -> Self {
+        self.bootstatus_blocks = true;
         self
     }
 
@@ -99,8 +112,13 @@ impl FakeXcrun {
             },
         );
         format!(
-            "#!/bin/sh\ndir=\"{dir}\"\nif [ \"$1\" = xcodebuild ]; then echo 'Xcode 27.0'; echo 'Build version 27A266a'; exit 0; fi\n[ \"$1\" = simctl ] && shift\necho \"$*\" >> \"$dir/calls\"\ncase \"$1\" in\n  help) {help} ;;\n  list) {list} ;;\n  boot) {boot} ;;\n  bootstatus) exit 0 ;;\n  shutdown) echo Shutdown > \"$dir/state/$2\" ;;\n  io) cat \"$dir/screenshot.jpg\" ;;\n  pbcopy) cat > \"$dir/pasteboard\" ;;\n  *) echo \"unknown simctl command $1\" >&2; exit 1 ;;\nesac\n",
-            list = self.list_script()
+            "#!/bin/sh\ndir=\"{dir}\"\nif [ \"$1\" = xcodebuild ]; then echo 'Xcode 27.0'; echo 'Build version 27A266a'; exit 0; fi\n[ \"$1\" = simctl ] && shift\necho \"$*\" >> \"$dir/calls\"\ncase \"$1\" in\n  help) {help} ;;\n  list) {list} ;;\n  boot) {boot} ;;\n  bootstatus) {bootstatus} ;;\n  shutdown) echo Shutdown > \"$dir/state/$2\" ;;\n  io) cp \"$dir/screenshot.jpg\" \"$5\" ;;\n  pbcopy) cat > \"$dir/pasteboard\" ;;\n  *) echo \"unknown simctl command $1\" >&2; exit 1 ;;\nesac\n",
+            list = self.list_script(),
+            bootstatus = if self.bootstatus_blocks {
+                "sleep 60"
+            } else {
+                "exit 0"
+            },
         )
     }
 
@@ -186,6 +204,11 @@ pub(crate) fn manager_for(runner: SimctlRunner) -> (DeviceManager, watch::Sender
     let backend = IosBackend::new(IosBackendConfig {
         runner,
         boot_timeout: Duration::from_secs(10),
+        // Never this Mac's frameworks: fake simulators open view-only.
+        guard: GuardCache::with_prober(Box::new(|_| GuardResult::ViewOnly {
+            kind: AvailabilityKind::XcodeUnsupported,
+            missing: "fake Xcode".to_owned(),
+        })),
     });
     let manager = DeviceManager::start(DeviceManagerConfig {
         backends: vec![Arc::new(backend)],

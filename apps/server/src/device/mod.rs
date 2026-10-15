@@ -9,6 +9,9 @@ pub mod frames;
 pub mod input;
 #[cfg(target_os = "macos")]
 pub(crate) mod ios;
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub use ios::host_manager_for_tests as ios_host_manager_for_tests;
 pub mod media;
 pub(crate) mod media_socket;
 pub(crate) mod stderr_tail;
@@ -87,6 +90,9 @@ pub enum DeviceOpError {
         "Video needs a signed-in session, and this server runs with --unsafe-no-auth, so the screen updates as still images. Restart the server without --unsafe-no-auth to show video."
     )]
     MediaUnavailable,
+    /// The device has no video; the message says why.
+    #[error("{0}")]
+    NoVideo(String),
 }
 
 fn unknown_image_message(platform: Platform, image_id: &str) -> String {
@@ -98,6 +104,16 @@ fn unknown_image_message(platform: Platform, image_id: &str) -> String {
             "No simulator with id \"{image_id}\" exists on the server. Choose one from the device list."
         ),
     }
+}
+
+/// Whether a platform's devices can open: ready, or view-only (screenshots without input).
+fn opens(kind: AvailabilityKind) -> bool {
+    matches!(
+        kind,
+        AvailabilityKind::Ready
+            | AvailabilityKind::XcodeUnsupported
+            | AvailabilityKind::ViewOnlyHeadless
+    )
 }
 
 fn not_ready_message(state: DeviceState) -> &'static str {
@@ -156,7 +172,7 @@ impl DeviceOpError {
                 "_tag": "DeviceEmulatorError",
                 "message": message,
             }),
-            Self::MediaUnavailable => serde_json::json!({
+            Self::MediaUnavailable | Self::NoVideo(_) => serde_json::json!({
                 "_tag": "DeviceMediaUnavailableError",
                 "message": message,
             }),
@@ -318,10 +334,10 @@ impl DeviceManager {
         // A platform this server has no backend for has no images.
         let entry = self.inner.backend(platform).ok_or_else(unknown)?;
         let mut found = self.inner.discover(entry, false).await;
-        if found.found.availability.kind != AvailabilityKind::Ready || !found.lists(image_id) {
+        if !opens(found.found.availability.kind) || !found.lists(image_id) {
             found = self.inner.discover(entry, true).await;
         }
-        if found.found.availability.kind != AvailabilityKind::Ready {
+        if !opens(found.found.availability.kind) {
             return Err(DeviceOpError::Sdk(found.found.availability));
         }
         let Some(display_name) = found.display_name(image_id) else {
@@ -449,7 +465,7 @@ impl DeviceManager {
         device.png(width.min(max_width)).await.map_err(|error| {
             tracing::warn!(%error, "device screenshot failed");
             DeviceOpError::Emulator(
-                "The emulator did not return a screenshot. Try again in a moment.".into(),
+                "The device did not return a screenshot. Try again in a moment.".into(),
             )
         })
     }
@@ -664,11 +680,16 @@ impl Inner {
 
     /// Ends a device whose emulator process is already gone in `state`.
     fn finish(&self, device_id: &str, state: DeviceState, failure: Option<String>) {
+        let mut reaped = None;
         self.update(device_id, |slot| {
             slot.snapshot.state = state;
             slot.snapshot.failure = failure;
-            slot.reaped.cancel();
+            reaped = Some(slot.reaped.clone());
         });
+        // After the catalog shows the end, so a `close` that returns sees it there.
+        if let Some(reaped) = reaped {
+            reaped.cancel();
+        }
     }
 
     async fn launch(
@@ -693,6 +714,7 @@ impl Inner {
             Ok(running) => {
                 let (width, height) = running.native_size();
                 let can_rotate = running.can_rotate();
+                let orientation_changes = running.orientation_changes();
                 let unwanted = {
                     let mut table = self.table();
                     match table.slots.get_mut(&device_id) {
@@ -716,6 +738,14 @@ impl Inner {
                 match unwanted {
                     None => {
                         record_lifecycle("ready", started, None);
+                        if let Some(changes) = orientation_changes {
+                            self.tasks.spawn(self.clone().follow_orientation(
+                                device_id.clone(),
+                                (width, height),
+                                changes,
+                                cancel.clone(),
+                            ));
+                        }
                         self.tasks
                             .spawn(self.clone().watch_exit(device_id, cancel.clone()));
                     }
@@ -739,6 +769,29 @@ impl Inner {
         let (failure_kind, failure) = launch_failure(&error);
         self.finish(&device_id, DeviceState::Failed, Some(failure));
         record_lifecycle("fail", started, Some(failure_kind));
+    }
+
+    /// Shows each orientation a running device reports, with its display size in it, until
+    /// the device stops.
+    async fn follow_orientation(
+        self: Arc<Self>,
+        device_id: String,
+        native: (u32, u32),
+        mut changes: futures_util::stream::BoxStream<'static, Orientation>,
+        cancel: CancellationToken,
+    ) {
+        use futures_util::StreamExt as _;
+        loop {
+            let orientation = tokio::select! {
+                () = cancel.cancelled() => return,
+                next = changes.next() => match next {
+                    Some(orientation) => orientation,
+                    None => return,
+                },
+            };
+            let (width, height) = oriented_size(native.0, native.1, orientation);
+            self.set_reported_orientation(&device_id, orientation, width, height);
+        }
     }
 
     /// Polls a `Ready` device; an exit nobody asked for fails the device.
@@ -1600,5 +1653,71 @@ mod platform_tests {
             launch_failure(&LaunchFailure::Busy),
             ("busy", "in use outside BiBCode".to_owned())
         );
+    }
+
+    #[tokio::test]
+    async fn the_catalog_follows_an_orientation_the_device_reports_without_frames() {
+        let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
+        let turn = ios.reports_orientation();
+        let (manager, _enabled) = fake_manager(vec![ios]);
+        let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        wait_state(&manager, &id, DeviceState::Ready).await;
+        turn.send_replace(Orientation::Landscape);
+        let mut catalog = manager.catalog();
+        let landscape = tokio::time::timeout(
+            Duration::from_secs(10),
+            catalog.wait_for(|catalog| {
+                catalog
+                    .devices
+                    .iter()
+                    .any(|device| device.orientation == Orientation::Landscape)
+            }),
+        )
+        .await
+        .expect("the reported turn reaches the catalog")
+        .unwrap()
+        .devices[0]
+            .clone();
+        let (width, height) = crate::device::fake_backend::FAKE_SIZE;
+        assert_eq!(
+            (landscape.width, landscape.height),
+            (Some(height), Some(width))
+        );
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_device_without_video_refuses_media_tickets_at_once() {
+        let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
+        ios.without_video("Video is off: this simulator runs view-only.");
+        let (manager, _enabled) = fake_manager(vec![ios]);
+        let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        wait_state(&manager, &id, DeviceState::Ready).await;
+        let refused = manager
+            .create_media_ticket(&id, "session", media::MediaChannel::Plain)
+            .unwrap_err();
+        assert_eq!(
+            refused.to_rpc_error(),
+            serde_json::json!({
+                "_tag": "DeviceMediaUnavailableError",
+                "message": "Video is off: this simulator runs view-only.",
+            })
+        );
+        manager.shutdown().await;
+    }
+
+    #[test]
+    fn view_only_platforms_open_and_others_do_not() {
+        assert!(opens(AvailabilityKind::Ready));
+        assert!(opens(AvailabilityKind::XcodeUnsupported));
+        assert!(opens(AvailabilityKind::ViewOnlyHeadless));
+        for kind in [
+            AvailabilityKind::XcodeMissing,
+            AvailabilityKind::XcodeSetupIncomplete,
+            AvailabilityKind::NoSimulators,
+            AvailabilityKind::SdkMissing,
+        ] {
+            assert!(!opens(kind), "{kind:?}");
+        }
     }
 }

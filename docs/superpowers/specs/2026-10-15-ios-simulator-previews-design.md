@@ -146,6 +146,10 @@ this subsection. Anything marked UNCONFIRMED was not observed here.
   - `frameCallback` fired 130 times in 5 s during an app launch.
   - All three callbacks run on the supplied queue.
   - Unregister with `unregisterScreenCallbacksWithUUID:` (`v24@0:8@16`).
+  - Correction (Task 6): CoreSimulator sends the blocks over XPC and raises
+    `NSInternalInconsistencyException` ("Block is missing signature field")
+    for a block without a signature. Give each block its signature:
+    `v8@?0`, `v24@?0@8@16` and `v16@?0@8`.
 - **Old-style fallback (`SimDisplayRenderable` /
   `SimDisplayIOSurfaceRenderable`):**
   - `registerCallbackWithUUID:damageRectanglesCallback:` (`v32@0:8@16@?24`)
@@ -532,8 +536,10 @@ Amended after the spikes (§0 Results); §0 names every call.
 - **JPEG.** `snapshot_jpeg` locks the current surface, honors its row stride,
   rotates, and encodes with `jpeg-encoder` (already a dependency) at the
   requested width. In view-only mode it uses
-  `xcrun simctl io <udid> screenshot --type=jpeg -` instead, which is already
-  rotated.
+  `xcrun simctl io <udid> screenshot --type=jpeg <file>` instead, which is
+  already rotated. (Correction, Task 6: Xcode 27 no longer writes screenshots
+  to stdout; `-` becomes a file named `-`, so the server writes a temporary
+  file and reads it.)
 - **Threading and exceptions.**
   - Callbacks run on a private serial dispatch queue and hand work to Tokio
     through bounded channels. No Tokio runtime call happens on a dispatch

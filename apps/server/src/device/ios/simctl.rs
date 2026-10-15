@@ -197,6 +197,21 @@ pub(crate) fn jpeg_size(jpeg: &[u8]) -> Option<(u32, u32)> {
     }
 }
 
+/// The screenshot `simctl` wrote to `path`, refused when it is larger than one full-size
+/// JPEG should be.
+async fn read_screenshot(path: &std::path::Path) -> Result<Vec<u8>, SimctlError> {
+    let unreadable = |error: std::io::Error| {
+        SimctlError::Parse(format!("could not read the simulator screenshot: {error}"))
+    };
+    let size = tokio::fs::metadata(path).await.map_err(unreadable)?.len();
+    if size > SCREENSHOT_MAX_OUTPUT_BYTES as u64 {
+        return Err(SimctlError::Parse(format!(
+            "the simulator screenshot is larger than {SCREENSHOT_MAX_OUTPUT_BYTES} bytes"
+        )));
+    }
+    tokio::fs::read(path).await.map_err(unreadable)
+}
+
 /// Runs `xcrun simctl` and `xcode-select` for the iOS backend.
 #[derive(Clone)]
 pub(crate) struct SimctlRunner {
@@ -250,14 +265,32 @@ impl SimctlRunner {
         Ok(())
     }
 
+    /// A JPEG screenshot. Xcode 27's `simctl io screenshot` no longer writes to stdout (it
+    /// takes `-` as a file name), so it writes to a temporary file that is read and removed.
     pub(crate) async fn screenshot_jpeg(&self, udid: &str) -> Result<Vec<u8>, SimctlError> {
-        self.simctl(
-            &["io", udid, "screenshot", "--type=jpeg", "-"],
-            None,
-            SCREENSHOT_TIMEOUT,
-            SCREENSHOT_MAX_OUTPUT_BYTES,
-        )
-        .await
+        let path = std::env::temp_dir().join(format!(
+            "bibcode-simulator-{}.jpg",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let target = path.to_string_lossy().into_owned();
+        let taken = self
+            .simctl(
+                &["io", udid, "screenshot", "--type=jpeg", &target],
+                None,
+                SCREENSHOT_TIMEOUT,
+                SMALL_OUTPUT_BYTES,
+            )
+            .await;
+        let read = match taken {
+            Ok(_) => read_screenshot(&path).await,
+            Err(error) => Err(error),
+        };
+        if let Err(error) = tokio::fs::remove_file(&path).await
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(%error, "could not remove a simulator screenshot");
+        }
+        read
     }
 
     /// Puts `text` on the simulator's pasteboard.
@@ -447,8 +480,26 @@ fn run_error(command: &str, error: SupervisedRunError) -> SimctlError {
         },
         other => SimctlError::Spawn {
             command,
-            message: format!("{other:?}"),
+            message: run_failure(&other),
         },
+    }
+}
+
+/// What went wrong with a child that did start, in words.
+fn run_failure(error: &SupervisedRunError) -> String {
+    match error {
+        SupervisedRunError::Spawn(error) => error.to_string(),
+        SupervisedRunError::Pipe { stream } => format!("its {stream} was not available"),
+        SupervisedRunError::Stdin(error) => format!("could not write its input: {error}"),
+        SupervisedRunError::Read { stream, source } => {
+            format!("could not read its {stream}: {source}")
+        }
+        SupervisedRunError::OutputLimit {
+            stream, max_bytes, ..
+        } => format!("its {stream} was larger than {max_bytes} bytes"),
+        SupervisedRunError::Timeout => "it timed out".to_owned(),
+        SupervisedRunError::Cancelled => "it was cancelled".to_owned(),
+        SupervisedRunError::Wait(error) => format!("could not wait for it: {error}"),
     }
 }
 
@@ -553,17 +604,23 @@ mod tests {
         let jpeg = runner.screenshot_jpeg("UDID-1").await.unwrap();
         assert_eq!(jpeg_size(&jpeg), Some(SCREEN));
         runner.shutdown("UDID-1").await.unwrap();
+        let calls = sim.calls();
         assert_eq!(
-            sim.calls(),
+            calls[..4],
             [
                 "boot UDID-1",
                 "bootstatus UDID-1 -b",
                 "list devices available -j",
                 "pbcopy UDID-1",
-                "io UDID-1 screenshot --type=jpeg -",
-                "shutdown UDID-1",
             ]
         );
+        // A file, not stdout, which Xcode 27 no longer writes to; it is removed after.
+        let screenshot = calls[4]
+            .strip_prefix("io UDID-1 screenshot --type=jpeg ")
+            .expect("a screenshot call");
+        assert!(screenshot.ends_with(".jpg"));
+        assert!(!std::path::Path::new(screenshot).exists());
+        assert_eq!(calls[5], "shutdown UDID-1");
     }
 
     #[tokio::test]
@@ -586,6 +643,33 @@ mod tests {
             sim.calls()
                 .iter()
                 .all(|call| !call.starts_with("bootstatus"))
+        );
+    }
+
+    #[test]
+    fn run_errors_read_as_words() {
+        let error = run_error(
+            "simctl io",
+            SupervisedRunError::OutputLimit {
+                stream: "stdout",
+                max_bytes: 10,
+                observed_bytes: 11,
+            },
+        );
+        assert_eq!(
+            error.to_string(),
+            "could not run simctl io: its stdout was larger than 10 bytes"
+        );
+        let error = run_error(
+            "simctl list",
+            SupervisedRunError::Read {
+                stream: "stderr",
+                source: std::io::Error::other("broken pipe"),
+            },
+        );
+        assert_eq!(
+            error.to_string(),
+            "could not run simctl list: could not read its stderr: broken pipe"
         );
     }
 

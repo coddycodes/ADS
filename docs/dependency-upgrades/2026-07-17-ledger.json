@@ -310,7 +310,7 @@
   "inventorySummary": {
     "javascriptDirect": 81,
     "javascriptLedger": 83,
-    "rustRegistry": 131,
+    "rustRegistry": 138,
     "rustPath": 3,
     "rustGit": 1,
     "actions": 9,
@@ -3083,6 +3083,90 @@
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
       "notes": "Build dependency: generates the emulator gRPC client from the protox-compiled descriptor set in apps/server/build.rs."
+    },
+    {
+      "key": "rust:apps/server:block2",
+      "name": "block2",
+      "current": "=0.6.2",
+      "target": "0.6.2",
+      "channel": "stable",
+      "source": "https://crates.io/crates/block2",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "Objective-C blocks for the CoreSimulator SimScreen callbacks, built with explicit block signatures because CoreSimulator sends them over XPC. Exact pin, released 2025-10-04 (at least 14 days before 2026-10-15); macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
+    },
+    {
+      "key": "rust:apps/server:dispatch2",
+      "name": "dispatch2",
+      "current": "=0.3.1",
+      "target": "0.3.1",
+      "channel": "stable",
+      "source": "https://crates.io/crates/dispatch2",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "The private serial dispatch queue the SimScreen callbacks run on. Exact pin, released 2026-02-26 (at least 14 days before 2026-10-15); macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
+    },
+    {
+      "key": "rust:apps/server:objc2",
+      "name": "objc2",
+      "current": "=0.6.4",
+      "target": "0.6.4",
+      "channel": "stable",
+      "source": "https://crates.io/crates/objc2",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "Objective-C runtime access for the in-process CoreSimulator loader; the exception feature catches every Objective-C exception before it reaches Rust. 0.6.5 (2026-10-05) is younger than the 14-day rule allows. Exact pin, released 2026-02-26 (at least 14 days before 2026-10-15); macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
+    },
+    {
+      "key": "rust:apps/server:objc2-core-foundation",
+      "name": "objc2-core-foundation",
+      "current": "=0.3.2",
+      "target": "0.3.2",
+      "channel": "stable",
+      "source": "https://crates.io/crates/objc2-core-foundation",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "CFRetained ownership and type checks for the simulator framebuffer IOSurface. Exact pin, released 2025-10-04 (at least 14 days before 2026-10-15); macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
+    },
+    {
+      "key": "rust:apps/server:objc2-foundation",
+      "name": "objc2-foundation",
+      "current": "=0.3.2",
+      "target": "0.3.2",
+      "channel": "stable",
+      "source": "https://crates.io/crates/objc2-foundation",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "NSString, NSUUID and NSError for the CoreSimulator device lookup and callback registration. Exact pin, released 2025-10-04 (at least 14 days before 2026-10-15); macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
+    },
+    {
+      "key": "rust:apps/server:objc2-io-surface",
+      "name": "objc2-io-surface",
+      "current": "=0.3.2",
+      "target": "0.3.2",
+      "channel": "stable",
+      "source": "https://crates.io/crates/objc2-io-surface",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "Locks and reads the simulator framebuffer IOSurface (BGRA, padded rows) for live JPEG and PNG frames. Exact pin, released 2025-10-04 (at least 14 days before 2026-10-15); macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
+    },
+    {
+      "key": "rust:apps/server:png",
+      "name": "png",
+      "current": "=0.18.1",
+      "target": "0.18.1",
+      "channel": "stable",
+      "source": "https://crates.io/crates/png",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "PNG encoding of live iOS simulator screenshots for the MCP screenshot tool; already in Cargo.lock through other dependencies. Exact pin, released 2026-02-14 (at least 14 days before 2026-10-15); macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
     }
   ]
 }

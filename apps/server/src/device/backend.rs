@@ -35,6 +35,7 @@ pub(crate) enum LaunchFailure {
 }
 
 /// One encoded JPEG from a device, before the hub numbers it.
+#[derive(Clone)]
 pub(crate) struct RawJpeg {
     pub jpeg: Vec<u8>,
     pub width: u32,
@@ -95,6 +96,17 @@ pub(crate) trait RunningDevice: Send + Sync + 'static {
     fn png(&self, max_width: u32) -> BoxFuture<'_, Result<Png, DeviceError>>;
     /// Starts an H.264 source for the media hub.
     fn video(&self) -> BoxFuture<'_, Result<Box<dyn ErasedVideoSource>, DeviceError>>;
+    /// Why this device has no video, so a media ticket is refused at once and the client
+    /// shows still images; `None` when [`video`](Self::video) can start.
+    fn video_unavailable(&self) -> Option<String> {
+        None
+    }
+    /// Each orientation the device reports, starting with the current one, for a device
+    /// that reports turns on its own; the manager follows it into the catalog while the
+    /// device runs. `None` for devices whose frames and `rotate` report it.
+    fn orientation_changes(&self) -> Option<BoxStream<'static, Orientation>> {
+        None
+    }
     /// Sends one validated batch in order. `orientation` is the catalog's current one.
     fn input(
         &self,

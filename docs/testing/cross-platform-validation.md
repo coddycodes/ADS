@@ -2987,7 +2987,17 @@ vp test run packages/contracts/src/device.test.ts packages/client-runtime/src/de
 
 The fakes stand in for `emulator`, `adb`, the emulator gRPC service, and
 scrcpy-server, so these tests prove BiBCode's side of each boundary but not the
-real tools. Run the
+real tools. On a Mac with Xcode and a `Shutdown` iPhone simulator, also run
+the opt-in real-simulator tests, which boot it through CoreSimulator, check
+live frames, and shut it down again (`BIBCODE_IOS_SIM_UDID` picks the
+simulator):
+
+```sh
+BIBCODE_IOS_SIM_TESTS=1 cargo test -p bibcode-server --test ios_simulator -- --nocapture
+xcrun simctl list devices | grep Booted   # nothing the test booted is left running
+```
+
+Run the
 [media interop suite](#direct-e2ee-interop-gate) when the media routes or
 their client change. Everything below needs a real Android SDK.
 

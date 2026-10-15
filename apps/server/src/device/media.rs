@@ -674,7 +674,11 @@ impl DeviceManager {
         if !self.enabled() {
             return Err(DeviceOpError::Disabled);
         }
-        self.inner.running(device_id)?;
+        let (device, _) = self.inner.running(device_id)?;
+        if let Some(reason) = device.video_unavailable() {
+            return Err(DeviceOpError::NoVideo(reason));
+        }
+        drop(device);
         let issued_ms = now_ms();
         let (ticket, _) = self
             .inner

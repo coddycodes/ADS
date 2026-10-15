@@ -1,6 +1,13 @@
-//! The iOS backend (macOS only): simulator discovery and lifecycle through `xcrun simctl`.
-//! Simulators run view-only: `simctl` screenshots, no touch input, no video, no rotation.
+//! The iOS backend (macOS only): simulator discovery and lifecycle through `xcrun simctl`,
+//! and the screen through CoreSimulator loaded in-process (`coresim`).
+//!
+//! When the private-API guard finds every name it needs, a booted simulator runs live: its
+//! frames come from the framebuffer as it changes, and its orientation reaches the catalog
+//! as the simulator reports it. Otherwise it runs view-only on `simctl` screenshots, and
+//! input and video are refused with the reason.
+pub(crate) mod coresim;
 pub(crate) mod guard;
+pub(crate) mod pixels;
 pub(crate) mod simctl;
 #[cfg(test)]
 pub(crate) mod testing;
@@ -15,11 +22,16 @@ use std::{
     time::Duration,
 };
 
-use futures_util::{StreamExt as _, future::BoxFuture};
+use futures_util::{
+    StreamExt as _,
+    future::BoxFuture,
+    stream::{self, BoxStream},
+};
 use tokio_util::sync::CancellationToken;
 
 use self::{
-    guard::{availability_for, xcode_status},
+    coresim::{CoreSim, Screen},
+    guard::{GuardCache, GuardResult, XcodeCache, availability_for},
     simctl::{SIMULATOR_LABEL, SimDevice, SimState, SimctlError, SimctlRunner, SimulatorProcess},
 };
 use super::{
@@ -29,6 +41,7 @@ use super::{
         RawJpeg, RunningDevice,
     },
     catalog::{Availability, AvailabilityKind, DeviceState, Image, Orientation, Platform},
+    frames::{JPEG_MIN_INTERVAL, encode_rgb888},
     input::DeviceInputEvent,
 };
 use crate::diagnostics::ProcessAttributionRegistry;
@@ -41,8 +54,17 @@ const STATE_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const SCREENSHOT_INTERVAL: Duration = Duration::from_millis(500);
 /// Screenshots tried after boot before the simulator counts as unresponsive.
 const FIRST_SCREENSHOT_ATTEMPTS: u32 = 5;
-/// Why touch input is off until live mode exists.
-const VIEW_ONLY_REASON: &str = "live input is not available yet";
+/// A live screen that has not changed for this long sends its last frame again, so a new
+/// subscriber gets a picture.
+const LIVE_REPEAT_INTERVAL: Duration = Duration::from_secs(1);
+/// Why a simulator whose screen BiBCode could not attach runs view-only.
+const ATTACH_FAILED_REASON: &str = "BiBCode could not attach to this simulator's screen.";
+/// Live simulators refuse input until live input exists (Task 8).
+const LIVE_INPUT_PENDING: &str =
+    "Input to iOS simulators is not available in this version of BiBCode yet.";
+/// Live simulators have no video until the encoder exists (Task 7); the client shows the
+/// live JPEG frames instead.
+const LIVE_VIDEO_PENDING: &str = "Video from iOS simulators is not available in this version of BiBCode yet, so the screen updates as still images.";
 pub(crate) const EXTERNAL_SHUTDOWN: &str = "Shutdown outside BiBCode";
 pub(crate) const EXTERNAL_DELETE: &str = "Deleted outside BiBCode";
 
@@ -53,6 +75,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 pub(crate) struct IosBackendConfig {
     pub runner: SimctlRunner,
     pub boot_timeout: Duration,
+    pub guard: GuardCache,
 }
 
 impl IosBackendConfig {
@@ -65,6 +88,11 @@ impl IosBackendConfig {
         } else {
             PathBuf::from("/usr/bin")
         };
+        Self::with_tools(bin, registry)
+    }
+
+    /// The tools in `bin` and this Mac's simulator frameworks.
+    fn with_tools(bin: PathBuf, registry: ProcessAttributionRegistry) -> Self {
         Self {
             runner: SimctlRunner {
                 xcrun: bin.join("xcrun"),
@@ -72,14 +100,25 @@ impl IosBackendConfig {
                 registry,
             },
             boot_timeout: DEFAULT_BOOT_TIMEOUT,
+            guard: GuardCache::new(),
         }
     }
+}
+
+/// How the next simulator opens, from the last discovery.
+#[derive(Clone)]
+enum LaunchMode {
+    Live(Arc<CoreSim>),
+    ViewOnly { reason: String },
 }
 
 /// The Mac's iOS simulators.
 pub(crate) struct IosBackend {
     runner: Arc<SimctlRunner>,
     boot_timeout: Duration,
+    xcode: XcodeCache,
+    guard: Arc<GuardCache>,
+    mode: Mutex<LaunchMode>,
     /// UDIDs BiBCode booted and has not shut down; only those are never `in_use_elsewhere`.
     booted: Arc<Mutex<HashSet<String>>>,
 }
@@ -89,6 +128,11 @@ impl IosBackend {
         Self {
             runner: Arc::new(config.runner),
             boot_timeout: config.boot_timeout,
+            xcode: XcodeCache::default(),
+            guard: Arc::new(config.guard),
+            mode: Mutex::new(LaunchMode::ViewOnly {
+                reason: ATTACH_FAILED_REASON.to_owned(),
+            }),
             booted: Arc::default(),
         }
     }
@@ -110,6 +154,22 @@ impl IosBackend {
         lock(&self.booted).remove(udid);
     }
 
+    /// The private-API guard's result for `status`; it loads frameworks, so it runs on a
+    /// blocking thread.
+    async fn guard(&self, status: &guard::XcodeStatus) -> GuardResult {
+        let cache = self.guard.clone();
+        let status = status.clone();
+        tokio::task::spawn_blocking(move || cache.get(&status))
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "the simulator framework guard did not finish");
+                GuardResult::ViewOnly {
+                    kind: AvailabilityKind::XcodeUnsupported,
+                    missing: "guard".to_owned(),
+                }
+            })
+    }
+
     async fn launch_inner(
         &self,
         udid: &str,
@@ -129,6 +189,7 @@ impl IosBackend {
         if device.state != SimState::Shutdown {
             return Err(LaunchFailure::Busy);
         }
+        let mode = lock(&self.mode).clone();
         lock(&self.booted).insert(udid.to_owned());
         on_phase(DeviceState::Booting);
         let booted = tokio::select! {
@@ -154,12 +215,12 @@ impl IosBackend {
                 return Err(LaunchFailure::Cancelled);
             }
         }
-        let native = tokio::select! {
+        let display = tokio::select! {
             () = cancel.cancelled() => Err(LaunchFailure::Cancelled),
-            native = self.first_screenshot_size(udid) => native,
+            display = self.attach_display(udid, mode) => display,
         };
-        let native = match native {
-            Ok(native) => native,
+        let (native, display) = match display {
+            Ok(display) => display,
             Err(error) => {
                 self.shut_down_own(udid).await;
                 return Err(error);
@@ -169,10 +230,39 @@ impl IosBackend {
         Ok(Box::new(RunningSimulator::start(
             udid.to_owned(),
             native,
+            display,
             self.runner.clone(),
             self.booted.clone(),
             process,
         )))
+    }
+
+    /// The booted simulator's screen: live through CoreSimulator when the guard allows it
+    /// and the screen attaches, otherwise `simctl` screenshots. Returns its portrait size.
+    async fn attach_display(
+        &self,
+        udid: &str,
+        mode: LaunchMode,
+    ) -> Result<((u32, u32), Display), LaunchFailure> {
+        let reason = match mode {
+            LaunchMode::Live(sim) => {
+                let owned = udid.to_owned();
+                let attached = tokio::task::spawn_blocking(move || Screen::attach(&sim, &owned))
+                    .await
+                    .map_err(|error| DeviceError::Protocol(error.to_string()))
+                    .and_then(|attached| attached);
+                match attached {
+                    Ok(screen) => return Ok((screen.size(), Display::Live(Arc::new(screen)))),
+                    Err(error) => {
+                        tracing::warn!(%error, "could not attach to the simulator's screen; it runs view-only");
+                        ATTACH_FAILED_REASON.to_owned()
+                    }
+                }
+            }
+            LaunchMode::ViewOnly { reason } => reason,
+        };
+        let native = self.first_screenshot_size(udid).await?;
+        Ok((native, Display::ViewOnly { reason }))
     }
 
     /// The native screen size, from the first screenshot that succeeds.
@@ -212,8 +302,9 @@ impl DeviceBackend for IosBackend {
 
     fn discover(&self) -> BoxFuture<'_, PlatformDiscovery> {
         Box::pin(async move {
-            let status = xcode_status(&self.runner).await;
-            let devices = if matches!(status, guard::XcodeStatus::Ready { .. }) {
+            let status = self.xcode.status(&self.runner).await;
+            let ready = matches!(status, guard::XcodeStatus::Ready { .. });
+            let devices = if ready {
                 match self.runner.list().await {
                     Ok(devices) => devices,
                     Err(error) => {
@@ -224,10 +315,21 @@ impl DeviceBackend for IosBackend {
             } else {
                 Vec::new()
             };
-            let availability = availability_for(&status, &devices);
+            let guard = if ready {
+                Some(self.guard(&status).await)
+            } else {
+                None
+            };
+            let availability = availability_for(&status, &devices, guard.as_ref());
             if availability.kind != AvailabilityKind::Ready {
-                tracing::debug!(kind = ?availability.kind, "ios simulators unavailable");
+                tracing::debug!(kind = ?availability.kind, "ios simulators are unavailable or view-only");
             }
+            *lock(&self.mode) = match guard {
+                Some(GuardResult::Live(sim)) => LaunchMode::Live(sim),
+                _ => LaunchMode::ViewOnly {
+                    reason: availability.message.clone(),
+                },
+            };
             PlatformDiscovery {
                 availability,
                 images: devices.iter().map(|device| self.image(device)).collect(),
@@ -263,7 +365,15 @@ impl DeviceBackend for IosBackend {
     }
 }
 
-/// A simulator BiBCode booted, seen through `simctl` screenshots.
+/// How a running simulator's screen is read.
+enum Display {
+    /// Frames from the framebuffer through CoreSimulator.
+    Live(Arc<Screen>),
+    /// `simctl` screenshots; input and video are refused for `reason`.
+    ViewOnly { reason: String },
+}
+
+/// A simulator BiBCode booted.
 struct RunningSimulator {
     shared: Arc<Shared>,
 }
@@ -271,6 +381,7 @@ struct RunningSimulator {
 struct Shared {
     udid: String,
     native: (u32, u32),
+    display: Display,
     runner: Arc<SimctlRunner>,
     booted: Arc<Mutex<HashSet<String>>>,
     /// Why the simulator ended without BiBCode asking; set by the state poll.
@@ -287,6 +398,7 @@ impl RunningSimulator {
     fn start(
         udid: String,
         native: (u32, u32),
+        display: Display,
         runner: Arc<SimctlRunner>,
         booted: Arc<Mutex<HashSet<String>>>,
         process: Option<SimulatorProcess>,
@@ -294,6 +406,7 @@ impl RunningSimulator {
         let shared = Arc::new(Shared {
             udid,
             native,
+            display,
             runner,
             booted,
             exit: Mutex::new(None),
@@ -355,6 +468,13 @@ impl Shared {
         if let Some(task) = task {
             let _ = task.await;
         }
+        // The screen's callbacks go before the simulator does.
+        if let Display::Live(screen) = &self.display {
+            let screen = screen.clone();
+            if let Err(error) = tokio::task::spawn_blocking(move || screen.detach()).await {
+                tracing::warn!(%error, "could not detach from the simulator's screen");
+            }
+        }
         if let Some(mut process) = lock(&self.process).take() {
             process.unregister();
         }
@@ -383,6 +503,92 @@ impl Shared {
     }
 }
 
+/// The live screen's current frame as a JPEG at most `max_width` wide. Reads about 12 MB
+/// and encodes, so it runs on a blocking thread.
+async fn live_jpeg(screen: Arc<Screen>, max_width: u32) -> Result<RawJpeg, DeviceError> {
+    tokio::task::spawn_blocking(move || {
+        let frame = screen.read_rgb(max_width)?;
+        Ok(RawJpeg {
+            jpeg: encode_rgb888(&frame.rgb, frame.width, frame.height)?,
+            width: frame.width,
+            height: frame.height,
+            orientation: frame.orientation.orientation(),
+        })
+    })
+    .await
+    .map_err(|error| DeviceError::Protocol(error.to_string()))?
+}
+
+/// The live screen's current frame as a PNG at most `max_width` wide.
+async fn live_png(screen: Arc<Screen>, max_width: u32) -> Result<Png, DeviceError> {
+    tokio::task::spawn_blocking(move || {
+        let frame = screen.read_rgb(max_width)?;
+        let mut png = Vec::new();
+        let mut encoder = png::Encoder::new(&mut png, frame.width, frame.height);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        let encode_error = |error: png::EncodingError| DeviceError::Protocol(error.to_string());
+        let mut writer = encoder.write_header().map_err(encode_error)?;
+        writer.write_image_data(&frame.rgb).map_err(encode_error)?;
+        writer.finish().map_err(encode_error)?;
+        Ok(Png {
+            png,
+            mime_type: "image/png",
+            width: frame.width,
+            height: frame.height,
+            orientation: frame.orientation.orientation(),
+        })
+    })
+    .await
+    .map_err(|error| DeviceError::Protocol(error.to_string()))?
+}
+
+/// Frames of a live screen: one per change, at most one per [`JPEG_MIN_INTERVAL`], and the
+/// last one again after [`LIVE_REPEAT_INTERVAL`] without a change. It ends after an error;
+/// the frame producer reopens it.
+fn live_frames(screen: Arc<Screen>, max_width: u32) -> JpegStream {
+    struct State {
+        screen: Arc<Screen>,
+        damage: tokio::sync::watch::Receiver<u64>,
+        last: Option<RawJpeg>,
+        sent: Option<tokio::time::Instant>,
+        failed: bool,
+    }
+    let mut damage = screen.damage();
+    // The first frame goes out at once.
+    damage.mark_changed();
+    let state = State {
+        screen,
+        damage,
+        last: None,
+        sent: None,
+        failed: false,
+    };
+    stream::unfold(state, move |mut state| async move {
+        if state.failed {
+            return None;
+        }
+        if let Some(sent) = state.sent {
+            tokio::time::sleep_until(sent + JPEG_MIN_INTERVAL).await;
+        }
+        let changed = tokio::time::timeout(LIVE_REPEAT_INTERVAL, state.damage.changed()).await;
+        state.damage.borrow_and_update();
+        state.sent = Some(tokio::time::Instant::now());
+        if changed.is_err()
+            && let Some(last) = &state.last
+        {
+            return Some((Ok(last.clone()), state));
+        }
+        let frame = live_jpeg(state.screen.clone(), max_width).await;
+        match &frame {
+            Ok(frame) => state.last = Some(frame.clone()),
+            Err(_) => state.failed = true,
+        }
+        Some((frame, state))
+    })
+    .boxed()
+}
+
 impl RunningDevice for RunningSimulator {
     fn native_size(&self) -> (u32, u32) {
         self.shared.native
@@ -392,12 +598,16 @@ impl RunningDevice for RunningSimulator {
         false
     }
 
-    /// Full-size `simctl` screenshots every [`SCREENSHOT_INTERVAL`]; `max_width` is not
-    /// applied, since decoding and re-encoding each one would cost more than sending it.
-    fn jpeg_stream(&self, _max_width: u32) -> BoxFuture<'_, Result<JpegStream, DeviceError>> {
+    /// Live: framebuffer frames scaled to `max_width`. View-only: full-size `simctl`
+    /// screenshots every [`SCREENSHOT_INTERVAL`]; `max_width` is not applied, since
+    /// decoding and re-encoding each one would cost more than sending it.
+    fn jpeg_stream(&self, max_width: u32) -> BoxFuture<'_, Result<JpegStream, DeviceError>> {
         let shared = self.shared.clone();
         Box::pin(async move {
-            let frames = futures_util::stream::unfold(
+            if let Display::Live(screen) = &shared.display {
+                return Ok(live_frames(screen.clone(), max_width));
+            }
+            let frames = stream::unfold(
                 (shared, None::<tokio::time::Instant>, false),
                 |(shared, last, failed)| async move {
                     if failed {
@@ -416,9 +626,12 @@ impl RunningDevice for RunningSimulator {
         })
     }
 
-    /// A JPEG: `simctl` screenshots are PNGs only in live mode.
-    fn png(&self, _max_width: u32) -> BoxFuture<'_, Result<Png, DeviceError>> {
+    /// Live: a PNG of the framebuffer. View-only: a `simctl` JPEG, as `mime_type` says.
+    fn png(&self, max_width: u32) -> BoxFuture<'_, Result<Png, DeviceError>> {
         Box::pin(async move {
+            if let Display::Live(screen) = &self.shared.display {
+                return live_png(screen.clone(), max_width).await;
+            }
             let frame = self.shared.screenshot().await?;
             Ok(Png {
                 png: frame.jpeg,
@@ -431,11 +644,37 @@ impl RunningDevice for RunningSimulator {
     }
 
     fn video(&self) -> BoxFuture<'_, Result<Box<dyn ErasedVideoSource>, DeviceError>> {
+        // Media tickets are refused first (`video_unavailable`), so this is not reached.
         Box::pin(async {
             Err(DeviceError::Protocol(
-                "iOS simulators have no video in view-only mode".into(),
+                "iOS simulators have no video yet".into(),
             ))
         })
+    }
+
+    fn video_unavailable(&self) -> Option<String> {
+        Some(match &self.shared.display {
+            Display::Live(_) => LIVE_VIDEO_PENDING.to_owned(),
+            Display::ViewOnly { reason } => {
+                format!("Video is off: {}.", reason.trim_end_matches('.'))
+            }
+        })
+    }
+
+    fn orientation_changes(&self) -> Option<BoxStream<'static, Orientation>> {
+        let Display::Live(screen) = &self.shared.display else {
+            return None;
+        };
+        let mut changes = screen.orientation();
+        changes.mark_changed();
+        Some(
+            stream::unfold(changes, |mut changes| async move {
+                changes.changed().await.ok()?;
+                let orientation = changes.borrow_and_update().orientation();
+                Some((orientation, changes))
+            })
+            .boxed(),
+        )
     }
 
     fn input(
@@ -443,11 +682,13 @@ impl RunningDevice for RunningSimulator {
         _events: Vec<DeviceInputEvent>,
         _orientation: Orientation,
     ) -> BoxFuture<'_, Result<(), DeviceOpError>> {
-        Box::pin(async {
-            Err(DeviceOpError::InvalidInput(format!(
-                "Touch input is off: {VIEW_ONLY_REASON}."
-            )))
-        })
+        let message = match &self.shared.display {
+            Display::Live(_) => LIVE_INPUT_PENDING.to_owned(),
+            Display::ViewOnly { reason } => {
+                format!("Touch input is off: {}.", reason.trim_end_matches('.'))
+            }
+        };
+        Box::pin(async move { Err(DeviceOpError::InvalidInput(message)) })
     }
 
     fn rotate<'a>(
@@ -505,6 +746,23 @@ fn report_simulator_exit(pid: u32, uptime: Duration) {
         &std::process::ExitStatus::from_raw(1 << 8),
         false,
     );
+}
+
+/// A device manager over this Mac's own simulators (`/usr/bin/xcrun` and the real
+/// frameworks), with device previews on, whatever features the build has. Only for the
+/// opt-in real-simulator tests (`tests/ios_simulator.rs`).
+#[doc(hidden)]
+pub fn host_manager_for_tests() -> (super::DeviceManager, tokio::sync::watch::Sender<bool>) {
+    let (enabled, signal) = tokio::sync::watch::channel(true);
+    let backend = IosBackend::new(IosBackendConfig::with_tools(
+        PathBuf::from("/usr/bin"),
+        ProcessAttributionRegistry::new(),
+    ));
+    let manager = super::DeviceManager::start(super::DeviceManagerConfig {
+        backends: vec![Arc::new(backend)],
+        enabled: signal,
+    });
+    (manager, enabled)
 }
 
 #[cfg(test)]
@@ -610,13 +868,69 @@ mod tests {
         assert_eq!(
             refused,
             Err(DeviceOpError::InvalidInput(
-                "Touch input is off: live input is not available yet.".into()
+                "Touch input is off: Xcode 27.0 changed the simulator interfaces BiBCode uses. Simulators open as screenshots without touch input.".into()
             ))
+        );
+        // Video tickets are refused at once, so the client shows still images.
+        assert_eq!(
+            manager
+                .create_media_ticket(&id, "session", crate::device::media::MediaChannel::Plain)
+                .unwrap_err()
+                .to_rpc_error()["_tag"],
+            "DeviceMediaUnavailableError"
         );
         let screenshot = manager.png(&id, 720).await.unwrap();
         assert_eq!(screenshot.mime_type, "image/jpeg");
         assert_eq!((screenshot.width, screenshot.height), (60, 130));
         assert_eq!(&screenshot.png[..2], &[0xFF, 0xD8]);
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn an_unsupported_xcode_still_opens_simulators_view_only() {
+        let sim = FakeXcrun::new()
+            .device("UDID-1", "iPhone 17 Pro", "iOS 27.0")
+            .write();
+        let (manager, _enabled) = ios_manager(&sim);
+        manager.refresh_now().await;
+        let availability = manager.catalog().borrow().platforms[0].availability.clone();
+        assert_eq!(
+            availability.kind,
+            crate::device::catalog::AvailabilityKind::XcodeUnsupported
+        );
+        let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        let ready = wait_state(&manager, &id, DeviceState::Ready).await;
+        assert_eq!((ready.width, ready.height), (Some(60), Some(130)));
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn closing_a_booting_simulator_shuts_down_only_it_once() {
+        let sim = FakeXcrun::new()
+            .device("UDID-1", "iPhone 17 Pro", "iOS 27.0")
+            .device("UDID-2", "iPhone 17e", "iOS 27.0")
+            .state("UDID-2", "Booted")
+            .bootstatus_blocks()
+            .write();
+        let (manager, _enabled) = ios_manager(&sim);
+        let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        wait_state(&manager, &id, DeviceState::Booting).await;
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while !sim.calls().iter().any(|c| c == "bootstatus UDID-1 -b") {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("bootstatus started");
+        manager.close(&id).await.unwrap();
+        let stopped = wait_state(&manager, &id, DeviceState::Stopped).await;
+        assert_eq!(stopped.failure, None);
+        let shutdowns: Vec<_> = sim
+            .calls()
+            .into_iter()
+            .filter(|c| c.starts_with("shutdown"))
+            .collect();
+        assert_eq!(shutdowns, ["shutdown UDID-1"]);
         manager.shutdown().await;
     }
 

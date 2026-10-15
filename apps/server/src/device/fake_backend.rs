@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use futures_util::future::BoxFuture;
+use futures_util::{future::BoxFuture, stream::BoxStream};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
@@ -47,6 +47,10 @@ pub(crate) struct FakeBackend {
     stops: Arc<AtomicUsize>,
     discover_calls: AtomicUsize,
     check_calls: AtomicUsize,
+    /// Set by `reports_orientation`: launched devices report turns through it.
+    orientation: Mutex<Option<watch::Sender<Orientation>>>,
+    /// Set by `without_video`: why launched devices have no video.
+    no_video: Mutex<Option<String>>,
 }
 
 struct FakeDeviceState {
@@ -66,7 +70,22 @@ impl FakeBackend {
             stops: Arc::default(),
             discover_calls: AtomicUsize::new(0),
             check_calls: AtomicUsize::new(0),
+            orientation: Mutex::new(None),
+            no_video: Mutex::new(None),
         })
+    }
+
+    /// Launched devices report orientation on their own, starting in portrait; returns the
+    /// sender that turns them.
+    pub(crate) fn reports_orientation(self: &Arc<Self>) -> watch::Sender<Orientation> {
+        let sender = watch::Sender::new(Orientation::Portrait);
+        *lock(&self.orientation) = Some(sender.clone());
+        sender
+    }
+
+    /// Launched devices have no video, for `reason`.
+    pub(crate) fn without_video(self: &Arc<Self>, reason: &str) {
+        *lock(&self.no_video) = Some(reason.to_owned());
     }
 
     /// `image` is in use outside BiBCode: `check_available` refuses it.
@@ -191,6 +210,10 @@ impl DeviceBackend for FakeBackend {
             }
             Ok(Box::new(FakeRunning {
                 state,
+                orientation: lock(&self.orientation)
+                    .as_ref()
+                    .map(watch::Sender::subscribe),
+                no_video: lock(&self.no_video).clone(),
                 can_rotate: self.can_rotate.load(Ordering::SeqCst),
                 stops: self.stops.clone(),
                 stopped: AtomicBool::new(false),
@@ -201,6 +224,8 @@ impl DeviceBackend for FakeBackend {
 
 struct FakeRunning {
     state: Arc<FakeDeviceState>,
+    orientation: Option<watch::Receiver<Orientation>>,
+    no_video: Option<String>,
     can_rotate: bool,
     stops: Arc<AtomicUsize>,
     stopped: AtomicBool,
@@ -237,6 +262,23 @@ impl RunningDevice for FakeRunning {
 
     fn video(&self) -> BoxFuture<'_, Result<Box<dyn ErasedVideoSource>, DeviceError>> {
         Box::pin(async { Err(unsupported()) })
+    }
+
+    fn video_unavailable(&self) -> Option<String> {
+        self.no_video.clone()
+    }
+
+    fn orientation_changes(&self) -> Option<BoxStream<'static, Orientation>> {
+        let mut changes = self.orientation.clone()?;
+        changes.mark_changed();
+        Some(Box::pin(futures_util::stream::unfold(
+            changes,
+            |mut changes| async move {
+                changes.changed().await.ok()?;
+                let orientation = *changes.borrow_and_update();
+                Some((orientation, changes))
+            },
+        )))
     }
 
     fn input(
