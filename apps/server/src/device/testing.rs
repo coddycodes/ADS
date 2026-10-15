@@ -1208,6 +1208,13 @@ pub(crate) fn key_unit(pts_us: u64) -> Vec<u8> {
     media_packet((1 << 61) | pts_us, &[0, 0, 0, 1, 0x65, 0x88])
 }
 
+/// A key unit whose Annex-B data is `len` bytes.
+pub(crate) fn key_unit_of(pts_us: u64, len: usize) -> Vec<u8> {
+    let mut data = vec![0x88_u8; len.max(5)];
+    data[..5].copy_from_slice(&[0, 0, 0, 1, 0x65]);
+    media_packet((1 << 61) | pts_us, &data)
+}
+
 pub(crate) fn delta_unit(pts_us: u64) -> Vec<u8> {
     media_packet(pts_us, &[0, 0, 0, 1, 0x41, 0x9a])
 }

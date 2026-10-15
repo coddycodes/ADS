@@ -632,7 +632,9 @@ impl E2eeChannel {
         Ok(channel)
     }
 
-    fn respond_to_message_a(
+    /// Answers the client's Noise_NK message A: the channel and message B to send back.
+    /// `Handshake` means the client pinned another host key.
+    pub(crate) fn respond_to_message_a(
         host_identity: &HostIdentity,
         message_a: &[u8],
     ) -> Result<(Self, Vec<u8>), E2eeSessionError> {
@@ -681,8 +683,12 @@ impl E2eeChannel {
         ))
     }
 
-    #[cfg(test)]
-    fn encrypt_message(&mut self, plaintext: &[u8]) -> Result<Vec<Vec<u8>>, E2eeSessionError> {
+    /// Encrypts one logical message as records of at most [`MAX_E2EE_CHUNK_BYTES`], every
+    /// one but the last flagged as a continuation.
+    pub(crate) fn encrypt_message(
+        &mut self,
+        plaintext: &[u8],
+    ) -> Result<Vec<Vec<u8>>, E2eeSessionError> {
         plaintext_records(plaintext)?
             .map(|(flag, chunk)| self.encrypt_record(flag, chunk))
             .collect()
@@ -1179,7 +1185,8 @@ pub(crate) async fn run_e2ee_session(
     .await;
 }
 
-async fn next_binary_frame(
+/// The next binary frame; `None` once the client closes, errs, or sends text.
+pub(crate) async fn next_binary_frame(
     reader: &mut futures_util::stream::SplitStream<WebSocket>,
 ) -> Option<Vec<u8>> {
     loop {

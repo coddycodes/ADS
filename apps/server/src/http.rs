@@ -42,7 +42,7 @@ use crate::{
         http_mutability,
     },
     preview::gateway::registry::{ClientReach, PreviewGateway},
-    production::http_routes::{self, DEVICE_MEDIA_PATH, HttpRoutesState},
+    production::http_routes::{self, DEVICE_MEDIA_E2EE_PATH, DEVICE_MEDIA_PATH, HttpRoutesState},
     remote_update::RemoteUpdateSupport,
     rpc::{
         CHUNKED_RPC_SUBPROTOCOL, E2eePreauthAdmission, MAX_E2EE_CIPHERTEXT_BYTES, RpcRegistry,
@@ -124,6 +124,7 @@ pub const ROUTE_INVENTORY: &[RouteSpec] = &[
     route(RouteMethod::Post, "/api/preview/open-url"),
     route(RouteMethod::Get, "/api/transfers/*"),
     route(RouteMethod::Get, DEVICE_MEDIA_PATH),
+    route(RouteMethod::Get, DEVICE_MEDIA_E2EE_PATH),
     route(RouteMethod::Post, "/api/transfers/*"),
     route(RouteMethod::Post, DESKTOP_SHUTDOWN_PATH),
     route(RouteMethod::Post, MAINTENANCE_UPDATE_PREPARE_PATH),
@@ -152,7 +153,7 @@ impl Connected<IncomingStream<'_, tokio::net::TcpListener>> for ConnectionAddrs 
     }
 }
 
-type ConnectionInfo = Result<ConnectInfo<ConnectionAddrs>, ExtensionRejection>;
+pub(crate) type ConnectionInfo = Result<ConnectInfo<ConnectionAddrs>, ExtensionRejection>;
 
 /// How a WebSocket client reached this server, for `preview.gatewayOpen`.
 fn client_reach(connection: ConnectionInfo, headers: &HeaderMap) -> Option<ClientReach> {

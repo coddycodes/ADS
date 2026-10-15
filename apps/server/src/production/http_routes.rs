@@ -18,6 +18,8 @@ const MAX_OPEN_URL_BODY_BYTES: usize = 16 * 1024;
 
 /// The plain H.264 media socket (spec §4.2); it authenticates with a ticket, never a cookie.
 pub const DEVICE_MEDIA_PATH: &str = "/api/device-media";
+/// The same socket inside a Noise_NK channel, for profiles that pin the host key.
+pub const DEVICE_MEDIA_E2EE_PATH: &str = "/api/device-media-e2ee";
 
 const NO_STORE: &str = "no-store";
 const OPERATE_SCOPE: &str = "orchestration:operate";
@@ -330,19 +332,52 @@ where
         )
         .route("/api/preview/open-url", post(preview_open_url))
         .route(DEVICE_MEDIA_PATH, get(device_media))
+        .route(DEVICE_MEDIA_E2EE_PATH, get(device_media_e2ee))
         .route("/mcp", post(mcp_post).delete(mcp_delete))
 }
 
 async fn device_media(
     State(state): State<HttpRoutesState>,
-    connection: Result<
-        axum::extract::ConnectInfo<crate::http::ConnectionAddrs>,
-        axum::extract::rejection::ExtensionRejection,
-    >,
+    connection: crate::http::ConnectionInfo,
     headers: HeaderMap,
     upgrade: axum::extract::ws::WebSocketUpgrade,
 ) -> Response {
-    // The same peer the E2EE route admits: a loopback forwarder's last `X-Forwarded-For` hop.
+    device_media_upgrade(
+        state,
+        connection,
+        &headers,
+        upgrade,
+        crate::device::media_socket::upgrade_plain,
+    )
+}
+
+async fn device_media_e2ee(
+    State(state): State<HttpRoutesState>,
+    connection: crate::http::ConnectionInfo,
+    headers: HeaderMap,
+    upgrade: axum::extract::ws::WebSocketUpgrade,
+) -> Response {
+    device_media_upgrade(
+        state,
+        connection,
+        &headers,
+        upgrade,
+        crate::device::media_socket::upgrade_e2ee,
+    )
+}
+
+fn device_media_upgrade(
+    state: HttpRoutesState,
+    connection: crate::http::ConnectionInfo,
+    headers: &HeaderMap,
+    upgrade: axum::extract::ws::WebSocketUpgrade,
+    upgrade_route: fn(
+        crate::device::media_socket::MediaSocketState,
+        std::net::IpAddr,
+        axum::extract::ws::WebSocketUpgrade,
+    ) -> Response,
+) -> Response {
+    // The same peer `/ws-e2ee` admits: a loopback forwarder's last `X-Forwarded-For` hop.
     let socket_peer = connection.map_or(
         std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
         |axum::extract::ConnectInfo(addrs)| addrs.peer.ip(),
@@ -354,7 +389,7 @@ async fn device_media(
             .and_then(|value| value.to_str().ok()),
     );
     match state.device_media {
-        Some(media) => crate::device::media_socket::upgrade_plain(media, peer_ip, upgrade),
+        Some(media) => upgrade_route(media, peer_ip, upgrade),
         None => json_response(
             StatusCode::SERVICE_UNAVAILABLE,
             BTreeMap::new(),
