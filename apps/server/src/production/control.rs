@@ -2594,6 +2594,7 @@ fn environment_descriptor(config: &ServerConfig, activity_protocol_registered: b
             "vcsCloneReattach": true,
             "attachmentStaging": true,
             "profiler": true,
+            "devicePreviews": true,
             "previewTunnels": true,
         },
     })
@@ -6638,6 +6639,8 @@ mod tests {
         }
         // Clients send the profiler RPCs only to servers that advertise them.
         assert_eq!(descriptor["capabilities"]["profiler"], true);
+        // Clients show the Device previews setting and pane only on servers that advertise it.
+        assert_eq!(descriptor["capabilities"]["devicePreviews"], true);
     }
 
     #[test]
