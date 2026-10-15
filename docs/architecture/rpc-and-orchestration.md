@@ -2234,6 +2234,25 @@ the prior valid reading for that turn. A malformed row cannot evict a valid row,
 and reverting a turn removes only that turn's projected usage; neither behavior
 creates a separate usage cache.
 
+### Checkpoint revert
+
+`thread.checkpoint.revert` is accepted at once; the orchestration effect does
+the work. A provider cannot undo a rewind, so the effect orders the steps to
+keep a failure from leaving the files and the conversation out of step:
+
+1. It checks that the workspace is a Git repository and that the target
+   checkpoint ref (or `HEAD`, for turn 0) resolves.
+2. It asks the provider to drop the newer turns. A provider that refuses or
+   has no live session fails the revert here, and nothing changes.
+3. It restores the files from the checkpoint ref, deletes the newer checkpoint
+   refs, and dispatches `thread.revert.complete`.
+
+Once the provider has rewound, the revert must be recorded, or a retry would
+rewind the provider again. Shutdown therefore waits for step 3 instead of
+interrupting it, and a restore that fails is still recorded: the work log
+then says the conversation was rewound but the files were not restored. Every
+failure is a `checkpoint.revert.failed` activity.
+
 ## Targeted Activity cancellation flow
 
 Targeted Activity control uses typed WebSocket RPC in browser and desktop

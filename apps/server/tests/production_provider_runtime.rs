@@ -10878,8 +10878,10 @@ async fn projects_event_aliases_user_input_and_proposed_plans_with_request_conte
     supervisor.shutdown().await.unwrap();
 }
 
+/// The provider rewinds before any file is restored: a rewind cannot be undone, so it runs
+/// first, and the files follow only once it succeeded.
 #[tokio::test]
-async fn checkpoint_rpc_rolls_back_once_after_restore_with_the_computed_delta() {
+async fn checkpoint_rpc_rewinds_the_provider_once_before_restoring_files() {
     let repository = initialize_repository();
     let engine = engine().await;
     for (turn_count, content) in [
@@ -10972,7 +10974,10 @@ async fn checkpoint_rpc_rolls_back_once_after_restore_with_the_computed_delta() 
     {
         let state = state.lock().unwrap();
         assert_eq!(state.rollbacks, [2]);
-        assert_eq!(state.rollback_observations, [(2, Some("one\n".to_owned()))]);
+        assert_eq!(
+            state.rollback_observations,
+            [(2, Some("three\n".to_owned()))]
+        );
     }
     for stale_turn in [2, 3] {
         assert!(!git_succeeds(
@@ -10994,6 +10999,7 @@ async fn checkpoint_rpc_rolls_back_once_after_restore_with_the_computed_delta() 
     engine.shutdown().await;
 }
 
+/// A failed provider rewind leaves everything as it was: files, checkpoint refs and messages.
 #[tokio::test]
 async fn checkpoint_rpc_reports_effect_failure_without_a_direct_or_second_rollback() {
     let repository = initialize_repository();
@@ -11085,18 +11091,31 @@ async fn checkpoint_rpc_reports_effect_failure_without_a_direct_or_second_rollba
         std::fs::read_to_string(repository.path().join("tracked.txt"))
             .unwrap()
             .replace("\r\n", "\n"),
-        "one\n"
+        "three\n",
+        "a refused rewind must not restore any file"
     );
     {
         let state = state.lock().unwrap();
         assert_eq!(state.rollbacks, [2]);
-        assert_eq!(state.rollback_observations, [(2, Some("one\n".to_owned()))]);
+        assert_eq!(
+            state.rollback_observations,
+            [(2, Some("three\n".to_owned()))]
+        );
     }
     let events = engine.read_events(0).await.unwrap();
     assert!(
         !events
             .iter()
             .any(|event| event.event.event_type == "thread.reverted")
+    );
+    assert!(
+        events.iter().any(|event| {
+            event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+                && event.event.payload["activity"]["payload"]["detail"]
+                    .as_str()
+                    .is_some_and(|detail| detail.contains("injected provider rollback failure"))
+        }),
+        "the provider's reason reaches the work log"
     );
     for preserved_turn in [2, 3] {
         assert!(git_succeeds(

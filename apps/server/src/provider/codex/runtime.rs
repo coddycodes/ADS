@@ -169,9 +169,9 @@ pub enum RuntimeError {
     #[error("{0}")]
     UnsupportedOption(RefusedOption),
     /// A legacy-history thread can only be rewound with `thread/rollback`, which Codex 0.156
-    /// removed. Only checkpoint revert rewinds, after BiBCode has restored the files.
+    /// removed. Checkpoint revert asks for the rewind before it touches any file.
     #[error(
-        "Codex can't rewind this conversation because an older Codex version started it. The files are restored, but the conversation keeps its newer messages. Start a new thread to continue from this checkpoint."
+        "Codex can't rewind this conversation because an older Codex version started it, so nothing was reverted. Start a new thread to continue."
     )]
     LegacyRewindUnsupported,
 }

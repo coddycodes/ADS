@@ -909,7 +909,14 @@ async fn revert_checkpoint(
                 ))
             })?
     };
-    if !restore_checkpoint(
+    // The provider rewind cannot be undone, so it runs before any file is touched and only once
+    // the checkpoint is known to resolve. A refused rewind then changes nothing.
+    let missing_checkpoint = || {
+        OrchestrationEffectsError::Effect(format!(
+            "Filesystem checkpoint is unavailable for turn {turn_count}."
+        ))
+    };
+    if checkpoint_revision(
         &cwd,
         Path::new("git"),
         &target_ref,
@@ -917,21 +924,47 @@ async fn revert_checkpoint(
         cancellation,
     )
     .await?
+    .is_none()
     {
-        return Err(OrchestrationEffectsError::Effect(format!(
-            "Filesystem checkpoint is unavailable for turn {turn_count}."
-        )));
+        return Err(missing_checkpoint());
     }
-    callbacks
-        .refresh_workspace(&cwd)
-        .await
-        .map_err(OrchestrationEffectsError::Effect)?;
     let rolled_back_turns = current_turn_count.saturating_sub(turn_count);
     if rolled_back_turns > 0 {
         callbacks
             .rollback_provider(thread_id, rolled_back_turns)
             .await
             .map_err(OrchestrationEffectsError::Effect)?;
+    }
+    // Once the provider has rewound, the revert must be recorded, or a retry would rewind the
+    // provider a second time. Shutdown therefore waits for the restore instead of interrupting
+    // it, and a restore that fails is still recorded.
+    let uninterruptible = CancellationToken::new();
+    let cancellation = if rolled_back_turns > 0 {
+        &uninterruptible
+    } else {
+        cancellation
+    };
+    let restored = match restore_checkpoint(
+        &cwd,
+        Path::new("git"),
+        &target_ref,
+        turn_count == 0,
+        cancellation,
+    )
+    .await
+    {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(missing_checkpoint()),
+        Err(error) => Err(error),
+    };
+    if restored.is_ok() {
+        callbacks
+            .refresh_workspace(&cwd)
+            .await
+            .map_err(OrchestrationEffectsError::Effect)?;
+    } else if rolled_back_turns == 0 {
+        // Nothing was rewound, so the revert stays undone and can simply be retried.
+        return restored;
     }
     for checkpoint in checkpoints
         .iter()
@@ -955,7 +988,11 @@ async fn revert_checkpoint(
         })
         .await
         .map_err(|error| OrchestrationEffectsError::Effect(error.to_string()))?;
-    Ok(())
+    restored.map_err(|error| {
+        OrchestrationEffectsError::Effect(format!(
+            "The conversation was rewound, but the files could not be restored: {error}"
+        ))
+    })
 }
 
 async fn cleanup_deleted_thread(
@@ -1175,16 +1212,18 @@ async fn has_ref(
         == 0)
 }
 
-async fn restore_checkpoint(
+/// The revision a checkpoint restores from: its ref, or `HEAD` when allowed and the ref is gone.
+async fn checkpoint_revision(
     cwd: &Path,
     git_command: &Path,
     reference: &str,
     fallback_to_head: bool,
     cancellation: &CancellationToken,
-) -> Result<bool, OrchestrationEffectsError> {
-    let revision = if has_ref(cwd, git_command, reference, cancellation).await? {
-        reference.to_owned()
-    } else if fallback_to_head
+) -> Result<Option<String>, OrchestrationEffectsError> {
+    if has_ref(cwd, git_command, reference, cancellation).await? {
+        return Ok(Some(reference.to_owned()));
+    }
+    let head_exists = fallback_to_head
         && run_git(
             cwd,
             git_command,
@@ -1195,10 +1234,20 @@ async fn restore_checkpoint(
         )
         .await?
         .exit_code
-            == 0
-    {
-        "HEAD".to_owned()
-    } else {
+            == 0;
+    Ok(head_exists.then(|| "HEAD".to_owned()))
+}
+
+async fn restore_checkpoint(
+    cwd: &Path,
+    git_command: &Path,
+    reference: &str,
+    fallback_to_head: bool,
+    cancellation: &CancellationToken,
+) -> Result<bool, OrchestrationEffectsError> {
+    let Some(revision) =
+        checkpoint_revision(cwd, git_command, reference, fallback_to_head, cancellation).await?
+    else {
         return Ok(false);
     };
     run_git(

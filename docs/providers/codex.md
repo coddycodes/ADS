@@ -131,9 +131,12 @@ cancellation, attachments, and reload behavior.
 
 ## Reverting to a checkpoint
 
-**Revert to this message** restores the workspace files from BiBCode's own Git
-checkpoint refs first, then asks Codex to drop the newer turns from its
-conversation history. Codex never restores files.
+**Revert to this message** first asks Codex to drop the newer turns from its
+conversation history. Only after that succeeds does BiBCode restore the
+workspace files from its own Git checkpoint refs, so a refused rewind changes
+nothing (see
+[Checkpoint revert](../architecture/rpc-and-orchestration.md#checkpoint-revert)).
+Codex never restores files.
 
 Codex reports a `historyMode` for each thread in its `thread/start` and
 `thread/resume` responses, and that mode decides how BiBCode rewinds it:
@@ -146,9 +149,8 @@ Codex reports a `historyMode` for each thread in its `thread/start` and
   `thread/rollback` with the number of turns to drop.
 
 Codex 0.156 removed `thread/rollback`, so it cannot rewind a legacy thread that
-an older Codex created. That revert fails with an error saying so. The files
-are already restored, but the conversation keeps its newer messages; start a
-new thread to continue from that point.
+an older Codex created. That revert fails with an error saying so and changes
+nothing; start a new thread to continue from that point.
 
 ## Activity observation
 
