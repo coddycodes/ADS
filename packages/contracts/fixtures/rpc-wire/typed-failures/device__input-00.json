@@ -7,8 +7,7 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "DeviceNotReadyError",
-          "state": "ready",
+          "_tag": "DeviceInputError",
           "message": ""
         }
       }

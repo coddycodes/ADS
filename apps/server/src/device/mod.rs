@@ -75,6 +75,11 @@ pub enum DeviceOpError {
     /// An emulator call failed on a `Ready` device; the message says what to do.
     #[error("{0}")]
     Emulator(String),
+    /// Media tickets need a signed-in session, which a server without auth never has.
+    #[error(
+        "Video needs a signed-in session, and this server runs with --unsafe-no-auth, so the screen updates as still images. Restart the server without --unsafe-no-auth to show video."
+    )]
+    MediaUnavailable,
 }
 
 fn not_ready_message(state: DeviceState) -> &'static str {
@@ -126,6 +131,10 @@ impl DeviceOpError {
             }),
             Self::Emulator(_) => serde_json::json!({
                 "_tag": "DeviceEmulatorError",
+                "message": message,
+            }),
+            Self::MediaUnavailable => serde_json::json!({
+                "_tag": "DeviceMediaUnavailableError",
                 "message": message,
             }),
         }
@@ -1151,6 +1160,14 @@ mod tests {
         assert_eq!(
             DeviceOpError::NotFound.to_rpc_error()["_tag"],
             "DeviceNotFoundError"
+        );
+        let media = DeviceOpError::MediaUnavailable.to_rpc_error();
+        assert_eq!(media["_tag"], "DeviceMediaUnavailableError");
+        assert!(
+            media["message"]
+                .as_str()
+                .unwrap()
+                .contains("--unsafe-no-auth")
         );
         assert_eq!(
             DeviceOpError::InvalidInput("Send at least one input event.".into()).to_rpc_error(),

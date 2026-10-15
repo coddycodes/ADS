@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
 import { EnvironmentId } from "@bibcode/contracts";
+import * as Cause from "effect/Cause";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -307,6 +308,18 @@ describe("DeviceVideoSession", () => {
     expect(workers[0]!.tickets).toEqual(["T1"]);
   });
 
+  it("shows still images at once when the server never issues tickets", async () => {
+    const { mintTicket, modes, video, workers } = session();
+    mintTicket.mockResolvedValueOnce({ unavailable: "noSignIn" } as unknown as string);
+    video.start();
+    await flush();
+    expect(workers).toHaveLength(0);
+    expect(modes.at(-1)).toEqual({ kind: "jpeg", reason: "noSignIn" });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(mintTicket).toHaveBeenCalledTimes(1);
+    expect(modes.at(-1)).toEqual({ kind: "jpeg", reason: "noSignIn" });
+  });
+
   it("does nothing after it is disposed", async () => {
     const { mintTicket, modes, video } = session();
     video.start();
@@ -386,6 +399,27 @@ describe("useDeviceVideo", () => {
     ]);
     await unmount();
     expect(posted.at(-1)).toEqual({ type: "stop" });
+  });
+
+  it("uses jpeg at once when the server runs without sign-in", async () => {
+    vi.stubGlobal("VideoDecoder", { isConfigSupported: async () => ({ supported: true }) });
+    vi.stubGlobal(
+      "Worker",
+      class {
+        addEventListener() {}
+        postMessage() {}
+        terminate() {}
+      },
+    );
+    hookDeps.mintTicket.mockResolvedValueOnce({
+      _tag: "Failure",
+      cause: Cause.fail({ _tag: "DeviceMediaUnavailableError", message: "no sign-in" }),
+    } as never);
+    const { modes, unmount } = await renderHook(document.createElement("canvas"));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(modes.at(-1)).toEqual({ kind: "jpeg", reason: "noSignIn" });
+    expect(hookDeps.mintTicket).toHaveBeenCalledTimes(1);
+    await unmount();
   });
 });
 

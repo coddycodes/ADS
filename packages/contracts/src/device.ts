@@ -152,6 +152,12 @@ export class DeviceEmulatorError extends Schema.TaggedError<DeviceEmulatorError>
   { message: Schema.String },
 ) {}
 
+/** The server cannot stream video on this connection (it runs without sign-in). */
+export class DeviceMediaUnavailableError extends Schema.TaggedError<DeviceMediaUnavailableError>()(
+  "DeviceMediaUnavailableError",
+  { message: Schema.String },
+) {}
+
 export const DeviceRpcError = Schema.Union([
   DevicePreviewsDisabledError,
   DeviceSdkUnavailableError,
@@ -160,5 +166,6 @@ export const DeviceRpcError = Schema.Union([
   DeviceNotReadyError,
   DeviceInputError,
   DeviceEmulatorError,
+  DeviceMediaUnavailableError,
 ]);
 export type DeviceRpcError = typeof DeviceRpcError.Type;

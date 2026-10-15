@@ -1,5 +1,6 @@
 /* oxlint-disable unicorn/require-post-message-target-origin -- Worker messages have no target origin. */
 import { type DeviceMediaTarget, deviceMediaTarget } from "@bibcode/client-runtime/device";
+import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
 import type { EnvironmentId } from "@bibcode/contracts";
 import * as Option from "effect/Option";
 import { useEffect, useRef, useState } from "react";
@@ -62,11 +63,16 @@ export interface DeviceVideoWorker {
   addEventListener(type: "error", listener: () => void): void;
 }
 
+/** The server never issues media tickets on this connection, so no retry can help. */
+export interface TicketUnavailable {
+  readonly unavailable: StillImagesReason;
+}
+
 export interface DeviceVideoSessionDeps {
   /** Whether this client can decode the stream at all. */
   readonly isSupported: () => Promise<boolean>;
-  /** A fresh single-use ticket, or `null` when the server would not issue one. */
-  readonly mintTicket: () => Promise<string | null>;
+  /** A fresh single-use ticket, or `null` when the server would not issue one now. */
+  readonly mintTicket: () => Promise<string | TicketUnavailable | null>;
   readonly target: () => DeviceMediaTarget | null;
   readonly createWorker: () => DeviceVideoWorker;
   /** Takes a decoded frame: draws it or closes it. */
@@ -120,6 +126,7 @@ export class DeviceVideoSession {
   private async connect(): Promise<void> {
     const ticket = await this.deps.mintTicket().catch(() => null);
     if (this.ended) return;
+    if (typeof ticket === "object" && ticket !== null) return this.fallBack(ticket.unavailable);
     const target = this.deps.target();
     if (ticket === null || target === null) return this.closed("network");
     if (this.worker === null) {
@@ -244,6 +251,15 @@ export class DeviceVideoSession {
   }
 }
 
+/** The server runs without sign-in, so it has no session to bind a media ticket to. */
+function isMediaUnavailable(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { _tag?: unknown })._tag === "DeviceMediaUnavailableError"
+  );
+}
+
 const hasWebCodecs = () => typeof VideoDecoder !== "undefined" && typeof Worker !== "undefined";
 
 /** The media target for a prepared connection; `"invalid"` when its socket URL does not parse. */
@@ -336,7 +352,10 @@ export function useDeviceVideo(input: {
       isSupported: isH264Supported,
       mintTicket: async () => {
         const result = await mintTicket({ environmentId, input: { deviceId } });
-        return result._tag === "Success" ? result.value.ticket : null;
+        if (result._tag === "Success") return result.value.ticket;
+        return isMediaUnavailable(squashAtomCommandFailure(result))
+          ? { unavailable: "noSignIn" }
+          : null;
       },
       target: () => ({ url: targetUrl, hostKey }),
       createWorker,

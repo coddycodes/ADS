@@ -1565,3 +1565,6 @@ performed on the machine that owns that server and filesystem.
 - Browsers expose WebCodecs only in a secure context, so a browser on
   `http://<lan-ip>` shows still images. WebKitGTK builds without
   `VideoDecoder` fall back the same way.
+- Media tickets are bound to a signed-in session, so a server started with
+  `--unsafe-no-auth` refuses `device.createMediaTicket` with
+  `DeviceMediaUnavailableError` and its clients show still images at once.

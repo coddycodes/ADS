@@ -191,9 +191,11 @@ fn create_media_ticket(
         return Err(DeviceOpError::Disabled.to_rpc_error());
     }
     let input: DeviceIdInput = decode(payload)?;
-    let principal = context.principal().ok_or_else(
-        || json!({ "_tag": "Defect", "message": "device media needs an authenticated session" }),
-    )?;
+    // Tickets are bound to a session; a server without auth has none, so the client shows
+    // still images at once.
+    let principal = context
+        .principal()
+        .ok_or_else(|| DeviceOpError::MediaUnavailable.to_rpc_error())?;
     let (ticket, expires_at_ms) = devices
         .create_media_ticket(&input.device_id, &principal.session_id, context.channel())
         .map_err(rpc_error)?;
@@ -576,7 +578,7 @@ mod tests {
             &RpcSessionContext::unauthenticated(),
         )
         .unwrap_err();
-        assert_eq!(anonymous["_tag"], "Defect");
+        assert_eq!(anonymous["_tag"], "DeviceMediaUnavailableError");
         let missing =
             create_media_ticket(&fixture.manager, json!({ "deviceId": "missing" }), &context)
                 .unwrap_err();

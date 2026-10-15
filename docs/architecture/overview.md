@@ -1967,7 +1967,9 @@ arrives within 5 s, or on a decoder error. Close reasons fall into three
 groups:
 
 - **Still images at once:** `host-identity`, `disabled`, `unauthorized`,
-  `wrongDevice`, `wrongChannel`, and `limit`, which a new ticket cannot fix.
+  `wrongDevice`, `wrongChannel`, and `limit`, which a new ticket cannot fix,
+  and a `DeviceMediaUnavailableError` from `device.createMediaTicket` (a
+  server running with `--unsafe-no-auth` has no session to bind a ticket to).
 - **Stop without still images:** `stopped`. The catalog already shows the
   device's state, and video starts again with the next ready device.
 - **Retried:** `expired`, `reused`, `failed`, `slow`, and a connection that is

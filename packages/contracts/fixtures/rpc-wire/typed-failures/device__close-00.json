@@ -7,7 +7,7 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "DeviceNotFoundError",
+          "_tag": "DeviceInputError",
           "message": "jsv@v"
         }
       }

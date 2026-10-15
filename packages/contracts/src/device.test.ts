@@ -100,6 +100,7 @@ describe("device preview contracts", () => {
       { _tag: "DeviceNotReadyError", state: "booting", message: "The device is still starting." },
       { _tag: "DeviceInputError", message: "Send at least one input event." },
       { _tag: "DeviceEmulatorError", message: "The emulator did not respond." },
+      { _tag: "DeviceMediaUnavailableError", message: "Video needs a signed-in session." },
     ];
     const decode = Schema.decodeUnknownSync(DeviceRpcError);
     for (const error of errors) {

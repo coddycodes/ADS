@@ -1203,8 +1203,9 @@ boot that did not finish within 180 s.
 **Video or still images.** The desktop app, and a browser on HTTPS or
 `localhost`, show the screen as video. A browser on plain HTTP to another
 address, such as `http://192.168.1.20:3773`, cannot decode video and shows
-**Still images** instead (at most 15 per second); the badge's tooltip says why
-and what to do. If video stops arriving, **Reconnect screen** starts it again.
+**Still images** instead (at most 15 per second), as does any client of a
+server started with `--unsafe-no-auth`; the badge's tooltip says why and what
+to do. If video stops arriving, **Reconnect screen** starts it again.
 
 **Agents.** While device previews are on, coding agents on that environment can
 use the `device_list`, `device_open`, `device_screenshot`, and `device_close`
