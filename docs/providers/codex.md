@@ -138,19 +138,23 @@ nothing (see
 [Checkpoint revert](../architecture/rpc-and-orchestration.md#checkpoint-revert)).
 Codex never restores files.
 
-Codex reports a `historyMode` for each thread in its `thread/start` and
-`thread/resume` responses, and that mode decides how BiBCode rewinds it:
+Rewinding needs **Codex 0.151.0 or later**. BiBCode rewinds only with
+`thread/revert`: it pages newest-first through `thread/turns/list`, then sends
+`thread/revert` with the ID of the oldest turn to drop as `beforeTurnId`. When
+Codex holds fewer turns than BiBCode is dropping, every remaining turn is
+dropped. `thread/revert` arrived in Codex 0.148.0 but rewinds only threads with
+paginated history, and Codex 0.151.0 is the first to create those by default.
 
-- `paginated` threads, which Codex creates by default from 0.151: BiBCode
-  pages newest-first through `thread/turns/list`, then sends `thread/revert`
-  with the ID of the oldest turn to drop as `beforeTurnId`. When Codex holds
-  fewer turns than BiBCode is dropping, every remaining turn is dropped.
-- `legacy` threads, and responses without `historyMode`: BiBCode sends
-  `thread/rollback` with the number of turns to drop.
+Codex reports each thread's `historyMode` in its `thread/start` and
+`thread/resume` responses. BiBCode checks it before asking for anything, and a
+revert it cannot do fails without changing anything:
 
-Codex 0.156 removed `thread/rollback`, so it cannot rewind a legacy thread that
-an older Codex created. That revert fails with an error saying so and changes
-nothing; start a new thread to continue from that point.
+- No `historyMode` means a Codex that predates history modes. The work log
+  asks you to update Codex to 0.151.0 or later and then start a new thread. A
+  Codex that rejects `thread/revert` as an unknown method gets the same advice.
+- `legacy` means a thread that cannot be rewound: one an older Codex started,
+  or any thread on a Codex before 0.151.0. The work log asks you to start a new
+  thread on Codex 0.151.0 or later.
 
 ## Activity observation
 

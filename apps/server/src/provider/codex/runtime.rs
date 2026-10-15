@@ -168,12 +168,18 @@ pub enum RuntimeError {
     /// every retry.
     #[error("{0}")]
     UnsupportedOption(RefusedOption),
-    /// A legacy-history thread can only be rewound with `thread/rollback`, which Codex 0.156
-    /// removed. Checkpoint revert asks for the rewind before it touches any file.
+    /// The thread reports no `historyMode` (a Codex that predates history modes), or Codex
+    /// rejects `thread/turns/list` or `thread/revert` as missing (`thread/revert` arrived in
+    /// 0.148). Codex 0.151 is the first to create the paginated threads it rewinds.
     #[error(
-        "Codex can't rewind this conversation because an older Codex version started it, so nothing was reverted. Start a new thread to continue."
+        "This Codex version can't rewind conversations. Update Codex to 0.151.0 or later, then start a new thread to use Revert."
     )]
-    LegacyRewindUnsupported,
+    RewindNeedsNewerCodex,
+    /// The thread has legacy history, which `thread/revert` rejects.
+    #[error(
+        "This conversation uses Codex's older history format, which can't be rewound. Start a new thread on Codex 0.151.0 or later to use Revert."
+    )]
+    RewindNeedsNewThread,
 }
 
 impl OptionRefusal for RuntimeError {
@@ -205,8 +211,8 @@ struct RuntimeInner {
     reconciliation_task: StdMutex<Option<JoinHandle<()>>>,
     reconciliation_cancellation: CancellationToken,
     explicit_close: Mutex<bool>,
-    /// The provider thread's `historyMode` is `paginated`, so it rewinds with `thread/revert`.
-    paginated_history: Mutex<bool>,
+    /// The provider thread's `historyMode`; only a `paginated` thread can be rewound.
+    history_mode: Mutex<Option<String>>,
     activity: Mutex<RuntimeActivityState>,
     mcp_status: McpStatusHandle,
     mcp_opening: Mutex<Option<McpOpenReservation>>,
@@ -771,7 +777,7 @@ impl CodexSessionRuntime {
             reconciliation_task: StdMutex::new(None),
             reconciliation_cancellation: reconciliation_cancellation.clone(),
             explicit_close: Mutex::new(false),
-            paginated_history: Mutex::new(false),
+            history_mode: Mutex::new(None),
             mcp_status: mcp_status.clone(),
             mcp_opening: Mutex::new(Some(mcp_opening)),
             mcp_status_actor_task: StdMutex::new(None),
@@ -1167,7 +1173,7 @@ impl CodexSessionRuntime {
             .or_else(|| self.inner.options.model.clone());
         session.resume_cursor = Some(provider_thread_id.clone());
         drop(session);
-        *self.inner.paginated_history.lock().await = has_paginated_history(opened.get("thread"));
+        *self.inner.history_mode.lock().await = thread_history_mode(opened.get("thread"));
         let mut activity = self.inner.activity.lock().await;
         if activity.agent_activity_enabled {
             activity.install_root_thread_id(&provider_thread_id);
@@ -1427,45 +1433,41 @@ impl CodexSessionRuntime {
         Ok(())
     }
 
-    /// Drops the newest `num_turns` turns from the Codex conversation history. Codex does not
-    /// touch files; checkpoint revert restores them from BiBCode's own Git refs first.
+    /// Drops the newest `num_turns` turns from the Codex conversation history with
+    /// `thread/revert`. Codex does not touch files; checkpoint revert restores them from
+    /// BiBCode's own Git refs once this succeeds.
     pub async fn rollback_thread(&self, num_turns: u64) -> Result<(), RuntimeError> {
         if num_turns == 0 {
             return Ok(());
         }
         let provider_thread_id = self.provider_thread_id().await?;
+        match self.inner.history_mode.lock().await.as_deref() {
+            Some("paginated") => {}
+            Some(_) => return Err(RuntimeError::RewindNeedsNewThread),
+            None => return Err(RuntimeError::RewindNeedsNewerCodex),
+        }
         let connection = self.inner.connection.lock().await.clone();
-        let paginated_history = *self.inner.paginated_history.lock().await;
-        let response = if paginated_history {
+        let rewind = async {
             let before_turn_id =
                 oldest_rolled_back_turn_id(&connection, &provider_thread_id, num_turns).await?;
-            connection
-                .request(
-                    "thread/revert",
-                    json!({
-                        "threadId": provider_thread_id,
-                        "beforeTurnId": before_turn_id,
-                    }),
-                )
-                .await?
-        } else {
-            connection
-                .request(
-                    "thread/rollback",
-                    json!({
-                        "threadId": provider_thread_id,
-                        "numTurns": num_turns,
-                    }),
-                )
-                .await
-                .map_err(|error| {
-                    if error.is_missing_method() {
-                        RuntimeError::LegacyRewindUnsupported
-                    } else {
-                        error.into()
-                    }
-                })?
+            Ok::<_, RuntimeError>(
+                connection
+                    .request(
+                        "thread/revert",
+                        json!({
+                            "threadId": provider_thread_id,
+                            "beforeTurnId": before_turn_id,
+                        }),
+                    )
+                    .await?,
+            )
         };
+        let response = rewind.await.map_err(|error| match error {
+            RuntimeError::Protocol(error) if error.is_missing_method() => {
+                RuntimeError::RewindNeedsNewerCodex
+            }
+            error => error,
+        })?;
         parse_thread_snapshot(&response)
             .map_err(|message| RuntimeError::InvalidPayload { message })?;
         let mut session = self.inner.session.lock().await;
@@ -2532,8 +2534,8 @@ impl CodexSessionRuntime {
                     .and_then(Value::as_str)
                 {
                     self.inner.session.lock().await.resume_cursor = Some(thread_id.to_owned());
-                    *self.inner.paginated_history.lock().await =
-                        has_paginated_history(params.get("thread"));
+                    *self.inner.history_mode.lock().await =
+                        thread_history_mode(params.get("thread"));
                     let request_reconciliation = {
                         let mut activity = self.inner.activity.lock().await;
                         if !activity.agent_activity_enabled {
@@ -3457,12 +3459,12 @@ fn pending_actor_transitions_are_valid(
     true
 }
 
-/// Codex reports `historyMode` on threads from 0.148; a missing field is a legacy thread.
-fn has_paginated_history(thread: Option<&Value>) -> bool {
+/// The thread's `historyMode` (`legacy` or `paginated`), absent from Codex before history modes.
+fn thread_history_mode(thread: Option<&Value>) -> Option<String> {
     thread
         .and_then(|thread| thread.get("historyMode"))
         .and_then(Value::as_str)
-        == Some("paginated")
+        .map(str::to_owned)
 }
 
 /// Codex's `thread/turns/list` page-size ceiling.

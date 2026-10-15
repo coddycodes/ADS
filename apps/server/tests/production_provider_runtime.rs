@@ -134,7 +134,6 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
         $response = '{"id":' + $id + ',"result":{"thread":{"id":"native-codex-thread","historyMode":"paginated","turns":[]}}}'
       }
     }
-    "thread/rollback" { $response = '{"id":' + $id + ',"error":{"code":-32600,"message":"Invalid request: unknown variant thread/rollback"}}' }
     "shutdown" { $response = '{"id":' + $id + ',"result":null}' }
   }
   if ($null -ne $response) {
@@ -11137,6 +11136,141 @@ async fn checkpoint_rpc_reports_effect_failure_without_a_direct_or_second_rollba
     engine.shutdown().await;
 }
 
+/// A Codex app-server from before history modes: its threads carry no `historyMode`, and it rejects
+/// any method it does not know while decoding the request.
+const OLD_CODEX_FIXTURE: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"initialize"'*) printf '{"id":%s,"result":{"userAgent":"codex_cli_rs/0.147.0"}}\n' "$id" ;;
+    *'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"/tmp","model":"gpt-5","thread":{"id":"old-codex-thread"}}}\n' "$id" ;;
+    *'"method":"mcpServerStatus/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$id" ;;
+    *'"method":"shutdown"'*) printf '{"id":%s,"result":null}\n' "$id" ;;
+    *) printf '{"id":%s,"error":{"code":-32600,"message":"Invalid request: unknown variant"}}\n' "$id" ;;
+  esac
+done
+"#;
+
+const WINDOWS_OLD_CODEX_FIXTURE: &str = r#"
+while ($null -ne ($line = [Console]::In.ReadLine())) {
+  try { $request = $line | ConvertFrom-Json } catch { continue }
+  if ($null -eq $request.id) { continue }
+  $id = [string]$request.id
+  switch ([string]$request.method) {
+    "initialize" { $response = '{"id":' + $id + ',"result":{"userAgent":"codex_cli_rs/0.147.0"}}' }
+    "thread/start" { $response = '{"id":' + $id + ',"result":{"cwd":"C:\\tmp","model":"gpt-5","thread":{"id":"old-codex-thread"}}}' }
+    "mcpServerStatus/list" { $response = '{"id":' + $id + ',"result":{"data":[],"nextCursor":null}}' }
+    "shutdown" { $response = '{"id":' + $id + ',"result":null}' }
+    default { $response = '{"id":' + $id + ',"error":{"code":-32600,"message":"Invalid request: unknown variant"}}' }
+  }
+  [Console]::Out.WriteLine($response)
+  [Console]::Out.Flush()
+}
+"#;
+
+/// Reverting a thread on a Codex too old to rewind restores no file and says how to fix it.
+#[tokio::test]
+async fn checkpoint_revert_on_an_old_codex_restores_nothing_and_asks_for_an_update() {
+    let repository = initialize_repository();
+    let engine = engine().await;
+    for (turn_count, content) in [(0, "baseline\n"), (1, "one\n"), (2, "two\n")] {
+        project_checkpoint(&engine, repository.path(), turn_count, content).await;
+    }
+    let temp = TempDir::new().unwrap();
+    let executable = executable_fixture(
+        &temp,
+        "old-codex",
+        OLD_CODEX_FIXTURE,
+        WINDOWS_OLD_CODEX_FIXTURE,
+    );
+    let supervisor = Arc::new(ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        Arc::new(NativeProviderDriverFactory::new(
+            temp.path().join("attachments"),
+        )),
+        activity_projection(&engine),
+        SupervisorOptions::default(),
+    ));
+    let mut provider_launch = launch();
+    provider_launch.binary_path = executable.to_string_lossy().into_owned();
+    provider_launch.cwd = repository.path().to_path_buf();
+    timeout(
+        CHECKPOINT_RPC_INTEGRATION_DEADLINE,
+        supervisor.launch(provider_launch),
+    )
+    .await
+    .expect("the old Codex fixture starts in time")
+    .unwrap();
+    let effects = OrchestrationEffects::start(
+        engine.clone(),
+        Arc::new(GitRepository::default()),
+        Arc::new(SupervisorEffectsCallbacks {
+            supervisor: supervisor.clone(),
+            workspace: repository.path().to_path_buf(),
+        }),
+        EffectsOptions::default(),
+    )
+    .await
+    .unwrap();
+    let mut events = engine.subscribe_events();
+
+    engine
+        .dispatch(
+            serde_json::from_value(json!({
+                "type":"thread.checkpoint.revert",
+                "commandId":"old-codex-revert",
+                "threadId":"t1",
+                "turnCount":1,
+                "createdAt":NOW
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    wait_for_event(&mut events, |event| {
+        event.event.event_type == "thread.activity-appended"
+            && event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+    })
+    .await;
+
+    effects.shutdown().await;
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("tracked.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "two\n",
+        "an old Codex must not leave the files reverted"
+    );
+    let events = engine.read_events(0).await.unwrap();
+    assert!(
+        events.iter().any(|event| {
+            event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+                && event.event.payload["activity"]["payload"]["detail"]
+                    .as_str()
+                    .is_some_and(|detail| detail.contains("Update Codex to 0.151.0 or later"))
+        }),
+        "the work log says how to fix it"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event.event_type == "thread.reverted")
+    );
+    assert!(git_succeeds(
+        repository.path(),
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &orchestration_effects::checkpoint_ref("t1", 2),
+        ]
+    ));
+
+    supervisor.shutdown().await.unwrap();
+    engine.shutdown().await;
+}
+
 #[tokio::test]
 async fn restart_reconciliation_settles_a_persisted_partial_assistant_message() {
     let state = TempDir::new().expect("state directory");
@@ -14984,7 +15118,6 @@ while IFS= read -r line; do
     *'"method":"turn/interrupt"'*) printf '{"id":%s,"result":{}}\n' "$id" ;;
     *'"method":"thread/turns/list"'*) printf '{"id":%s,"result":{"data":[{"id":"native-codex-turn","items":[]}],"nextCursor":null}}\n' "$id" ;;
     *'"method":"thread/revert"'*'"beforeTurnId":"native-codex-turn"'*) printf '{"id":%s,"result":{"thread":{"id":"native-codex-thread","historyMode":"paginated","turns":[]}}}\n' "$id" ;;
-    *'"method":"thread/rollback"'*) printf '{"id":%s,"error":{"code":-32600,"message":"Invalid request: unknown variant thread/rollback"}}\n' "$id" ;;
     *'"method":"shutdown"'*) printf '{"id":%s,"result":null}\n' "$id" ;;
   esac
 done
@@ -15117,8 +15250,8 @@ done
             .is_some()
     );
     driver.interrupt(None).await.unwrap();
-    // Like Codex 0.162.1, the fixture starts a paginated thread, rejects the removed
-    // `thread/rollback`, and answers `thread/revert` only before the listed turn.
+    // Like Codex 0.162.1, the fixture starts a paginated thread and answers `thread/revert`
+    // only before the listed turn.
     timeout(Duration::from_secs(10), driver.rollback(1))
         .await
         .expect("Codex should answer the revert")

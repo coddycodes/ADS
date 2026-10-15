@@ -8746,22 +8746,6 @@ async fn reconnect_resume_fallback_and_shutdown_stay_correlated() {
         )
         .respond(json!({"data": [], "nextCursor": null}));
     peer_b
-        .expect_request(
-            "thread/rollback",
-            json!({
-                "threadId": "provider-thread-2",
-                "numTurns": 1
-            }),
-        )
-        .respond(json!({
-            "thread": {
-                "id": "provider-thread-2",
-                "turns": [
-                    { "id": "fixture-turn", "items": [] }
-                ]
-            }
-        }));
-    peer_b
         .expect_request("shutdown", Value::Null)
         .respond(Value::Null);
     let peer_b_task = tokio::spawn(peer_b.run());
@@ -8781,7 +8765,6 @@ async fn reconnect_resume_fallback_and_shutdown_stay_correlated() {
             ..
         }
     )));
-    runtime.rollback_thread(1).await.expect("rollback");
     runtime.shutdown().await.expect("shutdown");
     peer_b_task.await.expect("peer b");
 }
@@ -8806,10 +8789,14 @@ fn project_runtime(
     )
 }
 
-/// Codex 0.162.1 starts every new thread with paginated history, rejects the removed
-/// `thread/rollback` and rewinds through `thread/revert` before a turn ID.
-fn expect_rewind_session_start(peer: &mut ScriptedPeer, history_mode: &str) {
+/// Codex 0.151+ starts every new thread with paginated history and rewinds it through
+/// `thread/revert` before a turn ID. Older Codex omits `historyMode` (`None`).
+fn expect_rewind_session_start(peer: &mut ScriptedPeer, history_mode: Option<&str>) {
     let reconnect_fixture = fixture("reconnect-scenario.json");
+    let mut thread = json!({ "id": "provider-thread-1", "turns": [] });
+    if let Some(history_mode) = history_mode {
+        thread["historyMode"] = json!(history_mode);
+    }
     peer.expect_request("initialize", fixture("initialize-params.json"))
         .respond(json!({ "userAgent": "bibcode_desktop/0.162.1" }));
     peer.expect_notification("initialized");
@@ -8820,11 +8807,7 @@ fn expect_rewind_session_start(peer: &mut ScriptedPeer, history_mode: &str) {
     .respond(json!({
         "cwd": "/tmp/project",
         "model": "gpt-5.3-codex",
-        "thread": {
-            "id": "provider-thread-1",
-            "historyMode": history_mode,
-            "turns": []
-        }
+        "thread": thread
     }));
 }
 
@@ -8832,7 +8815,7 @@ fn expect_rewind_session_start(peer: &mut ScriptedPeer, history_mode: &str) {
 async fn paginated_thread_rollback_reverts_before_the_oldest_rolled_back_turn() {
     let (connection, incoming, mut peer) = scripted_peer();
     let runtime = project_runtime(connection, incoming);
-    expect_rewind_session_start(&mut peer, "paginated");
+    expect_rewind_session_start(&mut peer, Some("paginated"));
     // Three turns back, across two newest-first pages.
     peer.expect_request(
         "thread/turns/list",
@@ -8918,18 +8901,63 @@ async fn paginated_thread_rollback_reverts_before_the_oldest_rolled_back_turn() 
     peer_task.await.expect("peer");
 }
 
+/// Only a paginated thread can be rewound. A Codex that reports no `historyMode` predates
+/// `thread/revert`; a `legacy` thread is rejected by it. Both fail without a request.
 #[tokio::test]
-async fn legacy_thread_rollback_without_thread_rollback_support_is_actionable() {
+async fn rewind_without_paginated_history_fails_before_contacting_codex() {
+    for (history_mode, next_step) in [
+        (None, "Update Codex to 0.151.0 or later"),
+        (
+            Some("legacy"),
+            "Start a new thread on Codex 0.151.0 or later",
+        ),
+    ] {
+        let (connection, incoming, mut peer) = scripted_peer();
+        let runtime = project_runtime(connection, incoming);
+        expect_rewind_session_start(&mut peer, history_mode);
+        // The next request the peer accepts is shutdown: no rewind request may come first.
+        peer.expect_request("shutdown", Value::Null)
+            .respond(Value::Null);
+        let peer_task = tokio::spawn(peer.run());
+
+        runtime.start().await.expect("start");
+        let error = runtime
+            .rollback_thread(1)
+            .await
+            .expect_err("only a paginated thread can be rewound")
+            .to_string();
+        assert!(
+            error.contains(next_step),
+            "{history_mode:?}: the error must say what to do next: {error}"
+        );
+        runtime.shutdown().await.expect("shutdown");
+        peer_task.await.expect("peer");
+    }
+}
+
+/// A Codex without `thread/revert` rejects it while decoding the request (-32600).
+#[tokio::test]
+async fn rewind_rejected_as_a_missing_method_asks_for_a_newer_codex() {
     let (connection, incoming, mut peer) = scripted_peer();
     let runtime = project_runtime(connection, incoming);
-    expect_rewind_session_start(&mut peer, "legacy");
+    expect_rewind_session_start(&mut peer, Some("paginated"));
     peer.expect_request(
-        "thread/rollback",
-        json!({ "threadId": "provider-thread-1", "numTurns": 1 }),
+        "thread/turns/list",
+        json!({
+            "threadId": "provider-thread-1",
+            "limit": 1,
+            "sortDirection": "desc",
+            "itemsView": "notLoaded"
+        }),
+    )
+    .respond(json!({ "data": [{ "id": "turn-1", "items": [] }], "nextCursor": null }));
+    peer.expect_request(
+        "thread/revert",
+        json!({ "threadId": "provider-thread-1", "beforeTurnId": "turn-1" }),
     )
     .respond_error(json!({
         "code": -32600,
-        "message": "Invalid request: unknown variant `thread/rollback`, expected one of `initialize`, `thread/start`, `thread/revert`"
+        "message": "Invalid request: unknown variant `thread/revert`, expected one of `initialize`, `thread/start`"
     }));
     peer.expect_request("shutdown", Value::Null)
         .respond(Value::Null);
@@ -8939,15 +8967,11 @@ async fn legacy_thread_rollback_without_thread_rollback_support_is_actionable() 
     let error = runtime
         .rollback_thread(1)
         .await
-        .expect_err("a legacy thread cannot be rewound once thread/rollback is gone")
+        .expect_err("a missing thread/revert cannot rewind")
         .to_string();
     assert!(
-        error.contains("older Codex") && error.contains("Start a new thread"),
-        "the error must say what failed and what to do next: {error}"
-    );
-    assert!(
-        !error.contains("unknown variant"),
-        "the raw method list must not reach the user: {error}"
+        error.contains("Update Codex to 0.151.0 or later") && !error.contains("unknown variant"),
+        "{error}"
     );
     runtime.shutdown().await.expect("shutdown");
     peer_task.await.expect("peer");
