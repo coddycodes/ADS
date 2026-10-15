@@ -291,9 +291,11 @@ impl ScrcpySession {
             .map_err(|error| DeviceError::Io(format!("scrcpy control socket: {error}")))
     }
 
-    /// Closes the sockets, ends the server, and removes the forward. A server that died on
-    /// its own is reported as an exit nobody asked for.
-    pub(crate) async fn stop(self) {
+    /// Closes the sockets, ends the server, and removes the forward unless `device_ended`:
+    /// adb drops a device's forwards when it disconnects, and asking a departing device only
+    /// waits for adb to fail. A server that died on its own is reported as an exit nobody
+    /// asked for.
+    pub(crate) async fn stop(self, device_ended: bool) {
         let Self {
             control,
             helper,
@@ -322,7 +324,11 @@ impl ScrcpySession {
         drop(reader);
         drop(control);
         helper.terminate().await;
-        forward.remove().await;
+        if device_ended {
+            forward.leave();
+        } else {
+            forward.remove().await;
+        }
     }
 }
 
@@ -498,6 +504,15 @@ impl Forward {
     async fn remove(mut self) {
         self.removed = true;
         remove_forward(&self.adb, &self.serial, self.port).await;
+    }
+
+    /// Leaves the forward to adb, which drops it with the device.
+    fn leave(mut self) {
+        self.removed = true;
+        tracing::debug!(
+            port = self.port,
+            "left the scrcpy adb forward to its ending device"
+        );
     }
 }
 
@@ -864,7 +879,7 @@ mod tests {
         session.reset_video().await.unwrap();
         assert_eq!(source.control_bytes().await, vec![17]);
         let pid = session.helper.pid;
-        session.stop().await;
+        session.stop(false).await;
         assert!(!crate::device::testing::process_alive(pid));
 
         let log = sdk.adb_log();
@@ -896,6 +911,23 @@ mod tests {
             !log.contains(" -a "),
             "adb never listens beyond loopback: {log}"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stopping_for_an_ended_device_leaves_the_forward_to_adb() {
+        use crate::device::testing::{FakeScrcpySource, FakeSdk};
+        let source = FakeScrcpySource::spawn(vec![config_unit()]).await;
+        let sdk = FakeSdk::new().adb_forwards_to(source.port).write();
+        let session = session_on(&sdk).await.unwrap();
+        let pid = session.helper.pid;
+        session.stop(true).await;
+        assert!(!crate::device::testing::process_alive(pid));
+        // Give a background removal (a dropped `Forward`) time to show up in the log.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let log = sdk.adb_log();
+        assert!(log.contains("forward tcp:0"), "{log}");
+        assert!(!log.contains("forward --remove"), "{log}");
     }
 
     #[cfg(unix)]
@@ -958,7 +990,7 @@ mod tests {
             .remote_jar_sha256(SCRCPY_SERVER_SHA256)
             .write();
         let session = session_on(&sdk).await.unwrap();
-        session.stop().await;
+        session.stop(false).await;
         let log = sdk.adb_log();
         assert!(log.contains("shell sha256sum"), "{log}");
         assert!(!log.contains(" push "), "{log}");
@@ -987,7 +1019,7 @@ mod tests {
             "{:?}",
             session.ended()
         );
-        session.stop().await;
+        session.stop(false).await;
         let reported = captured.take();
         assert_eq!(reported.len(), 1, "{reported:?}");
         assert_eq!(reported[0][1], HELPER_LABEL, "{reported:?}");
@@ -1009,7 +1041,7 @@ mod tests {
         assert!(session.units.recv().await.is_none());
         assert!(matches!(session.ended(), Some(StreamEnd::Failed(_))));
         let pid = session.helper.pid;
-        session.stop().await;
+        session.stop(false).await;
         assert!(!crate::device::testing::process_alive(pid));
         assert!(captured.take().is_empty());
     }

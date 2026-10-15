@@ -834,7 +834,6 @@ mod tests {
             .wait_state(&harness.device_id, DeviceState::Stopped)
             .await;
         assert!(!process_alive(pid), "the emulator is reaped");
-        wait_until(|| harness.fixture.sdk.adb_log().contains("forward --remove")).await;
         assert!(matches!(
             harness.fixture.manager.create_media_ticket(
                 &harness.device_id,
@@ -843,6 +842,10 @@ mod tests {
             ),
             Err(crate::device::DeviceOpError::Disabled)
         ));
+        // adb drops the forward with the device; the hub leaves it alone.
+        harness.fixture.manager.shutdown().await;
+        let log = harness.fixture.sdk.adb_log();
+        assert!(!log.contains("forward --remove"), "{log}");
     }
 
     #[tokio::test]
@@ -877,8 +880,9 @@ mod tests {
             .fixture
             .wait_state(&harness.device_id, DeviceState::Failed)
             .await;
-        wait_until(|| harness.fixture.sdk.adb_log().contains("forward --remove")).await;
         harness.fixture.manager.shutdown().await;
+        let log = harness.fixture.sdk.adb_log();
+        assert!(!log.contains("forward --remove"), "{log}");
     }
 
     #[tokio::test]

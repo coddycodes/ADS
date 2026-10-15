@@ -5,7 +5,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc, Mutex, MutexGuard, PoisonError, Weak,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -304,6 +304,8 @@ pub(super) struct MediaHub {
     state: Mutex<HubState>,
     reset: Notify,
     cancel: CancellationToken,
+    /// Set when the hub stops because its device ended, before `cancel`.
+    device_ended: AtomicBool,
 }
 
 impl MediaHub {
@@ -312,6 +314,7 @@ impl MediaHub {
             state: Mutex::default(),
             reset: Notify::new(),
             cancel,
+            device_ended: AtomicBool::new(false),
         })
     }
 
@@ -328,6 +331,13 @@ impl MediaHub {
     pub(super) fn stop(&self) {
         self.close(false);
         self.cancel.cancel();
+    }
+
+    /// [`stop`](Self::stop) for a device that stopped running, whose session then skips the
+    /// cleanup that needs the device.
+    pub(super) fn stop_device_ended(&self) {
+        self.device_ended.store(true, Ordering::Release);
+        self.stop();
     }
 
     fn close(&self, failed: bool) {
@@ -481,7 +491,8 @@ pub(super) trait VideoSource: Send + 'static {
     fn reset_video(&mut self) -> impl Future<Output = Result<(), DeviceError>> + Send;
     /// Whether the stream ended because it failed.
     fn failed(&self) -> bool;
-    fn stop(self) -> impl Future<Output = ()> + Send;
+    /// Ends the source; `device_ended` when its device stopped running.
+    fn stop(self, device_ended: bool) -> impl Future<Output = ()> + Send;
 }
 
 impl VideoSource for super::scrcpy::ScrcpySession {
@@ -497,8 +508,8 @@ impl VideoSource for super::scrcpy::ScrcpySession {
         matches!(self.ended(), Some(super::scrcpy::StreamEnd::Failed(_)))
     }
 
-    async fn stop(self) {
-        Self::stop(self).await;
+    async fn stop(self, device_ended: bool) {
+        Self::stop(self, device_ended).await;
     }
 }
 
@@ -544,7 +555,7 @@ pub(super) async fn run<S: VideoSource>(
         tracing::warn!("device media stream failed; closing its sockets");
     }
     hub.close(failed);
-    source.stop().await;
+    source.stop(hub.device_ended.load(Ordering::Acquire)).await;
 }
 
 /// One media socket's view of a device's stream.
@@ -764,10 +775,12 @@ mod tests {
         unit(UnitKind::Delta, pts_us)
     }
 
-    /// A video source fed through a channel, counting the resets it is asked for.
+    /// A video source fed through a channel, counting the resets it is asked for and
+    /// recording how it was stopped.
     struct ChannelSource {
         units: mpsc::Receiver<VideoUnit>,
         resets: Arc<AtomicUsize>,
+        stopped: Arc<std::sync::OnceLock<bool>>,
     }
 
     impl VideoSource for ChannelSource {
@@ -784,7 +797,9 @@ mod tests {
             false
         }
 
-        async fn stop(self) {}
+        async fn stop(self, device_ended: bool) {
+            let _ = self.stopped.set(device_ended);
+        }
     }
 
     /// Drives a [`MediaHub`] from a channel-fed source.
@@ -794,6 +809,8 @@ mod tests {
         fed: std::cell::Cell<u64>,
         /// `RESET_VIDEO` writes the source received.
         written: Arc<AtomicUsize>,
+        /// Whether the source was stopped for an ended device, once it was stopped.
+        stopped: Arc<std::sync::OnceLock<bool>>,
     }
 
     struct Watcher {
@@ -805,9 +822,11 @@ mod tests {
             let hub = MediaHub::new(CancellationToken::new());
             let (units, receiver) = mpsc::channel(64);
             let written = Arc::<AtomicUsize>::default();
+            let stopped = Arc::<std::sync::OnceLock<bool>>::default();
             let source = ChannelSource {
                 units: receiver,
                 resets: written.clone(),
+                stopped: stopped.clone(),
             };
             tokio::spawn(run(hub.clone(), async move { Ok(source) }));
             Self {
@@ -815,6 +834,7 @@ mod tests {
                 units,
                 fed: std::cell::Cell::new(0),
                 written,
+                stopped,
             }
         }
 
@@ -1139,6 +1159,33 @@ mod tests {
         drop(second);
         assert!(!hub.hub.is_open());
         assert!(hub.hub.cancel.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn the_source_learns_whether_its_device_ended() {
+        let stopped = |hub: &HubFixture| {
+            let stopped = hub.stopped.clone();
+            async move {
+                for _ in 0..400 {
+                    if let Some(device_ended) = stopped.get() {
+                        return *device_ended;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                panic!("the source was never stopped");
+            }
+        };
+        // Each source runs before its hub stops.
+        let left = HubFixture::new();
+        let watcher = left.subscribe();
+        left.feed([config()]).await;
+        drop(watcher);
+        assert!(!stopped(&left).await);
+        let ended = HubFixture::new();
+        let _watcher = ended.subscribe();
+        ended.feed([config()]).await;
+        ended.hub.stop_device_ended();
+        assert!(stopped(&ended).await);
     }
 
     #[tokio::test]

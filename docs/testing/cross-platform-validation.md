@@ -3072,7 +3072,9 @@ Record each client's OS, app or browser version, and profile type.
 10. **Stop and cleanup.** **Stop** the device. Within 10 s the pill shows
     **Stopped**, the platform page's process check finds no `emulator` or
     `qemu-system` process, its discovery file is gone, and
-    `adb forward --list` is empty. Start the device again, then turn the
+    `adb forward --list` is empty (BiBCode leaves a stopping device's
+    scrcpy forward to adb, which drops it with the device, so this checks
+    that adb does). Start the device again, then turn the
     setting off: the confirmation names the running device, and after it
     the same checks pass and the panel shows how to turn previews on. Start
     it once more and stop the server (or quit the desktop that hosts it):

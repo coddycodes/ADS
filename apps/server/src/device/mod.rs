@@ -203,7 +203,7 @@ impl Slot {
         }
         // Closes every media socket and stops the scrcpy session.
         if let Some(media) = self.media.take() {
-            media.stop();
+            media.stop_device_ended();
         }
         // An `input` call still holding the old state finishes its batch, then drops it.
         self.input = Arc::default();
