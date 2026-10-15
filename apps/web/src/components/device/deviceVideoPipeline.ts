@@ -108,9 +108,13 @@ export function createDecoderPipeline<F extends DecodedVideoFrame>(
 ): DecoderPipeline {
   const now = options.now ?? (() => performance.now());
   const supportedCodecs = new Map<string, boolean>();
+  /** Codecs whose support check has not answered yet; one check per codec at a time. */
+  const checking = new Set<string>();
   let decoder: VideoDecoderHandle | null = null;
   let config: { readonly codec: string; readonly data: Uint8Array } | null = null;
   let waitingForKey = true;
+  /** The current wait for a key frame began with a backlog drop, so the key frame was asked for. */
+  let skippingBacklog = false;
   let recovering = false;
   let stopped = false;
   let sawFrame = false;
@@ -176,6 +180,7 @@ export function createDecoderPipeline<F extends DecodedVideoFrame>(
     decoder ??= open();
     const current = decoder;
     waitingForKey = true;
+    skippingBacklog = false;
     try {
       current.configure({ codec: config.codec, optimizeForLatency: true });
     } catch {
@@ -189,6 +194,7 @@ export function createDecoderPipeline<F extends DecodedVideoFrame>(
     if (chunk.type === "delta" && current.decodeQueueSize > MAX_DECODE_QUEUE) {
       // Behind: skip to the next key frame rather than queue more of this one's deltas.
       waitingForKey = true;
+      skippingBacklog = true;
       requestKeyframeThrottled();
       return;
     }
@@ -203,6 +209,7 @@ export function createDecoderPipeline<F extends DecodedVideoFrame>(
     if (config === null) return;
     if (frame.kind === "key") {
       waitingForKey = false;
+      skippingBacklog = false;
       decode({
         type: "key",
         timestamp: Number(frame.ptsUs),
@@ -210,7 +217,11 @@ export function createDecoderPipeline<F extends DecodedVideoFrame>(
       });
       return;
     }
-    if (waitingForKey) return;
+    if (waitingForKey) {
+      // A request the throttle swallowed is sent again once its window has passed.
+      if (skippingBacklog) requestKeyframeThrottled();
+      return;
+    }
     decode({ type: "delta", timestamp: Number(frame.ptsUs), data: frame.data });
   };
 
@@ -218,9 +229,11 @@ export function createDecoderPipeline<F extends DecodedVideoFrame>(
     const check = options.isCodecSupported;
     if (check === undefined) return supportedCodecs.set(codec, true);
     held = [];
+    checking.add(codec);
     void check(codec)
       .catch(() => false)
       .then((supported) => {
+        checking.delete(codec);
         if (stopped || config?.codec !== codec) return;
         supportedCodecs.set(codec, supported);
         if (!supported) return stop(events.unsupported);
@@ -247,6 +260,11 @@ export function createDecoderPipeline<F extends DecodedVideoFrame>(
         const supported = supportedCodecs.get(codec);
         if (supported === false) return stop(events.unsupported);
         if (supported === undefined) {
+          // A check already under way configures for this config too; hold its frames for it.
+          if (checking.has(codec)) {
+            held = [];
+            return;
+          }
           checkCodec(codec);
           if (supportedCodecs.get(codec) !== true) return;
         }
@@ -298,23 +316,23 @@ export function workerPoster<F extends DecodedVideoFrame>(
  */
 export class FramePresenter<F extends { close(): void }> {
   private pending: F | null = null;
-  private scheduled = false;
+  private scheduled: number | null = null;
   private disposed = false;
 
   constructor(
     private readonly draw: (frame: F) => void,
-    private readonly schedule: (callback: () => void) => void = (callback) =>
-      void requestAnimationFrame(callback),
+    private readonly schedule: (callback: () => void) => number = (callback) =>
+      requestAnimationFrame(callback),
+    private readonly cancel: (handle: number) => void = (handle) => cancelAnimationFrame(handle),
   ) {}
 
   push(frame: F): void {
     if (this.disposed) return frame.close();
     this.pending?.close();
     this.pending = frame;
-    if (this.scheduled) return;
-    this.scheduled = true;
-    this.schedule(() => {
-      this.scheduled = false;
+    if (this.scheduled !== null) return;
+    this.scheduled = this.schedule(() => {
+      this.scheduled = null;
       const next = this.pending;
       this.pending = null;
       if (next !== null && !this.disposed) this.draw(next);
@@ -324,6 +342,8 @@ export class FramePresenter<F extends { close(): void }> {
 
   dispose(): void {
     this.disposed = true;
+    if (this.scheduled !== null) this.cancel(this.scheduled);
+    this.scheduled = null;
     this.pending?.close();
     this.pending = null;
   }

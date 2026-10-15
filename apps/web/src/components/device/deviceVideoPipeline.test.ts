@@ -238,6 +238,60 @@ describe("createDecoderPipeline", () => {
     expect(events.requestKeyframe).toHaveBeenCalledTimes(2);
   });
 
+  it("asks again for a throttled backlog key frame once the window has passed", () => {
+    let now = 0;
+    const { current, events, pipeline } = harness({ now: () => now });
+    pipeline.push(config(SPS_PORTRAIT));
+    pipeline.push(key(1));
+    current().decodeQueueSize = MAX_DECODE_QUEUE + 1;
+    pipeline.push(delta(2));
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(1);
+    current().decodeQueueSize = 0;
+    // A second backlog episode inside the window: its request is throttled.
+    pipeline.push(key(3));
+    now = 500;
+    current().decodeQueueSize = MAX_DECODE_QUEUE + 1;
+    pipeline.push(delta(4));
+    current().decodeQueueSize = 0;
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(1);
+    now = 900;
+    pipeline.push(delta(5));
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(1);
+    // The next dropped delta after the window asks again.
+    now = KEYFRAME_REQUEST_INTERVAL_MS;
+    pipeline.push(delta(6));
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(2);
+    expect(current().decoded.map((chunk) => chunk.timestamp)).toEqual([1, 3]);
+  });
+
+  it("does not re-ask for key frames while waiting after a reconfigure", () => {
+    let now = 0;
+    const { events, pipeline } = harness({ now: () => now });
+    pipeline.push(config(SPS_PORTRAIT));
+    now = 5_000;
+    pipeline.push(delta(1));
+    pipeline.push(delta(2));
+    expect(events.requestKeyframe).not.toHaveBeenCalled();
+  });
+
+  it("runs one codec check at a time and configures once", async () => {
+    let answer: (supported: boolean) => void = () => undefined;
+    const isCodecSupported = vi.fn(() => new Promise<boolean>((resolve) => (answer = resolve)));
+    const { current, decoders, pipeline } = harness({ isCodecSupported });
+    pipeline.push(config(SPS_PORTRAIT));
+    pipeline.push(key(1));
+    pipeline.push(config(SPS_PORTRAIT));
+    pipeline.push(key(2));
+    expect(isCodecSupported).toHaveBeenCalledTimes(1);
+    answer(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(decoders).toHaveLength(1);
+    expect(current().configured).toEqual(["avc1.42c01f"]);
+    // Only the frames after the latest config are replayed.
+    expect(current().decoded.map((chunk) => chunk.timestamp)).toEqual([2]);
+  });
+
   it("checks the stream's codec once and replays the frames held meanwhile", async () => {
     const isCodecSupported = vi.fn(async () => true);
     const { current, decoders, events, pipeline } = harness({ isCodecSupported });
@@ -372,6 +426,7 @@ describe("FramePresenter", () => {
         frame.close();
       },
       (callback) => callbacks.push(callback),
+      () => undefined,
     );
     const [first, second, third] = [new FakeFrame(1, 1), new FakeFrame(1, 1), new FakeFrame(1, 1)];
     presenter.push(first);
@@ -386,18 +441,18 @@ describe("FramePresenter", () => {
     expect(third.closed).toBe(true);
   });
 
-  it("closes the waiting frame and later arrivals once disposed", () => {
-    const callbacks: Array<() => void> = [];
+  it("cancels its animation frame and closes the waiting frame and later arrivals once disposed", () => {
     const draw = vi.fn();
-    const presenter = new FramePresenter<FakeFrame>(draw, (callback) => callbacks.push(callback));
+    const cancel = vi.fn();
+    const presenter = new FramePresenter<FakeFrame>(draw, () => 42, cancel);
     const waiting = new FakeFrame(1, 1);
     presenter.push(waiting);
     presenter.dispose();
+    expect(cancel).toHaveBeenCalledWith(42);
     expect(waiting.closed).toBe(true);
     const late = new FakeFrame(1, 1);
     presenter.push(late);
     expect(late.closed).toBe(true);
-    callbacks[0]!();
     expect(draw).not.toHaveBeenCalled();
   });
 });
