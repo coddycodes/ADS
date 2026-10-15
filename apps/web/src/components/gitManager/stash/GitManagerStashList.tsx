@@ -7,7 +7,7 @@ import type {
 } from "@bibcode/contracts";
 import { LegendList } from "@legendapp/list/react";
 import { ArchiveRestoreIcon, PackageOpenIcon, Trash2Icon } from "lucide-react";
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -213,22 +213,8 @@ export const GitManagerStashList = memo(function GitManagerStashList({
   onDrop,
   operationInFlight,
 }: GitManagerStashListProps) {
-  const previousRows = useRef(new Map<string, GitManagerStashRow>());
-  const builtRows = useMemo(
-    () => buildStashRows(entries, blockedReasons),
-    [blockedReasons, entries],
-  );
-  const rows = useMemo(() => {
-    const nextRows = new Map<string, GitManagerStashRow>();
-    const stableRows = builtRows.map((row) => {
-      const previous = previousRows.current.get(row.sha);
-      const stable = previous !== undefined && stashRowsEqual(previous, row) ? previous : row;
-      nextRows.set(row.sha, stable);
-      return stable;
-    });
-    previousRows.current = nextRows;
-    return stableRows;
-  }, [builtRows]);
+  // LegendList's itemsAreEqual and the row comparator both skip rebuilt rows that are unchanged.
+  const rows = useMemo(() => buildStashRows(entries, blockedReasons), [blockedReasons, entries]);
   const [pendingDropSha, setPendingDropSha] = useState<string | null>(null);
   const [dropPending, setDropPending] = useState(false);
   const pendingDropRow =
@@ -239,7 +225,7 @@ export const GitManagerStashList = memo(function GitManagerStashList({
   const changeDropDialogOpen = useCallback((open: boolean) => {
     if (!open) setPendingDropSha(null);
   }, []);
-  const confirmDrop = useCallback(async () => {
+  const confirmDrop = async () => {
     if (pendingDropRow === null || dropPending) return;
     setDropPending(true);
     try {
@@ -248,7 +234,7 @@ export const GitManagerStashList = memo(function GitManagerStashList({
     } finally {
       setDropPending(false);
     }
-  }, [dropPending, onDrop, pendingDropRow]);
+  };
   const renderItem = useCallback(
     ({ item }: { item: GitManagerStashRow; index: number }) => (
       <GitManagerStashRowView

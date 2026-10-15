@@ -160,48 +160,36 @@ export interface GitManagerCommitDndContextProps {
   readonly onCommitDrop?: (resolution: GitManagerCommitDropResolution) => void;
 }
 
-export function GitManagerCommitDndContext({
-  children,
-  commitShas,
-  multiCommitSelection = EMPTY_MULTI_COMMIT_SELECTION,
-  onCommitDrop,
-}: GitManagerCommitDndContextProps) {
-  const multiCommitSelectionRef = useRef(multiCommitSelection);
-  const onCommitDropRef = useRef(onCommitDrop);
+// One drag gesture: the commits picked up at drag start and their drop.
+function useCommitDragSession(
+  multiCommitSelection: ReadonlyArray<string>,
+  onCommitDrop: ((resolution: GitManagerCommitDropResolution) => void) | undefined,
+) {
   const activeDragShasRef = useRef<ReadonlyArray<string>>(EMPTY_MULTI_COMMIT_SELECTION);
-  const dragInputRef = useRef<"keyboard" | "pointer">("pointer");
-  multiCommitSelectionRef.current = multiCommitSelection;
-  onCommitDropRef.current = onCommitDrop;
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(KeyboardSensor, { keyboardCodes: COMMIT_KEYBOARD_CODES }),
-  );
-  const dndIds = useMemo(() => commitShas.map(commitDndId), [commitShas]);
   const clearDrag = useCallback(() => {
     activeDragShasRef.current = EMPTY_MULTI_COMMIT_SELECTION;
   }, []);
-  const handleDragStart = useCallback((event: DragStartEvent) => {
-    const sha = event.active.data.current?.["sha"];
-    if (typeof sha !== "string") return;
-    const selection = multiCommitSelectionRef.current;
-    activeDragShasRef.current = selection.includes(sha) ? selection : [sha];
-    dragInputRef.current = event.activatorEvent.type.startsWith("key") ? "keyboard" : "pointer";
-  }, []);
+  const handleDragStart = useCallback(
+    (event: DragStartEvent) => {
+      const sha = event.active.data.current?.["sha"];
+      if (typeof sha !== "string") return;
+      activeDragShasRef.current = multiCommitSelection.includes(sha) ? multiCommitSelection : [sha];
+    },
+    [multiCommitSelection],
+  );
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
-      const onDrop = onCommitDropRef.current;
       const overData = event.over?.data.current;
       const shas = activeDragShasRef.current;
       clearDrag();
-      if (onDrop === undefined || overData === undefined || shas.length === 0) return;
+      if (onCommitDrop === undefined || overData === undefined || shas.length === 0) return;
 
       let target: GitManagerCommitDropTarget;
       if (overData["type"] === "commit" && typeof overData["sha"] === "string") {
-        target =
-          dragInputRef.current === "keyboard"
-            ? { type: "insertion", beforeSha: overData["sha"] }
-            : { type: "commit", sha: overData["sha"] };
+        // The activator is the event that started this drag.
+        target = event.activatorEvent.type.startsWith("key")
+          ? { type: "insertion", beforeSha: overData["sha"] }
+          : { type: "commit", sha: overData["sha"] };
       } else if (overData["type"] === "insertion") {
         const beforeSha = overData["beforeSha"];
         target = { type: "insertion", beforeSha: typeof beforeSha === "string" ? beforeSha : null };
@@ -209,10 +197,28 @@ export function GitManagerCommitDndContext({
         target = { type: "other" };
       }
       const resolution = resolveCommitDropTarget({ type: "commit", shas }, target);
-      if (resolution !== null) onDrop(resolution);
+      if (resolution !== null) onCommitDrop(resolution);
     },
-    [clearDrag],
+    [clearDrag, onCommitDrop],
   );
+  return { clearDrag, handleDragEnd, handleDragStart };
+}
+
+export function GitManagerCommitDndContext({
+  children,
+  commitShas,
+  multiCommitSelection = EMPTY_MULTI_COMMIT_SELECTION,
+  onCommitDrop,
+}: GitManagerCommitDndContextProps) {
+  const { clearDrag, handleDragEnd, handleDragStart } = useCommitDragSession(
+    multiCommitSelection,
+    onCommitDrop,
+  );
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { keyboardCodes: COMMIT_KEYBOARD_CODES }),
+  );
+  const dndIds = useMemo(() => commitShas.map(commitDndId), [commitShas]);
 
   return createElement(
     DndContext,

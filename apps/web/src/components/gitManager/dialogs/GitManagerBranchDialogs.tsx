@@ -145,7 +145,7 @@ function CreateBranchDialog({
   const [debouncedRulesMessage, setDebouncedRulesMessage] = useState<string | null>(null);
   const checkoutHintId = useId();
   const trimmedName = name.trim();
-  const currentBranch = useMemo(() => refs.find((ref) => ref.current)?.name ?? null, [refs]);
+  const currentBranch = useMemo(() => refs.find((branch) => branch.current)?.name ?? null, [refs]);
   const sourceGroups = useMemo((): ReadonlyArray<BranchSourceGroup> => {
     const start =
       baseCommit !== null ? [commitSource(baseCommit)] : baseBranch === null ? [HEAD_SOURCE] : [];
@@ -160,10 +160,7 @@ function CreateBranchDialog({
     [refs, trimmedName],
   );
   useEffect(() => {
-    if (trimmedName.length === 0) {
-      setDebouncedRulesMessage(null);
-      return;
-    }
+    if (trimmedName.length === 0) return;
     const timer = window.setTimeout(
       () => setDebouncedRulesMessage(refRulesMessage(trimmedName)),
       250,
@@ -201,7 +198,12 @@ function CreateBranchDialog({
               aria-describedby={disabledReasonId}
               id="git-manager-create-branch-name"
               value={name}
-              onChange={(event) => setName(event.currentTarget.value)}
+              onChange={(event) => {
+                const next = event.currentTarget.value;
+                setName(next);
+                // Clearing the name drops the debounced message so retyping never shows a stale one.
+                if (next.trim().length === 0) setDebouncedRulesMessage(null);
+              }}
             />
             {disabledReason === null ? null : (
               <p className="text-xs text-muted-foreground" id={disabledReasonId}>

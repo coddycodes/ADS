@@ -155,6 +155,7 @@ export const GitManagerPullRequestPanel = memo(function GitManagerPullRequestPan
     [disabledReason, requested, scope.cwd, scope.environmentId],
   );
   const query = useEnvironmentQuery(queryAtom);
+  const refreshQuery = query.refresh;
   const result: GitManagerPullRequestsResult | null = query.data ?? null;
   const providerKind = provider?.kind ?? null;
   const changeRequest = resolveStatusChangeRequestPresentation(provider, statusLoaded);
@@ -174,11 +175,11 @@ export const GitManagerPullRequestPanel = memo(function GitManagerPullRequestPan
     if (disabledReason !== null) return;
     onRefresh();
     if (requested) {
-      query.refresh();
+      refreshQuery();
     } else {
       setRequested(true);
     }
-  }, [disabledReason, onRefresh, query.refresh, requested]);
+  }, [disabledReason, onRefresh, refreshQuery, requested]);
   // Opening the review surface publishes nothing; the dialog owns the action.
   const create = useCallback(() => {
     if (disabledReason !== null) return;

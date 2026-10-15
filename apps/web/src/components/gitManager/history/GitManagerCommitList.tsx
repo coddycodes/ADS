@@ -4,6 +4,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useInsertionEffect,
   useMemo,
   useRef,
   type KeyboardEvent,
@@ -86,7 +87,8 @@ const GitManagerCommitRow = memo(function GitManagerCommitRow({
   rewriteDisabledReason,
 }: GitManagerCommitRowProps) {
   const author = deriveAuthorIdentity({ name: commit.authorName, email: commit.authorEmail });
-  const drag = useGitManagerCommitDragSource(commit.sha, rewriteDisabledReason !== null);
+  const { attributes, isDragging, listeners, setNodeRef, transform } =
+    useGitManagerCommitDragSource(commit.sha, rewriteDisabledReason !== null);
   const select = useCallback(
     (event: MouseEvent<HTMLButtonElement>) => {
       if (event.shiftKey && onMultiSelect !== undefined) {
@@ -103,9 +105,9 @@ const GitManagerCommitRow = memo(function GitManagerCommitRow({
   );
   return (
     <button
-      ref={drag.setNodeRef}
-      {...drag.attributes}
-      {...drag.listeners}
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
       type="button"
       aria-describedby={
         rewriteDisabledReason === null ? undefined : "git-manager-history-rewrite-disabled-reason"
@@ -115,12 +117,12 @@ const GitManagerCommitRow = memo(function GitManagerCommitRow({
       className={cn(
         "flex h-[50px] w-full min-w-0 touch-manipulation items-center gap-2 border-b border-border/60 px-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
         selected ? "bg-accent text-accent-foreground" : "hover:bg-muted/45",
-        drag.isDragging && "select-none opacity-40",
+        isDragging && "select-none opacity-40",
       )}
       data-commit-drag-source={rewriteDisabledReason === null ? commit.sha : undefined}
       data-commit-sha={commit.sha}
       role="option"
-      style={{ transform: drag.transform }}
+      style={{ transform }}
       tabIndex={tabbable ? 0 : -1}
       title={rewriteDisabledReason ?? undefined}
       onClick={select}
@@ -172,14 +174,16 @@ export const GitManagerCommitList = memo(function GitManagerCommitList({
   const listRef = useRef<LegendListRef | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const commitsRef = useRef(commits);
-  const onSelectRef = useRef(onSelect);
   const onReachEndRef = useRef(onReachEnd);
   const isLoadingMoreRef = useRef(isLoadingMore);
   const lastRequestAtMsRef = useRef(Number.NEGATIVE_INFINITY);
-  commitsRef.current = commits;
-  onSelectRef.current = onSelect;
-  onReachEndRef.current = onReachEnd;
-  isLoadingMoreRef.current = isLoadingMore;
+  // LegendList reports viewability from its own layout effects, which run before
+  // this component's, so the paging gate's inputs update in the insertion phase.
+  useInsertionEffect(() => {
+    commitsRef.current = commits;
+    onReachEndRef.current = onReachEnd;
+    isLoadingMoreRef.current = isLoadingMore;
+  }, [commits, isLoadingMore, onReachEnd]);
   const commitShas = useMemo(() => commits.map((commit) => commit.sha), [commits]);
 
   const renderCommit = useCallback(
@@ -283,13 +287,13 @@ export const GitManagerCommitList = memo(function GitManagerCommitList({
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-commit-sha]");
       const currentSha = button?.dataset.commitSha;
       if (!currentSha) return;
-      const currentIndex = commitsRef.current.findIndex((commit) => commit.sha === currentSha);
+      const currentIndex = commits.findIndex((commit) => commit.sha === currentSha);
       const nextIndex = currentIndex + (event.key === "ArrowDown" ? 1 : -1);
-      const nextCommit = commitsRef.current[nextIndex];
+      const nextCommit = commits[nextIndex];
       if (!nextCommit) return;
 
       event.preventDefault();
-      onSelectRef.current(nextCommit.sha);
+      onSelect(nextCommit.sha);
       const scroll = listRef.current?.scrollToIndex({
         index: nextIndex,
         animated: false,
@@ -300,7 +304,7 @@ export const GitManagerCommitList = memo(function GitManagerCommitList({
         () => undefined,
       );
     },
-    [focusCommit],
+    [commits, focusCommit, onSelect],
   );
 
   return (

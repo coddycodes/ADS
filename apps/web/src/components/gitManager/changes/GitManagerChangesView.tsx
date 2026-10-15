@@ -14,7 +14,16 @@ import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { SearchIcon, XIcon } from "lucide-react";
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { Button } from "~/components/ui/button";
 import { RetryButton, type RetryButtonProps } from "~/components/ui/retry-button";
@@ -82,6 +91,21 @@ const isGitManagerOperationError = Schema.is(GitManagerOperationError);
 interface PendingDiscard {
   readonly paths: ReadonlyArray<string>;
   readonly disposition: "trash" | "permanent";
+}
+
+// Sets the busy flag for the length of one mutation. The React Compiler skips the
+// body of a `try` without a `catch` when it infers a callback's dependencies, so
+// callbacks keep that `try` here.
+async function runWhileBusy<T>(
+  setBusy: (busy: boolean) => void,
+  run: () => Promise<T>,
+): Promise<T> {
+  setBusy(true);
+  try {
+    return await run();
+  } finally {
+    setBusy(false);
+  }
 }
 
 function isEnvironmentUnavailable(
@@ -276,7 +300,9 @@ export const GitManagerChangesView = memo(function GitManagerChangesView({
     [conflictedPaths, deferredFilterText, excludedPaths, files, filters],
   );
   const rowsRef = useRef(rows);
-  rowsRef.current = rows;
+  useLayoutEffect(() => {
+    rowsRef.current = rows;
+  }, [rows]);
   const header = useMemo(() => changeRowsHeader(rows), [rows]);
   const includedPaths = useMemo(() => {
     const conflicted = new Set(conflictedPaths);
@@ -286,8 +312,6 @@ export const GitManagerChangesView = memo(function GitManagerChangesView({
     }
     return [...included];
   }, [conflictedPaths, excludedPaths, files]);
-  const includedPathsRef = useRef(includedPaths);
-  includedPathsRef.current = includedPaths;
   const allChangedPaths = useMemo(() => [...new Set(files.map((file) => file.path))], [files]);
   const latestCommit = latestCommitQuery.data?.commits[0] ?? null;
   const localBranches = refsQuery.data?.localBranches ?? [];
@@ -356,11 +380,10 @@ export const GitManagerChangesView = memo(function GitManagerChangesView({
     setFilters(DEFAULT_CHANGE_FILTERS);
   }, [setFilterText, stableProjectRef]);
   const handleCommit = useCallback(
-    async (input: GitManagerCommitSubmission) => {
-      const selectedAtInvocation = new Set(includedPathsRef.current);
-      setMutationBusy(true);
-      setMutationError(null);
-      try {
+    (input: GitManagerCommitSubmission) => {
+      const selectedAtInvocation = new Set(includedPaths);
+      return runWhileBusy(setMutationBusy, async () => {
+        setMutationError(null);
         const freshStatus = await refreshStatus({ environmentId, input: { cwd } });
         if (freshStatus._tag === "Failure") {
           const message = gitManagerMutationErrorMessage(squashAtomCommandFailure(freshStatus));
@@ -428,14 +451,13 @@ export const GitManagerChangesView = memo(function GitManagerChangesView({
         }
         revalidateRefs();
         revalidateLatestCommit();
-      } finally {
-        setMutationBusy(false);
-      }
+      });
     },
     [
       commit,
       cwd,
       environmentId,
+      includedPaths,
       revalidateLatestCommit,
       revalidateRefs,
       refreshStatus,
@@ -443,22 +465,21 @@ export const GitManagerChangesView = memo(function GitManagerChangesView({
       unstageFiles,
     ],
   );
-  const handleUndo = useCallback(async (): Promise<GitManagerUndoCommitResult | null> => {
-    setMutationBusy(true);
-    setMutationError(null);
-    try {
-      const result = await undoCommit({ environmentId, input: { cwd } });
-      if (result._tag === "Failure") {
-        setMutationError(gitManagerMutationErrorMessage(squashAtomCommandFailure(result)));
-        return null;
-      }
-      revalidateRefs();
-      revalidateLatestCommit();
-      return result.value;
-    } finally {
-      setMutationBusy(false);
-    }
-  }, [cwd, environmentId, revalidateLatestCommit, revalidateRefs, undoCommit]);
+  const handleUndo = useCallback(
+    () =>
+      runWhileBusy(setMutationBusy, async (): Promise<GitManagerUndoCommitResult | null> => {
+        setMutationError(null);
+        const result = await undoCommit({ environmentId, input: { cwd } });
+        if (result._tag === "Failure") {
+          setMutationError(gitManagerMutationErrorMessage(squashAtomCommandFailure(result)));
+          return null;
+        }
+        revalidateRefs();
+        revalidateLatestCommit();
+        return result.value;
+      }),
+    [cwd, environmentId, revalidateLatestCommit, revalidateRefs, undoCommit],
+  );
   const requestDiscardAll = useCallback(() => {
     if (allChangedPaths.length > 0) {
       setPendingDiscard({ paths: allChangedPaths, disposition: "trash" });
@@ -470,9 +491,8 @@ export const GitManagerChangesView = memo(function GitManagerChangesView({
   const confirmDiscard = useCallback(async (): Promise<"keep-open" | void> => {
     const requested = pendingDiscard;
     if (requested === null) return;
-    setMutationBusy(true);
-    setMutationError(null);
-    try {
+    return runWhileBusy(setMutationBusy, async (): Promise<"keep-open" | void> => {
+      setMutationError(null);
       const result = await discard({
         environmentId,
         input: {
@@ -493,9 +513,7 @@ export const GitManagerChangesView = memo(function GitManagerChangesView({
         });
         return "keep-open";
       }
-    } finally {
-      setMutationBusy(false);
-    }
+    });
   }, [cwd, discard, environmentId, pendingDiscard]);
   const handleOpenExternal = useCallback(
     (path: string) => {

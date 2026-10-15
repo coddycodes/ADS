@@ -1,6 +1,14 @@
 import type { GitManagerImageDiffSide } from "@bibcode/contracts";
 import type { FileDiffMetadata } from "@pierre/diffs";
-import { memo, useCallback, useMemo, useRef, type KeyboardEvent, type PointerEvent } from "react";
+import {
+  memo,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type KeyboardEvent,
+  type PointerEvent,
+} from "react";
 
 import { classifyDiffPayload, type DiffPayloadMeasurements } from "../history/diffLadder";
 import { GitManagerStoredImageDiff } from "../diff/GitManagerImageDiffModeContext";
@@ -213,7 +221,9 @@ const GitManagerTextStagingGutter = memo(function GitManagerTextStagingGutter({
   });
   const runs = useMemo(() => groupContiguousRuns(fileDiff), [fileDiff]);
   const selectionRef = useRef(selection);
-  selectionRef.current = selection;
+  useLayoutEffect(() => {
+    selectionRef.current = selection;
+  }, [selection]);
   const dragRef = useRef<DragSelection | null>(null);
   const anchorRef = useRef<number | null>(null);
 
