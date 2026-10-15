@@ -39,7 +39,7 @@ use self::{
     guard::{GuardCache, GuardResult, XcodeCache, availability_for},
     hid::{
         HidAction, HidError, HidSink, INPUT_FAILED, KEYBOARD_NOT_READY, PointerState,
-        ROTATE_FAILED, paste_keys, plan_events,
+        ROTATE_FAILED, TouchPhase, paste_keys, plan_events,
     },
     pixels::IosOrientation,
     simctl::{SIMULATOR_LABEL, SimDevice, SimState, SimctlError, SimctlRunner, SimulatorProcess},
@@ -592,13 +592,19 @@ impl Shared {
         if self.stopping.load(Ordering::SeqCst) {
             return Err(DeviceOpError::NotReady(DeviceState::Stopped));
         }
-        let plan = plan_events(&events, orientation, &mut lock(&self.pointer))?;
+        // Planned against a copy: a refused batch leaves the pointer as it was.
+        let mut pointer = lock(&self.pointer).clone();
+        let plan = plan_events(&events, orientation, &mut pointer)?;
         if plan.iter().any(HidAction::needs_keyboard) && !sink.keyboard_ready() {
             return Err(DeviceOpError::InvalidInput(KEYBOARD_NOT_READY.to_owned()));
         }
+        *lock(&self.pointer) = pointer;
         for action in plan {
             match action {
                 HidAction::Paste { text } => {
+                    if self.stopping.load(Ordering::SeqCst) {
+                        return Err(DeviceOpError::NotReady(DeviceState::Stopped));
+                    }
                     if let Err(error) = self.runner.pbcopy(&self.udid, &text).await {
                         tracing::warn!(%error, chars = text.chars().count(), "could not copy text to the simulator");
                         return Err(DeviceOpError::Emulator(INPUT_FAILED.to_owned()));
@@ -609,10 +615,22 @@ impl Shared {
                             .map_err(|error| sink_error(error, INPUT_FAILED))?;
                     }
                 }
-                action => sink
-                    .send(action)
-                    .await
-                    .map_err(|error| sink_error(error, INPUT_FAILED))?,
+                action => {
+                    let down = matches!(
+                        action,
+                        HidAction::Touch {
+                            phase: TouchPhase::Down,
+                            ..
+                        }
+                    );
+                    if let Err(error) = sink.send(action).await {
+                        // A down the guest never got leaves no pointer active.
+                        if down {
+                            *lock(&self.pointer) = PointerState::default();
+                        }
+                        return Err(sink_error(error, INPUT_FAILED));
+                    }
+                }
             }
         }
         Ok(())
@@ -992,7 +1010,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn text_is_typed_and_the_rest_pasted_through_the_pasteboard() {
+    async fn text_with_a_non_us_character_is_pasted_whole() {
         let sim = FakeXcrun::new()
             .device("UDID-1", "iPhone 17 Pro", "iOS 27.0")
             .write();
@@ -1014,11 +1032,10 @@ mod tests {
             .await
             .unwrap();
         let key = |usage, down| HidAction::Key { usage, down };
+        // "aé" has a character no US key types, so the whole event is pasted.
         assert_eq!(
             hid.sent(),
             [
-                key(0x04, true),
-                key(0x04, false),
                 key(0xE3, true),
                 key(0x19, true),
                 key(0x19, false),
@@ -1029,7 +1046,7 @@ mod tests {
                 },
             ]
         );
-        assert_eq!(sim.pasteboard().as_deref(), Some("é"));
+        assert_eq!(sim.pasteboard().as_deref(), Some("aé"));
         manager.shutdown().await;
     }
 
@@ -1069,6 +1086,41 @@ mod tests {
             [HidAction::Button {
                 button: SimButton::VolumeUp,
                 down: true
+            }]
+        );
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_refused_batch_leaves_the_pointer_up() {
+        let sim = FakeXcrun::new()
+            .device("UDID-1", "iPhone 17 Pro", "iOS 27.0")
+            .write();
+        let hid = RecordingHid::new();
+        hid.set_keyboard(false);
+        let (manager, _enabled) = live_fake_ios(&sim, &hid);
+        let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        wait_state(&manager, &id, DeviceState::Ready).await;
+        let refused = manager
+            .input(
+                &id,
+                vec![
+                    tap_down(0.1, 0.1),
+                    DeviceInputEvent::Text { text: "é".into() },
+                ],
+            )
+            .await;
+        assert_eq!(
+            refused,
+            Err(DeviceOpError::InvalidInput(KEYBOARD_NOT_READY.into()))
+        );
+        manager.input(&id, vec![tap_down(0.2, 0.3)]).await.unwrap();
+        assert_eq!(
+            hid.sent(),
+            [HidAction::Touch {
+                phase: TouchPhase::Down,
+                x: 0.2,
+                y: 0.3
             }]
         );
         manager.shutdown().await;

@@ -117,7 +117,7 @@ impl SimButton {
 }
 
 /// Tracks the single active pointer between batches: iOS input has one finger (spec §5).
-#[derive(Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct PointerState {
     active: Option<u32>,
 }
@@ -164,24 +164,24 @@ fn key_target(key: DeviceKey) -> Result<KeyTarget, DeviceOpError> {
     })
 }
 
-/// Text as maximal runs, in order: US-typeable characters as key down/up pairs (Shift
-/// around shifted ones), everything else as one paste per run. `\r\n` is one Return.
+/// A text event: all US-typeable, it is typed as key down/up pairs (Shift around shifted
+/// characters, `\r\n` as one Return); otherwise it is pasted whole, one pasteboard write
+/// per event, so a later paste never replaces text iOS has not read yet (spec §5).
 fn plan_text(text: &str, plan: &mut Vec<HidAction>) {
-    let mut pasted = String::new();
+    if !text.chars().all(|c| us_usage(c).is_some()) {
+        plan.push(HidAction::Paste {
+            text: text.to_owned(),
+        });
+        return;
+    }
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '\r' && chars.peek() == Some(&'\n') {
             continue;
         }
         let Some((usage, shift)) = us_usage(c) else {
-            pasted.push(c);
             continue;
         };
-        if !pasted.is_empty() {
-            plan.push(HidAction::Paste {
-                text: std::mem::take(&mut pasted),
-            });
-        }
         if shift {
             plan.push(HidAction::Key {
                 usage: SHIFT,
@@ -196,9 +196,6 @@ fn plan_text(text: &str, plan: &mut Vec<HidAction>) {
                 down: false,
             });
         }
-    }
-    if !pasted.is_empty() {
-        plan.push(HidAction::Paste { text: pasted });
     }
 }
 
@@ -609,30 +606,32 @@ mod tests {
     }
 
     #[test]
-    fn mixed_text_is_split_in_order() {
-        let mut pointer = PointerState::default();
-        let plan = plan_events(
-            &[DeviceInputEvent::Text {
+    fn mixed_text_is_pasted_whole() {
+        let plan = plan_one(
+            DeviceInputEvent::Text {
                 text: "Hi é😀!".into(),
-            }],
+            },
             Orientation::Portrait,
-            &mut pointer,
-        )
-        .unwrap();
-        let paste_at = plan
-            .iter()
-            .position(|a| matches!(a, HidAction::Paste { .. }))
-            .unwrap();
+        );
         assert_eq!(
-            plan[paste_at],
-            HidAction::Paste {
-                text: "é😀".into()
-            }
+            plan,
+            [HidAction::Paste {
+                text: "Hi é😀!".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn us_text_is_typed_as_keys() {
+        let plan = plan_one(
+            DeviceInputEvent::Text {
+                text: "Hi !".into(),
+            },
+            Orientation::Portrait,
         );
         let key = |usage, down| HidAction::Key { usage, down };
-        // "Hi " before the paste (H needs shift), "!" after it.
         assert_eq!(
-            plan[..paste_at],
+            plan,
             [
                 key(0xE1, true),
                 key(0x0B, true),
@@ -642,23 +641,11 @@ mod tests {
                 key(0x0C, false),
                 key(0x2C, true),
                 key(0x2C, false),
-            ]
-        );
-        assert_eq!(
-            plan[paste_at + 1..],
-            [
                 key(0xE1, true),
                 key(0x1E, true),
                 key(0x1E, false),
-                key(0xE1, false)
+                key(0xE1, false),
             ]
-        );
-        assert_eq!(
-            plan.last(),
-            Some(&HidAction::Key {
-                usage: 0xE1,
-                down: false
-            })
         );
     }
 

@@ -1632,6 +1632,9 @@ impl HidInner {
         if let Some(client) = &*legacy {
             return Ok(client.clone());
         }
+        if self.released.load(Ordering::SeqCst) {
+            return Err(HidError::Released);
+        }
         let creator = this.clone();
         let created =
             tokio::task::spawn_blocking(move || LegacyHid::new(&creator.sim, &creator.device))
@@ -1646,8 +1649,16 @@ impl HidInner {
         Ok(created)
     }
 
-    /// The path for `action`: a touch's moves and lift follow its down.
-    fn path(self: &Arc<Self>, action: &HidAction) -> InputPath {
+    /// The path for `action`, or [`HidError::Released`] once released.
+    fn path(self: &Arc<Self>, action: &HidAction) -> Result<InputPath, HidError> {
+        if self.released.load(Ordering::SeqCst) {
+            return Err(HidError::Released);
+        }
+        Ok(self.path_unreleased(action))
+    }
+
+    /// A touch's moves and lift follow the path its down took.
+    fn path_unreleased(self: &Arc<Self>, action: &HidAction) -> InputPath {
         let current = || self.dtu().map_or(InputPath::Legacy, InputPath::Dtu);
         let HidAction::Touch { phase, .. } = action else {
             return current();
@@ -1668,7 +1679,7 @@ impl HidInner {
         if self.released.load(Ordering::SeqCst) {
             return Err(HidError::Released);
         }
-        match self.path(&action) {
+        match self.path(&action)? {
             InputPath::Dtu(connection) => {
                 let message = dtu_message(&action)
                     .ok_or_else(|| HidError::Failed("a paste is not a HID message".to_owned()))?;
