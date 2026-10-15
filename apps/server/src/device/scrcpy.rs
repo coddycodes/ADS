@@ -245,9 +245,11 @@ impl ScrcpySession {
             reader,
             ..
         } = self;
+        // Closing the sockets alone makes the server exit, so the stop is noted first.
+        note_stop(&helper);
         reader.abort();
         drop(control);
-        stop_helper(helper).await;
+        helper.terminate().await;
         remove_forward(&adb, &serial, port).await;
     }
 }
@@ -311,12 +313,14 @@ async fn launch(
     let helper = spawn_registered_helper(command, exe, HELPER_LABEL, registry)
         .await
         .map_err(|error| DeviceError::Io(format!("could not start scrcpy-server: {error}")))?;
+    // The sockets outlive the attempt so a failure notes the stop before closing them.
+    let (mut video_socket, mut control_socket) = (None, None);
     let connected = async {
-        let mut video = connect_video(&helper, port).await?;
+        let video = video_socket.insert(connect_video(&helper, port).await?);
         let control = TcpStream::connect((Ipv4Addr::LOCALHOST, port))
             .await
             .map_err(|error| DeviceError::Io(format!("scrcpy control socket: {error}")))?;
-        let _ = control.set_nodelay(true);
+        let _ = control_socket.insert(control).set_nodelay(true);
         let mut codec_id = [0_u8; 4];
         let mut session = [0_u8; 12];
         let headers = async {
@@ -332,15 +336,18 @@ async fn launch(
                 ));
             }
         }
-        let codec = parse_codec_header(codec_id, session)?;
-        Ok((codec, video, control))
+        parse_codec_header(codec_id, session)
     }
     .await;
-    match connected {
-        Ok((codec, video, control)) => Ok((helper, codec, video, control)),
-        Err(error) => {
-            stop_helper(helper).await;
-            Err(error)
+    match (connected, video_socket, control_socket) {
+        (Ok(codec), Some(video), Some(control)) => Ok((helper, codec, video, control)),
+        (connected, video, control) => {
+            note_stop(&helper);
+            drop((video, control));
+            helper.terminate().await;
+            Err(connected.err().unwrap_or_else(|| {
+                DeviceError::Protocol("scrcpy sockets missing after connecting".to_owned())
+            }))
         }
     }
 }
@@ -375,13 +382,13 @@ async fn connect_video(helper: &RegisteredHelper, port: u16) -> Result<TcpStream
     }
 }
 
-/// Ends the server: an exit nobody asked for is reported, otherwise the stop is noted first.
-async fn stop_helper(helper: RegisteredHelper) {
+/// Before the server is asked to stop: an exit nobody asked for is reported, otherwise the
+/// coming stop is noted so its exit is not reported.
+fn note_stop(helper: &RegisteredHelper) {
     match helper.exited() {
         Some(status) => helper.report_unrequested_exit(HELPER_LABEL, &status),
         None => exits::note_stop_requested(helper.pid),
     }
-    helper.terminate().await;
 }
 
 /// Pushes the embedded jar unless the device already holds a copy with the pinned hash.
