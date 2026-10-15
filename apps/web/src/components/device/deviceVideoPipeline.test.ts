@@ -375,14 +375,14 @@ describe("createDeviceVideoWorkerRuntime", () => {
 
   it("replaces the socket on a new start and ignores the old one", () => {
     const { handle, posted, sockets } = runtime();
-    handle({ type: "start", target, ticket: "T1" });
+    handle({ type: "start", target, ticket: "ticket-a" });
     sockets[0]!.handlers.onClose("expired");
-    handle({ type: "start", target, ticket: "T2" });
-    handle({ type: "start", target, ticket: "T3" });
+    handle({ type: "start", target, ticket: "ticket-b" });
+    handle({ type: "start", target, ticket: "ticket-c" });
     expect(sockets[1]!.close).toHaveBeenCalled();
     sockets[1]!.handlers.onClose("network");
     expect(posted).toEqual([{ type: "closed", reason: "expired" }]);
-    expect(sockets.map((socket) => socket.ticket)).toEqual(["T1", "T2", "T3"]);
+    expect(sockets.map((socket) => socket.ticket)).toEqual(["ticket-a", "ticket-b", "ticket-c"]);
   });
 
   it("asks the socket for a key frame when the decoder recovers", () => {

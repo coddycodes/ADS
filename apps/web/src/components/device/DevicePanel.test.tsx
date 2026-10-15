@@ -25,6 +25,7 @@ const h = vi.hoisted(() => ({
   navigations: [] as unknown[],
   screens: [] as unknown[],
   stillImages: null as string | null,
+  catalogListeners: new Set<() => void>(),
 }));
 
 vi.mock("./deviceAvailability", () => ({
@@ -41,9 +42,18 @@ vi.mock("../../state/device", () => ({
   },
 }));
 
-vi.mock("../../state/query", () => ({
-  useEnvironmentQuery: () => h.catalogQuery,
-}));
+// Subscribed like the real query, so a catalog change re-renders the pane itself, not only a
+// parent re-render (which the compiled DevicePanel does not pass on to an unchanged session).
+vi.mock("../../state/query", async () => {
+  const { useSyncExternalStore } = await import("react");
+  const subscribe = (listener: () => void) => {
+    h.catalogListeners.add(listener);
+    return () => h.catalogListeners.delete(listener);
+  };
+  return {
+    useEnvironmentQuery: () => useSyncExternalStore(subscribe, () => h.catalogQuery),
+  };
+});
 
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: { __cmd: string }) => (input: unknown) => {
@@ -130,6 +140,7 @@ function withCatalog(value: DeviceCatalog | null) {
     refresh: vi.fn(),
     revalidate: vi.fn(),
   };
+  for (const listener of h.catalogListeners) listener();
 }
 
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
@@ -238,9 +249,8 @@ describe("DevicePanel", () => {
     h.results.open = { _tag: "Success", value: { deviceId: "d-1" } };
     const container = await render();
     await click(button(container, "Start"));
-    withCatalog(catalog({ devices: [snapshot({ state: "failed", failure: "exited: 1" })] }));
     await act(async () => {
-      mounted[0]!.root.render(<DevicePanel environmentId={ENVIRONMENT_ID} />);
+      withCatalog(catalog({ devices: [snapshot({ state: "failed", failure: "exited: 1" })] }));
     });
     expect(container.querySelector("[role='status']")?.textContent).toBe("Failed: exited: 1");
     expect(button(container, "Start").disabled).toBe(false);
@@ -260,14 +270,13 @@ describe("DevicePanel", () => {
     const container = await render();
     await click(button(container, "Start"));
     // Another client started Pixel_8 meanwhile; the catalog shows it.
-    withCatalog(
-      catalog({
-        avds: [PIXEL, { name: "Tablet", displayName: "Tablet" }],
-        devices: [snapshot({ deviceId: "d-9", state: "ready" })],
-      }),
-    );
     await act(async () => {
-      mounted[0]!.root.render(<DevicePanel environmentId={ENVIRONMENT_ID} />);
+      withCatalog(
+        catalog({
+          avds: [PIXEL, { name: "Tablet", displayName: "Tablet" }],
+          devices: [snapshot({ deviceId: "d-9", state: "ready" })],
+        }),
+      );
     });
     expect(container.querySelector("[role='alert']")?.textContent).toContain(
       "Pixel_8 is already running. Stop it before starting another device.",
