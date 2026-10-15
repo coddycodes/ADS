@@ -1,6 +1,6 @@
 # Pull and merge requests in a thread's right panel
 
-Status: **Draft** for review on 2026-10-15.
+Status: **Approved** on 2026-10-15. Refined while planning (see "Planning refinements").
 
 ## Goal
 
@@ -33,26 +33,30 @@ full detail the user chose).
 `apps/web/src/rightPanelStore.ts`:
 
 - `RIGHT_PANEL_KINDS` gains `"pullRequest"`, and `RightPanelSurface` gains
-  `{ id: \`pullRequest:${number}\`; kind: "pullRequest"; number: number; tab: PullRequestsDetailTab }`.
+  `{ id: \`pullRequest:${number}\`; kind: "pullRequest"; number: number; provider: SourceControlProviderKind; tab: PullRequestsDetailTab }`.
+  `provider` is recorded when the surface opens, so the tab label needs no
+  query.
   `PullRequestsDetailTab` is `"conversation" | "commits" | "checks" | "files"`
   (`apps/web/src/pullRequestsStore.ts`).
 - A thread may hold several such surfaces. Opening a number that is already
   open activates it; it never adds a duplicate.
 - New actions:
-  - `openPullRequest(ref, number, tab = "conversation")`: add or activate the
-    surface and show the panel. Activating an existing surface keeps its saved
-    tab unless a tab is passed explicitly.
+  - `openPullRequest(ref, { number, provider }, tab?)`: add or activate the
+    surface and show the panel. A new surface starts on `tab` or Conversation;
+    activating an existing surface keeps its saved tab unless a tab is passed.
   - `setPullRequestTab(ref, number, tab)`: record the selected detail tab.
 - `pullRequest` is excluded from the generic singleton `open`/`toggle` kinds,
   like `file`, `terminal` and `activity`.
-- The surfaces persist with the thread's right-panel state.
-  `RIGHT_PANEL_STORAGE_VERSION` goes from 9 to 10. The migration keeps v9 state
-  unchanged; validation drops a `pullRequest` surface whose `number` is not a
-  positive integer or whose `tab` is unknown, instead of discarding the thread's
-  panel state.
-- `RightPanelTabs` labels the tab with the provider icon and the request
-  reference (`!89` on GitLab, `#89` on GitHub, from the change request
-  presentation). The request title is the tooltip once the detail has loaded.
+- The surfaces persist with the thread's right-panel state. Saved state is
+  normalized by content on every load (`migratePersistedRightPanelState` runs
+  for `migrate` and `merge`), so `RIGHT_PANEL_STORAGE_VERSION` stays 9: an older
+  build drops the surfaces it does not know. Normalization drops a
+  `pullRequest` surface whose `number` is not a positive safe integer, whose
+  `id` does not match, or whose `provider` is unknown, and resets an unknown
+  `tab` to Conversation, without discarding the thread's other surfaces.
+- `RightPanelTabs` labels the tab with a pull request icon and the request
+  reference from `formatChangeRequestNumber` (`!89` on GitLab, `#89` on
+  GitHub).
 - `ChatView` renders `PullRequestPanelSurface` for the active `pullRequest`
   surface, beside the existing `sourceControl`, `diff` and `plan` branches. It
   receives the thread ref, the project ref, `gitCwd` and `workspaceUnavailable`,
@@ -62,29 +66,44 @@ full detail the user chose).
 
 ### Navigation interface
 
-`PullRequestsDetailView` stops importing the router. It receives:
+`PullRequestsDetailView`, `PullRequestsFiles` and the conversation's file links
+stop importing the router. They read a navigation from React context
+(`PullRequestsNavigationContext`, `usePullRequestsNavigation()`), which every
+host provides; reading it without a provider throws.
 
 ```ts
-interface PullRequestsDetailNavigation {
+interface PullRequestsNavigation {
+  /** The file the Changes tab scrolls to, or null. */
+  readonly fileAnchor: string | null;
   /** The user picked another detail tab. */
   selectTab(tab: PullRequestsDetailTab): void;
+  /** A conversation link to a file: the Changes tab, scrolled to that file. */
+  showFile(path: string): void;
+  /** The file tree selected a file: replace the anchor in place. */
+  setFileAnchor(path: string): void;
   /** An action created another request (a revert request). */
   openRequest(number: number): void;
   /** The request was deleted. */
   requestGone(): void;
   /** "Back to merge requests", or null where there is no list to go back to. */
-  back: (() => void) | null;
+  readonly back: (() => void) | null;
 }
 ```
+
+The file anchor was the URL hash (`#file=<path>`); a panel has no URL, so the
+navigation owns it.
 
 `usePullRequestsAction`'s `navigate(number | null)` maps onto `openRequest`
 (a number) and `requestGone` (`null`).
 
-- **Full page:** the pull-requests route builds the router adapter: exactly the
-  navigations the view makes today (tab change with `replace`, the list, another
-  request's conversation tab). URLs and behaviour do not change.
+- **Full page:** `PullRequestsRouteNavigation` provides the router adapter:
+  exactly the navigations made today (tab change with `replace`, the file
+  anchor in the hash, the list, another request's conversation tab). URLs and
+  behaviour do not change. The conversation's file link becomes a button that
+  calls `showFile` instead of a router `<Link>`.
 - **Panel adapter:**
-  - `selectTab` calls `setPullRequestTab`.
+  - `selectTab` calls `setPullRequestTab`; `showFile` also sets the file
+    anchor, which the host keeps in component state.
   - `openRequest(n)` calls `openPullRequest(thread, n)`, so a revert request
     opens as a new tab beside the original.
   - `requestGone` closes this surface; the existing "Request deleted" toast
@@ -105,13 +124,16 @@ A new component under `apps/web/src/components/pullRequests/`. It resolves what
 When pull requests are not usable, it renders the existing
 `PullRequestsUnavailableState` with its reason inside the tab: turned off in
 settings, environment disconnected, no supported host, or the thread's workspace
-unavailable. Otherwise it renders a compact header and the detail view with the
-panel adapter and `scope = { environmentId, cwd: gitCwd }`.
+unavailable. Otherwise it renders the detail view with the panel adapter and
+`scope = { environmentId, cwd: gitCwd }`. The context loading it shares with the
+full page (stored context, then one live read; rescan; auth recovery) moves from
+`PullRequestsPanel` into a `usePullRequestsContextQuery` hook both use.
 
-The compact header shows the repository, **Open in browser** (the request's web
-URL) and **Open full page** (navigates to
-`/project/$environmentId/$projectId/pull-requests/$number` with the surface's
-tab). Checkout and every other action behave as on the full page, against the
+`PullRequestsDetailView` gains a `headerActions` slot in its top row, where the
+full page shows "Back to merge requests". The panel puts **Open full page**
+there (navigates to `/project/$environmentId/$projectId/pull-requests/$number`
+with the surface's tab); the detail header already has **Open in browser**.
+Checkout and every other action behave as on the full page, against the
 thread's checkout.
 
 ## 3. Entry points and layout
@@ -119,7 +141,7 @@ thread's checkout.
 ### Done in the create dialog
 
 `GitManagerCreatePullRequestDialog` gains an optional
-`onDone?: (request: { number: number }) => void`. **Done** calls it after the
+`onDone?: (request: { number: number; provider: SourceControlProviderKind }) => void`. **Done** calls it after the
 request was created or an existing one was found, when the host returned a
 number (`GitRunStackedActionResult.pr.number`), then closes the dialog. Without
 a number, Done only closes, as today. Only `SourceControlPanel` passes `onDone`;
@@ -128,20 +150,20 @@ Requests page and the git manager keep today's Done.
 
 ### "Open {MR/PR} in panel" in the thread
 
-Both menu models gain an item right after "View {MR/PR}", labelled "Open
-{MR/PR} in panel": Source Control's
-(`apps/web/src/components/SourceControlPrimaryAction.logic.ts`) and the Git
-actions control's (`buildMenuItems` in
-`apps/web/src/components/GitActionsControl.logic.ts`). It is present only when
-the branch has an open request and the caller has a thread to open it in.
-`SourceControlPanel` and `GitActionsControl` call `openPullRequest` with
-`status.pr.number`. The primary "View {MR/PR}" button and menu item keep opening
-the browser.
+Source Control's menu gains an item right after "View {MR/PR}", labelled "Open
+{MR/PR} in panel", in both of its menu models: the staging-area menu
+(`apps/web/src/components/SourceControlPrimaryAction.logic.ts`) and the legacy
+menu (`buildMenuItems` in `apps/web/src/components/GitActionsControl.logic.ts`,
+through a `canOpenInPanel` option). It is present only when the branch has an
+open request, and calls `openPullRequest` with `status.pr.number`. The primary
+"View {MR/PR}" button and menu item keep opening the browser. The chat header's
+`GitActionsControl` is not changed: it always renders with `hideTrigger`, so its
+menu is never shown.
 
 ### "Open beside a thread…" on the full page
 
-A header action in the full-page detail view opens a picker listing the
-project's threads that are not archived:
+An action in the full-page detail view's `headerActions` slot opens a picker
+listing the project's threads that are not archived:
 
 - threads whose `branch` equals the request's `headBranch` first, marked
   "On this branch";
@@ -212,9 +234,23 @@ In the same change:
 Reviews required by `AGENTS.md`: `vercel-react-best-practices` for every changed
 component and hook, and `UI.md` for the new tab, header, menu item and picker.
 
+## Planning refinements
+
+Found while reading the code for the plan, after approval:
+
+- No storage version bump: saved panel state is normalized by content on load.
+- The surface records `provider`, so the tab label needs no query; no title
+  tooltip.
+- Navigation comes from React context and owns the Changes tab's file anchor,
+  because `PullRequestsFiles` and the conversation's file links used the router
+  and the URL hash.
+- The panel's "Open full page" sits in a `headerActions` slot of the detail
+  view; "Open in browser" was already in the detail header.
+
 ## Out of scope
 
 - A request list inside the panel.
 - Changing what "View {MR/PR}" does.
+- The chat header's Git actions menu (hidden in production).
 - Opening the panel from the Git actions control's or git manager's create
   dialog.
