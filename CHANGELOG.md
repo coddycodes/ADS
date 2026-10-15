@@ -12,6 +12,10 @@
 - Reconnecting to a long thread no longer leaves another full copy of the thread in the app's memory. The app keeps the parts of a resent thread that did not change; in a test with a 200-message thread, six reconnects grew the web view's memory by 20 MB instead of 58 MB. (#96)
 - The Files panel no longer re-reads the whole file list when a formatter or editor saves files without adding or removing any. A burst of new files costs one read when it ends, or one about every 10 s while it lasts, instead of one every few seconds. (#111)
 
+### Providers
+
+- OpenCode 2 is reported as not supported yet, in Settings and when you send a message, with the setting to change (point **Binary path** at an OpenCode 1.x executable), instead of failing later with "HTTP 405" or "error decoding response body". BiBCode now waits for the OpenCode 1.x API to answer before it treats a server as ready.
+
 ### Left panel and Git Manager
 
 - After you check out another branch in the Git Manager, the left panel's cards show the new branch even when the repository's pull request lookup fails. They used to go back to the thread's old branch about half a second later.
