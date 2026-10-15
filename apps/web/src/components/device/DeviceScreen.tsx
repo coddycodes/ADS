@@ -161,8 +161,18 @@ export function DeviceScreen({
   // A key released while another window has focus never reaches the canvas; lift it on blur.
   useEffect(() => {
     const releaseKeys = () => onRelease("keys");
+    // A hidden page also ends drags: its pointer events may never arrive.
+    const releaseWhenHidden = () => {
+      if (!document.hidden) return;
+      touchesRef.current.clear();
+      onRelease("all");
+    };
     window.addEventListener("blur", releaseKeys);
-    return () => window.removeEventListener("blur", releaseKeys);
+    document.addEventListener("visibilitychange", releaseWhenHidden);
+    return () => {
+      window.removeEventListener("blur", releaseKeys);
+      document.removeEventListener("visibilitychange", releaseWhenHidden);
+    };
   }, [onRelease]);
   // Unmounting mid-drag or with a key down must not leave it pressed on the device.
   useEffect(() => {

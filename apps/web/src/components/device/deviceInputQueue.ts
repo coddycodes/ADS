@@ -21,6 +21,8 @@ export class DeviceInputQueue {
   private scheduled = false;
   /** No new input is accepted; what is queued (and the releases) still goes out. */
   private closed = false;
+  /** Releases are waiting: drain without waiting for animation frames. */
+  private urgent = false;
   private readonly heldKeys = new Set<DeviceKey>();
   private readonly heldTouches = new Map<number, { readonly x: number; readonly y: number }>();
 
@@ -39,20 +41,24 @@ export class DeviceInputQueue {
     this.enqueue(event);
   }
 
-  /** Lifts every key still held down, such as when focus leaves the screen. */
+  /**
+   * Lifts every key still held down, such as when focus leaves the screen. Sent at once, not on
+   * the next animation frame: a hidden or occluded window may not run one until it is back.
+   */
   releaseKeys(): void {
     if (this.closed) return;
-    // Each release deletes the entry being visited, which Set iteration allows.
-    for (const key of this.heldKeys) this.enqueue({ type: "key", key, action: "up" });
+    this.queueKeyReleases();
+    this.flushUrgently();
   }
 
-  /** Lifts every held key and cancels every touch still down. */
+  /** Lifts every held key and cancels every touch still down, sent at once. */
   releaseAll(): void {
     if (this.closed) return;
-    this.releaseKeys();
+    this.queueKeyReleases();
     for (const [pointerId, position] of this.heldTouches) {
       this.enqueue({ type: "touch", action: "cancel", pointerId, ...position });
     }
+    this.flushUrgently();
   }
 
   /**
@@ -63,6 +69,17 @@ export class DeviceInputQueue {
     if (this.closed) return;
     this.releaseAll();
     this.closed = true;
+  }
+
+  private queueKeyReleases(): void {
+    // Each release deletes the entry being visited, which Set iteration allows.
+    for (const key of this.heldKeys) this.enqueue({ type: "key", key, action: "up" });
+  }
+
+  /** Sends what is queued now, and keeps draining without frames until it is empty. */
+  private flushUrgently(): void {
+    if (this.pending.length === 0) return;
+    this.urgent = true;
     this.flush();
   }
 
@@ -108,7 +125,11 @@ export class DeviceInputQueue {
   }
 
   private flush(): void {
-    if (this.sending || this.pending.length === 0) return;
+    if (this.sending) return;
+    if (this.pending.length === 0) {
+      this.urgent = false;
+      return;
+    }
     const batch = this.pending.splice(0, MAX_INPUT_BATCH);
     this.sending = true;
     let sent: Promise<void>;
@@ -120,7 +141,7 @@ export class DeviceInputQueue {
     // A failed batch is dropped: the caller reports it, and later input still goes out.
     const settle = () => {
       this.sending = false;
-      if (this.closed) this.flush();
+      if (this.closed || this.urgent) this.flush();
       else this.requestFlush();
     };
     void sent.then(settle, settle);

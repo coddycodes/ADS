@@ -114,6 +114,32 @@ describe("DeviceScreen", () => {
     ]);
   });
 
+  it("releases held keys and touches when the page is hidden", async () => {
+    const canvas = await render();
+    await act(async () => {
+      canvas.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          pointerId: 3,
+          pointerType: "touch",
+          clientX: 500,
+          clientY: 400,
+        }),
+      );
+      canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await settle();
+    vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await settle();
+    expect(sent.slice(-2)).toEqual([
+      { type: "key", key: "enter", action: "up" },
+      { type: "touch", action: "cancel", pointerId: 0, x: 0.5, y: 0.5 },
+    ]);
+  });
+
   it("cancels a drag in progress when it unmounts", async () => {
     const canvas = await render();
     await act(async () => {

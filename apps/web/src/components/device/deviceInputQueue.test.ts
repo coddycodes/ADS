@@ -157,6 +157,45 @@ describe("DeviceInputQueue", () => {
     ]);
   });
 
+  it("sends releases at once, without waiting for a frame", async () => {
+    const sent: Array<ReadonlyArray<DeviceInputEvent>> = [];
+    const flushes: Array<() => void> = [];
+    let release!: () => void;
+    const queue = new DeviceInputQueue(
+      (events) => {
+        sent.push(events);
+        return new Promise<void>((resolve) => (release = resolve));
+      },
+      (flush) => flushes.push(flush),
+    );
+    queue.push({ type: "key", key: "backspace", action: "down" });
+    queue.push(touch("down", 0.2, 0.2));
+    // The frame that would flush these never runs, as in a hidden window.
+    queue.releaseKeys();
+    expect(sent).toEqual([
+      [
+        { type: "key", key: "backspace", action: "down" },
+        touch("down", 0.2, 0.2),
+        { type: "key", key: "backspace", action: "up" },
+      ],
+    ]);
+    // A release while a batch is in flight follows as soon as it settles, still without a frame.
+    queue.releaseAll();
+    release();
+    await settle();
+    expect(sent[1]).toEqual([touch("cancel", 0.2, 0.2)]);
+    release();
+    await settle();
+    // Once drained, ordinary input waits for frames again; the frame requested before the
+    // releases finds nothing left to send.
+    expect(flushes).toHaveLength(1);
+    flushes.shift()?.();
+    expect(sent).toHaveLength(2);
+    queue.push(key(2));
+    expect(sent).toHaveLength(2);
+    expect(flushes).toHaveLength(1);
+  });
+
   it("on dispose cancels a drag in progress and sends it without waiting for a frame", async () => {
     const sent: Array<ReadonlyArray<DeviceInputEvent>> = [];
     const flushes: Array<() => void> = [];
