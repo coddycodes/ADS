@@ -27,10 +27,11 @@
 //! | `unauthorized` | the ticket's session was revoked or expired |
 //! | `slow` | the client accepted no frame for 10 s |
 //!
-//! Before the upgrade, connections to either route are admitted against the same global,
-//! per-peer, and per-network pre-auth budgets as `/ws-e2ee`, from one pool of their own so
-//! media sockets cannot starve RPC handshakes; a refused one gets `503` and is never
-//! upgraded. A socket leaves the pool once its ticket is redeemed.
+//! While device previews are off, both routes refuse with `503` before admission, holding
+//! nothing. Otherwise, before the upgrade, connections to either route are admitted against
+//! the same global, per-peer, and per-network pre-auth budgets as `/ws-e2ee`, from one pool
+//! of their own so media sockets cannot starve RPC handshakes; a refused one gets `503` and
+//! is never upgraded. A socket leaves the pool once its ticket is redeemed.
 
 use std::{net::IpAddr, time::Duration};
 
@@ -239,8 +240,8 @@ pub(crate) fn upgrade_e2ee(
 }
 
 /// Admits a connection from `peer_ip` into the media routes' pre-auth pool, or refuses it
-/// with `503` before the upgrade; an admitted socket reads messages of at most
-/// `max_inbound` bytes.
+/// with `503` before the upgrade (at once while device previews are off); an admitted socket
+/// reads messages of at most `max_inbound` bytes.
 fn admit_and_upgrade<F, Fut>(
     state: MediaSocketState,
     peer_ip: IpAddr,
@@ -252,6 +253,11 @@ where
     F: FnOnce(WebSocket, MediaSocketState, E2eePreauthLease) -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send + 'static,
 {
+    if !state.devices.enabled() {
+        // Expected right after the setting turns off; a ticket could not be minted anyway.
+        tracing::debug!("device media socket refused: device previews are off");
+        return (StatusCode::SERVICE_UNAVAILABLE, "device previews are off").into_response();
+    }
     let lease = match state
         .admission
         .try_admit(peer_ip, tokio::time::Instant::now())
@@ -498,6 +504,7 @@ mod tests {
         session_id: String,
         url: String,
         e2ee_url: String,
+        admission: E2eePreauthAdmission,
     }
 
     impl Harness {
@@ -534,6 +541,7 @@ mod tests {
                 .expect("authorized session");
             let mut state = MediaSocketState::new(fixture.manager.clone(), auth.clone());
             state.e2ee_preauth = e2ee_preauth;
+            let admission = state.admission.clone();
             let app = Router::new()
                 .route(
                     "/api/device-media",
@@ -569,6 +577,7 @@ mod tests {
                 session_id: issued.principal.session_id,
                 url,
                 e2ee_url,
+                admission,
             }
         }
 
@@ -846,6 +855,34 @@ mod tests {
         harness.fixture.manager.shutdown().await;
         let log = harness.fixture.sdk.adb_log();
         assert!(!log.contains("forward --remove"), "{log}");
+    }
+
+    #[tokio::test]
+    async fn sockets_are_refused_without_a_lease_while_previews_are_off() {
+        let harness = Harness::start().await;
+        let free = harness.admission.available_permits();
+        // While on, a socket that waits for its ticket holds a pre-auth slot.
+        let (held, _) = connect_async(&harness.url).await.expect("admitted");
+        assert_eq!(harness.admission.available_permits(), free - 1);
+        drop(held);
+        wait_until(|| harness.admission.available_permits() == free).await;
+        harness
+            .fixture
+            .enabled
+            .send(false)
+            .expect("turn previews off");
+        wait_until(|| !harness.fixture.manager.enabled()).await;
+        for url in [&harness.url, &harness.e2ee_url] {
+            for _ in 0..3 {
+                match connect_async(url.as_str()).await {
+                    Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+                        assert_eq!(response.status(), 503);
+                    }
+                    other => panic!("expected a refusal before the upgrade, got {other:?}"),
+                }
+            }
+        }
+        assert_eq!(harness.admission.available_permits(), free);
     }
 
     #[tokio::test]

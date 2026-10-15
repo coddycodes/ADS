@@ -1,7 +1,9 @@
 //! `GET /api/device-media` and `GET /api/device-media-e2ee` through the full production
-//! runtime. The sockets admit only a ticket sent as their first message; a URL query or
-//! cookie is never read. Paths that need a running device or a minted ticket (streaming,
-//! `reused`, `wrongChannel`, `limit`, `disabled`, E2EE streaming) run against a fake SDK and
+//! runtime, with device previews on unless a test says otherwise. Test builds find no Android
+//! SDK (`SdkEnv::from_process` under `hermetic-test-guard`), so no real emulator runs. The
+//! sockets admit only a ticket sent as their first message; a URL query or cookie is never
+//! read. Paths that need a running device or a minted ticket (streaming, `reused`,
+//! `wrongChannel`, `limit`, `disabled`, E2EE streaming) run against a fake SDK and
 //! scrcpy-server in `device::media_socket`'s unit tests.
 
 #[path = "support/hermetic_providers.rs"]
@@ -28,13 +30,35 @@ type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn start() -> (ServerHandle, TempDir) {
+    start_with_previews(true).await
+}
+
+async fn start_with_previews(enabled: bool) -> (ServerHandle, TempDir) {
     let temp = TempDir::new().expect("server state");
     let config = ServerConfig::new(temp.path())
         .with_bind("127.0.0.1", 0)
         .with_unsafe_no_auth();
-    hermetic_providers::ensure_hermetic_settings(&config.state_dir());
+    hermetic_providers::write_hermetic_settings(
+        &config.state_dir(),
+        serde_json::json!({ "enableDevicePreviews": enabled }),
+    );
     let handle = ServerRuntime::start(config).await.expect("server starts");
     (handle, temp)
+}
+
+#[tokio::test]
+async fn both_routes_refuse_before_upgrade_while_previews_are_off() {
+    let (handle, _temp) = start_with_previews(false).await;
+    for route in ["device-media", "device-media-e2ee"] {
+        match connect_async(format!("ws://{}/api/{route}", handle.local_addr())).await {
+            Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+                assert_eq!(response.status(), 503, "{route}");
+            }
+            other => panic!("expected a refusal before the upgrade, got {other:?}"),
+        }
+    }
+    handle.shutdown();
+    handle.join().await.expect("server joins");
 }
 
 /// Reads until the server closes; the close code and reason, or `None` when the connection

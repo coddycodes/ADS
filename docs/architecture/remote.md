@@ -1416,7 +1416,9 @@ URL by replacing its path (`deviceMediaTarget`).
   draw on one pre-auth admission pool of their own, with the same global,
   per-peer, and per-network limits as `/ws-e2ee`, so media sockets cannot
   starve RPC handshakes. An over-limit connection gets HTTP `503` and is never
-  upgraded. A socket leaves the pool once its ticket is redeemed.
+  upgraded. While device previews are off, both routes answer `503` before
+  admission and hold no slot. A socket leaves the pool once its ticket is
+  redeemed.
 - **Plain route.** `GET /api/device-media` waits 5 s for the ticket as a text
   message, then sends frames as binary messages.
 - **E2EE route.** `GET /api/device-media-e2ee` serves profiles that pin the

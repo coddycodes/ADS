@@ -144,6 +144,12 @@ the session D-Bus service. A missing test reader is an error; explicit light
 and dark selections never consult it. Production commands retain native home
 discovery and portal reads.
 
+Under the guard, the production runtime's Android SDK discovery
+(`SdkEnv::from_process`) leaves out `ANDROID_HOME`, `ANDROID_SDK_ROOT`,
+`LOCALAPPDATA`, and the home directory, so a test runtime with
+`enableDevicePreviews` on finds no SDK and never runs the host's emulator or
+adb. Tests that need a device use the fake SDK in `device::testing`.
+
 The server harnesses, including the library's `control.rs` and lifecycle tests,
 and the desktop harnesses follow these rules. Cargo dev units enable the
 [approved hermetic test guard](../superpowers/specs/2026-09-26-hermetic-test-guard-design.md),

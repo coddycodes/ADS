@@ -31,12 +31,26 @@ pub(crate) struct SdkEnv {
 }
 
 impl SdkEnv {
+    /// The server's environment. Test builds (`hermetic-test-guard`) leave out every SDK
+    /// location, so a runtime with device previews on finds no SDK and never runs the
+    /// host's real emulator or adb.
     pub(crate) fn from_process() -> Self {
+        let vars =
+            std::env::vars_os().filter_map(|(key, value)| Some((key.into_string().ok()?, value)));
+        #[cfg(feature = "hermetic-test-guard")]
+        let vars = vars.filter(|(key, _)| {
+            !matches!(
+                key.as_str(),
+                "ANDROID_HOME" | "ANDROID_SDK_ROOT" | "LOCALAPPDATA"
+            )
+        });
         Self {
-            vars: std::env::vars_os()
-                .filter_map(|(key, value)| Some((key.into_string().ok()?, value)))
-                .collect(),
-            home: dirs::home_dir(),
+            vars: vars.collect(),
+            home: if cfg!(feature = "hermetic-test-guard") {
+                None
+            } else {
+                dirs::home_dir()
+            },
             os: std::env::consts::OS,
         }
     }

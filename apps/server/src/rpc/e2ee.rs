@@ -204,6 +204,12 @@ impl E2eePreauthAdmission {
         }
     }
 
+    /// Global pre-auth slots no connection holds.
+    #[cfg(test)]
+    pub(crate) fn available_permits(&self) -> usize {
+        self.inner.global.available_permits()
+    }
+
     /// Admits one pre-auth connection from `peer_ip` against the global, per-peer, and
     /// per-network budgets; the error is the refusal reason (`busy` or `rate`).
     pub(crate) fn try_admit(
