@@ -2245,8 +2245,16 @@ keep a failure from leaving the files and the conversation out of step:
 
 1. It checks that the workspace is a Git repository and that the target
    checkpoint ref (or `HEAD`, for turn 0) resolves.
-2. It asks the provider to drop the newer turns. A provider that refuses or
-   has no live session fails the revert here, and nothing changes.
+2. It asks the provider to drop the newer turns. If the session was suspended
+   while idle, the supervisor first reopens it with the launch a new message
+   would use: the thread's provider, modes and saved resume cursor. One case
+   differs: a conversation the provider no longer has fails the revert instead
+   of starting a new conversation, because a new one has nothing to rewind.
+   For the same reason, a thread with no saved conversation for its provider
+   fails without starting a session.
+   After the rewind, the session idles again under the normal deadline. A
+   provider that refuses, or a session that cannot be reopened, fails the
+   revert here, and nothing changes.
 3. It restores the files from the checkpoint ref, deletes the newer checkpoint
    refs, and dispatches `thread.revert.complete`.
 

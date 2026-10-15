@@ -82,7 +82,7 @@ use provider_runtime::{
     build_claude_launch_arguments_for_test, build_claude_launch_arguments_with_settings_for_test,
     claude_output_shutdown_with_open_stream_for_test, deliver_durable_orchestration_turn,
     deliver_orchestration_turn, freeze_delivery_route, reconcile_abandoned_provider_sessions,
-    reconcile_orchestration_turn, route_orchestration_command,
+    reconcile_orchestration_turn, rewind_thread_conversation, route_orchestration_command,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -1294,7 +1294,22 @@ async fn project_session(engine: &OrchestrationEngine, thread_id: &str, status: 
 
 struct SupervisorEffectsCallbacks {
     supervisor: Arc<ProviderRuntimeSupervisor>,
+    engine: OrchestrationEngine,
+    settings: TempDir,
     workspace: PathBuf,
+}
+
+fn supervisor_effects(
+    supervisor: &Arc<ProviderRuntimeSupervisor>,
+    engine: &OrchestrationEngine,
+    workspace: &Path,
+) -> Arc<SupervisorEffectsCallbacks> {
+    Arc::new(SupervisorEffectsCallbacks {
+        supervisor: supervisor.clone(),
+        engine: engine.clone(),
+        settings: TempDir::new().unwrap(),
+        workspace: workspace.to_path_buf(),
+    })
 }
 
 impl OrchestrationEffectCallbacks for SupervisorEffectsCallbacks {
@@ -1311,10 +1326,14 @@ impl OrchestrationEffectCallbacks for SupervisorEffectsCallbacks {
         turns: i64,
     ) -> BoxEffectFuture<'a, ProviderRewind> {
         Box::pin(async move {
-            self.supervisor
-                .rewind(thread_id, turns)
-                .await
-                .map_err(|error| error.to_string())
+            rewind_thread_conversation(
+                &self.supervisor,
+                &self.engine,
+                &self.settings.path().to_path_buf(),
+                thread_id,
+                turns,
+            )
+            .await
         })
     }
 
@@ -10911,10 +10930,7 @@ async fn checkpoint_rpc_rewinds_the_provider_once_before_restoring_files() {
     let effects = OrchestrationEffects::start(
         engine.clone(),
         Arc::new(GitRepository::default()),
-        Arc::new(SupervisorEffectsCallbacks {
-            supervisor: supervisor.clone(),
-            workspace: repository.path().to_path_buf(),
-        }),
+        supervisor_effects(&supervisor, &engine, repository.path()),
         EffectsOptions::default(),
     )
     .await
@@ -11032,10 +11048,7 @@ async fn checkpoint_rpc_reports_effect_failure_without_a_direct_or_second_rollba
     let effects = OrchestrationEffects::start(
         engine.clone(),
         Arc::new(GitRepository::default()),
-        Arc::new(SupervisorEffectsCallbacks {
-            supervisor: supervisor.clone(),
-            workspace: repository.path().to_path_buf(),
-        }),
+        supervisor_effects(&supervisor, &engine, repository.path()),
         EffectsOptions::default(),
     )
     .await
@@ -11135,6 +11148,318 @@ async fn checkpoint_rpc_reports_effect_failure_without_a_direct_or_second_rollba
     engine.shutdown().await;
 }
 
+/// A session that reports its work, so the supervisor suspends it once a turn ends and nothing
+/// runs. `starts` sessions are prepared: the first launch, and each relaunch after it.
+fn idle_suspending_state(starts: usize) -> Arc<StdMutex<DriverState>> {
+    Arc::new(StdMutex::new(DriverState {
+        start_results: (0..starts)
+            .map(|_| {
+                Ok(StartedSession {
+                    activity_capabilities: ActivityCapabilities::structured_full(false),
+                    ..started_session_for_provider("codex", "provider-session-1")
+                })
+            })
+            .collect(),
+        ..DriverState::default()
+    }))
+}
+
+/// Ends one turn and waits until the idle deadline has suspended the session.
+async fn finish_a_turn_and_wait_for_idle_suspension(
+    supervisor: &ProviderRuntimeSupervisor,
+    events_tx: &mpsc::Sender<ProviderEvent>,
+) {
+    events_tx
+        .send(ProviderEvent {
+            native_event_id: None,
+            event_type: "turn.completed".to_owned(),
+            thread_id: "t1".to_owned(),
+            turn_id: Some("turn-2".to_owned()),
+            item_id: None,
+            request_id: None,
+            payload: json!({"messageId":"assistant-2","state":"completed"}),
+            activity: Vec::new(),
+            activity_controls: Default::default(),
+        })
+        .await
+        .unwrap();
+    wait_until_suspended(supervisor).await;
+}
+
+async fn wait_until_suspended(supervisor: &ProviderRuntimeSupervisor) {
+    timeout(Duration::from_secs(10), async {
+        while supervisor
+            .capture_session_identity("t1")
+            .await
+            .unwrap()
+            .is_some()
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the idle session is suspended");
+}
+
+const REVERT_IDLE_TIMEOUT: Duration = Duration::from_millis(200);
+
+/// Revert on a thread whose session was suspended after a turn reopens it the way a new message
+/// does, with the saved resume cursor, rewinds, restores the files, and lets it idle again.
+#[tokio::test]
+async fn checkpoint_revert_resumes_an_idle_suspended_session_then_rewinds() {
+    let repository = initialize_repository();
+    let engine = engine().await;
+    for (turn_count, content) in [(0, "baseline\n"), (1, "one\n"), (2, "two\n")] {
+        project_checkpoint(&engine, repository.path(), turn_count, content).await;
+    }
+    let state = idle_suspending_state(2);
+    let (events_tx, events_rx) = mpsc::channel(8);
+    let (_relaunch_events_tx, relaunch_events_rx) = mpsc::channel(8);
+    let supervisor = Arc::new(ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        Arc::new(FakeFactory {
+            state: state.clone(),
+            events: StdMutex::new(VecDeque::from([events_rx, relaunch_events_rx])),
+        }),
+        activity_projection(&engine),
+        SupervisorOptions {
+            session_idle_timeout: REVERT_IDLE_TIMEOUT,
+            ..SupervisorOptions::default()
+        },
+    ));
+    let mut provider_launch = launch();
+    provider_launch.cwd = repository.path().to_path_buf();
+    supervisor.launch(provider_launch).await.unwrap();
+    finish_a_turn_and_wait_for_idle_suspension(&supervisor, &events_tx).await;
+    let effects = OrchestrationEffects::start(
+        engine.clone(),
+        Arc::new(GitRepository::default()),
+        supervisor_effects(&supervisor, &engine, repository.path()),
+        EffectsOptions::default(),
+    )
+    .await
+    .unwrap();
+    let mut events = engine.subscribe_events();
+
+    engine
+        .dispatch(
+            serde_json::from_value(json!({
+                "type":"thread.checkpoint.revert",
+                "commandId":"revert-after-suspension",
+                "threadId":"t1",
+                "turnCount":1,
+                "createdAt":NOW
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    wait_for_event(&mut events, |event| {
+        event.event.event_type == "thread.reverted"
+            || event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+    })
+    .await;
+    effects.shutdown().await;
+
+    let failures = engine
+        .read_events(0)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.event.payload["activity"]["kind"] == "checkpoint.revert.failed")
+        .map(|event| event.event.payload["activity"]["payload"]["detail"].clone())
+        .collect::<Vec<_>>();
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("tracked.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "one\n"
+    );
+    {
+        let state = state.lock().unwrap();
+        assert_eq!(state.rollbacks, [1], "the resumed session rewinds once");
+        assert_eq!(
+            state.launches.len(),
+            2,
+            "the suspended session is relaunched"
+        );
+        assert_eq!(
+            state.launches[1].resume_cursor,
+            Some(json!({"threadId":"provider-session-1"})),
+            "the relaunch resumes the saved conversation"
+        );
+    }
+    wait_until_suspended(&supervisor).await;
+
+    supervisor.shutdown().await.unwrap();
+    engine.shutdown().await;
+}
+
+/// If the suspended session cannot be reopened, the revert fails before any file changes and
+/// says why.
+#[tokio::test]
+async fn checkpoint_revert_that_cannot_resume_the_session_changes_nothing() {
+    let repository = initialize_repository();
+    let engine = engine().await;
+    for (turn_count, content) in [(0, "baseline\n"), (1, "one\n"), (2, "two\n")] {
+        project_checkpoint(&engine, repository.path(), turn_count, content).await;
+    }
+    let state = idle_suspending_state(1);
+    state
+        .lock()
+        .unwrap()
+        .start_results
+        .push_back(Err(ProviderRuntimeError::Spawn {
+            provider: "codex".to_owned(),
+            detail: "the executable exited with status 1".to_owned(),
+        }));
+    let (events_tx, events_rx) = mpsc::channel(8);
+    let (_relaunch_events_tx, relaunch_events_rx) = mpsc::channel(8);
+    let supervisor = Arc::new(ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        Arc::new(FakeFactory {
+            state: state.clone(),
+            events: StdMutex::new(VecDeque::from([events_rx, relaunch_events_rx])),
+        }),
+        activity_projection(&engine),
+        SupervisorOptions {
+            session_idle_timeout: REVERT_IDLE_TIMEOUT,
+            ..SupervisorOptions::default()
+        },
+    ));
+    let mut provider_launch = launch();
+    provider_launch.cwd = repository.path().to_path_buf();
+    supervisor.launch(provider_launch).await.unwrap();
+    finish_a_turn_and_wait_for_idle_suspension(&supervisor, &events_tx).await;
+    let effects = OrchestrationEffects::start(
+        engine.clone(),
+        Arc::new(GitRepository::default()),
+        supervisor_effects(&supervisor, &engine, repository.path()),
+        EffectsOptions::default(),
+    )
+    .await
+    .unwrap();
+    let mut events = engine.subscribe_events();
+
+    engine
+        .dispatch(
+            serde_json::from_value(json!({
+                "type":"thread.checkpoint.revert",
+                "commandId":"revert-resume-fails",
+                "threadId":"t1",
+                "turnCount":1,
+                "createdAt":NOW
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    wait_for_event(&mut events, |event| {
+        event.event.event_type == "thread.activity-appended"
+            && event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+    })
+    .await;
+    effects.shutdown().await;
+
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("tracked.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "two\n",
+        "a failed resume restores no file"
+    );
+    let events = engine.read_events(0).await.unwrap();
+    let detail = events
+        .iter()
+        .find(|event| event.event.payload["activity"]["kind"] == "checkpoint.revert.failed")
+        .and_then(|event| event.event.payload["activity"]["payload"]["detail"].as_str())
+        .expect("failure detail")
+        .to_owned();
+    assert!(
+        detail.contains("so nothing was reverted") && detail.contains("could not start"),
+        "{detail}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event.event_type == "thread.reverted")
+    );
+    assert!(state.lock().unwrap().rollbacks.is_empty());
+
+    supervisor.shutdown().await.unwrap();
+    engine.shutdown().await;
+}
+
+/// A thread with no saved conversation for its provider has nothing to rewind: the revert starts
+/// no session and changes nothing.
+#[tokio::test]
+async fn checkpoint_revert_without_a_saved_conversation_starts_nothing() {
+    let repository = initialize_repository();
+    let engine = engine().await;
+    for (turn_count, content) in [(0, "baseline\n"), (1, "one\n"), (2, "two\n")] {
+        project_checkpoint(&engine, repository.path(), turn_count, content).await;
+    }
+    let state = Arc::new(StdMutex::new(DriverState::default()));
+    let supervisor = Arc::new(ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        Arc::new(FakeFactory {
+            state: state.clone(),
+            events: StdMutex::new(VecDeque::new()),
+        }),
+        activity_projection(&engine),
+        SupervisorOptions::default(),
+    ));
+    let effects = OrchestrationEffects::start(
+        engine.clone(),
+        Arc::new(GitRepository::default()),
+        supervisor_effects(&supervisor, &engine, repository.path()),
+        EffectsOptions::default(),
+    )
+    .await
+    .unwrap();
+    let mut events = engine.subscribe_events();
+
+    engine
+        .dispatch(
+            serde_json::from_value(json!({
+                "type":"thread.checkpoint.revert",
+                "commandId":"revert-without-conversation",
+                "threadId":"t1",
+                "turnCount":1,
+                "createdAt":NOW
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    wait_for_event(&mut events, |event| {
+        event.event.event_type == "thread.activity-appended"
+            && event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+    })
+    .await;
+    effects.shutdown().await;
+
+    assert!(
+        state.lock().unwrap().launches.is_empty(),
+        "no session starts"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("tracked.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "two\n"
+    );
+    assert!(engine.read_events(0).await.unwrap().iter().any(|event| {
+        event.event.payload["activity"]["payload"]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("no saved"))
+    }));
+
+    supervisor.shutdown().await.unwrap();
+    engine.shutdown().await;
+}
+
 /// A provider that cannot rewind its conversation (Claude here) gets its files restored and a
 /// notice that the conversation was not rewound; its messages, checkpoints and turn count stay.
 #[tokio::test]
@@ -11165,10 +11490,7 @@ async fn checkpoint_revert_on_a_provider_that_cannot_rewind_restores_files_only(
     let effects = OrchestrationEffects::start(
         engine.clone(),
         Arc::new(GitRepository::default()),
-        Arc::new(SupervisorEffectsCallbacks {
-            supervisor: supervisor.clone(),
-            workspace: repository.path().to_path_buf(),
-        }),
+        supervisor_effects(&supervisor, &engine, repository.path()),
         EffectsOptions::default(),
     )
     .await
@@ -11308,10 +11630,7 @@ async fn checkpoint_revert_on_an_old_codex_restores_nothing_and_asks_for_an_upda
     let effects = OrchestrationEffects::start(
         engine.clone(),
         Arc::new(GitRepository::default()),
-        Arc::new(SupervisorEffectsCallbacks {
-            supervisor: supervisor.clone(),
-            workspace: repository.path().to_path_buf(),
-        }),
+        supervisor_effects(&supervisor, &engine, repository.path()),
         EffectsOptions::default(),
     )
     .await

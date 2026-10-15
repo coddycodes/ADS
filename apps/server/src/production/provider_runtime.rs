@@ -4756,13 +4756,40 @@ async fn build_launch_request_for_command(
             detail: "only a turn start can launch a provider runtime".to_owned(),
         });
     };
+    let bootstrap_selection = bootstrap
+        .as_deref()
+        .and_then(|bootstrap| bootstrap.create_thread.as_ref())
+        .map(|create| &create.model_selection);
+    build_launch_request(
+        engine,
+        settings_root,
+        thread_id,
+        model_selection.as_ref().or(bootstrap_selection),
+        Some((runtime_mode, interaction_mode)),
+        frozen_delivery,
+        recovering_lost_resume,
+    )
+    .await
+}
+
+/// The launch for a thread's provider session: a turn's own selection and modes, or the
+/// thread's when `selection` and `modes` are `None`, with the thread's saved resume cursor.
+async fn build_launch_request(
+    engine: &OrchestrationEngine,
+    settings_root: &PathBuf,
+    thread_id: &str,
+    selection: Option<&Value>,
+    modes: Option<(&String, &String)>,
+    frozen_delivery: Option<&ProviderTurnDelivery>,
+    recovering_lost_resume: bool,
+) -> Result<ProviderLaunchRequest, ProviderRuntimeError> {
     let repositories = engine.repositories();
     let thread = repositories
-        .get_thread(thread_id.clone())
+        .get_thread(thread_id.to_owned())
         .await
         .map_err(|error| ProviderRuntimeError::Persistence(error.to_string()))?
         .ok_or_else(|| ProviderRuntimeError::SessionNotFound {
-            thread_id: thread_id.clone(),
+            thread_id: thread_id.to_owned(),
         })?;
     let project = repositories
         .get_project(thread.project_id.clone())
@@ -4772,14 +4799,12 @@ async fn build_launch_request_for_command(
             provider: "orchestration".to_owned(),
             detail: format!("project {} was not found", thread.project_id),
         })?;
-    let bootstrap_selection = bootstrap
-        .as_deref()
-        .and_then(|bootstrap| bootstrap.create_thread.as_ref())
-        .map(|create| &create.model_selection);
-    let selection = model_selection
-        .as_ref()
-        .or(bootstrap_selection)
-        .unwrap_or(&thread.model_selection);
+    let (runtime_mode, interaction_mode) = modes.map_or_else(
+        || (&thread.runtime_mode, &thread.interaction_mode),
+        |(runtime_mode, interaction_mode)| (runtime_mode, interaction_mode),
+    );
+    let (runtime_mode, interaction_mode) = (runtime_mode.clone(), interaction_mode.clone());
+    let selection = selection.unwrap_or(&thread.model_selection);
     let instance_id = frozen_delivery.map_or_else(
         || {
             selection
@@ -4794,7 +4819,7 @@ async fn build_launch_request_for_command(
         resolve_provider_route_settings(settings_root, &instance_id, frozen_delivery).await?;
     let provider = route.provider.as_str();
     let persisted = repositories
-        .get_provider_session_runtime(thread_id.clone())
+        .get_provider_session_runtime(thread_id.to_owned())
         .await
         .map_err(|error| ProviderRuntimeError::Persistence(error.to_string()))?;
     let requires_resume = frozen_delivery.is_some_and(|row| row.provider_session_id.is_some());
@@ -4863,7 +4888,7 @@ async fn build_launch_request_for_command(
         None => (Vec::new(), None),
     };
     Ok(ProviderLaunchRequest {
-        thread_id: thread_id.clone(),
+        thread_id: thread_id.to_owned(),
         activity_causal_revision: 0,
         provider: provider.to_owned(),
         provider_label: route.provider_label,
@@ -4874,8 +4899,8 @@ async fn build_launch_request_for_command(
                 .worktree_path
                 .map_or_else(|| PathBuf::from(project.workspace_root), PathBuf::from),
         ),
-        runtime_mode: runtime_mode.clone(),
-        interaction_mode: interaction_mode.clone(),
+        runtime_mode,
+        interaction_mode,
         model: model_from_selection(selection),
         service_tier: selection_string_option_from(&options, "serviceTier"),
         effort: selection_effort(&options),
@@ -7605,8 +7630,73 @@ async fn rewind_session(
             provider_label: entry.launch.provider_label.clone(),
         });
     }
-    entry.driver.rollback(turn_count).await?;
+    let rewound = entry.driver.rollback(turn_count).await;
+    // A rewind uses the session like a turn does: it idles again under the normal deadline,
+    // also when the session was reopened only for this revert.
+    let generation = entry.idle_generation.fetch_add(1, Ordering::Relaxed) + 1;
+    schedule_idle_suspend(
+        entry.terminal_sender.clone(),
+        thread_id.to_owned(),
+        entry.idle_generation.clone(),
+        generation,
+        entry.idle_timeout,
+        #[cfg(test)]
+        entry.idle_deadline_test_observer.clone(),
+    );
+    rewound?;
     Ok(ProviderRewind::Rewound)
+}
+
+/// Drops the newest `turn_count` turns from a thread's provider conversation for a checkpoint
+/// revert. A session suspended while idle is reopened first with the launch a new message would
+/// use (the thread's provider, modes and saved resume cursor), except that a conversation the
+/// provider no longer has fails instead of starting a new one: a new conversation has nothing to
+/// rewind. A provider that cannot rewind is not reopened. Errors are the work-log text.
+pub async fn rewind_thread_conversation(
+    supervisor: &ProviderRuntimeSupervisor,
+    engine: &OrchestrationEngine,
+    settings_root: &PathBuf,
+    thread_id: &str,
+    turn_count: i64,
+) -> Result<ProviderRewind, String> {
+    match supervisor.rewind(thread_id, turn_count).await {
+        Err(ProviderRuntimeError::SessionNotFound { .. }) => {}
+        outcome => return outcome.map_err(|error| delivery_detail(&error, None)),
+    }
+    let request = build_launch_request(engine, settings_root, thread_id, None, None, None, false)
+        .await
+        .map_err(|error| delivery_detail(&error, None))?;
+    if !crate::provider::supports_conversation_rewind(&request.provider) {
+        return Ok(ProviderRewind::FilesOnly {
+            provider_label: request.provider_label,
+        });
+    }
+    let label = request.provider_label.clone();
+    // Without a saved conversation for this provider instance, a launch would start an empty
+    // one and replace the thread's saved runtime, though there is nothing to rewind.
+    if request.resume_cursor.is_none() {
+        return Err(format!(
+            "There's no saved {label} conversation for this thread to rewind, so nothing was reverted."
+        ));
+    }
+    if let Err(error) = supervisor
+        .launch_with_context_handoff(request, false, None, true)
+        .await
+    {
+        let reason = match error {
+            ProviderRuntimeError::FrozenConversationLost { .. } => {
+                format!("{label} no longer has this conversation.")
+            }
+            error => delivery_detail(&error, Some(&label)),
+        };
+        return Err(format!(
+            "Couldn't reopen {label} to rewind its conversation, so nothing was reverted. {reason}"
+        ));
+    }
+    supervisor
+        .rewind(thread_id, turn_count)
+        .await
+        .map_err(|error| delivery_detail(&error, Some(&label)))
 }
 
 async fn reconcile_model_selection(
