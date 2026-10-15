@@ -615,6 +615,18 @@ impl MediaSubscriber {
     pub(crate) fn failed(&self) -> bool {
         self.guard.hub.as_ref().is_some_and(|hub| hub.failed())
     }
+
+    /// The media socket's close reason once the stream ended: `failed` when its source
+    /// failed, otherwise `stopped`, or `disabled` when device previews are off.
+    pub(crate) fn end_reason(&self, enabled: bool) -> &'static str {
+        if self.failed() {
+            "failed"
+        } else if enabled {
+            "stopped"
+        } else {
+            "disabled"
+        }
+    }
 }
 
 /// Leaves the hub on drop; the last socket to leave stops it.
@@ -779,6 +791,13 @@ impl MediaFramesForTests {
     /// The next frame as a socket sends it: `[kind u8][pts u64 BE][Annex B data]`.
     pub async fn next_frame(&mut self) -> Option<Bytes> {
         self.0.next_frame().await
+    }
+
+    /// Waits for the stream to end and returns the reason a media socket would close with.
+    pub async fn end_reason(mut self, devices: &DeviceManager) -> &'static str {
+        while self.0.next_frame().await.is_some() {}
+        self.0.closed.cancelled().await;
+        self.0.end_reason(devices.enabled())
     }
 }
 

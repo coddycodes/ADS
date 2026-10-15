@@ -9,10 +9,8 @@
 //! listed), and shuts it down again at the end, even when it fails, then checks that `simctl`
 //! reports it `Shutdown`.
 //!
-//! - `BIBCODE_IOS_SIM_FRAMES_DIR`: also write the JPEGs received there, and the first H.264
-//!   config and key as `first.h264` (Annex B, for `ffprobe`), to look at them.
-//! - `BIBCODE_IOS_SIM_ROTATE_TOOL`: a command run as `<tool> <udid> purple-rotate <n>` that
-//!   turns the simulator (spike S2's probe), until BiBCode rotates simulators itself.
+//! - `BIBCODE_IOS_SIM_FRAMES_DIR`: also write the JPEGs and PNGs received there, and the
+//!   first H.264 config and key as `first.h264` (Annex B, for `ffprobe`), to look at them.
 #![cfg(target_os = "macos")]
 
 use std::{
@@ -21,10 +19,12 @@ use std::{
 };
 
 use bibcode_server::device::{
-    DeviceManager,
+    DeviceManager, DeviceOpError,
     catalog::{AvailabilityKind, DeviceState, Orientation, Platform},
     frames::{FrameSubscription, JpegFrame},
-    h264_sps_dimensions_for_tests as sps_dimensions, ios_host_manager_for_tests,
+    h264_sps_dimensions_for_tests as sps_dimensions,
+    input::{DeviceInputEvent, TouchAction},
+    ios_host_manager_for_tests,
     media::{MediaChannel, MediaFramesForTests},
     video::UnitKind,
 };
@@ -200,12 +200,19 @@ impl IosHarness {
             .expect("device in catalog")
     }
 
-    /// Closes the device and checks that `simctl` reports the simulator `Shutdown`.
+    /// Closes the device and checks that `simctl` reports the simulator `Shutdown`. A
+    /// device that already failed stays failed.
     async fn stop(self) {
         let started = Instant::now();
+        let ended = self.snapshot().state == DeviceState::Failed;
         self.manager.close(&self.device_id).await.expect("close");
         let stopped = self.snapshot();
-        assert_eq!(stopped.state, DeviceState::Stopped, "{stopped:?}");
+        let expected = if ended {
+            DeviceState::Failed
+        } else {
+            DeviceState::Stopped
+        };
+        assert_eq!(stopped.state, expected, "{stopped:?}");
         self.manager.shutdown().await;
         let deadline = Instant::now() + Duration::from_secs(30);
         while simctl_state(&self.udid).as_deref() != Some("Shutdown") {
@@ -213,6 +220,211 @@ impl IosHarness {
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
         println!("{} Shutdown after {:?}", self.udid, started.elapsed());
+    }
+}
+
+/// An RGB picture.
+struct Rgb {
+    pixels: Vec<u8>,
+    width: u32,
+    height: u32,
+}
+
+impl Rgb {
+    fn decode(png: &[u8]) -> Self {
+        let mut reader = png::Decoder::new(std::io::Cursor::new(png))
+            .read_info()
+            .expect("a PNG");
+        let mut pixels = vec![0; reader.output_buffer_size().expect("a size")];
+        let info = reader.next_frame(&mut pixels).expect("a PNG frame");
+        pixels.truncate(info.buffer_size());
+        let channels = info.color_type.samples();
+        let pixels = pixels
+            .chunks(channels)
+            .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
+            .collect();
+        Self {
+            pixels,
+            width: info.width,
+            height: info.height,
+        }
+    }
+
+    fn at(&self, x: u32, y: u32) -> &[u8] {
+        let offset = ((y * self.width + x) * 3) as usize;
+        &self.pixels[offset..offset + 3]
+    }
+
+    /// Nearest-neighbour scaling to `width` x `height`.
+    fn resized(&self, width: u32, height: u32) -> Self {
+        let pixels = (0..height)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .flat_map(|(x, y)| {
+                self.at(x * self.width / width, y * self.height / height)
+                    .to_vec()
+            })
+            .collect();
+        Self {
+            pixels,
+            width,
+            height,
+        }
+    }
+
+    fn half_turn(&self) -> Self {
+        let pixels = self
+            .pixels
+            .chunks(3)
+            .rev()
+            .flat_map(<[u8]>::to_vec)
+            .collect();
+        Self {
+            pixels,
+            width: self.width,
+            height: self.height,
+        }
+    }
+
+    /// The mean absolute difference per channel.
+    fn mean_difference(&self, other: &Self) -> f64 {
+        assert_eq!((self.width, self.height), (other.width, other.height));
+        let total: u64 = self
+            .pixels
+            .iter()
+            .zip(&other.pixels)
+            .map(|(a, b)| u64::from(a.abs_diff(*b)))
+            .sum();
+        total as f64 / self.pixels.len() as f64
+    }
+
+    /// The share of pixels with a channel more than 24 apart.
+    fn changed_share(&self, other: &Self) -> f64 {
+        if (self.width, self.height) != (other.width, other.height) {
+            return 1.0;
+        }
+        let changed = self
+            .pixels
+            .chunks(3)
+            .zip(other.pixels.chunks(3))
+            .filter(|(a, b)| a.iter().zip(*b).any(|(a, b)| a.abs_diff(*b) > 24))
+            .count();
+        changed as f64 / (self.pixels.len() / 3) as f64
+    }
+}
+
+/// `simctl`'s own screenshot of `udid`, upright in the UI orientation.
+fn simctl_screenshot(udid: &str) -> Rgb {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("screenshot.png");
+    let status = Command::new("/usr/bin/xcrun")
+        .args(["simctl", "io", udid, "screenshot", "--type=png"])
+        .arg(&path)
+        .status()
+        .expect("simctl io screenshot");
+    assert!(status.success());
+    Rgb::decode(&std::fs::read(&path).expect("read screenshot"))
+}
+
+impl IosHarness {
+    /// Opens a page in Safari, which turns with the device; the iPhone home screen does not.
+    async fn open_safari(&self) {
+        let status = Command::new("/usr/bin/xcrun")
+            .args(["simctl", "openurl", &self.udid, "https://example.com"])
+            .status()
+            .expect("simctl openurl");
+        assert!(status.success());
+        tokio::time::sleep(Duration::from_secs(4)).await;
+    }
+
+    /// Asks the device to turn and prints what the catalog then reports.
+    async fn rotate(&self, orientation: Orientation) {
+        let started = Instant::now();
+        self.manager
+            .rotate(&self.device_id, orientation)
+            .await
+            .expect("rotate");
+        let snapshot = self.snapshot();
+        println!(
+            "rotate {orientation:?} -> {:?} {:?}x{:?} in {:?}",
+            snapshot.orientation,
+            snapshot.width,
+            snapshot.height,
+            started.elapsed()
+        );
+    }
+
+    /// A down and an up at a point of the current orientation.
+    async fn tap(&self, x: f64, y: f64) {
+        let touch = |action| DeviceInputEvent::Touch {
+            action,
+            pointer_id: 0,
+            x,
+            y,
+        };
+        self.manager
+            .input(&self.device_id, vec![touch(TouchAction::Down)])
+            .await
+            .expect("touch down");
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        self.manager
+            .input(&self.device_id, vec![touch(TouchAction::Up)])
+            .await
+            .expect("touch up");
+    }
+
+    /// The live screen as RGB, at most `max_width` wide; saved as `name` when asked.
+    async fn screen_rgb(&self, max_width: u32, name: &str) -> Rgb {
+        let (png, mime_type, _, _) = self
+            .manager
+            .png_for_tests(&self.device_id, max_width)
+            .await
+            .expect("a screenshot");
+        assert_eq!(mime_type, "image/png", "a live simulator gives PNGs");
+        if let Ok(dir) = std::env::var("BIBCODE_IOS_SIM_FRAMES_DIR") {
+            let path = std::path::Path::new(&dir).join(format!("{name}.png"));
+            std::fs::write(&path, &png).expect("write screenshot");
+            println!("wrote {}", path.display());
+        }
+        Rgb::decode(&png)
+    }
+
+    /// Waits up to `timeout` for more than 5% of the screen's pixels to differ from
+    /// `before`, and returns the share that did.
+    async fn screen_changes_from(&self, before: &Rgb, timeout: Duration, name: &str) -> f64 {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let now = self.screen_rgb(before.width, name).await;
+            let changed = before.changed_share(&now);
+            if changed > 0.05 {
+                return changed;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "only {:.1}% of pixels changed",
+                changed * 100.0
+            );
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+
+    /// Waits up to `timeout` for the device to reach `state`.
+    async fn wait_state(
+        &self,
+        state: DeviceState,
+        timeout: Duration,
+    ) -> bibcode_server::device::catalog::DeviceSnapshot {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let snapshot = self.snapshot();
+            if snapshot.state == state {
+                return snapshot;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the device did not reach {state:?}: {snapshot:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 }
 
@@ -338,33 +550,16 @@ async fn live_frames_arrive_from_a_booted_simulator() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn live_frames_turn_with_the_simulator() {
+async fn rotation_changes_the_screen_size() {
     if !enabled() {
         return;
     }
-    let Ok(tool) = std::env::var("BIBCODE_IOS_SIM_ROTATE_TOOL") else {
-        println!("BIBCODE_IOS_SIM_ROTATE_TOOL is not set; skipping the rotation check");
-        return;
-    };
     let _serial = ONE_AT_A_TIME.lock().await;
     let harness = IosHarness::start().await;
-    // The iPhone home screen does not rotate; Safari does.
-    let launched = Command::new("/usr/bin/xcrun")
-        .args(["simctl", "launch", &harness.udid, "com.apple.mobilesafari"])
-        .status()
-        .expect("simctl launch");
-    assert!(launched.success());
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    harness.open_safari().await;
     let mut subscription = harness.subscribe();
-    let rotate = |value: &str| {
-        let status = Command::new(&tool)
-            .args([harness.udid.as_str(), "purple-rotate", value])
-            .status()
-            .expect("rotate tool");
-        assert!(status.success());
-    };
-    // Purple 4 → uiOrientation 3 (spec §0).
-    rotate("4");
+    assert!(harness.snapshot().can_rotate, "a live simulator turns");
+    harness.rotate(Orientation::Landscape).await;
     let landscape = harness
         .frame_where(&mut subscription, Duration::from_secs(10), |frame| {
             frame.orientation == Orientation::Landscape
@@ -379,8 +574,7 @@ async fn live_frames_turn_with_the_simulator() {
     let snapshot = harness.snapshot();
     assert_eq!(snapshot.orientation, Orientation::Landscape);
     assert_eq!((snapshot.width, snapshot.height), (Some(2622), Some(1206)));
-    // Purple 3 → uiOrientation 4.
-    rotate("3");
+    harness.rotate(Orientation::ReverseLandscape).await;
     let reverse = harness
         .frame_where(&mut subscription, Duration::from_secs(10), |frame| {
             frame.orientation == Orientation::ReverseLandscape
@@ -388,7 +582,11 @@ async fn live_frames_turn_with_the_simulator() {
         .await;
     save(&reverse, "reverse-landscape");
     assert!(reverse.width > reverse.height);
-    rotate("1");
+    assert_eq!(
+        harness.snapshot().orientation,
+        Orientation::ReverseLandscape
+    );
+    harness.rotate(Orientation::Portrait).await;
     let portrait = harness
         .frame_where(&mut subscription, Duration::from_secs(10), |frame| {
             frame.orientation == Orientation::Portrait
@@ -396,7 +594,174 @@ async fn live_frames_turn_with_the_simulator() {
         .await;
     save(&portrait, "portrait");
     assert!(portrait.height > portrait.width);
+    let snapshot = harness.snapshot();
+    assert_eq!((snapshot.width, snapshot.height), (Some(1206), Some(2622)));
     drop(subscription);
+    harness.stop().await;
+}
+
+/// BiBCode's `landscape` is Android's: the phone turned left (counter-clockwise), so the
+/// UI's top lies along the device's right edge. That convention comes from spec §0's
+/// observation of which surface edge the UI's top lies along at each `uiOrientation`, which
+/// `IosOrientation` encodes. This test checks the chain end to end: `landscape` is
+/// reported back as `landscape` at the landscape size, and the frame BiBCode turns upright
+/// with that orientation's turn matches `simctl`'s own upright screenshot rather than the
+/// same picture upside down, so the turn, and with it the edge, is the real one.
+#[tokio::test(flavor = "multi_thread")]
+async fn rotation_matches_android_convention() {
+    if !enabled() {
+        return;
+    }
+    let _serial = ONE_AT_A_TIME.lock().await;
+    let harness = IosHarness::start().await;
+    harness.open_safari().await;
+    harness.rotate(Orientation::Landscape).await;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while harness.snapshot().orientation != Orientation::Landscape {
+        assert!(
+            Instant::now() < deadline,
+            "Safari did not turn to landscape"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let snapshot = harness.snapshot();
+    assert_eq!((snapshot.width, snapshot.height), (Some(2622), Some(1206)));
+    // Let the turn's animation settle before comparing pictures.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let ours = harness.screen_rgb(400, "android-convention-bibcode").await;
+    let theirs = simctl_screenshot(&harness.udid);
+    println!(
+        "simctl screenshot {}x{}, BiBCode frame {}x{}",
+        theirs.width, theirs.height, ours.width, ours.height
+    );
+    assert!(
+        theirs.width > theirs.height,
+        "simctl's screenshot is upright landscape"
+    );
+    let theirs = theirs.resized(ours.width, ours.height);
+    let upright = ours.mean_difference(&theirs);
+    let upside_down = ours.mean_difference(&theirs.half_turn());
+    println!("mean difference: upright {upright:.1}, upside down {upside_down:.1}");
+    assert!(
+        upright * 2.0 < upside_down,
+        "the landscape frame matches simctl's upright screenshot"
+    );
+    harness.rotate(Orientation::Portrait).await;
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tap_changes_the_screen() {
+    if !enabled() {
+        return;
+    }
+    let _serial = ONE_AT_A_TIME.lock().await;
+    let harness = IosHarness::start().await;
+    // Let the home screen settle after boot.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let before = harness.screen_rgb(360, "tap-before").await;
+    let started = Instant::now();
+    // The Settings icon on the default home screen (spec §0); the centre is wallpaper.
+    harness.tap(0.848, 0.483).await;
+    let changed = harness
+        .screen_changes_from(&before, Duration::from_secs(5), "tap-after")
+        .await;
+    println!(
+        "{:.1}% of pixels changed {:?} after the tap",
+        changed * 100.0,
+        started.elapsed()
+    );
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn text_arrives_in_a_text_field() {
+    if !enabled() {
+        return;
+    }
+    let _serial = ONE_AT_A_TIME.lock().await;
+    let harness = IosHarness::start().await;
+    harness.open_safari().await;
+    let page = harness.screen_rgb(360, "text-page").await;
+    // Safari's address bar sits at the bottom of the page on iOS 26; focusing it opens
+    // the start page and the keyboard.
+    harness.tap(0.47, 0.935).await;
+    harness
+        .screen_changes_from(&page, Duration::from_secs(5), "text-focused")
+        .await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let focused = harness.screen_rgb(360, "text-focused").await;
+    let started = Instant::now();
+    let text = vec![DeviceInputEvent::Text {
+        text: "BiBCode".to_owned(),
+    }];
+    // The keyboard path needs the DTUHID handshake, which may still run after boot.
+    loop {
+        match harness
+            .manager
+            .input(&harness.device_id, text.clone())
+            .await
+        {
+            Ok(()) => break,
+            Err(DeviceOpError::InvalidInput(message))
+                if message.contains("not accepting keyboard input yet")
+                    && started.elapsed() < Duration::from_secs(45) =>
+            {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            Err(error) => panic!("typing failed: {error:?}"),
+        }
+    }
+    println!("typed after {:?}", started.elapsed());
+    let changed = harness
+        .screen_changes_from(&focused, Duration::from_secs(5), "text-typed")
+        .await;
+    println!("{:.1}% of pixels changed after typing", changed * 100.0);
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn external_shutdown_fails_device() {
+    if !enabled() {
+        return;
+    }
+    let _serial = ONE_AT_A_TIME.lock().await;
+    let harness = IosHarness::start().await;
+    harness
+        .manager
+        .create_media_ticket(
+            &harness.device_id,
+            "ios-simulator-test",
+            MediaChannel::Plain,
+        )
+        .expect("a media ticket");
+    let (_, media) = harness.first_video_units(Duration::from_secs(20)).await;
+    let started = Instant::now();
+    let udid = harness.udid.clone();
+    let shutdown = std::thread::spawn(move || {
+        let status = Command::new("/usr/bin/xcrun")
+            .args(["simctl", "shutdown", &udid])
+            .status()
+            .expect("simctl shutdown");
+        (status, Instant::now())
+    });
+    // Within 5 s of the shutdown starting.
+    let failed = harness
+        .wait_state(DeviceState::Failed, Duration::from_secs(5))
+        .await;
+    println!(
+        "failed {:?} after simctl shutdown started: {:?}",
+        started.elapsed(),
+        failed.failure
+    );
+    let (status, returned) = shutdown.join().expect("the shutdown thread");
+    assert!(status.success());
+    println!("simctl shutdown took {:?}", returned - started);
+    assert_eq!(failed.failure.as_deref(), Some("Shutdown outside BiBCode"));
+    let reason = tokio::time::timeout(Duration::from_secs(5), media.end_reason(&harness.manager))
+        .await
+        .expect("the media stream closes");
+    assert_eq!(reason, "stopped");
     harness.stop().await;
 }
 
@@ -456,36 +821,19 @@ async fn first_key_frame_decodes_to_the_screen_size() {
         bytes += frame.len();
     }
     println!("{count} more units ({keys} keys, {bytes} bytes) in the next 2 s");
-    if let Ok(tool) = std::env::var("BIBCODE_IOS_SIM_ROTATE_TOOL") {
-        // The iPhone home screen does not rotate; Safari does.
-        let launched = Command::new("/usr/bin/xcrun")
-            .args(["simctl", "launch", &harness.udid, "com.apple.mobilesafari"])
-            .status()
-            .expect("simctl launch");
-        assert!(launched.success());
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        let rotate = |value: &str| {
-            let status = Command::new(&tool)
-                .args([harness.udid.as_str(), "purple-rotate", value])
-                .status()
-                .expect("rotate tool");
-            assert!(status.success());
-        };
-        let turning = Instant::now();
-        // Purple 4 → uiOrientation 3 (spec §0): landscape, so the picture is 2622x1206.
-        rotate("4");
-        let (units, bytes) = config_of_size(&mut media, (h, w)).await;
-        let elapsed = turning.elapsed();
-        println!(
-            "landscape config after {elapsed:?}; {units} units, {bytes} bytes while turning ({:.1} Mbit/s)",
-            bytes as f64 * 8.0 / elapsed.as_secs_f64() / 1e6
-        );
-        rotate("1");
-        config_of_size(&mut media, (w, h)).await;
-        println!("portrait config again");
-    } else {
-        println!("BIBCODE_IOS_SIM_ROTATE_TOOL is not set; skipping the rotated stream check");
-    }
+    harness.open_safari().await;
+    let turning = Instant::now();
+    harness.rotate(Orientation::Landscape).await;
+    // Landscape, so the picture is 2622x1206.
+    let (units, bytes) = config_of_size(&mut media, (h, w)).await;
+    let elapsed = turning.elapsed();
+    println!(
+        "landscape config after {elapsed:?}; {units} units, {bytes} bytes while turning ({:.1} Mbit/s)",
+        bytes as f64 * 8.0 / elapsed.as_secs_f64() / 1e6
+    );
+    harness.rotate(Orientation::Portrait).await;
+    config_of_size(&mut media, (w, h)).await;
+    println!("portrait config again");
     drop(media);
     harness.stop().await;
 }

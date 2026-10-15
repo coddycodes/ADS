@@ -408,15 +408,8 @@ async fn stream<T: MediaTransport>(
     send_stall: Duration,
 ) -> Option<&'static str> {
     let closed = subscriber.closed.clone();
-    let end_reason = |subscriber: &super::media::MediaSubscriber| {
-        if subscriber.failed() {
-            "failed"
-        } else if devices.enabled() {
-            "stopped"
-        } else {
-            "disabled"
-        }
-    };
+    let end_reason =
+        |subscriber: &super::media::MediaSubscriber| subscriber.end_reason(devices.enabled());
     loop {
         tokio::select! {
             biased;

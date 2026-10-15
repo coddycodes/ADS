@@ -2,13 +2,16 @@
 //! and the screen through CoreSimulator loaded in-process (`coresim`).
 //!
 //! When the private-API guard finds every name it needs, a booted simulator runs live: its
-//! frames come from the framebuffer as it changes, and its orientation reaches the catalog
-//! as the simulator reports it, and its video is H.264 from VideoToolbox (`encoder`).
-//! Otherwise it runs view-only on `simctl` screenshots, and input and video are refused
-//! with the reason.
+//! frames come from the framebuffer as it changes, its orientation reaches the catalog as
+//! the simulator reports it, its video is H.264 from VideoToolbox (`encoder`), and input
+//! and rotation go to it in-process (`hid`, `coresim::HidClient`). Otherwise it runs
+//! view-only on `simctl` screenshots, and input, rotation and video are refused with the
+//! reason.
 pub(crate) mod coresim;
 pub(crate) mod encoder;
 pub(crate) mod guard;
+pub(crate) mod hid;
+pub(crate) mod keymap;
 pub(crate) mod pixels;
 pub(crate) mod simctl;
 #[cfg(test)]
@@ -32,8 +35,13 @@ use futures_util::{
 use tokio_util::sync::CancellationToken;
 
 use self::{
-    coresim::{CoreSim, Screen},
+    coresim::{CoreSim, HidClient, Screen},
     guard::{GuardCache, GuardResult, XcodeCache, availability_for},
+    hid::{
+        HidAction, HidError, HidSink, INPUT_FAILED, KEYBOARD_NOT_READY, PointerState,
+        ROTATE_FAILED, paste_keys, plan_events,
+    },
+    pixels::IosOrientation,
     simctl::{SIMULATOR_LABEL, SimDevice, SimState, SimctlError, SimctlRunner, SimulatorProcess},
 };
 use super::{
@@ -44,7 +52,7 @@ use super::{
     },
     catalog::{Availability, AvailabilityKind, DeviceState, Image, Orientation, Platform},
     frames::{JPEG_MIN_INTERVAL, encode_rgb888},
-    input::DeviceInputEvent,
+    input::{DeviceInputEvent, oriented_size},
 };
 use crate::diagnostics::ProcessAttributionRegistry;
 
@@ -61,9 +69,11 @@ const FIRST_SCREENSHOT_ATTEMPTS: u32 = 5;
 const LIVE_REPEAT_INTERVAL: Duration = Duration::from_secs(1);
 /// Why a simulator whose screen BiBCode could not attach runs view-only.
 const ATTACH_FAILED_REASON: &str = "BiBCode could not attach to this simulator's screen.";
-/// Live simulators refuse input until live input exists (Task 8).
-const LIVE_INPUT_PENDING: &str =
-    "Input to iOS simulators is not available in this version of BiBCode yet.";
+/// Why a live simulator whose input BiBCode could not reach takes no input.
+const INPUT_ATTACH_FAILED_REASON: &str = "BiBCode could not connect to this simulator's input.";
+/// How many times, and how far apart, `rotate` reads the orientation back.
+const ROTATION_POLLS: u32 = 5;
+const ROTATION_POLL_INTERVAL: Duration = Duration::from_millis(300);
 pub(crate) const EXTERNAL_SHUTDOWN: &str = "Shutdown outside BiBCode";
 pub(crate) const EXTERNAL_DELETE: &str = "Deleted outside BiBCode";
 
@@ -71,10 +81,17 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Makes the input sink for a test simulator, whatever its display.
+#[cfg(test)]
+pub(crate) type HidFactory = Arc<dyn Fn() -> Arc<dyn HidSink> + Send + Sync>;
+
 pub(crate) struct IosBackendConfig {
     pub runner: SimctlRunner,
     pub boot_timeout: Duration,
     pub guard: GuardCache,
+    /// Tests only: every simulator takes input through this sink instead of CoreSimulator.
+    #[cfg(test)]
+    pub hid_for_tests: Option<HidFactory>,
 }
 
 impl IosBackendConfig {
@@ -100,6 +117,8 @@ impl IosBackendConfig {
             },
             boot_timeout: DEFAULT_BOOT_TIMEOUT,
             guard: GuardCache::new(),
+            #[cfg(test)]
+            hid_for_tests: None,
         }
     }
 }
@@ -120,6 +139,8 @@ pub(crate) struct IosBackend {
     mode: Mutex<LaunchMode>,
     /// UDIDs BiBCode booted and has not shut down; only those are never `in_use_elsewhere`.
     booted: Arc<Mutex<HashSet<String>>>,
+    #[cfg(test)]
+    hid_for_tests: Option<HidFactory>,
 }
 
 impl IosBackend {
@@ -133,6 +154,8 @@ impl IosBackend {
                 reason: ATTACH_FAILED_REASON.to_owned(),
             }),
             booted: Arc::default(),
+            #[cfg(test)]
+            hid_for_tests: config.hid_for_tests,
         }
     }
 
@@ -218,40 +241,62 @@ impl IosBackend {
             () = cancel.cancelled() => Err(LaunchFailure::Cancelled),
             display = self.attach_display(udid, mode) => display,
         };
-        let (native, display) = match display {
+        let (native, display, control) = match display {
             Ok(display) => display,
             Err(error) => {
                 self.shut_down_own(udid).await;
                 return Err(error);
             }
         };
+        #[cfg(test)]
+        let control = match &self.hid_for_tests {
+            Some(factory) => Control::Live(factory()),
+            None => control,
+        };
         let process = self.runner.register_simulator(udid).await;
         Ok(Box::new(RunningSimulator::start(
             udid.to_owned(),
             native,
             display,
+            control,
             self.runner.clone(),
             self.booted.clone(),
             process,
         )))
     }
 
-    /// The booted simulator's screen: live through CoreSimulator when the guard allows it
-    /// and the screen attaches, otherwise `simctl` screenshots. Returns its portrait size.
+    /// The booted simulator's screen and input: live through CoreSimulator when the guard
+    /// allows it and the screen attaches, otherwise `simctl` screenshots without input.
+    /// Returns its portrait size.
     async fn attach_display(
         &self,
         udid: &str,
         mode: LaunchMode,
-    ) -> Result<((u32, u32), Display), LaunchFailure> {
+    ) -> Result<((u32, u32), Display, Control), LaunchFailure> {
         let reason = match mode {
             LaunchMode::Live(sim) => {
                 let owned = udid.to_owned();
-                let attached = tokio::task::spawn_blocking(move || Screen::attach(&sim, &owned))
-                    .await
-                    .map_err(|error| DeviceError::Protocol(error.to_string()))
-                    .and_then(|attached| attached);
+                let runtime = tokio::runtime::Handle::current();
+                let attached = tokio::task::spawn_blocking(move || {
+                    let screen = Screen::attach(&sim, &owned)?;
+                    Ok((screen, HidClient::start(sim, &owned, runtime)))
+                })
+                .await
+                .map_err(|error| DeviceError::Protocol(error.to_string()))
+                .and_then(|attached| attached);
                 match attached {
-                    Ok(screen) => return Ok((screen.size(), Display::Live(Arc::new(screen)))),
+                    Ok((screen, hid)) => {
+                        let control = match hid {
+                            Ok(hid) => Control::Live(Arc::new(hid)),
+                            Err(error) => {
+                                tracing::warn!(%error, "could not reach the simulator's input; it takes none");
+                                Control::Off {
+                                    reason: INPUT_ATTACH_FAILED_REASON.to_owned(),
+                                }
+                            }
+                        };
+                        return Ok((screen.size(), Display::Live(Arc::new(screen)), control));
+                    }
                     Err(error) => {
                         tracing::warn!(%error, "could not attach to the simulator's screen; it runs view-only");
                         ATTACH_FAILED_REASON.to_owned()
@@ -261,7 +306,13 @@ impl IosBackend {
             LaunchMode::ViewOnly { reason } => reason,
         };
         let native = self.first_screenshot_size(udid).await?;
-        Ok((native, Display::ViewOnly { reason }))
+        Ok((
+            native,
+            Display::ViewOnly {
+                reason: reason.clone(),
+            },
+            Control::Off { reason },
+        ))
     }
 
     /// The native screen size, from the first screenshot that succeeds.
@@ -372,6 +423,28 @@ enum Display {
     ViewOnly { reason: String },
 }
 
+/// Where a running simulator's input and rotations go.
+enum Control {
+    Live(Arc<dyn HidSink>),
+    /// Input and rotation are refused for `reason`.
+    Off {
+        reason: String,
+    },
+}
+
+/// What a sink error means to the caller; `failed` is the copy for a send the simulator did
+/// not take, which is logged without content.
+fn sink_error(error: HidError, failed: &str) -> DeviceOpError {
+    match error {
+        HidError::KeyboardUnavailable => DeviceOpError::InvalidInput(KEYBOARD_NOT_READY.to_owned()),
+        HidError::Released => DeviceOpError::NotReady(DeviceState::Stopped),
+        HidError::Failed(detail) => {
+            tracing::warn!(%detail, "the simulator did not accept input");
+            DeviceOpError::Emulator(failed.to_owned())
+        }
+    }
+}
+
 /// A simulator BiBCode booted.
 struct RunningSimulator {
     shared: Arc<Shared>,
@@ -381,6 +454,11 @@ struct Shared {
     udid: String,
     native: (u32, u32),
     display: Display,
+    control: Control,
+    /// The single touch pointer that is down, between batches.
+    pointer: Mutex<PointerState>,
+    /// One input batch at a time, so batches arrive in order.
+    input_lock: tokio::sync::Mutex<()>,
     runner: Arc<SimctlRunner>,
     booted: Arc<Mutex<HashSet<String>>>,
     /// Why the simulator ended without BiBCode asking; set by the state poll.
@@ -398,6 +476,7 @@ impl RunningSimulator {
         udid: String,
         native: (u32, u32),
         display: Display,
+        control: Control,
         runner: Arc<SimctlRunner>,
         booted: Arc<Mutex<HashSet<String>>>,
         process: Option<SimulatorProcess>,
@@ -406,6 +485,9 @@ impl RunningSimulator {
             udid,
             native,
             display,
+            control,
+            pointer: Mutex::new(PointerState::default()),
+            input_lock: tokio::sync::Mutex::new(()),
             runner,
             booted,
             exit: Mutex::new(None),
@@ -461,6 +543,12 @@ impl Shared {
         if self.stopping.swap(true, Ordering::SeqCst) {
             return;
         }
+        // Input closes first: nothing more reaches the simulator, and the HID connections
+        // go before the screen and the simulator do.
+        if let Control::Live(sink) = &self.control {
+            sink.release().await;
+        }
+        *lock(&self.pointer) = PointerState::default();
         // The poll ends first, so this shutdown is never taken for an external one.
         self.poll.cancel();
         let task = lock(&self.poll_task).take();
@@ -483,6 +571,90 @@ impl Shared {
             tracing::warn!(%error, "could not shut down the simulator");
         }
         lock(&self.booted).remove(&self.udid);
+    }
+
+    /// Plans and sends one validated batch in order; a paste is `simctl pbcopy` then Cmd+V.
+    async fn input(
+        &self,
+        events: Vec<DeviceInputEvent>,
+        orientation: Orientation,
+    ) -> Result<(), DeviceOpError> {
+        let sink = match &self.control {
+            Control::Live(sink) => sink.clone(),
+            Control::Off { reason } => {
+                return Err(DeviceOpError::InvalidInput(format!(
+                    "Touch input is off: {}.",
+                    reason.trim_end_matches('.')
+                )));
+            }
+        };
+        let _serial = self.input_lock.lock().await;
+        if self.stopping.load(Ordering::SeqCst) {
+            return Err(DeviceOpError::NotReady(DeviceState::Stopped));
+        }
+        let plan = plan_events(&events, orientation, &mut lock(&self.pointer))?;
+        if plan.iter().any(HidAction::needs_keyboard) && !sink.keyboard_ready() {
+            return Err(DeviceOpError::InvalidInput(KEYBOARD_NOT_READY.to_owned()));
+        }
+        for action in plan {
+            match action {
+                HidAction::Paste { text } => {
+                    if let Err(error) = self.runner.pbcopy(&self.udid, &text).await {
+                        tracing::warn!(%error, chars = text.chars().count(), "could not copy text to the simulator");
+                        return Err(DeviceOpError::Emulator(INPUT_FAILED.to_owned()));
+                    }
+                    for key in paste_keys() {
+                        sink.send(key)
+                            .await
+                            .map_err(|error| sink_error(error, INPUT_FAILED))?;
+                    }
+                }
+                action => sink
+                    .send(action)
+                    .await
+                    .map_err(|error| sink_error(error, INPUT_FAILED))?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Sends the Purple orientation for `to`, then reads back what the simulator reports
+    /// and passes that to `report`, never what was asked: the UI turns only when the
+    /// foreground app allows it.
+    async fn rotate(
+        &self,
+        to: Orientation,
+        report: &(dyn Fn(Orientation, u32, u32) + Send + Sync),
+    ) -> Result<(), DeviceOpError> {
+        let sink = match &self.control {
+            Control::Live(sink) => sink.clone(),
+            Control::Off { reason } => {
+                return Err(DeviceOpError::InvalidInput(format!(
+                    "Rotation is off: {}.",
+                    reason.trim_end_matches('.')
+                )));
+            }
+        };
+        sink.rotate(IosOrientation::from_orientation(to).purple())
+            .await
+            .map_err(|error| sink_error(error, ROTATE_FAILED))?;
+        let Display::Live(screen) = &self.display else {
+            return Ok(());
+        };
+        let mut reported = screen.orientation();
+        let (width, height) = self.native;
+        for poll in 0..ROTATION_POLLS {
+            if poll > 0 {
+                tokio::time::sleep(ROTATION_POLL_INTERVAL).await;
+            }
+            let orientation = reported.borrow_and_update().orientation();
+            let (width, height) = oriented_size(width, height, orientation);
+            report(orientation, width, height);
+            if orientation == to {
+                break;
+            }
+        }
+        Ok(())
     }
 
     async fn screenshot(&self) -> Result<RawJpeg, DeviceError> {
@@ -593,8 +765,9 @@ impl RunningDevice for RunningSimulator {
         self.shared.native
     }
 
+    /// Live simulators turn through the Purple port; view-only ones cannot.
     fn can_rotate(&self) -> bool {
-        false
+        matches!(self.shared.control, Control::Live(_))
     }
 
     /// Live: framebuffer frames scaled to `max_width`. View-only: full-size `simctl`
@@ -685,28 +858,18 @@ impl RunningDevice for RunningSimulator {
 
     fn input(
         &self,
-        _events: Vec<DeviceInputEvent>,
-        _orientation: Orientation,
+        events: Vec<DeviceInputEvent>,
+        orientation: Orientation,
     ) -> BoxFuture<'_, Result<(), DeviceOpError>> {
-        let message = match &self.shared.display {
-            Display::Live(_) => LIVE_INPUT_PENDING.to_owned(),
-            Display::ViewOnly { reason } => {
-                format!("Touch input is off: {}.", reason.trim_end_matches('.'))
-            }
-        };
-        Box::pin(async move { Err(DeviceOpError::InvalidInput(message)) })
+        Box::pin(self.shared.input(events, orientation))
     }
 
     fn rotate<'a>(
         &'a self,
-        _to: Orientation,
-        _report: &'a (dyn Fn(Orientation, u32, u32) + Send + Sync),
+        to: Orientation,
+        report: &'a (dyn Fn(Orientation, u32, u32) + Send + Sync),
     ) -> BoxFuture<'a, Result<(), DeviceOpError>> {
-        Box::pin(async {
-            Err(DeviceOpError::InvalidInput(
-                "This simulator cannot rotate from BiBCode.".into(),
-            ))
-        })
+        Box::pin(self.shared.rotate(to, report))
     }
 
     fn exited(&self) -> Option<String> {
@@ -773,13 +936,168 @@ pub fn host_manager_for_tests() -> (super::DeviceManager, tokio::sync::watch::Se
 
 #[cfg(test)]
 mod tests {
-    use super::testing::{FakeXcrun, ios_manager};
+    use super::{
+        hid::{HidAction, KEYBOARD_NOT_READY, SimButton, TouchPhase},
+        testing::{FakeXcrun, RecordingHid, ios_manager, live_fake_ios},
+    };
     use crate::device::{
         DeviceOpError,
-        catalog::{DeviceState, Platform},
+        catalog::{DeviceState, Orientation, Platform},
         fake_backend::wait_state,
-        input::{DeviceInputEvent, KeyAction},
+        input::{DeviceInputEvent, DeviceKey, KeyAction, TouchAction},
     };
+
+    fn tap_down(x: f64, y: f64) -> DeviceInputEvent {
+        DeviceInputEvent::Touch {
+            action: TouchAction::Down,
+            pointer_id: 0,
+            x,
+            y,
+        }
+    }
+
+    #[tokio::test]
+    async fn input_after_stop_is_refused_without_ffi() {
+        let sim = FakeXcrun::new()
+            .device("UDID-1", "iPhone 17 Pro", "iOS 27.0")
+            .write();
+        let hid = RecordingHid::new();
+        let (manager, _enabled) = live_fake_ios(&sim, &hid);
+        let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        let ready = wait_state(&manager, &id, DeviceState::Ready).await;
+        assert!(ready.can_rotate);
+        manager.input(&id, vec![tap_down(0.5, 0.5)]).await.unwrap();
+        assert_eq!(
+            hid.sent(),
+            [HidAction::Touch {
+                phase: TouchPhase::Down,
+                x: 0.5,
+                y: 0.5
+            }]
+        );
+        manager.close(&id).await.unwrap();
+        assert!(hid.released(), "stop releases the HID connections");
+        let tap = vec![tap_down(0.5, 0.5)];
+        assert!(matches!(
+            manager.input(&id, tap).await,
+            Err(DeviceOpError::NotReady(DeviceState::Stopped))
+        ));
+        assert!(matches!(
+            manager.rotate(&id, Orientation::Landscape).await,
+            Err(DeviceOpError::NotReady(DeviceState::Stopped))
+        ));
+        assert_eq!(hid.sent_after_release(), 0);
+        assert!(hid.sent().is_empty());
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn text_is_typed_and_the_rest_pasted_through_the_pasteboard() {
+        let sim = FakeXcrun::new()
+            .device("UDID-1", "iPhone 17 Pro", "iOS 27.0")
+            .write();
+        let hid = RecordingHid::new();
+        let (manager, _enabled) = live_fake_ios(&sim, &hid);
+        let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        wait_state(&manager, &id, DeviceState::Ready).await;
+        manager
+            .input(
+                &id,
+                vec![
+                    DeviceInputEvent::Text { text: "aé".into() },
+                    DeviceInputEvent::Key {
+                        key: DeviceKey::Home,
+                        action: KeyAction::Down,
+                    },
+                ],
+            )
+            .await
+            .unwrap();
+        let key = |usage, down| HidAction::Key { usage, down };
+        assert_eq!(
+            hid.sent(),
+            [
+                key(0x04, true),
+                key(0x04, false),
+                key(0xE3, true),
+                key(0x19, true),
+                key(0x19, false),
+                key(0xE3, false),
+                HidAction::Button {
+                    button: SimButton::Home,
+                    down: true
+                },
+            ]
+        );
+        assert_eq!(sim.pasteboard().as_deref(), Some("é"));
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn keys_wait_for_the_keyboard_and_buttons_do_not() {
+        let sim = FakeXcrun::new()
+            .device("UDID-1", "iPhone 17 Pro", "iOS 27.0")
+            .write();
+        let hid = RecordingHid::new();
+        hid.set_keyboard(false);
+        let (manager, _enabled) = live_fake_ios(&sim, &hid);
+        let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        wait_state(&manager, &id, DeviceState::Ready).await;
+        let refused = manager
+            .input(
+                &id,
+                vec![
+                    tap_down(0.1, 0.1),
+                    DeviceInputEvent::Text { text: "é".into() },
+                ],
+            )
+            .await;
+        assert_eq!(
+            refused,
+            Err(DeviceOpError::InvalidInput(KEYBOARD_NOT_READY.into()))
+        );
+        // Nothing of the refused batch went out, not even to the pasteboard.
+        assert!(hid.sent().is_empty());
+        assert_eq!(sim.pasteboard(), None);
+        let volume = DeviceInputEvent::Key {
+            key: DeviceKey::VolumeUp,
+            action: KeyAction::Down,
+        };
+        manager.input(&id, vec![volume]).await.unwrap();
+        assert_eq!(
+            hid.sent(),
+            [HidAction::Button {
+                button: SimButton::VolumeUp,
+                down: true
+            }]
+        );
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn rotate_sends_the_purple_value_for_the_android_convention() {
+        let sim = FakeXcrun::new()
+            .device("UDID-1", "iPhone 17 Pro", "iOS 27.0")
+            .write();
+        let hid = RecordingHid::new();
+        let (manager, _enabled) = live_fake_ios(&sim, &hid);
+        let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        wait_state(&manager, &id, DeviceState::Ready).await;
+        for orientation in [
+            Orientation::Landscape,
+            Orientation::ReverseLandscape,
+            Orientation::ReversePortrait,
+            Orientation::Portrait,
+        ] {
+            manager.rotate(&id, orientation).await.unwrap();
+        }
+        // Landscape is Purple 3 (`uiOrientation` 4, the UI's top on the right edge).
+        assert_eq!(hid.rotations(), [3, 4, 2, 1]);
+        // Screenshots report no orientation, so the catalog stays where it was.
+        let snapshot = manager.catalog().borrow().devices[0].clone();
+        assert_eq!(snapshot.orientation, Orientation::Portrait);
+        manager.shutdown().await;
+    }
 
     #[tokio::test]
     async fn unrequested_shutdown_fails_the_device() {

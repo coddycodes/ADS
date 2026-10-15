@@ -25,16 +25,28 @@ pub(crate) enum Turn {
 }
 
 impl IosOrientation {
-    /// `uiOrientation` 1 is portrait and 2 upside-down. Which of 3 and 4 BiBCode calls
-    /// `landscape` is provisional: Task 8's real-simulator rotate test confirms it against
-    /// Android's convention. Other values are not orientations.
+    /// `uiOrientation` 1 is portrait and 2 upside-down. 4 is `landscape` and 3
+    /// `reverseLandscape`, Android's convention: Android's landscape is the phone turned
+    /// left (counter-clockwise, `Surface.ROTATION_90`), which puts the UI's top along the
+    /// device's right edge, and spec §0 observed the UI's top along the surface's right edge
+    /// at 4 and its left edge at 3. Other values are not orientations.
     pub(crate) fn from_ui(value: u32) -> Option<Self> {
         match value {
             1 => Some(Self::Portrait),
             2 => Some(Self::ReversePortrait),
-            3 => Some(Self::Landscape),
-            4 => Some(Self::ReverseLandscape),
+            3 => Some(Self::ReverseLandscape),
+            4 => Some(Self::Landscape),
             _ => None,
+        }
+    }
+
+    /// The catalog's orientation as the simulator's.
+    pub(crate) fn from_orientation(orientation: Orientation) -> Self {
+        match orientation {
+            Orientation::Portrait => Self::Portrait,
+            Orientation::ReversePortrait => Self::ReversePortrait,
+            Orientation::Landscape => Self::Landscape,
+            Orientation::ReverseLandscape => Self::ReverseLandscape,
         }
     }
 
@@ -48,15 +60,27 @@ impl IosOrientation {
         }
     }
 
-    /// Follows the `uiOrientation` value, not the catalog name: spec §0 observed the UI's top
-    /// along the surface's physical left edge at 3 and its right edge at 4. If Task 8 swaps
-    /// `from_ui`'s 3 and 4, this swaps with it; a test pins both together.
+    /// The Purple GSEvent value that turns the UI here (spec §0, S2): Purple 3 gives
+    /// `uiOrientation` 4 and Purple 4 gives 3. Upside-down (2) only turns apps that support
+    /// it, which Safari on iPhone does not.
+    pub(crate) fn purple(self) -> u32 {
+        match self {
+            Self::Portrait => 1,
+            Self::ReversePortrait => 2,
+            Self::Landscape => 3,
+            Self::ReverseLandscape => 4,
+        }
+    }
+
+    /// How the portrait surface turns to show the UI upright: spec §0 observed the UI's top
+    /// along the surface's right edge at `uiOrientation` 4 (`landscape`) and its left edge
+    /// at 3. A test pins this with `from_ui` and `purple`.
     pub(crate) fn turn(self) -> Turn {
         match self {
             Self::Portrait => Turn::None,
             Self::ReversePortrait => Turn::Half,
-            Self::Landscape => Turn::Clockwise,
-            Self::ReverseLandscape => Turn::CounterClockwise,
+            Self::Landscape => Turn::CounterClockwise,
+            Self::ReverseLandscape => Turn::Clockwise,
         }
     }
 }
@@ -181,21 +205,32 @@ mod tests {
             IosOrientation::from_ui(2),
             Some(IosOrientation::ReversePortrait)
         );
-        assert_eq!(IosOrientation::from_ui(3), Some(IosOrientation::Landscape));
         assert_eq!(
-            IosOrientation::from_ui(4),
+            IosOrientation::from_ui(3),
             Some(IosOrientation::ReverseLandscape)
         );
+        assert_eq!(IosOrientation::from_ui(4), Some(IosOrientation::Landscape));
         assert_eq!(IosOrientation::from_ui(0), None);
         assert_eq!(IosOrientation::from_ui(5), None);
         assert_eq!(
-            IosOrientation::from_ui(3).unwrap().orientation(),
+            IosOrientation::from_ui(4).unwrap().orientation(),
             Orientation::Landscape
         );
+        for orientation in [
+            Orientation::Portrait,
+            Orientation::Landscape,
+            Orientation::ReversePortrait,
+            Orientation::ReverseLandscape,
+        ] {
+            assert_eq!(
+                IosOrientation::from_orientation(orientation).orientation(),
+                orientation
+            );
+        }
     }
 
     #[test]
-    fn the_turn_follows_the_observed_ui_value() {
+    fn the_turn_and_purple_value_follow_the_observed_ui_value() {
         // Spec §0: at 3 the UI's top lies along the surface's left edge, at 4 its right.
         assert_eq!(IosOrientation::from_ui(1).unwrap().turn(), Turn::None);
         assert_eq!(IosOrientation::from_ui(2).unwrap().turn(), Turn::Half);
@@ -204,6 +239,13 @@ mod tests {
             IosOrientation::from_ui(4).unwrap().turn(),
             Turn::CounterClockwise
         );
+        // Spec §0, S2: Purple 4 reads back as `uiOrientation` 3, Purple 3 as 4, 1 as 1.
+        assert_eq!(IosOrientation::from_ui(3).unwrap().purple(), 4);
+        assert_eq!(IosOrientation::from_ui(4).unwrap().purple(), 3);
+        assert_eq!(IosOrientation::from_ui(1).unwrap().purple(), 1);
+        assert_eq!(IosOrientation::from_ui(2).unwrap().purple(), 2);
+        // Android's landscape (the phone turned left) has the UI's top on the right edge.
+        assert_eq!(IosOrientation::Landscape.turn(), Turn::CounterClockwise);
     }
 
     #[test]

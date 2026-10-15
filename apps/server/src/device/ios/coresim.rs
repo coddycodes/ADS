@@ -10,11 +10,11 @@
 //! class, protocol and selector exists with that signature.
 
 use std::{
-    ffi::{CStr, CString, c_void},
+    ffi::{CStr, CString, c_char, c_void},
     os::unix::ffi::OsStrExt as _,
     panic::AssertUnwindSafe,
     path::{Path, PathBuf},
-    ptr::{NonNull, null_mut},
+    ptr::{NonNull, null, null_mut},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -24,6 +24,7 @@ use std::{
 
 use block2::{Block, ManualBlockEncoding, RcBlock};
 use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
+use futures_util::future::BoxFuture;
 use objc2::{
     exception,
     ffi::{self, objc_method_description},
@@ -33,10 +34,16 @@ use objc2::{
 use objc2_core_foundation::{CFRetained, CFType};
 use objc2_foundation::{NSError, NSString, NSUUID};
 use objc2_io_surface::{IOSurfaceLockOptions, IOSurfaceRef};
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
+use tokio_util::sync::CancellationToken;
 
 use super::{
     guard::{GuardResult, Owner, SymbolResolver, probe_with},
+    hid::{
+        DIGITIZER_SERVICE, HidAction, HidError, HidSink, IndigoMessage, PURPLE_MESSAGE_SIZE,
+        SINGLE_TOUCH_LEN, TouchPhase, XpcValue, dtu_message, indigo_message, liveness_message,
+        purple_orientation_message, single_touch,
+    },
     lock,
     pixels::{Bgra, IosOrientation, upright_rgb},
 };
@@ -93,17 +100,30 @@ impl Library {
     }
 }
 
-/// A C function's address, for Task 8 to call with its §0 signature.
+/// A C function's address, called with its §0 signature through [`Symbol::as_fn`].
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Symbol(#[allow(dead_code)] NonNull<c_void>); // Task 8 calls it.
+pub(crate) struct Symbol(NonNull<c_void>);
 
 // SAFETY: a code address is immutable and valid on every thread.
 unsafe impl Send for Symbol {}
 // SAFETY: as above.
 unsafe impl Sync for Symbol {}
 
+impl Symbol {
+    /// The function as `F`.
+    ///
+    /// # Safety
+    ///
+    /// `F` must be an `unsafe extern "C" fn` type matching the symbol's real signature.
+    unsafe fn as_fn<F: Copy>(self) -> F {
+        const { assert!(size_of::<F>() == size_of::<*mut c_void>()) };
+        // SAFETY: a function pointer and a data pointer have one size on Apple platforms;
+        // the caller names the signature.
+        unsafe { std::mem::transmute_copy(&self.0.as_ptr()) }
+    }
+}
+
 /// The C functions live input calls (spec §0, S1).
-#[allow(dead_code)] // Task 8 sends input through them.
 pub(crate) struct HidSymbols {
     pub mouse_event: Symbol,
     pub button: Symbol,
@@ -116,7 +136,6 @@ pub(crate) struct HidSymbols {
 /// Loaded frameworks and resolved symbols. It exists only once the guard found every name.
 pub(crate) struct CoreSim {
     developer_dir: PathBuf,
-    #[allow(dead_code)] // Task 8 sends input through them.
     pub hid: HidSymbols,
 }
 
@@ -312,6 +331,18 @@ unsafe fn send2<A, B, R>(receiver: Id, selector: Sel, a: A, b: B) -> R {
 
 /// # Safety
 ///
+/// As [`send0`], with four arguments.
+unsafe fn send4<A, B, C, D>(receiver: Id, selector: Sel, a: A, b: B, c: C, d: D) {
+    // SAFETY: the caller guarantees the signature.
+    unsafe {
+        msg_send_fn::<unsafe extern "C-unwind" fn(Id, Sel, A, B, C, D)>()(
+            receiver, selector, a, b, c, d,
+        );
+    }
+}
+
+/// # Safety
+///
 /// As [`send0`], with five arguments.
 unsafe fn send5<A, B, C, D, E>(receiver: Id, selector: Sel, a: A, b: B, c: C, d: D, e: E) {
     // SAFETY: the caller guarantees the signature.
@@ -344,6 +375,12 @@ unsafe impl Sync for Object {}
 impl Object {
     fn ptr(&self) -> Id {
         Retained::as_ptr(&self.0).cast_mut()
+    }
+
+    /// Takes ownership of an object returned at +1 (`init…`); `None` for nil.
+    fn owned(object: Id) -> Option<Self> {
+        // SAFETY: `object` is nil or a live object the callee returned retained.
+        unsafe { Retained::from_raw(object) }.map(Self)
     }
 
     /// Retains an object a getter returned (autoreleased, or owned by its parent).
@@ -641,10 +678,12 @@ impl Drop for SurfaceLock<'_> {
 }
 
 /// The block signatures CoreSimulator needs: it sends the blocks across XPC and refuses a
-/// block without one ("Block is missing signature field").
-struct FrameBlock;
+/// block without one ("Block is missing signature field"). Every other block BiBCode hands
+/// a framework (XPC handlers and barriers, the legacy HID completion) carries one too.
+/// `void (^)(void)`: frame callbacks and XPC barriers.
+struct VoidBlock;
 // SAFETY: `void (^)(void)` is `v8@?0` on 64-bit, matching `Arguments` and `Return`.
-unsafe impl ManualBlockEncoding for FrameBlock {
+unsafe impl ManualBlockEncoding for VoidBlock {
     type Arguments = ();
     type Return = ();
     const ENCODING_CSTR: &'static CStr = c"v8@?0";
@@ -658,9 +697,11 @@ unsafe impl ManualBlockEncoding for SurfacesBlock {
     const ENCODING_CSTR: &'static CStr = c"v24@?0@8@16";
 }
 
-struct PropertiesBlock;
+/// `void (^)(id)`: properties callbacks, XPC event and reply handlers (an `xpc_object_t`
+/// is an object), and the legacy HID completion (`NSError *`).
+struct ObjectBlock;
 // SAFETY: `void (^)(id)` is `v16@?0@8` on 64-bit, matching `Arguments`.
-unsafe impl ManualBlockEncoding for PropertiesBlock {
+unsafe impl ManualBlockEncoding for ObjectBlock {
     type Arguments = (Id,);
     type Return = ();
     const ENCODING_CSTR: &'static CStr = c"v16@?0@8";
@@ -772,7 +813,7 @@ impl Screen {
         let uuid = Object(unsafe { Retained::cast_unchecked::<AnyObject>(uuid) });
         let frame = {
             let state = state.clone();
-            RcBlock::with_encoding::<_, _, _, FrameBlock>(move || state.tick())
+            RcBlock::with_encoding::<_, _, _, VoidBlock>(move || state.tick())
         };
         let surfaces = {
             let state = state.clone();
@@ -791,7 +832,7 @@ impl Screen {
         };
         let properties = {
             let state = state.clone();
-            RcBlock::with_encoding::<_, _, _, PropertiesBlock>(move |properties: Id| {
+            RcBlock::with_encoding::<_, _, _, ObjectBlock>(move |properties: Id| {
                 autoreleasepool(|_| {
                     let orientation = Object::retain(properties)
                         .and_then(|properties| ui_orientation(&properties));
@@ -906,6 +947,794 @@ pub(crate) struct RgbFrame {
     pub orientation: IosOrientation,
 }
 
+// ---------------------------------------------------------------------------------------------
+// Input: DTUHID over in-process XPC, legacy Indigo, and Purple rotation (spec §0, S1–S2)
+
+/// An opaque XPC type descriptor (`_xpc_type_s`); only its address is compared.
+#[repr(C)]
+struct XpcType {
+    _private: [u8; 0],
+}
+
+type Xpc = *mut c_void;
+
+// SAFETY: libxpc and the Mach calls are part of libSystem, which every macOS process links;
+// these are their public C signatures.
+unsafe extern "C" {
+    static _xpc_type_dictionary: XpcType;
+    static _xpc_type_error: XpcType;
+    fn xpc_dictionary_create(keys: *const *const c_char, values: *const Xpc, count: usize) -> Xpc;
+    fn xpc_dictionary_set_uint64(dictionary: Xpc, key: *const c_char, value: u64);
+    fn xpc_dictionary_set_double(dictionary: Xpc, key: *const c_char, value: f64);
+    fn xpc_dictionary_set_bool(dictionary: Xpc, key: *const c_char, value: bool);
+    fn xpc_dictionary_set_string(dictionary: Xpc, key: *const c_char, value: *const c_char);
+    fn xpc_dictionary_set_value(dictionary: Xpc, key: *const c_char, value: Xpc);
+    fn xpc_get_type(object: Xpc) -> *const XpcType;
+    fn xpc_release(object: Xpc);
+    fn xpc_connection_set_event_handler(connection: Xpc, handler: *const Block<dyn Fn(Id)>);
+    fn xpc_connection_resume(connection: Xpc);
+    fn xpc_connection_cancel(connection: Xpc);
+    fn xpc_connection_send_message(connection: Xpc, message: Xpc);
+    fn xpc_connection_send_barrier(connection: Xpc, barrier: *const Block<dyn Fn()>);
+    fn xpc_connection_send_message_with_reply(
+        connection: Xpc,
+        message: Xpc,
+        reply_queue: *mut c_void,
+        handler: *const Block<dyn Fn(Id)>,
+    );
+    fn mach_msg(
+        message: *mut c_void,
+        option: i32,
+        send_size: u32,
+        receive_size: u32,
+        receive_name: u32,
+        timeout: u32,
+        notify: u32,
+    ) -> i32;
+    fn mach_port_deallocate(task: u32, name: u32) -> i32;
+    static mach_task_self_: u32;
+    fn mach_absolute_time() -> u64;
+}
+
+const MACH_SEND_MSG: i32 = 0x1;
+const MACH_SEND_TIMEOUT: i32 = 0x10;
+/// How long `mach_msg` may wait to queue the Purple message.
+const PURPLE_SEND_TIMEOUT_MS: u32 = 2000;
+/// How long the liveness barrier's reply may take (spec §0: idb's 4 s).
+const LIVENESS_TIMEOUT: Duration = Duration::from_secs(4);
+/// How long to wait between liveness attempts.
+const LIVENESS_BACKOFF: Duration = Duration::from_secs(4);
+const LIVENESS_ATTEMPTS: u32 = 5;
+/// How long one DTUHID message's barrier, or one legacy completion, may take.
+const SEND_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// An XPC object this code owns (+1), released on drop.
+struct XpcObject(NonNull<c_void>);
+
+// SAFETY: XPC objects are reference counted atomically and libxpc allows them on any
+// thread; connections are thread-safe and the dictionaries are not changed once sent.
+unsafe impl Send for XpcObject {}
+// SAFETY: as above.
+unsafe impl Sync for XpcObject {}
+
+impl XpcObject {
+    fn new(object: Xpc) -> Result<Self, DeviceError> {
+        NonNull::new(object)
+            .map(Self)
+            .ok_or_else(|| protocol_error("libxpc returned NULL"))
+    }
+
+    fn ptr(&self) -> Xpc {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for XpcObject {
+    fn drop(&mut self) {
+        // SAFETY: this code owns one reference.
+        unsafe { xpc_release(self.0.as_ptr()) };
+    }
+}
+
+/// Whether `object` (borrowed from a handler) is an XPC object of `kind`.
+fn xpc_is(object: Id, kind: *const XpcType) -> bool {
+    if object.is_null() {
+        return false;
+    }
+    // SAFETY: `object` is a live XPC object the handler received; reading its type does
+    // not retain it.
+    std::ptr::eq(unsafe { xpc_get_type(object.cast()) }, kind)
+}
+
+/// Builds an XPC dictionary from `entries`.
+fn xpc_dictionary(entries: &[(&'static CStr, XpcValue)]) -> Result<XpcObject, DeviceError> {
+    // SAFETY: an empty dictionary: no keys or values to read.
+    let dictionary = XpcObject::new(unsafe { xpc_dictionary_create(null(), null(), 0) })?;
+    for (key, value) in entries {
+        let (dictionary, key) = (dictionary.ptr(), key.as_ptr());
+        // SAFETY: `dictionary` is live, `key` and string values are NUL-terminated and
+        // copied by libxpc, and a nested value is retained by the dictionary.
+        unsafe {
+            match value {
+                XpcValue::U64(value) => xpc_dictionary_set_uint64(dictionary, key, *value),
+                XpcValue::Double(value) => xpc_dictionary_set_double(dictionary, key, *value),
+                XpcValue::Bool(value) => xpc_dictionary_set_bool(dictionary, key, *value),
+                XpcValue::Str(value) => xpc_dictionary_set_string(dictionary, key, value.as_ptr()),
+                XpcValue::Dict(entries) => {
+                    let nested = xpc_dictionary(entries)?;
+                    xpc_dictionary_set_value(dictionary, key, nested.ptr());
+                }
+            }
+        }
+    }
+    Ok(dictionary)
+}
+
+fn xpc_message(message: &XpcValue) -> Result<XpcObject, DeviceError> {
+    match message {
+        XpcValue::Dict(entries) => xpc_dictionary(entries),
+        _ => Err(protocol_error("a DTUHID message must be a dictionary")),
+    }
+}
+
+/// A one-shot completion that a framework block fires on its own thread.
+fn completion<T: Send + 'static>() -> (impl Fn(T) + Send + Sync + 'static, oneshot::Receiver<T>) {
+    let (sender, receiver) = oneshot::channel();
+    let sender = Mutex::new(Some(sender));
+    let fire = move |value: T| {
+        if let Some(sender) = lock(&sender).take() {
+            let _ = sender.send(value);
+        }
+    };
+    (fire, receiver)
+}
+
+/// One send right this task holds to a simulator service, deallocated on drop.
+struct SendRight(u32);
+
+impl Drop for SendRight {
+    fn drop(&mut self) {
+        // SAFETY: this code holds one user reference to the right; `lookup` added it.
+        let status = unsafe { mach_port_deallocate(mach_task_self_, self.0) };
+        if status != 0 {
+            tracing::warn!(status, "could not release a simulator service port");
+        }
+    }
+}
+
+/// `-[SimDevice lookup:error:]` for `service`. Inside a drained autorelease pool the call
+/// leaves this task exactly one send right, which [`SendRight`] releases. Blocking: it is a
+/// round trip to CoreSimulatorService.
+fn lookup(device: &Object, service: &CStr) -> Result<SendRight, DeviceError> {
+    let selector = c"lookup:error:";
+    if !device.responds(selector) {
+        return Err(missing(selector));
+    }
+    autoreleasepool(|_| {
+        let name = NSString::from_str(&service.to_string_lossy());
+        let name: Id = Retained::as_ptr(&name).cast::<AnyObject>().cast_mut();
+        let mut error: Id = null_mut();
+        // SAFETY: `-lookup:error:` is `I32@0:8@16^@24` (checked by the guard): an NSString
+        // and an error out-pointer, returning a `mach_port_t`.
+        let port = guarded(selector, || unsafe {
+            send2::<Id, *mut Id, u32>(device.ptr(), sel(selector), name, &raw mut error)
+        })?;
+        if port == 0 {
+            return Err(error_from(selector, error));
+        }
+        Ok(SendRight(port))
+    })
+}
+
+/// A connection to the guest's `dtuhidd` (spec §0, the DTUHID path).
+struct DtuConnection {
+    connection: XpcObject,
+    /// Set by the event handler on any connection error, and by [`cancel`](Self::cancel).
+    dead: Arc<AtomicBool>,
+    cancelled: AtomicBool,
+    /// Released after the connection, which holds its own reference.
+    _port: SendRight,
+}
+
+type EndpointFromPort = unsafe extern "C" fn(u32, u64, u64) -> Xpc;
+type ConnectionFromEndpoint = unsafe extern "C" fn(Xpc) -> Xpc;
+type EnableSim2Host = unsafe extern "C" fn(Xpc);
+
+impl DtuConnection {
+    /// Looks the digitizer service up and connects in §0's order: endpoint, connection,
+    /// sim2host, event handler, resume. Blocking (the lookup); proves nothing about
+    /// `dtuhidd` until [`liveness`](Self::liveness) answers.
+    fn open(sim: &CoreSim, device: &Object) -> Result<Self, DeviceError> {
+        let port = lookup(device, DIGITIZER_SERVICE)?;
+        // SAFETY: §0 records these signatures; the guard resolved each symbol.
+        let (endpoint_from_port, from_endpoint, enable_sim2host) = unsafe {
+            (
+                sim.hid
+                    .endpoint_create_mach_port
+                    .as_fn::<EndpointFromPort>(),
+                sim.hid
+                    .connection_from_endpoint
+                    .as_fn::<ConnectionFromEndpoint>(),
+                sim.hid.enable_sim2host.as_fn::<EnableSim2Host>(),
+            )
+        };
+        // SAFETY: `port.0` is a send right this task holds; the endpoint does not take it.
+        let endpoint = XpcObject::new(unsafe { endpoint_from_port(port.0, 0, 0) })?;
+        // SAFETY: `endpoint` is a live endpoint; the connection retains what it needs.
+        let connection = XpcObject::new(unsafe { from_endpoint(endpoint.ptr()) })?;
+        drop(endpoint);
+        let dead = Arc::new(AtomicBool::new(false));
+        let handler = {
+            let dead = dead.clone();
+            RcBlock::with_encoding::<_, _, _, ObjectBlock>(move |event: Id| {
+                if xpc_is(event, &raw const _xpc_type_error) {
+                    dead.store(true, Ordering::SeqCst);
+                }
+            })
+        };
+        let handler: *const Block<dyn Fn(Id)> = &*handler;
+        // SAFETY: `connection` is live and not yet resumed; libxpc copies the handler,
+        // which captures only an atomic flag.
+        unsafe {
+            enable_sim2host(connection.ptr());
+            xpc_connection_set_event_handler(connection.ptr(), handler);
+            xpc_connection_resume(connection.ptr());
+        }
+        Ok(Self {
+            connection,
+            dead,
+            cancelled: AtomicBool::new(false),
+            _port: port,
+        })
+    }
+
+    fn is_dead(&self) -> bool {
+        self.dead.load(Ordering::SeqCst)
+    }
+
+    /// Sends §0's barrier key-up with a reply and waits [`LIVENESS_TIMEOUT`] for it.
+    async fn liveness(&self) -> Result<(), String> {
+        let reply = self.send_liveness().map_err(|error| error.to_string())?;
+        match tokio::time::timeout(LIVENESS_TIMEOUT, reply).await {
+            Ok(Ok(true)) => Ok(()),
+            Ok(Ok(false)) => Err("the barrier was answered with an error".to_owned()),
+            Ok(Err(_)) => Err("the barrier's reply handler was dropped".to_owned()),
+            Err(_) => Err("no barrier reply in time".to_owned()),
+        }
+    }
+
+    /// Sends the liveness barrier; the receiver says whether a dictionary came back.
+    fn send_liveness(&self) -> Result<oneshot::Receiver<bool>, DeviceError> {
+        let message = xpc_message(&liveness_message())?;
+        let (fire, reply) = completion::<bool>();
+        let handler = RcBlock::with_encoding::<_, _, _, ObjectBlock>(move |reply: Id| {
+            fire(xpc_is(reply, &raw const _xpc_type_dictionary));
+        });
+        let handler: *const Block<dyn Fn(Id)> = &*handler;
+        // SAFETY: a live connection and message; a NULL queue runs the handler on the
+        // connection's queue; libxpc copies the handler, which only fires a channel.
+        unsafe {
+            xpc_connection_send_message_with_reply(
+                self.connection.ptr(),
+                message.ptr(),
+                null_mut(),
+                handler,
+            );
+        }
+        Ok(reply)
+    }
+
+    /// Sends one message, then a barrier, and waits for the barrier (§0's send sequence).
+    async fn send(&self, message: &XpcValue) -> Result<(), String> {
+        if self.is_dead() {
+            return Err("the DTUHID connection closed".to_owned());
+        }
+        let done = self
+            .send_with_barrier(message)
+            .map_err(|error| error.to_string())?;
+        match tokio::time::timeout(SEND_TIMEOUT, done).await {
+            Ok(Ok(())) if !self.is_dead() => Ok(()),
+            Ok(_) => Err("the DTUHID connection closed".to_owned()),
+            Err(_) => Err("the DTUHID barrier did not run in time".to_owned()),
+        }
+    }
+
+    fn send_with_barrier(&self, message: &XpcValue) -> Result<oneshot::Receiver<()>, DeviceError> {
+        let message = xpc_message(message)?;
+        let (fire, done) = completion::<()>();
+        let barrier = RcBlock::with_encoding::<_, _, _, VoidBlock>(move || fire(()));
+        let barrier: *const Block<dyn Fn()> = &*barrier;
+        // SAFETY: a live connection and message; libxpc retains the message and copies the
+        // barrier, which only fires a channel.
+        unsafe {
+            xpc_connection_send_message(self.connection.ptr(), message.ptr());
+            xpc_connection_send_barrier(self.connection.ptr(), barrier);
+        }
+        Ok(done)
+    }
+
+    /// Cancels the connection once; pending barriers and replies then run.
+    fn cancel(&self) {
+        if self.cancelled.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        self.dead.store(true, Ordering::SeqCst);
+        // SAFETY: a live connection; cancelling twice is prevented above.
+        unsafe { xpc_connection_cancel(self.connection.ptr()) };
+    }
+}
+
+impl Drop for DtuConnection {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CgPair {
+    a: f64,
+    b: f64,
+}
+
+type MouseEvent =
+    unsafe extern "C" fn(*const CgPair, *const CgPair, u32, u64, CgPair, u32) -> *mut u8;
+type ButtonEvent = unsafe extern "C" fn(i32, i32, i32) -> *mut u8;
+type HidArbitrary = unsafe extern "C" fn(i32, u32, u32, i32) -> *mut u8;
+
+/// `IndigoHIDMessageFor…` direction: 1 down, 2 up.
+fn direction(down: bool) -> i32 {
+    if down { 1 } else { 2 }
+}
+
+/// A `malloc`'d Indigo message, freed on drop unless handed to the client.
+struct IndigoBuffer(NonNull<u8>);
+
+impl IndigoBuffer {
+    fn new(message: *mut u8) -> Result<Self, DeviceError> {
+        NonNull::new(message)
+            .map(Self)
+            .ok_or_else(|| protocol_error("an Indigo message builder returned NULL"))
+    }
+
+    /// Hands the buffer to a callee that frees it (`freeWhenDone:YES`).
+    fn into_raw(self) -> *mut u8 {
+        let pointer = self.0.as_ptr();
+        std::mem::forget(self);
+        pointer
+    }
+}
+
+impl Drop for IndigoBuffer {
+    fn drop(&mut self) {
+        // SAFETY: the buffer came from `malloc`/`calloc` and nobody else owns it.
+        unsafe { libc::free(self.0.as_ptr().cast()) };
+    }
+}
+
+/// SimulatorKit's `SimDeviceLegacyHIDClient`: the fallback for touch and buttons.
+struct LegacyHid {
+    client: Object,
+    queue: DispatchRetained<DispatchQueue>,
+    mouse: MouseEvent,
+    button: ButtonEvent,
+    arbitrary: HidArbitrary,
+}
+
+impl LegacyHid {
+    /// `-[SimDeviceLegacyHIDClient initWithDevice:error:]`. Blocking.
+    fn new(sim: &CoreSim, device: &Object) -> Result<Self, DeviceError> {
+        let class = AnyClass::get(c"SimulatorKit.SimDeviceLegacyHIDClient")
+            .ok_or_else(|| missing(c"SimulatorKit.SimDeviceLegacyHIDClient"))?;
+        let class: Id = std::ptr::from_ref(class).cast::<AnyObject>().cast_mut();
+        let init = c"initWithDevice:error:";
+        let client = autoreleasepool(|_| {
+            // SAFETY: `+alloc` takes nothing and returns an uninitialised instance (+1).
+            let allocated = guarded(c"alloc", || unsafe { send0::<Id>(class, sel(c"alloc")) })?;
+            if allocated.is_null() {
+                return Err(nil(c"alloc"));
+            }
+            let mut error: Id = null_mut();
+            // SAFETY: `-initWithDevice:error:` is `@32@0:8@16^@24` (checked by the guard);
+            // it consumes `allocated` and returns the client at +1, or nil.
+            let client = guarded(init, || unsafe {
+                send2::<Id, *mut Id, Id>(allocated, sel(init), device.ptr(), &raw mut error)
+            })?;
+            Object::owned(client).ok_or_else(|| error_from(init, error))
+        })?;
+        // SAFETY: §0 records these builders' signatures; the guard resolved each symbol.
+        let (mouse, button, arbitrary) = unsafe {
+            (
+                sim.hid.mouse_event.as_fn::<MouseEvent>(),
+                sim.hid.button.as_fn::<ButtonEvent>(),
+                sim.hid.hid_arbitrary.as_fn::<HidArbitrary>(),
+            )
+        };
+        Ok(Self {
+            client,
+            queue: DispatchQueue::new("dev.bibcode.ios-legacy-hid", DispatchQueueAttr::SERIAL),
+            mouse,
+            button,
+            arbitrary,
+        })
+    }
+
+    /// The `malloc`'d message for `message`.
+    fn build(&self, message: &IndigoMessage) -> Result<IndigoBuffer, DeviceError> {
+        match *message {
+            IndigoMessage::Touch { x, y, down } => {
+                let point = CgPair { a: x, b: y };
+                // SAFETY: §0's builder: a point, no second point, target 0x32, NSEventType
+                // 1 (down) or 2 (up), a unit size so the point is a ratio, edge 0. It
+                // returns a `malloc`'d message.
+                let builder = IndigoBuffer::new(unsafe {
+                    (self.mouse)(
+                        &point,
+                        null(),
+                        0x32,
+                        u64::from(direction(down).unsigned_abs()),
+                        CgPair { a: 1.0, b: 1.0 },
+                        0,
+                    )
+                })?;
+                // SAFETY: `malloc_size` reads the allocation's size from its zone.
+                let size = unsafe { libc::malloc_size(builder.0.as_ptr().cast()) };
+                if size < 0xA0 {
+                    return Err(protocol_error("the Indigo touch message is too small"));
+                }
+                // SAFETY: the allocation holds at least 0xA0 bytes, checked above.
+                let source = unsafe { std::slice::from_raw_parts(builder.0.as_ptr(), 0xA0) };
+                // SAFETY: reads the host's monotonic clock.
+                let message = single_touch(source, x, y, unsafe { mach_absolute_time() });
+                drop(builder);
+                // SAFETY: a fresh zeroed allocation the client will `free`.
+                let buffer =
+                    IndigoBuffer::new(unsafe { libc::calloc(1, SINGLE_TOUCH_LEN) }.cast())?;
+                // SAFETY: `buffer` holds `SINGLE_TOUCH_LEN` bytes, as does `message`.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        message.as_ptr(),
+                        buffer.0.as_ptr(),
+                        SINGLE_TOUCH_LEN,
+                    );
+                }
+                Ok(buffer)
+            }
+            IndigoMessage::Button { source, down } => {
+                // SAFETY: §0's builder: source, direction, target 0x33; `malloc`'d.
+                IndigoBuffer::new(unsafe { (self.button)(source, direction(down), 0x33) })
+            }
+            IndigoMessage::Consumer { usage, down } => {
+                // SAFETY: §0's builder: target 0x32, usage page, usage, direction; `malloc`'d.
+                IndigoBuffer::new(unsafe { (self.arbitrary)(0x32, 0x0C, usage, direction(down)) })
+            }
+        }
+    }
+
+    /// Sends `message` and waits for its completion.
+    async fn send(&self, message: &IndigoMessage) -> Result<(), String> {
+        let done = self.submit(message).map_err(|error| error.to_string())?;
+        match tokio::time::timeout(SEND_TIMEOUT, done).await {
+            Ok(Ok(None)) => Ok(()),
+            Ok(Ok(Some(error))) => Err(error),
+            Ok(Err(_)) => Err("the legacy HID completion was dropped".to_owned()),
+            Err(_) => Err("the legacy HID send did not complete in time".to_owned()),
+        }
+    }
+
+    /// Hands `message` to the client; the receiver gets the completion's error, if any.
+    fn submit(
+        &self,
+        message: &IndigoMessage,
+    ) -> Result<oneshot::Receiver<Option<String>>, DeviceError> {
+        let buffer = self.build(message)?;
+        let (fire, done) = completion::<Option<String>>();
+        let handler = RcBlock::with_encoding::<_, _, _, ObjectBlock>(move |error: Id| {
+            let failure = (!error.is_null()).then(|| {
+                autoreleasepool(|_| {
+                    if is_instance_of(error, c"NSError") {
+                        // SAFETY: the object's own class was just checked to be `NSError`.
+                        let error = unsafe { &*error.cast::<NSError>() };
+                        error.localizedDescription().to_string()
+                    } else {
+                        "an unknown error".to_owned()
+                    }
+                })
+            });
+            fire(failure);
+        });
+        let handler: *const Block<dyn Fn(Id)> = &*handler;
+        let queue: Id = DispatchRetained::as_ptr(&self.queue).as_ptr().cast();
+        let selector = c"sendWithMessage:freeWhenDone:completionQueue:completion:";
+        if !self.client.responds(selector) {
+            return Err(missing(selector));
+        }
+        let pointer = buffer.into_raw();
+        // SAFETY: `v44@0:8^{IndigoHIDMessageStruct=…}16B24@28@?36`: the message, which
+        // the client frees (`freeWhenDone:YES`), a queue and a completion it copies. If
+        // this raises, the message may or may not have been freed, so it is leaked.
+        guarded(selector, || unsafe {
+            send4::<*mut u8, Bool, Id, *const Block<dyn Fn(Id)>>(
+                self.client.ptr(),
+                sel(selector),
+                pointer,
+                Bool::YES,
+                queue,
+                handler,
+            );
+        })?;
+        Ok(done)
+    }
+}
+
+/// Sends the Purple orientation `value` to the simulator's `PurpleWorkspacePort`. Blocking:
+/// a lookup round trip and `mach_msg` with a 2 s send timeout.
+fn purple_rotate(device: &Object, value: u32) -> Result<(), DeviceError> {
+    let port = lookup(device, c"PurpleWorkspacePort")?;
+    let mut message = purple_orientation_message(port.0, value);
+    // SAFETY: `message` is a 112-byte, 4-byte-aligned `mach_msg_header_t` and body whose
+    // remote port is a send right this task holds (`COPY_SEND`, so it is kept); only a
+    // send is asked for, with a timeout.
+    let status = unsafe {
+        mach_msg(
+            message.as_mut_ptr().cast(),
+            MACH_SEND_MSG | MACH_SEND_TIMEOUT,
+            PURPLE_MESSAGE_SIZE,
+            0,
+            0,
+            PURPLE_SEND_TIMEOUT_MS,
+            0,
+        )
+    };
+    drop(port);
+    if status != 0 {
+        tracing::warn!(status, "the simulator's Purple port refused a rotation");
+        return Err(protocol_error(format!("mach_msg returned {status:#x}")));
+    }
+    Ok(())
+}
+
+/// The DTUHID connection's state.
+enum Dtu {
+    /// A handshake is running.
+    Connecting,
+    Live(Arc<DtuConnection>),
+    /// The last handshake failed; the next key starts another.
+    Down,
+}
+
+/// Which path a touch gesture went down on; its moves and lift follow it.
+#[derive(Clone)]
+enum InputPath {
+    Dtu(Arc<DtuConnection>),
+    Legacy,
+}
+
+/// Live input, keys and rotation for one booted simulator: DTUHID first, legacy Indigo for
+/// touch and buttons while DTUHID is not live (spec §5).
+pub(crate) struct HidClient {
+    inner: Arc<HidInner>,
+}
+
+struct HidInner {
+    sim: Arc<CoreSim>,
+    device: Object,
+    dtu: Mutex<Dtu>,
+    legacy: tokio::sync::Mutex<Option<Arc<LegacyHid>>>,
+    touch: Mutex<Option<InputPath>>,
+    released: AtomicBool,
+    /// Ends the handshake.
+    cancel: CancellationToken,
+    runtime: tokio::runtime::Handle,
+}
+
+impl HidClient {
+    /// Finds the booted `udid` and starts the DTUHID handshake on `runtime` in the
+    /// background. Blocking (the device lookup), so call it off the async runtime.
+    pub(crate) fn start(
+        sim: Arc<CoreSim>,
+        udid: &str,
+        runtime: tokio::runtime::Handle,
+    ) -> Result<Self, DeviceError> {
+        let device = autoreleasepool(|_| find_device(&sim, udid))?;
+        let inner = Arc::new(HidInner {
+            sim,
+            device,
+            dtu: Mutex::new(Dtu::Connecting),
+            legacy: tokio::sync::Mutex::new(None),
+            touch: Mutex::new(None),
+            released: AtomicBool::new(false),
+            cancel: CancellationToken::new(),
+            runtime: runtime.clone(),
+        });
+        runtime.spawn(handshake(inner.clone()));
+        Ok(Self { inner })
+    }
+}
+
+/// Connects to `dtuhidd` and waits for its barrier reply: [`LIVENESS_ATTEMPTS`] attempts of
+/// [`LIVENESS_TIMEOUT`], [`LIVENESS_BACKOFF`] apart. `dtuhidd` is demand-launched and may
+/// abort early in boot while its port still exists, so a port alone proves nothing.
+async fn handshake(inner: Arc<HidInner>) {
+    for attempt in 1..=LIVENESS_ATTEMPTS {
+        if attempt > 1 {
+            tokio::select! {
+                () = inner.cancel.cancelled() => return,
+                () = tokio::time::sleep(LIVENESS_BACKOFF) => {}
+            }
+        }
+        let opener = inner.clone();
+        let opened =
+            tokio::task::spawn_blocking(move || DtuConnection::open(&opener.sim, &opener.device))
+                .await;
+        let connection = match opened {
+            Ok(Ok(connection)) => connection,
+            Ok(Err(error)) => {
+                tracing::debug!(attempt, %error, "could not connect to the simulator's HID service");
+                continue;
+            }
+            Err(error) => {
+                tracing::debug!(attempt, %error, "the HID service lookup did not finish");
+                continue;
+            }
+        };
+        let answered = tokio::select! {
+            () = inner.cancel.cancelled() => return,
+            answered = connection.liveness() => answered,
+        };
+        match answered {
+            Ok(()) => {
+                let mut dtu = lock(&inner.dtu);
+                if inner.released.load(Ordering::SeqCst) {
+                    return;
+                }
+                *dtu = Dtu::Live(Arc::new(connection));
+                tracing::info!(attempt, "simulator HID service is ready");
+                return;
+            }
+            Err(reason) => {
+                tracing::debug!(attempt, %reason, "the simulator's HID service did not answer");
+            }
+        }
+    }
+    let mut dtu = lock(&inner.dtu);
+    if matches!(*dtu, Dtu::Connecting) {
+        *dtu = Dtu::Down;
+    }
+    drop(dtu);
+    tracing::warn!(
+        "the simulator's HID service did not answer; touch uses the legacy path and keys are refused"
+    );
+}
+
+impl HidInner {
+    /// The live DTUHID connection; a dead one is dropped and a new handshake starts.
+    fn dtu(self: &Arc<Self>) -> Option<Arc<DtuConnection>> {
+        let mut dtu = lock(&self.dtu);
+        match &*dtu {
+            Dtu::Live(connection) if !connection.is_dead() => return Some(connection.clone()),
+            Dtu::Connecting => return None,
+            Dtu::Live(_) | Dtu::Down => {}
+        }
+        if self.released.load(Ordering::SeqCst) {
+            return None;
+        }
+        *dtu = Dtu::Connecting;
+        drop(dtu);
+        tracing::debug!("reconnecting to the simulator's HID service");
+        self.runtime.spawn(handshake(self.clone()));
+        None
+    }
+
+    /// The legacy client, created on first use.
+    async fn legacy(&self, this: &Arc<Self>) -> Result<Arc<LegacyHid>, HidError> {
+        let mut legacy = self.legacy.lock().await;
+        if let Some(client) = &*legacy {
+            return Ok(client.clone());
+        }
+        let creator = this.clone();
+        let created =
+            tokio::task::spawn_blocking(move || LegacyHid::new(&creator.sim, &creator.device))
+                .await
+                .map_err(|error| HidError::Failed(error.to_string()))?
+                .map_err(|error| HidError::Failed(error.to_string()))?;
+        if self.released.load(Ordering::SeqCst) {
+            return Err(HidError::Released);
+        }
+        let created = Arc::new(created);
+        *legacy = Some(created.clone());
+        Ok(created)
+    }
+
+    /// The path for `action`: a touch's moves and lift follow its down.
+    fn path(self: &Arc<Self>, action: &HidAction) -> InputPath {
+        let current = || self.dtu().map_or(InputPath::Legacy, InputPath::Dtu);
+        let HidAction::Touch { phase, .. } = action else {
+            return current();
+        };
+        let mut touch = lock(&self.touch);
+        match phase {
+            TouchPhase::Down => {
+                let path = current();
+                *touch = Some(path.clone());
+                path
+            }
+            TouchPhase::Move => touch.clone().unwrap_or_else(current),
+            TouchPhase::Up => touch.take().unwrap_or_else(current),
+        }
+    }
+
+    async fn send(self: &Arc<Self>, action: HidAction) -> Result<(), HidError> {
+        if self.released.load(Ordering::SeqCst) {
+            return Err(HidError::Released);
+        }
+        match self.path(&action) {
+            InputPath::Dtu(connection) => {
+                let message = dtu_message(&action)
+                    .ok_or_else(|| HidError::Failed("a paste is not a HID message".to_owned()))?;
+                connection.send(&message).await.map_err(|reason| {
+                    connection.dead.store(true, Ordering::SeqCst);
+                    HidError::Failed(reason)
+                })
+            }
+            InputPath::Legacy => {
+                let Some(message) = indigo_message(&action) else {
+                    return Err(HidError::KeyboardUnavailable);
+                };
+                self.legacy(self)
+                    .await?
+                    .send(&message)
+                    .await
+                    .map_err(HidError::Failed)
+            }
+        }
+    }
+}
+
+impl Drop for HidClient {
+    /// Ends a handshake still running for a launch that never reached `Ready`.
+    fn drop(&mut self) {
+        self.inner.released.store(true, Ordering::SeqCst);
+        self.inner.cancel.cancel();
+    }
+}
+
+impl HidSink for HidClient {
+    fn keyboard_ready(&self) -> bool {
+        !self.inner.released.load(Ordering::SeqCst) && self.inner.dtu().is_some()
+    }
+
+    fn send(&self, action: HidAction) -> BoxFuture<'_, Result<(), HidError>> {
+        Box::pin(self.inner.send(action))
+    }
+
+    fn rotate(&self, value: u32) -> BoxFuture<'_, Result<(), HidError>> {
+        Box::pin(async move {
+            if self.inner.released.load(Ordering::SeqCst) {
+                return Err(HidError::Released);
+            }
+            let inner = self.inner.clone();
+            tokio::task::spawn_blocking(move || purple_rotate(&inner.device, value))
+                .await
+                .map_err(|error| HidError::Failed(error.to_string()))?
+                .map_err(|error| HidError::Failed(error.to_string()))
+        })
+    }
+
+    fn release(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            self.inner.released.store(true, Ordering::SeqCst);
+            self.inner.cancel.cancel();
+            let dtu = std::mem::replace(&mut *lock(&self.inner.dtu), Dtu::Down);
+            if let Dtu::Live(connection) = dtu {
+                connection.cancel();
+            }
+            lock(&self.inner.touch).take();
+            self.inner.legacy.lock().await.take();
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -947,6 +1776,42 @@ mod tests {
         let uuid = NSUUID::new();
         let uuid: Id = Retained::as_ptr(&uuid).cast::<AnyObject>().cast_mut();
         assert!(is_instance_of(uuid, c"NSUUID"));
+    }
+
+    // SAFETY: libxpc's public getters, in libSystem.
+    unsafe extern "C" {
+        fn xpc_dictionary_get_value(dictionary: Xpc, key: *const c_char) -> Xpc;
+        fn xpc_dictionary_get_uint64(dictionary: Xpc, key: *const c_char) -> u64;
+        fn xpc_dictionary_get_double(dictionary: Xpc, key: *const c_char) -> f64;
+        fn xpc_dictionary_get_bool(dictionary: Xpc, key: *const c_char) -> bool;
+        fn xpc_dictionary_get_string(dictionary: Xpc, key: *const c_char) -> *const c_char;
+        fn xpc_dictionary_get_count(dictionary: Xpc) -> usize;
+    }
+
+    #[test]
+    fn dtuhid_messages_become_typed_xpc_dictionaries() {
+        let action = HidAction::Touch {
+            phase: TouchPhase::Up,
+            x: 0.25,
+            y: 0.75,
+        };
+        let message = xpc_message(&dtu_message(&action).unwrap()).unwrap();
+        let root = message.ptr();
+        // SAFETY: reads from live dictionaries this test owns; returned values are borrowed.
+        unsafe {
+            assert_eq!(xpc_dictionary_get_count(root), 4);
+            let string = |key: &CStr| CStr::from_ptr(xpc_dictionary_get_string(root, key.as_ptr()));
+            assert_eq!(string(c"messageType"), c"IndigoDigitizerEvent");
+            assert_eq!(string(c"featureIdentifier"), DIGITIZER_SERVICE);
+            assert!(!xpc_dictionary_get_bool(root, c"isBarrier".as_ptr()));
+            let payload = xpc_dictionary_get_value(root, c"payload".as_ptr());
+            assert!(xpc_is(payload.cast(), &raw const _xpc_type_dictionary));
+            assert_eq!(xpc_dictionary_get_uint64(payload, c"eventType".as_ptr()), 2);
+            let point = xpc_dictionary_get_value(payload, c"pointOne".as_ptr());
+            assert_eq!(xpc_dictionary_get_double(point, c"x".as_ptr()), 0.25);
+            assert_eq!(xpc_dictionary_get_double(point, c"y".as_ptr()), 0.75);
+        }
+        assert!(xpc_message(&XpcValue::U64(1)).is_err());
     }
 
     #[test]

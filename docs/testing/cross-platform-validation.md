@@ -2988,11 +2988,15 @@ vp test run packages/contracts/src/device.test.ts packages/client-runtime/src/de
 The fakes stand in for `emulator`, `adb`, the emulator gRPC service, and
 scrcpy-server, so these tests prove BiBCode's side of each boundary but not the
 real tools. On a Mac with Xcode and a `Shutdown` iPhone simulator, also run
-the opt-in real-simulator tests, which boot it through CoreSimulator, check
+the opt-in real-simulator tests. They boot it through CoreSimulator and check
 live frames and the H.264 stream (a config unit whose SPS has the screen's
-size, then a key unit), and shut it down again (`BIBCODE_IOS_SIM_UDID` picks
-the simulator; `tests/ios_simulator.rs` documents the optional rotate tool
-that also checks turned frames and the turned stream):
+size, then a key unit). They tap Settings open, type into Safari's address bar,
+and rotate Safari to each orientation, checking the reported orientation and
+size, and that `landscape` matches `simctl`'s own upright screenshot. They shut
+the simulator down from outside and expect the device `failed` within 5 s and
+the media stream closed with `stopped`. Each test shuts its simulator down
+again (`BIBCODE_IOS_SIM_UDID` picks the simulator; `BIBCODE_IOS_SIM_FRAMES_DIR`
+keeps the frames and screenshots):
 
 ```sh
 BIBCODE_IOS_SIM_TESTS=1 cargo test -p bibcode-server --test ios_simulator -- --nocapture

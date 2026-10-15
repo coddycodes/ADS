@@ -3,15 +3,21 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
+use futures_util::future::BoxFuture;
 use tokio::sync::watch;
 
 use super::{
-    IosBackend, IosBackendConfig,
+    HidFactory, IosBackend, IosBackendConfig,
     guard::{GuardCache, GuardResult},
+    hid::{HidAction, HidError, HidSink},
+    lock,
     simctl::SimctlRunner,
 };
 use crate::device::catalog::AvailabilityKind;
@@ -200,6 +206,107 @@ pub(crate) fn ios_manager(sim: &FakeXcrun) -> (DeviceManager, watch::Sender<bool
 
 /// A manager whose only backend is iOS through `runner`, with device previews on.
 pub(crate) fn manager_for(runner: SimctlRunner) -> (DeviceManager, watch::Sender<bool>) {
+    manager_with(runner, None)
+}
+
+/// An input sink that records what it is sent and never calls a framework.
+pub(crate) struct RecordingHid {
+    sent: Mutex<Vec<HidAction>>,
+    rotations: Mutex<Vec<u32>>,
+    keyboard: AtomicBool,
+    released: AtomicBool,
+    after_release: AtomicUsize,
+}
+
+impl RecordingHid {
+    pub(crate) fn new() -> Arc<Self> {
+        Arc::new(Self {
+            sent: Mutex::default(),
+            rotations: Mutex::default(),
+            keyboard: AtomicBool::new(true),
+            released: AtomicBool::new(false),
+            after_release: AtomicUsize::new(0),
+        })
+    }
+
+    /// Whether keys can be sent, as a live DTUHID connection would say.
+    pub(crate) fn set_keyboard(&self, ready: bool) {
+        self.keyboard.store(ready, Ordering::SeqCst);
+    }
+
+    pub(crate) fn sent(&self) -> Vec<HidAction> {
+        std::mem::take(&mut *lock(&self.sent))
+    }
+
+    pub(crate) fn rotations(&self) -> Vec<u32> {
+        lock(&self.rotations).clone()
+    }
+
+    pub(crate) fn released(&self) -> bool {
+        self.released.load(Ordering::SeqCst)
+    }
+
+    /// Sends and rotations asked of the sink after `release`.
+    pub(crate) fn sent_after_release(&self) -> usize {
+        self.after_release.load(Ordering::SeqCst)
+    }
+
+    fn refused(&self) -> bool {
+        let released = self.released();
+        if released {
+            self.after_release.fetch_add(1, Ordering::SeqCst);
+        }
+        released
+    }
+}
+
+impl HidSink for RecordingHid {
+    fn keyboard_ready(&self) -> bool {
+        self.keyboard.load(Ordering::SeqCst) && !self.released()
+    }
+
+    fn send(&self, action: HidAction) -> BoxFuture<'_, Result<(), HidError>> {
+        Box::pin(async move {
+            if self.refused() {
+                return Err(HidError::Released);
+            }
+            lock(&self.sent).push(action);
+            Ok(())
+        })
+    }
+
+    fn rotate(&self, value: u32) -> BoxFuture<'_, Result<(), HidError>> {
+        Box::pin(async move {
+            if self.refused() {
+                return Err(HidError::Released);
+            }
+            lock(&self.rotations).push(value);
+            Ok(())
+        })
+    }
+
+    fn release(&self) -> BoxFuture<'_, ()> {
+        self.released.store(true, Ordering::SeqCst);
+        Box::pin(async {})
+    }
+}
+
+/// A manager over `sim` whose simulators show screenshots but take input through `hid`.
+pub(crate) fn live_fake_ios(
+    sim: &FakeXcrun,
+    hid: &Arc<RecordingHid>,
+) -> (DeviceManager, watch::Sender<bool>) {
+    let hid = hid.clone();
+    manager_with(
+        sim.runner(),
+        Some(Arc::new(move || hid.clone() as Arc<dyn HidSink>)),
+    )
+}
+
+fn manager_with(
+    runner: SimctlRunner,
+    hid_for_tests: Option<HidFactory>,
+) -> (DeviceManager, watch::Sender<bool>) {
     let (enabled, signal) = watch::channel(true);
     let backend = IosBackend::new(IosBackendConfig {
         runner,
@@ -209,6 +316,7 @@ pub(crate) fn manager_for(runner: SimctlRunner) -> (DeviceManager, watch::Sender
             kind: AvailabilityKind::XcodeUnsupported,
             missing: "fake Xcode".to_owned(),
         })),
+        hid_for_tests,
     });
     let manager = DeviceManager::start(DeviceManagerConfig {
         backends: vec![Arc::new(backend)],

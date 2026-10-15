@@ -473,6 +473,18 @@ impl DeviceManager {
         })
     }
 
+    /// [`png`](Self::png)'s bytes, MIME type, width and height, for the opt-in
+    /// real-simulator tests (`tests/ios_simulator.rs`).
+    #[doc(hidden)]
+    pub async fn png_for_tests(
+        &self,
+        device_id: &str,
+        max_width: u32,
+    ) -> Result<(Vec<u8>, &'static str, u32, u32), DeviceOpError> {
+        let png = self.png(device_id, max_width).await?;
+        Ok((png.png, png.mime_type, png.width, png.height))
+    }
+
     /// Records the orientation the device reported and the display size in it; never what
     /// a rotate command asked for.
     #[cfg(test)]
