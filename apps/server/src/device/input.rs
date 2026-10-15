@@ -263,10 +263,19 @@ async fn send(
         },
         _ => event,
     };
-    let sink = client.input_sink(tasks)?;
+    reopen_into(client.input_sink(tasks)?, state, event).await
+}
+
+/// Reopens on `sink` and stores the result. The old state stays until the reopen finishes,
+/// so a call dropped mid-reopen leaves every pointer it held for the next reopen to release.
+async fn reopen_into(
+    sink: mpsc::Sender<proto::InputEvent>,
+    state: &mut Option<InputState>,
+    event: proto::InputEvent,
+) -> Result<(), DeviceError> {
     let pressed = state
-        .take()
-        .map(|previous| previous.pressed)
+        .as_ref()
+        .map(|previous| previous.pressed.clone())
         .unwrap_or_default();
     let (reopened, sent) = reopen(sink, pressed, event).await;
     *state = Some(reopened);
@@ -516,6 +525,41 @@ mod tests {
             released.push((touch.touches[0].identifier, touch.touches[0].pressure));
         }
         assert_eq!(released, vec![(0, 0), (1, 0), (2, 1)]);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_reopen_keeps_the_pointers_it_held() {
+        use futures_util::FutureExt as _;
+        let (closed_sink, closed) = mpsc::channel(1);
+        drop(closed);
+        let mut state = Some(InputState {
+            sink: closed_sink,
+            pressed: BTreeMap::from([(0, (540, 1200)), (1, (10, 20))]),
+        });
+        // The first release fills the stream, so the second waits; the call is dropped there.
+        let (sink, mut received) = mpsc::channel(1);
+        assert!(
+            reopen_into(sink, &mut state, touch_event(1, 1, 2, 1))
+                .now_or_never()
+                .is_none()
+        );
+        assert_eq!(state.as_ref().unwrap().pressed.len(), 2);
+        received.recv().await.unwrap();
+        // The next reopen still releases both pointers before its event.
+        let (sink, mut received) = mpsc::channel(8);
+        reopen_into(sink, &mut state, touch_event(1, 1, 2, 1))
+            .await
+            .unwrap();
+        assert!(state.as_ref().unwrap().pressed.is_empty());
+        let mut sent = Vec::new();
+        for _ in 0..3 {
+            let event = received.recv().await.unwrap();
+            let Some(proto::input_event::Type::TouchEvent(touch)) = event.r#type else {
+                panic!("not a touch");
+            };
+            sent.push((touch.touches[0].identifier, touch.touches[0].pressure));
+        }
+        assert_eq!(sent, vec![(0, 0), (1, 0), (2, 1)]);
     }
 
     #[test]
