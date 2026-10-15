@@ -1216,11 +1216,17 @@ describe("useGeneralSettingsRestore", () => {
 
   function captureRestore(onRestored?: () => void): RestoreProbeResult {
     let captured: RestoreProbeResult | null = null;
-    function Probe() {
-      captured = useGeneralSettingsRestore(onRestored) as RestoreProbeResult;
+    function Probe({ onResult }: { readonly onResult: (result: RestoreProbeResult) => void }) {
+      onResult(useGeneralSettingsRestore(onRestored) as RestoreProbeResult);
       return null;
     }
-    render(<Probe />);
+    render(
+      <Probe
+        onResult={(result) => {
+          captured = result;
+        }}
+      />,
+    );
     if (captured === null) {
       throw new Error("useGeneralSettingsRestore probe did not render");
     }

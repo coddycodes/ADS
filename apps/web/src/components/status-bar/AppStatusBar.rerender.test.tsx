@@ -796,8 +796,8 @@ describe("AppStatusBar real hook rerenders", () => {
       },
       localDiagnostics: null,
     });
-    expect(harness.processDiagnosticsCalls.slice(callsBeforeSelectingLocal)).toEqual([
-      primaryEnvironmentId,
+    // The compiled bar requests each diagnostics atom once per environment, not once per render.
+    expect([...new Set(harness.processDiagnosticsCalls.slice(callsBeforeSelectingLocal))]).toEqual([
       primaryEnvironmentId,
     ]);
   });

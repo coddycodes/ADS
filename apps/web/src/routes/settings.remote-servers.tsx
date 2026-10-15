@@ -26,6 +26,12 @@ function RemoteServersRouteView() {
   const { tab, code, action } = Route.useSearch();
   const navigate = Route.useNavigate();
   const [retainedPairingCode, setRetainedPairingCode] = useState(code ?? null);
+  // Retain each newly arrived code; a consumed code stays cleared until the search code changes.
+  const [lastSearchCode, setLastSearchCode] = useState(code);
+  if (code !== lastSearchCode) {
+    setLastSearchCode(code);
+    if (code !== undefined) setRetainedPairingCode(code);
+  }
   const scrubbedPairingCodeRef = useRef<string | null>(null);
   const consumeRetainedPairingCode = useCallback(() => setRetainedPairingCode(null), []);
 
@@ -34,7 +40,6 @@ function RemoteServersRouteView() {
       scrubbedPairingCodeRef.current = null;
       return;
     }
-    setRetainedPairingCode(code);
     if (scrubbedPairingCodeRef.current === code) return;
     scrubbedPairingCodeRef.current = code;
     void navigate({
