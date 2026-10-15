@@ -3,7 +3,7 @@ import { projectKey } from "@bibcode/client-runtime/state/entities";
 import { environmentRpcKey } from "@bibcode/client-runtime/state/runtime";
 import type { ScopedProjectRef } from "@bibcode/contracts";
 import { RefreshCwIcon } from "lucide-react";
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useOpenPrLink } from "../../lib/openPullRequestLink";
@@ -32,6 +32,7 @@ import {
 import { PullRequestsContextRefresh } from "./pullRequestsContextRefresh";
 import { pullRequestsHostAddress } from "./pullRequestsHost.logic";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
+import { usePullRequestsContextQuery } from "./usePullRequestsContextQuery";
 import { PullRequestsDetailView } from "./detail/PullRequestsDetailView";
 import { PullRequestsRouteNavigation } from "./detail/pullRequestsNavigation";
 import { PermissionButton } from "../ui/permission-button";
@@ -196,15 +197,18 @@ export function PullRequestsPanel({ projectRef, number, tab }: PullRequestsPanel
         : null,
     [ready, catalogProjectId, environmentId],
   );
-  const contextAtom = useMemo(
-    () =>
-      ready && cwd !== null && catalogProjectId !== null
-        ? pullRequestsEnvironment.getContext({ environmentId, input: { cwd } })
-        : null,
-    [ready, catalogProjectId, cwd, environmentId],
-  );
   const catalog = useEnvironmentQuery(catalogAtom);
-  const query = useEnvironmentQuery(contextAtom);
+  const {
+    contextAtom,
+    query,
+    storedContext,
+    rescan: rescanContext,
+    recover: recoverContext,
+  } = usePullRequestsContextQuery({
+    environmentId,
+    cwd,
+    enabled: ready && catalogProjectId !== null,
+  });
   const contextPending = query.data === null && query.error === null;
   // The Open and Closed first pages do not depend on the context, so the list's page
   // loads alongside it. Subscribe only to that input while the context is pending.
@@ -261,37 +265,6 @@ export function PullRequestsPanel({ projectRef, number, tab }: PullRequestsPanel
     if (number !== undefined)
       usePullRequestsStore.getState().setLastNumber({ environmentId, projectId }, number);
   }, [environmentId, number, projectId]);
-  const refreshContext = query.refresh;
-  const revalidateContext = query.revalidate;
-  // A stored context paints at once and is read live right after; a failed live read
-  // keeps the stored context on screen instead of replacing the panel with an error.
-  const storedContext = query.data?.status === "available" && query.data.stale === true;
-  // Every stored answer is followed by one live read, including one that arrives
-  // again after a failed live read or for another checkout.
-  const storedAnswer = storedContext ? query.data : null;
-  const contextReading = query.isPending;
-  const readContextLive = useEffectEvent(() => {
-    // A panel remounted by a route change joins the read already running.
-    if (!contextReading) revalidateContext();
-  });
-  useEffect(() => {
-    if (storedAnswer !== null) readContextLive();
-  }, [storedAnswer]);
-  // Rescan and auth recovery bypass the server's bounded context caches; opening the
-  // panel and switching checkout reuse them.
-  const requestContextRescan = useCallback(() => {
-    if (cwd !== null)
-      pullRequestsEnvironment.requestContextRescan({ environmentId, input: { cwd } });
-  }, [cwd, environmentId]);
-  const rescanContext = useCallback(() => {
-    requestContextRescan();
-    refreshContext();
-  }, [refreshContext, requestContextRescan]);
-  // Auth recovery follows a read failure automatically, so it keeps a cut-off latched.
-  const recoverContext = useCallback(() => {
-    requestContextRescan();
-    revalidateContext();
-  }, [requestContextRescan, revalidateContext]);
   const rescan = () => {
     rescanContext();
     catalog.refresh();
