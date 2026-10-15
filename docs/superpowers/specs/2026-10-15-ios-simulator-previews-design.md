@@ -68,6 +68,261 @@ implementation starts.
   on the device's IO ports (the path `idb`'s `FBFramebuffer` uses), the
   IOSurface pixel format, and its size after rotation.
 
+### Results (2026-10-15)
+
+Environment: macOS 27.0.1, Xcode 27.0, CoreSimulator **1171.7**, iPhone 17 Pro
+on the iOS **26.5** runtime, booted with `simctl` and Simulator.app **not
+running**. The probes were scratch Objective-C programs that `dlopen` the two
+frameworks and use `objc_msgSend` and `dlsym`. Later tasks take names from
+this subsection. Anything marked UNCONFIRMED was not observed here.
+
+**Rules that apply to every call**
+
+- The IO ports, descriptors and screen properties are `ROCKRemoteProxy` /
+  `ROCKImmutableProxy` objects:
+  - KVC (`valueForKey:`) raises on them. Send each selector directly.
+  - An unknown selector raises `NSInvalidArgumentException`. For example,
+    `ioSurface` raises on Xcode 27.
+  - An Objective-C exception must never unwind through Rust frames. Call
+    only the selectors listed below, and gate them with
+    `conformsToProtocol:` / `respondsToSelector:`.
+- `respondsToSelector:` was accurate for the display descriptors in this
+  probe, but idb warns that proxies may claim selectors they do not
+  implement.
+
+**Lookup (CoreSimulator, `/Library/Developer/PrivateFrameworks/CoreSimulator.framework/CoreSimulator`)**
+
+- `+[SimServiceContext sharedServiceContextForDeveloperDir:error:]` takes
+  `(NSString *, NSError **)` and returns `id`. The developer dir is
+  `xcode-select -p`.
+- `-[SimServiceContext defaultDeviceSetWithError:]` returns `id`.
+- `-[SimDeviceSet devices]` returns `NSArray<SimDevice *>`. Match on
+  `-[SimDevice UDID]` (`NSUUID`). `-[SimDevice state]`: 3 means booted.
+- `-[SimDevice io]` returns a `SimDeviceIOClient`. Call
+  `-[SimDeviceIOClient ioPorts]` (`@16@0:8`), which returns an `NSArray` of
+  `SimDeviceIOPortInterface` proxies.
+- `-[port descriptor]` (`@16@0:8`) returns the descriptor. The main display is
+  the descriptor that meets all three tests:
+  1. It conforms to `SimScreen`, `SimDisplayIOSurfaceRenderable` and
+     `SimDisplayRenderable`.
+  2. It responds to `framebufferSurface`.
+  3. `-[descriptor state]` returns a `SimDisplayDescriptorState` whose
+     `displayClass` (`S`, unsigned short) is `0`.
+
+  The iPhone 17 Pro has one class-0 display and two class-1 displays.
+- `SimDisplayDescriptorState`:
+  - `defaultWidthForDisplay` (`I`) is 1206.
+  - `defaultHeightForDisplay` (`I`) is 2622.
+  - `defaultPixelFormat` (`I`) is `'BGRA'` (0x42475241).
+
+**S3: framebuffer (confirmed)**
+
+- `-[descriptor framebufferSurface]` (`@16@0:8`) returns an `IOSurface`
+  (toll-free bridged `IOSurfaceRef`) with these properties:
+  - 1206×2622 pixels, pixel format `'BGRA'` (0x42475241).
+  - 4864 bytes per row (padded, not width×4), 4 bytes per element, and 0
+    planes (non-planar).
+  - An allocation of 12,763,136 bytes.
+
+  `maskedFramebufferSurface` has the same shape, with corners and notch
+  masked. Do not use it.
+- **Preferred callbacks (`SimScreen`):**
+  `registerScreenCallbacksWithUUID:callbackQueue:frameCallback:surfacesChangedCallback:propertiesChangedCallback:`
+  has the encoding `v56@0:8@16@24@?32@?40@?48`. Its arguments are:
+  - `NSUUID *`
+  - `dispatch_queue_t`
+  - `void (^)(void)` for frames
+  - `void (^)(id fb, id masked)` for surfaces
+  - `void (^)(id props)` for properties
+
+  How they behaved:
+  - `surfacesChanged` fired once, immediately, with the current surface.
+  - `frameCallback` fired 130 times in 5 s during an app launch.
+  - All three callbacks run on the supplied queue.
+  - Unregister with `unregisterScreenCallbacksWithUUID:` (`v24@0:8@16`).
+- **Old-style fallback (`SimDisplayRenderable` /
+  `SimDisplayIOSurfaceRenderable`):**
+  - `registerCallbackWithUUID:damageRectanglesCallback:` (`v32@0:8@16@?24`)
+    fired 158 times in 5 s. The array was **always empty**, so it is a bare
+    per-frame tick, not geometry. It fired 6 times in 3 s while idle, on a
+    non-main framework thread.
+  - `registerCallbackWithUUID:ioSurfacesChangeCallback:` (`v32@0:8@16@?24`)
+    did **not** fire at registration.
+  - Unregister with `unregisterDamageRectanglesCallbackWithUUID:` and
+    `unregisterIOSurfacesChangeCallbackWithUUID:`.
+  - §4 should use the `SimScreen` callbacks and read `framebufferSurface`
+    once at start and on each `surfacesChanged`. A frame callback does not
+    carry the surface.
+- **Size after rotation:** the IOSurface **stays 1206×2622 in portrait** (same
+  surface ID). The guest draws rotated content into it. The rotation is
+  reported in two ways:
+  - `propertiesChangedCallback` fires.
+  - `-[SimScreenProperties uiOrientation]` (`I`) changes.
+
+  `SimScreenProperties` comes from `-[descriptor screenProperties]` or from the
+  callback argument. It has these selectors:
+  - `uiOrientation`
+  - `pixelSize` (`{CGSize=dd}`, 1206×2622)
+  - `screenID` (1)
+  - `uniqueId` (`"PurpleMain"`)
+  - `name` (`"LCD"`)
+  - `seed`
+  - `dotPitch` (460)
+  - `screenType`
+
+  `simctl io screenshot` returns 2622×1206 in landscape, so it is already
+  rotated. To send a landscape view, the encoder must rotate per
+  `uiOrientation`, or the client must.
+
+**S1: input (confirmed with a GUI session logged in and Simulator.app not running)**
+
+- **Legacy Indigo path (SimulatorKit,
+  `/Applications/Xcode.app/Contents/SharedFrameworks/SimulatorKit.framework/SimulatorKit`):**
+  - `NSClassFromString(@"SimulatorKit.SimDeviceLegacyHIDClient")`:
+    - Initialize with `-initWithDevice:error:` (`@32@0:8@16^@24`).
+    - Send with `-sendWithMessage:freeWhenDone:completionQueue:completion:`
+      (`v44@0:8^{IndigoHIDMessageStruct=…}16B24@28@?36`). Its arguments are
+      `(IndigoMessage *, BOOL, dispatch_queue_t, void (^)(NSError *))`.
+    - Completions arrived with `nil` errors.
+    - Also present: `-initWithDevice:sessionResetQueue:error:sessionResetHandler:`
+      and `-resetHIDSession`.
+  - C builders (exported, `dlsym`). Each returns a `malloc`'d `IndigoMessage *`:
+    - `IndigoHIDMessageForMouseNSEvent(CGPoint *p1, CGPoint *p2OrNULL, uint32_t target, NSEventType type, CGSize size, uint32_t edge)`
+      - Use target `0x32`, type 1 for down and 2 for up, size `{1,1}` (so
+        `p` is a ratio), and edge 0.
+      - It returns a 384-byte multi-payload message (`innerSize` 0xA0,
+        eventType 2, eventKind 0xB).
+      - The probe re-enveloped it as idb's 320-byte single-touch message:
+        - `innerSize` 0x90 at 0x18, `eventType` 2 at 0x1C, `eventKind` 0xB
+          at 0x20, `mach_absolute_time()` at 0x24.
+        - Copy the 0x70-byte touch from 0x30.
+        - Duplicate the 0x90 payload from 0x20 to 0xB0. In the copy, set
+          `field1` (0xC0) to 1 and `field2` (0xC4) to 2.
+        - The touch struct holds `xRatio` (double) at 0x3C and `yRatio`
+          (double) at 0x44.
+    - `IndigoHIDMessageForButton(int32_t source, int32_t direction, int32_t target)`
+      - Sources: home is 0x0, lock is 0x1, side is 0xBB8.
+      - Direction: 1 is down, 2 is up. Target: 0x33.
+      - The message is 192 bytes.
+    - `IndigoHIDMessageForHIDArbitrary(int32_t target, uint32_t usagePage, uint32_t usage, int32_t direction)`
+      - Use target 0x32.
+    - `IndigoHIDMessageForKeyboardArbitrary(int32_t keyCode, int32_t direction)`
+  - Results:
+
+    | Input                                                                     | Result                         | How it was verified                                         |
+    | ------------------------------------------------------------------------- | ------------------------------ | ----------------------------------------------------------- |
+    | Touch on the Settings icon at ratio (0.848, 0.483)                        | **Works**, 5 of 5 cycles       | Settings opened. The screen centre is empty wallpaper, so it was not used. |
+    | Home button (source 0)                                                    | **Works**, 5 of 5 cycles       | Returned to the home screen.                                |
+    | Lock button (source 1)                                                    | **Works**                      | The device locked.                                          |
+    | Volume up via `HIDArbitrary(0x32, 0x0C, 0xE9)`                            | **Works**, +1/16 per press     | Read `sim_volume` in `data/var/run/simulatoraudio/audiosettings.plist`. |
+    | `KeyboardArbitrary`, HID usages 0x04–0x08 or HIToolbox code 0x02          | **Dropped**: no text appeared  | A focused search field showed no text.                      |
+- **DTUHID path (`dtuhidd` in the guest, in-process XPC with no helper):**
+  - Symbols (`dlsym(RTLD_DEFAULT)`, libxpc):
+    - `xpc_object_t xpc_endpoint_create_mach_port_4sim(mach_port_t, uint64_t, uint64_t)`
+      takes `(port, 0, 0)`.
+    - `xpc_connection_t xpc_connection_create_from_endpoint(xpc_object_t)`.
+    - `void xpc_connection_enable_sim2host_4sim(xpc_connection_t)`, called
+      before resume.
+  - Get the port from `-[SimDevice lookup:error:]` (`I32@0:8@16^@24`, which
+    returns `mach_port_t`). The service is
+    `com.apple.coredevice.feature.remote.hid.digitizer`.
+  - Every message is an XPC dictionary with these keys:
+    - `messageType` (string)
+    - `isBarrier` (bool)
+    - `featureIdentifier` (string, the service name)
+    - `payload` (dictionary)
+  - The liveness check is
+    `IndigoKeyboardButtonEvent {usageCode: u64 0, state: u64 2}`, sent with
+    `isBarrier = true` through `xpc_connection_send_message_with_reply`. The
+    reply was an empty dictionary on the first attempt. The device had
+    been booted for minutes by then.
+  - A successful port lookup does not prove liveness. `dtuhidd` is
+    demand-launched, and idb documents it aborting early in boot. The port
+    still exists after that, and sends to it are silently discarded.
+    Connecting must round-trip the barrier and retry with backoff after boot.
+    idb makes 5 attempts, each with a 4 s reply timeout and a 4 s backoff.
+  - Results:
+
+    | Message                                                               | Payload                                                                          | Result                                                        |
+    | --------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+    | `IndigoDigitizerEvent`                                                | `pointOne {x: double, y: double}`, `eventType` u64 (0 start, 1 position, 2 end), `edge` u64 0, `target` u64 0 | **Works**: opened Settings; opened a Safari tab in landscape. |
+    | `IndigoButtonEvent`                                                   | `usagePage` u64, `usageCode` u64, `state` u64 (1 down, 2 up)                     | **Works**: Home (0x0C, 0x40), Power/lock (0x0C, 0x30), Volume up/down (0x0C, 0xE9 / 0xEA). |
+    | `IndigoKeyboardButtonEvent`                                           | `usageCode` u64 (HID usage), `state` u64 (1 down, 2 up)                          | **Works**: typed "Abc" into the Settings search field.        |
+- **Coordinates:** both paths take ratios in the **portrait framebuffer**
+  space whatever the `uiOrientation`. At `uiOrientation` 3, a point at view
+  ratio (u, v) in the landscape image is sent as (v, 1 − u).
+- **Consequence for §5:** keys and text must use DTUHID
+  `IndigoKeyboardButtonEvent`, because legacy keyboard input is dropped on
+  CoreSimulator 1171.7. Touch and buttons work on either path. idb treats
+  legacy touch as unreliable from CoreSimulator 1155.4 on, so prefer DTUHID
+  for all input and keep Indigo touch/buttons as the fallback.
+- **Headless:**
+  - Booting, the callbacks and HID all work without Simulator.app.
+  - **S1 over SSH: NOT CONFIRMED (no key auth).** `ssh -o BatchMode=yes localhost`
+    returned "Permission denied (publickey,password,keyboard-interactive)".
+  - **Logged-out console: NOT CONFIRMED.** The probe could not log the GUI
+    out.
+  - The default stays "works". Task 6's `viewOnlyHeadless` branch stays
+    implemented but unreachable.
+
+**S2: rotation (confirmed: Purple GSEvent)**
+
+The options were tried in the brief's order:
+
+1. `SimDevice` / `SimDeviceIO` method lists filtered for `orient` or `rotat`:
+   nothing usable. The only match was
+   `updateNearbyInteractionDeviceRect:deviceRotation:error:`.
+2. `IndigoHIDMessageForHIDArbitrary(0x32, 0x20, 0x8A, …)` (HID Sensor page,
+   Device Orientation): no change.
+3. `-[SimDevice postDarwinNotification:error:]` (`B32@0:8@16^@24`) with
+   `com.apple.springboard.rotate`: returned YES, with no change.
+4. **Purple GSEvent: works.**
+   - Get the port with `-[SimDevice lookup:@"PurpleWorkspacePort" error:]`.
+   - Send a 112-byte buffer with
+     `mach_msg(MACH_SEND_MSG | MACH_SEND_TIMEOUT, size 108, timeout 2000 ms)`.
+     The buffer holds:
+
+     | Offset | Value                                          |
+     | ------ | ---------------------------------------------- |
+     | 0x00   | `msgh_bits` 0x13                               |
+     | 0x04   | `msgh_size` 108                                |
+     | 0x08   | `msgh_remote_port` = the port                  |
+     | 0x14   | `msgh_id` 0x7B                                 |
+     | 0x18   | GSEvent type `50 \| 0x20000`                   |
+     | 0x48   | record size 4                                  |
+     | 0x4C   | orientation value                              |
+
+   - The orientation value is 1 for portrait and 2 for upside-down. idb
+     names 3 "landscape-right" and 4 "landscape-left". Those names are
+     UNCONFIRMED here; only the effect was observed. After Purple 4
+     (`uiOrientation` 3), the UI's top edge lies along the **physical left**
+     edge of the portrait surface. Purple 3 (`uiOrientation` 4) is the
+     opposite. Task 8 must map the user's rotate left/right onto these
+     observed effects, not onto idb's names.
+   - Measured with Safari in the foreground:
+
+     | Purple value sent | `uiOrientation` read back | Screenshot |
+     | ----------------- | ------------------------- | ---------- |
+     | 4                 | 3                         | 2622×1206  |
+     | 3                 | 4                         | 2622×1206  |
+     | 1                 | 1                         | 1206×2622  |
+
+   - Value 2 had no effect in Safari, which does not support upside-down on
+     iPhone.
+   - The home screen does not rotate on iPhone. Whether the UI rotates
+     depends on the foreground app.
+5. idb's vendor-defined HID path made **no change on iOS 26.5**:
+   - It uses DTUHID service
+     `com.apple.coredevice.feature.remote.hid.vendordefined` and the message
+     `IndigoVendorDefinedEvent {usagePage 0xff61, usage 0x5b, version 0, data: IOCFSerialize(binary)}`.
+   - The serialized dictionary is
+     `{provider: com.apple.Virtualization.VirtualMachines, source: orientation-picker-control, type: enum, value: landscape-left}`.
+   - idb uses this path only when `querymotioncapabilities` reports
+     `deviceMotionState`. The probe did not check that on iOS 27.0, so it is
+     UNCONFIRMED.
+
+Rotate is therefore **enabled**, and `canRotate` is `true` for iOS.
+
 ## 1. Server: backend split (`apps/server/src/device/`)
 
 The device module splits into a platform-neutral manager and two backends:
