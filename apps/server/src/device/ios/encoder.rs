@@ -2,7 +2,9 @@
 //!
 //! One named thread per stream owns every VideoToolbox and CoreVideo object: the
 //! compression session, the rotation session and its pixel-buffer pool. It waits for the
-//! screen's frame signal, at most one frame per [`MIN_FRAME_INTERVAL`], wraps the current
+//! screen's frame signal (and, while a key frame or a failed encode is pending, every
+//! [`RETRY_INTERVAL`], so a still screen recovers), at most one frame per
+//! [`MIN_FRAME_INTERVAL`], wraps the current
 //! framebuffer IOSurface in a `CVPixelBuffer`, turns it into the UI orientation with
 //! `VTPixelRotationSession` when the UI is not portrait (the surface itself always stays
 //! portrait), and encodes it. A change of output size (a rotation or a new surface) tears
@@ -43,7 +45,7 @@ use objc2_io_surface::IOSurfaceRef;
 use objc2_video_toolbox::{
     VTCompressionSession, VTEncodeInfoFlags, VTPixelRotationSession, VTSessionSetProperty,
     kVTCompressionPropertyKey_AllowFrameReordering, kVTCompressionPropertyKey_AverageBitRate,
-    kVTCompressionPropertyKey_MaxKeyFrameInterval,
+    kVTCompressionPropertyKey_ExpectedFrameRate, kVTCompressionPropertyKey_MaxKeyFrameInterval,
     kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, kVTCompressionPropertyKey_ProfileLevel,
     kVTCompressionPropertyKey_RealTime, kVTEncodeFrameOptionKey_ForceKeyFrame,
     kVTPixelRotationPropertyKey_Rotation, kVTProfileLevel_H264_Main_AutoLevel, kVTRotation_180,
@@ -64,7 +66,12 @@ use crate::device::{
 };
 
 /// At most 60 frames a second.
-const MIN_FRAME_INTERVAL: Duration = Duration::from_millis(16);
+const MIN_FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
+/// How often the encoder thread wakes without a signal to look for a pending key frame or a
+/// failed encode; either encodes the current surface again, so a still screen recovers.
+const RETRY_INTERVAL: Duration = Duration::from_millis(100);
+/// The frame rate the encoder plans for, so its automatic level covers it.
+const EXPECTED_FRAME_RATE: i64 = 60;
 /// Units waiting for the media hub; a full queue drops to the next key frame.
 const UNIT_QUEUE: usize = 8;
 /// Bits per pixel per second: 0.1 bit per pixel at 60 fps.
@@ -115,10 +122,11 @@ fn has_idr(sample: &[u8]) -> bool {
         if length > tail.len() {
             return false;
         }
-        if tail.first().is_some_and(|header| header & 0x1F == 5) {
+        let (unit, tail) = tail.split_at(length);
+        if unit.first().is_some_and(|header| header & 0x1F == 5) {
             return true;
         }
-        rest = &tail[length..];
+        rest = tail;
     }
     false
 }
@@ -493,9 +501,11 @@ fn read_sample(sample: &CMSampleBuffer) -> Result<Sample, DeviceError> {
     let format = format.ok_or_else(|| protocol_error("an encoded frame has no format"))?;
     // SAFETY: `block` is a live block buffer.
     let length = unsafe { block.data_length() };
+    if length == 0 {
+        return Err(protocol_error("an encoded frame is empty"));
+    }
     let mut avcc = vec![0u8; length];
-    let destination = NonNull::new(avcc.as_mut_ptr().cast::<c_void>())
-        .ok_or_else(|| protocol_error("an encoded frame is empty"))?;
+    let destination = NonNull::from(&mut avcc[..]).cast::<c_void>();
     // SAFETY: `destination` points at `length` writable bytes, all the block holds.
     let status = unsafe { block.copy_data_bytes(0, length, destination) };
     if status != 0 {
@@ -643,6 +653,11 @@ impl Compressor {
                 session,
                 kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
                 &CFNumber::new_f64(MAX_KEY_FRAME_INTERVAL_SECONDS),
+            );
+            set_property(
+                session,
+                kVTCompressionPropertyKey_ExpectedFrameRate,
+                &number(EXPECTED_FRAME_RATE),
             );
             set_property(
                 session,
@@ -962,9 +977,10 @@ impl Pipeline {
 // ---------------------------------------------------------------------------------------------
 // The source
 
-/// Runs `future` on this (non-runtime) thread, parking between polls. The futures here
-/// only wait on Tokio's runtime-independent sync primitives.
-fn block_on<F: Future>(future: F) -> F::Output {
+/// Runs `future` on this (non-runtime) thread, parking between polls, for at most
+/// `timeout`; `None` when it ran out. The futures here only wait on Tokio's
+/// runtime-independent sync primitives.
+fn block_on<F: Future>(future: F, timeout: Duration) -> Option<F::Output> {
     struct Unpark(thread::Thread);
     impl Wake for Unpark {
         fn wake(self: Arc<Self>) {
@@ -974,14 +990,19 @@ fn block_on<F: Future>(future: F) -> F::Output {
             self.0.unpark();
         }
     }
+    let deadline = Instant::now() + timeout;
     let waker = Waker::from(Arc::new(Unpark(thread::current())));
     let mut context = Context::from_waker(&waker);
     let mut future = pin!(future);
     loop {
         if let Poll::Ready(output) = future.as_mut().poll(&mut context) {
-            return output;
+            return Some(output);
         }
-        thread::park();
+        let now = Instant::now();
+        if now >= deadline {
+            return None;
+        }
+        thread::park_timeout(deadline - now);
     }
 }
 
@@ -993,15 +1014,20 @@ struct Signals {
     stop: CancellationToken,
 }
 
-/// The encoder thread: one frame per frame signal or reset, at most one per
-/// [`MIN_FRAME_INTERVAL`], until stopped or [`MAX_FAILURES`] encodes in a row fail.
-/// Reports whether the first frame encoded, then returns whether the stream failed.
+/// Encodes the current frame in an orientation, as a key frame when asked.
+trait Encode: FnMut(IosOrientation, bool) -> Result<(), DeviceError> {}
+impl<F: FnMut(IosOrientation, bool) -> Result<(), DeviceError>> Encode for F {}
+
+/// The encoder loop: one frame per frame signal or reset, at most one per
+/// [`MIN_FRAME_INTERVAL`]; while a key frame or a failed encode is pending, also every
+/// [`RETRY_INTERVAL`] without a signal. Runs until stopped or [`MAX_FAILURES`] encodes in a
+/// row fail. Reports whether the first frame encoded, then returns whether the stream
+/// failed.
 fn run_encoder(
-    screen: Arc<Screen>,
-    mut pipeline: Pipeline,
-    mut signals: Signals,
-    requests: Arc<Requests>,
+    signals: &mut Signals,
+    requests: &Requests,
     started: oneshot::Sender<Result<(), DeviceError>>,
+    encode: &mut impl Encode,
 ) -> bool {
     let mut started = Some(started);
     let mut failures = 0;
@@ -1009,16 +1035,25 @@ fn run_encoder(
     // The first frame goes out at once.
     signals.damage.mark_changed();
     loop {
-        let woke = block_on(async {
-            tokio::select! {
-                biased;
-                () = signals.stop.cancelled() => false,
-                changed = signals.damage.changed() => changed.is_ok(),
-                () = signals.wake.notified() => true,
-            }
-        });
-        if !woke {
-            return false;
+        // The wait wakes every `RETRY_INTERVAL` to see a key request the output callback
+        // made after the last encode: the callback only `try_send`s and never wakes us.
+        let woke = block_on(
+            async {
+                tokio::select! {
+                    biased;
+                    () = signals.stop.cancelled() => false,
+                    changed = signals.damage.changed() => changed.is_ok(),
+                    () = signals.wake.notified() => true,
+                }
+            },
+            RETRY_INTERVAL,
+        );
+        match woke {
+            Some(false) => return false,
+            Some(true) => {}
+            // No signal: encode the same frame again only for a pending key or a failure.
+            None if failures > 0 || requests.force_key.load(Ordering::Acquire) => {}
+            None => continue,
         }
         if let Some(last) = last {
             let next = last + MIN_FRAME_INTERVAL;
@@ -1033,11 +1068,8 @@ fn run_encoder(
         signals.damage.borrow_and_update();
         last = Some(Instant::now());
         let orientation = *signals.orientation.borrow_and_update();
-        let Some(surface) = screen.surface() else {
-            continue;
-        };
         let force_key = requests.force_key.swap(false, Ordering::AcqRel);
-        match pipeline.encode(surface.as_surface(), orientation, force_key) {
+        match encode(orientation, force_key) {
             Ok(()) => {
                 failures = 0;
                 if let Some(started) = started.take() {
@@ -1057,6 +1089,7 @@ fn run_encoder(
                     tracing::warn!(%error, "the simulator's H.264 stream failed");
                     return true;
                 }
+                tracing::debug!(%error, failures, "a simulator frame did not encode; retrying");
             }
         }
     }
@@ -1083,12 +1116,40 @@ impl SimulatorVideo {
             requests: requests.clone(),
             warned: AtomicBool::new(false),
         });
+        let (damage, orientation) = (screen.damage(), screen.orientation());
+        let (video, first) = Self::launch(units, requests, damage, orientation, move || {
+            // Built on the encoder thread, which owns every VideoToolbox object.
+            let mut pipeline = Pipeline::new(output);
+            move |orientation, force_key| {
+                let surface = screen
+                    .surface()
+                    .ok_or_else(|| protocol_error("the simulator has no framebuffer"))?;
+                pipeline.encode(surface.as_surface(), orientation, force_key)
+            }
+        })?;
+        video.started(first).await
+    }
+
+    /// Spawns the encoder thread around the encoder `make_encode` builds there. The thread
+    /// records a failure (an error or a panic) in `failed` before the encoder, and with it
+    /// the units' sender, is dropped, so the hub sees `failed()` when the units end.
+    fn launch<M, E>(
+        units: mpsc::Receiver<VideoUnit>,
+        requests: Arc<Requests>,
+        damage: watch::Receiver<u64>,
+        orientation: watch::Receiver<IosOrientation>,
+        make_encode: M,
+    ) -> Result<(Self, oneshot::Receiver<Result<(), DeviceError>>), DeviceError>
+    where
+        M: FnOnce() -> E + Send + 'static,
+        E: Encode,
+    {
         let wake = Arc::new(Notify::new());
         let stop = CancellationToken::new();
         let failed = Arc::new(AtomicBool::new(false));
-        let signals = Signals {
-            damage: screen.damage(),
-            orientation: screen.orientation(),
+        let mut signals = Signals {
+            damage,
+            orientation,
             wake: wake.clone(),
             stop: stop.clone(),
         };
@@ -1099,14 +1160,23 @@ impl SimulatorVideo {
             thread::Builder::new()
                 .name("bibcode-ios-encoder".to_owned())
                 .spawn(move || {
-                    let pipeline = Pipeline::new(output);
-                    if run_encoder(screen, pipeline, signals, requests, started) {
+                    let mut encode = make_encode();
+                    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        run_encoder(&mut signals, &requests, started, &mut encode)
+                    }));
+                    let failure = outcome.unwrap_or_else(|_| {
+                        tracing::error!("the simulator's H.264 encoder thread panicked");
+                        true
+                    });
+                    if failure {
                         failed.store(true, Ordering::Release);
                     }
+                    // Only now do the sessions and the units' sender go.
+                    drop(encode);
                 })
                 .map_err(|error| DeviceError::Io(error.to_string()))?
         };
-        let mut video = Self {
+        let video = Self {
             units,
             requests,
             wake,
@@ -1114,15 +1184,22 @@ impl SimulatorVideo {
             failed,
             thread: Some(thread),
         };
-        // Dropping `video` on an early return stops the thread.
+        Ok((video, first))
+    }
+
+    /// Waits until the first frame encoded; stops the thread when it did not.
+    async fn started(
+        mut self,
+        first: oneshot::Receiver<Result<(), DeviceError>>,
+    ) -> Result<Self, DeviceError> {
         match first.await {
-            Ok(Ok(())) => Ok(video),
+            Ok(Ok(())) => Ok(self),
             Ok(Err(error)) => {
-                video.stop_thread().await;
+                self.stop_thread().await;
                 Err(error)
             }
             Err(_) => {
-                video.stop_thread().await;
+                self.stop_thread().await;
                 Err(protocol_error(
                     "the H.264 encoder stopped before its first frame",
                 ))
@@ -1247,6 +1324,9 @@ mod tests {
         assert!(has_idr(&[0, 0, 0, 1, 0x06, 0, 0, 0, 2, 0x65, 0x88]));
         assert!(!has_idr(&[0, 0, 0, 2, 0x41, 0x9A]));
         assert!(!has_idr(&[0, 0, 0, 9, 0x65]));
+        // An empty NAL unit is skipped, not read as the next length's first byte.
+        assert!(!has_idr(&[0, 0, 0, 0, 0x05, 0, 0, 1, 0x41]));
+        assert!(has_idr(&[0, 0, 0, 0, 0, 0, 0, 1, 0x65]));
     }
 
     #[test]
@@ -1550,5 +1630,132 @@ mod tests {
             .unwrap();
         pipeline.flush();
         assert_eq!(kinds(&drain(&mut units)), [UnitKind::Config, UnitKind::Key]);
+    }
+
+    // -- The encoder thread, with a scripted encoder ---------------------------------------
+
+    struct Scripted {
+        video: SimulatorVideo,
+        damage: watch::Sender<u64>,
+        _orientation: watch::Sender<IosOrientation>,
+        /// The `force_key` of each encode, in order.
+        calls: std::sync::mpsc::Receiver<bool>,
+    }
+
+    fn unit(kind: UnitKind) -> VideoUnit {
+        VideoUnit {
+            kind,
+            pts_us: 0,
+            data: Bytes::from_static(b"unit"),
+        }
+    }
+
+    /// A source whose encoder sends one key unit per call while `script(call)` is `Ok`.
+    async fn scripted(
+        script: impl Fn(usize) -> Result<(), DeviceError> + Send + 'static,
+    ) -> Scripted {
+        let (sender, units) = mpsc::channel(UNIT_QUEUE);
+        let (damage, damage_rx) = watch::channel(0);
+        let (orientation, orientation_rx) = watch::channel(IosOrientation::Portrait);
+        let (calls_tx, calls) = std::sync::mpsc::channel();
+        let (video, first) = SimulatorVideo::launch(
+            units,
+            Arc::default(),
+            damage_rx,
+            orientation_rx,
+            move || {
+                let mut call = 0;
+                move |_: IosOrientation, force_key: bool| -> Result<(), DeviceError> {
+                    let _ = calls_tx.send(force_key);
+                    call += 1;
+                    script(call)?;
+                    let _ = sender.try_send(unit(UnitKind::Key));
+                    Ok(())
+                }
+            },
+        )
+        .unwrap();
+        Scripted {
+            video: video.started(first).await.unwrap(),
+            damage,
+            _orientation: orientation,
+            calls,
+        }
+    }
+
+    async fn next(video: &mut SimulatorVideo) -> Option<VideoUnit> {
+        tokio::time::timeout(Duration::from_secs(5), VideoSource::next_unit(video))
+            .await
+            .expect("the source answered in time")
+    }
+
+    #[tokio::test]
+    async fn an_encoder_failure_is_reported_when_the_units_end() {
+        let mut source = scripted(|call| {
+            if call == 1 {
+                Ok(())
+            } else {
+                Err(protocol_error("the encoder refused a frame"))
+            }
+        })
+        .await;
+        assert!(next(&mut source.video).await.is_some());
+        // One new frame fails; the retries fail too, without another signal.
+        source.damage.send_modify(|frames| *frames += 1);
+        assert!(next(&mut source.video).await.is_none());
+        assert!(source.video.failed(), "failed() is set when the units end");
+        VideoSource::stop(source.video, false).await;
+    }
+
+    #[tokio::test]
+    async fn a_panicking_encoder_is_reported_as_failed() {
+        let mut source = scripted(|call| {
+            assert!(call == 1, "the encoder broke");
+            Ok(())
+        })
+        .await;
+        assert!(next(&mut source.video).await.is_some());
+        source.damage.send_modify(|frames| *frames += 1);
+        assert!(next(&mut source.video).await.is_none());
+        assert!(source.video.failed());
+        VideoSource::stop(source.video, false).await;
+    }
+
+    #[tokio::test]
+    async fn a_still_screen_is_encoded_again_while_a_key_is_pending() {
+        let source = scripted(|_| Ok(())).await;
+        let calls = &source.calls;
+        assert_eq!(calls.recv_timeout(Duration::from_secs(5)), Ok(false));
+        // The output callback lost a unit and asked for a key; the screen stays still.
+        source
+            .video
+            .requests
+            .force_key
+            .store(true, Ordering::Release);
+        // The next damage-free wait times out and encodes a key frame.
+        assert_eq!(calls.recv_timeout(Duration::from_secs(2)), Ok(true));
+        // With nothing pending, a still screen is not encoded again.
+        assert!(calls.recv_timeout(RETRY_INTERVAL * 3).is_err());
+        VideoSource::stop(source.video, false).await;
+    }
+
+    #[tokio::test]
+    async fn a_failed_encode_is_retried_without_a_new_frame() {
+        let source = scripted(|call| {
+            if call == 2 {
+                Err(protocol_error("the encoder refused a frame"))
+            } else {
+                Ok(())
+            }
+        })
+        .await;
+        let calls = &source.calls;
+        assert_eq!(calls.recv_timeout(Duration::from_secs(5)), Ok(false));
+        source.damage.send_modify(|frames| *frames += 1);
+        assert_eq!(calls.recv_timeout(Duration::from_secs(2)), Ok(false));
+        // Retried after the interval with no new signal, and it succeeds.
+        assert_eq!(calls.recv_timeout(Duration::from_secs(2)), Ok(false));
+        assert!(!source.video.failed());
+        VideoSource::stop(source.video, false).await;
     }
 }

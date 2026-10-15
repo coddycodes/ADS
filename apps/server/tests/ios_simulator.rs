@@ -427,6 +427,11 @@ async fn first_key_frame_decodes_to_the_screen_size() {
     assert_eq!(units[0].kind, UnitKind::Config);
     assert_eq!(units[1].kind, UnitKind::Key);
     let (w, h) = sps_dimensions(&units[0].data).expect("an SPS");
+    // `00 00 00 01 67 profile constraints level …`
+    println!(
+        "SPS profile_idc {} level_idc {}",
+        units[0].data[5], units[0].data[7]
+    );
     assert_eq!((w, h), harness.screen_size());
     if let Ok(dir) = std::env::var("BIBCODE_IOS_SIM_FRAMES_DIR") {
         // Config then key as an Annex B file, for `ffprobe`.
@@ -436,7 +441,7 @@ async fn first_key_frame_decodes_to_the_screen_size() {
     }
     // Whatever else the screen sends for two seconds, to see the rate it runs at.
     let window = Instant::now();
-    let (mut count, mut bytes, mut last_pts) = (0u32, 0usize, units[1].pts_us);
+    let (mut count, mut keys, mut bytes, mut last_pts) = (0u32, 0u32, 0usize, units[1].pts_us);
     while window.elapsed() < Duration::from_secs(2) {
         let Ok(frame) = tokio::time::timeout(Duration::from_millis(500), media.next_frame()).await
         else {
@@ -447,9 +452,10 @@ async fn first_key_frame_decodes_to_the_screen_size() {
         assert!(pts >= last_pts, "pts never goes back");
         last_pts = pts;
         count += 1;
+        keys += u32::from(frame[0] == 1);
         bytes += frame.len();
     }
-    println!("{count} more units ({bytes} bytes) in 2 s on a quiet screen");
+    println!("{count} more units ({keys} keys, {bytes} bytes) in the next 2 s");
     if let Ok(tool) = std::env::var("BIBCODE_IOS_SIM_ROTATE_TOOL") {
         // The iPhone home screen does not rotate; Safari does.
         let launched = Command::new("/usr/bin/xcrun")
