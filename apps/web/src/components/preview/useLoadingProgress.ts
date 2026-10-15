@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 const TICK_INTERVAL_MS = 120;
 const FADE_OUT_DELAY_MS = 220;
@@ -12,34 +12,41 @@ const MIN_INCREMENT = 0.5;
  * Animates 0 → 90% asymptotically while `loading` is true, snaps to 100%
  * on release, then resets after a short pause.
  *
- * Uses a ref to thread the latest progress through interval ticks without
- * needing `loading` to retrigger the effect, which sidesteps the stale-
- * closure pitfalls of reading `progress` directly.
+ * The seed and the snap happen in the render that flips `loading`; interval
+ * ticks advance from the latest progress through a functional update, so
+ * `loading` alone owns the interval.
  */
 export function useLoadingProgress(loading: boolean): number {
-  const [progress, setProgress] = useState(0);
-  const progressRef = useRef(0);
-  progressRef.current = progress;
+  const [progress, setProgress] = useState(loading ? SEED_PERCENT : 0);
+  const [previousLoading, setPreviousLoading] = useState(loading);
+  if (loading !== previousLoading) {
+    setPreviousLoading(loading);
+    if (loading) {
+      setProgress(progress > 0 && progress < 95 ? progress : SEED_PERCENT);
+    } else if (progress !== 0) {
+      setProgress(100);
+    }
+  }
 
   useEffect(() => {
-    if (!loading) {
-      if (progressRef.current === 0) return;
-      setProgress(100);
-      const timer = window.setTimeout(() => setProgress(0), FADE_OUT_DELAY_MS);
-      return () => window.clearTimeout(timer);
-    }
-
-    setProgress((value) => (value > 0 && value < 95 ? value : SEED_PERCENT));
+    if (!loading) return;
     const interval = window.setInterval(() => {
-      const current = progressRef.current;
-      if (current >= ASYMPTOTE_PERCENT) return;
-      const remaining = ASYMPTOTE_PERCENT - current;
-      const increment = Math.max(MIN_INCREMENT, remaining * APPROACH_FACTOR);
-      setProgress(Math.min(ASYMPTOTE_PERCENT, current + increment));
+      setProgress((current) => {
+        if (current >= ASYMPTOTE_PERCENT) return current;
+        const remaining = ASYMPTOTE_PERCENT - current;
+        const increment = Math.max(MIN_INCREMENT, remaining * APPROACH_FACTOR);
+        return Math.min(ASYMPTOTE_PERCENT, current + increment);
+      });
     }, TICK_INTERVAL_MS);
-
     return () => window.clearInterval(interval);
   }, [loading]);
+
+  const completed = !loading && progress === 100;
+  useEffect(() => {
+    if (!completed) return;
+    const timer = window.setTimeout(() => setProgress(0), FADE_OUT_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [completed]);
 
   return progress;
 }

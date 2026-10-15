@@ -124,9 +124,7 @@ describe("SidebarProviderUpdatePill", () => {
       harness.providers,
       expect.objectContaining({ visibleAfterIso: "2026-07-16T00:00:00.000Z" }),
     );
-    harness.effects[0]?.();
     expect(harness.setters[5]).toHaveBeenCalledWith("2026-07-16T00:00:00.000Z");
-    harness.effects[1]?.();
   });
 
   it.each(Object.values(views))("renders the $tone tone", (view) => {
@@ -137,7 +135,6 @@ describe("SidebarProviderUpdatePill", () => {
     if (view.tone === "loading") expect(markup).toContain("animate-spin");
     if (view.dismissible) expect(markup).toContain("Dismiss provider update notice");
     else expect(markup).not.toContain("Dismiss provider update notice");
-    harness.effects[1]?.();
     expect(harness.setters[1]).toHaveBeenCalledWith(view);
   });
 
@@ -185,7 +182,6 @@ describe("SidebarProviderUpdatePill", () => {
     harness.stateValues = [new Set(), views.warning, null, null, null, undefined];
     harness.view = null;
     SidebarProviderUpdatePill();
-    harness.effects[1]?.();
     expect(harness.setters[3]).toHaveBeenCalledWith("warning");
 
     harness.stateIndex = 0;
@@ -194,7 +190,6 @@ describe("SidebarProviderUpdatePill", () => {
     harness.stateValues = [new Set(), views.warning, null, null, null, undefined];
     harness.view = views.error;
     SidebarProviderUpdatePill();
-    harness.effects[1]?.();
     expect(harness.setters[2]).toHaveBeenCalledWith(views.error);
     expect(harness.setters[3]).toHaveBeenCalledWith("warning");
   });
@@ -208,7 +203,7 @@ describe("SidebarProviderUpdatePill", () => {
     harness.view = views.success;
     harness.stateValues = [new Set(), views.success, null, null, null, undefined];
     renderPill();
-    const cleanup = harness.effects[2]?.();
+    const cleanup = harness.effects[0]?.();
     vi.advanceTimersByTime(500);
     expect(harness.setters[3]).toHaveBeenCalledWith("success");
     expect(harness.setters[4]).toHaveBeenCalledWith("success");

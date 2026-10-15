@@ -18,6 +18,37 @@ describe("browser target resolver", () => {
   beforeEach(() => readPreparedConnection.mockReset());
   afterEach(() => vi.unstubAllGlobals());
 
+  // #69: which environments' preview tabs load loopback pages through a tunnel.
+  it("asks the desktop, which keeps the first decision, whether an environment is tunneled", async () => {
+    const decided = new Map<string, boolean>();
+    const mode = vi.fn(async (environmentId: string, requested: boolean) => {
+      if (!decided.has(environmentId)) decided.set(environmentId, requested);
+      return decided.get(environmentId)!;
+    });
+    vi.stubGlobal("window", { desktopBridge: { preview: { tunnels: { mode } } } });
+    readPreparedConnection.mockReturnValue(bearer("http://192.168.1.25:3773"));
+    const { routesThroughTunnel, wantsPreviewTunnel } = await import("./browserTargetResolver");
+    expect(wantsPreviewTunnel(env)).toBe(false);
+
+    readPreparedConnection.mockReturnValue({
+      ...bearer("http://192.168.1.25:3773"),
+      descriptor: { capabilities: { previewTunnels: true } },
+    });
+    expect(wantsPreviewTunnel(env)).toBe(true);
+    expect(await routesThroughTunnel(env)).toBe(true);
+    expect(mode).toHaveBeenCalledWith(env, true);
+    // The server loses the capability, or the connection drops: the decision stands.
+    readPreparedConnection.mockReturnValue(null);
+    expect(await routesThroughTunnel(env)).toBe(true);
+
+    // A same-host environment loads directly and needs no tunnel.
+    readPreparedConnection.mockReturnValue({
+      ...bearer("http://127.0.0.1:3773"),
+      descriptor: { capabilities: { previewTunnels: true } },
+    });
+    expect(wantsPreviewTunnel(env)).toBe(false);
+  });
+
   it("keeps environment ports canonical on a private network host", async () => {
     readPreparedConnection.mockReturnValue(bearer("http://192.168.1.25:3773"));
     const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");

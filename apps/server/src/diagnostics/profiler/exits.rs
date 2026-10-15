@@ -746,6 +746,8 @@ fn attach_coredump(occurrence: Occurrence, pid: u32, exe: &str, started_at: time
                     .format(&time::format_description::well_known::Rfc3339)
                     .unwrap_or_default(),
                 oom_kill_baseline: None,
+                unit: None,
+                exit: None,
             };
             let record = tokio::time::timeout(COREDUMP_WAIT, async {
                 loop {

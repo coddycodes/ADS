@@ -51,6 +51,11 @@ function resolveProviderIcon(provider: string) {
   return typeof icon === "function" ? icon : BotIcon;
 }
 
+function renderProviderIcon(provider: string, className: string) {
+  const ProviderIcon = resolveProviderIcon(provider);
+  return <ProviderIcon className={className} />;
+}
+
 function isActiveStatus(status: ActivityLifecycle): boolean {
   return (
     status === "starting" || status === "running" || status === "waiting" || status === "unknown"
@@ -288,7 +293,6 @@ export function ActivityDock({
   const backgroundDone = visibility.showBackgroundTasks ? viewModel.counts.backgroundTasks.done : 0;
   const active = addCounts(subagentActive, backgroundActive);
   const done = addCounts(subagentDone, backgroundDone);
-  const ProviderIcon = resolveProviderIcon(viewModel.provider);
   const dataIsStale =
     viewModel.observationState === "reconnecting" || viewModel.observationState === "stale";
   const subagentSectionState = visibility.showSubagents
@@ -326,7 +330,7 @@ export function ActivityDock({
       className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border bg-muted"
       data-activity-provider-glyph={viewModel.provider}
     >
-      <ProviderIcon className="size-3" />
+      {renderProviderIcon(viewModel.provider, "size-3")}
     </span>
   );
 

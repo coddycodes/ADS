@@ -804,7 +804,6 @@ interface TerminalViewportProps {
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   focusRequestId: number;
   autoFocus: boolean;
-  resizeEpoch: number;
   keybindings: ResolvedKeybindingsConfig;
   workspaceUnavailable?: string | null;
 }
@@ -844,7 +843,6 @@ export function TerminalViewport({
   onAddTerminalContext,
   focusRequestId,
   autoFocus,
-  resizeEpoch,
   keybindings,
   workspaceUnavailable = null,
 }: TerminalViewportProps) {
@@ -1004,6 +1002,11 @@ export function TerminalViewport({
   );
   const readTerminalFontFamily = useEffectEvent(() => terminalFontFamily);
   const runtimeEnvKey = useMemo(() => runtimeEnvSignature(runtimeEnv), [runtimeEnv]);
+  // One xterm instance per launch: a new cwd, worktree, command or runtime env recreates it.
+  const terminalLaunch = useMemo(
+    () => ({ cwd, worktreePath, command, runtimeEnvKey }),
+    [cwd, worktreePath, command, runtimeEnvKey],
+  );
   const recordWebglDiagnosticOnce = useCallback(() => {
     if (webglDiagnosticRecordedRef.current) return;
     webglDiagnosticRecordedRef.current = true;
@@ -1018,27 +1021,29 @@ export function TerminalViewport({
   const readTerminalLabel = useEffectEvent(() => terminalLabel);
   const hasAuthoritativeHostConfig = serverConfig !== null;
   const hasPersistentWindowsConsoleTheme = usesPersistentWindowsConsoleTheme(command);
-  const attachmentLaunchThemeRef = useRef<{
+  const canAttachTerminal = command === undefined || hasAuthoritativeHostConfig;
+  const shouldPinAttachmentTheme = shouldRender && canAttachTerminal;
+  const [attachmentLaunchThemeState, setAttachmentLaunchThemeState] = useState<{
     readonly targetKey: string;
     readonly theme: TerminalThemeMode;
     readonly pinned: boolean;
-  } | null>(null);
-  const canAttachTerminal = command === undefined || hasAuthoritativeHostConfig;
-  const shouldPinAttachmentTheme = shouldRender && canAttachTerminal;
-  if (attachmentLaunchThemeRef.current?.targetKey !== terminalTargetKey) {
-    attachmentLaunchThemeRef.current = {
-      targetKey: terminalTargetKey,
-      theme: resolvedTheme,
-      pinned: shouldPinAttachmentTheme,
-    };
-  } else if (!attachmentLaunchThemeRef.current.pinned) {
-    attachmentLaunchThemeRef.current = {
+  }>(() => ({
+    targetKey: terminalTargetKey,
+    theme: resolvedTheme,
+    pinned: shouldPinAttachmentTheme,
+  }));
+  let attachmentLaunchThemeEntry = attachmentLaunchThemeState;
+  if (
+    attachmentLaunchThemeEntry.targetKey !== terminalTargetKey ||
+    !attachmentLaunchThemeEntry.pinned
+  ) {
+    attachmentLaunchThemeEntry = {
       targetKey: terminalTargetKey,
       theme: resolvedTheme,
       pinned: shouldPinAttachmentTheme,
     };
   }
-  const attachmentLaunchTheme = attachmentLaunchThemeRef.current.theme;
+  const attachmentLaunchTheme = attachmentLaunchThemeEntry.theme;
   // Launch-command env supplies provider defaults and the thread's runtime env
   // wins ordinary conflicts. Theme colors and the Codex-only Windows console
   // theme are authoritative because the PTY consumes them during spawn.
@@ -1072,39 +1077,57 @@ export function TerminalViewport({
   const readTerminalGeneration = useEffectEvent(() => terminalGeneration);
   const readServerOs = useEffectEvent(() => serverConfig?.environment.platform.os);
   const transcriptRuntime = terminalSession.transcriptRuntime;
+  const [observedTerminalError, setObservedTerminalError] = useState(terminalError);
+  if (terminalError !== observedTerminalError) {
+    setObservedTerminalError(terminalError);
+    if (terminalError !== null) setInputReattaching(false);
+  }
   const themeRestartRequestIdRef = useRef(0);
   const themeRestartRequestRef = useRef<CodexThemeRestartRequest | null>(null);
   const [themeRestartRequest, setThemeRestartRequest] = useState<CodexThemeRestartRequest | null>(
     null,
   );
   const [themeRestartError, setThemeRestartError] = useState<CodexThemeRestartError | null>(null);
-  const launchThemeRef = useRef<TerminalLaunchThemeState | null>(null);
-  const activeThemeRestartRequest = themeRestartRequestRef.current;
-  launchThemeRef.current = retainTerminalLaunchTheme(launchThemeRef.current, {
+  const launchThemeInput = {
     persistentConsoleTheme: hasPersistentWindowsConsoleTheme,
     generation: terminalGeneration,
     resolvedTheme: hasPersistentWindowsConsoleTheme ? attachmentLaunchTheme : resolvedTheme,
     authoritativeTheme: terminalSession.consoleTheme,
-    restartRequest: activeThemeRestartRequest,
-  });
+    restartRequest: themeRestartRequest,
+  };
+  const [launchThemeState, setLaunchThemeState] = useState<TerminalLaunchThemeState>(() =>
+    retainTerminalLaunchTheme(null, launchThemeInput),
+  );
+  const launchTheme = retainTerminalLaunchTheme(launchThemeState, launchThemeInput);
+  if (
+    launchTheme.generation !== launchThemeState.generation ||
+    launchTheme.theme !== launchThemeState.theme
+  ) {
+    setLaunchThemeState(launchTheme);
+  }
   if (
     hasPersistentWindowsConsoleTheme &&
-    activeThemeRestartRequest !== null &&
-    terminalGeneration > activeThemeRestartRequest.sourceGeneration &&
-    attachmentLaunchThemeRef.current.targetKey === terminalTargetKey &&
-    attachmentLaunchThemeRef.current.theme !== activeThemeRestartRequest.targetTheme
+    themeRestartRequest !== null &&
+    terminalGeneration > themeRestartRequest.sourceGeneration &&
+    attachmentLaunchThemeEntry.theme !== themeRestartRequest.targetTheme
   ) {
-    attachmentLaunchThemeRef.current = {
-      ...attachmentLaunchThemeRef.current,
-      theme: activeThemeRestartRequest.targetTheme,
+    attachmentLaunchThemeEntry = {
+      ...attachmentLaunchThemeEntry,
+      theme: themeRestartRequest.targetTheme,
       pinned: true,
     };
   }
+  if (
+    attachmentLaunchThemeEntry.targetKey !== attachmentLaunchThemeState.targetKey ||
+    attachmentLaunchThemeEntry.theme !== attachmentLaunchThemeState.theme ||
+    attachmentLaunchThemeEntry.pinned !== attachmentLaunchThemeState.pinned
+  ) {
+    setAttachmentLaunchThemeState(attachmentLaunchThemeEntry);
+  }
   const effectiveTerminalTheme = hasPersistentWindowsConsoleTheme
-    ? launchThemeRef.current.theme
+    ? launchTheme.theme
     : resolvedTheme;
-  const effectiveTerminalThemeRef = useRef(effectiveTerminalTheme);
-  effectiveTerminalThemeRef.current = effectiveTerminalTheme;
+  const readEffectiveTerminalTheme = useEffectEvent(() => effectiveTerminalTheme);
   const nativeThemeMismatch =
     hasPersistentWindowsConsoleTheme &&
     terminalStatus === "running" &&
@@ -1269,7 +1292,7 @@ export function TerminalViewport({
       fontSize: 12,
       scrollback: 5_000,
       fontFamily: readTerminalFontFamily(),
-      theme: terminalThemeFromApp(effectiveTerminalThemeRef.current, mount),
+      theme: terminalThemeFromApp(readEffectiveTerminalTheme(), mount),
       // OSC 8 activations bypass the link provider, so apply the same activation guard here.
       linkHandler: {
         activate: (event, uri, range) => {
@@ -1781,8 +1804,8 @@ export function TerminalViewport({
                 );
                 return;
               }
-              const editorTarget = resolvePathLinkTarget(localPath, cwd);
-              const previewFile = terminalPreviewFilePath(localPath, cwd);
+              const editorTarget = resolvePathLinkTarget(localPath, terminalLaunch.cwd);
+              const previewFile = terminalPreviewFilePath(localPath, terminalLaunch.cwd);
               if (
                 previewFile !== null &&
                 readHasThread() &&
@@ -1959,7 +1982,7 @@ export function TerminalViewport({
       // <html> class/style churn (tooltips, scroll locks) fires this observer
       // far more often than the theme changes; a repaint rebuilds the glyph
       // atlas, so skip it unless the resolved theme actually differs.
-      repaintTerminalTheme(activeTerminal, effectiveTerminalThemeRef.current, containerRef.current);
+      repaintTerminalTheme(activeTerminal, readEffectiveTerminalTheme(), containerRef.current);
     });
     themeObserver.observe(document.documentElement, {
       attributes: true,
@@ -2028,17 +2051,16 @@ export function TerminalViewport({
   }, [
     terminalTargetKey,
     runTerminalResize,
+    runResetInput,
+    runTerminalWrite,
     canAttachTerminal,
-    command,
-    cwd,
+    terminalLaunch,
     environmentId,
-    runtimeEnvKey,
     shouldRender,
     terminalId,
     threadId,
     sizeOwnership,
     orderedInput,
-    worktreePath,
   ]);
 
   useEffect(() => {
@@ -2243,6 +2265,8 @@ export function TerminalViewport({
       terminalInputKey(environmentId, threadId, terminalId),
     );
     if (!binding || binding.renderer?.terminal !== terminalRef.current) return;
+    // Prepared input follows the server's ordering mode, so a capability flip prepares again.
+    binding.ordered = orderedInput;
     const previous = binding.attachment;
     if (
       previous !== null &&
@@ -2274,10 +2298,6 @@ export function TerminalViewport({
     threadId,
     transcriptRuntime,
   ]);
-
-  useEffect(() => {
-    if (terminalError !== null) setInputReattaching(false);
-  }, [terminalError]);
 
   useEffect(() => {
     const generation = focusGenerationRef.current + 1;
@@ -2362,7 +2382,8 @@ export function TerminalViewport({
   useEffect(() => {
     const terminal = terminalRef.current;
     const fitAddon = fitAddonRef.current;
-    if (!shouldRender || !terminal || !fitAddon) return;
+    if (!shouldRender || !terminal || !fitAddon || rendererEpoch !== rendererEpochRef.current)
+      return;
     const resizeRendererGeneration = resizeRendererGenerationRef.current;
     const frame = window.requestAnimationFrame(() => {
       if (
@@ -2375,7 +2396,7 @@ export function TerminalViewport({
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [environmentId, resizeEpoch, shouldRender, terminalId, threadId]);
+  }, [rendererEpoch, shouldRender]);
   return (
     <div className="relative h-full w-full overflow-hidden rounded-[4px] bg-background">
       <div
@@ -2924,7 +2945,6 @@ export default function ThreadTerminalPanel({
                           onAddTerminalContext={onAddTerminalContext}
                           focusRequestId={focusRequestId}
                           autoFocus={focusEligible && terminalId === resolvedActiveTerminalId}
-                          resizeEpoch={0}
                           keybindings={keybindings}
                           workspaceUnavailable={workspaceUnavailable}
                         />
@@ -2958,7 +2978,6 @@ export default function ThreadTerminalPanel({
                   onAddTerminalContext={onAddTerminalContext}
                   focusRequestId={focusRequestId}
                   autoFocus={focusEligible}
-                  resizeEpoch={0}
                   keybindings={keybindings}
                   workspaceUnavailable={workspaceUnavailable}
                 />

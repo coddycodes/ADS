@@ -2,7 +2,12 @@
 //! shutdown began; an orderly shutdown marks it clean, so the next start can tell how a run
 //! that never did ended.
 
-use std::{collections::HashSet, fs, io, path::Path};
+use std::{
+    collections::HashSet,
+    fs, io,
+    path::Path,
+    sync::{Mutex, PoisonError},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -17,8 +22,14 @@ use super::{
 };
 
 const SESSION_FILE: &str = "session.json";
+/// Serializes this process's read-modify-writes of the session file: a note on the way out
+/// may race the shutdown marking it, and both write through the same temp file.
+static WRITE: Mutex<()> = Mutex::new(());
 const SESSION_TMP_FILE: &str = "session.json.tmp";
 const RUNNING: &str = "running";
+/// The exit cause of a run the OS ended with its session (shutdown, sign-out, Restart
+/// Manager), which exited as asked: an expected ending.
+pub const SESSION_END: &str = "session-end";
 /// Shutdown began: a run left in this state was being shut down, not crashed, unless a dump
 /// or an OS crash record says otherwise.
 const STOPPING: &str = "stopping";
@@ -41,6 +52,36 @@ pub struct SessionRecord {
     pub version: String,
     pub started_at: String,
     pub oom_kill_baseline: Option<u64>,
+    /// The systemd unit the run was in (Linux), so the next start can read systemd's own
+    /// account of how it ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    /// How the run said it was ending, written on its way out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit: Option<ExitNote>,
+}
+
+/// What a run recorded about its own ending, synchronously, before it was gone.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExitNote {
+    /// `display-lost` (GDK lost its display and is about to exit), `quit`, `signal`, or
+    /// `session-end` (the OS ended the session, on Windows).
+    pub cause: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    pub at: String,
+}
+
+/// What is known about an ending no crash record explains.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExitContext {
+    /// What the run noted on its way out.
+    pub note: Option<ExitNote>,
+    /// systemd's own lines about the run's unit ending (Linux), oldest first.
+    pub journal: Vec<String>,
+    /// When the crash monitor saw the run's process end without asking for a dump.
+    pub gone_at: Option<String>,
 }
 
 /// How the previous run ended.
@@ -53,10 +94,11 @@ pub enum PreviousRun {
     Oom,
     UncleanExit {
         facility: &'static str,
+        context: ExitContext,
     },
     SystemCrash,
     /// Shutdown began and never finished, and nothing says the run crashed.
-    ShutdownIncomplete,
+    ShutdownIncomplete(ExitContext),
 }
 
 /// A crash dump's sidecar, as far as linking it to a finding needs.
@@ -288,6 +330,7 @@ pub fn dump_of_run<'a>(
 /// Returns the previous record if it was left `running` or `stopping`, then records this run as
 /// running through a synced temp file and a rename. Blocks on file I/O.
 pub fn begin_session(dir: &Path) -> Option<SessionRecord> {
+    let _write = WRITE.lock().unwrap_or_else(PoisonError::into_inner);
     let previous = read(dir).filter(|record| record.state == RUNNING || record.state == STOPPING);
     let current = SessionRecord {
         state: RUNNING.into(),
@@ -299,14 +342,62 @@ pub fn begin_session(dir: &Path) -> Option<SessionRecord> {
         version: env!("CARGO_PKG_VERSION").into(),
         started_at: store::now_rfc3339(),
         oom_kill_baseline: oom_kill_count(),
+        unit: os_records::current_unit(),
+        exit: None,
     };
     write(dir, &current);
     previous
 }
 
+/// Records how this process is ending, before it is gone: GDK losing its display, a quit, or a
+/// termination signal. The first note stands. Only this process's running or stopping record
+/// changes. Blocks on file I/O and waits on nothing else, so it is safe on the way out.
+pub fn note_exit(dir: &Path, cause: &str, detail: Option<&str>) {
+    let _write = WRITE.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(mut record) = read(dir).filter(|record| {
+        record.pid == std::process::id()
+            && (record.state == RUNNING || record.state == STOPPING)
+            && record.exit.is_none()
+    }) {
+        record.exit = Some(ExitNote {
+            cause: cause.to_owned(),
+            detail: detail.map(ToOwned::to_owned),
+            at: store::now_rfc3339(),
+        });
+        write(dir, &record);
+    }
+}
+
+const GONE_FILE: &str = "gone.json";
+
+/// The crash monitor's note that `pid` ended without asking for a dump: a clean exit, a
+/// forced kill or an exit without a signal alike. The next start reads it only for a run that
+/// never shut down, as its time of death.
+pub fn note_gone(dir: &Path, pid: u32) {
+    let note = json!({ "pid": pid, "at": store::now_rfc3339() });
+    if let Err(error) = fs::write(dir.join(GONE_FILE), note.to_string()) {
+        tracing::warn!(%error, "profiler crash monitor could not note its parent's end");
+    }
+}
+
+/// When the crash monitor saw `previous` end, if it did.
+pub fn gone_at(dir: &Path, previous: &SessionRecord) -> Option<String> {
+    let note: Value = serde_json::from_slice(&fs::read(dir.join(GONE_FILE)).ok()?).ok()?;
+    let at = note["at"].as_str()?;
+    let after_start = match (
+        OffsetDateTime::parse(at, &Rfc3339),
+        OffsetDateTime::parse(&previous.started_at, &Rfc3339),
+    ) {
+        (Ok(at), Ok(started)) => at >= started,
+        _ => false,
+    };
+    (note["pid"].as_u64() == Some(u64::from(previous.pid)) && after_start).then(|| at.to_owned())
+}
+
 /// Marks this process's running session as stopping: its shutdown has begun. A clean record,
 /// or one another process wrote, is left alone. Blocks on file I/O.
 pub fn mark_stopping(dir: &Path) {
+    let _write = WRITE.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(mut record) =
         read(dir).filter(|record| record.pid == std::process::id() && record.state == RUNNING)
     {
@@ -318,6 +409,7 @@ pub fn mark_stopping(dir: &Path) {
 /// Marks this process's session clean. A record another process wrote after this one
 /// released the directory is left alone. Blocks on file I/O.
 pub fn end_session(dir: &Path) {
+    let _write = WRITE.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(mut record) = read(dir).filter(|record| record.pid == std::process::id()) {
         record.state = CLEAN.into();
         write(dir, &record);
@@ -343,8 +435,15 @@ pub fn classify(
     if let Some(record) = record {
         return PreviousRun::Crash(record);
     }
+    if previous
+        .exit
+        .as_ref()
+        .is_some_and(|note| note.cause == SESSION_END)
+    {
+        return PreviousRun::Clean;
+    }
     if previous.state == STOPPING {
-        return PreviousRun::ShutdownIncomplete;
+        return PreviousRun::ShutdownIncomplete(ExitContext::noted(previous));
     }
     if let (Some(before), Some(now)) = (previous.boot_id.as_deref(), current_boot)
         && !same_boot(before, now)
@@ -358,6 +457,53 @@ pub fn classify(
     }
     PreviousRun::UncleanExit {
         facility: os_records::facility(),
+        context: ExitContext::noted(previous),
+    }
+}
+
+impl ExitContext {
+    /// What `previous` noted itself; the OS lookups fill in the rest.
+    fn noted(previous: &SessionRecord) -> Self {
+        Self {
+            note: previous.exit.clone(),
+            ..Self::default()
+        }
+    }
+
+    fn evidence(&self) -> Map<String, Value> {
+        let mut evidence = Map::new();
+        if let Some(note) = &self.note {
+            evidence.insert("exitCause".to_owned(), note.cause.clone().into());
+            evidence.insert("exitDetail".to_owned(), note.detail.clone().into());
+            evidence.insert("exitNotedAt".to_owned(), note.at.clone().into());
+        }
+        if !self.journal.is_empty() {
+            evidence.insert("journal".to_owned(), self.journal.clone().into());
+        }
+        if let Some(gone_at) = &self.gone_at {
+            evidence.insert("goneAt".to_owned(), gone_at.clone().into());
+        }
+        evidence
+    }
+
+    /// Sentences for a finding's summary, each with a leading space; empty when nothing is
+    /// known.
+    fn describe(&self) -> String {
+        let mut text = String::new();
+        if let Some(note) = &self.note {
+            text.push_str(&format!(" On its way out it recorded `{}`", note.cause));
+            if let Some(detail) = &note.detail {
+                text.push_str(&format!(": {detail}"));
+            }
+            text.push('.');
+        }
+        if let Some(gone_at) = &self.gone_at {
+            text.push_str(&format!(" The crash monitor saw it end at {gone_at}."));
+        }
+        if let Some(line) = self.journal.last() {
+            text.push_str(&format!(" systemd recorded \"{line}\"."));
+        }
+        text
     }
 }
 
@@ -450,18 +596,33 @@ pub fn finding_for(previous: &SessionRecord, run: PreviousRun) -> Option<Finding
                 .to_owned(),
             json!({}),
         ),
-        PreviousRun::UncleanExit { facility } => (
-            "crash.unclean-exit",
-            Severity::Warn,
-            Vec::new(),
-            "Previous run did not exit cleanly".to_owned(),
-            format!(
-                "BiBCode stopped without shutting down and no OS crash record matched \
-                 (crash records: {facility}). A forced kill, a hang or a missed crash dump \
-                 can cause this."
-            ),
-            json!({ "facility": facility }),
-        ),
+        PreviousRun::UncleanExit { facility, context } => {
+            let mut extra = context.evidence();
+            extra.insert("facility".to_owned(), facility.into());
+            let (title, cause) = match context.note.as_ref().map(|note| note.cause.as_str()) {
+                Some("display-lost") => (
+                    "Previous run exited after losing its display",
+                    "GTK exits on its own when the compositor or X server drops its connection",
+                ),
+                _ => (
+                    "Previous run did not exit cleanly",
+                    "A forced kill, a hang or a missed crash dump can cause this",
+                ),
+            };
+            (
+                "crash.unclean-exit",
+                Severity::Warn,
+                // A recorded cause tells endings apart; an unexplained one keeps one finding.
+                context.note.iter().map(|note| note.cause.clone()).collect(),
+                title.to_owned(),
+                format!(
+                    "BiBCode stopped without shutting down and no OS crash record matched \
+                     (crash records: {facility}).{} {cause}.",
+                    context.describe()
+                ),
+                Value::Object(extra),
+            )
+        }
         PreviousRun::SystemCrash => (
             "crash.system",
             Severity::Info,
@@ -471,16 +632,18 @@ pub fn finding_for(previous: &SessionRecord, run: PreviousRun) -> Option<Finding
             json!({}),
         ),
         // Not a `crash.*` kind: it never sets the last crash.
-        PreviousRun::ShutdownIncomplete => (
+        PreviousRun::ShutdownIncomplete(context) => (
             "shutdown.incomplete",
             Severity::Info,
             Vec::new(),
             "BiBCode did not finish shutting down".to_owned(),
-            "The previous run began shutting down and stopped before it finished, and no crash \
-             record matched it. Quitting while work was still stopping, or a forced quit, can \
-             cause this."
-                .to_owned(),
-            json!({}),
+            format!(
+                "The previous run began shutting down and stopped before it finished, and no \
+                 crash record matched it.{} Quitting while work was still stopping, or a forced \
+                 quit, can cause this.",
+                context.describe()
+            ),
+            Value::Object(context.evidence()),
         ),
     };
     if let (Value::Object(evidence), Value::Object(extra)) = (&mut evidence, extra) {
@@ -628,6 +791,13 @@ pub fn unrecorded_crash_finding(
     }
 }
 
+/// The BiBCode version of the latest run that used `dir`, running now or not (#98). The
+/// sentinel is written with the profiler off too, so this is not necessarily the version that
+/// recorded the events: `session.start` events and findings name that.
+pub(super) fn recorded_version(dir: &Path) -> Option<String> {
+    read(dir).map(|record| record.version)
+}
+
 fn read(dir: &Path) -> Option<SessionRecord> {
     serde_json::from_slice(&fs::read(dir.join(SESSION_FILE)).ok()?).ok()
 }
@@ -688,6 +858,8 @@ mod tests {
             version: "0.9.0".into(),
             started_at: "2026-10-09T10:00:00Z".into(),
             oom_kill_baseline: Some(3),
+            unit: None,
+            exit: None,
         }
     }
 
@@ -922,7 +1094,7 @@ mod tests {
         };
         // Another boot and a risen OOM count do not make it a crash either.
         let run = classify(&prev, Some("b2"), Some(4), None, None);
-        assert!(matches!(run, PreviousRun::ShutdownIncomplete), "{run:?}");
+        assert!(matches!(run, PreviousRun::ShutdownIncomplete(_)), "{run:?}");
         let input = finding_for(&prev, run).unwrap();
         assert_eq!(input.kind, "shutdown.incomplete");
         assert_eq!(input.severity, Severity::Info);
@@ -1066,6 +1238,169 @@ mod tests {
         );
     }
 
+    /// The run's own note on its way out, systemd's account and the crash monitor's time of
+    /// death explain an ending no crash record does (#87).
+    #[test]
+    fn an_unclean_exit_carries_what_the_run_and_the_os_recorded() {
+        let mut prev = previous();
+        prev.exit = Some(ExitNote {
+            cause: "display-lost".into(),
+            detail: Some("Error 71 (Protocol error) dispatching to Wayland display.".into()),
+            at: "2026-10-09T10:05:00Z".into(),
+        });
+        let run = classify(&prev, Some("b1"), Some(3), None, None);
+        let PreviousRun::UncleanExit {
+            mut context,
+            facility,
+        } = run
+        else {
+            panic!("not an unclean exit");
+        };
+        assert_eq!(context.note, prev.exit);
+        context.journal = vec![
+            "bibcode-desktop.service: Main process exited, code=exited, status=1/FAILURE".into(),
+        ];
+        context.gone_at = Some("2026-10-09T10:05:01Z".into());
+        let input = finding_for(&prev, PreviousRun::UncleanExit { facility, context }).unwrap();
+        assert_eq!(input.kind, "crash.unclean-exit");
+        assert_eq!(input.title, "Previous run exited after losing its display");
+        assert_eq!(input.fingerprint_fields, vec!["display-lost".to_owned()]);
+        assert_eq!(input.evidence["exitCause"], "display-lost");
+        assert_eq!(input.evidence["goneAt"], "2026-10-09T10:05:01Z");
+        assert_eq!(input.evidence["journal"][0], json!(prev_journal_line()));
+        assert!(
+            input.summary.contains("dispatching to Wayland display"),
+            "{}",
+            input.summary
+        );
+        assert!(
+            input.summary.contains("status=1/FAILURE"),
+            "{}",
+            input.summary
+        );
+
+        // Nothing recorded: the one unexplained finding as before.
+        let bare = finding_for(
+            &previous(),
+            classify(&previous(), Some("b1"), Some(3), None, None),
+        )
+        .unwrap();
+        assert!(bare.fingerprint_fields.is_empty());
+        assert_eq!(bare.title, "Previous run did not exit cleanly");
+        assert!(bare.evidence.get("exitCause").is_none());
+
+        let stopping = SessionRecord {
+            state: "stopping".into(),
+            exit: Some(ExitNote {
+                cause: "quit".into(),
+                detail: None,
+                at: "2026-10-09T10:05:00Z".into(),
+            }),
+            ..previous()
+        };
+        let incomplete = finding_for(
+            &stopping,
+            classify(&stopping, Some("b1"), Some(3), None, None),
+        )
+        .unwrap();
+        assert_eq!(incomplete.kind, "shutdown.incomplete");
+        assert_eq!(incomplete.evidence["exitCause"], "quit");
+        assert!(
+            incomplete.summary.contains("`quit`"),
+            "{}",
+            incomplete.summary
+        );
+    }
+
+    /// #102: Windows ending the session with BiBCode open is no crash, also across the reboot
+    /// that follows; a crash record of the same run still wins.
+    #[test]
+    fn a_run_the_os_ended_with_its_session_is_clean() {
+        let ended = SessionRecord {
+            exit: Some(ExitNote {
+                cause: SESSION_END.into(),
+                detail: None,
+                at: "2026-10-09T10:05:00Z".into(),
+            }),
+            ..previous()
+        };
+        assert!(matches!(
+            classify(&ended, Some("b2"), Some(3), None, None),
+            PreviousRun::Clean
+        ));
+        assert!(finding_for(&ended, classify(&ended, Some("b1"), Some(3), None, None)).is_none());
+        assert!(matches!(
+            classify(
+                &ended,
+                Some("b1"),
+                Some(3),
+                Some(abort_in("bibcode_desktop")),
+                None
+            ),
+            PreviousRun::Crash(_)
+        ));
+    }
+
+    fn prev_journal_line() -> &'static str {
+        "bibcode-desktop.service: Main process exited, code=exited, status=1/FAILURE"
+    }
+
+    #[test]
+    fn only_the_running_process_notes_its_exit_and_the_first_note_stands() {
+        let dir = tempfile::tempdir().unwrap();
+        begin_session(dir.path());
+        note_exit(dir.path(), "signal", Some("SIGTERM"));
+        note_exit(dir.path(), "quit", None);
+        let noted = read(dir.path()).unwrap().exit.unwrap();
+        assert_eq!(
+            (noted.cause.as_str(), noted.detail.as_deref()),
+            ("signal", Some("SIGTERM"))
+        );
+
+        // A clean session, or one another process wrote, takes no note.
+        let clean = tempfile::tempdir().unwrap();
+        begin_session(clean.path());
+        end_session(clean.path());
+        note_exit(clean.path(), "display-lost", None);
+        assert_eq!(read(clean.path()).unwrap().exit, None);
+        let other = tempfile::tempdir().unwrap();
+        write(
+            other.path(),
+            &SessionRecord {
+                pid: std::process::id().wrapping_add(1),
+                ..previous()
+            },
+        );
+        note_exit(other.path(), "display-lost", None);
+        assert_eq!(read(other.path()).unwrap().exit, None);
+    }
+
+    #[test]
+    fn the_crash_monitors_gone_note_dates_only_that_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let prev = SessionRecord {
+            started_at: "2000-01-01T00:00:00Z".into(),
+            ..previous()
+        };
+        assert_eq!(gone_at(dir.path(), &prev), None);
+        note_gone(dir.path(), prev.pid);
+        assert!(gone_at(dir.path(), &prev).is_some());
+        let other_pid = SessionRecord {
+            pid: 43,
+            ..prev.clone()
+        };
+        assert_eq!(gone_at(dir.path(), &other_pid), None);
+        let later_run = SessionRecord {
+            started_at: "2999-01-01T00:00:00Z".into(),
+            ..prev
+        };
+        assert_eq!(
+            gone_at(dir.path(), &later_run),
+            None,
+            "noted before that run began"
+        );
+    }
+
     #[test]
     fn findings_name_the_crash_kind() {
         let prev = previous();
@@ -1077,6 +1412,7 @@ mod tests {
             &prev,
             PreviousRun::UncleanExit {
                 facility: "no systemd-coredump",
+                context: ExitContext::default(),
             },
         )
         .unwrap();

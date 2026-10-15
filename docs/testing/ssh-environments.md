@@ -199,7 +199,10 @@ and its [SSH port forward](../architecture/remote.md#desktop-managed-ssh) end
 to end; the user-facing behavior is in
 [Previewing the server's dev servers](../user/workspace-ui.md#previewing-the-servers-dev-servers).
 Record each as its own row (evidence class, result, exact message) in the
-report's SSH environment evidence section.
+report's SSH environment evidence section. On a Linux desktop whose environment
+server offers preview tunnels, the BiBCode browser rows below do not apply; run
+[Preview tunnels over SSH](#preview-tunnels-over-ssh-linux-desktop) for them.
+The system browser rows apply everywhere.
 
 **Dev server.** In the thread's terminal, run
 `printf '<script>document.write(location.origin)</script>' > origin.html` and
@@ -287,6 +290,38 @@ WebSocket) open, revoke the desktop's device on the host's Share tab. Within
 30 s the page's WebSocket closes: a new screen file no longer reloads it. After
 the desktop pairs again, as in scenario 7, **Reload** loads the page through a
 new gateway session.
+
+### Preview tunnels over SSH (Linux desktop)
+
+On a Linux desktop, an SSH environment whose server advertises the
+`previewTunnels` capability loads previews through
+[preview tunnels](../architecture/remote.md#preview-tunnels) instead of the
+gateway. Run these with the same dev server as above (`python3 -m http.server
+8123 --bind 127.0.0.1`, with `origin.html`), from a thread on the environment,
+with **Open links in** set to **BiBCode browser**, in a session whose first
+preview of this environment is this one (restart BiBCode first if a preview of
+it was already open):
+
+- Click `http://localhost:8123/`: the listing loads and the address bar shows
+  `http://localhost:8123/`. `origin.html` shows `http://localhost:8123`.
+- No forward `ssh` child starts for the preview: `ps` shows only the
+  environment's own connection, and nothing listens on port 8123 on the
+  desktop machine. A local server on port 8123 makes no difference and shows no
+  "in use" note.
+- `ss -ltnp` shows the desktop listening on one more `127.0.0.1` port: the
+  environment's SOCKS server, for the rest of the session.
+- Serve HTTPS on the remote host (any self-signed server on port 8443): the
+  preview of `https://localhost:8443/` reaches it (WebKitGTK shows its
+  certificate warning), with no "HTTPS dev servers can't be previewed" message.
+- A file preview from the thread (a PDF or HTML file) loads: it comes from the
+  environment's own address on this computer, which is not tunneled.
+- Stop the dev server and press **Reload**: the tab shows WebKitGTK's own
+  connection error, not the gateway's `502` page. Start it again and press
+  **Reload**: the page returns.
+- Open the companion page from **Brainstorming companion** above: its
+  WebSocket reloads the page through the tunnel.
+- Revoke the desktop's device on the host's Share tab: within 30 s the page's
+  WebSocket closes.
 
 ### Cleanup
 

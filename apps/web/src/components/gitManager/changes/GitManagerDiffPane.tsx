@@ -2,7 +2,16 @@ import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime"
 import { projectKey } from "@bibcode/client-runtime/state/entities";
 import type { EnvironmentId, ScopedProjectRef } from "@bibcode/contracts";
 import type { SelectedLineRange } from "@pierre/diffs";
-import { lazy, memo, Suspense, useCallback, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { DraftId } from "~/composerDraftStore";
 import { useTheme } from "~/hooks/useTheme";
@@ -46,6 +55,21 @@ const DIFF_PREPARING_FALLBACK = (
   </p>
 );
 const renderHeaderPrefix = () => null;
+
+// Sets the busy flag for the length of one mutation. The React Compiler skips the
+// body of a `try` without a `catch` when it infers a callback's dependencies, so
+// callbacks keep that `try` here.
+async function runWhileBusy<T>(
+  setBusy: (busy: boolean) => void,
+  run: () => Promise<T>,
+): Promise<T> {
+  setBusy(true);
+  try {
+    return await run();
+  } finally {
+    setBusy(false);
+  }
+}
 
 export type GitManagerPartialArea = "staged" | "unstaged";
 
@@ -187,7 +211,9 @@ export const GitManagerDiffPane = memo(function GitManagerDiffPane({
     [activeArea, generation, selectable, storedSelection],
   );
   const selectionRef = useRef(selection);
-  selectionRef.current = selection;
+  useLayoutEffect(() => {
+    selectionRef.current = selection;
+  }, [selection]);
   const codeViewFiles = useMemo(
     () =>
       fileDiff === null
@@ -241,10 +267,12 @@ export const GitManagerDiffPane = memo(function GitManagerDiffPane({
     );
     const [firstLine, ...remainingLines] = wire.selectedLines;
     if (firstLine === undefined || partialBusyRef.current) return;
-    partialBusyRef.current = true;
-    setPartialBusy(true);
-    setMutationError(null);
-    try {
+    const setBusy = (busy: boolean) => {
+      partialBusyRef.current = busy;
+      setPartialBusy(busy);
+    };
+    await runWhileBusy(setBusy, async () => {
+      setMutationError(null);
       const command = selectPartialStagingCommand(activeArea, { stagePartial, unstagePartial });
       const result = await command({
         environmentId,
@@ -267,10 +295,7 @@ export const GitManagerDiffPane = memo(function GitManagerDiffPane({
       }
       setLineSelection(projectRef, path, null);
       revalidateDiff();
-    } finally {
-      partialBusyRef.current = false;
-      setPartialBusy(false);
-    }
+    });
   }, [
     activeArea,
     cwd,

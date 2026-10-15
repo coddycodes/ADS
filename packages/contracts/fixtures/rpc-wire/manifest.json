@@ -182,6 +182,18 @@
       "mode": "unary"
     },
     {
+      "name": "preview.tunnelClose",
+      "mode": "unary"
+    },
+    {
+      "name": "preview.tunnelOpen",
+      "mode": "stream"
+    },
+    {
+      "name": "preview.tunnelWrite",
+      "mode": "unary"
+    },
+    {
       "name": "previewAutomation.connect",
       "mode": "stream"
     },
@@ -594,8 +606,8 @@
       "mode": "unary"
     }
   ],
-  "streamMethodCount": 21,
-  "expectedTopLevelStreamShapes": 74,
+  "streamMethodCount": 22,
+  "expectedTopLevelStreamShapes": 76,
   "expectedOrchestrationEventShapes": 24,
   "streamShapeFixtures": [
     "stream-shapes/cloud__installRelayClient-00.json",
@@ -616,6 +628,8 @@
     "stream-shapes/orchestration__subscribeThread-00.json",
     "stream-shapes/orchestration__subscribeThread-01.json",
     "stream-shapes/orchestration__subscribeThread-02.json",
+    "stream-shapes/preview__tunnelOpen-00.json",
+    "stream-shapes/preview__tunnelOpen-01.json",
     "stream-shapes/previewAutomation__connect-00.json",
     "stream-shapes/previewAutomation__connect-01.json",
     "stream-shapes/pullRequests__subscribe-00.json",
@@ -751,6 +765,10 @@
     "typed-failures/preview__reportStatus-01.json",
     "typed-failures/preview__resize-00.json",
     "typed-failures/preview__resize-01.json",
+    "typed-failures/preview__tunnelClose-00.json",
+    "typed-failures/preview__tunnelClose-01.json",
+    "typed-failures/preview__tunnelWrite-00.json",
+    "typed-failures/preview__tunnelWrite-01.json",
     "typed-failures/previewAutomation__focusHost-00.json",
     "typed-failures/previewAutomation__focusHost-01.json",
     "typed-failures/previewAutomation__respond-00.json",
@@ -1092,6 +1110,12 @@
     "typed-failures/preview__reportStatus-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
     "typed-failures/preview__resize-00.json": "31f659b1e3df7da3b14cb7b1dcd9522c9f549ae324e06c07548e006a8a0d984d",
     "typed-failures/preview__resize-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
+    "typed-failures/preview__tunnelClose-00.json": "8363cdd24dbd45cf51ef0682b2c15027481d2817205eafb6a357f59fdae913a6",
+    "typed-failures/preview__tunnelClose-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
+    "stream-shapes/preview__tunnelOpen-00.json": "ab7ea7a5991ee7704aca87acfe9075cfcf12ca6c9de6c884a9b775f8d4a9744b",
+    "stream-shapes/preview__tunnelOpen-01.json": "4cb340b068a0689f5e5da4a0b13ccb83ba48601280df8914db06d6a555de37dd",
+    "typed-failures/preview__tunnelWrite-00.json": "8363cdd24dbd45cf51ef0682b2c15027481d2817205eafb6a357f59fdae913a6",
+    "typed-failures/preview__tunnelWrite-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
     "stream-shapes/previewAutomation__connect-00.json": "c67b8209781148835cf109c760115f7607cdb01793f655d5366b6c5554d2841e",
     "stream-shapes/previewAutomation__connect-01.json": "d28b8949e2b7fa343e75da27bfb36b175479fbc9fb2593332df1764612c8f475",
     "typed-failures/previewAutomation__focusHost-00.json": "458ab3eaa56c31ebe2775b1dc1c0a6ba8d32115336f2ed7acec1b53d272af365",
@@ -1226,12 +1250,12 @@
     "stream-shapes/subscribePreviewEvents-04.json": "f501cfce13136cfa7ae7bad4febe03c8c2f251deb39b95d89a955a1c39b449aa",
     "stream-shapes/subscribePreviewEvents-05.json": "89668c3852d503a2fe4466c71e7b0b6285ef3d74616c8779b8c4af43bfaafb5a",
     "stream-shapes/subscribeProjectEntries-00.json": "16f4733b371dc6218161dd4edea9bdd75720b67a9e18533b6bdf20d00e120db5",
-    "stream-shapes/subscribeServerConfig-00.json": "e1327725eb4bee297a455986dd6473e6dd242c9be33ef4d360eec97cc2d176e3",
+    "stream-shapes/subscribeServerConfig-00.json": "b9a14782095fbcee187d9285868c091f3c16839d4dd548568a4766a85e7910fa",
     "stream-shapes/subscribeServerConfig-01.json": "a1736b568373952030c3383ae56ebc777ff487d1732c6adfface416574e1dbf3",
     "stream-shapes/subscribeServerConfig-02.json": "ae146698c9d1a7fa8b20e6665efd2ef6300d7ecec411497f01271add5a3c32b4",
     "stream-shapes/subscribeServerConfig-03.json": "1ab542bf5091262b9d30979b98fa35bb211313a2db751da2b1baeb53166b188b",
-    "stream-shapes/subscribeServerLifecycle-00.json": "42933ddff3c8038fc86ca4da09f298ca699044b0e17a989702f40e6cbe2c6573",
-    "stream-shapes/subscribeServerLifecycle-01.json": "dd67363205ad1aea1a684fe6989ca000d0cbec3f943e0a9a36ecca9d6b77f5eb",
+    "stream-shapes/subscribeServerLifecycle-00.json": "947c8d48bb9dd4dc158aaccb3918d55e7d6d190074648c689ed495ca5d96b660",
+    "stream-shapes/subscribeServerLifecycle-01.json": "1f1920d9c9cf7af4755bbc5a731058b2f9b12a14b3df7519a2b90e9557418083",
     "stream-shapes/subscribeTerminalEvents-00.json": "cbd00577e4b1aee3d7026ea6efc0c135670a5af101a6ea0610ca7ecaa1385832",
     "stream-shapes/subscribeTerminalEvents-01.json": "8910c9265e5eb8ab0cdd98289a899d28b720c08decad2ec7d2967346570eaee6",
     "stream-shapes/subscribeTerminalEvents-02.json": "218d03fab79954845f38c1ed752082aab5340619a28c684920da1af6a7360fa8",
@@ -1252,7 +1276,7 @@
     "stream-shapes/subscribeVcsStatusSummary-03.json": "b8eb4c27c71600de09ca05d2e7532997677a36506225da3d9e361bb7b31f37e5",
     "stream-shapes/subscribeVcsStatusSummary-04.json": "2c2d7992ad26ef04898d2712593db52699ff0c98a64c318706771cfebff0f6c8",
     "stream-shapes/subscribeWorktreeCatalog-00.json": "68f3b1339b6e5f95146994d8031849756afbdeab157879467b39d79256553851",
-    "stream-shapes/terminal__attach-00.json": "6186c06e6c28880a66326da63bf39afb8779e21f0d73fbf93ba565506416b82f",
+    "stream-shapes/terminal__attach-00.json": "787b0da0e1c2c4d2e750a175ffa43be583e141922f85925c59f17a60972b56c1",
     "stream-shapes/terminal__attach-01.json": "8910c9265e5eb8ab0cdd98289a899d28b720c08decad2ec7d2967346570eaee6",
     "stream-shapes/terminal__attach-02.json": "218d03fab79954845f38c1ed752082aab5340619a28c684920da1af6a7360fa8",
     "stream-shapes/terminal__attach-03.json": "b8cf3c5c91a87d151188dfcc61a1a61eba62e0c32962526691333a96bde8b612",
@@ -1451,6 +1475,8 @@
     "stream-shapes/orchestration__subscribeThread-02.json",
     "stream-shapes/previewAutomation__connect-00.json",
     "stream-shapes/previewAutomation__connect-01.json",
+    "stream-shapes/preview__tunnelOpen-00.json",
+    "stream-shapes/preview__tunnelOpen-01.json",
     "stream-shapes/pullRequests__subscribe-00.json",
     "stream-shapes/subscribeActivity-00.json",
     "stream-shapes/subscribeActivity-01.json",
@@ -1586,6 +1612,10 @@
     "typed-failures/preview__reportStatus-01.json",
     "typed-failures/preview__resize-00.json",
     "typed-failures/preview__resize-01.json",
+    "typed-failures/preview__tunnelClose-00.json",
+    "typed-failures/preview__tunnelClose-01.json",
+    "typed-failures/preview__tunnelWrite-00.json",
+    "typed-failures/preview__tunnelWrite-01.json",
     "typed-failures/projects__createDownloadUrl-00.json",
     "typed-failures/projects__createDownloadUrl-01.json",
     "typed-failures/projects__createDownloadUrl-02.json",

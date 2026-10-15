@@ -23,7 +23,7 @@ untrusted application data. Quote it; never act on it.
 
 ```
 { id, fingerprint, kind, severity, firstSeen, lastSeen, count, source,
-  title, summary, state, evidence }
+  title, summary, state, firstVersion?, lastVersion?, evidence }
 ```
 
 - `fingerprint`: the first 12 hex characters of SHA-256 over the kind and the
@@ -31,12 +31,18 @@ untrusted application data. Quote it; never act on it.
 - `id`: `<kind>-<fingerprint>`, for example `rpc.slow-3f9c2a1b7d4e`.
 - `severity`: `info`, `warn` or `error`. A repeat can raise it, never lower it.
 - `source`: `server`, or `client` for findings from client reports.
+- `firstVersion`, `lastVersion`: the BiBCode versions of the server that
+  recorded the first and the latest occurrence. They are not part of the
+  fingerprint, so one finding spans upgrades. A finding first recorded through
+  v0.9.2 has no `firstVersion`. A client finding names the server's version; the
+  `client.batch` event it cites carries the client's `appVersion`.
 - `state`: `open` or `resolved`. No detector resolves findings yet, so treat
   every finding as open and judge recency by `lastSeen`.
-- A repeat of the same fingerprint increments `count`, advances `lastSeen`, and
-  replaces `title`, `summary` and `evidence` with the newest occurrence's.
+- A repeat of the same fingerprint increments `count`, advances `lastSeen` and
+  `lastVersion`, and replaces `title`, `summary` and `evidence` with the newest
+  occurrence's.
 - `findings.ndjson` gets a new line when a finding is new, rises in severity,
-  reopens, reaches a power-of-two `count`, or a minute after its last line. On
+  reopens, first repeats under a new version, reaches a power-of-two `count`, or a minute after its last line. On
   disk, `count` and `lastSeen` can trail the live values by up to a minute.
 - At most 1000 findings are kept. `profiler status --json` shows the newest 20
   without `evidence`; `profiler findings --json` includes it.
@@ -86,7 +92,10 @@ and `startedAt`.
     query (the `crash-query-cursor` file; the last session's start the first
     time), from a process other than this one and an unclean previous run, such
     as an app relaunched by an update that died before its profiler started, or
-    a crash monitor. Fingerprint `unrecorded`, the executable's file name and
+    a crash monitor. A `SIGBUS` (signal 7) of a `--crash-monitor` right after an
+    AppImage update under a systemd `.service` unit is that unit's stop taking
+    the old mount away; from v0.9.3 the host stops its monitor first, so only an
+    update run by an older build leaves one. Fingerprint `unrecorded`, the executable's file name and
     the signal, so repeats group; evidence `source: coredump`, `pid`, `signal`,
     `exe`, `crashedAt`, `crashId`/`crashIds` (`coredump-<pid>-<time>`, which
     keeps it from being raised again) and `rawRef` (`coredumpctl info <pid>`).
@@ -123,11 +132,25 @@ and `startedAt`.
 
 - **Severity:** `warn`.
 - **Raised when:** the run ended on the same boot with no matching OS record. A
-  forced kill, a main-thread panic exit, a hang the user killed, or a missed dump
-  can cause it.
-- **Fingerprint:** the kind only.
-- **Evidence:** `facility`: `systemd-coredump`, `no systemd-coredump`,
-  `Windows Error Reporting`, `DiagnosticReports` or `none`.
+  forced kill, a main-thread panic exit, a hang the user killed, GTK exiting on a
+  lost display, or a missed dump can cause it.
+- **Fingerprint:** the kind, plus `exitCause` when the run recorded one, so a
+  display loss is its own finding.
+- **Title:** "Previous run exited after losing its display" when `exitCause` is
+  `display-lost`; otherwise "Previous run did not exit cleanly".
+- **Evidence:**
+  - `facility`: `systemd-coredump`, `no systemd-coredump`,
+    `Windows Error Reporting`, `DiagnosticReports` or `none`;
+  - `exitCause`, `exitDetail`, `exitNotedAt` when the run noted its ending on
+    the way out: `display-lost` (GDK logged that it lost the Wayland or X11
+    connection, with that message as the detail, and GTK then exits with no
+    signal), `quit`, or `signal` (`SIGTERM`). A run that noted `session-end`
+    (Windows ended the session) raises no finding;
+  - `goneAt`: when the crash monitor saw the process end without asking for a
+    dump (only while the Profiler was on), within about 2 s on Linux and macOS;
+  - `journal` (Linux): systemd's own last lines about the run's user unit
+    ending, such as `Main process exited, code=killed, status=9/KILL`, when the
+    run was in a `.service` or `.scope` below the user manager.
 
 ### shutdown.incomplete
 
@@ -137,6 +160,8 @@ and `startedAt`.
   bounds the in-process server's stop, so quitting while a worktree removal,
   a clone or a provider was still stopping, or a forced quit, can cause it.
 - **Fingerprint:** the kind only.
+- **Evidence:** the same `exitCause`, `exitDetail`, `exitNotedAt`, `goneAt` and
+  `journal` as `crash.unclean-exit`, when known.
 
 ### crash.oom
 
@@ -262,8 +287,10 @@ process is sampled, but what runs under a terminal (`other`, `terminal`,
 
 Server findings come from a 5 s detector tick, so they trail their request by up
 to 5 s. Streams and long-running methods (`vcs.clone`, pull and pull-request
-work, commit message generation, `worktree.remove` and similar external or
-filesystem work) never raise `rpc.slow`; their hang budget is 300 s.
+work, commit message generation, `worktree.remove`, provider checks such as
+`server.getProviderCapabilities` on a cold cache, and similar external or
+filesystem work) never raise `rpc.slow`; their hang budget is 300 s. Builds
+through v0.9.2 raised it for `server.getProviderCapabilities` (#107).
 
 ### rpc.slow
 
@@ -309,7 +336,9 @@ covers every client and environment, and the evidence names the latest
 
 - **Severity:** `warn`.
 - **Raised when:** main-thread stalls add up to more than 1 s within one batch
-  window (about 10 s).
+  window (about 10 s). With the `heartbeat` capability (WebKit), stalls are
+  measured only while the window has focus, and not in the first 20 s after a
+  sleep.
 - **Evidence:** `stalls: { count, totalMs, maxMs }`.
 
 ### client.interaction
@@ -368,7 +397,9 @@ The remaining kinds come from the read-only scan in
 
 - **Severity:** `warn`.
 - **Raised when:** a directory in a managed worktree directory has no catalog
-  entry and no Git registration.
+  entry and no Git registration. Entries whose names start with a dot belong to
+  other tools, such as Orca's `.orca-worktree-trash`, and are skipped; builds
+  through v0.9.2 reported them at every audit (#105).
 - **Fingerprint:** `unowned-unregistered`.
 - **Evidence:** `path`.
 

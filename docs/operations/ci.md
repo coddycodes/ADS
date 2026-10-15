@@ -14,7 +14,8 @@ run as queued after Check, Test, and the other native rows have already
 started. Inspect the jobs, not only the run status, before treating the
 workflow as idle.
 
-- **Check** runs `vp check`, workspace typechecking (`vpr typecheck`),
+- **Check** runs `vp check` (which fails on any lint warning), workspace
+  typechecking (`vpr typecheck`),
   `cargo fmt --all --check`, Clippy with warnings denied, and the complete
   desktop build pipeline on Ubuntu 24.04. A separate
   `cargo check -p bibcode-server --lib --bins -j 2` also checks production

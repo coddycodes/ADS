@@ -797,6 +797,11 @@ clients the other way: their `$BROWSER` shim posts to
 event that one client claims. See
 [Preview gateway](remote.md#preview-gateway) and
 [Open requests and automation hosts](remote.md#open-requests-and-automation-hosts).
+On the Linux desktop, a remote environment's previews skip the gateway: its
+preview profile routes loopback traffic through a desktop SOCKS server, and the
+web client carries each connection over the environment's own RPC connection
+(`preview.tunnelOpen`, `preview.tunnelWrite`, `preview.tunnelClose`). See
+[Preview tunnels](remote.md#preview-tunnels).
 
 When WSL-only mode is selected, that intent is authoritative even if an older
 persisted document has a stale disabled-backend flag. WSL planning and primary
@@ -1193,6 +1198,29 @@ it and early output (a known limitation of surviving streams). A reopen
 therefore leaves the first-attachment grant available for the next
 claim-carrying attach.
 
+A PTY's reader thread hands its reads to the manager through a channel of 1024,
+and the manager publishes the reads already waiting together, up to 64 KiB per
+event. A program printing thousands of short lines wrote faster than one read
+per publication, and the earlier 256-read channel dropped many of its lines
+before they reached the history. The channel still drops output, recorded as a
+gap, when the manager stalls for longer than 1024 reads.
+
+Every terminal's events go through one shared channel of 512 events. A
+`terminal.attach` stream sends the events already waiting together in one chunk
+(at most 64 items or 32 KiB, which bounds its 64-chunk queue at about 2 MiB), so a burst of output does not wait for one
+acknowledgement per event. A stream that still falls further behind than the
+channel holds no longer skips the lost events, which left lines missing from
+the terminal. It sends the session's state instead, with history and sequence
+read together under the session lock, and then only newer events. A chunk with
+such a snapshot waits until the chunks already queued for the client have gone
+out, so at most one waits. When the
+process is the one the stream last saw, the `snapshot` is marked
+`resync: true`: the client replaces its transcript, size and status but keeps
+the attachment generation, so input still waiting to be written survives.
+After a restart, or one that may have been among the lost events, it is a
+plain `snapshot`, handled as a new attachment. Clients that predate the flag
+handle every resync that way.
+
 Resize requests publish `resized { size }` after the PTY accepts the size,
 before subsequent output can publish. Claim-only changes publish; exact no-ops
 do not. Failed resizes preserve the prior state. Legacy resizes without a claim
@@ -1492,6 +1520,13 @@ it.
   event dropped by a full channel is never cited.
 - `server.getProfilerStatus` returns the 20 newest findings without evidence;
   the CLI and MCP readers return the evidence too.
+- **Versions (#98).** Every event line names the build that wrote it
+  (`bibcode`), so retention and failed writes never part events from their
+  version. Each start of recording also writes a `session.start` event with
+  the version, host (`desktop` or `server`), OS and architecture. Findings
+  carry `firstVersion` and `lastVersion`, which are not part of the
+  fingerprint. Status reports the `version` in `session.json`, the latest run's, which may
+  not have recorded. Client batches carry the client's own `appVersion`.
 
 ### Crash capture
 
@@ -1551,7 +1586,11 @@ it.
   starts, the host reads the local environment's `enableProfiler` from that data
   root's `settings.json` (`BIBCODE_HOME` or `~/.bibcode`), so a crash during
   startup is captured once the toggle is on. Afterwards it follows the in-process
-  server's committed setting. WSL, SSH, and remote environments run their own
+  server's committed setting. An AppImage host that runs directly in a systemd
+  `.service` unit stops its monitor and waits for it at its last exit callback:
+  the unit's stop kills the AppImage's FUSE mount with the cgroup, and a monitor
+  that ignored that SIGTERM would die with SIGBUS on its next page fault, a
+  false `crash.native`. WSL, SSH, and remote environments run their own
   `bibcode` process, hook, and monitor under their own setting.
 - **Dumps become findings.** A dump is a `crash.native` finding (error) whose
   evidence has `source: "minidump"`, `crashId`, `crashIds` (every dump the
@@ -1616,6 +1655,22 @@ it.
   | A different boot ID                                     | `crash.system` (info)                                         |
   | The user session cgroup's `oom_kill` count rose (Linux) | `crash.oom` (error)                                           |
   | None of these                                           | `crash.unclean-exit` (warn), naming the crash-record source   |
+
+  The record also keeps the run's systemd user `unit` (Linux) and an `exit`
+  note `{ cause, detail, at }` written synchronously as the run ends, the first
+  note standing: the desktop's GLib log writer notes `display-lost` when GDK
+  logs that it lost the Wayland or X11 connection (GTK then calls `_exit(1)`,
+  so nothing else records it), and the desktop notes `quit` on an exit request
+  and `signal` on `SIGTERM`. On Windows it notes `session-end` when Windows ends
+  the session with BiBCode open (shutdown, sign-out or Restart Manager): tao
+  destroys its event loop on `WM_ENDSESSION`, so the desktop exits at once, as
+  tao 0.36 would, instead of dispatching further messages into the destroyed
+  loop (#102). A run noted `session-end` is a clean ending unless a crash dump
+  or OS record matches it. The crash monitor writes `gone.json` with the time
+  it saw its parent end without a dump. For `crash.unclean-exit` and
+  `shutdown.incomplete`, the next start adds that note, the monitor's `goneAt`,
+  and systemd's own lines about the unit ending (`journalctl --user -u <unit>
+-t systemd`, within 5 s); a recorded cause also splits the fingerprint.
 
 - **OS crash records** are read read-only within 5 s. Linux runs
   `coredumpctl --json=short list` and `journalctl -a -o json` for the coredump

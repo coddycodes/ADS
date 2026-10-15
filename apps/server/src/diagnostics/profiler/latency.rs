@@ -107,6 +107,9 @@ pub fn is_long_running(method: &str) -> bool {
     matches!(
         method,
         "vcs.clone"
+            // A preview tunnel lives as long as its page; a write waits on the dev server.
+            | "preview.tunnelOpen"
+            | "preview.tunnelWrite"
             | "sourceControl.cloneRepository"
             | "sourceControl.publishRepository"
             | "sourceControl.lookupRepository"
@@ -134,6 +137,8 @@ pub fn is_long_running(method: &str) -> bool {
             | "server.updateProvider"
             | "server.refreshProviders"
             | "server.refreshProviderUsage"
+            // Served from a cache, but a cold one waits on the provider's probe (#107).
+            | "server.getProviderCapabilities"
             | "worktree.createManaged"
             // `git worktree remove --force` deletes the whole tree, `node_modules` and `target`
             // included.
@@ -1104,6 +1109,7 @@ mod tests {
             "pullRequests.list",
             "gitManager.commit",
             "worktree.remove",
+            "server.getProviderCapabilities",
         ] {
             book.observe(method, "success", 1_500.0, 0.0, None);
         }

@@ -3,8 +3,8 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use bibcode_server::terminal::{
-    PortablePtyBackend, PtyBackend, PtySpawnInput, TerminalAttachInput, TerminalEvent,
-    TerminalManager, TerminalMetadataEvent, TerminalOpenInput,
+    AttachmentItem, PortablePtyBackend, PtyBackend, PtySpawnInput, TerminalAttachInput,
+    TerminalEvent, TerminalManager, TerminalMetadataEvent, TerminalOpenInput,
 };
 
 const WINDOWS_CONSOLE_THEME_ENV: &str = "BIBCODE_WINDOWS_CONSOLE_THEME";
@@ -278,7 +278,7 @@ async fn restarting_a_native_terminal_with_a_new_console_theme_completes() {
         loop {
             if matches!(
                 attachment.recv().await,
-                Some(TerminalEvent::Output { ref data, .. })
+                Some(AttachmentItem::Event(TerminalEvent::Output { ref data, .. }))
                     if data.contains("BIBCODE_BEFORE_THEME_RESTART")
             ) {
                 break;
@@ -311,7 +311,7 @@ async fn restarting_a_native_terminal_with_a_new_console_theme_completes() {
         loop {
             if matches!(
                 attachment.recv().await,
-                Some(TerminalEvent::Restarted { .. })
+                Some(AttachmentItem::Event(TerminalEvent::Restarted { .. }))
             ) {
                 break;
             }

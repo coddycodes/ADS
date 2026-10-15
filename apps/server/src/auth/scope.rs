@@ -102,6 +102,9 @@ pub(crate) fn required_scope(method: &str) -> Option<&'static str> {
         | "preview.claimOpenRequest"
         | "preview.close"
         | "preview.gatewayOpen"
+        | "preview.tunnelClose"
+        | "preview.tunnelOpen"
+        | "preview.tunnelWrite"
         | "preview.navigate"
         | "preview.open"
         | "preview.refresh"
@@ -340,6 +343,17 @@ mod tests {
             Some(SCOPE_ORCHESTRATION_OPERATE),
             "a gateway gives read/write access to the upstream, so reading is not enough"
         );
+        for method in [
+            "preview.tunnelOpen",
+            "preview.tunnelWrite",
+            "preview.tunnelClose",
+        ] {
+            assert_eq!(
+                required_scope(method),
+                Some(SCOPE_ORCHESTRATION_OPERATE),
+                "a tunnel reaches the server's loopback like the gateway: {method}"
+            );
+        }
         assert_eq!(
             required_scope("vcs.cancelClone"),
             Some(SCOPE_ORCHESTRATION_OPERATE),

@@ -18,7 +18,7 @@ import {
   ProviderInstanceId,
 } from "@bibcode/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { isDesktopLocalConnectionTarget, desktopLocalBackendId } from "~/connection/desktopLocal";
 import { readCurrentEnvironmentPresentationPolicy } from "~/connection/currentEnvironmentPresentation";
@@ -151,7 +151,12 @@ function fallbackHost(primaryEnvironmentId: EnvironmentId): AddProjectHostOption
   };
 }
 
-function initialWorkflowHost(input: AddProjectWorkflowStateInput): AddProjectHostOption {
+function initialWorkflowHost(
+  input: Pick<
+    AddProjectWorkflowStateInput,
+    "hosts" | "initialEnvironmentId" | "primaryEnvironmentId"
+  >,
+): AddProjectHostOption {
   return (
     (input.initialEnvironmentId !== null
       ? input.hosts.find((host) => host.environmentId === input.initialEnvironmentId)
@@ -278,8 +283,14 @@ function cloneFeedback(
 export function useAddProjectWorkflowState(
   input: AddProjectWorkflowStateInput,
 ): AddProjectWorkflow {
+  const { onOpenChange, pickFolder } = input;
   const initialHost = useMemo(
-    () => initialWorkflowHost(input),
+    () =>
+      initialWorkflowHost({
+        hosts: input.hosts,
+        initialEnvironmentId: input.initialEnvironmentId,
+        primaryEnvironmentId: input.primaryEnvironmentId,
+      }),
     [input.hosts, input.initialEnvironmentId, input.primaryEnvironmentId],
   );
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState(initialHost.environmentId);
@@ -300,7 +311,9 @@ export function useAddProjectWorkflowState(
   const previousOpenRef = useRef(false);
   /** Set only while the clone request itself runs, so Cancel cannot interrupt registration. */
   const cloneAttemptRef = useRef<CloneAttempt | null>(null);
-  openRef.current = input.open;
+  useLayoutEffect(() => {
+    openRef.current = input.open;
+  }, [input.open]);
 
   const catalogSelectedHost = input.hosts.find(
     (host) => host.environmentId === selectedEnvironmentId,
@@ -313,7 +326,6 @@ export function useAddProjectWorkflowState(
       setStep("start");
       setParentBrowseGeneration(null);
       setBusy(false);
-      busyRef.current = false;
       setCloneProgress("idle");
       setHostPathState(host.baseDirectory);
       setCloneUrlState("");
@@ -326,14 +338,39 @@ export function useAddProjectWorkflowState(
     [],
   );
 
+  // Reset the form when the dialog opens and when the selected host leaves the catalog while
+  // open. Each committed reset starts a new generation, so earlier work cannot land on it.
+  const missingHostFallback = input.open && catalogSelectedHost === undefined ? initialHost : null;
+  const [formReset, setFormReset] = useState<{
+    readonly open: boolean;
+    readonly missingHostFallback: AddProjectHostOption | null;
+    readonly count: number;
+  }>({ open: false, missingHostFallback: null, count: 0 });
+  if (formReset.open !== input.open || formReset.missingHostFallback !== missingHostFallback) {
+    let count = formReset.count;
+    if (input.open && !formReset.open) {
+      resetForHost(initialHost);
+      count += 1;
+    }
+    if (missingHostFallback !== null) {
+      resetForHost(
+        missingHostFallback,
+        "The selected host disconnected. Choose a host and try again.",
+      );
+      count += 1;
+    }
+    setFormReset({ open: input.open, missingHostFallback, count });
+  }
+  const formResetCount = formReset.count;
+  useLayoutEffect(() => {
+    if (formResetCount === 0) return;
+    generationRef.current += 1;
+    busyRef.current = false;
+  }, [formResetCount]);
+
   useEffect(() => {
     const wasOpen = previousOpenRef.current;
     previousOpenRef.current = input.open;
-    if (input.open && !wasOpen) {
-      generationRef.current += 1;
-      resetForHost(initialHost);
-      return;
-    }
     if (!input.open && wasOpen) {
       generationRef.current += 1;
       // Closing while a clone waits for its host cancels it and ends the wait.
@@ -342,15 +379,7 @@ export function useAddProjectWorkflowState(
       busyRef.current = false;
       setCloneProgress("idle");
     }
-  }, [initialHost, input.open, resetForHost]);
-
-  useEffect(() => {
-    if (!input.open || catalogSelectedHost !== undefined) {
-      return;
-    }
-    generationRef.current += 1;
-    resetForHost(initialHost, "The selected host disconnected. Choose a host and try again.");
-  }, [catalogSelectedHost, initialHost, input.open, resetForHost]);
+  }, [input.open]);
 
   useEffect(
     () => () => {
@@ -397,9 +426,9 @@ export function useAddProjectWorkflowState(
       busyRef.current = false;
       setBusy(false);
       generationRef.current += 1;
-      input.onOpenChange(false);
+      onOpenChange(false);
     },
-    [input.onOpenChange, isCurrent],
+    [isCurrent, onOpenChange],
   );
 
   const completeOperation = useCallback(
@@ -468,7 +497,7 @@ export function useAddProjectWorkflowState(
       return;
     }
     try {
-      const picked = await input.pickFolder(selectedHost, hostPath);
+      const picked = await pickFolder(selectedHost, hostPath);
       if (!isCurrent(generation)) {
         return;
       }
@@ -500,8 +529,8 @@ export function useAddProjectWorkflowState(
     finishAsync,
     hostPath,
     input.operations,
-    input.pickFolder,
     isCurrent,
+    pickFolder,
     selectedHost,
   ]);
 
@@ -601,7 +630,7 @@ export function useAddProjectWorkflowState(
       }
       const initialPath = kind === "clone" ? cloneParent : createParent;
       try {
-        const picked = await input.pickFolder(selectedHost, initialPath);
+        const picked = await pickFolder(selectedHost, initialPath);
         if (!isCurrent(generation)) {
           return;
         }
@@ -648,8 +677,8 @@ export function useAddProjectWorkflowState(
       createParent,
       finishAsync,
       input.hosts,
-      input.pickFolder,
       isCurrent,
+      pickFolder,
       selectedHost,
     ],
   );
@@ -882,6 +911,15 @@ function adaptAtomResult<T, E>(result: AtomCommandResult<T, E>): AddProjectComma
   };
 }
 
+/** A stable getter for the latest rendered value, for async work that outlives its render. */
+function useLatestGetter<T>(value: T): () => T {
+  const ref = useRef(value);
+  useLayoutEffect(() => {
+    ref.current = value;
+  }, [value]);
+  return useCallback(() => ref.current, []);
+}
+
 /** Saved remote environments (SSH, direct, relay) are add-project hosts. */
 function isRemoteEnvironmentTarget(target: ConnectionTarget): boolean {
   return (
@@ -901,8 +939,7 @@ export function useAddProjectWorkflow(input: {
   const activeEnvironmentId = useActiveEnvironmentId();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const projects = useProjects();
-  const projectsRef = useRef(projects);
-  projectsRef.current = projects;
+  const getProjects = useLatestGetter(projects);
   const navigate = useNavigate();
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const createDefaultThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
@@ -910,7 +947,7 @@ export function useAddProjectWorkflow(input: {
   const cancelCloneCommand = useAtomCommand(vcsEnvironment.cancelClone, { reportFailure: false });
   const primaryEnvironmentId =
     primaryEnvironment?.environmentId ?? EnvironmentId.make(PRIMARY_LOCAL_ENVIRONMENT_ID);
-  const presentation = useMemo(readCurrentEnvironmentPresentationPolicy, []);
+  const presentation = useMemo(() => readCurrentEnvironmentPresentationPolicy(), []);
 
   const hosts = useMemo((): ReadonlyArray<AddProjectHostOption> => {
     const remoteEnvironmentIds = new Set(
@@ -974,7 +1011,7 @@ export function useAddProjectWorkflow(input: {
   const operations = useMemo(
     () =>
       createAddProjectOperations({
-        getProjects: () => projectsRef.current,
+        getProjects,
         createProject: async (commandInput) => {
           const environment = environments.find(
             (candidate) => candidate.environmentId === commandInput.environmentId,
@@ -1057,7 +1094,7 @@ export function useAddProjectWorkflow(input: {
           );
           if (!defaultThreadId) {
             defaultThreadId = newThreadId();
-            const project = projectsRef.current.find(
+            const project = getProjects().find(
               (candidate) =>
                 candidate.environmentId === commandInput.environmentId &&
                 candidate.id === commandInput.projectId,
@@ -1127,6 +1164,7 @@ export function useAddProjectWorkflow(input: {
       createDefaultThread,
       createProject,
       environments,
+      getProjects,
       navigate,
     ],
   );

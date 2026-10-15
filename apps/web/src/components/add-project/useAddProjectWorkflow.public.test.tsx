@@ -260,11 +260,20 @@ let currentWorkflow: AddProjectWorkflow;
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
-function WorkflowProbe() {
-  currentWorkflow = useAddProjectWorkflow({
+function captureWorkflow(workflow: AddProjectWorkflow) {
+  currentWorkflow = workflow;
+}
+
+function WorkflowProbe({
+  onWorkflow,
+}: {
+  readonly onWorkflow: (workflow: AddProjectWorkflow) => void;
+}) {
+  const workflow = useAddProjectWorkflow({
     open: true,
     onOpenChange: harness.onOpenChange,
   });
+  onWorkflow(workflow);
   return null;
 }
 
@@ -272,7 +281,7 @@ async function mountWorkflow(): Promise<AddProjectWorkflow> {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  await act(async () => root?.render(<WorkflowProbe />));
+  await act(async () => root?.render(<WorkflowProbe onWorkflow={captureWorkflow} />));
   return currentWorkflow;
 }
 

@@ -91,14 +91,25 @@ vi.mock("~/state/gitManager", () => ({
   },
 }));
 
+const deliveredDefaults = new WeakMap<object, object>();
+function deliveredCreateDefaults(value: object): object {
+  let delivered = deliveredDefaults.get(value);
+  if (delivered === undefined) {
+    delivered = { ...value };
+    deliveredDefaults.set(value, delivered);
+  }
+  return delivered;
+}
+
 vi.mock("~/state/query", () => ({
   useEnvironmentQuery: (atom: { kind: string; cursor?: number; tip?: string } | null) => ({
     data:
       atom?.kind === "createDefaults"
-        ? // A new object per read, as a revalidated query delivers.
+        ? // A new object per delivered value, as a revalidated query delivers: a query
+          // returns the same object until its next emission.
           h.createDefaults === null
           ? null
-          : { ...(h.createDefaults as object) }
+          : deliveredCreateDefaults(h.createDefaults as object)
         : atom?.kind === "status"
           ? h.status
           : atom?.kind === "commits"
@@ -166,7 +177,13 @@ vi.mock("~/state/query", () => ({
           : null,
     isPending: false,
     refresh: atom?.kind === "createDefaults" ? h.refreshDefaults : vi.fn(),
-    revalidate: vi.fn(),
+    // Revalidating delivers the defaults again, as a new object.
+    revalidate:
+      atom?.kind === "createDefaults"
+        ? () => {
+            if (h.createDefaults !== null) deliveredDefaults.delete(h.createDefaults as object);
+          }
+        : vi.fn(),
     requiresRetry: false,
   }),
 }));

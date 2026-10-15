@@ -458,6 +458,20 @@ After the candidate is installed, the harness also requires the relaunched app:
 as the crash monitor have none) within the restart bound, so an update that
 closes BiBCode without starting the new version fails the lane instead of
 passing a cleanup that found nothing to stop.
+When either wait times out, the harness saves `windows-processes-at-timeout.txt`
+(`tasklist.exe /V`), `windows-ui-at-timeout.txt` (top-level windows and their
+UI Automation names, which shows a waiting installer dialog), and
+`windows-process-audit-at-timeout.txt`: the updater's temporary directories,
+the BiBCode uninstall entries, then process starts and exits from the Security
+log for BiBCode executables (including the updater's installer) and the
+WebDriver processes, newest first and capped, with command lines only for
+`bibcode-desktop.exe` and its updater installer. The workflow turns on
+process-creation and process-termination auditing before the lane runs; a local
+run without it still records the directories and uninstall entries and notes
+that no audit events were found. The workflow also turns on Windows Error
+Reporting minidumps for `bibcode-desktop.exe` and uploads any it writes as the
+`seeded-upgrade-crash-dumps-<arch>` artifact: an exit status of `0xc00000fd`
+in the audit is a stack overflow, and its dump holds the crash site.
 The protected-baseline install command stays open until the host exits into that
 installer. Ending the command on the first `protecting` event stops the host
 before NSIS starts. Inspect that artifact on timeout; the later public
@@ -793,6 +807,13 @@ ones:
   open, quit the app normally. After the next start no new `crash.webview`
   (a `ProcessFailed` raised during shutdown) or `subprocess.crash` finding
   exists.
+- **Windows ends the session.** With the profiler on and the app open, sign
+  out of Windows (or shut down) without quitting BiBCode. After signing back in
+  and starting the app, `profiler findings --json` holds no new `crash.panic`
+  (`cannot move state from Destroyed`), `crash.unclean-exit` or `crash.system`
+  finding for that run, and `session.json` from before the start recorded
+  `exit.cause` `session-end` (#102). A virtual machine you can sign out of is
+  enough; a CI runner cannot end its own session.
 - **Console attach.** Run `profiler status` from `cmd.exe` and from
   PowerShell, with and without piping the output. The executable borrows the
   calling console, so `cmd.exe` returns its prompt at once: record whether the

@@ -332,6 +332,11 @@ export type TerminalEvent = typeof TerminalEvent.Type;
 const TerminalAttachSnapshotEvent = Schema.Struct({
   type: Schema.Literal("snapshot"),
   snapshot: TerminalSessionSnapshot,
+  /**
+   * The server's catch-up after its stream fell behind: the same attachment and process, so
+   * only the transcript is replaced. Absent on the first snapshot of an attachment.
+   */
+  resync: Schema.optionalKey(Schema.Boolean),
 });
 
 export const TerminalAttachStreamEvent = Schema.Union([

@@ -1,3 +1,6 @@
+import { EnvironmentId } from "@bibcode/contracts";
+
+import { wantsPreviewTunnel } from "~/browser/browserTargetResolver";
 import { previewBridge } from "~/components/preview/previewBridge";
 
 interface DesktopTabLease {
@@ -55,7 +58,10 @@ function createTab(tabId: string, lease: DesktopTabLease): void {
     for (const [inactiveTabId, inactiveLease] of inactive) {
       await closeTab(inactiveTabId, inactiveLease);
     }
-    await previewBridge?.createTab(tabId, lease.partition);
+    await previewBridge?.createTab(tabId, lease.partition, {
+      // A request: the desktop keeps the environment's first decision.
+      tunnel: lease.partition !== null && wantsPreviewTunnel(EnvironmentId.make(lease.partition)),
+    });
   });
   lease.ready = ready;
   lease.createFailed = false;

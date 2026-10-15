@@ -1,11 +1,31 @@
 // @vitest-environment happy-dom
 
-import type { GitManagerCommitEntry, GitManagerCommitPage } from "@bibcode/contracts";
+import {
+  GitManagerOperationError,
+  type GitManagerCommitEntry,
+  type GitManagerCommitPage,
+  type ScopedProjectRef,
+} from "@bibcode/contracts";
+import * as Cause from "effect/Cause";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { useGitManagerStore } from "~/gitManagerStore";
 import { textSizesBelowTextXs } from "~/test/uiTypography";
+
+interface NextPageRequest {
+  readonly offset: number;
+  readonly attempt: number;
+}
+
+interface NextPageResult {
+  readonly data: GitManagerCommitPage | null;
+  readonly error: string | null;
+  readonly failure?: GitManagerOperationError;
+}
+
+const PENDING_NEXT_PAGE: NextPageResult = { data: null, error: null };
 
 const h = vi.hoisted(() => ({
   listProps: null as Record<string, unknown> | null,
@@ -28,7 +48,11 @@ const h = vi.hoisted(() => ({
   contextMenuShow: vi.fn(),
   dndProps: null as Record<string, unknown> | null,
   refreshCommits: vi.fn(),
+  revalidateFirstPage: vi.fn(),
   scrollNode: null as HTMLElement | null,
+  nextPageRequests: [] as number[],
+  nextPageResult: (_request: NextPageRequest): NextPageResult => PENDING_NEXT_PAGE,
+  retryNextPage: vi.fn(),
 }));
 
 vi.mock("@legendapp/list/react", async () => {
@@ -62,7 +86,12 @@ vi.mock("../../../localApi", () => ({
 
 vi.mock("../../../state/gitManager", () => ({
   gitManagerEnvironment: {
-    getCommits: vi.fn(() => ({ kind: "commits" })),
+    getCommits: vi.fn((request: { input: { offset: number } }) => {
+      const offset = request.input.offset;
+      h.nextPageRequests.push(offset);
+      const attempt = h.nextPageRequests.filter((requested) => requested === offset).length;
+      return { kind: "next", offset, attempt };
+    }),
     getHistoryFirstPage: vi.fn((input: { input: { refreshCacheKey: string } }) => {
       h.firstPageInputs.push(input);
       return { kind: "commits" };
@@ -75,29 +104,47 @@ vi.mock("../../../state/gitManager", () => ({
 }));
 
 vi.mock("../../../state/query", () => ({
-  useEnvironmentQuery: (atom: { kind: string } | null) => ({
-    data:
-      atom?.kind === "commits" ? h.commitPage : atom?.kind === "retained" ? h.retainedPages : null,
-    emission: {
-      _tag: "Initial",
-      waiting:
+  useEnvironmentQuery: (atom: ({ kind: string } & Partial<NextPageRequest>) | null) => {
+    const next =
+      atom?.kind === "next"
+        ? h.nextPageResult({ offset: atom.offset ?? 0, attempt: atom.attempt ?? 0 })
+        : null;
+    return {
+      data:
         atom?.kind === "commits"
-          ? h.firstPageWaiting
+          ? h.commitPage
           : atom?.kind === "retained"
-            ? h.retainedWaiting
-            : false,
-    },
-    error:
-      atom?.kind === "retained"
-        ? h.retainedError
-        : atom?.kind === "commits"
-          ? h.firstPageError
-          : null,
-    isPending: false,
-    refresh: atom?.kind === "commits" ? h.refreshCommits : h.retryRetained,
-    revalidate: vi.fn(),
-    requiresRetry: false,
-  }),
+            ? h.retainedPages
+            : (next?.data ?? null),
+      emission:
+        next?.failure === undefined
+          ? {
+              _tag: "Initial",
+              waiting:
+                atom?.kind === "commits"
+                  ? h.firstPageWaiting
+                  : atom?.kind === "retained"
+                    ? h.retainedWaiting
+                    : false,
+            }
+          : { _tag: "Failure", cause: Cause.fail(next.failure), waiting: false },
+      error:
+        atom?.kind === "retained"
+          ? h.retainedError
+          : atom?.kind === "commits"
+            ? h.firstPageError
+            : (next?.error ?? null),
+      isPending: false,
+      refresh:
+        atom?.kind === "commits"
+          ? h.refreshCommits
+          : atom?.kind === "next"
+            ? h.retryNextPage
+            : h.retryRetained,
+      revalidate: atom?.kind === "commits" ? h.revalidateFirstPage : vi.fn(),
+      requiresRetry: false,
+    };
+  },
 }));
 
 vi.mock("../rewrite/gitManagerCommitDrag", () => ({
@@ -156,6 +203,10 @@ beforeEach(() => {
   h.contextMenuShow.mockReset();
   h.dndProps = null;
   h.refreshCommits.mockReset();
+  h.revalidateFirstPage.mockReset();
+  h.nextPageRequests.length = 0;
+  h.nextPageResult = () => PENDING_NEXT_PAGE;
+  h.retryNextPage.mockReset();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -1147,5 +1198,176 @@ describe("GitManagerHistoryView repository generation tracking", () => {
       expect(target.environmentId).toBe("environment-1");
       expect(target.input.cwd).toBe("/repositories/a");
     }
+  });
+});
+
+describe("GitManagerHistoryView paging", () => {
+  const pagingProjectRef = {
+    environmentId: "environment-1",
+    projectId: "project-paging",
+  } as unknown as ScopedProjectRef;
+
+  afterEach(() => {
+    useGitManagerStore.getState().setLoadedPageCursors(pagingProjectRef, []);
+    useGitManagerStore.getState().setLoadedPageCount(pagingProjectRef, 0);
+  });
+
+  function historyPage(
+    commits: ReadonlyArray<GitManagerCommitEntry>,
+    nextOffset: number | null,
+  ): GitManagerCommitPage {
+    return {
+      generation: 1,
+      pinnedTips: [commit(1).sha],
+      commits,
+      nextOffset,
+      exhausted: nextOffset === null,
+      degradedToAllPaging: false,
+    };
+  }
+
+  function renderPagedHistory() {
+    return act(async () =>
+      root?.render(
+        <GitManagerHistoryView
+          branchSyncDisabledReason={null}
+          blockedReasons={[]}
+          repositoryGeneration={null}
+          signalGeneration={null}
+          signalPending={false}
+          projectRef={pagingProjectRef}
+          rewriteDisabledReason={null}
+          scope={{ environmentId: "environment-1" as never, cwd: "/opaque/repository" }}
+          tagDisabledReason={null}
+          onAction={vi.fn()}
+        />,
+      ),
+    );
+  }
+
+  function reachListEnd() {
+    const onViewableItemsChanged = h.listProps?.onViewableItemsChanged as
+      | ((info: { end: number }) => void)
+      | undefined;
+    const rows = (h.listProps?.data as ReadonlyArray<GitManagerCommitEntry> | undefined) ?? [];
+    return act(async () => onViewableItemsChanged?.({ end: rows.length - 1 }));
+  }
+
+  function loadedCursors() {
+    return useGitManagerStore.getState().selectViewState(pagingProjectRef).loadedPageCursors;
+  }
+
+  it("attempts a persisted next page that keeps failing once and asks again only when the user does", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_000);
+    h.commitPage = historyPage([commit(1), commit(2), commit(3)], 3);
+    // Each request's failure stays cached. A later request succeeds, so a
+    // re-request loop shows up as extra requests instead of hanging the test,
+    // and a render loop that never settles fails fast.
+    let reads = 0;
+    h.nextPageResult = ({ attempt }) => {
+      reads += 1;
+      if (reads > 200) throw new Error("History kept re-rendering the failed page.");
+      return attempt <= 5
+        ? { data: null, error: "The next page could not load." }
+        : { data: historyPage([commit(4)], null), error: null };
+    };
+    useGitManagerStore.getState().setLoadedPageCursors(pagingProjectRef, [0, 3]);
+
+    await renderPagedHistory();
+
+    expect(h.nextPageRequests).toEqual([3]);
+    expect(container.textContent).toContain("The next page could not load.");
+    expect(container.textContent).not.toContain("Loading more commits…");
+
+    await renderPagedHistory();
+    expect(h.nextPageRequests).toEqual([3]);
+    expect(h.retryNextPage).not.toHaveBeenCalled();
+
+    await reachListEnd();
+    expect(h.retryNextPage).toHaveBeenCalledOnce();
+    expect(h.nextPageRequests).toEqual([3]);
+  });
+
+  it("clears a failed page's error when the user refreshes history", async () => {
+    h.commitPage = historyPage([commit(1), commit(2), commit(3)], 3);
+    h.nextPageResult = () => ({ data: null, error: "The next page could not load." });
+    useGitManagerStore.getState().setLoadedPageCursors(pagingProjectRef, [0, 3]);
+
+    await renderPagedHistory();
+    expect(container.textContent).toContain("The next page could not load.");
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Refresh history"]')?.click(),
+    );
+
+    expect(h.refreshCommits).toHaveBeenCalledOnce();
+    expect(container.textContent).not.toContain("The next page could not load.");
+    expect(container.textContent).toContain("3 commits loaded");
+    expect(h.nextPageRequests).toEqual([3]);
+    expect(loadedCursors()).toEqual([0]);
+  });
+
+  it("loads persisted pages one after another and keeps their cursors", async () => {
+    h.commitPage = historyPage([commit(1), commit(2), commit(3)], 3);
+    const second = historyPage([commit(4), commit(5), commit(6)], 6);
+    const third = historyPage([commit(7)], null);
+    h.nextPageResult = ({ offset }) => ({
+      data: offset === 3 ? second : offset === 6 ? third : null,
+      error: null,
+    });
+    useGitManagerStore.getState().setLoadedPageCursors(pagingProjectRef, [0, 3, 6]);
+
+    await renderPagedHistory();
+
+    expect(h.nextPageRequests).toEqual([3, 6]);
+    expect(container.textContent).toContain("7 commits loaded");
+    expect(container.textContent).not.toContain("Loading more commits…");
+    expect(loadedCursors()).toEqual([0, 3, 6]);
+  });
+
+  it("loads the next page when the user reaches the end and records its cursor", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_000);
+    h.commitPage = historyPage([commit(1), commit(2), commit(3)], 3);
+    let resolved = false;
+    h.nextPageResult = () => ({
+      data: resolved ? historyPage([commit(4)], null) : null,
+      error: null,
+    });
+
+    await renderPagedHistory();
+    expect(h.nextPageRequests).toEqual([]);
+
+    await reachListEnd();
+    expect(h.nextPageRequests).toEqual([3]);
+    expect(container.textContent).toContain("Loading more commits…");
+
+    resolved = true;
+    await renderPagedHistory();
+    expect(container.textContent).toContain("4 commits loaded");
+    expect(container.textContent).not.toContain("Loading more commits…");
+    expect(loadedCursors()).toEqual([0, 3]);
+  });
+
+  it("re-reads history from the first page when a next page's pinned tips no longer resolve", async () => {
+    h.commitPage = historyPage([commit(1), commit(2), commit(3)], 3);
+    h.nextPageResult = () => ({
+      data: null,
+      error: "The pinned history tips no longer resolve.",
+      failure: new GitManagerOperationError({
+        operation: "history",
+        code: "history-tips-unresolvable",
+        message: "The pinned history tips no longer resolve.",
+        blocked: null,
+      }),
+    });
+    useGitManagerStore.getState().setLoadedPageCursors(pagingProjectRef, [0, 3]);
+
+    await renderPagedHistory();
+
+    expect(h.nextPageRequests).toEqual([3]);
+    expect(h.revalidateFirstPage).toHaveBeenCalledOnce();
+    expect(container.textContent).toContain("3 commits loaded");
+    expect(container.textContent).not.toContain("no longer resolve");
+    expect(loadedCursors()).toEqual([0]);
   });
 });

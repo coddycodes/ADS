@@ -8,7 +8,7 @@ import {
   MoreHorizontalIcon,
   SearchIcon,
 } from "lucide-react";
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useMemo, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { ChatRouteInset } from "../../routes/-ChatRouteInset";
@@ -100,11 +100,9 @@ export function AgentsPage() {
     [rows, selectedKey],
   );
 
-  useEffect(() => {
-    if (selectedKey !== null && !rows.some((row) => row.key === selectedKey)) {
-      setSelectedKey(null);
-    }
-  }, [rows, selectedKey]);
+  if (selectedKey !== null && !rows.some((row) => row.key === selectedKey)) {
+    setSelectedKey(null);
+  }
 
   const handleBack = useCallback(() => {
     if (router.history.canGoBack?.()) {

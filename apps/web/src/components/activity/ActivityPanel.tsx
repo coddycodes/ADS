@@ -128,9 +128,9 @@ export function ActivityPanel({
 }: ActivityPanelProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const selectedForFocusRef = useRef<string | null>(null);
-  const restoreFocusRef = useRef<string | null>(null);
   const handledRemovalRef = useRef<string | null>(null);
   const previousSectionRef = useRef(route.section);
+  const [restoreFocusRecordId, setRestoreFocusRecordId] = useState<string | null>(null);
   const [removalNotice, setRemovalNotice] = useState<{
     readonly section: ActivityPanelRoute["section"];
     readonly recordKind: ActivityRecordKind;
@@ -142,9 +142,16 @@ export function ActivityPanel({
   const detailRecord = routedDetail?.pages[0]?.record;
   const loadingDetail = routedDetail === null ? loadingDetailForRoute(route) : null;
   const resolvedDetail = routedDetail ?? loadingDetail;
+  const activeRosterPages = roster.active.pages;
+  const doneRosterPages = roster.done.pages;
   const reconciledRoster = useMemo(
-    () => reconcileActivityRosterRecords(roster.active, roster.done, route.section),
-    [roster.active.pages, roster.done.pages, route.section],
+    () =>
+      reconcileActivityRosterRecords(
+        { pages: activeRosterPages },
+        { pages: doneRosterPages },
+        route.section,
+      ),
+    [activeRosterPages, doneRosterPages, route.section],
   );
   const rosterRecords = useMemo(
     () => [...reconciledRoster.active, ...reconciledRoster.done],
@@ -172,25 +179,28 @@ export function ActivityPanel({
     setRemovalNotice(null);
   }, [route.section]);
 
+  // A handled removal always has its notice; selecting another record forgets both.
   useEffect(() => {
+    const handledRemoval = handledRemovalRef.current;
     if (
-      removalNotice === null ||
+      handledRemoval === null ||
       route.selectedRecordKind === null ||
       route.selectedRecordId === null ||
-      (route.selectedRecordKind === removalNotice.recordKind &&
-        route.selectedRecordId === removalNotice.recordId)
+      handledRemoval === `${route.section}:${route.selectedRecordKind}:${route.selectedRecordId}`
     ) {
       return;
     }
     handledRemovalRef.current = null;
     setRemovalNotice(null);
-  }, [removalNotice, route.selectedRecordId, route.selectedRecordKind]);
+  }, [route.section, route.selectedRecordId, route.selectedRecordKind]);
 
+  const headingFocusKey =
+    selected && !removed ? `${route.selectedRecordId}\u0000${detailRecord?.id ?? ""}` : null;
   useEffect(() => {
-    if (selected && !removed) {
+    if (headingFocusKey !== null) {
       headingRef.current?.focus();
     }
-  }, [detailRecord?.id, removed, route.selectedRecordId, selected]);
+  }, [headingFocusKey]);
 
   useEffect(() => {
     if (!removed || route.selectedRecordKind === null || route.selectedRecordId === null) {
@@ -201,7 +211,7 @@ export function ActivityPanel({
       return;
     }
     handledRemovalRef.current = removalKey;
-    restoreFocusRef.current = null;
+    setRestoreFocusRecordId(null);
     setRemovalNotice({
       section: route.section,
       recordKind: route.selectedRecordKind,
@@ -228,7 +238,7 @@ export function ActivityPanel({
     [onNavigate, route.section],
   );
   const back = useCallback(() => {
-    restoreFocusRef.current = selectedForFocusRef.current ?? route.selectedRecordId;
+    setRestoreFocusRecordId(selectedForFocusRef.current ?? route.selectedRecordId);
     onNavigate({
       section: route.section,
       selectedRecordKind: null,
@@ -249,14 +259,14 @@ export function ActivityPanel({
     [onNavigate],
   );
   const focusRestored = useCallback(() => {
-    restoreFocusRef.current = null;
+    setRestoreFocusRecordId(null);
   }, []);
 
   const rosterContent = (
     <ActivityRoster
       active={roster.active}
       done={roster.done}
-      focusRecordId={restoreFocusRef.current}
+      focusRecordId={restoreFocusRecordId}
       notification={removalNotification}
       now={effectiveNow}
       onFocusRestored={focusRestored}

@@ -115,8 +115,14 @@ function baseOptions(overrides: Partial<HookOptions> = {}): HookOptions {
 
 let captured: HookResult | null = null;
 
-function Harness({ options }: { options: HookOptions }) {
-  captured = useBrowserViewportResize(options);
+function Harness({
+  options,
+  onResult,
+}: {
+  options: HookOptions;
+  onResult: (result: HookResult) => void;
+}) {
+  onResult(useBrowserViewportResize(options));
   return null;
 }
 
@@ -125,7 +131,14 @@ function renderHook(options: HookOptions = baseOptions()): HookResult {
   harness.setStateCalls.length = 0;
   harness.effects.length = 0;
   harness.refs.length = 0;
-  renderToStaticMarkup(createElement(Harness, { options }));
+  renderToStaticMarkup(
+    createElement(Harness, {
+      options,
+      onResult: (result) => {
+        captured = result;
+      },
+    }),
+  );
   if (!captured) throw new Error("hook did not produce a result");
   return captured;
 }

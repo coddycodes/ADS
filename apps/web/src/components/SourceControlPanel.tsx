@@ -191,6 +191,7 @@ export default function SourceControlPanel({
     cwd: gitCwd ?? "",
     legacyThreadKey: scopedThreadKey(threadRef),
   });
+  const { clear: clearDraft, setMessage: setDraftMessage } = draft;
 
   const groupByFolder = useSourceControlPanelStore((state) => state.sourceControlGroupByFolder);
   const setGroupByFolder = useSourceControlPanelStore(
@@ -239,7 +240,13 @@ export default function SourceControlPanel({
   // Files staged for discard, awaiting the destructive-action confirm dialog.
   const [pendingDiscard, setPendingDiscard] = useState<PendingDiscard | null>(null);
   // Bumped on every successful git action so <SourceControlCommits> refetches.
-  const [commitSignal, setCommitSignal] = useState(0);
+  // `nowMs` is the stable clock for relative commit timestamps: it only advances
+  // with a bump, not on every keystroke in the message box.
+  const [commitReload, setCommitReload] = useState(() => ({ signal: 0, nowMs: Date.now() }));
+  const reloadCommits = useCallback(() => {
+    const nowMs = Date.now();
+    setCommitReload((current) => ({ signal: current.signal + 1, nowMs }));
+  }, []);
   const [selectionMode, setSelectionMode] = useState(false);
   const [restoreSelectFocus, setRestoreSelectFocus] = useState(false);
   const [selectedFilePaths, setSelectedFilePaths] = useState<ReadonlySet<string>>(() => new Set());
@@ -268,7 +275,7 @@ export default function SourceControlPanel({
         setRecoveryEvent(event);
         // The merge commit now exists; the commit history reloads on this token.
         if (event._tag === "finished" && input._tag === "continue") {
-          setCommitSignal((value) => value + 1);
+          reloadCommits();
         }
       });
       recoveryHandleRef.current = handle;
@@ -290,7 +297,7 @@ export default function SourceControlPanel({
         });
       });
     },
-    [environmentId, runOperation],
+    [environmentId, reloadCommits, runOperation],
   );
   const cancelRecovery = useCallback(() => {
     recoveryHandleRef.current?.cancel();
@@ -320,9 +327,6 @@ export default function SourceControlPanel({
     return staged.length > 0 ? staged : files.map((file) => file.path);
   }, [files]);
   const summary = useMemo(() => summarizeChangeSelection(files), [files]);
-  // Stable clock for relative commit timestamps: only advances when a commit
-  // succeeds, not on every keystroke in the message box.
-  const nowMs = useMemo(() => Date.now(), [commitSignal]);
   const presentation = useMemo(
     () => getSourceControlPresentation(status?.sourceControlProvider),
     [status?.sourceControlProvider],
@@ -383,20 +387,24 @@ export default function SourceControlPanel({
 
   const threadToastData = useMemo(() => ({ threadRef }), [threadRef]);
 
+  // Selection mode ends by itself once no selectable files remain, and the
+  // selection keeps only paths that still exist.
+  if (selectionMode && (files.length === 0 || !hasAreas)) {
+    setSelectionMode(false);
+    if (selectedFilePaths.size > 0) setSelectedFilePaths(new Set());
+    if (pendingDiscard?.kind === "bulk") setPendingDiscard(null);
+  } else if (selectedFilePaths.size > 0) {
+    const available = new Set(files.map((file) => file.path));
+    const next = new Set([...selectedFilePaths].filter((path) => available.has(path)));
+    if (next.size !== selectedFilePaths.size) setSelectedFilePaths(next);
+  }
+  // Leaving selection mode, the automatic exit included, ends its session, so a
+  // pending Ignore does not exit it again.
+  const wasSelectingRef = useRef(selectionMode);
   useEffect(() => {
-    if (selectionMode && (files.length === 0 || !hasAreas)) {
-      selectionSessionRef.current += 1;
-      setSelectionMode(false);
-      setSelectedFilePaths((current) => (current.size === 0 ? current : new Set()));
-      setPendingDiscard((current) => (current?.kind === "bulk" ? null : current));
-      return;
-    }
-    setSelectedFilePaths((current) => {
-      const available = new Set(files.map((file) => file.path));
-      const next = new Set([...current].filter((path) => available.has(path)));
-      return next.size === current.size ? current : next;
-    });
-  }, [files, hasAreas, selectionMode]);
+    if (wasSelectingRef.current && !selectionMode) selectionSessionRef.current += 1;
+    wasSelectingRef.current = selectionMode;
+  }, [selectionMode]);
 
   const runGitAction = useCallback(
     async (action: GitStackedAction, options?: { skipConfirm?: boolean }) => {
@@ -489,10 +497,10 @@ export default function SourceControlPanel({
       }
       // Commit succeeded: clear the drafted message.
       if (actionCanCommit) {
-        draft.clear();
+        clearDraft();
       }
       // Refresh the commits list (and the relative-time clock) after any success.
-      setCommitSignal((value) => value + 1);
+      reloadCommits();
       toastManager.update(toastId, {
         type: "success",
         title: result.value.toast.title,
@@ -506,7 +514,7 @@ export default function SourceControlPanel({
     },
     [
       draft.message,
-      draft.clear,
+      clearDraft,
       files,
       hasAreas,
       isDefaultRef,
@@ -516,6 +524,7 @@ export default function SourceControlPanel({
       gitCwd,
       environmentId,
       pullRequestBranchSelection,
+      reloadCommits,
     ],
   );
 
@@ -670,7 +679,7 @@ export default function SourceControlPanel({
       const mutation = Symbol();
       ignoreMutationRef.current = mutation;
       setIgnorePending(true);
-      try {
+      const updateGitignore = async (): Promise<boolean> => {
         const uniquePatterns = Array.from(new Set(patterns));
         const readResult = await readProjectFile({
           environmentId,
@@ -703,12 +712,13 @@ export default function SourceControlPanel({
           return false;
         }
         return true;
-      } finally {
+      };
+      return updateGitignore().finally(() => {
         if (ignoreMutationRef.current === mutation) {
           ignoreMutationRef.current = null;
           setIgnorePending(false);
         }
-      }
+      });
     },
     [environmentId, gitCwd, readProjectFile, runDiscard, threadToastData, writeProjectFile],
   );
@@ -763,9 +773,9 @@ export default function SourceControlPanel({
       return;
     }
     if (result.value.message.trim().length > 0) {
-      draft.setMessage(result.value.message);
+      setDraftMessage(result.value.message);
     }
-  }, [draft.setMessage, generateAction, generateFilePaths, threadToastData]);
+  }, [generateAction, generateFilePaths, setDraftMessage, threadToastData]);
 
   const cancelGenerate = useCallback(() => {
     // There is no clean client-side interrupt path for this RPC: unlike
@@ -1385,7 +1395,7 @@ export default function SourceControlPanel({
           }}
           onSettled={(result) => {
             if (result.commit.status === "created") draft.clear();
-            setCommitSignal((value) => value + 1);
+            reloadCommits();
           }}
         />
       ) : null}
@@ -1399,7 +1409,7 @@ export default function SourceControlPanel({
           refsError={refsQuery.error}
           scope={{ environmentId, cwd: gitCwd }}
           targetMode="current-branch"
-          onFinished={() => setCommitSignal((value) => value + 1)}
+          onFinished={reloadCommits}
           onOpenChange={setMergeDialogOpen}
           onRefsStale={refsQuery.refresh}
           onRunningChange={setMergeOperationRunning}
@@ -1469,8 +1479,8 @@ export default function SourceControlPanel({
       <SourceControlCommits
         threadRef={threadRef}
         gitCwd={gitCwd}
-        nowMs={nowMs}
-        reloadToken={commitSignal}
+        nowMs={commitReload.nowMs}
+        reloadToken={commitReload.signal}
       />
     </DiffPanelShell>
   );

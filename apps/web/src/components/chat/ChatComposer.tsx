@@ -218,6 +218,26 @@ function isInsideComposerFloatingLayer(element: Element): boolean {
   return element.closest(COMPOSER_FLOATING_LAYER_SELECTOR) !== null;
 }
 
+/**
+ * Renders the provider trait controls from an element, so their callbacks are props rather than
+ * arguments of a render-time call.
+ */
+function ComposerFooterTraitControls({
+  hidden,
+  ...input
+}: Parameters<typeof renderComposerTraitControls>[0] & { hidden: boolean }) {
+  const traitControls = renderComposerTraitControls(input);
+  if (hidden || !traitControls) {
+    return null;
+  }
+  return (
+    <>
+      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+      {traitControls}
+    </>
+  );
+}
+
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   interactionModeAvailability: ProviderControlAvailability;
   interactionMode: ProviderInteractionMode;
@@ -858,21 +878,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         hasExplicitSelectedInstanceId,
       ),
     }),
-    [
-      hasExplicitSelectedInstanceId,
-      providerStatuses,
-      selectedInstanceId,
-      selectedProvider,
-      selectedProviderStatus,
-    ],
+    [hasExplicitSelectedInstanceId, providerStatuses, selectedInstanceId, selectedProvider],
   );
   const selectedModelSelection = useMemo<ModelSelection>(
     () => createModelSelection(selectedInstanceId, selectedModel, selectedModelOptionsForDispatch),
     [selectedInstanceId, selectedModel, selectedModelOptionsForDispatch],
   );
   const mountedRef = useRef(true);
-  const latestModelOptionCommitRef = useRef("");
-  latestModelOptionCommitRef.current = `${selectedProvider}:${selectedInstanceId}:${selectedModel}`;
+  const modelOptionCommitKey = `${selectedProvider}:${selectedInstanceId}:${selectedModel}`;
+  const latestModelOptionCommitRef = useRef(modelOptionCommitKey);
+  useLayoutEffect(() => {
+    latestModelOptionCommitRef.current = modelOptionCommitKey;
+  }, [modelOptionCommitKey]);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -980,10 +997,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Refs
   // ------------------------------------------------------------------
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
-  const composerCapabilitiesRef = useRef(composerCapabilities);
-  composerCapabilitiesRef.current = composerCapabilities;
-  const composerInlineTokenContextRef = useRef(composerInlineTokenContext);
-  composerInlineTokenContextRef.current = composerInlineTokenContext;
   const previousComposerCursorMappingRef = useRef({
     prompt,
     inlineTokenContext: composerInlineTokenContext,
@@ -999,7 +1012,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const mobileComposerExpandFrameRef = useRef<number | null>(null);
   const mobileComposerExpandReleaseFrameRef = useRef<number | null>(null);
   const mobileComposerExpandInFlightRef = useRef(false);
-  const dragDepthRef = useRef(0);
+
+  // ------------------------------------------------------------------
+  // Reset compositor state on thread/draft change
+  // ------------------------------------------------------------------
+  const [composerResetScope, setComposerResetScope] = useState(() => ({
+    draftId,
+    activeThreadId,
+  }));
+  const isComposerResetPending =
+    composerResetScope.draftId !== draftId || composerResetScope.activeThreadId !== activeThreadId;
+  if (isComposerResetPending) {
+    setComposerResetScope({ draftId, activeThreadId });
+    setComposerHighlightedItemId(null);
+    setComposerCursor(
+      collapseExpandedComposerCursor(prompt, prompt.length, composerInlineTokenContext),
+    );
+    setComposerTrigger(detectComposerTrigger(prompt, prompt.length, composerCapabilities.trigger));
+    setIsDragOverComposer(false);
+  }
+  // Drag depth counts per thread/draft, so a switch mid-drag starts again from zero.
+  const dragDepthRef = useRef({ scope: composerResetScope, depth: 0 });
+  const readDragDepth = () =>
+    dragDepthRef.current.scope === composerResetScope ? dragDepthRef.current.depth : 0;
+  const writeDragDepth = (depth: number) => {
+    dragDepthRef.current = { scope: composerResetScope, depth };
+  };
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1075,9 +1113,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerMenuSearchKey,
   ]);
 
-  composerMenuOpenRef.current = composerMenuOpen;
-  composerMenuItemsRef.current = composerMenuItems;
-  activeComposerMenuItemRef.current = activeComposerMenuItem;
+  useLayoutEffect(() => {
+    composerMenuOpenRef.current = composerMenuOpen;
+    composerMenuItemsRef.current = composerMenuItems;
+    activeComposerMenuItemRef.current = activeComposerMenuItem;
+  }, [activeComposerMenuItem, composerMenuItems, composerMenuOpen]);
 
   const nonPersistedComposerAttachmentIdSet = useMemo(
     () => new Set(nonPersistedComposerAttachmentIds),
@@ -1095,28 +1135,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
   const showPlanSidebarToggle = Boolean(activePlan || sidebarProposedPlan || planSidebarOpen);
-  const composerFooterActionLayoutKey = useMemo(() => {
-    if (activePendingProgress) {
-      return `pending:${activePendingProgress.questionIndex}:${activePendingProgress.isLastQuestion}:${activePendingIsResponding}`;
-    }
-    if (phase === "running") {
-      return "running";
-    }
-    if (showPlanFollowUpPrompt) {
-      return prompt.trim().length > 0 ? "plan:refine" : "plan:implement";
-    }
-    return `idle:${composerSendState.hasSendableContent}:${isSendBusy}:${isConnecting}:${isPreparingWorktree}`;
-  }, [
-    activePendingIsResponding,
-    activePendingProgress,
-    composerSendState.hasSendableContent,
-    isConnecting,
-    isPreparingWorktree,
-    isSendBusy,
-    phase,
-    prompt,
-    showPlanFollowUpPrompt,
-  ]);
 
   const isProviderCapabilityMenu =
     composerTriggerKind === "provider-dollar-skill" ||
@@ -1165,20 +1183,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ],
   );
 
-  const renderedComposerTraitControls = renderComposerTraitControls({
-    provider: selectedProvider,
-    instanceId: selectedInstanceId,
-    ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
-    ...(routeKind === "draft" && draftId ? { draftId } : {}),
-    model: selectedModel,
-    models: selectedProviderModels,
-    providerSnapshotLoaded: selectedProviderStatus !== null,
-    modelOptions: composerModelOptions?.[selectedInstanceId],
-    prompt,
-    onPromptChange: setPromptFromTraits,
-    onModelOptionsChange: commitComposerModelOptions,
-  });
-  const composerTraitControls = isProviderBindingConflicted ? null : renderedComposerTraitControls;
+  const composerTraitControls = (
+    <ComposerFooterTraitControls
+      hidden={isProviderBindingConflicted}
+      provider={selectedProvider}
+      instanceId={selectedInstanceId}
+      {...(routeKind === "server" ? { threadRef: routeThreadRef } : {})}
+      {...(routeKind === "draft" && draftId ? { draftId } : {})}
+      model={selectedModel}
+      models={selectedProviderModels}
+      providerSnapshotLoaded={selectedProviderStatus !== null}
+      modelOptions={composerModelOptions?.[selectedInstanceId]}
+      prompt={prompt}
+      onPromptChange={setPromptFromTraits}
+      onModelOptionsChange={commitComposerModelOptions}
+    />
+  );
   const pendingPrimaryAction = useMemo(
     () =>
       activePendingProgress
@@ -1304,33 +1324,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Composer menu highlight sync
   // ------------------------------------------------------------------
-  useEffect(() => {
-    if (!composerMenuOpen) {
-      setComposerHighlightedItemId(null);
-      setComposerHighlightedSearchKey(null);
-      return;
+  // The highlight follows the resolved active item; a closed menu has neither (its search key is
+  // null too). A pending thread/draft reset re-renders first, so this pass must not override it.
+  const syncedComposerHighlightedItemId = composerMenuOpen
+    ? (activeComposerMenuItem?.id ?? null)
+    : null;
+  if (!isComposerResetPending) {
+    if (composerHighlightedItemId !== syncedComposerHighlightedItemId) {
+      setComposerHighlightedItemId(syncedComposerHighlightedItemId);
     }
-    const nextActiveItemId = resolveComposerMenuActiveItemId({
-      items: composerMenuItems,
-      highlightedItemId: composerHighlightedItemId,
-      currentSearchKey: composerMenuSearchKey,
-      highlightedSearchKey: composerHighlightedSearchKey,
-      preferredItemId: composerMenuResult.preferredItemId,
-    });
-    setComposerHighlightedItemId((existing) =>
-      existing === nextActiveItemId ? existing : nextActiveItemId,
-    );
-    setComposerHighlightedSearchKey((existing) =>
-      existing === composerMenuSearchKey ? existing : composerMenuSearchKey,
-    );
-  }, [
-    composerHighlightedItemId,
-    composerHighlightedSearchKey,
-    composerMenuItems,
-    composerMenuOpen,
-    composerMenuResult.preferredItemId,
-    composerMenuSearchKey,
-  ]);
+    if (composerHighlightedSearchKey !== composerMenuSearchKey) {
+      setComposerHighlightedSearchKey(composerMenuSearchKey);
+    }
+  }
 
   const lastSyncedPendingInputRef = useRef<{
     requestId: string | null;
@@ -1385,30 +1391,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   // ------------------------------------------------------------------
-  // Reset compositor state on thread/draft change
-  // ------------------------------------------------------------------
-  useEffect(() => {
-    const currentCapabilities = composerCapabilitiesRef.current;
-    setComposerHighlightedItemId(null);
-    setComposerCursor(
-      collapseExpandedComposerCursor(
-        promptRef.current,
-        promptRef.current.length,
-        composerInlineTokenContextRef.current,
-      ),
-    );
-    setComposerTrigger(
-      detectComposerTrigger(
-        promptRef.current,
-        promptRef.current.length,
-        currentCapabilities.trigger,
-      ),
-    );
-    dragDepthRef.current = 0;
-    setIsDragOverComposer(false);
-  }, [draftId, activeThreadId, promptRef]);
-
-  // ------------------------------------------------------------------
   // Footer compact layout observation
   // ------------------------------------------------------------------
   useLayoutEffect(() => {
@@ -1452,7 +1434,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return () => {
       observer.disconnect();
     };
-  }, [activeThreadId, composerFooterActionLayoutKey, composerFooterHasWideActions]);
+  }, [composerFooterHasWideActions]);
 
   // ------------------------------------------------------------------
   // Attachment persist effect
@@ -1534,7 +1516,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       terminalContextIds: string[],
     ) => {
       if (isProviderBindingConflicted) return;
-      if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
+      const activePendingQuestion = activePendingProgress?.activeQuestion;
+      if (activePendingQuestion && pendingUserInputs.length > 0) {
         setComposerCursor(nextCursor);
         setComposerTrigger(
           cursorAdjacentToMention
@@ -1542,7 +1525,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             : detectComposerTrigger(nextPrompt, expandedCursor, composerCapabilities.trigger),
         );
         onChangeActivePendingUserInputCustomAnswer(
-          activePendingProgress.activeQuestion.id,
+          activePendingQuestion.id,
           nextPrompt,
           nextCursor,
           expandedCursor,
@@ -1668,20 +1651,30 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, [composerInlineTokenContext, composerCursor, composerTerminalContexts, promptRef]);
 
+  // Re-detect only when the provider's supported trigger surface changes. A cleared trigger
+  // closes the menu, and the highlight sync clears its highlight on that render.
+  const detectedTriggerSurfaceRef = useRef<{
+    signature: string;
+    instanceId: ProviderInstanceId | undefined;
+  } | null>(null);
   useLayoutEffect(() => {
-    const snapshot = readComposerSnapshot();
-    const next = detectComposerTrigger(
-      snapshot.value,
-      snapshot.expandedCursor,
-      composerCapabilities.trigger,
-    );
-    setComposerTrigger(next);
-    if (!next) {
-      setComposerHighlightedItemId(null);
-      setComposerHighlightedSearchKey(null);
+    const signature = composerCapabilities.signature;
+    const instanceId = selectedProviderStatus?.instanceId;
+    const detectedSurface = detectedTriggerSurfaceRef.current;
+    if (detectedSurface?.signature === signature && detectedSurface.instanceId === instanceId) {
+      return;
     }
-    // Re-detect only when the provider's supported trigger surface changes.
-  }, [composerCapabilities.signature, selectedProviderStatus?.instanceId]);
+    detectedTriggerSurfaceRef.current = { signature, instanceId };
+    const snapshot = readComposerSnapshot();
+    setComposerTrigger(
+      detectComposerTrigger(snapshot.value, snapshot.expandedCursor, composerCapabilities.trigger),
+    );
+  }, [
+    composerCapabilities.signature,
+    composerCapabilities.trigger,
+    readComposerSnapshot,
+    selectedProviderStatus?.instanceId,
+  ]);
 
   const executeBiBCodeAction = useCallback(
     (action: ComposerBiBCodeAction) => {
@@ -1994,7 +1987,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
     if (isProviderBindingConflicted) return;
-    dragDepthRef.current += 1;
+    writeDragDepth(readDragDepth() + 1);
     setIsDragOverComposer(true);
   };
 
@@ -2015,8 +2008,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (isProviderBindingConflicted) return;
     const nextTarget = event.relatedTarget;
     if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
-    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-    if (dragDepthRef.current === 0) {
+    const nextDragDepth = Math.max(0, readDragDepth() - 1);
+    writeDragDepth(nextDragDepth);
+    if (nextDragDepth === 0) {
       setIsDragOverComposer(false);
     }
   };
@@ -2024,7 +2018,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const onComposerDrop = (event: React.DragEvent<HTMLDivElement>) => {
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
-    dragDepthRef.current = 0;
+    writeDragDepth(0);
     setIsDragOverComposer(false);
     if (isProviderBindingConflicted) return;
     const files = Array.from(event.dataTransfer.files);
@@ -2784,12 +2778,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }}
                 />
 
-                {composerTraitControls ? (
-                  <>
-                    <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-                    {composerTraitControls}
-                  </>
-                ) : null}
+                {composerTraitControls}
                 <ComposerFooterModeControls
                   interactionModeAvailability={composerProviderControls.interactionModeAvailability}
                   interactionMode={interactionMode}

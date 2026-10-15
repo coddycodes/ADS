@@ -86,6 +86,33 @@ afterEach(() => {
 });
 
 describe("resolveForNavigation", () => {
+  // #69: only the native preview has the environment's SOCKS proxy.
+  it("loads a tunneled environment's real origin in a preview tab, not in the system browser", async () => {
+    vi.stubGlobal("window", {
+      desktopBridge: { preview: { tunnels: { mode: async () => true } } },
+    });
+    readPreparedConnection.mockReturnValue({
+      ...lan(),
+      descriptor: { capabilities: { previewTunnels: true } },
+    });
+    const gatewayOpen = vi.fn<GatewayOpenMutation>(async () => opened(40123));
+    const input = {
+      environmentId,
+      threadId,
+      canonicalUrl: "https://localhost:5173/a",
+      gatewayOpen,
+    };
+
+    expect(await resolveForNavigation({ ...input, tabId: "tab-1" })).toEqual({
+      kind: "ok",
+      url: "https://localhost:5173/a",
+    });
+    expect(gatewayOpen).not.toHaveBeenCalled();
+
+    await resolveForNavigation(input);
+    expect(gatewayOpen).toHaveBeenCalledTimes(1);
+  });
+
   it("resolves LAN loopback through the gateway with a bootstrap url", async () => {
     readPreparedConnection.mockReturnValue(lan());
     const gatewayOpen = vi.fn(async () => opened(41000));

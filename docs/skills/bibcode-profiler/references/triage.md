@@ -75,6 +75,16 @@ it repeats.
    - **OS records:** the evidence `frames` and `rawRef`. `crash.unclean-exit`
      names the crash-record `facility`. `no systemd-coredump` means Linux kept
      no record, so say so instead of guessing a cause.
+   - **Exit context:** `crash.unclean-exit` and `shutdown.incomplete` may carry
+     `exitCause`/`exitDetail` (what the run noted as it ended: `display-lost`
+     means GDK lost the compositor or X server and GTK exited), `goneAt` (when
+     the crash monitor saw it end), and `journal` (systemd's lines about the
+     user unit). `code=killed, status=9/KILL` there is a forced kill from
+     outside; `code=exited, status=1/FAILURE` with `display-lost` is GTK's exit.
+     With none of them, nothing recorded the ending: say so. Builds through
+     v0.9.2 on Windows panic with `cannot move state from Destroyed` in tao's
+     `runner.rs` when Windows shuts down with BiBCode open (#102). Newer builds
+     note `session-end` and exit, which raises no finding.
 2. **Symbolicate.**
    - Run `P symbolicate <crash-id> --json` for a dump, or
      `P symbolicate <sid>:<seq> --json` for a panic, with the `sid` and `seq`
@@ -150,7 +160,11 @@ Covers `memory.leak-suspect`, `memory.leak-likely`, `cpu.sustained`,
      Memory that stays is live data or pages that live data shares with freed
      chunks (fragmentation), not free heap the allocator kept. On v0.9.0 and
      earlier nothing trims, and arena heaps that stay after a burst are usually
-     free memory glibc kept.
+     free memory glibc kept. Through v0.9.2, the process history behind the
+     status bar's resource readout added about 10 to 15 MB in its first hour
+     and then stayed flat (#100). A single `memory.leak-suspect` 75 to 90
+     minutes into an idle run, followed by a plateau, is that fill. Newer
+     builds keep the full hour in about 0.5 MB.
    - `provider`: the provider CLI named by `label` is third-party. Check what
      BiBCode feeds it and how long it keeps sessions:
      `apps/server/src/provider/<driver>/`, `apps/server/src/provider_terminal/`.
@@ -158,6 +172,8 @@ Covers `memory.leak-suspect`, `memory.leak-likely`, `cpu.sustained`,
      `apps/server/src/provider_terminal/`.
    - `terminal`: shell sessions; `apps/server/src/terminal/`.
    - `webview`: the UI in `apps/web/src/` running in the system webview. On
+     macOS it is the WebKit WebContent process the desktop observes, sampled
+     only from builds after v0.9.2 (#104). On
      Windows and Linux it also includes preview tabs' web content, which runs
      the previewed app's code: before filing, check whether the growth or CPU
      follows a preview tab rather than BiBCode's own window.

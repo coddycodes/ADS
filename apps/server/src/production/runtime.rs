@@ -30,7 +30,7 @@ use crate::{
             crash::MonitorDetector,
             latency::LatencyDetector,
             profiler_dir,
-            runtime::{Detector, ProfilerRuntime},
+            runtime::{Detector, ProfilerRuntime, SessionHeader},
             sampler::SamplerDetector,
             worktree_audit::{AuditSources, WorktreeAuditDetector},
         },
@@ -45,6 +45,7 @@ use crate::{
             registry::{PreviewGateway, gateway_context},
             relay::RelayHosts,
         },
+        tunnel::PreviewTunnels,
     },
     process::configure_background_command,
     production::{
@@ -111,6 +112,7 @@ pub struct ProductionRuntime {
     pub preview_automation: PreviewAutomationBroker,
     pub preview: PreviewManager,
     preview_gateway: PreviewGateway,
+    preview_tunnels: PreviewTunnels,
     asset_access: AssetAccess,
     transfer_access: TransferAccess,
     terminal_services: ServerTerminalServices,
@@ -163,6 +165,10 @@ impl ProductionRuntime {
     #[must_use]
     pub fn preview_gateway(&self) -> PreviewGateway {
         self.preview_gateway.clone()
+    }
+
+    pub fn preview_tunnels(&self) -> &PreviewTunnels {
+        &self.preview_tunnels
     }
 
     /// The handler that serves signed download URLs.
@@ -245,6 +251,10 @@ impl ProductionRuntime {
         let worktree_audit_sources = Arc::new(OnceLock::new());
         let sampler = SamplerDetector::new(process_attribution.clone());
         let mut profiler_detectors: Vec<Box<dyn Detector>> = vec![
+            Box::new(SessionHeader::new(match process_tree_cleanup {
+                ProcessTreeCleanup::StandaloneServer => "server",
+                ProcessTreeCleanup::EmbeddedHost => "desktop",
+            })),
             Box::new(match process_tree_cleanup {
                 ProcessTreeCleanup::StandaloneServer => sampler,
                 ProcessTreeCleanup::EmbeddedHost => sampler.in_desktop_host(),
@@ -477,12 +487,14 @@ impl ProductionRuntime {
             preview.clone(),
             relay_hosts,
         );
+        let preview_tunnels = PreviewTunnels::new(config.port, Arc::new(auth.clone()));
         let workspace_preview = WorkspacePreviewRpcServices::new(
             workspace.clone(),
             preview.clone(),
             preview_automation.clone(),
         )
-        .with_gateway(preview_gateway.clone());
+        .with_gateway(preview_gateway.clone())
+        .with_tunnels(preview_tunnels.clone());
 
         let process_monitor = Arc::new(DiagnosticsMonitor::new(
             resource_sampler.clone(),
@@ -614,6 +626,7 @@ impl ProductionRuntime {
             preview_automation,
             preview,
             preview_gateway,
+            preview_tunnels,
             asset_access,
             transfer_access,
             terminal_services,
@@ -767,6 +780,7 @@ impl ProductionRuntime {
         self.process_monitor.shutdown().await;
         self.server_control.shutdown_capability_discovery().await;
         self.preview_gateway.shutdown().await;
+        self.preview_tunnels.shutdown();
         let process_ownership = self.terminal_services.freeze_process_ownership().await;
         self.managed_endpoint.shutdown().await;
         self.workspace.shutdown().await;

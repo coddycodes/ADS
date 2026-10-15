@@ -3,7 +3,7 @@ import type {
   ProviderSessionDefault,
   ServerProviderModel,
 } from "@bibcode/contracts";
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   getProviderSessionDefaultControls,
   type ProviderSessionDefaultChange,
@@ -29,7 +29,9 @@ export function ProviderSessionDefaultsControls({
   onChange,
 }: ProviderSessionDefaultsControlsProps) {
   const idPrefix = useId();
-  const modelLabelsByDriver = useRef(new Map<ProviderDriverKind, Map<string, string>>());
+  const [modelLabelsByDriver, setModelLabelsByDriver] = useState<
+    ReadonlyMap<ProviderDriverKind, ReadonlyMap<string, string>>
+  >(() => new Map());
   const latestValueRef = useRef(value);
   const modelId = `${idPrefix}-model`;
   const effortId = `${idPrefix}-effort`;
@@ -46,18 +48,22 @@ export function ProviderSessionDefaultsControls({
   const selectedServerModel = models.find((model) => model.slug === selectedModel);
   const selectedModelSlug = selectedServerModel?.slug;
   const selectedModelName = selectedServerModel?.name;
-  useEffect(() => {
-    if (selectedModelSlug === undefined || selectedModelName === undefined) return;
-    const modelLabels = modelLabelsByDriver.current.get(driver) ?? new Map<string, string>();
+  // Remember the selected model's name so the trigger keeps it while the model list changes.
+  if (
+    selectedModelSlug !== undefined &&
+    selectedModelName !== undefined &&
+    modelLabelsByDriver.get(driver)?.get(selectedModelSlug) !== selectedModelName
+  ) {
+    const modelLabels = new Map(modelLabelsByDriver.get(driver));
     modelLabels.set(selectedModelSlug, selectedModelName);
-    modelLabelsByDriver.current.set(driver, modelLabels);
-  }, [driver, selectedModelName, selectedModelSlug]);
+    setModelLabelsByDriver(new Map(modelLabelsByDriver).set(driver, modelLabels));
+  }
   useEffect(() => {
     latestValueRef.current = value;
   }, [value]);
   const modelLabel =
     selectedServerModel?.name ??
-    modelLabelsByDriver.current.get(driver)?.get(selectedModel) ??
+    modelLabelsByDriver.get(driver)?.get(selectedModel) ??
     selectedModel;
 
   const change = (next: ProviderSessionDefaultChange) => {

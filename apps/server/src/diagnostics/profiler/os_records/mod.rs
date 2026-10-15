@@ -88,6 +88,32 @@ async fn harvest(_previous: &SessionRecord) -> Option<OsCrashRecord> {
     None
 }
 
+/// The systemd user unit this process runs in (Linux), so the next start can read
+/// [`unit_exit_lines`] for it.
+pub fn current_unit() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::unit_of(&std::fs::read_to_string("/proc/self/cgroup").ok()?)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+/// systemd's own lines about the previous run's unit ending, when it ran in one (Linux).
+/// Gives up after 5 s; empty when there are none or the journal could not be read.
+pub async fn unit_exit_lines(previous: &SessionRecord) -> Vec<String> {
+    #[cfg(target_os = "linux")]
+    if let (Some(unit), Some(since)) = (previous.unit.as_deref(), started_at(previous)) {
+        return tokio::time::timeout(HARVEST_TIMEOUT, linux::unit_exit_lines(unit, since))
+            .await
+            .unwrap_or_default();
+    }
+    let _ = previous;
+    Vec::new()
+}
+
 /// The facility that keeps crash records on this host, as an unclean-exit finding names it.
 pub fn facility() -> &'static str {
     if cfg!(target_os = "linux") {

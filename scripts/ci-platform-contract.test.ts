@@ -829,9 +829,15 @@ describe("seeded packaged desktop upgrade contract", () => {
       "Install frozen dependencies",
       "Resolve previous stable and isolated candidate versions",
       "Generate ephemeral updater signing key",
+      "Audit Windows processes and keep crash dumps",
       "Run previous-stable, protected-baseline, and remote-install upgrades",
       "Upload bounded seeded-upgrade evidence",
+      "Upload Windows crash dumps",
     ]);
+    // Only Windows lanes keep dumps, and only for a week: they hold process memory.
+    const dumps = smoke.steps?.find((step) => step.name === "Upload Windows crash dumps");
+    expect(dumps?.if).toBe("always() && matrix.platform == 'win'");
+    expect(dumps?.with?.["retention-days"]).toBe(7);
     const commands = allStepCommands(smoke);
     expect(commands).toContain("--restart-timeout-ms 180000");
     expect(commands).toContain(". -> target");

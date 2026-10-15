@@ -95,6 +95,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const [searchQuery, setSearchQuery] = useState("");
   const [showTopScrollFade, setShowTopScrollFade] = useState(false);
   const [showBottomScrollFade, setShowBottomScrollFade] = useState(false);
+  const [scrollFadeModelKeys, setScrollFadeModelKeys] = useState<readonly string[] | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const modelListRef = useRef<LegendListRef | null>(null);
   const highlightedModelKeyRef = useRef<string | null>(null);
@@ -458,9 +459,18 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     };
   }, [handleModelSelect, keybindings, modelJumpModelKeys, modelJumpShortcutContext]);
 
-  useLayoutEffect(() => {
+  // Reset the fades for a new result list before paint; the frames below measure the real ones.
+  if (scrollFadeModelKeys !== filteredModelKeys) {
+    setScrollFadeModelKeys(filteredModelKeys);
     setShowTopScrollFade(false);
     setShowBottomScrollFade(filteredModelKeys.length > 5);
+  }
+
+  useLayoutEffect(() => {
+    // An empty list cannot scroll, and the reset above already cleared both fades.
+    if (filteredModelKeys.length === 0) {
+      return;
+    }
     let nestedFrame = 0;
     const frame = window.requestAnimationFrame(() => {
       updateModelListScrollFades();

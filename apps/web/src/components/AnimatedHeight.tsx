@@ -19,7 +19,7 @@ export function AnimatedHeight({ children }: { readonly children: ReactNode }) {
       );
     }, HEIGHT_TRANSITION_FALLBACK_MS);
     return () => window.clearTimeout(timeoutId);
-  }, [heightState.height, heightState.isClipping]);
+  }, [heightState]);
 
   useLayoutEffect(() => {
     const element = contentRef.current;

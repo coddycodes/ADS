@@ -357,9 +357,9 @@ describe("SidebarThreadRow browser interactions", () => {
             renamingTitle,
             setRenamingTitle,
             startThreadRename: beginRename,
-            renamingInputRef,
-            renamingCommittedRef,
           })}
+          renamingInputRef={renamingInputRef}
+          renamingCommittedRef={renamingCommittedRef}
         />
       );
     }
@@ -409,8 +409,8 @@ describe("SidebarThreadRow browser interactions", () => {
             appSettingsConfirmThreadArchive: true,
             confirmingArchiveThreadKey,
             setConfirmingArchiveThreadKey,
-            confirmArchiveButtonRefs,
           })}
+          confirmArchiveButtonRefs={confirmArchiveButtonRefs}
         />
       );
     }

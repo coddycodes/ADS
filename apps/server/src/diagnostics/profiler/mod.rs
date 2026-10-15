@@ -51,6 +51,8 @@ pub(crate) fn persisted_enabled(state_dir: &Path) -> bool {
 
 /// The live profiler state that hot paths reach through [`global`].
 pub struct ProfilerHandle {
+    /// The profiler directory this runtime owns, with its session sentinel.
+    dir: PathBuf,
     pub(crate) enabled: AtomicBool,
     pub(crate) sender: store::EventSender,
     pub(crate) findings: Mutex<findings::FindingsBook>,
@@ -103,6 +105,16 @@ pub fn is_enabled() -> bool {
         .unwrap_or_else(PoisonError::into_inner)
         .as_ref()
         .is_some_and(|handle| handle.enabled.load(Ordering::Relaxed))
+}
+
+/// Records how this process is ending in the session sentinel, so the next start can say why
+/// the run ended when no crash record does: `display-lost`, `quit` or `signal`, with an
+/// optional detail. Works with the profiler off, like the sentinel. Synchronous file I/O:
+/// call it on the way out, never on an async worker's hot path.
+pub fn note_exit(cause: &str, detail: Option<&str>) {
+    if let Some(handle) = global() {
+        sentinel::note_exit(&handle.dir, cause, detail);
+    }
 }
 
 /// Queues one server event and returns its `eventId`, which a finding the event explains

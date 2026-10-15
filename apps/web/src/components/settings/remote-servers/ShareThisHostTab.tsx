@@ -1,7 +1,15 @@
 import type { AuthShareStateResult, DesktopServerExposureState } from "@bibcode/contracts";
 import * as DateTime from "effect/DateTime";
 import { RefreshCwIcon } from "lucide-react";
-import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactElement,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { readCurrentEnvironmentPresentationPolicy } from "~/connection/currentEnvironmentPresentation";
 import {
@@ -97,7 +105,9 @@ export function ShareThisHostTab(): ReactElement {
   const wslOnlyPrimary = desktopWsl.data?.wslOnly === true;
   const canManageNativeExposure = hasDesktopBridge && desktopWsl.data?.wslOnly === false;
   const canManageNativeExposureRef = useRef(canManageNativeExposure);
-  canManageNativeExposureRef.current = canManageNativeExposure;
+  useLayoutEffect(() => {
+    canManageNativeExposureRef.current = canManageNativeExposure;
+  }, [canManageNativeExposure]);
   const exposureState = desktopNetworkAccess.data?.serverExposureState ?? null;
   const advertisedEndpoints = desktopNetworkAccess.data?.advertisedEndpoints ?? [];
   const [intent, setIntent] = useState<ShareIntent>("another-device");
@@ -111,13 +121,13 @@ export function ShareThisHostTab(): ReactElement {
   const [isResumingLegacy, setIsResumingLegacy] = useState(false);
   const [legacyResumeError, setLegacyResumeError] = useState<string | null>(null);
 
-  const refreshShareState = useCallback(async () => {
-    try {
-      setShareState(await getServerShareState());
-    } catch (error) {
-      console.warn("[remote-sharing] Could not refresh server share state.", error);
-    }
-  }, []);
+  const refreshShareState = useCallback(
+    (): Promise<void> =>
+      getServerShareState().then(setShareState, (error: unknown) => {
+        console.warn("[remote-sharing] Could not refresh server share state.", error);
+      }),
+    [],
+  );
 
   useEffect(() => {
     void refreshShareState();

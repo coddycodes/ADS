@@ -324,12 +324,15 @@ export default function FileBrowserPanel({
       refreshEntries: entriesQuery.revalidate,
     });
 
+  const [backgroundMenuAvailability, setBackgroundMenuAvailability] =
+    useState(workspaceUnavailable);
+  if (backgroundMenuAvailability !== workspaceUnavailable) {
+    setBackgroundMenuAvailability(workspaceUnavailable);
+    if (workspaceUnavailable) setBackgroundMenu(null);
+  }
   useEffect(() => {
     workspaceUnavailableRef.current = workspaceUnavailable;
-    if (workspaceUnavailable) {
-      closeDialog();
-      setBackgroundMenu(null);
-    }
+    if (workspaceUnavailable) closeDialog();
   }, [closeDialog, workspaceUnavailable]);
 
   // The server keeps a cached workspace index, so refreshing the query atom alone replays the stale
@@ -337,10 +340,16 @@ export default function FileBrowserPanel({
   // query — including when the rebuild itself fails, so the tree still resyncs with whatever the
   // server has. The projects.* mutations already drop the server's cached index themselves, so they
   // must NOT come through here; a second rebuild request would ship the whole entry list twice.
+  const refreshEntriesQuery = entriesQuery.refresh;
   const rescanFiles = useCallback(() => {
     if (rescanInFlightRef.current) return;
     rescanInFlightRef.current = true;
     setIsRescanning(true);
+    const finishRescan = () => {
+      rescanInFlightRef.current = false;
+      setIsRescanning(false);
+      refreshEntriesQuery();
+    };
     void (async () => {
       try {
         const result = await refreshServerEntries({
@@ -352,13 +361,9 @@ export default function FileBrowserPanel({
         }
       } catch (error) {
         showMutationError(error, "Failed to refresh workspace files");
-      } finally {
-        rescanInFlightRef.current = false;
-        setIsRescanning(false);
-        entriesQuery.refresh();
       }
-    })();
-  }, [cwd, entriesQuery, environmentId, refreshServerEntries, showMutationError]);
+    })().finally(finishRescan);
+  }, [cwd, environmentId, refreshEntriesQuery, refreshServerEntries, showMutationError]);
 
   const addAsProject = useCallback(
     (workspaceRoot: string) => {

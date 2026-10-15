@@ -21,7 +21,7 @@ const harness = vi.hoisted(() => ({
     atom: null,
     error: null,
   } as { atom: unknown; error: string | null },
-  runtimeRef: { current: null as unknown },
+  retainedTranscript: null as unknown,
   attachProducer: vi.fn((_input: unknown) => null as unknown),
   attachSnapshot: vi.fn((_input: unknown) => null as unknown),
   metadata: vi.fn((input: unknown) => ({ kind: "metadata", input })),
@@ -37,20 +37,29 @@ const harness = vi.hoisted(() => ({
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),
-  useRef: () => harness.runtimeRef,
-  useState: () => [
-    harness.producerState,
-    (
-      update:
-        | { atom: unknown; error: string | null }
-        | ((previous: { atom: unknown; error: string | null }) => {
-            atom: unknown;
-            error: string | null;
-          }),
-    ) => {
-      harness.producerState = typeof update === "function" ? update(harness.producerState) : update;
-    },
-  ],
+  // The retained transcript starts as `null`; the producer error starts as an object.
+  useState: (initial: unknown) =>
+    initial === null
+      ? [
+          harness.retainedTranscript,
+          (update: unknown) => {
+            harness.retainedTranscript = update;
+          },
+        ]
+      : [
+          harness.producerState,
+          (
+            update:
+              | { atom: unknown; error: string | null }
+              | ((previous: { atom: unknown; error: string | null }) => {
+                  atom: unknown;
+                  error: string | null;
+                }),
+          ) => {
+            harness.producerState =
+              typeof update === "function" ? update(harness.producerState) : update;
+          },
+        ],
 }));
 vi.mock("@effect/atom-react", () => ({
   useAtomRefresh: (atom: unknown) => () => harness.refreshedAtoms.push(atom),
@@ -115,7 +124,7 @@ beforeEach(() => {
     transcriptRuntime: null,
   };
   harness.producerState = { atom: null, error: null };
-  harness.runtimeRef.current = null;
+  harness.retainedTranscript = null;
   harness.attachProducer.mockClear();
   harness.attachSnapshot.mockClear();
   harness.metadata.mockClear();

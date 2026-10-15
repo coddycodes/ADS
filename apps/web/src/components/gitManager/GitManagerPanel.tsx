@@ -25,6 +25,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -535,13 +536,18 @@ const GitManagerRepositorySurfaces = memo(function GitManagerRepositorySurfaces(
     activeOperationRef.current = null;
     setOperationRunning(false);
   }, []);
-  const externalMultiCommitState =
-    externalMultiCommitKind === null || conflicts.length === 0
-      ? null
-      : {
-          ...createMultiCommitState(externalMultiCommitKind, "show-conflicts", []),
-          operationStartedExternally: true,
-        };
+  const hasConflicts = conflicts.length > 0;
+  // Memoized: built inline, this object stops the React Compiler preserving the callbacks below.
+  const externalMultiCommitState = useMemo(
+    () =>
+      externalMultiCommitKind === null || !hasConflicts
+        ? null
+        : {
+            ...createMultiCommitState(externalMultiCommitKind, "show-conflicts", []),
+            operationStartedExternally: true,
+          },
+    [externalMultiCommitKind, hasConflicts],
+  );
   const baseMultiCommitState = multiCommitState ?? externalMultiCommitState;
   const presentedMultiCommitState =
     baseMultiCommitState === null
@@ -556,8 +562,10 @@ const GitManagerRepositorySurfaces = memo(function GitManagerRepositorySurfaces(
         };
   const presentedMultiCommitStateRef = useRef(presentedMultiCommitState);
   const pendingRewriteRequestRef = useRef(pendingRewriteRequest);
-  presentedMultiCommitStateRef.current = presentedMultiCommitState;
-  pendingRewriteRequestRef.current = pendingRewriteRequest;
+  useLayoutEffect(() => {
+    presentedMultiCommitStateRef.current = presentedMultiCommitState;
+    pendingRewriteRequestRef.current = pendingRewriteRequest;
+  });
   const observeMultiCommitEvent = useCallback((event: GitManagerOperationEvent) => {
     setMultiCommitState((current) => {
       if (current === null) return null;

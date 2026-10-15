@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const harness = vi.hoisted(() => ({
   providerDerivationCount: 0,
   providerProps: [] as Array<Record<string, unknown>>,
-  resourceRenderCount: 0,
+  statusBarRenderCount: 0,
 }));
 
 vi.mock("./ProfilerRecordingSegment", () => ({ ProfilerRecordingSegment: () => null }));
@@ -59,7 +59,11 @@ vi.mock("../../state/server", () => ({
 }));
 
 vi.mock("../../state/terminalSessions", () => ({
-  useKnownTerminalSessions: () => [],
+  // AppStatusBar calls this hook once per render; the compiler never memoizes hook calls.
+  useKnownTerminalSessions: () => {
+    harness.statusBarRenderCount += 1;
+    return [];
+  },
 }));
 
 vi.mock("../../state/use-atom-command", () => ({
@@ -91,10 +95,7 @@ vi.mock("./providerUsagePresentation", async (importOriginal) => {
 });
 
 vi.mock("./ResourceUsageSegment", () => ({
-  ResourceUsageSegment: () => {
-    harness.resourceRenderCount += 1;
-    return <span data-resource-usage />;
-  },
+  ResourceUsageSegment: () => <span data-resource-usage />,
 }));
 
 import {
@@ -121,7 +122,7 @@ beforeEach(() => {
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   harness.providerDerivationCount = 0;
   harness.providerProps.length = 0;
-  harness.resourceRenderCount = 0;
+  harness.statusBarRenderCount = 0;
   registry = AtomRegistry.make();
   container = document.createElement("div");
   document.body.append(container);
@@ -157,13 +158,13 @@ describe("AppStatusBar client-settings subscription", () => {
         </RegistryContext.Provider>,
       );
     });
-    expect(harness.resourceRenderCount).toBe(1);
+    expect(harness.statusBarRenderCount).toBe(1);
 
     await act(async () => updateSettings?.({ wordWrap: false }));
-    expect(harness.resourceRenderCount).toBe(1);
+    expect(harness.statusBarRenderCount).toBe(1);
 
     await act(async () => updateSettings?.({ statusBarUsageMode: "compact" }));
-    expect(harness.resourceRenderCount).toBe(2);
+    expect(harness.statusBarRenderCount).toBe(2);
   });
 
   it("does not repeat provider derivation for resource-only rerenders", async () => {
@@ -234,6 +235,35 @@ describe("AppStatusBar client-settings subscription", () => {
     await act(async () => root.render(renderView(laterBucket, changedUsage, "used")));
     expect(harness.providerDerivationCount).toBe(4);
     expect(latestProviderLabels().percentage).toBe("80% used");
+  });
+  it("reads the clock on every render when no presentation clock is passed", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-07-22T12:00:00.000Z"));
+      const usage = usageFixture(DateTime.makeUnsafe("2026-07-22T12:00:00.000Z"));
+      const renderView = (queryError: string | null) => (
+        <AppStatusBarView
+          usage={usage}
+          diagnostics={{ diagnostics: null, queryError }}
+          localDiagnostics={null}
+          terminalCount={0}
+          onRefresh={vi.fn()}
+        />
+      );
+
+      await act(async () => root.render(renderView(null)));
+      expect(latestProviderLabels().reset).toBe("Resets in 2h");
+
+      // A resource poll re-renders the bar after the countdown crossed a label bucket.
+      vi.setSystemTime(new Date("2026-07-22T13:31:00.000Z"));
+      await act(async () => root.render(renderView("resource refresh failed")));
+      expect(latestProviderLabels()).toMatchObject({
+        reset: "Resets in 59m",
+        creditExpiry: "Resets in 1h",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

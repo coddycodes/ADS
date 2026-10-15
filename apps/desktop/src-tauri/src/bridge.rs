@@ -1015,6 +1015,8 @@ pub fn desktop_bridge_get_bridge_metadata(app: AppHandle<DesktopRuntime>) -> Val
             "protectedConnectionCatalog": cfg!(target_os = "windows"),
             "sshProvisioning": true,
             "preview": crate::preview::host::is_supported(),
+            // Remote environments' previews route through SOCKS (#69); WebKitGTK only so far.
+            "previewTunnels": cfg!(target_os = "linux") && crate::preview::host::is_supported(),
             "updater": app.updater().is_ok(),
             "menuEvents": true,
         },
@@ -3888,6 +3890,11 @@ mod tests {
         assert_eq!(
             metadata["features"]["preview"],
             crate::preview::host::is_supported()
+        );
+        assert_eq!(
+            metadata["features"]["previewTunnels"],
+            cfg!(target_os = "linux") && crate::preview::host::is_supported(),
+            "only WebKitGTK routes previews through SOCKS so far (#69)"
         );
         assert_eq!(metadata["features"]["sshProvisioning"], true);
         assert_eq!(metadata["features"]["menuEvents"], true);

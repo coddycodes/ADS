@@ -5,20 +5,41 @@ use std::{
 };
 
 use super::{
-    AttributedProcess, AttributedProcessSnapshot, AttributionConfidence, AttributionKind,
-    AttributionScope, ProcessAttributionTotals, ProcessIdentity, UiCoverage, process_tree_metadata,
+    AttributedProcessSnapshot, AttributionConfidence, AttributionKind, AttributionScope,
+    ProcessAttributionTotals, ProcessIdentity, UiCoverage, process_tree_metadata,
 };
 
 const RETENTION: Duration = Duration::from_secs(60 * 60);
 const MAX_RETAINED_SAMPLES: usize = 20_000;
 
+/// One retained sample (#100). The sampler runs every 2 s while the status bar reads it, so an
+/// hour holds about 1,800 of these: each keeps only what changes from tick to tick, and shares
+/// what does not with the sample before it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AttributedProcessSample {
     pub sampled_at_ms: i128,
-    pub processes: Vec<AttributedProcess>,
+    processes: Vec<SampledProcess>,
     pub totals: ProcessAttributionTotals,
-    pub ui_coverage: UiCoverage,
-    process_metadata: HashMap<ProcessIdentity, ProcessHistoryMetadata>,
+    pub ui_coverage: Arc<UiCoverage>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct SampledProcess {
+    cpu_percent: f64,
+    rss_bytes: u64,
+    details: Arc<ProcessDetails>,
+}
+
+/// What stays the same for a process from one sample to the next.
+#[derive(Debug, PartialEq)]
+struct ProcessDetails {
+    identity: ProcessIdentity,
+    process_key: String,
+    scope: AttributionScope,
+    kind: AttributionKind,
+    label: String,
+    confidence: AttributionConfidence,
+    metadata: Option<ProcessHistoryMetadata>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -86,29 +107,65 @@ pub struct ProcessResourceHistory {
     pub error: Option<String>,
 }
 
-impl From<&AttributedProcessSnapshot> for AttributedProcessSample {
-    fn from(snapshot: &AttributedProcessSnapshot) -> Self {
+impl AttributedProcessSample {
+    /// The sample of `snapshot`, sharing each process's details and the coverage with
+    /// `previous` where they did not change.
+    pub(crate) fn new(
+        snapshot: &AttributedProcessSnapshot,
+        previous: Option<&AttributedProcessSample>,
+    ) -> Self {
+        let mut metadata = process_tree_metadata(
+            &snapshot.native_rows,
+            snapshot.processes.iter().map(|process| process.identity),
+        );
+        let previous_details = previous
+            .map(|previous| {
+                previous
+                    .processes
+                    .iter()
+                    .map(|process| (process.details.identity, &process.details))
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+        let processes = snapshot
+            .processes
+            .iter()
+            .map(|process| {
+                let details = ProcessDetails {
+                    identity: process.identity,
+                    process_key: process.process_key.clone(),
+                    scope: process.scope,
+                    kind: process.kind,
+                    label: process.label.clone(),
+                    confidence: process.confidence,
+                    metadata: metadata.remove(&process.identity).map(|metadata| {
+                        ProcessHistoryMetadata {
+                            ppid: metadata.ppid,
+                            command: metadata.command,
+                            depth: metadata.depth,
+                        }
+                    }),
+                };
+                SampledProcess {
+                    cpu_percent: process.cpu_percent,
+                    rss_bytes: process.rss_bytes,
+                    details: previous_details
+                        .get(&process.identity)
+                        .copied()
+                        .filter(|shared| ***shared == details)
+                        .map_or_else(|| Arc::new(details), Arc::clone),
+                }
+            })
+            .collect();
+        let ui_coverage = previous
+            .map(|previous| &previous.ui_coverage)
+            .filter(|shared| ***shared == snapshot.ui_coverage)
+            .map_or_else(|| Arc::new(snapshot.ui_coverage.clone()), Arc::clone);
         Self {
             sampled_at_ms: snapshot.sampled_at_ms,
-            processes: snapshot.processes.clone(),
+            processes,
             totals: snapshot.totals,
-            ui_coverage: snapshot.ui_coverage.clone(),
-            process_metadata: process_tree_metadata(
-                &snapshot.native_rows,
-                snapshot.processes.iter().map(|process| process.identity),
-            )
-            .into_iter()
-            .map(|(identity, metadata)| {
-                (
-                    identity,
-                    ProcessHistoryMetadata {
-                        ppid: metadata.ppid,
-                        command: metadata.command,
-                        depth: metadata.depth,
-                    },
-                )
-            })
-            .collect(),
+            ui_coverage,
         }
     }
 }
@@ -160,7 +217,7 @@ pub(crate) fn aggregate_history(
         },
         ui_coverage: retained
             .last()
-            .map(|sample| sample.ui_coverage.clone())
+            .map(|sample| UiCoverage::clone(&sample.ui_coverage))
             .unwrap_or_default(),
         buckets: if retained.is_empty() {
             Vec::new()
@@ -177,66 +234,59 @@ fn summarize_processes(
     interval_seconds: f64,
 ) -> Vec<ProcessResourceSummary> {
     struct ProcessGroup<'a> {
-        process_key: String,
-        samples: Vec<(
-            i128,
-            &'a AttributedProcess,
-            Option<&'a ProcessHistoryMetadata>,
-        )>,
+        process_key: &'a str,
+        samples: Vec<(i128, &'a SampledProcess)>,
     }
 
-    let mut group_indexes = HashMap::<String, usize>::new();
+    let mut group_indexes = HashMap::<&str, usize>::new();
     let mut groups = Vec::<ProcessGroup<'_>>::new();
     for sample in samples {
         for process in &sample.processes {
-            let index = if let Some(index) = group_indexes.get(&process.process_key) {
-                *index
-            } else {
-                let index = groups.len();
-                group_indexes.insert(process.process_key.clone(), index);
+            let process_key = process.details.process_key.as_str();
+            let index = *group_indexes.entry(process_key).or_insert_with(|| {
                 groups.push(ProcessGroup {
-                    process_key: process.process_key.clone(),
+                    process_key,
                     samples: Vec::new(),
                 });
-                index
-            };
-            groups[index].samples.push((
-                sample.sampled_at_ms,
-                process,
-                sample.process_metadata.get(&process.identity),
-            ));
+                groups.len() - 1
+            });
+            groups[index].samples.push((sample.sampled_at_ms, process));
         }
     }
 
     groups
         .into_iter()
         .filter_map(|group| {
-            let (first_seen_at_ms, _, _) = group
+            let (first_seen_at_ms, _) = group
                 .samples
                 .iter()
-                .min_by_key(|(sampled_at_ms, _, _)| *sampled_at_ms)
+                .min_by_key(|(sampled_at_ms, _)| *sampled_at_ms)
                 .copied()?;
-            let (last_seen_at_ms, latest, latest_metadata) = group
+            let (last_seen_at_ms, latest) = group
                 .samples
                 .iter()
-                .max_by_key(|(sampled_at_ms, _, _)| *sampled_at_ms)
+                .max_by_key(|(sampled_at_ms, _)| *sampled_at_ms)
                 .copied()?;
+            let details = latest.details.as_ref();
+            let metadata = details.metadata.as_ref();
             let cpu_total = group
                 .samples
                 .iter()
-                .map(|(_, process, _)| process.cpu_percent)
+                .map(|(_, process)| process.cpu_percent)
                 .sum::<f64>();
             Some(ProcessResourceSummary {
-                process_key: group.process_key,
-                pid: latest.identity.pid,
-                ppid: latest_metadata.map_or(0, |metadata| metadata.ppid),
-                command: latest_metadata
-                    .map_or_else(|| latest.label.clone(), |metadata| metadata.command.clone()),
-                depth: latest_metadata.map_or(0, |metadata| metadata.depth),
-                scope: latest.scope,
-                kind: latest.kind,
-                label: latest.label.clone(),
-                confidence: latest.confidence,
+                process_key: group.process_key.to_owned(),
+                pid: details.identity.pid,
+                ppid: metadata.map_or(0, |metadata| metadata.ppid),
+                command: metadata.map_or_else(
+                    || details.label.clone(),
+                    |metadata| metadata.command.clone(),
+                ),
+                depth: metadata.map_or(0, |metadata| metadata.depth),
+                scope: details.scope,
+                kind: details.kind,
+                label: details.label.clone(),
+                confidence: details.confidence,
                 first_seen_at_ms,
                 last_seen_at_ms,
                 current_cpu_percent: latest.cpu_percent,
@@ -244,18 +294,18 @@ fn summarize_processes(
                 max_cpu_percent: group
                     .samples
                     .iter()
-                    .map(|(_, process, _)| process.cpu_percent)
+                    .map(|(_, process)| process.cpu_percent)
                     .fold(0.0, f64::max),
                 cpu_seconds_approx: group
                     .samples
                     .iter()
-                    .map(|(_, process, _)| process.cpu_percent / 100.0 * interval_seconds)
+                    .map(|(_, process)| process.cpu_percent / 100.0 * interval_seconds)
                     .sum(),
                 current_rss_bytes: latest.rss_bytes,
                 max_rss_bytes: group
                     .samples
                     .iter()
-                    .map(|(_, process, _)| process.rss_bytes)
+                    .map(|(_, process)| process.rss_bytes)
                     .max()
                     .unwrap_or(0),
                 sample_count: group.samples.len(),
@@ -475,8 +525,10 @@ mod tests {
             external_cpu_percent,
             external_rss_bytes,
         );
-        Arc::new(AttributedProcessSample {
+        let snapshot = AttributedProcessSnapshot {
             sampled_at_ms,
+            server_identity: core.identity,
+            native_rows: Arc::from([]),
             processes: vec![core, external],
             totals: ProcessAttributionTotals {
                 combined: ProcessResourceTotals {
@@ -499,8 +551,8 @@ mod tests {
                 status: coverage_status,
                 message: Some("fixture coverage".to_owned()),
             },
-            process_metadata: HashMap::new(),
-        })
+        };
+        Arc::new(AttributedProcessSample::new(&snapshot, None))
     }
 
     fn split_history_samples() -> Vec<Arc<AttributedProcessSample>> {
@@ -578,7 +630,7 @@ mod tests {
             },
             ui_coverage: UiCoverage::default(),
         };
-        let retained = [Arc::new(AttributedProcessSample::from(&snapshot))];
+        let retained = [Arc::new(AttributedProcessSample::new(&snapshot, None))];
 
         let history = aggregate_history(
             &retained,
@@ -624,12 +676,65 @@ mod tests {
             ui_coverage: UiCoverage::default(),
         };
 
-        let retained = AttributedProcessSample::from(&snapshot);
+        let retained = AttributedProcessSample::new(&snapshot, None);
 
         assert!(
             !format!("{retained:?}").contains("unattributed-secret-command"),
             "retained history must not duplicate native rows outside attributed history"
         );
+    }
+
+    /// #100: an hour of samples must not repeat each process's strings 1,800 times.
+    #[test]
+    fn samples_share_what_did_not_change_and_keep_what_did() {
+        let identity = ProcessIdentity {
+            pid: 10,
+            started_at: 100,
+        };
+        let snapshot = |sampled_at_ms: i128, label: &str| {
+            let mut row = ProcessRow::fixture(10, 1, "bibcode serve");
+            row.started_at = 100;
+            AttributedProcessSnapshot {
+                sampled_at_ms,
+                server_identity: identity,
+                native_rows: Arc::from([row]),
+                processes: vec![attributed_process(
+                    identity,
+                    AttributionScope::Core,
+                    AttributionKind::Server,
+                    label,
+                    AttributionConfidence::Exact,
+                    1.0,
+                    10,
+                )],
+                totals: ProcessAttributionTotals::default(),
+                ui_coverage: UiCoverage::default(),
+            }
+        };
+        let first = AttributedProcessSample::new(&snapshot(1_000, "server"), None);
+        let same = AttributedProcessSample::new(&snapshot(2_000, "server"), Some(&first));
+        let relabeled = AttributedProcessSample::new(&snapshot(3_000, "renamed"), Some(&same));
+
+        assert!(Arc::ptr_eq(
+            &first.processes[0].details,
+            &same.processes[0].details
+        ));
+        assert!(Arc::ptr_eq(&first.ui_coverage, &same.ui_coverage));
+        assert!(!Arc::ptr_eq(
+            &same.processes[0].details,
+            &relabeled.processes[0].details
+        ));
+        let history = aggregate_history(
+            &[first, same, relabeled].map(Arc::new),
+            None,
+            3_000,
+            3_000,
+            3_000,
+            Duration::from_secs(1),
+        );
+        assert_eq!(history.processes[0].label, "renamed");
+        assert_eq!(history.processes[0].command, "bibcode serve");
+        assert_eq!(history.processes[0].sample_count, 3);
     }
 
     #[test]
@@ -659,7 +764,7 @@ mod tests {
             ui_coverage: UiCoverage::default(),
         };
 
-        let retained = format!("{:?}", AttributedProcessSample::from(&snapshot));
+        let retained = format!("{:?}", AttributedProcessSample::new(&snapshot, None));
 
         assert!(retained.contains("required-command"));
         assert!(!retained.contains("unretained-status"));
@@ -673,18 +778,19 @@ mod tests {
         );
     }
 
+    fn empty_sample(sampled_at_ms: i128) -> AttributedProcessSample {
+        AttributedProcessSample {
+            sampled_at_ms,
+            processes: Vec::new(),
+            totals: ProcessAttributionTotals::default(),
+            ui_coverage: Arc::default(),
+        }
+    }
+
     #[test]
     fn retained_samples_are_bounded_by_age_and_count() {
         let mut retained = (0..MAX_RETAINED_SAMPLES + 2)
-            .map(|sampled_at_ms| {
-                Arc::new(AttributedProcessSample {
-                    sampled_at_ms: sampled_at_ms as i128,
-                    processes: Vec::new(),
-                    totals: ProcessAttributionTotals::default(),
-                    ui_coverage: UiCoverage::default(),
-                    process_metadata: HashMap::new(),
-                })
-            })
+            .map(|sampled_at_ms| Arc::new(empty_sample(sampled_at_ms as i128)))
             .collect::<VecDeque<_>>();
 
         trim_samples(&mut retained, (MAX_RETAINED_SAMPLES + 1) as i128);
@@ -692,13 +798,7 @@ mod tests {
         assert_eq!(retained.len(), MAX_RETAINED_SAMPLES);
         assert_eq!(retained.front().map(|sample| sample.sampled_at_ms), Some(2));
 
-        retained.push_back(Arc::new(AttributedProcessSample {
-            sampled_at_ms: RETENTION.as_millis() as i128 + 3,
-            processes: Vec::new(),
-            totals: ProcessAttributionTotals::default(),
-            ui_coverage: UiCoverage::default(),
-            process_metadata: HashMap::new(),
-        }));
+        retained.push_back(Arc::new(empty_sample(RETENTION.as_millis() as i128 + 3)));
         trim_samples(&mut retained, RETENTION.as_millis() as i128 + 3);
 
         assert_eq!(retained.front().map(|sample| sample.sampled_at_ms), Some(3));

@@ -47,6 +47,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import { BotIcon } from "lucide-react";
 
@@ -627,6 +628,20 @@ function agentSignature(agents: ReadonlyArray<ServerProviderAgent>): string {
     .filter((agent) => agent.invocation === "mention")
     .map((agent) => [agent.name, agent.description ?? ""].join("\u001f"))
     .join("\u001e");
+}
+
+/**
+ * Derives a value once per content signature, so callers that pass fresh but equal arrays keep
+ * the identity that downstream effects and memos depend on.
+ */
+function useSignatureMemo<T>(signature: string, derive: () => T): T {
+  const [memo, setMemo] = useState(() => ({ signature, value: derive() }));
+  if (memo.signature === signature) {
+    return memo.value;
+  }
+  const value = derive();
+  setMemo({ signature, value });
+  return value;
 }
 
 function clampExpandedCursor(value: string, cursor: number): number {
@@ -1610,14 +1625,14 @@ function ComposerPromptEditorInner({
   const onChangeRef = useRef(onChange);
   const agentsSignature = agentSignature(agents);
   const agentsSignatureRef = useRef(agentsSignature);
-  const agentMetadata = useMemo(() => agentMetadataByName(agents), [agentsSignature]);
+  const agentMetadata = useSignatureMemo(agentsSignature, () => agentMetadataByName(agents));
   const agentMetadataRef = useRef(agentMetadata);
   const mentionableAgentNames = useMemo(() => new Set(agentMetadata.keys()), [agentMetadata]);
   const terminalContextsSignature = terminalContextSignature(terminalContexts);
   const terminalContextsSignatureRef = useRef(terminalContextsSignature);
   const skillsSignature = skillSignature(skills);
   const skillsSignatureRef = useRef(skillsSignature);
-  const skillMetadata = useMemo(() => skillMetadataByName(skills), [skillsSignature]);
+  const skillMetadata = useSignatureMemo(skillsSignature, () => skillMetadataByName(skills));
   const skillMetadataRef = useRef(skillMetadata);
   const inlineTokenContext = useMemo<ComposerInlineTokenContext>(
     () => ({

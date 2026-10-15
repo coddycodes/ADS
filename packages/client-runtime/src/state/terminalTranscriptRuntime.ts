@@ -123,15 +123,23 @@ export function createTerminalTranscriptRuntime(
     };
   };
 
-  const resetTranscript = (snapshot: TerminalSessionSnapshot) => {
+  /**
+   * Replaces the transcript and state with `snapshot`'s. A resync (the server's catch-up
+   * after its stream fell behind) is the same attachment and process, so it keeps the
+   * generation, and with it any input still waiting to be written.
+   */
+  const resetTranscript = (snapshot: TerminalSessionSnapshot, newGeneration = true) => {
     transcript.clear();
     transcript.append(snapshot.history);
     size = snapshot.size;
     oscColorResponderActive = snapshot.oscColorResponderActive ?? false;
-    firstAttachmentGrantClaim = snapshot.firstAttachmentGrant ? (size?.sizeClaim ?? null) : null;
+    // A resync is the same attachment: a startup grant not used yet stays its owner's.
+    if (newGeneration) {
+      firstAttachmentGrantClaim = snapshot.firstAttachmentGrant ? (size?.sizeClaim ?? null) : null;
+    }
     updateMetadata(
       { status: snapshot.status, error: null, consoleTheme: snapshot.consoleTheme ?? null },
-      true,
+      newGeneration,
     );
     const history = transcript.snapshot();
     fanRender((claim) => createResetSignalAndConsumeGrant(history, claim));
@@ -141,6 +149,8 @@ export function createTerminalTranscriptRuntime(
   const processEvent = (event: TerminalAttachStreamEvent) => {
     switch (event.type) {
       case "snapshot":
+        resetTranscript(event.snapshot, event.resync !== true);
+        return;
       case "restarted":
         resetTranscript(event.snapshot);
         return;

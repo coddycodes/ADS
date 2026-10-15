@@ -380,6 +380,8 @@ export interface DesktopBridgeFeatureFlags {
   protectedConnectionCatalog: boolean;
   sshProvisioning: boolean;
   preview: boolean;
+  /** The desktop routes remote environments' previews through SOCKS (#69); absent is false. */
+  previewTunnels?: boolean;
   updater: boolean;
   menuEvents: boolean;
 }
@@ -395,6 +397,7 @@ export const DesktopBridgeFeatureFlagsSchema = Schema.Struct({
   protectedConnectionCatalog: Schema.Boolean,
   sshProvisioning: Schema.Boolean,
   preview: Schema.Boolean,
+  previewTunnels: Schema.optional(Schema.Boolean),
   updater: Schema.Boolean,
   menuEvents: Schema.Boolean,
 });
@@ -1376,13 +1379,61 @@ export interface DesktopBridge {
   preview?: DesktopPreviewBridge;
 }
 
+/** A SOCKS-routed preview connection (#69): `host:port` on `environmentId`'s loopback. */
+export interface DesktopPreviewTunnelRequest {
+  readonly connectionId: string;
+  readonly environmentId: string;
+  /** The loopback name or address the page asked for, as it asked. */
+  readonly host: string;
+  readonly port: number;
+}
+
+/**
+ * The desktop side of preview tunnels (#69). A remote environment's preview profile routes its
+ * loopback traffic through a SOCKS server on this computer; for each connection it asks the
+ * renderer, which holds the environment's connection, to open a tunnel. Bytes move by pull,
+ * base64 as `preview.tunnelWrite` and the tunnel stream carry them: the renderer reads what
+ * the page sent and writes what the environment sent.
+ */
+export interface DesktopPreviewTunnelBridge {
+  /**
+   * Whether `environmentId`'s preview hosts route through SOCKS. The desktop decides once, at
+   * the first call or the first preview host, whichever comes first, for the app's lifetime;
+   * `requested` is that first decision. A reloaded renderer learns the decision here.
+   */
+  mode: (environmentId: string, requested: boolean) => Promise<boolean>;
+  onRequest: (listener: (request: DesktopPreviewTunnelRequest) => void) => () => void;
+  /**
+   * Answers a request: the page's connection is `opened` through the tunnel, `refused`, or
+   * connected `direct` on this computer (the environment's own endpoint here, such as an SSH
+   * environment's local forward).
+   */
+  answer: (connectionId: string, outcome: "opened" | "direct" | "refused") => Promise<void>;
+  /** The next bytes the page sent; `null` once it closed its side or the connection is gone. */
+  read: (connectionId: string) => Promise<string | null>;
+  /** Bytes for the page; resolves once they are written. */
+  write: (connectionId: string, data: string) => Promise<void>;
+  close: (connectionId: string) => Promise<void>;
+}
+
 export interface DesktopPreviewBridge {
+  /**
+   * Present where the desktop routes remote environments' previews through SOCKS (#69): their
+   * previews load at the real loopback URL, with no gateway.
+   */
+  tunnels?: DesktopPreviewTunnelBridge;
   /**
    * `environmentId` selects the preview storage: each environment's previews
    * keep their own cookies, storage, and service workers; `null` or absent is
-   * the local environment's profile.
+   * the local environment's profile. `tunnel` routes the environment's previews
+   * through SOCKS (#69); an environment's first preview host decides, for the
+   * app's lifetime.
    */
-  createTab: (tabId: string, environmentId?: string | null) => Promise<void>;
+  createTab: (
+    tabId: string,
+    environmentId?: string | null,
+    options?: { readonly tunnel?: boolean },
+  ) => Promise<void>;
   /**
    * Deletes a removed environment's preview storage, unless one of its previews
    * was opened this session (that native view lives until the app exits).

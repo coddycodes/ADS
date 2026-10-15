@@ -1903,15 +1903,24 @@ describe("ChatComposer command menu", () => {
       rangeEnd: 9,
     });
 
-    renderComposer({
+    const overrides = {
       providerStatuses: [providerWithoutDollarSkills],
       activeProjectDefaultModelSelection: {
         instanceId: providerWithoutDollarSkills.instanceId,
         model: "gpt-5.4",
       },
-    });
+    };
+    renderComposer(overrides);
 
     expect(setStateValues(STATE.trigger)).toContain(null);
+    expect(draftOf(threadRef)?.prompt).toBe("$ordinary");
+
+    // The next render sees the cleared trigger, so the closed menu drops its stale highlight.
+    h.stateSeeds.set(STATE.trigger, null);
+    h.stateSeeds.set(STATE.highlightedItemId, "stale-item");
+    h.stateSeeds.set(STATE.highlightedSearchKey, "provider-dollar-skill:ordinary");
+    renderComposer(overrides);
+
     expect(setStateValues(STATE.highlightedItemId)).toContain(null);
     expect(setStateValues(STATE.highlightedSearchKey)).toContain(null);
     expect(draftOf(threadRef)?.prompt).toBe("$ordinary");
@@ -1929,6 +1938,7 @@ describe("ChatComposer command menu", () => {
   it("resets highlight state when the menu is closed", () => {
     seedPrompt("plain prompt");
     h.stateSeeds.set(STATE.highlightedItemId, "stale-item");
+    h.stateSeeds.set(STATE.highlightedSearchKey, "provider-slash:stale");
     renderComposer();
 
     expect(setStateValues(STATE.highlightedItemId)).toContain(null);

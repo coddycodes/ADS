@@ -1,6 +1,6 @@
 import type { GitManagerOperationEvent } from "@bibcode/contracts";
 import { ChevronDownIcon, ChevronRightIcon, LoaderCircleIcon, XIcon } from "lucide-react";
-import { memo, useEffect, useReducer, useRef } from "react";
+import { memo, useEffect, useReducer } from "react";
 
 import { Button } from "~/components/ui/button";
 
@@ -89,18 +89,11 @@ export const GitManagerOperationBanner = memo(function GitManagerOperationBanner
   onCancel,
 }: GitManagerOperationBannerProps) {
   const [state, dispatch] = useReducer(reduceBannerState, CLOSED_OPERATION_STATE);
-  const lastEventRef = useRef<GitManagerOperationEvent | null>(null);
-  const eventSequenceRef = useRef(0);
-  if (operation !== lastEventRef.current) {
-    lastEventRef.current = operation;
-    eventSequenceRef.current += 1;
-  }
-  const eventSequence = eventSequenceRef.current;
-  const eventSignature = operation === null ? null : JSON.stringify(operation);
+  // Each new event object is applied once, even when it equals the previous one.
   useEffect(() => {
-    if (eventSignature === null) return;
-    dispatch({ kind: "event", event: JSON.parse(eventSignature) as GitManagerOperationEvent });
-  }, [eventSequence, eventSignature]);
+    if (operation === null) return;
+    dispatch({ kind: "event", event: operation });
+  }, [operation]);
 
   if (!state.visible) return null;
   const outputId = "git-manager-operation-output";

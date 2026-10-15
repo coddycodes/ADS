@@ -432,7 +432,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   useEffect(() => {
     const frame = requestAnimationFrame(handleScroll);
     return () => cancelAnimationFrame(frame);
-  }, [handleScroll, rows.length]);
+  }, [handleScroll]);
 
   useEffect(() => {
     if (!timelineViewportElement) {
@@ -456,7 +456,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [timelineViewportElement, rows.length]);
+  }, [timelineViewportElement]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
@@ -1273,9 +1273,12 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
 function WorkingTimer({ createdAt }: { createdAt: string | null }) {
   const textRef = useRef<HTMLSpanElement>(null);
   const elapsedFloorRef = useRef(0);
-  const initialElapsedMs =
-    createdAt === null ? 0 : (readWorkingTimerElapsedMs(createdAt, Date.now()) ?? 0);
-  const initialText = formatWorkingElapsedMs(Math.max(elapsedFloorRef.current, initialElapsedMs));
+  // Rendered once: the frame loop below owns the text after mount.
+  const [initialText] = useState(() =>
+    formatWorkingElapsedMs(
+      createdAt === null ? 0 : (readWorkingTimerElapsedMs(createdAt, Date.now()) ?? 0),
+    ),
+  );
 
   useEffect(() => {
     const sourceElapsedMs =
@@ -1885,16 +1888,20 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
 /** Returns a structurally-shared copy of `rows`: for each row whose content
  *  hasn't changed since last call, the previous object reference is reused. */
 function useStableRows(rows: MessagesTimelineRow[]): MessagesTimelineRow[] {
-  const prevState = useRef<StableMessagesTimelineRowsState>({
+  const [stabilizeRows] = useState(createMessagesTimelineRowStabilizer);
+  return useMemo(() => stabilizeRows(rows), [rows, stabilizeRows]);
+}
+
+/** Per-instance memoizer that reuses unchanged rows from the previous call. */
+function createMessagesTimelineRowStabilizer() {
+  let previous: StableMessagesTimelineRowsState = {
     byId: new Map<string, MessagesTimelineRow>(),
     result: [],
-  });
-
-  return useMemo(() => {
-    const nextState = computeStableMessagesTimelineRows(rows, prevState.current);
-    prevState.current = nextState;
-    return nextState.result;
-  }, [rows]);
+  };
+  return (rows: MessagesTimelineRow[]): MessagesTimelineRow[] => {
+    previous = computeStableMessagesTimelineRows(rows, previous);
+    return previous.result;
+  };
 }
 
 // ---------------------------------------------------------------------------

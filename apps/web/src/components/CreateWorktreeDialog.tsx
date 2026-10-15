@@ -113,6 +113,20 @@ const TAB_OPTIONS: ReadonlyArray<{ value: WorktreeSourceMode; label: string }> =
   { value: "branch", label: "Branch" },
 ];
 
+/** The name, and the name this dialog last suggested: a suggestion never replaces a typed name. */
+interface WorktreeNameState {
+  readonly text: string;
+  readonly automatic: string | null;
+}
+
+const EMPTY_WORKTREE_NAME: WorktreeNameState = { text: "", automatic: null };
+
+/** Stops tracking the suggestion, clearing the name if it is still that suggestion. */
+function forgetAutomaticName(name: WorktreeNameState): WorktreeNameState {
+  if (name.automatic === null) return name;
+  return { text: name.text === name.automatic ? "" : name.text, automatic: null };
+}
+
 export function CreateWorktreeDialog({
   open,
   onOpenChange,
@@ -130,7 +144,8 @@ export function CreateWorktreeDialog({
   }));
   const { projectRef, branchRefName } = projectSelection;
   const [mode, setMode] = useState<WorktreeSourceMode>("smart");
-  const [nameText, setNameText] = useState("");
+  const [name, setName] = useState<WorktreeNameState>(EMPTY_WORKTREE_NAME);
+  const nameText = name.text;
   const [sourceText, setSourceText] = useState("");
   const [reuseSelectedBranch, setReuseSelectedBranch] = useState(false);
   const [baseBranchOverride, setBaseBranchOverride] = useState("");
@@ -139,7 +154,6 @@ export function CreateWorktreeDialog({
   const [agentActionValue, setAgentActionValue] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const agentSelectionTouchedRef = useRef(false);
-  const automaticNameRef = useRef<string | null>(null);
   const previousOpenRef = useRef(false);
   const refsEnabledRef = useRef(false);
 
@@ -161,14 +175,11 @@ export function CreateWorktreeDialog({
 
   const applySuggestedName = useCallback(
     (suggestion: string): boolean => {
-      const shouldApply = nameText.trim().length === 0 || nameText === automaticNameRef.current;
-      if (shouldApply) {
-        automaticNameRef.current = suggestion;
-        setNameText(suggestion);
-      }
+      const shouldApply = name.text.trim().length === 0 || name.text === name.automatic;
+      if (shouldApply) setName({ text: suggestion, automatic: suggestion });
       return shouldApply;
     },
-    [nameText],
+    [name],
   );
 
   const handleModeChange = useCallback(
@@ -210,11 +221,7 @@ export function CreateWorktreeDialog({
       selectProjectTarget(nextProjectRef);
       setSourceText("");
       setReuseSelectedBranch(false);
-      const automaticName = automaticNameRef.current;
-      if (automaticName !== null) {
-        automaticNameRef.current = null;
-        setNameText((current) => (current === automaticName ? "" : current));
-      }
+      setName(forgetAutomaticName);
     },
     [projectRef, selectProjectTarget],
   );
@@ -226,11 +233,7 @@ export function CreateWorktreeDialog({
     if (!wasOpen) {
       agentSelectionTouchedRef.current = false;
       setReuseSelectedBranch(false);
-      const automaticName = automaticNameRef.current;
-      if (automaticName !== null) {
-        setNameText((current) => (current === automaticName ? "" : current));
-        automaticNameRef.current = null;
-      }
+      setName(forgetAutomaticName);
     }
     const firstProject = projects[0];
     const firstProjectRef = firstProject
@@ -280,11 +283,12 @@ export function CreateWorktreeDialog({
       : null,
   );
   const refsEnabled = open && branchesEnabled;
+  const revalidateRefs = refsQuery.revalidate;
   useEffect(() => {
     const wasEnabled = refsEnabledRef.current;
     refsEnabledRef.current = refsEnabled;
-    if (refsEnabled && !wasEnabled) refsQuery.revalidate();
-  }, [refsEnabled, refsQuery.revalidate]);
+    if (refsEnabled && !wasEnabled) revalidateRefs();
+  }, [refsEnabled, revalidateRefs]);
   // TODO(orca-port): confirm VcsListRefsResult field name is `refs`.
   const refs: ReadonlyArray<RefLike> = refsQuery.data?.refs ?? [];
   const exactBranchRef = useMemo(() => findExactRefMatch(refs, sourceText), [refs, sourceText]);
@@ -294,28 +298,25 @@ export function CreateWorktreeDialog({
   );
   const selectedBranchRefName = selectedBranchRef?.name ?? null;
   const canReuseSelectedBranch = canReuseBranch(selectedBranchRef);
-  useEffect(() => {
-    if (
-      (mode === "branch" || mode === "smart") &&
-      exactBranchRef !== null &&
-      branchRefName !== exactBranchRef.name
-    ) {
-      handleBranchSelect(exactBranchRef);
-    }
-  }, [branchRefName, exactBranchRef, handleBranchSelect, mode]);
+  if (
+    (mode === "branch" || mode === "smart") &&
+    exactBranchRef !== null &&
+    branchRefName !== exactBranchRef.name
+  ) {
+    handleBranchSelect(exactBranchRef);
+  }
   const handleReuseSelectedBranchChange = useCallback(
     (nextReuse: boolean) => {
       if (!selectedBranchRef || !canReuseSelectedBranch) return;
-      if (nameText === automaticNameRef.current) {
+      if (name.text === name.automatic) {
         const suggestion = nextReuse
           ? selectedBranchRef.name
           : suggestNextAvailableBranchName(selectedBranchRef.name, refs);
-        automaticNameRef.current = suggestion;
-        setNameText(suggestion);
+        setName({ text: suggestion, automatic: suggestion });
       }
       setReuseSelectedBranch(nextReuse);
     },
-    [canReuseSelectedBranch, nameText, refs, selectedBranchRef],
+    [canReuseSelectedBranch, name, refs, selectedBranchRef],
   );
 
   const githubItem: GitHubWorkItemRef | null =
@@ -402,9 +403,8 @@ export function CreateWorktreeDialog({
   });
 
   const resetForNextCreate = useCallback(() => {
-    setNameText("");
+    setName(EMPTY_WORKTREE_NAME);
     setSourceText("");
-    automaticNameRef.current = null;
     clearBranchSelection();
     setFormError(null);
     window.requestAnimationFrame(() => nameInputRef.current?.focus());
@@ -417,7 +417,7 @@ export function CreateWorktreeDialog({
     }
     setFormError(null);
     setIsSubmitting(true);
-    try {
+    const submit = async () => {
       const threadId = newThreadId();
       const settings = serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS;
       const requestedAction = selectableAgentActions.find(
@@ -488,9 +488,8 @@ export function CreateWorktreeDialog({
       // Verified against routeTree.gen.ts: "/$environmentId/$threadId" is the
       // FileRoutesByTo id for routes/_chat.$environmentId.$threadId.tsx.
       void navigate({ to: "/$environmentId/$threadId", params: { environmentId, threadId } });
-    } finally {
-      setIsSubmitting(false);
-    }
+    };
+    await submit().finally(() => setIsSubmitting(false));
   }, [
     project,
     environmentId,
@@ -571,10 +570,7 @@ export function CreateWorktreeDialog({
               ref={nameInputRef}
               placeholder="Worktree name"
               value={nameText}
-              onChange={(event) => {
-                automaticNameRef.current = null;
-                setNameText(event.target.value);
-              }}
+              onChange={(event) => setName({ text: event.target.value, automatic: null })}
             />
           </label>
 

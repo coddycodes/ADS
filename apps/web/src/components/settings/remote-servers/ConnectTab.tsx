@@ -9,7 +9,16 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { type ReactNode, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type {
   DesktopDiscoveredSshHost,
   DesktopSshEnvironmentTarget,
@@ -965,16 +974,21 @@ export function ConnectTab({
     (decodedPairingCode !== null &&
       (decodedPairingCode.reach === "this-computer" ||
         classifyPairingEndpoint(decodedPairingCode.endpoint) === "loopback"));
-  useEffect(() => {
-    if (initialPairingCode === null) return;
-    initialPairingCodeConsumedRef.current = false;
-    setPairingCodeInput(initialPairingCode);
-    setSavedBackendMode("pairing-code");
-    setTunnelAcknowledged(false);
-    setFlowDemandsAcknowledgement(false);
-    setAddServerFailure(null);
-    setSavedBackendError(null);
-    setAddBackendDialogOpen(true);
+  const [appliedInitialPairingCode, setAppliedInitialPairingCode] = useState<string | null>(null);
+  if (initialPairingCode !== appliedInitialPairingCode) {
+    setAppliedInitialPairingCode(initialPairingCode);
+    if (initialPairingCode !== null) {
+      setPairingCodeInput(initialPairingCode);
+      setSavedBackendMode("pairing-code");
+      setTunnelAcknowledged(false);
+      setFlowDemandsAcknowledgement(false);
+      setAddServerFailure(null);
+      setSavedBackendError(null);
+      setAddBackendDialogOpen(true);
+    }
+  }
+  useLayoutEffect(() => {
+    if (initialPairingCode !== null) initialPairingCodeConsumedRef.current = false;
   }, [initialPairingCode]);
   useEffect(() => {
     if (!initialAddServerOpen || initialAddServerActionConsumedRef.current) return;

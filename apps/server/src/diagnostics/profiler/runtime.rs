@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::{
     sync::{mpsc, watch},
@@ -132,6 +132,7 @@ impl ProfilerRuntime {
         let (panics, panic_records) = mpsc::channel(PANIC_QUEUE);
         let linked_dumps = Mutex::new(findings.crash_ids().collect());
         let handle = Arc::new(ProfilerHandle {
+            dir: dir.clone(),
             enabled: Default::default(),
             sender: store.sender(),
             findings: Mutex::new(findings),
@@ -419,7 +420,7 @@ async fn raise_unrecorded_crashes(
 async fn classify_previous_run(handle: Arc<ProfilerHandle>, previous: SessionRecord, dir: PathBuf) {
     let record = os_records::harvest_previous_crash(&previous).await;
     let dump = {
-        let (handle, previous) = (handle.clone(), previous.clone());
+        let (handle, previous, dir) = (handle.clone(), previous.clone(), dir.clone());
         tokio::task::spawn_blocking(move || {
             let sidecars = sentinel::dump_sidecars(&dir);
             let mut linked = lock(&handle.linked_dumps);
@@ -432,13 +433,20 @@ async fn classify_previous_run(handle: Arc<ProfilerHandle>, previous: SessionRec
         .ok()
         .flatten()
     };
-    let run = sentinel::classify(
+    let mut run = sentinel::classify(
         &previous,
         sentinel::boot_id().as_deref(),
         sentinel::oom_kill_count(),
         record,
         dump,
     );
+    // No crash record explains the ending: add what systemd and the crash monitor saw.
+    if let sentinel::PreviousRun::UncleanExit { context, .. }
+    | sentinel::PreviousRun::ShutdownIncomplete(context) = &mut run
+    {
+        context.journal = os_records::unit_exit_lines(&previous).await;
+        context.gone_at = sentinel::gone_at(&dir, &previous);
+    }
     if let Some(input) = sentinel::finding_for(&previous, run) {
         lock(&handle.findings).record_now(input, OffsetDateTime::now_utc(), &handle.sender);
     }
@@ -603,9 +611,51 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Writes `session.start` each time recording starts, first among the detectors: which
+/// BiBCode recorded the events that follow under this `sid` (#98).
+pub struct SessionHeader {
+    host: &'static str,
+}
+
+impl SessionHeader {
+    /// `host` is `desktop` for the server inside the desktop app, `server` otherwise.
+    pub fn new(host: &'static str) -> Self {
+        Self { host }
+    }
+
+    fn payload(&self) -> Value {
+        json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "host": self.host,
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+        })
+    }
+}
+
+impl Detector for SessionHeader {
+    fn name(&self) -> &'static str {
+        "session"
+    }
+
+    fn start(&self, _cancel: CancellationToken) -> JoinHandle<()> {
+        super::emit(store::SESSION_START, self.payload());
+        tokio::spawn(async {})
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_names_the_build_that_recorded_it() {
+        let payload = SessionHeader::new("desktop").payload();
+        assert_eq!(payload["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(payload["host"], "desktop");
+        assert_eq!(payload["os"], std::env::consts::OS);
+        assert_eq!(payload["arch"], std::env::consts::ARCH);
+    }
 
     fn finding_line(last_seen: &str) -> String {
         format!(

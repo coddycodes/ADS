@@ -67,6 +67,14 @@ Desktop releases are built by the Tauri 2 pipeline in `apps/desktop`.
 > Windows releases remain unsigned; choose "More info" → "Run anyway" if
 > SmartScreen warns.
 
+> [!IMPORTANT]
+> On Windows, BiBCode 0.7.x closes as soon as you choose **Install** on an
+> update, before the installer starts, and stays on the old version
+> ([#95](https://github.com/mubeda/BibCode/issues/95)). Download the latest
+> `.exe` installer from [GitHub Releases](https://github.com/mubeda/BibCode/releases)
+> and run it: it keeps your projects and settings. Version 0.8.0 and later
+> install their updates themselves.
+
 ### Run from source
 
 See [Getting started](./docs/getting-started/quick-start.md), or jump to the

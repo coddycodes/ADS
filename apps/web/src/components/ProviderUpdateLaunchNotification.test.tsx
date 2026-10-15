@@ -133,11 +133,12 @@ describe("ProviderUpdateLaunchNotification", () => {
   it("tracks notification keys and settles immediately when backends are ready", () => {
     harness.environments = [{ entry: { target: { local: true } } }];
     harness.notificationKey = null;
+    harness.settleElapsed = true;
     renderNotification();
+    expect(harness.setSettleElapsed).toHaveBeenCalledWith(false);
     harness.effects[1]?.();
     expect(harness.refs[1]?.current).toBeNull();
-    harness.effects[2]?.();
-    expect(harness.setSettleElapsed).toHaveBeenCalledWith(false);
+    expect(harness.effects[2]?.()).toBeUndefined();
   });
 
   it("waits up to thirty seconds for settling backends", () => {

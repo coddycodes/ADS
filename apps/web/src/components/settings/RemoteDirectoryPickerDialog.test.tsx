@@ -44,7 +44,8 @@ const hooks = vi.hoisted(() => {
         const previous = states.get(index) as T;
         const value = typeof next === "function" ? (next as (value: T) => T)(previous) : next;
         states.set(index, value);
-        if (index === 0) harness.setPath(value as string);
+        // The browser's first state is the picker identity; report the path it browses.
+        if (index === 0) harness.setPath((value as { readonly path: string }).path);
       };
       return [states.get(index) as T, setState] as const;
     },

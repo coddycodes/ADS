@@ -238,6 +238,11 @@ import {
   PreviewGatewayError,
   PreviewGatewayOpenInput,
   PreviewGatewayOpenResult,
+  PreviewTunnelCloseInput,
+  PreviewTunnelError,
+  PreviewTunnelEvent,
+  PreviewTunnelOpenInput,
+  PreviewTunnelWriteInput,
   PreviewEvent,
   PreviewListInput,
   PreviewListResult,
@@ -542,6 +547,9 @@ export const WS_METHODS = {
   previewReportStatus: "preview.reportStatus",
   previewClaimOpenRequest: "preview.claimOpenRequest",
   previewGatewayOpen: "preview.gatewayOpen",
+  previewTunnelOpen: "preview.tunnelOpen",
+  previewTunnelWrite: "preview.tunnelWrite",
+  previewTunnelClose: "preview.tunnelClose",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
@@ -1571,6 +1579,23 @@ export const WsPreviewGatewayOpenRpc = Rpc.make(WS_METHODS.previewGatewayOpen, {
   error: Schema.Union([PreviewGatewayError, EnvironmentRpcError]),
 });
 
+export const WsPreviewTunnelOpenRpc = Rpc.make(WS_METHODS.previewTunnelOpen, {
+  payload: PreviewTunnelOpenInput,
+  success: PreviewTunnelEvent,
+  error: Schema.Union([PreviewTunnelError, EnvironmentRpcError]),
+  stream: true,
+});
+
+export const WsPreviewTunnelWriteRpc = Rpc.make(WS_METHODS.previewTunnelWrite, {
+  payload: PreviewTunnelWriteInput,
+  error: Schema.Union([PreviewTunnelError, EnvironmentRpcError]),
+});
+
+export const WsPreviewTunnelCloseRpc = Rpc.make(WS_METHODS.previewTunnelClose, {
+  payload: PreviewTunnelCloseInput,
+  error: Schema.Union([PreviewTunnelError, EnvironmentRpcError]),
+});
+
 export const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
   payload: PreviewAutomationHost,
   success: PreviewAutomationStreamEvent,
@@ -1896,6 +1921,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewReportStatusRpc,
   WsPreviewClaimOpenRequestRpc,
   WsPreviewGatewayOpenRpc,
+  WsPreviewTunnelOpenRpc,
+  WsPreviewTunnelWriteRpc,
+  WsPreviewTunnelCloseRpc,
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,

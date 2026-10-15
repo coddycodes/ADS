@@ -801,7 +801,12 @@ pub fn audit(facts: &AuditFacts) -> Vec<FindingInput> {
         }
     }
     for dir in &facts.base_dirs {
-        if !owned.contains(dir.as_path()) && !facts.git_registrations.contains_key(dir) {
+        // BiBCode names no worktree with a leading dot; such an entry is another tool's, like
+        // Orca's `.orca-worktree-trash`, which was reported every audit (#105).
+        let hidden = dir
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with('.'));
+        if !hidden && !owned.contains(dir.as_path()) && !facts.git_registrations.contains_key(dir) {
             let path = redact(dir);
             findings.push(finding(
                 "worktree.orphan-dir",
@@ -968,7 +973,7 @@ mod tests {
 
     #[test]
     fn an_unowned_unregistered_directory_is_an_orphan() {
-        let facts = AuditFacts {
+        let mut facts = AuditFacts {
             catalog: vec![entry(
                 "/base/repo/owned",
                 AdoptedWorktreeAvailability::Present,
@@ -989,6 +994,11 @@ mod tests {
             "worktree.orphan-dir",
             vec!["unowned-unregistered".to_owned()]
         )));
+        // Another tool's hidden entry is not BiBCode's leftover (#105).
+        facts
+            .base_dirs
+            .push(PathBuf::from("/base/repo/.orca-worktree-trash"));
+        assert_eq!(kinds(&facts), found);
         assert_eq!(
             found
                 .iter()

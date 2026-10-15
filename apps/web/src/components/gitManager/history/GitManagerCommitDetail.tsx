@@ -150,10 +150,6 @@ const ChangedFileList = memo(function ChangedFileList({
 }: ChangedFileListProps) {
   const listRef = useRef<LegendListRef | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const pathsRef = useRef(paths);
-  const onSelectRef = useRef(onSelect);
-  pathsRef.current = paths;
-  onSelectRef.current = onSelect;
 
   const renderFile = useCallback(
     ({ item, index }: { item: string; index: number }) => (
@@ -185,13 +181,13 @@ const ChangedFileList = memo(function ChangedFileList({
       );
       const currentPath = button?.dataset.changedFilePath;
       if (!currentPath) return;
-      const currentIndex = pathsRef.current.indexOf(currentPath);
+      const currentIndex = paths.indexOf(currentPath);
       const nextIndex = currentIndex + (event.key === "ArrowDown" ? 1 : -1);
-      const nextPath = pathsRef.current[nextIndex];
+      const nextPath = paths[nextIndex];
       if (!nextPath) return;
 
       event.preventDefault();
-      onSelectRef.current(nextPath);
+      onSelect(nextPath);
       const scroll = listRef.current?.scrollToIndex({
         index: nextIndex,
         animated: false,
@@ -202,7 +198,7 @@ const ChangedFileList = memo(function ChangedFileList({
         () => undefined,
       );
     },
-    [focusFile],
+    [focusFile, onSelect, paths],
   );
 
   return (

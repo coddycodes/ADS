@@ -57,6 +57,9 @@ struct RegistryState {
     next_registration_id: u64,
     entries: HashMap<u64, RegistryEntry>,
     registration_order: VecDeque<u64>,
+    /// The UI processes process diagnostics last observed. Not claims: diagnostics attribute
+    /// them from the observation itself.
+    observed_ui: Vec<ProcessIdentity>,
 }
 
 #[derive(Debug)]
@@ -83,8 +86,20 @@ impl ProcessAttributionRegistry {
                 next_registration_id: 0,
                 entries: HashMap::new(),
                 registration_order: VecDeque::new(),
+                observed_ui: Vec::new(),
             })),
         }
+    }
+
+    /// Records the UI processes the desktop's observer found. On macOS they are WebKit XPC
+    /// services under launchd, outside the server's process tree, so this is how the
+    /// Profiler's sampler learns of them (#104).
+    pub(crate) fn set_observed_ui(&self, identities: Vec<ProcessIdentity>) {
+        lock_state(&self.inner).observed_ui = identities;
+    }
+
+    pub(crate) fn observed_ui(&self) -> Vec<ProcessIdentity> {
+        lock_state(&self.inner).observed_ui.clone()
     }
 
     pub(crate) fn register_identity(

@@ -1340,6 +1340,83 @@ identity` on page loads (document or iframe Fetch Metadata, or, on plain-HTTP
   load failures today, so after a page has loaded, a dropped forward shows the
   webview's own error page instead of that state; Reload recovers.
 
+### Preview tunnels
+
+On the Linux desktop, a remote environment's previews load at their real
+origin (`http://localhost:5173`, HTTPS included) instead of a gateway address
+([design](../superpowers/specs/2026-10-11-preview-socks-profiles-design.md),
+#69). The environment's preview profile routes through a SOCKS5 server on
+`127.0.0.1`, one per environment, that the desktop starts with the
+environment's first preview host:
+
+```text
+preview webview -> SOCKS (desktop, 127.0.0.1) -> DesktopBridge -> web client
+  -> preview.tunnel* RPC on the environment's connection -> server -> 127.0.0.1:<port>
+```
+
+- **Routing.** A `CONNECT` to `localhost`, `*.localhost`, `127.0.0.0/8`,
+  `::1` or a wildcard address (`0.0.0.0`, `::`) becomes a tunnel; any other
+  destination is connected from this
+  computer, as an unproxied browser would. Only `CONNECT` with no
+  authentication is served, at most 64 page connections per environment.
+  Every account on the computer reaches `127.0.0.1`, so the server first
+  checks the kernel's socket table (`/proc/net/tcp`, `/proc/net/tcp6`) and
+  drops a connection whose socket another user owns; otherwise another account
+  could reach the environment's loopback through this user's connection.
+  Tauri passes the proxy as host and port only, which rules out SOCKS
+  username and password authentication.
+- **Same access as the gateway.** A tunnel reaches any loopback port on the
+  server except the two listed below, as the preview gateway's targets do, under the
+  same `orchestration:operate` scope, which can already run agent commands
+  there.
+- **Desktop to renderer.** The SOCKS server emits `preview://tunnel-request`
+  with a connection id and the destination host and port; the renderer answers it
+  (`desktop_preview_tunnel_answer`, which writes the SOCKS reply), then pulls
+  what the page sent (`desktop_preview_tunnel_read`) and writes what the
+  environment sent (`desktop_preview_tunnel_write`), base64, one chunk at a
+  time. A request with no answer in 20 s is refused. The renderer may also
+  answer `direct` for the environment's own endpoint on this computer, matched
+  by exact host and port (an SSH environment's local forward
+  `127.0.0.1:<forward port>`, which serves its signed file links; the same port
+  as `localhost:<port>` is a dev server on the environment): the desktop then
+  connects it locally. A write either side cannot complete in 60 s closes the
+  tunnel, so a stuck upstream cannot hide a page that went away. A page closing its side, or a reload of
+  the main renderer, closes its connections on the desktop too. The web client
+  carries at most 16 tunnels per environment at once and queues up to 64 more:
+  each tunnel holds one of the connection's 64 RPC request slots for its
+  lifetime, and one more while it writes. A request still queued after 15 s
+  is dropped, since the desktop has refused it by then.
+- **One decision per environment.** The desktop decides each environment's
+  mode once, at the first `desktop_preview_tunnel_mode` or preview host,
+  whichever comes first, and returns it from both for the app's lifetime. The
+  URL a preview tab loads and the environment's preview host therefore always
+  agree, also after the renderer reloads or the connection changes between
+  the two.
+- **Server.** `preview.tunnelOpen({ port })`, which needs
+  `orchestration:operate`, connects to `127.0.0.1:<port>`, then `[::1]:<port>`,
+  and streams `Opened { tunnelId }` followed by `Data { data }` (base64, up to
+  64 KiB each). The transport sends the next chunk only after the client
+  acknowledged the last, and the web client acknowledges only after the
+  desktop wrote it, so a slow page cannot pile data up anywhere.
+  `preview.tunnelWrite({ tunnelId, data })` returns once its chunk is written;
+  `preview.tunnelClose` closes. Port 0 and the server's own port are refused
+  (`not-admitted`): a loopback peer earns forwarded-header and pre-auth trust
+  the gateway does not refuse either. Limits are 64 tunnels per session and
+  256 per server (`busy`). A tunnel is written to and closed only by the
+  session that opened it, and ends when that session's principal is revoked
+  (checked every 30 s, `revoked`), when the stream is cancelled, or at
+  shutdown. The methods are reads for update maintenance, like
+  `previewAutomation.connect`: a tunnel lives as long as its page.
+- **Choosing.** The desktop advertises `previewTunnels` in its bridge
+  metadata on Linux, and a server advertises the `previewTunnels` capability
+  in its environment descriptor (`/.well-known/bibcode/environment`, which a
+  remote connection reads, and the server config).
+  A remote environment (LAN, SSH, or relay) whose server has it gets a
+  tunneled preview host; its first preview host decides for the app's
+  lifetime, so a host created without a tunnel keeps using the gateway.
+  Same-host environments, browser mode, Windows and macOS keep the gateway.
+  Tunneled hosts have DNS prefetching off.
+
 ### Open requests and automation hosts
 
 A command in an agent or terminal session asks a client to open a URL through

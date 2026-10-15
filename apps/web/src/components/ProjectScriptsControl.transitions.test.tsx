@@ -59,11 +59,18 @@ describe("ProjectScriptsControl availability transitions", () => {
     onUpdateScript,
     onDeleteScript,
   });
+  const captureController = (next: ProjectScriptsController) => {
+    controller = next as InternalController;
+  };
   function Harness({
     suspended,
+    onController,
     ...next
-  }: ProjectScriptsControlProps & { suspended?: Promise<never> }) {
-    controller = useProjectScriptsController(next) as InternalController;
+  }: ProjectScriptsControlProps & {
+    suspended?: Promise<never>;
+    onController: (controller: ProjectScriptsController) => void;
+  }) {
+    onController(useProjectScriptsController(next));
     if (suspended) throw suspended;
     return null;
   }
@@ -71,7 +78,7 @@ describe("ProjectScriptsControl availability transitions", () => {
     await act(async () =>
       root.render(
         <Suspense fallback={null}>
-          <Harness {...props(enabled)} />
+          <Harness {...props(enabled)} onController={captureController} />
         </Suspense>,
       ),
     );
@@ -137,7 +144,7 @@ describe("ProjectScriptsControl availability transitions", () => {
     await act(async () => {
       root.render(
         <Suspense fallback={null}>
-          <Harness {...props(false)} suspended={suspended} />
+          <Harness {...props(false)} suspended={suspended} onController={captureController} />
         </Suspense>,
       );
     });

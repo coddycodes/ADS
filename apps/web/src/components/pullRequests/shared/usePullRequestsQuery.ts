@@ -1,5 +1,5 @@
 import { AsyncResult, type Atom } from "effect/unstable/reactivity";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { useEnvironmentQuery, type EnvironmentQueryView } from "../../../state/query";
 
 export interface PullRequestsQueryOptions {
@@ -22,7 +22,11 @@ export function usePullRequestsQuery<A, E>(
   options?: PullRequestsQueryOptions,
 ): EnvironmentQueryView<A, E> {
   const query = useEnvironmentQuery(atom);
-  const shown = useRef<{ atom: typeof atom; data: A | null }>({ atom, data: null });
+  // The data last displayed for this atom, which a failed refresh keeps showing.
+  const [shown, setShown] = useState<{ atom: typeof atom; data: A | null }>({
+    atom,
+    data: null,
+  });
   const [opened, setOpened] = useState(() =>
     openedView(atom, query, options?.freshOnOpen === true),
   );
@@ -47,14 +51,16 @@ export function usePullRequestsQuery<A, E>(
       emission: AsyncResult.initial<A, E>(true),
       isPending: true,
     };
-  if (shown.current.atom !== atom) shown.current = { atom, data: null };
   const view =
     opened.data !== null && query.data === opened.data
       ? { ...query, data: null, isPending: query.isPending || query.error === null }
       : query;
-  if (view.data !== null) shown.current = { atom, data: view.data };
-  if (view.data === null && view.error !== null && shown.current.data !== null)
-    return { ...view, data: shown.current.data };
+  const shownData = shown.atom === atom ? shown.data : null;
+  if (shown.atom !== atom || (view.data !== null && view.data !== shownData)) {
+    setShown({ atom, data: view.data });
+  }
+  if (view.data === null && view.error !== null && shownData !== null)
+    return { ...view, data: shownData };
   return view;
 }
 

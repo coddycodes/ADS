@@ -90,6 +90,17 @@ describe("desktop local topology reads", () => {
     expect(reader.readResult()).toEqual({ _tag: "Success", bootstraps: [secondary] });
   });
 
+  it("keeps the snapshot's identity while the topology is unchanged", () => {
+    const topology = [{ id: "wsl:Ubuntu", label: "WSL: Ubuntu", httpBaseUrl: "", wsBaseUrl: "" }];
+    const reader = createDesktopSecondaryBootstrapsReader(() => ({
+      getLocalEnvironmentBootstraps: () => topology,
+    }));
+    expect(reader.readSnapshot()).toBe(reader.readSnapshot());
+
+    const withoutBridge = createDesktopSecondaryBootstrapsReader(() => undefined);
+    expect(withoutBridge.readSnapshot()).toBe(withoutBridge.readSnapshot());
+  });
+
   it("retains the last successful snapshot only until another read succeeds", () => {
     const secondary = {
       id: "wsl:Ubuntu",

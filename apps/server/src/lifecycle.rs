@@ -70,6 +70,7 @@ fn connect_environment_descriptor(config: &ServerConfig) -> serde_json::Value {
             "vcsCloneReattach": true,
             "attachmentStaging": true,
             "profiler": true,
+            "previewTunnels": true,
         },
     })
 }
@@ -312,6 +313,8 @@ impl ServerRuntime {
                     .await
                     .map_err(ServerError::ProductionInitialize)?,
                 );
+                // A port-0 start learns its port only here.
+                runtime.preview_tunnels().set_own_port(local_addr.port());
                 let jwt = PersistentJwtCodec::open(state_directory.join("environment-jwt.json"))
                     .await
                     .map_err(|error| ServerError::ProductionInitialize(error.to_string()))?;
@@ -1170,6 +1173,7 @@ mod tests {
         assert_eq!(descriptor["capabilities"]["remoteUpdateProgress"], true);
         assert_eq!(descriptor["capabilities"]["terminalOrderedInput"], true);
         assert_eq!(descriptor["capabilities"]["terminalSizeOwnership"], true);
+        assert_eq!(descriptor["capabilities"]["previewTunnels"], true);
         assert_eq!(descriptor["capabilities"]["terminalImagePaste"], true);
         assert_eq!(descriptor["capabilities"]["pullRequestCreateOptions"], true);
         assert_eq!(descriptor["capabilities"]["vcsCloneReattach"], true);

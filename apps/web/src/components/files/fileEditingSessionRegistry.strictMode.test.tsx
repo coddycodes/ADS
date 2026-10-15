@@ -29,22 +29,18 @@ type TestRegistry = FileEditingSessionRegistry<TestSession> & {
 };
 
 function RegistryOwner({
-  lifetimeKey,
   openRelativePaths,
   activeRelativePath,
   onRegistry,
   onSession,
 }: {
-  lifetimeKey: string;
   openRelativePaths: readonly string[];
   activeRelativePath: string | null;
   onRegistry: (registry: TestRegistry) => void;
   onSession: (session: TestSession) => void;
 }) {
-  const registry = useMemo(
-    () => new FileEditingSessionRegistry<TestSession>() as TestRegistry,
-    [lifetimeKey],
-  );
+  // Keyed by lifetime, so a new lifetime remounts the owner with a fresh registry.
+  const registry = useMemo(() => new FileEditingSessionRegistry<TestSession>() as TestRegistry, []);
 
   useEffect(() => {
     const releaseOwnership = registry.acquireOwnership?.();
@@ -102,7 +98,6 @@ describe("FileEditingSessionRegistry StrictMode ownership", () => {
           <StrictMode>
             <RegistryOwner
               key={lifetimeKey}
-              lifetimeKey={lifetimeKey}
               openRelativePaths={openRelativePaths}
               activeRelativePath={activeRelativePath}
               onRegistry={onRegistry}

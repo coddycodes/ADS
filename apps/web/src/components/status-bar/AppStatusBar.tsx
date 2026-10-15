@@ -10,7 +10,15 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { RefreshCwIcon } from "lucide-react";
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { useHasSlowRpcAckRequests } from "../../rpc/requestLatencyState";
@@ -47,6 +55,15 @@ interface ProviderUsageResetOverlay {
   readonly queryEmission: ProviderUsageQueryEmission;
 }
 
+interface ProviderUsagePresentation {
+  readonly snapshots: ServerProviderUsageResult["providers"];
+  readonly percentageDisplay: UsagePercentageDisplay;
+  readonly showClaudeUsage: boolean;
+  readonly showCodexUsage: boolean;
+  readonly relativeLabelKey: string;
+  readonly providers: ReadonlyArray<ProviderUsageViewModel>;
+}
+
 interface StatusBarClientSettings {
   readonly showClaudeUsage: boolean;
   readonly showCodexUsage: boolean;
@@ -77,6 +94,8 @@ const equalStatusBarClientSettings = (
   previous.statusBarUsageMode === next.statusBarUsageMode &&
   previous.usagePercentageDisplay === next.usagePercentageDisplay;
 const NOOP_OPEN_PROVIDER_SETTINGS = (): void => {};
+// The clock has no subscription: the bar samples it whenever it renders, as each poll does.
+const NOOP_CLOCK_SUBSCRIBE = (): (() => void) => () => {};
 const EMPTY_PROVIDER_USAGE_SNAPSHOTS: ServerProviderUsageResult["providers"] = [];
 
 function visibleProviderUsage(
@@ -87,6 +106,25 @@ function visibleProviderUsage(
   return reset !== null && isProviderUsageResetCurrent(reset, queryEmission)
     ? reset.usage
     : queried;
+}
+
+function buildProviderUsagePresentation(
+  input: Omit<ProviderUsagePresentation, "providers">,
+  presentationNow: DateTime.Utc | undefined,
+): ProviderUsagePresentation {
+  const derived = buildProviderUsageViewModels(input.snapshots, {
+    now: presentationNow ?? DateTime.nowUnsafe(),
+    percentageDisplay: input.percentageDisplay,
+  });
+  const byProvider = new Map(derived.map((provider) => [provider.provider, provider]));
+  return {
+    ...input,
+    providers: (["claude", "codex"] as const).flatMap((provider) => {
+      const viewModel = byProvider.get(provider);
+      const visible = provider === "claude" ? input.showClaudeUsage : input.showCodexUsage;
+      return visible && viewModel !== undefined ? [viewModel] : [];
+    }),
+  };
 }
 
 function isProviderUsageResetCurrent(
@@ -218,45 +256,36 @@ export function AppStatusBarView({
   >["onConsumeCodexRateLimitReset"];
 }) {
   const snapshots = usage?.providers ?? EMPTY_PROVIDER_USAGE_SNAPSHOTS;
-  const now = presentationNow ?? DateTime.nowUnsafe();
-  const relativeLabelKey = providerUsageRelativeLabelKey(snapshots, now);
-  const presentationCache = useRef<{
-    readonly snapshots: ServerProviderUsageResult["providers"];
-    readonly percentageDisplay: UsagePercentageDisplay;
-    readonly showClaudeUsage: boolean;
-    readonly showCodexUsage: boolean;
-    readonly relativeLabelKey: string;
-    readonly providers: ReadonlyArray<ProviderUsageViewModel>;
-  } | null>(null);
+  const readRelativeLabelKey = () =>
+    providerUsageRelativeLabelKey(snapshots, presentationNow ?? DateTime.nowUnsafe());
+  const relativeLabelKey = useSyncExternalStore(
+    NOOP_CLOCK_SUBSCRIBE,
+    readRelativeLabelKey,
+    readRelativeLabelKey,
+  );
+  const presentationInput = {
+    snapshots,
+    percentageDisplay: usagePercentageDisplay,
+    showClaudeUsage,
+    showCodexUsage,
+    relativeLabelKey,
+  };
+  // Rederive only when an input or a countdown label bucket changes, not on every clock tick.
+  const [cachedPresentation, setCachedPresentation] = useState(() =>
+    buildProviderUsagePresentation(presentationInput, presentationNow),
+  );
+  let presentation = cachedPresentation;
   if (
-    presentationCache.current === null ||
-    presentationCache.current.snapshots !== snapshots ||
-    presentationCache.current.percentageDisplay !== usagePercentageDisplay ||
-    presentationCache.current.showClaudeUsage !== showClaudeUsage ||
-    presentationCache.current.showCodexUsage !== showCodexUsage ||
-    presentationCache.current.relativeLabelKey !== relativeLabelKey
+    presentation.snapshots !== snapshots ||
+    presentation.percentageDisplay !== usagePercentageDisplay ||
+    presentation.showClaudeUsage !== showClaudeUsage ||
+    presentation.showCodexUsage !== showCodexUsage ||
+    presentation.relativeLabelKey !== relativeLabelKey
   ) {
-    presentationCache.current = {
-      snapshots,
-      percentageDisplay: usagePercentageDisplay,
-      showClaudeUsage,
-      showCodexUsage,
-      relativeLabelKey,
-      providers: (() => {
-        const derived = buildProviderUsageViewModels(snapshots, {
-          now,
-          percentageDisplay: usagePercentageDisplay,
-        });
-        const byProvider = new Map(derived.map((provider) => [provider.provider, provider]));
-        return (["claude", "codex"] as const).flatMap((provider) => {
-          const viewModel = byProvider.get(provider);
-          const visible = provider === "claude" ? showClaudeUsage : showCodexUsage;
-          return visible && viewModel !== undefined ? [viewModel] : [];
-        });
-      })(),
-    };
+    presentation = buildProviderUsagePresentation(presentationInput, presentationNow);
+    setCachedPresentation(presentation);
   }
-  const providers = presentationCache.current.providers;
+  const providers = presentation.providers;
   return (
     <div
       className={`${STATUS_BAR_CLASS_NAME} justify-between`}
@@ -340,7 +369,9 @@ export function AppStatusBar() {
   const refreshFlightsRef = useRef(new Map<EnvironmentId, Promise<void>>());
   const manualRefreshPendingRef = useRef(new Set<EnvironmentId>());
   const [iconOnly, setIconOnly] = useState(false);
-  const [, setManualRefreshVersion] = useState(0);
+  const [manualRefreshPending, setManualRefreshPending] = useState<ReadonlySet<EnvironmentId>>(
+    () => new Set(),
+  );
   const {
     showClaudeUsage,
     showCodexUsage,
@@ -431,21 +462,22 @@ export function AppStatusBar() {
     if (environmentId === null || manualRefreshPendingRef.current.has(environmentId)) return;
 
     manualRefreshPendingRef.current.add(environmentId);
-    setManualRefreshVersion((current) => current + 1);
+    setManualRefreshPending(new Set(manualRefreshPendingRef.current));
     const flight = performRefresh(true);
     const finish = () => {
       if (!manualRefreshPendingRef.current.delete(environmentId)) return;
-      setManualRefreshVersion((current) => current + 1);
+      setManualRefreshPending(new Set(manualRefreshPendingRef.current));
     };
     void flight.then(finish, finish);
   }, [environmentId, performRefresh]);
-  const resourceRefresh = useCallback(
-    createStatusBarResourceRefreshHandler({
-      environmentId,
-      refreshProcessDiagnostics: diagnostics.revalidate,
-      refreshLocalProcessDiagnostics:
-        primaryLocalEnvironmentId === null ? null : localDiagnostics.revalidate,
-    }),
+  const resourceRefresh = useMemo(
+    () =>
+      createStatusBarResourceRefreshHandler({
+        environmentId,
+        refreshProcessDiagnostics: diagnostics.revalidate,
+        refreshLocalProcessDiagnostics:
+          primaryLocalEnvironmentId === null ? null : localDiagnostics.revalidate,
+      }),
     [diagnostics.revalidate, environmentId, localDiagnostics.revalidate, primaryLocalEnvironmentId],
   );
   const handleOpenProviderSettings = useCallback(() => {
@@ -569,8 +601,7 @@ export function AppStatusBar() {
         }
         terminalCount={terminalSessions.length}
         isRefreshing={
-          usage.isPending ||
-          (environmentId !== null && manualRefreshPendingRef.current.has(environmentId))
+          usage.isPending || (environmentId !== null && manualRefreshPending.has(environmentId))
         }
         iconOnly={iconOnly}
         showClaudeUsage={showClaudeUsage}

@@ -193,7 +193,7 @@ fn run_monitor(args: MonitorArgs) -> i32 {
     let Ok(mut server) = server else {
         return 1;
     };
-    if !watch_parent(args.parent_pid) {
+    if !watch_parent(args.parent_pid, args.dir.clone()) {
         return 1;
     }
     let handler = Handler::new(&args.dir, args.parent_pid, monitor_process_kind());
@@ -216,10 +216,10 @@ fn run_monitor(args: MonitorArgs) -> i32 {
     code
 }
 
-/// Sets `SHUTDOWN` once the parent is gone. Returns false if the parent cannot be watched,
-/// so the monitor never outlives it.
+/// Sets `SHUTDOWN` once the parent is gone, after noting when in `dir` for the next start.
+/// Returns false if the parent cannot be watched, so the monitor never outlives it.
 #[cfg(unix)]
-fn watch_parent(parent_pid: u32) -> bool {
+fn watch_parent(parent_pid: u32, dir: PathBuf) -> bool {
     let Ok(parent) = libc::pid_t::try_from(parent_pid) else {
         return false;
     };
@@ -229,6 +229,7 @@ fn watch_parent(parent_pid: u32) -> bool {
             while !parent_gone(parent) {
                 std::thread::sleep(PARENT_CHECK_EVERY);
             }
+            super::sentinel::note_gone(&dir, parent_pid);
             SHUTDOWN.store(true, Ordering::Relaxed);
         })
         .is_ok()
@@ -245,10 +246,10 @@ fn parent_gone(parent: libc::pid_t) -> bool {
     reparented || missing
 }
 
-/// Sets `SHUTDOWN` once the parent is gone. Returns false if the parent cannot be watched,
-/// so the monitor never outlives it.
+/// Sets `SHUTDOWN` once the parent is gone, after noting when in `dir` for the next start.
+/// Returns false if the parent cannot be watched, so the monitor never outlives it.
 #[cfg(windows)]
-fn watch_parent(parent_pid: u32) -> bool {
+fn watch_parent(parent_pid: u32, dir: PathBuf) -> bool {
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 
     use windows_sys::Win32::{
@@ -271,6 +272,7 @@ fn watch_parent(parent_pid: u32) -> bool {
         .spawn(move || {
             // SAFETY: `parent` stays open for as long as this thread waits on it.
             while unsafe { WaitForSingleObject(parent.as_raw_handle(), wait_ms) } == WAIT_TIMEOUT {}
+            super::sentinel::note_gone(&dir, parent_pid);
             SHUTDOWN.store(true, Ordering::Relaxed);
         })
         .is_ok()

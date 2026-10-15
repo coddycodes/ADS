@@ -16,4 +16,9 @@ commands.allow = [
   "desktop_preview_forget_environment",
   "desktop_preview_capture_screenshot",
   "desktop_preview_reveal_artifact",
+  "desktop_preview_tunnel_mode",
+  "desktop_preview_tunnel_answer",
+  "desktop_preview_tunnel_read",
+  "desktop_preview_tunnel_write",
+  "desktop_preview_tunnel_close",
 ]

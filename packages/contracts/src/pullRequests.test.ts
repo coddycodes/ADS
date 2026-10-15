@@ -35,6 +35,11 @@ const encodePullRequestsCheckoutResult = Schema.encodeSync(PullRequests.PullRequ
 const decodePullRequestsCheckoutResult = Schema.decodeUnknownSync(
   PullRequests.PullRequestsCheckoutResult,
 );
+const decodePullRequestsSnapshot = Schema.decodeUnknownSync(PullRequests.PullRequestsSnapshot);
+const decodePullRequestsChanged = Schema.decodeUnknownSync(PullRequests.PullRequestsChanged);
+const decodePullRequestsCreateDefaults = Schema.decodeUnknownSync(
+  PullRequests.PullRequestsCreateDefaults,
+);
 
 const permission = (allowed: boolean, reason: string | null = null) => ({ allowed, reason });
 
@@ -673,9 +678,8 @@ describe("PullRequests actions and outcomes", () => {
 
 describe("PullRequests snapshots and change events", () => {
   it("decodes a snapshot with a null list and a detail observedAt of 1", () => {
-    const decode = Schema.decodeUnknownSync(PullRequests.PullRequestsSnapshot);
     expect(
-      decode({
+      decodePullRequestsSnapshot({
         list: null,
         detail: { payload: detail, observedAt: 1 },
         tab: null,
@@ -688,9 +692,8 @@ describe("PullRequests snapshots and change events", () => {
   });
 
   it("rejects a changed event that omits checks", () => {
-    const decode = Schema.decodeUnknownSync(PullRequests.PullRequestsChanged);
     expect(() =>
-      decode({
+      decodePullRequestsChanged({
         list: false,
         detail: false,
         timeline: false,
@@ -703,9 +706,8 @@ describe("PullRequests snapshots and change events", () => {
 
 describe("PullRequestsCreateDefaults", () => {
   it("decodes GitLab defaults and GitHub's empty merge settings", () => {
-    const decode = Schema.decodeUnknownSync(PullRequests.PullRequestsCreateDefaults);
     expect(
-      decode({
+      decodePullRequestsCreateDefaults({
         viewer: { id: "7", label: "alice" },
         squash: "default_on",
         removeSourceBranch: true,
@@ -716,9 +718,19 @@ describe("PullRequestsCreateDefaults", () => {
       removeSourceBranch: true,
     });
     expect(
-      decode({ viewer: { id: "octo", label: "octo" }, squash: null, removeSourceBranch: null }),
+      decodePullRequestsCreateDefaults({
+        viewer: { id: "octo", label: "octo" },
+        squash: null,
+        removeSourceBranch: null,
+      }),
     ).toEqual({ viewer: { id: "octo", label: "octo" }, squash: null, removeSourceBranch: null });
-    expect(() => decode({ viewer: null, squash: "sometimes", removeSourceBranch: null })).toThrow();
+    expect(() =>
+      decodePullRequestsCreateDefaults({
+        viewer: null,
+        squash: "sometimes",
+        removeSourceBranch: null,
+      }),
+    ).toThrow();
   });
 
   it("is served by pullRequests.getCreateDefaults", () => {

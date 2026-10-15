@@ -27,6 +27,7 @@ const harness = vi.hoisted(() => {
 vi.mock("react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react")>()),
   useEffect: (effect: () => void | (() => void)) => harness.effects.push(effect),
+  useEffectEvent: <T,>(callback: T) => callback,
   useState: (initial: unknown) => {
     const index = harness.stateIndex++;
     const value = index < harness.stateValues.length ? harness.stateValues[index] : initial;
@@ -126,15 +127,16 @@ describe("SourceControlCommits", () => {
   });
 
   it("builds first and subsequent page queries and refreshes expansion", () => {
-    harness.stateValues = [true, null, []];
+    harness.stateValues = [true, null, [], 1];
     renderCommits({ reloadToken: 2 });
     expect(harness.listCommits).toHaveBeenCalledWith({
       environmentId: threadRef.environmentId,
       input: { cwd: "/repo", limit: 30 },
     });
-    harness.effects[0]?.();
+    expect(harness.setters[3]).toHaveBeenCalledWith(2);
     expect(harness.setters[2]).toHaveBeenCalledWith([]);
     expect(harness.setters[1]).toHaveBeenCalledWith(null);
+    harness.effects[0]?.();
     expect(harness.query.refresh).toHaveBeenCalledOnce();
 
     harness.stateIndex = 0;

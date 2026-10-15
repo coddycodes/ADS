@@ -47,7 +47,10 @@ const OBSERVER_CALLBACK_JOIN_REAPER_POLL_INTERVAL: Duration = Duration::from_mil
 const OBSERVER_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(250);
 const OBSERVER_WORKER_ABORT_TIMEOUT: Duration = Duration::from_millis(50);
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_millis(100);
-const MAX_DRAINED_OUTPUT_CHUNKS: usize = 1_024;
+/// Reads published after an exit: twice the PTY channel's 1024, as lag notices count too.
+const MAX_DRAINED_OUTPUT_CHUNKS: usize = 2_048;
+/// The most output one publication gathers from reads already waiting.
+const MAX_COALESCED_OUTPUT_BYTES: usize = 64 * 1024;
 const TERMINAL_CLOSE_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_TERMINAL_LABEL_LENGTH: usize = 128;
 
@@ -2505,6 +2508,21 @@ impl TerminalManager {
                         Err(broadcast::error::RecvError::Closed) => break,
                     }
                 };
+                // Reads already waiting are published together: one lock and one event per
+                // batch instead of per read keeps the publisher ahead of a program that writes
+                // in many small pieces.
+                let mut data = data;
+                let mut lagged = false;
+                while data.len() < MAX_COALESCED_OUTPUT_BYTES {
+                    match output.try_recv() {
+                        Ok(more) => data.push_str(&more),
+                        Err(broadcast::error::TryRecvError::Lagged(_)) => {
+                            lagged = true;
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
                 #[cfg(test)]
                 let barrier = output_generation
                     .output_barrier
@@ -2523,6 +2541,12 @@ impl TerminalManager {
                     data,
                 )
                 .await
+                {
+                    return;
+                }
+                if lagged
+                    && !Self::publish_output_gap(&output_inner, &output_session, &output_generation)
+                        .await
                 {
                     return;
                 }
@@ -2981,6 +3005,8 @@ impl TerminalManager {
         let mut initial = current.snapshot();
         initial.first_attachment_grant = first_attachment_grant;
         Ok(TerminalAttachment {
+            inner: Arc::downgrade(&self.inner),
+            generation: Some(current.generation.clone()),
             thread_id: input.thread_id,
             terminal_id: input.terminal_id,
             next_sequence: initial.sequence,
@@ -3867,6 +3893,9 @@ impl Drop for TerminalAttachmentClaim {
 
 pub struct TerminalAttachment {
     pub initial: TerminalSessionSnapshot,
+    inner: std::sync::Weak<Inner>,
+    /// The process this attachment last saw; `None` after a restart it was told about.
+    generation: Option<Arc<SessionGeneration>>,
     thread_id: String,
     terminal_id: String,
     next_sequence: u64,
@@ -3874,28 +3903,163 @@ pub struct TerminalAttachment {
     _size_claim: Option<TerminalAttachmentClaim>,
 }
 
+/// What a terminal attachment delivers next.
+pub enum AttachmentItem {
+    Event(TerminalEvent),
+    /// The attachment fell further behind than the shared event channel holds, so it may have
+    /// missed this terminal's output: the session's current state, for the client to reset
+    /// to. Skipping the lost events instead left lines missing from the terminal.
+    /// `same_process` is false when the session restarted meanwhile, or may have.
+    Resync {
+        snapshot: TerminalSessionSnapshot,
+        same_process: bool,
+    },
+}
+
 impl TerminalAttachment {
-    pub async fn recv(&mut self) -> Option<TerminalEvent> {
+    pub async fn recv(&mut self) -> Option<AttachmentItem> {
         loop {
             match self.events.recv().await {
-                Ok(event) if event.belongs_to(&self.thread_id, &self.terminal_id) => {
-                    let sequence = event.sequence();
-                    // A restarted session owns a fresh sequence space. Its
-                    // authoritative reset must reach existing attachments even
-                    // when the prior process had already advanced past it.
-                    if matches!(event, TerminalEvent::Restarted { .. }) {
-                        self.next_sequence = sequence;
-                        return Some(event);
-                    }
-                    if sequence > self.next_sequence {
-                        self.next_sequence = sequence;
-                        return Some(event);
+                Ok(event) => {
+                    if let Some(event) = self.accept(event) {
+                        return Some(self.deliver(event).await);
                     }
                 }
-                Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    if let Some(item) = self.resync().await {
+                        return Some(item);
+                    }
+                }
                 Err(broadcast::error::RecvError::Closed) => return None,
             }
         }
+    }
+
+    /// The next item already waiting, without waiting for one to arrive.
+    pub async fn try_recv(&mut self) -> Option<AttachmentItem> {
+        loop {
+            match self.events.try_recv() {
+                Ok(event) => {
+                    if let Some(event) = self.accept(event) {
+                        return Some(self.deliver(event).await);
+                    }
+                }
+                Err(broadcast::error::TryRecvError::Lagged(_)) => {
+                    if let Some(item) = self.resync().await {
+                        return Some(item);
+                    }
+                }
+                Err(
+                    broadcast::error::TryRecvError::Empty | broadcast::error::TryRecvError::Closed,
+                ) => {
+                    return None;
+                }
+            }
+        }
+    }
+
+    async fn deliver(&mut self, event: TerminalEvent) -> AttachmentItem {
+        // The client moves to the restarted process: later resyncs compare against it, when
+        // the live session is still that process. After a further restart it is unknown, and
+        // the next resync counts as a new process.
+        if let TerminalEvent::Restarted { snapshot, .. } = &event {
+            self.generation = match self.current_session().await {
+                Some(session) => {
+                    let session = session.lock().await;
+                    (session.pid == snapshot.pid).then(|| session.generation.clone())
+                }
+                None => None,
+            };
+        }
+        AttachmentItem::Event(event)
+    }
+
+    /// The session closed and its event was among the lost ones: say so.
+    fn closed(&mut self) -> AttachmentItem {
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        AttachmentItem::Event(TerminalEvent::Closed {
+            thread_id: self.thread_id.clone(),
+            terminal_id: self.terminal_id.clone(),
+            sequence: self.next_sequence,
+        })
+    }
+
+    async fn current_session(&self) -> Option<SharedSession> {
+        let inner = self.inner.upgrade()?;
+        inner
+            .sessions
+            .read()
+            .await
+            .get(&(self.thread_id.clone(), self.terminal_id.clone()))
+            .cloned()
+    }
+
+    fn accept(&mut self, event: TerminalEvent) -> Option<TerminalEvent> {
+        if !event.belongs_to(&self.thread_id, &self.terminal_id) {
+            return None;
+        }
+        let sequence = event.sequence();
+        // A restarted session owns a fresh sequence space. Its
+        // authoritative reset must reach existing attachments even
+        // when the prior process had already advanced past it.
+        if matches!(event, TerminalEvent::Restarted { .. }) {
+            self.next_sequence = sequence;
+            return Some(event);
+        }
+        if sequence > self.next_sequence {
+            self.next_sequence = sequence;
+            return Some(event);
+        }
+        None
+    }
+
+    /// The session's current state; events it already holds are skipped afterwards. History
+    /// and sequence advance together under the session lock, so they agree.
+    ///
+    /// Everything still queued is published before the snapshot is read, so the snapshot
+    /// covers it and it is dropped, a restart included. A lag caused only by other terminals
+    /// changes nothing here and yields no resync, so the display and selection stay.
+    // ponytail: a restart published between the drain and the read still arrives after the
+    // snapshot and resets to its startup state; a per-process restart counter would fence it.
+    async fn resync(&mut self) -> Option<AttachmentItem> {
+        // A start or restart in progress settles first: between removing the old session and
+        // installing the new one the terminal is absent without being closed.
+        let inner = self.inner.upgrade()?;
+        let operation = inner
+            .operations
+            .for_key(&(self.thread_id.clone(), self.terminal_id.clone()));
+        let _operation = operation.lock().await;
+        // Drained under the lock: what is queued now, a restart included, the snapshot covers.
+        while let Ok(_) | Err(broadcast::error::TryRecvError::Lagged(_)) = self.events.try_recv() {}
+        let Some(session) = self.current_session().await else {
+            return Some(self.closed());
+        };
+        let (snapshot, generation) = {
+            let session = session.lock().await;
+            (session.snapshot(), session.generation.clone())
+        };
+        // Removed while its state was read: that state may already carry the close's sequence,
+        // which would then turn the real `Closed` away.
+        if !self
+            .current_session()
+            .await
+            .is_some_and(|current| Arc::ptr_eq(&current, &session))
+        {
+            return Some(self.closed());
+        }
+        let same_process = self
+            .generation
+            .as_ref()
+            .is_some_and(|seen| Arc::ptr_eq(seen, &generation));
+        self.generation = Some(generation);
+        if same_process && snapshot.sequence == self.next_sequence {
+            return None;
+        }
+        self.next_sequence = snapshot.sequence;
+        Some(AttachmentItem::Resync {
+            snapshot,
+            same_process,
+        })
     }
 }
 
@@ -4645,10 +4809,7 @@ mod tests {
             .await
             .unwrap();
         backend.latest().emit("after resize");
-        let legacy_event = tokio::time::timeout(Duration::from_secs(2), legacy.recv())
-            .await
-            .unwrap()
-            .unwrap();
+        let legacy_event = next_attachment_event(&mut legacy).await;
         assert!(
             matches!(legacy_event, TerminalEvent::Output { ref data, .. } if data == "after resize")
         );
@@ -4730,10 +4891,311 @@ mod tests {
     }
 
     async fn next_attachment_event(attachment: &mut TerminalAttachment) -> TerminalEvent {
-        tokio::time::timeout(Duration::from_secs(2), attachment.recv())
+        match tokio::time::timeout(Duration::from_secs(2), attachment.recv())
             .await
             .unwrap()
             .unwrap()
+        {
+            AttachmentItem::Event(event) => event,
+            AttachmentItem::Resync { .. } => panic!("expected an event, not a resync"),
+        }
+    }
+
+    /// An attachment that falls further behind than the event channel holds resets its client
+    /// to the session's state instead of silently skipping output, which left lines missing
+    /// from the terminal after a burst.
+    #[tokio::test]
+    async fn a_lagging_attachment_resyncs_instead_of_skipping_output() {
+        let root = tempfile::tempdir().unwrap();
+        let backend = Arc::new(HistoryTestBackend::default());
+        let manager = TerminalManager::new(
+            backend.clone(),
+            TerminalManagerOptions {
+                subprocess_poll_interval: Duration::ZERO,
+                event_capacity: 16,
+                ..TerminalManagerOptions::default()
+            },
+        );
+        manager
+            .open(TerminalOpenInput::new(
+                "lag",
+                "term",
+                root.path().to_path_buf(),
+                80,
+                24,
+            ))
+            .await
+            .unwrap();
+        let mut attachment = manager
+            .attach(TerminalAttachInput::existing("lag", "term"))
+            .await
+            .unwrap();
+        let pty = backend.latest();
+        for line in 0..100 {
+            pty.emit(&format!("line {line}\n"));
+            // Each line is published before the next, while the attachment reads nothing.
+            for _ in 0..8 {
+                tokio::task::yield_now().await;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let item = tokio::time::timeout(Duration::from_secs(2), attachment.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let AttachmentItem::Resync {
+            snapshot,
+            same_process: true,
+        } = item
+        else {
+            panic!("a lagging attachment gets the same process's state");
+        };
+        for line in 0..100 {
+            assert!(
+                snapshot.history.contains(&format!("line {line}\n")),
+                "line {line}"
+            );
+        }
+        // Only what follows the snapshot is delivered after it.
+        pty.emit("after");
+        let event = loop {
+            match tokio::time::timeout(Duration::from_secs(2), attachment.recv())
+                .await
+                .unwrap()
+                .unwrap()
+            {
+                AttachmentItem::Event(TerminalEvent::Output { data, .. }) => break data,
+                AttachmentItem::Event(_) => continue,
+                AttachmentItem::Resync { .. } => panic!("one resync"),
+            }
+        };
+        assert_eq!(event, "after");
+        manager.shutdown().await;
+    }
+
+    /// Reads waiting when the publisher runs go out as one event: publishing them one by one
+    /// fell behind a program printing many short lines, and the PTY channel dropped output.
+    #[tokio::test]
+    async fn reads_already_waiting_are_published_together() {
+        let (_root, backend, manager) = size_fixture(80, 24).await;
+        let mut attachment = manager.attach(size_attachment("reader")).await.unwrap();
+        let pty = backend.latest();
+        // No await between them: all ten wait for the publisher.
+        for read in 0..10 {
+            pty.emit(&format!("[{read}]"));
+        }
+        let data = loop {
+            if let TerminalEvent::Output { data, .. } = next_attachment_event(&mut attachment).await
+            {
+                break data;
+            }
+        };
+        assert_eq!(data, "[0][1][2][3][4][5][6][7][8][9]");
+        manager.shutdown().await;
+    }
+
+    /// Another terminal's burst can overflow the shared channel: this terminal missed nothing,
+    /// so it gets no resync, which would reset its display and selection.
+    #[tokio::test]
+    async fn a_lag_caused_by_another_terminal_does_not_resync() {
+        let root = tempfile::tempdir().unwrap();
+        let backend = Arc::new(HistoryTestBackend::default());
+        let manager = TerminalManager::new(
+            backend.clone(),
+            TerminalManagerOptions {
+                subprocess_poll_interval: Duration::ZERO,
+                event_capacity: 16,
+                ..TerminalManagerOptions::default()
+            },
+        );
+        manager
+            .open(TerminalOpenInput::new(
+                "lag",
+                "quiet",
+                root.path().to_path_buf(),
+                80,
+                24,
+            ))
+            .await
+            .unwrap();
+        let mut attachment = manager
+            .attach(TerminalAttachInput::existing("lag", "quiet"))
+            .await
+            .unwrap();
+        manager
+            .open(TerminalOpenInput::new(
+                "lag",
+                "busy",
+                root.path().to_path_buf(),
+                80,
+                24,
+            ))
+            .await
+            .unwrap();
+        let busy = backend.latest();
+        for line in 0..40 {
+            busy.emit(&format!("line {line}\n"));
+            for _ in 0..8 {
+                tokio::task::yield_now().await;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            attachment.try_recv().await.is_none(),
+            "nothing for the quiet terminal"
+        );
+        manager.shutdown().await;
+    }
+
+    /// A close lost to the lag still reaches the client, which would otherwise show the
+    /// terminal running.
+    #[tokio::test]
+    async fn a_close_lost_to_the_lag_is_still_delivered() {
+        let root = tempfile::tempdir().unwrap();
+        let backend = Arc::new(HistoryTestBackend::default());
+        let manager = TerminalManager::new(
+            backend.clone(),
+            TerminalManagerOptions {
+                subprocess_poll_interval: Duration::ZERO,
+                event_capacity: 16,
+                ..TerminalManagerOptions::default()
+            },
+        );
+        manager
+            .open(TerminalOpenInput::new(
+                "lag",
+                "term",
+                root.path().to_path_buf(),
+                80,
+                24,
+            ))
+            .await
+            .unwrap();
+        let mut attachment = manager
+            .attach(TerminalAttachInput::existing("lag", "term"))
+            .await
+            .unwrap();
+        let pty = backend.latest();
+        for line in 0..40 {
+            pty.emit(&format!("line {line}\n"));
+            for _ in 0..8 {
+                tokio::task::yield_now().await;
+            }
+        }
+        manager.close("lag", Some("term")).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let item = tokio::time::timeout(Duration::from_secs(2), attachment.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            item,
+            AttachmentItem::Event(TerminalEvent::Closed { .. })
+        ));
+        manager.shutdown().await;
+    }
+
+    /// After a restart the client saw, a lag caused by another terminal is still nothing to
+    /// resync.
+    #[tokio::test]
+    async fn a_seen_restart_keeps_later_lags_from_resetting_input() {
+        let root = tempfile::tempdir().unwrap();
+        let backend = Arc::new(HistoryTestBackend::default());
+        let manager = TerminalManager::new(
+            backend.clone(),
+            TerminalManagerOptions {
+                subprocess_poll_interval: Duration::ZERO,
+                event_capacity: 16,
+                ..TerminalManagerOptions::default()
+            },
+        );
+        let input = TerminalOpenInput::new("lag", "quiet", root.path().to_path_buf(), 80, 24);
+        manager.open(input.clone()).await.unwrap();
+        let mut attachment = manager
+            .attach(TerminalAttachInput::existing("lag", "quiet"))
+            .await
+            .unwrap();
+        manager.restart(input).await.unwrap();
+        loop {
+            if matches!(
+                next_attachment_event(&mut attachment).await,
+                TerminalEvent::Restarted { .. }
+            ) {
+                break;
+            }
+        }
+        manager
+            .open(TerminalOpenInput::new(
+                "lag",
+                "busy",
+                root.path().to_path_buf(),
+                80,
+                24,
+            ))
+            .await
+            .unwrap();
+        let busy = backend.latest();
+        for line in 0..40 {
+            busy.emit(&format!("line {line}\n"));
+            for _ in 0..8 {
+                tokio::task::yield_now().await;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            attachment.try_recv().await.is_none(),
+            "nothing for the quiet terminal"
+        );
+        manager.shutdown().await;
+    }
+
+    /// A restart hidden in the lag is a new process: the resync must not keep the old one's
+    /// pending input.
+    #[tokio::test]
+    async fn a_resync_across_a_missed_restart_is_a_new_process() {
+        let root = tempfile::tempdir().unwrap();
+        let backend = Arc::new(HistoryTestBackend::default());
+        let manager = TerminalManager::new(
+            backend.clone(),
+            TerminalManagerOptions {
+                subprocess_poll_interval: Duration::ZERO,
+                event_capacity: 16,
+                ..TerminalManagerOptions::default()
+            },
+        );
+        let input = TerminalOpenInput::new("lag", "term", root.path().to_path_buf(), 80, 24);
+        manager.open(input.clone()).await.unwrap();
+        let mut attachment = manager
+            .attach(TerminalAttachInput::existing("lag", "term"))
+            .await
+            .unwrap();
+        manager.restart(input).await.unwrap();
+        let pty = backend.latest();
+        for line in 0..40 {
+            pty.emit(&format!("line {line}\n"));
+            for _ in 0..8 {
+                tokio::task::yield_now().await;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let item = tokio::time::timeout(Duration::from_secs(2), attachment.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(
+                item,
+                AttachmentItem::Resync {
+                    same_process: false,
+                    ..
+                }
+            ),
+            "the restart's event was lost to the lag, so the resync replaces the process"
+        );
+        manager.shutdown().await;
     }
 
     async fn wait_for_attachment_workers(manager: &TerminalManager, count: usize) {
@@ -5004,7 +5466,7 @@ mod tests {
             loop {
                 if matches!(
                     survivor.recv().await.expect("surviving attachment"),
-                    TerminalEvent::Exited { .. }
+                    AttachmentItem::Event(TerminalEvent::Exited { .. })
                 ) {
                     break;
                 }
@@ -7312,10 +7774,7 @@ mod tests {
             .expect("stale output publisher did not complete");
         replacement_process.emit("replacement-output");
 
-        let received = tokio::time::timeout(Duration::from_secs(2), replacement.recv())
-            .await
-            .expect("replacement output timeout")
-            .expect("terminal event sender");
+        let received = next_attachment_event(&mut replacement).await;
         assert!(
             matches!(
                 received,
@@ -8169,7 +8628,7 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(2), attachment.recv())
                 .await
                 .unwrap(),
-            Some(TerminalEvent::Cleared { .. })
+            Some(AttachmentItem::Event(TerminalEvent::Cleared { .. }))
         ));
 
         let restarted = manager.restart(input).await.unwrap();

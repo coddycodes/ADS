@@ -28,7 +28,6 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
   const { threadRef, tabId } = input;
   const clearBrowserPointer = useBrowserPointerStore((state) => state.clear);
   const reportStatus = useAtomCommand(previewEnvironment.reportStatus, "preview status report");
-  const bridge = previewBridge;
 
   // One bridge subscription does both jobs (mirror state + forward to
   // server) so the desktop bridge keeps a single listener entry per tab.
@@ -36,6 +35,7 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
   const lastReportedKind = useRef<DesktopPreviewTabState["navStatus"]["kind"] | null>(null);
   const lastDesktopNavStatus = useRef<DesktopPreviewTabState["navStatus"] | null>(null);
   useEffect(() => {
+    const bridge = previewBridge;
     if (!bridge || typeof window === "undefined") return;
     lastReportedUrl.current = null;
     lastReportedKind.current = null;
@@ -82,7 +82,7 @@ export function usePreviewBridge(input: { threadRef: ScopedThreadRef; tabId: str
       });
     });
     return unsubscribe;
-  }, [bridge, clearBrowserPointer, reportStatus, tabId, threadRef]);
+  }, [clearBrowserPointer, reportStatus, tabId, threadRef]);
 }
 
 function canonicalizeDesktopState(

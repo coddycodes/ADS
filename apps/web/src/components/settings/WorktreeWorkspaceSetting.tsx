@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { EnvironmentId } from "@bibcode/contracts";
 import type { UnifiedSettings } from "@bibcode/contracts/settings";
 import {
@@ -37,16 +37,16 @@ export function WorktreeWorkspaceSetting() {
     initialEnvironmentId,
   );
 
-  useEffect(() => {
-    if (
-      selectedEnvironmentId === null ||
-      !environments.some((environment) => environment.environmentId === selectedEnvironmentId)
-    ) {
-      setSelectedEnvironmentId(
-        primaryEnvironment?.environmentId ?? environments[0]?.environmentId ?? null,
-      );
+  if (
+    selectedEnvironmentId === null ||
+    !environments.some((environment) => environment.environmentId === selectedEnvironmentId)
+  ) {
+    const fallbackEnvironmentId =
+      primaryEnvironment?.environmentId ?? environments[0]?.environmentId ?? null;
+    if (fallbackEnvironmentId !== selectedEnvironmentId) {
+      setSelectedEnvironmentId(fallbackEnvironmentId);
     }
-  }, [environments, primaryEnvironment?.environmentId, selectedEnvironmentId]);
+  }
 
   const selectedEnvironment =
     environments.find((environment) => environment.environmentId === selectedEnvironmentId) ?? null;
@@ -94,7 +94,9 @@ function EnvironmentWorktreeWorkspaceSetting({
 }) {
   const settings = useEnvironmentSettings(environment.environmentId);
   const latestSettings = useRef(settings);
-  latestSettings.current = settings;
+  useLayoutEffect(() => {
+    latestSettings.current = settings;
+  }, [settings]);
   const updateSettings = useUpdateEnvironmentSettings(environment.environmentId);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pending, setPending] = useState(false);
@@ -106,11 +108,9 @@ function EnvironmentWorktreeWorkspaceSetting({
   } | null>(null);
   const connected = environment.connection.phase === "connected";
 
-  useEffect(() => {
-    if (confirmedWorkspace !== null && settings !== confirmedWorkspace.source) {
-      setConfirmedWorkspace(null);
-    }
-  }, [confirmedWorkspace, settings]);
+  if (confirmedWorkspace !== null && settings !== confirmedWorkspace.source) {
+    setConfirmedWorkspace(null);
+  }
 
   useEffect(
     () => () => {

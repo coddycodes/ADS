@@ -322,45 +322,42 @@ function PhysicalWorktreeDiscoverySection(props: {
     );
   }, []);
 
-  const handleAddOne = useCallback(
-    async (candidate: VcsWorktreeDescriptor) => {
-      if (
-        snapshot === null ||
-        addAllPendingRef.current ||
-        pendingWorktreeKeysRef.current.has(candidate.worktreeKey)
-      ) {
+  const handleAddOne = async (candidate: VcsWorktreeDescriptor) => {
+    if (
+      snapshot === null ||
+      addAllPendingRef.current ||
+      pendingWorktreeKeysRef.current.has(candidate.worktreeKey)
+    ) {
+      return;
+    }
+    pendingWorktreeKeysRef.current.add(candidate.worktreeKey);
+    setPendingWorktreeKeys(new Set(pendingWorktreeKeysRef.current));
+    try {
+      const result = await addOne({
+        environmentId: member.environmentId,
+        input: candidateInput({
+          member,
+          candidate,
+          generation: snapshot.generation,
+          serverConfig,
+        }),
+      });
+      if (result._tag === "Failure") {
+        reportCommandFailure(`Could not add ${candidate.branch ?? "detached worktree"}`, result);
         return;
       }
-      pendingWorktreeKeysRef.current.add(candidate.worktreeKey);
-      setPendingWorktreeKeys(new Set(pendingWorktreeKeysRef.current));
-      try {
-        const result = await addOne({
-          environmentId: member.environmentId,
-          input: candidateInput({
-            member,
-            candidate,
-            generation: snapshot.generation,
-            serverConfig,
-          }),
-        });
-        if (result._tag === "Failure") {
-          reportCommandFailure(`Could not add ${candidate.branch ?? "detached worktree"}`, result);
-          return;
-        }
-        if (mountedRef.current) {
-          onNavigateToThread(scopeThreadRef(member.environmentId, result.value.threadId));
-        }
-      } finally {
-        pendingWorktreeKeysRef.current.delete(candidate.worktreeKey);
-        if (mountedRef.current) {
-          setPendingWorktreeKeys(new Set(pendingWorktreeKeysRef.current));
-        }
+      if (mountedRef.current) {
+        onNavigateToThread(scopeThreadRef(member.environmentId, result.value.threadId));
       }
-    },
-    [addOne, member, onNavigateToThread, reportCommandFailure, serverConfig, snapshot],
-  );
+    } finally {
+      pendingWorktreeKeysRef.current.delete(candidate.worktreeKey);
+      if (mountedRef.current) {
+        setPendingWorktreeKeys(new Set(pendingWorktreeKeysRef.current));
+      }
+    }
+  };
 
-  const handleAddAll = useCallback(async () => {
+  const handleAddAll = async () => {
     if (snapshot === null || addAllPendingRef.current) return;
     const candidatesToAdd = cardCandidates.filter(
       (candidate) => !pendingWorktreeKeysRef.current.has(candidate.worktreeKey),
@@ -401,7 +398,7 @@ function PhysicalWorktreeDiscoverySection(props: {
         setAddAllPendingCount(0);
       }
     }
-  }, [addAll, cardCandidates, member, reportCommandFailure, serverConfig, snapshot]);
+  };
 
   const addAllCandidateCount = cardCandidates.filter(
     (candidate) => !pendingWorktreeKeys.has(candidate.worktreeKey),

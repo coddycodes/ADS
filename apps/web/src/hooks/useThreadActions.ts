@@ -16,7 +16,7 @@ import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useRouter } from "@tanstack/react-router";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useCenterPanelStore } from "../centerPanelStore";
@@ -96,7 +96,9 @@ export function useThreadActions() {
   const worktreeRemovalCleanupByThreadKeyRef = useRef(
     new Map<string, WorktreeRemovalCleanupContext>(),
   );
-  handleNewThreadRef.current = handleNewThread;
+  useLayoutEffect(() => {
+    handleNewThreadRef.current = handleNewThread;
+  }, [handleNewThread]);
 
   const resolveThreadTarget = useCallback((target: ScopedThreadRef) => {
     const thread = readThreadShell(target);
