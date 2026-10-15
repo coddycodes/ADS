@@ -761,6 +761,25 @@ impl DeviceManager {
         };
         hub.subscribe(SOCKET_QUEUE_FRAMES, Arc::downgrade(&self.inner), device_id)
     }
+
+    /// Joins a device's H.264 stream as a media socket would, without a socket. Only for
+    /// the opt-in real-device tests (`tests/ios_simulator.rs`).
+    #[doc(hidden)]
+    pub fn media_frames_for_tests(&self, device_id: &str) -> Option<MediaFramesForTests> {
+        self.attach_media(device_id).ok().map(MediaFramesForTests)
+    }
+}
+
+/// A media socket's frames without the socket; see
+/// [`DeviceManager::media_frames_for_tests`].
+#[doc(hidden)]
+pub struct MediaFramesForTests(MediaSubscriber);
+
+impl MediaFramesForTests {
+    /// The next frame as a socket sends it: `[kind u8][pts u64 BE][Annex B data]`.
+    pub async fn next_frame(&mut self) -> Option<Bytes> {
+        self.0.next_frame().await
+    }
 }
 
 #[cfg(test)]

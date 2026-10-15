@@ -2989,8 +2989,10 @@ The fakes stand in for `emulator`, `adb`, the emulator gRPC service, and
 scrcpy-server, so these tests prove BiBCode's side of each boundary but not the
 real tools. On a Mac with Xcode and a `Shutdown` iPhone simulator, also run
 the opt-in real-simulator tests, which boot it through CoreSimulator, check
-live frames, and shut it down again (`BIBCODE_IOS_SIM_UDID` picks the
-simulator):
+live frames and the H.264 stream (a config unit whose SPS has the screen's
+size, then a key unit), and shut it down again (`BIBCODE_IOS_SIM_UDID` picks
+the simulator; `tests/ios_simulator.rs` documents the optional rotate tool
+that also checks turned frames and the turned stream):
 
 ```sh
 BIBCODE_IOS_SIM_TESTS=1 cargo test -p bibcode-server --test ios_simulator -- --nocapture

@@ -3,9 +3,11 @@
 //!
 //! When the private-API guard finds every name it needs, a booted simulator runs live: its
 //! frames come from the framebuffer as it changes, and its orientation reaches the catalog
-//! as the simulator reports it. Otherwise it runs view-only on `simctl` screenshots, and
-//! input and video are refused with the reason.
+//! as the simulator reports it, and its video is H.264 from VideoToolbox (`encoder`).
+//! Otherwise it runs view-only on `simctl` screenshots, and input and video are refused
+//! with the reason.
 pub(crate) mod coresim;
+pub(crate) mod encoder;
 pub(crate) mod guard;
 pub(crate) mod pixels;
 pub(crate) mod simctl;
@@ -62,9 +64,6 @@ const ATTACH_FAILED_REASON: &str = "BiBCode could not attach to this simulator's
 /// Live simulators refuse input until live input exists (Task 8).
 const LIVE_INPUT_PENDING: &str =
     "Input to iOS simulators is not available in this version of BiBCode yet.";
-/// Live simulators have no video until the encoder exists (Task 7); the client shows the
-/// live JPEG frames instead.
-const LIVE_VIDEO_PENDING: &str = "Video from iOS simulators is not available in this version of BiBCode yet, so the screen updates as still images.";
 pub(crate) const EXTERNAL_SHUTDOWN: &str = "Shutdown outside BiBCode";
 pub(crate) const EXTERNAL_DELETE: &str = "Deleted outside BiBCode";
 
@@ -643,22 +642,29 @@ impl RunningDevice for RunningSimulator {
         })
     }
 
+    /// Live: H.264 from the framebuffer. View-only simulators refuse media tickets first
+    /// (`video_unavailable`), so they do not reach this.
     fn video(&self) -> BoxFuture<'_, Result<Box<dyn ErasedVideoSource>, DeviceError>> {
-        // Media tickets are refused first (`video_unavailable`), so this is not reached.
-        Box::pin(async {
-            Err(DeviceError::Protocol(
-                "iOS simulators have no video yet".into(),
-            ))
+        Box::pin(async move {
+            match &self.shared.display {
+                Display::Live(screen) => {
+                    let video = encoder::SimulatorVideo::start(screen.clone()).await?;
+                    Ok(Box::new(video) as Box<dyn ErasedVideoSource>)
+                }
+                Display::ViewOnly { .. } => Err(DeviceError::Protocol(
+                    "a view-only simulator has no video".into(),
+                )),
+            }
         })
     }
 
     fn video_unavailable(&self) -> Option<String> {
-        Some(match &self.shared.display {
-            Display::Live(_) => LIVE_VIDEO_PENDING.to_owned(),
+        match &self.shared.display {
+            Display::Live(_) => None,
             Display::ViewOnly { reason } => {
-                format!("Video is off: {}.", reason.trim_end_matches('.'))
+                Some(format!("Video is off: {}.", reason.trim_end_matches('.')))
             }
-        })
+        }
     }
 
     fn orientation_changes(&self) -> Option<BoxStream<'static, Orientation>> {

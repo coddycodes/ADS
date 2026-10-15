@@ -573,8 +573,7 @@ impl IoSurface {
         (width, height)
     }
 
-    /// The surface itself, for the encoder (Task 7).
-    #[allow(dead_code)] // Task 7 wraps it in a CVPixelBuffer.
+    /// The surface itself, which the encoder wraps in a `CVPixelBuffer`.
     pub(crate) fn as_surface(&self) -> &IOSurfaceRef {
         &self.0
     }

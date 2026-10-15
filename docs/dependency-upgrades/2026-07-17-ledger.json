@@ -310,7 +310,7 @@
   "inventorySummary": {
     "javascriptDirect": 81,
     "javascriptLedger": 83,
-    "rustRegistry": 138,
+    "rustRegistry": 141,
     "rustPath": 3,
     "rustGit": 1,
     "actions": 9,
@@ -3155,6 +3155,42 @@
       "platforms": ["macos"],
       "status": "green",
       "notes": "Locks and reads the simulator framebuffer IOSurface (BGRA, padded rows) for live JPEG and PNG frames. Exact pin, released 2025-10-04 (at least 14 days before 2026-10-15); macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
+    },
+    {
+      "key": "rust:apps/server:objc2-core-media",
+      "name": "objc2-core-media",
+      "current": "=0.3.2",
+      "target": "0.3.2",
+      "channel": "stable",
+      "source": "https://crates.io/crates/objc2-core-media",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "Reads the H.264 sample buffers, block buffers, presentation times and SPS/PPS parameter sets that VideoToolbox returns for iOS simulator video. Exact pin, released 2025-10-04 (at least 14 days before 2026-10-15); macOS-only target table in apps/server; covered by the device::ios::encoder tests and the opt-in tests/ios_simulator.rs."
+    },
+    {
+      "key": "rust:apps/server:objc2-core-video",
+      "name": "objc2-core-video",
+      "current": "=0.3.2",
+      "target": "0.3.2",
+      "channel": "stable",
+      "source": "https://crates.io/crates/objc2-core-video",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "Wraps the simulator framebuffer IOSurface in a CVPixelBuffer and pools the rotated buffers the H.264 encoder reads for iOS simulator video. Exact pin, released 2025-10-04 (at least 14 days before 2026-10-15); macOS-only target table in apps/server; covered by the device::ios::encoder tests and the opt-in tests/ios_simulator.rs."
+    },
+    {
+      "key": "rust:apps/server:objc2-video-toolbox",
+      "name": "objc2-video-toolbox",
+      "current": "=0.3.2",
+      "target": "0.3.2",
+      "channel": "stable",
+      "source": "https://crates.io/crates/objc2-video-toolbox",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "Encodes iOS simulator screens as real-time H.264 (VTCompressionSession) and turns frames into the UI orientation (VTPixelRotationSession). Exact pin, released 2025-10-04 (at least 14 days before 2026-10-15); macOS-only target table in apps/server; covered by the device::ios::encoder tests and the opt-in tests/ios_simulator.rs."
     },
     {
       "key": "rust:apps/server:png",

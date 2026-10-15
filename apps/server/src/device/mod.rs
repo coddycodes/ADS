@@ -11,6 +11,9 @@ pub mod input;
 pub(crate) mod ios;
 #[cfg(target_os = "macos")]
 #[doc(hidden)]
+pub use ios::encoder::sps_dimensions as h264_sps_dimensions_for_tests;
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
 pub use ios::host_manager_for_tests as ios_host_manager_for_tests;
 pub mod media;
 pub(crate) mod media_socket;
