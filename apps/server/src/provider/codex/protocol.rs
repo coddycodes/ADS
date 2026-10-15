@@ -101,6 +101,24 @@ pub enum ProtocolError {
     Cancelled { method: String },
 }
 
+impl ProtocolError {
+    /// The Codex app-server does not have the requested method.
+    pub fn is_missing_method(&self) -> bool {
+        matches!(
+            self,
+            Self::RemoteRequest { method, code, message, .. }
+                if is_missing_method_error(*code, message, method)
+        )
+    }
+}
+
+/// JSON-RPC -32601, or the -32600 Codex returns when request decoding rejects the method name
+/// (serde: "unknown variant `<method>`"). Any other -32600 is an invalid request for a method
+/// that exists, such as a missing field or a bad enum parameter.
+pub(crate) fn is_missing_method_error(code: i64, message: &str, method: &str) -> bool {
+    code == -32601 || (code == -32600 && message.contains(&format!("unknown variant `{method}`")))
+}
+
 #[derive(Clone)]
 pub struct JsonRpcConnection {
     inner: Arc<Inner>,

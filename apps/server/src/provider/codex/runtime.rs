@@ -1459,7 +1459,7 @@ impl CodexSessionRuntime {
                 )
                 .await
                 .map_err(|error| {
-                    if method_was_removed(&error) {
+                    if error.is_missing_method() {
                         RuntimeError::LegacyRewindUnsupported
                     } else {
                         error.into()
@@ -1814,7 +1814,7 @@ impl CodexSessionRuntime {
                 .await
             {
                 Ok(response) => Some(response),
-                Err(error) if method_is_incompatible(&error) => {
+                Err(error) if error.is_missing_method() => {
                     read_incompatible = true;
                     None
                 }
@@ -1934,7 +1934,7 @@ impl CodexSessionRuntime {
                     .await
                 {
                     Ok(response) => response,
-                    Err(error) if method_is_incompatible(&error) => {
+                    Err(error) if error.is_missing_method() => {
                         list_incompatible = true;
                         break;
                     }
@@ -2049,7 +2049,7 @@ impl CodexSessionRuntime {
                     .await
                 {
                     Ok(response) => response,
-                    Err(error) if method_is_incompatible(&error) => {
+                    Err(error) if error.is_missing_method() => {
                         read_incompatible = true;
                         break;
                     }
@@ -2233,7 +2233,7 @@ impl CodexSessionRuntime {
                     .await
                 {
                     Ok(response) => response,
-                    Err(error) if method_is_incompatible(&error) => {
+                    Err(error) if error.is_missing_method() => {
                         background_incompatible = true;
                         break;
                     }
@@ -3455,21 +3455,6 @@ fn pending_actor_transitions_are_valid(
         }
     }
     true
-}
-
-fn method_is_incompatible(error: &ProtocolError) -> bool {
-    matches!(error, ProtocolError::RemoteRequest { code: -32601, .. })
-}
-
-/// Codex rejects a method name its request enum no longer has with -32600 and a serde
-/// `unknown variant` message, as 0.156+ does for `thread/rollback`.
-fn method_was_removed(error: &ProtocolError) -> bool {
-    method_is_incompatible(error)
-        || matches!(
-            error,
-            ProtocolError::RemoteRequest { code: -32600, message, .. }
-                if message.contains("unknown variant")
-        )
 }
 
 /// Codex reports `historyMode` on threads from 0.148; a missing field is a legacy thread.
