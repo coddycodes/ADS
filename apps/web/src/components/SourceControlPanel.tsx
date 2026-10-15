@@ -45,6 +45,7 @@ import { Textarea } from "~/components/ui/textarea";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useDiffPanelStore } from "~/diffPanelStore";
 import { usePreferredEditor } from "~/editorPreferences";
+import { usePrimarySettings } from "~/hooks/useSettings";
 import { openPullRequestLink } from "~/lib/openPullRequestLink";
 import {
   useGitStackedAction,
@@ -112,6 +113,7 @@ import { GIT_MANAGER_STASH_MERGE_DISABLED_REASON } from "./gitManager/gitManager
 import { GitManagerInProgressStrip } from "./gitManager/GitManagerInProgressStrip";
 import { GitManagerMergeDialog } from "./gitManager/merge/GitManagerMergeDialog";
 import { GitManagerOperationBanner } from "./gitManager/toolbar/GitManagerOperationBanner";
+import { canOpenPullRequestInPanel } from "./pullRequests/pullRequestsAvailability";
 import { SourceControlMergeChanges } from "./SourceControlMergeChanges";
 import {
   GitManagerCreatePullRequestDialog,
@@ -178,6 +180,7 @@ export default function SourceControlPanel({
 }: SourceControlPanelProps) {
   const environmentId = threadRef.environmentId;
   const scope = useMemo(() => ({ environmentId, cwd: gitCwd }), [environmentId, gitCwd]);
+  const pullRequestsEnabled = usePrimarySettings((settings) => settings.pullRequestsEnabled);
 
   const statusQuery = useEnvironmentQuery(
     gitCwd === null || workspaceUnavailable !== null
@@ -1397,7 +1400,15 @@ export default function SourceControlPanel({
             if (result.commit.status === "created") draft.clear();
             reloadCommits();
           }}
-          onDone={(request) => useRightPanelStore.getState().openPullRequest(threadRef, request)}
+          onDone={(request) => {
+            if (
+              canOpenPullRequestInPanel({
+                enabled: pullRequestsEnabled,
+                providerKind: request.provider,
+              })
+            )
+              useRightPanelStore.getState().openPullRequest(threadRef, request);
+          }}
         />
       ) : null}
       {projectRef !== null && gitCwd !== null ? (
