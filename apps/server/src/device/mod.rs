@@ -72,7 +72,7 @@ pub enum DeviceOpError {
     },
     /// The image is already running outside BiBCode.
     #[error(
-        "This simulator is already running outside BibCode. Shut it down in Simulator, then open it here."
+        "This simulator is already running outside BiBCode. Shut it down in Simulator, then open it here."
     )]
     Busy { image_id: String },
     #[error("{0}")]
@@ -214,6 +214,8 @@ struct Slot {
     /// Cancelled once the device has ended and its emulator process is gone.
     reaped: CancellationToken,
     started: Instant,
+    /// The image's name as the device list shows it, for the limit error.
+    display_name: String,
     /// Open order, which decides which ended devices the catalog keeps.
     seq: u64,
     /// The JPEG frame producer while anyone subscribes.
@@ -320,8 +322,14 @@ impl DeviceManager {
         if found.found.availability.kind != AvailabilityKind::Ready {
             return Err(DeviceOpError::Sdk(found.found.availability));
         }
-        if !found.lists(image_id) {
+        let Some(display_name) = found.display_name(image_id) else {
             return Err(unknown());
+        };
+        // Cheap and unlocked, so a doomed open never runs the backend's check; the check
+        // under the lock below stays authoritative.
+        let running = self.inner.table().running_on(platform);
+        if let Some(running) = running {
+            return Err(DeviceOpError::Limit { running });
         }
         match entry.backend.check_available(image_id).await {
             Ok(()) => {}
@@ -331,10 +339,11 @@ impl DeviceManager {
                 });
             }
             Err(error) => {
-                let (_, failure) = launch_failure(&error);
-                return Err(DeviceOpError::Emulator(format!(
-                    "The device cannot start: {failure}."
-                )));
+                tracing::warn!(?error, "device availability check failed");
+                return Err(DeviceOpError::Emulator(
+                    "The server could not check whether this device can start. Try again in a moment."
+                        .into(),
+                ));
             }
         }
         let backend = entry.backend.clone();
@@ -348,14 +357,8 @@ impl DeviceManager {
             if !self.inner.accepting() {
                 return Err(DeviceOpError::Disabled);
             }
-            if let Some(active) = table
-                .slots
-                .values()
-                .find(|slot| slot.snapshot.platform == platform && !ended(slot.snapshot.state))
-            {
-                return Err(DeviceOpError::Limit {
-                    running: active.snapshot.image_id.clone(),
-                });
+            if let Some(running) = table.running_on(platform) {
+                return Err(DeviceOpError::Limit { running });
             }
             let seq = table.next_seq;
             table.next_seq += 1;
@@ -378,6 +381,7 @@ impl DeviceManager {
                     cancel: cancel.clone(),
                     reaped: CancellationToken::new(),
                     started,
+                    display_name,
                     seq,
                     frames: None,
                     media: None,
@@ -495,7 +499,25 @@ impl DeviceManager {
 
 impl Discovery {
     fn lists(&self, image_id: &str) -> bool {
-        self.found.images.iter().any(|image| image.id == image_id)
+        self.display_name(image_id).is_some()
+    }
+
+    fn display_name(&self, image_id: &str) -> Option<String> {
+        self.found
+            .images
+            .iter()
+            .find(|image| image.id == image_id)
+            .map(|image| image.display_name.clone())
+    }
+}
+
+impl DeviceTable {
+    /// The display name of `platform`'s device that has not ended, if any.
+    fn running_on(&self, platform: Platform) -> Option<String> {
+        self.slots
+            .values()
+            .find(|slot| slot.snapshot.platform == platform && !ended(slot.snapshot.state))
+            .map(|slot| slot.display_name.clone())
     }
 }
 
@@ -890,7 +912,7 @@ fn launch_failure(error: &LaunchFailure) -> (&'static str, String) {
             format!("did not report its display: {message}"),
         ),
         LaunchFailure::Cancelled => ("cancelled", "cancelled".to_owned()),
-        LaunchFailure::Busy => ("busy", "in use outside BibCode".to_owned()),
+        LaunchFailure::Busy => ("busy", "in use outside BiBCode".to_owned()),
     }
 }
 
@@ -1354,8 +1376,10 @@ mod platform_tests {
         );
         assert!(matches!(
             manager.open(Platform::Ios, "UDID-2").await,
-            Err(DeviceOpError::Limit { running }) if running == "UDID-1"
+            Err(DeviceOpError::Limit { running }) if running == "iPhone UDID-1"
         ));
+        // The doomed open never reached the backend's availability check.
+        assert_eq!(ios.check_calls(), 1);
         manager.shutdown().await;
         assert_eq!((android.stops(), ios.stops()), (1, 1));
     }
@@ -1380,7 +1404,7 @@ mod platform_tests {
         let (manager, _enabled) = fake_manager(vec![ios.clone()]);
         let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
         let failed = wait_state(&manager, &id, DeviceState::Failed).await;
-        assert_eq!(failed.failure.as_deref(), Some("in use outside BibCode"));
+        assert_eq!(failed.failure.as_deref(), Some("in use outside BiBCode"));
         assert_eq!(ios.stops(), 0);
     }
 
@@ -1392,9 +1416,9 @@ mod platform_tests {
         let a = manager.open(Platform::Android, "Pixel").await.unwrap();
         let i = manager.open(Platform::Ios, "UDID-1").await.unwrap();
         wait_state(&manager, &i, DeviceState::Ready).await;
-        ios.exit_running(0, "Shutdown outside BibCode");
+        ios.exit_running(0, "Shutdown outside BiBCode");
         let failed = wait_state(&manager, &i, DeviceState::Failed).await;
-        assert_eq!(failed.failure.as_deref(), Some("Shutdown outside BibCode"));
+        assert_eq!(failed.failure.as_deref(), Some("Shutdown outside BiBCode"));
         assert_eq!(ios.stops(), 1);
         assert_eq!(
             wait_state(&manager, &a, DeviceState::Ready).await.state,
@@ -1430,7 +1454,7 @@ mod platform_tests {
         assert_eq!(json["platforms"][1]["platform"], "ios");
         assert_eq!(
             json["platforms"][1]["images"][0],
-            serde_json::json!({ "id": "UDID-1", "displayName": "UDID-1" })
+            serde_json::json!({ "id": "UDID-1", "displayName": "iPhone UDID-1" })
         );
         manager.shutdown().await;
     }
@@ -1557,7 +1581,7 @@ mod platform_tests {
             serde_json::json!({
                 "_tag": "DeviceBusyError",
                 "imageId": "UDID-1",
-                "message": "This simulator is already running outside BibCode. Shut it down in Simulator, then open it here.",
+                "message": "This simulator is already running outside BiBCode. Shut it down in Simulator, then open it here.",
             })
         );
         let ios = DeviceOpError::UnknownImage {
@@ -1572,7 +1596,7 @@ mod platform_tests {
         );
         assert_eq!(
             launch_failure(&LaunchFailure::Busy),
-            ("busy", "in use outside BibCode".to_owned())
+            ("busy", "in use outside BiBCode".to_owned())
         );
     }
 }

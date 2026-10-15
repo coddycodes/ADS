@@ -46,6 +46,7 @@ pub(crate) struct FakeBackend {
     launched: Mutex<Vec<Arc<FakeDeviceState>>>,
     stops: Arc<AtomicUsize>,
     discover_calls: AtomicUsize,
+    check_calls: AtomicUsize,
 }
 
 struct FakeDeviceState {
@@ -64,6 +65,7 @@ impl FakeBackend {
             launched: Mutex::default(),
             stops: Arc::default(),
             discover_calls: AtomicUsize::new(0),
+            check_calls: AtomicUsize::new(0),
         })
     }
 
@@ -100,6 +102,11 @@ impl FakeBackend {
 
     pub(crate) fn discover_calls(&self) -> usize {
         self.discover_calls.load(Ordering::SeqCst)
+    }
+
+    /// How many times `check_available` ran.
+    pub(crate) fn check_calls(&self) -> usize {
+        self.check_calls.load(Ordering::SeqCst)
     }
 
     /// How many launches started.
@@ -141,7 +148,7 @@ impl DeviceBackend for FakeBackend {
                     .iter()
                     .map(|id| Image {
                         id: id.clone(),
-                        display_name: id.clone(),
+                        display_name: format!("iPhone {id}"),
                         in_use_elsewhere: lock(&self.busy).contains(id),
                     })
                     .collect(),
@@ -154,6 +161,7 @@ impl DeviceBackend for FakeBackend {
         image_id: &'a str,
     ) -> BoxFuture<'a, Result<(), LaunchFailure>> {
         Box::pin(async move {
+            self.check_calls.fetch_add(1, Ordering::SeqCst);
             if lock(&self.busy).contains(image_id) {
                 Err(LaunchFailure::Busy)
             } else {
