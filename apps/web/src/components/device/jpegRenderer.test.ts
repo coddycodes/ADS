@@ -63,6 +63,26 @@ describe("JpegRenderer", () => {
     expect(drawn).toEqual([good]);
   });
 
+  it("redraws the last drawn frame, for a canvas that was resized", async () => {
+    const decoder = fakeDecoder();
+    const drawn: DecodedFrame[] = [];
+    const renderer = new JpegRenderer((frame) => drawn.push(frame), decoder.decode);
+    renderer.redraw();
+    await flush();
+    expect(decoder.pending).toHaveLength(0);
+    renderer.push(btoa("still"));
+    await flush();
+    decoder.pending[0]!.resolve(decoder.frame("still"));
+    await flush();
+    renderer.redraw();
+    await flush();
+    expect(decoder.pending.map((entry) => entry.bytes)).toEqual(["still", "still"]);
+    const again = decoder.frame("still");
+    decoder.pending[1]!.resolve(again);
+    await flush();
+    expect(drawn.at(-1)).toBe(again);
+  });
+
   it("draws nothing after dispose and still closes a late frame", async () => {
     const decoder = fakeDecoder();
     const drawn: DecodedFrame[] = [];

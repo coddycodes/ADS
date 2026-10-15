@@ -131,7 +131,8 @@ export function DevicePanel({ environmentId }: { readonly environmentId: Environ
       </PanelMessage>
     );
   }
-  return <DeviceSession environmentId={environmentId} />;
+  // Keyed so switching to a thread on another environment starts from a clean pane.
+  return <DeviceSession key={environmentId} environmentId={environmentId} />;
 }
 
 function isDisabledFailure(cause: Cause.Cause<unknown>): boolean {

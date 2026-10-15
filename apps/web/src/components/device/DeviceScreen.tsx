@@ -68,6 +68,22 @@ export function DeviceScreen({
   // Browser pointer id → the touch id the device sees, for pointers held down on the screen.
   const touchesRef = useRef(new Map<number, number>());
 
+  // Created in an effect, not during render, so a remount never draws with a disposed one.
+  const rendererRef = useRef<JpegRenderer | null>(null);
+  useEffect(() => {
+    const renderer = new JpegRenderer((frame) => {
+      const canvas = canvasRef.current;
+      const context = canvas?.getContext("2d");
+      if (!canvas || !context) return;
+      context.drawImage(frame, 0, 0, canvas.width, canvas.height);
+    });
+    rendererRef.current = renderer;
+    return () => {
+      renderer.dispose();
+      rendererRef.current = null;
+    };
+  }, []);
+
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (container === null) return;
@@ -100,23 +116,8 @@ export function DeviceScreen({
     const ratio = window.devicePixelRatio || 1;
     canvas.width = Math.max(1, Math.round(box.width * ratio));
     canvas.height = Math.max(1, Math.round(box.height * ratio));
+    rendererRef.current?.redraw();
   }, [box.width, box.height]);
-
-  // Created in an effect, not during render, so a remount never draws with a disposed one.
-  const rendererRef = useRef<JpegRenderer | null>(null);
-  useEffect(() => {
-    const renderer = new JpegRenderer((frame) => {
-      const canvas = canvasRef.current;
-      const context = canvas?.getContext("2d");
-      if (!canvas || !context) return;
-      context.drawImage(frame, 0, 0, canvas.width, canvas.height);
-    });
-    rendererRef.current = renderer;
-    return () => {
-      renderer.dispose();
-      rendererRef.current = null;
-    };
-  }, []);
 
   const framesAtom = deviceEnvironment.frames({
     environmentId,

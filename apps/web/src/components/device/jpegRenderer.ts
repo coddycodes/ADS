@@ -22,6 +22,9 @@ function base64ToBytes(base64: string): Uint8Array<ArrayBuffer> {
  */
 export class JpegRenderer<F extends DecodedFrame = ImageBitmap> {
   private waiting: string | null = null;
+  // The last frame drawn, kept so a resized (and so cleared) canvas can be painted again: the
+  // server sends frames only when the screen changes.
+  private lastDrawn: string | null = null;
   private decoding = false;
   private disposed = false;
 
@@ -40,9 +43,16 @@ export class JpegRenderer<F extends DecodedFrame = ImageBitmap> {
     this.start(jpegBase64);
   }
 
+  /** Draws the last drawn frame again, unless a newer one is already on its way. */
+  redraw(): void {
+    if (this.disposed || this.decoding || this.lastDrawn === null) return;
+    this.start(this.lastDrawn);
+  }
+
   dispose(): void {
     this.disposed = true;
     this.waiting = null;
+    this.lastDrawn = null;
   }
 
   private start(jpegBase64: string): void {
@@ -64,7 +74,10 @@ export class JpegRenderer<F extends DecodedFrame = ImageBitmap> {
       return;
     }
     try {
-      if (!this.disposed) this.draw(frame);
+      if (!this.disposed) {
+        this.draw(frame);
+        this.lastDrawn = jpegBase64;
+      }
     } finally {
       frame.close();
     }
