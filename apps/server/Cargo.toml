@@ -93,23 +93,23 @@ libc.workspace = true
 
 # The iOS simulator backend loads CoreSimulator in-process; exact pins, see the dependency ledger.
 [target.'cfg(target_os = "macos")'.dependencies]
-block2 = "=0.6.2"
-dispatch2 = { version = "=0.3.1", default-features = false, features = ["std", "objc2"] }
-objc2 = { version = "=0.6.4", features = ["exception"] }
-objc2-core-foundation = { version = "=0.3.2", default-features = false, features = [
+block2.workspace = true
+dispatch2 = { workspace = true, features = ["std", "objc2"] }
+objc2 = { workspace = true, features = ["exception"] }
+objc2-core-foundation = { workspace = true, features = [
   "std",
   "CFDictionary",
   "CFNumber",
   "CFString",
 ] }
-objc2-core-media = { version = "=0.3.2", default-features = false, features = [
+objc2-core-media = { workspace = true, features = [
   "std",
   "CMBlockBuffer",
   "CMFormatDescription",
   "CMSampleBuffer",
   "CMTime",
 ] }
-objc2-core-video = { version = "=0.3.2", default-features = false, features = [
+objc2-core-video = { workspace = true, features = [
   "std",
   "CVBase",
   "CVBuffer",
@@ -120,13 +120,8 @@ objc2-core-video = { version = "=0.3.2", default-features = false, features = [
   "CVReturn",
   "objc2-io-surface",
 ] }
-objc2-foundation = { version = "=0.3.2", default-features = false, features = [
-  "std",
-  "NSError",
-  "NSString",
-  "NSUUID",
-] }
-objc2-io-surface = { version = "=0.3.2", default-features = false, features = [
+objc2-foundation = { workspace = true, features = ["std", "NSError", "NSString", "NSUUID"] }
+objc2-io-surface = { workspace = true, features = [
   "std",
   "IOSurfaceRef",
   "IOSurfaceTypes",
@@ -134,7 +129,7 @@ objc2-io-surface = { version = "=0.3.2", default-features = false, features = [
   "objc2",
   "objc2-core-foundation",
 ] }
-objc2-video-toolbox = { version = "=0.3.2", default-features = false, features = [
+objc2-video-toolbox = { workspace = true, features = [
   "std",
   "VTCompressionProperties",
   "VTCompressionSession",
@@ -145,7 +140,7 @@ objc2-video-toolbox = { version = "=0.3.2", default-features = false, features =
   "objc2-core-media",
   "objc2-core-video",
 ] }
-png = "=0.18.1"
+png.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 junction.workspace = true
