@@ -457,6 +457,9 @@ struct Shared {
     control: Control,
     /// The single touch pointer that is down, between batches.
     pointer: Mutex<PointerState>,
+    /// Where a touch the guest may still hold was last sent, in portrait ratios: set
+    /// before a down or move goes out, cleared once its up was sent.
+    held: Mutex<Option<(f64, f64)>>,
     /// One input batch at a time, so batches arrive in order.
     input_lock: tokio::sync::Mutex<()>,
     runner: Arc<SimctlRunner>,
@@ -487,6 +490,7 @@ impl RunningSimulator {
             display,
             control,
             pointer: Mutex::new(PointerState::default()),
+            held: Mutex::new(None),
             input_lock: tokio::sync::Mutex::new(()),
             runner,
             booted,
@@ -549,6 +553,7 @@ impl Shared {
             sink.release().await;
         }
         *lock(&self.pointer) = PointerState::default();
+        lock(&self.held).take();
         // The poll ends first, so this shutdown is never taken for an external one.
         self.poll.cancel();
         let task = lock(&self.poll_task).take();
@@ -599,6 +604,20 @@ impl Shared {
             return Err(DeviceOpError::InvalidInput(KEYBOARD_NOT_READY.to_owned()));
         }
         *lock(&self.pointer) = pointer;
+        let result = self.send_plan(sink.as_ref(), plan).await;
+        if result.is_err() {
+            self.lift_held_touch(sink.as_ref()).await;
+        }
+        result
+    }
+
+    /// Sends a planned batch in order, keeping `held` in step with the touch the guest may
+    /// hold: set before a down or move goes out, cleared once an up was sent.
+    async fn send_plan(
+        &self,
+        sink: &dyn HidSink,
+        plan: Vec<HidAction>,
+    ) -> Result<(), DeviceOpError> {
         for action in plan {
             match action {
                 HidAction::Paste { text } => {
@@ -616,24 +635,41 @@ impl Shared {
                     }
                 }
                 action => {
-                    let down = matches!(
-                        action,
-                        HidAction::Touch {
-                            phase: TouchPhase::Down,
-                            ..
-                        }
-                    );
-                    if let Err(error) = sink.send(action).await {
-                        // A down the guest never got leaves no pointer active.
-                        if down {
-                            *lock(&self.pointer) = PointerState::default();
-                        }
-                        return Err(sink_error(error, INPUT_FAILED));
+                    let touch = match action {
+                        HidAction::Touch { phase, x, y } => Some((phase, x, y)),
+                        _ => None,
+                    };
+                    if let Some((TouchPhase::Down | TouchPhase::Move, x, y)) = touch {
+                        *lock(&self.held) = Some((x, y));
+                    }
+                    sink.send(action)
+                        .await
+                        .map_err(|error| sink_error(error, INPUT_FAILED))?;
+                    if let Some((TouchPhase::Up, ..)) = touch {
+                        *lock(&self.held) = None;
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    /// After a failed send: lifts a touch the guest may still hold, best effort, at its
+    /// last known position (the sink sends it on the path its down took), and leaves the
+    /// pointer idle.
+    async fn lift_held_touch(&self, sink: &dyn HidSink) {
+        let held = lock(&self.held).take();
+        if let Some((x, y)) = held {
+            let up = HidAction::Touch {
+                phase: TouchPhase::Up,
+                x,
+                y,
+            };
+            if let Err(error) = sink.send(up).await {
+                tracing::debug!(?error, "could not lift a held touch after a failed send");
+            }
+        }
+        *lock(&self.pointer) = PointerState::default();
     }
 
     /// Sends the Purple orientation for `to`, then reads back what the simulator reports
@@ -1123,6 +1159,148 @@ mod tests {
                 y: 0.3
             }]
         );
+        manager.shutdown().await;
+    }
+
+    fn touch(action: TouchAction, x: f64, y: f64) -> DeviceInputEvent {
+        DeviceInputEvent::Touch {
+            action,
+            pointer_id: 0,
+            x,
+            y,
+        }
+    }
+
+    fn sent_touch(phase: TouchPhase, x: f64, y: f64) -> HidAction {
+        HidAction::Touch { phase, x, y }
+    }
+
+    async fn ready_live_fake(
+        sim: &FakeXcrun,
+        hid: &std::sync::Arc<RecordingHid>,
+    ) -> (
+        crate::device::DeviceManager,
+        tokio::sync::watch::Sender<bool>,
+        String,
+    ) {
+        let (manager, enabled) = live_fake_ios(sim, hid);
+        let id = manager.open(Platform::Ios, "UDID-1").await.unwrap();
+        wait_state(&manager, &id, DeviceState::Ready).await;
+        (manager, enabled, id)
+    }
+
+    fn one_device() -> FakeXcrun {
+        FakeXcrun::new()
+            .device("UDID-1", "iPhone 17 Pro", "iOS 27.0")
+            .write()
+    }
+
+    #[tokio::test]
+    async fn a_failed_move_lifts_the_touch_and_frees_the_pointer() {
+        let sim = one_device();
+        let hid = RecordingHid::new();
+        let (manager, _enabled, id) = ready_live_fake(&sim, &hid).await;
+        hid.fail_next(|action| {
+            matches!(
+                action,
+                HidAction::Touch {
+                    phase: TouchPhase::Move,
+                    ..
+                }
+            )
+        });
+        let failed = manager
+            .input(
+                &id,
+                vec![
+                    touch(TouchAction::Down, 0.1, 0.2),
+                    touch(TouchAction::Move, 0.3, 0.4),
+                    touch(TouchAction::Up, 0.3, 0.4),
+                ],
+            )
+            .await;
+        assert!(
+            matches!(failed, Err(DeviceOpError::Emulator(_))),
+            "{failed:?}"
+        );
+        // The down went out, the move failed, and the touch was lifted where the move went.
+        assert_eq!(
+            hid.sent(),
+            [
+                sent_touch(TouchPhase::Down, 0.1, 0.2),
+                sent_touch(TouchPhase::Up, 0.3, 0.4),
+            ]
+        );
+        manager.input(&id, vec![tap_down(0.5, 0.6)]).await.unwrap();
+        assert_eq!(hid.sent(), [sent_touch(TouchPhase::Down, 0.5, 0.6)]);
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_failed_up_for_a_held_pointer_is_retried_and_resets() {
+        let sim = one_device();
+        let hid = RecordingHid::new();
+        let (manager, _enabled, id) = ready_live_fake(&sim, &hid).await;
+        manager.input(&id, vec![tap_down(0.1, 0.2)]).await.unwrap();
+        manager
+            .input(&id, vec![touch(TouchAction::Move, 0.2, 0.2)])
+            .await
+            .unwrap();
+        hid.sent();
+        hid.fail_next(|action| {
+            matches!(
+                action,
+                HidAction::Touch {
+                    phase: TouchPhase::Up,
+                    ..
+                }
+            )
+        });
+        let failed = manager
+            .input(&id, vec![touch(TouchAction::Up, 0.25, 0.2)])
+            .await;
+        assert!(
+            matches!(failed, Err(DeviceOpError::Emulator(_))),
+            "{failed:?}"
+        );
+        // The best-effort up goes where the touch last was.
+        assert_eq!(hid.sent(), [sent_touch(TouchPhase::Up, 0.2, 0.2)]);
+        manager.input(&id, vec![tap_down(0.5, 0.6)]).await.unwrap();
+        assert_eq!(hid.sent(), [sent_touch(TouchPhase::Down, 0.5, 0.6)]);
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_failed_key_after_a_held_down_lifts_the_touch() {
+        let sim = one_device();
+        let hid = RecordingHid::new();
+        let (manager, _enabled, id) = ready_live_fake(&sim, &hid).await;
+        hid.fail_next(|action| matches!(action, HidAction::Key { .. }));
+        let failed = manager
+            .input(
+                &id,
+                vec![
+                    tap_down(0.1, 0.2),
+                    DeviceInputEvent::Key {
+                        key: DeviceKey::Enter,
+                        action: KeyAction::Down,
+                    },
+                ],
+            )
+            .await;
+        assert!(
+            matches!(failed, Err(DeviceOpError::Emulator(_))),
+            "{failed:?}"
+        );
+        assert_eq!(
+            hid.sent(),
+            [
+                sent_touch(TouchPhase::Down, 0.1, 0.2),
+                sent_touch(TouchPhase::Up, 0.1, 0.2),
+            ]
+        );
+        manager.input(&id, vec![tap_down(0.5, 0.6)]).await.unwrap();
+        assert_eq!(hid.sent(), [sent_touch(TouchPhase::Down, 0.5, 0.6)]);
         manager.shutdown().await;
     }
 

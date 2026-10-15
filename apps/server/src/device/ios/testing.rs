@@ -209,9 +209,13 @@ pub(crate) fn manager_for(runner: SimctlRunner) -> (DeviceManager, watch::Sender
     manager_with(runner, None)
 }
 
+type FailWhen = Box<dyn Fn(&HidAction) -> bool + Send>;
+
 /// An input sink that records what it is sent and never calls a framework.
 pub(crate) struct RecordingHid {
     sent: Mutex<Vec<HidAction>>,
+    /// Fails the next send this accepts, once.
+    fail_next: Mutex<Option<FailWhen>>,
     rotations: Mutex<Vec<u32>>,
     keyboard: AtomicBool,
     released: AtomicBool,
@@ -222,6 +226,7 @@ impl RecordingHid {
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
             sent: Mutex::default(),
+            fail_next: Mutex::default(),
             rotations: Mutex::default(),
             keyboard: AtomicBool::new(true),
             released: AtomicBool::new(false),
@@ -234,6 +239,12 @@ impl RecordingHid {
         self.keyboard.store(ready, Ordering::SeqCst);
     }
 
+    /// The next send that `when` accepts fails, and is not recorded.
+    pub(crate) fn fail_next(&self, when: impl Fn(&HidAction) -> bool + Send + 'static) {
+        *lock(&self.fail_next) = Some(Box::new(when));
+    }
+
+    /// What was sent since the last call.
     pub(crate) fn sent(&self) -> Vec<HidAction> {
         std::mem::take(&mut *lock(&self.sent))
     }
@@ -269,6 +280,13 @@ impl HidSink for RecordingHid {
         Box::pin(async move {
             if self.refused() {
                 return Err(HidError::Released);
+            }
+            {
+                let mut fail = lock(&self.fail_next);
+                if fail.as_ref().is_some_and(|when| when(&action)) {
+                    fail.take();
+                    return Err(HidError::Failed("a recorded failure".to_owned()));
+                }
             }
             lock(&self.sent).push(action);
             Ok(())
