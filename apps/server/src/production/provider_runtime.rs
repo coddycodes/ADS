@@ -90,7 +90,7 @@ use crate::{
         },
         opencode::OpenCodeSessionRuntime,
         option_needs_value_refusal, option_on_or_off_refusal, option_without_id_refusal,
-        unsupported_option_refusal,
+        parse_provider_command, unsupported_option_refusal,
     },
     server_settings::{ProviderBinarySettingsState, ProviderSettingsStore},
 };
@@ -8171,20 +8171,6 @@ fn selection_effort(options: &[Value]) -> Option<String> {
         .find_map(|id| selection_string_option_from(options, id))
 }
 
-fn parse_provider_command(text: &str) -> Option<(&str, &str)> {
-    let command = text.strip_prefix('/')?;
-    let split = command.find(char::is_whitespace).unwrap_or(command.len());
-    let name = &command[..split];
-    if name.is_empty()
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.'))
-    {
-        return None;
-    }
-    Some((name, command[split..].trim()))
-}
-
 #[allow(clippy::too_many_arguments)]
 fn spawn_event_pump(
     engine: OrchestrationEngine,
@@ -11690,7 +11676,8 @@ impl ProviderDriver for OpenCodeDriver {
                     turn_id: Some(turn_id),
                 },
                 Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::MissingSession)
-                | Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::InvalidResponse(_)) => {
+                | Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::InvalidResponse(_))
+                | Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::NotSent(_)) => {
                     ProviderDeliveryOutcome::DefinitelyNotSent {
                         detail: delivery_detail(&provider_error("opencode")(error), None),
                     }

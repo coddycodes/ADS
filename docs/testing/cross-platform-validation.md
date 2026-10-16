@@ -107,13 +107,13 @@ execution report. Hermetic tests do not establish a packaged native visual pass.
 
 Run `opencode --version` with the desktop's `PATH` first and record it: OpenCode
 1 prints `1.x.y`, OpenCode 2 prints `opencode v2.x.y`. With OpenCode 2, chat
-scenarios (messages, permissions, questions, Stop) and subagent activity apply;
-record its catalog, rewind and terminal-observation scenarios as unavailable
-until those stages ship. The focused checks are
+scenarios (messages, permissions, questions, Stop), subagent activity and the
+model, agent, command and skill catalogs apply; record its rewind and
+terminal-observation scenarios as unavailable until those stages ship. The focused checks are
 `cargo test -p bibcode-server --lib -j 2 -- opencode`, which replays responses
 captured from a real OpenCode 2.0.29 server. The opt-in `live_opencode_2` tests
-drive a real OpenCode 2 server. The doc comment of `live_opencode_2_round_trip`
-lists the environment they need; the server's default model must be a scripted
+drive a real OpenCode 2 server. The doc comments of `live_opencode_2_round_trip`
+and `live_opencode_2_local_inventory` list the environment they need; the server's default model must be a scripted
 local endpoint so no provider credits are spent.
 
 ## Revision and worktree preflight

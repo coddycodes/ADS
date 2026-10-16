@@ -22,7 +22,9 @@ use futures_util::{StreamExt, stream};
 use serde_json::{Value, json};
 use tokio::sync::Notify;
 
-use super::runtime::{OpenCodeRuntimeEventStableView, OpenCodeSessionRuntime};
+use super::runtime::{
+    OpenCodeRuntimeError, OpenCodeRuntimeEventStableView, OpenCodeSessionRuntime,
+};
 
 fn fixture(name: &str) -> String {
     let path = format!(
@@ -81,6 +83,8 @@ struct Replay {
     lose_next_reply_response: AtomicBool,
     /// `/api/session/active` lists the root session.
     active: AtomicBool,
+    /// The skill and command lists answer HTTP 500.
+    fail_catalogs: AtomicBool,
 }
 
 impl Replay {
@@ -310,6 +314,7 @@ async fn serve(scenario: &'static str) -> (String, Arc<Replay>) {
         fail_next_reply: AtomicBool::new(false),
         lose_next_reply_response: AtomicBool::new(false),
         active: AtomicBool::new(false),
+        fail_catalogs: AtomicBool::new(false),
     });
     let app = Router::new()
         .route("/api/session", post(record).get(captured_list))
@@ -351,6 +356,30 @@ async fn serve(scenario: &'static str) -> (String, Arc<Replay>) {
         .route(
             "/api/agent",
             get(|| async { Json(exchange("catalog", "GET", "/api/agent").1) }),
+        )
+        .route(
+            "/api/skill",
+            get(|State(replay): State<Arc<Replay>>| async move {
+                if replay.fail_catalogs.load(Ordering::SeqCst) {
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+                // The captured skills, plus one that shares the `review` command's name.
+                let mut skills = exchange("catalog", "GET", "/api/skill").1;
+                skills["data"]
+                    .as_array_mut()
+                    .expect("skills")
+                    .push(json!({ "id": "review", "description": "Review skill" }));
+                Json(skills).into_response()
+            }),
+        )
+        .route(
+            "/api/command",
+            get(|State(replay): State<Arc<Replay>>| async move {
+                if replay.fail_catalogs.load(Ordering::SeqCst) {
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+                Json(exchange("catalog", "GET", "/api/command").1).into_response()
+            }),
         )
         .route(
             "/api/info",
@@ -1063,6 +1092,115 @@ async fn live_opencode_2_background_child() {
     assert!(
         statuses.contains(&ActivityLifecycle::Running),
         "{statuses:?}"
+    );
+    runtime.stop().await.expect("stop");
+}
+
+/// OpenCode 2 skills are not commands: a slash skill is sent as a prompt that attaches the skill
+/// (with the delivery's message id), and other slash commands use the command route. A command
+/// wins a name collision with a skill, as it does in the slash menu.
+#[tokio::test]
+async fn slash_skills_attach_the_skill_and_commands_use_the_command_route() {
+    let (endpoint, replay) = serve("hello").await;
+    let runtime = v2_runtime(&endpoint);
+    runtime.start().await.expect("session starts");
+    runtime
+        .send_command("/report", "the build fails", Some("skill-key"))
+        .await
+        .expect("skill is sent");
+    runtime
+        .send_command("review", "", Some("command-key"))
+        .await
+        .expect("command is sent");
+    assert_eq!(
+        replay.requests_to("/prompt")[0].2,
+        json!({
+            "id": "msg_skillkey",
+            "text": "the build fails",
+            "delivery": "steer",
+            "skills": [{ "id": "report" }],
+        })
+    );
+    assert_eq!(
+        replay.requests_to("/command")[0].2,
+        json!({ "name": "review", "text": "", "delivery": "steer" })
+    );
+    runtime.stop().await.expect("stop");
+}
+
+/// A slash invocation whose route cannot be told (the skill or command list is unreadable) fails
+/// instead of guessing between a command and a skill of the same name.
+#[tokio::test]
+async fn slash_invocations_fail_when_the_catalogs_cannot_be_read() {
+    let (endpoint, replay) = serve("hello").await;
+    let runtime = v2_runtime(&endpoint);
+    runtime.start().await.expect("session starts");
+    replay.fail_catalogs.store(true, Ordering::SeqCst);
+    let error = runtime
+        .send_command("review", "", Some("command-key"))
+        .await
+        .expect_err("the route is unknown");
+    assert!(
+        matches!(error, OpenCodeRuntimeError::NotSent(_)),
+        "nothing was sent, so the delivery can be retried: {error:?}"
+    );
+    assert!(replay.requests_to("/command").is_empty());
+    assert!(replay.requests_to("/prompt").is_empty());
+    runtime.stop().await.expect("stop");
+}
+
+/// A slash skill sent with attachments (which the driver sends as a prompt, not a command) still
+/// attaches the skill.
+#[tokio::test]
+async fn a_slash_skill_with_attachments_still_attaches_the_skill() {
+    let (endpoint, replay) = serve("hello").await;
+    let runtime = v2_runtime(&endpoint);
+    runtime.start().await.expect("session starts");
+    runtime
+        .send_turn(
+            Some("/report the build fails"),
+            vec![json!({ "url": "file:///work/project/log.png", "filename": "log.png" })],
+            Some("skill-key"),
+        )
+        .await
+        .expect("prompt is sent");
+    runtime
+        .send_turn(Some("/review this"), Vec::new(), None)
+        .await
+        .expect("prompt is sent");
+    let prompts = replay.requests_to("/prompt");
+    assert_eq!(
+        prompts[0].2,
+        json!({
+            "id": "msg_skillkey",
+            "text": "the build fails",
+            "delivery": "steer",
+            "files": [{ "uri": "file:///work/project/log.png", "name": "log.png" }],
+            "skills": [{ "id": "report" }],
+        })
+    );
+    assert!(
+        prompts[1].2.get("skills").is_none(),
+        "a command's name is not a skill"
+    );
+    runtime.stop().await.expect("stop");
+}
+
+/// Text that only starts with `/`, such as a file path, is an ordinary prompt: it is sent without
+/// reading the catalogs, so it is sent even when they cannot be read.
+#[tokio::test]
+async fn a_path_prompt_is_not_a_slash_invocation() {
+    let (endpoint, replay) = serve("hello").await;
+    let runtime = v2_runtime(&endpoint);
+    runtime.start().await.expect("session starts");
+    replay.fail_catalogs.store(true, Ordering::SeqCst);
+    runtime
+        .send_turn(Some("/tmp/project/file.rs is failing"), Vec::new(), None)
+        .await
+        .expect("prompt is sent");
+    assert_eq!(
+        replay.requests_to("/prompt")[0].2["text"],
+        "/tmp/project/file.rs is failing"
     );
     runtime.stop().await.expect("stop");
 }

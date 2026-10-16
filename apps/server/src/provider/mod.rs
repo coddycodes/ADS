@@ -14,6 +14,22 @@ pub(crate) fn supports_turn_steer(provider: &str) -> bool {
     matches!(provider, "codex" | "claudeAgent")
 }
 
+/// A provider slash invocation, `/name arguments`, as `(name, arguments)`. A name is ASCII
+/// letters, digits, `-`, `_`, `:` and `.`, so text such as a leading file path is not one.
+pub(crate) fn parse_provider_command(text: &str) -> Option<(&str, &str)> {
+    let command = text.strip_prefix('/')?;
+    let split = command.find(char::is_whitespace).unwrap_or(command.len());
+    let name = &command[..split];
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.'))
+    {
+        return None;
+    }
+    Some((name, command[split..].trim()))
+}
+
 /// Driver-owned capability used by both inventory and checkpoint revert: the driver's
 /// `rollback` drops the newest turns from its conversation. A revert on any other provider
 /// restores only the files.

@@ -835,3 +835,240 @@ mod tests {
         }
     }
 }
+
+/// OpenCode 2 catalogs (`/api/provider`, `/api/model`, `/api/agent`, `/api/command`,
+/// `/api/skill`) as the OpenCode 1 shapes `build_inventory_snapshot` reads.
+pub(crate) mod catalog {
+    use serde_json::{Map, Value, json};
+
+    fn data(response: &Value) -> impl Iterator<Item = &Value> {
+        response
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+    }
+
+    /// `{all:[{id, models:{id:{name, variants:{id:{}}}}}], connected:[ids]}` from the usable
+    /// models (OpenCode 2 lists only those its policies allow) of providers that are not
+    /// disabled; an `auto` provider is active once it has credentials.
+    pub(crate) fn provider_list(providers: &Value, models: &Value) -> Value {
+        let disabled = data(providers)
+            .filter(|provider| {
+                provider.get("activation").and_then(Value::as_str) == Some("disabled")
+            })
+            .filter_map(|provider| provider.get("id").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        let mut grouped: Vec<(String, Map<String, Value>)> = Vec::new();
+        for model in data(models) {
+            let (Some(provider_id), Some(model_id)) = (
+                model.get("providerID").and_then(Value::as_str),
+                model.get("id").and_then(Value::as_str),
+            ) else {
+                continue;
+            };
+            if model.get("enabled").and_then(Value::as_bool) == Some(false)
+                || model.get("status").and_then(Value::as_str) == Some("deprecated")
+                || disabled.contains(&provider_id)
+            {
+                continue;
+            }
+            let variants = model
+                .get("variants")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|variant| variant.get("id").and_then(Value::as_str))
+                .map(|id| (id.to_owned(), json!({})))
+                .collect::<Map<_, _>>();
+            let entry = json!({
+                "name": model.get("name").and_then(Value::as_str).unwrap_or(model_id),
+                "variants": variants,
+            });
+            match grouped.iter_mut().find(|(id, _)| id == provider_id) {
+                Some((_, models)) => {
+                    models.insert(model_id.to_owned(), entry);
+                }
+                None => grouped.push((
+                    provider_id.to_owned(),
+                    Map::from_iter([(model_id.to_owned(), entry)]),
+                )),
+            }
+        }
+        json!({
+            "connected": grouped.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(),
+            "all": grouped
+                .into_iter()
+                .map(|(id, models)| json!({ "id": id, "models": models }))
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    /// Agents keyed by their id, which is what a session selects.
+    pub(crate) fn agents(agents: &Value) -> Value {
+        Value::Array(
+            data(agents)
+                .filter_map(|agent| {
+                    let id = agent.get("id").and_then(Value::as_str)?;
+                    let mut out = json!({ "name": id });
+                    for key in ["description", "mode", "hidden"] {
+                        if let Some(value) = agent.get(key) {
+                            out[key] = value.clone();
+                        }
+                    }
+                    match agent.get("model") {
+                        Some(Value::String(model)) => out["model"] = json!(model),
+                        Some(model @ Value::Object(_)) => {
+                            if let (Some(provider), Some(id)) = (
+                                model.get("providerID").and_then(Value::as_str),
+                                model.get("id").and_then(Value::as_str),
+                            ) {
+                                out["model"] = json!(format!("{provider}/{id}"));
+                            }
+                        }
+                        _ => {}
+                    }
+                    Some(out)
+                })
+                .collect(),
+        )
+    }
+
+    /// Commands, then skills as `source: "skill"` entries (BiBCode offers both under `/`).
+    pub(crate) fn commands(commands: &Value, skills: &Value) -> Value {
+        Value::Array(
+            data(commands)
+                .filter_map(|command| {
+                    let name = command.get("name").and_then(Value::as_str)?;
+                    let mut out = json!({ "name": name, "source": "command" });
+                    for key in ["description", "template"] {
+                        if let Some(value) = command.get(key) {
+                            out[key] = value.clone();
+                        }
+                    }
+                    Some(out)
+                })
+                .chain(data(skills).filter_map(|skill| {
+                    let id = skill.get("id").and_then(Value::as_str)?;
+                    let mut out = json!({ "name": id, "source": "skill" });
+                    if let Some(description) = skill.get("description") {
+                        out["description"] = description.clone();
+                    }
+                    Some(out)
+                }))
+                .collect(),
+        )
+    }
+
+    /// Whether `name` is one of the skills `GET /api/skill` lists.
+    pub(crate) fn is_skill(skills: &Value, name: &str) -> bool {
+        data(skills).any(|skill| skill.get("id").and_then(Value::as_str) == Some(name))
+    }
+
+    /// Whether `name` is one of the commands `GET /api/command` lists.
+    pub(crate) fn is_command(commands: &Value, name: &str) -> bool {
+        data(commands).any(|command| command.get("name").and_then(Value::as_str) == Some(name))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::provider::opencode::model::build_inventory_snapshot;
+
+        fn captured(route: &str) -> Value {
+            let path = format!(
+                "{}/tests/fixtures/opencode-v2/catalog.exchanges.json",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            let exchanges: Value =
+                serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+            exchanges["exchanges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|exchange| {
+                    exchange["method"] == "GET"
+                        && exchange["path"].as_str().unwrap().split('?').next() == Some(route)
+                })
+                .unwrap()["response"]
+                .clone()
+        }
+
+        /// The OpenCode 2.0.29 catalogs produce the same inventory a 1.x server would: models
+        /// with their variants, selectable agents, commands, and skills under `/`.
+        #[test]
+        fn captured_v2_catalogs_build_the_inventory() {
+            let snapshot = build_inventory_snapshot(
+                &provider_list(&captured("/api/provider"), &captured("/api/model")),
+                &agents(&captured("/api/agent")),
+                &commands(&captured("/api/command"), &captured("/api/skill")),
+                &["custom/model".to_owned()],
+            );
+            assert_eq!(snapshot.auth["status"], "authenticated");
+            let slugs = snapshot
+                .models
+                .iter()
+                .map(|model| model.slug.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(slugs, ["mock/mock-model", "custom/model"]);
+            let variant = snapshot.models[0].capabilities["optionDescriptors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|descriptor| descriptor["id"] == "variant")
+                .expect("variant option")
+                .clone();
+            assert_eq!(
+                variant["options"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|option| option["id"].as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                ["high", "low", "medium"]
+            );
+            let agent_names = snapshot
+                .agents
+                .iter()
+                .map(|agent| agent["name"].as_str().unwrap())
+                .collect::<Vec<_>>();
+            assert!(agent_names.contains(&"build"));
+            assert!(agent_names.contains(&"plan"));
+            assert!(!agent_names.contains(&"title"), "hidden agents stay hidden");
+            let command_names = snapshot
+                .commands
+                .iter()
+                .map(|command| command["name"].as_str().unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(command_names, ["init", "review"]);
+            let skill_names = snapshot
+                .skills
+                .iter()
+                .map(|skill| skill["name"].as_str().unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(skill_names, ["opencode", "report"]);
+            assert!(is_skill(&captured("/api/skill"), "report"));
+            assert!(!is_skill(&captured("/api/skill"), "review"));
+        }
+
+        /// An `auto` provider (active once it has credentials) keeps its models; only a disabled
+        /// provider's models are dropped.
+        #[test]
+        fn only_disabled_providers_lose_their_models() {
+            let providers = json!({ "data": [
+                { "id": "anthropic", "activation": "auto" },
+                { "id": "mock", "activation": "enabled" },
+                { "id": "old", "activation": "disabled" },
+            ]});
+            let models = json!({ "data": [
+                { "id": "sonnet", "providerID": "anthropic" },
+                { "id": "mock-model", "providerID": "mock" },
+                { "id": "legacy", "providerID": "old" },
+            ]});
+            assert_eq!(
+                provider_list(&providers, &models)["connected"],
+                json!(["anthropic", "mock"])
+            );
+        }
+    }
+}

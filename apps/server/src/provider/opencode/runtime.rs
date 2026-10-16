@@ -50,6 +50,8 @@ const RECONCILIATION_HINT_CAPACITY: usize = 1;
 const RECONCILIATION_DEBOUNCE: Duration = Duration::from_millis(250);
 const RECONCILIATION_DEFERRED_DELAY: Duration = Duration::from_millis(10);
 const RECONCILIATION_TIMEOUT: Duration = Duration::from_secs(5);
+/// Bounds the OpenCode 2 skill and command reads that route a slash invocation.
+const SLASH_CATALOG_TIMEOUT: Duration = Duration::from_secs(5);
 const RECONCILIATION_RETRY_MIN: Duration = Duration::from_millis(100);
 const RECONCILIATION_RETRY_MAX: Duration = Duration::from_secs(2);
 const RECONCILIATION_CHILD_LIMIT: usize = 50;
@@ -136,9 +138,20 @@ pub enum OpenCodeRuntimeError {
     UnknownPermission(String),
     #[error("Session is not started")]
     MissingSession,
+    /// A request failed before the turn itself was submitted, so it was not sent.
+    #[error("OpenCode request failed before the turn was sent: {0}")]
+    NotSent(String),
     /// An operation this OpenCode version does not support in BiBCode yet; the text is shown.
     #[error("{0}")]
     Unsupported(String),
+}
+
+/// A failed HTTP request made before the turn's own request did not send the turn.
+fn not_sent(error: OpenCodeRuntimeError) -> OpenCodeRuntimeError {
+    match error {
+        OpenCodeRuntimeError::Http(detail) => OpenCodeRuntimeError::NotSent(detail),
+        error => error,
+    }
 }
 
 impl OptionRefusal for OpenCodeRuntimeError {
@@ -863,13 +876,19 @@ impl OpenCodeSessionRuntime {
         let session_id = self.session_id().await?;
         let turn_id = self.begin_turn().await;
         if self.is_v2() {
-            let body = v2::prompt_body(
-                text,
-                &attachments,
-                message_id.map(v2::message_id).as_deref(),
-            );
+            let message_id = message_id.map(v2::message_id);
             let result = async {
-                self.v2_sync_selection(&session_id).await?;
+                self.v2_sync_selection(&session_id)
+                    .await
+                    .map_err(not_sent)?;
+                let mut body = v2::prompt_body(text, &attachments, message_id.as_deref());
+                // A slash skill with attachments arrives here rather than as a command.
+                if let Some((name, rest)) = text.and_then(crate::provider::parse_provider_command)
+                    && self.v2_is_skill(name).await?
+                {
+                    body = v2::prompt_body(Some(rest), &attachments, message_id.as_deref());
+                    body["skills"] = json!([{ "id": name }]);
+                }
                 let response = self
                     .inner
                     .client
@@ -1024,12 +1043,27 @@ impl OpenCodeSessionRuntime {
             // command and recording the delivery, restart recovery finds no message and sends
             // it again. The window is that of one database write.
             let result = async {
-                self.v2_sync_selection(&session_id).await?;
+                self.v2_sync_selection(&session_id)
+                    .await
+                    .map_err(not_sent)?;
+                // OpenCode 2 skills are not commands: a slash skill is a prompt that attaches the
+                // skill (and, unlike a command, takes a message id, so it is looked up exactly).
+                let (route, body) = if self.v2_is_skill(command).await? {
+                    let mut body = v2::prompt_body(
+                        Some(arguments.trim()),
+                        &[],
+                        message_id.map(v2::message_id).as_deref(),
+                    );
+                    body["skills"] = json!([{ "id": command }]);
+                    ("prompt", body)
+                } else {
+                    ("command", v2::command_body(command, arguments.trim()))
+                };
                 let response = self
                     .inner
                     .client
-                    .post(self.v2_url(&["session", &session_id, "command"], false)?)
-                    .json(&v2::command_body(command, arguments.trim()))
+                    .post(self.v2_url(&["session", &session_id, route], false)?)
+                    .json(&body)
                     .send()
                     .await
                     .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
@@ -2587,6 +2621,24 @@ impl OpenCodeSessionRuntime {
                 tracing::warn!(provider = "opencode", %error, "OpenCode 2 read failed");
             })
             .ok()
+    }
+
+    /// Whether `name` is an OpenCode 2 skill that no command shares: a command wins a name
+    /// collision, as it does in the slash menu. An unreadable list fails the turn before it is
+    /// sent rather than guess the route.
+    async fn v2_is_skill(&self, name: &str) -> Result<bool, OpenCodeRuntimeError> {
+        let catalog = |kind: &'static str| async move {
+            let url = self.v2_url(&[kind], true)?;
+            tokio::time::timeout(SLASH_CATALOG_TIMEOUT, self.v2_get_json(url))
+                .await
+                .ok()
+                .flatten()
+                .ok_or_else(|| {
+                    OpenCodeRuntimeError::NotSent(format!("the {kind} list could not be read"))
+                })
+        };
+        Ok(v2::catalog::is_skill(&catalog("skill").await?, name)
+            && !v2::catalog::is_command(&catalog("command").await?, name))
     }
 
     /// Gives an OpenCode 2 session the permission rules of BiBCode's runtime mode.

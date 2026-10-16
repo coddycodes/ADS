@@ -192,7 +192,11 @@ tracker consumes. Its V1 → V2 mapping and
 staging are recorded in
 [the OpenCode V2 client design](../superpowers/specs/2026-10-15-opencode-v2-client-design.md).
 Inventory reads the CLI's `--version` and does not start an OpenCode server it
-cannot read.
+cannot drive. On V2 it reads `/api/provider`, `/api/model`, `/api/agent`,
+`/api/command` and `/api/skill` with `location[directory]`, and
+`provider::opencode::v2::catalog` shapes them like the V1 catalogs; V2 skills
+are a separate catalog, so a slash skill is sent as a prompt that attaches it
+rather than through the command route.
 
 Provider-specific events are normalized into shared orchestration contracts;
 provider wire payloads do not leak into React state. See
