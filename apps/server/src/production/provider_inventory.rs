@@ -641,6 +641,36 @@ async fn probe_one_snapshot(
         );
     };
     if !include_slow_capabilities {
+        // A version BiBCode cannot drive must not read Ready until the full probe runs.
+        if definition.driver == "opencode" {
+            let output =
+                run_command(&executable, &["--version"], cwd, &definition.environment).await;
+            let version = normalize_provider_version(
+                &definition.driver,
+                output
+                    .as_ref()
+                    .and_then(|output| first_line(&output.stdout, &output.stderr)),
+            );
+            if let Some(opencode::OpenCodeCliSupport::Unsupported(unsupported)) =
+                version.as_deref().map(opencode::cli_support)
+            {
+                return ProviderProbeResult::new(
+                    snapshot(
+                        definition,
+                        true,
+                        version,
+                        "error",
+                        json!({ "status": "unknown" }),
+                        default_models,
+                        ProviderCapabilities::default(),
+                        Some(unsupported),
+                        checked_at,
+                        "available",
+                    ),
+                    rich_metadata,
+                );
+            }
+        }
         return ProviderProbeResult::new(
             snapshot(
                 definition,
@@ -2189,6 +2219,51 @@ mod tests {
             "This OpenCode version isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x or 2.x executable."
         );
         assert!(!marker.exists(), "no server may be started");
+    }
+
+    /// The quick probe reads OpenCode's `--version` too, so a version BiBCode cannot drive never
+    /// reads Ready, while a supported one stays ready.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_quick_probe_reports_an_unknown_opencode_version() {
+        for (version, status) in [("opencode v3.0.0", "error"), ("opencode v2.0.29", "ready")] {
+            let root = tempfile::tempdir().expect("inventory root");
+            let executable = root.path().join("opencode");
+            crate::test_support::executable_fixture::write_executable(
+                &executable,
+                format!(
+                    "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '{version}\\n'; exit 0; fi\nexit 1\n"
+                ),
+            );
+            let settings = json!({
+                "enableProviderUpdateChecks": false,
+                "providerInstances": {
+                    "opencode": {
+                        "driver": "opencode",
+                        "enabled": true,
+                        "config": { "binaryPath": executable }
+                    }
+                }
+            });
+
+            let providers = probe(
+                &settings,
+                Some("opencode"),
+                root.path(),
+                &ProviderMaintenance::new(),
+            )
+            .await;
+
+            let snapshot = &providers[0].snapshot;
+            assert_eq!(snapshot["status"], status, "{version}");
+            if status == "error" {
+                assert_eq!(snapshot["version"], version);
+                assert_eq!(
+                    snapshot["message"],
+                    "This OpenCode version isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x or 2.x executable."
+                );
+            }
+        }
     }
 
     /// An OpenCode 2 server's catalogs, as captured from 2.0.29, behind its `/api/info`.

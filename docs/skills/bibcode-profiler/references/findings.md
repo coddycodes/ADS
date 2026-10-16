@@ -295,7 +295,8 @@ process is sampled, but what runs under a terminal (`other`, `terminal`,
 Server findings come from a 5 s detector tick, so they trail their request by up
 to 5 s. Streams and long-running methods (`vcs.clone`, pull and pull-request
 work, commit message generation, `worktree.remove`, provider checks such as
-`server.getProviderCapabilities` on a cold cache, and similar external or
+`server.getProviderCapabilities` on a cold cache and `server.updateSettings`
+(which re-probes providers, running OpenCode's `--version`), and similar external or
 filesystem work) never raise `rpc.slow`; their hang budget is 300 s. Builds
 through v0.9.2 raised it for `server.getProviderCapabilities` (#107).
 

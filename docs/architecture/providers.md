@@ -803,12 +803,12 @@ conflicting resolved/canonical ownership are unknown rather than inferred.
 
 The source/action mapping is installation-specific:
 
-| Provider | Recognized source and latest metadata                                                                                           | Server update action                                                                                                    |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Codex    | npm `@openai/codex`, selected only for a recognized standalone, Homebrew cask, or package-manager path                          | `codex update` for standalone; `brew upgrade --cask codex` for Homebrew; the matching package-manager command otherwise |
-| Claude   | Native stable/latest channel, Homebrew `claude-code` or `claude-code@latest` cask, WinGet, or a marked Linux repository channel | Native `claude update`, Homebrew, and WinGet actions are executable; apt/dnf/apk guidance is display-only               |
-| Cursor   | Official Cursor release paths and parsed official installer metadata                                                            | Resolved `cursor-agent update` only for an official path                                                                |
-| OpenCode | npm `opencode-ai`, selected only for a recognized native, Homebrew, or package-manager path                                     | Native `opencode upgrade`, Homebrew, or the matching package-manager command                                            |
+| Provider | Recognized source and latest metadata                                                                                                                          | Server update action                                                                                                    |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Codex    | npm `@openai/codex`, selected only for a recognized standalone, Homebrew cask, or package-manager path                                                         | `codex update` for standalone; `brew upgrade --cask codex` for Homebrew; the matching package-manager command otherwise |
+| Claude   | Native stable/latest channel, Homebrew `claude-code` or `claude-code@latest` cask, WinGet, or a marked Linux repository channel                                | Native `claude update`, Homebrew, and WinGet actions are executable; apt/dnf/apk guidance is display-only               |
+| Cursor   | Official Cursor release paths and parsed official installer metadata                                                                                           | Resolved `cursor-agent update` only for an official path                                                                |
+| OpenCode | npm `opencode-ai` (1.x) or `@opencode/cli` (2.x, by package path or installed major), selected only for a recognized native, Homebrew, or package-manager path | Native `opencode upgrade`, Homebrew, or the matching package-manager command                                            |
 
 Claude channel discovery defaults native installations to `latest` when user
 settings are missing or malformed. It reads only regular local evidence under

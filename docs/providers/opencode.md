@@ -33,7 +33,9 @@ a notice and chats use the server's default model. Reverting to a checkpoint
 rewinds the OpenCode 2 conversation, then restores the files. The provider
 terminal is observed too (see below).
 
-A version BiBCode cannot drive (3.x or later) shows an error asking you to set
+The provider row reads OpenCode's `--version` on every check, including the
+quick one, so a version BiBCode cannot drive never reads Ready. A version
+BiBCode cannot drive (3.x or later) shows an error asking you to set
 **Binary path** to an OpenCode 1.x or 2.x executable; a configured
 **Server URL** that runs one reports the same error, naming **Server URL**.
 
@@ -44,12 +46,19 @@ its canonical target, not from a separate package-manager inventory. Native
 OpenCode installations use the resolved `opencode upgrade` action; recognized
 Homebrew installations use `brew upgrade anomalyco/tap/opencode`; recognized
 npm, pnpm, Bun, and Vite+ paths use their matching global-install command.
-Each recognized row gets its latest-version advisory from npm's `opencode-ai`
-latest document, while the update action remains installation-specific.
+Each recognized row gets its latest-version advisory from npm: OpenCode 1 is
+published as `opencode-ai`, OpenCode 2 as `@opencode/cli`. A package-manager
+install of OpenCode 2 (a path through `node_modules/@opencode/cli`) updates and
+compares against `@opencode/cli`; where the path cannot tell (a native or
+Homebrew install), an installed 2.x version compares against `@opencode/cli`.
+The update action remains installation-specific.
 
-On Windows, a recognized npm-backed `opencode.cmd` path selects `npm install
--g opencode-ai@latest`; the server resolves the platform's npm command shim
-from the provider environment. This is path-based source selection, so Windows
+On Windows, a recognized npm-backed `opencode.cmd` (or OpenCode 2's
+`opencode2.cmd`) runs the package beside it: `node_modules/opencode-ai` selects
+`npm install -g opencode-ai@latest`, `node_modules/@opencode/cli` selects
+`npm install -g @opencode/cli@latest`, and BiBCode supervises that package's
+native `opencode.exe`. The server resolves the platform's npm command shim from
+the provider environment. This is path-based source selection, so Windows
 runtime behavior still depends on the actual host's npm shim and `PATH`.
 
 An arbitrary custom executable or wrapper is manual-only. BiBCode does not

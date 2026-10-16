@@ -129,29 +129,37 @@ pub(crate) fn cli_support(version_output: &str) -> OpenCodeCliSupport {
 /// Resolves the native OpenCode executable behind the standard Windows npm
 /// shim when BiBCode must own the launched process tree. OpenCode's native
 /// launcher can detach from `opencode.cmd`, so supervising only the batch shim
-/// does not provide a reliable shutdown boundary.
+/// does not provide a reliable shutdown boundary. OpenCode 1 installs as
+/// `opencode-ai`; OpenCode 2 as `@opencode/cli`, whose shims are `opencode.cmd`
+/// and `opencode2.cmd`.
 pub(crate) fn resolve_owned_executable(platform: Platform, executable: &Path) -> PathBuf {
-    if platform != Platform::Windows
-        || !executable
-            .file_name()
-            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("opencode.cmd"))
-    {
+    let shim = executable
+        .file_name()
+        .map(|name| name.to_string_lossy().to_ascii_lowercase());
+    let packages: &[&[&str]] = match shim.as_deref() {
+        Some("opencode.cmd") => &[&["opencode-ai"], &["@opencode", "cli"]],
+        Some("opencode2.cmd") => &[&["@opencode", "cli"]],
+        _ => &[],
+    };
+    if platform != Platform::Windows || packages.is_empty() {
         return executable.to_path_buf();
     }
-
     let Some(shim_directory) = executable.parent() else {
         return executable.to_path_buf();
     };
-    let native = shim_directory
-        .join("node_modules")
-        .join("opencode-ai")
-        .join("bin")
-        .join("opencode.exe");
-    if native.is_file() {
-        native
-    } else {
-        executable.to_path_buf()
-    }
+    packages
+        .iter()
+        .map(|package| {
+            package
+                .iter()
+                .fold(shim_directory.join("node_modules"), |path, part| {
+                    path.join(part)
+                })
+                .join("bin")
+                .join("opencode.exe")
+        })
+        .find(|native| native.is_file())
+        .unwrap_or_else(|| executable.to_path_buf())
 }
 
 #[doc(hidden)]
@@ -381,6 +389,27 @@ mod launch_tests {
 
         assert_eq!(resolve_owned_executable(Platform::Windows, &shim), native);
         assert_eq!(resolve_owned_executable(Platform::Unix, &shim), shim);
+    }
+
+    /// OpenCode 2 installs as `@opencode/cli`, with `opencode.cmd` and `opencode2.cmd` shims.
+    #[test]
+    fn windows_npm_shims_of_opencode_2_resolve_to_its_native_executable() {
+        let root = tempfile::tempdir().expect("temporary OpenCode 2 npm layout");
+        let native = root
+            .path()
+            .join("node_modules/@opencode/cli/bin/opencode.exe");
+        std::fs::create_dir_all(native.parent().expect("native parent"))
+            .expect("native OpenCode directory");
+        std::fs::write(&native, b"fixture").expect("native OpenCode fixture");
+        for name in ["opencode.cmd", "opencode2.cmd"] {
+            let shim = root.path().join(name);
+            std::fs::write(&shim, "@opencode fixture").expect("OpenCode shim fixture");
+            assert_eq!(
+                resolve_owned_executable(Platform::Windows, &shim),
+                native,
+                "{name}"
+            );
+        }
     }
 
     #[test]
