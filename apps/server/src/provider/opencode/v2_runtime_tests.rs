@@ -84,6 +84,14 @@ struct Replay {
 }
 
 impl Replay {
+    /// The session creations (`POST /api/session`), not reconciliation's session-tree reads.
+    fn created_sessions(&self) -> Vec<(String, String, Value)> {
+        self.requests_to("/api/session")
+            .into_iter()
+            .filter(|(method, _, _)| method == "POST")
+            .collect()
+    }
+
     fn requests_to(&self, path_suffix: &str) -> Vec<(String, String, Value)> {
         self.requests
             .lock()
@@ -194,22 +202,41 @@ async fn captured_list(State(replay): State<Arc<Replay>>, uri: OriginalUri) -> J
     let exchanges: Value =
         serde_json::from_str(&fixture(&format!("{}.exchanges.json", replay.scenario))).unwrap();
     let path = uri.0.path().to_owned();
-    Json(
-        exchanges["exchanges"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|exchange| {
-                exchange["method"] == "GET"
-                    && exchange["path"]
-                        .as_str()
-                        .is_some_and(|captured| captured.split('?').next() == Some(path.as_str()))
+    replay
+        .requests
+        .lock()
+        .unwrap()
+        .push(("GET".to_owned(), uri.0.to_string(), Value::Null));
+    // The last capture of the same query (such as one parent's children), else of the same path;
+    // the last capture is the settled state.
+    let parent = uri
+        .0
+        .query()
+        .and_then(|query| query.split('&').find(|pair| pair.starts_with("parentID=")));
+    let gets = exchanges["exchanges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|exchange| exchange["method"] == "GET")
+        .filter(|exchange| {
+            exchange["path"]
+                .as_str()
+                .is_some_and(|captured| captured.split('?').next() == Some(path.as_str()))
+        })
+        .collect::<Vec<_>>();
+    let found = parent
+        .and_then(|parent| {
+            gets.iter().rfind(|exchange| {
+                exchange["path"]
+                    .as_str()
+                    .is_some_and(|captured| captured.split('?').nth(1) == Some(parent))
             })
-            .map_or_else(
-                || json!({ "data": [] }),
-                |exchange| exchange["response"].clone(),
-            ),
-    )
+        })
+        .or_else(|| gets.last().filter(|_| parent.is_none()));
+    Json(found.map_or_else(
+        || json!({ "data": [] }),
+        |exchange| exchange["response"].clone(),
+    ))
 }
 
 async fn models() -> Json<Value> {
@@ -288,15 +315,18 @@ async fn serve(scenario: &'static str) -> (String, Arc<Replay>) {
         .route("/api/session", post(record).get(captured_list))
         .route("/api/session/{session_id}/permission", get(captured_list))
         .route("/api/session/{session_id}/form", get(captured_list))
+        .route("/api/session/{session_id}/message", get(captured_list))
         .route(
             "/api/session/active",
-            get(|State(replay): State<Arc<Replay>>| async move {
-                if replay.active.load(Ordering::SeqCst) {
-                    Json(json!({ "data": { replay.root.clone(): { "type": "running" } } }))
-                } else {
-                    Json(json!({ "data": {} }))
-                }
-            }),
+            get(
+                |State(replay): State<Arc<Replay>>, uri: OriginalUri| async move {
+                    if replay.active.load(Ordering::SeqCst) {
+                        Json(json!({ "data": { replay.root.clone(): { "type": "running" } } }))
+                    } else {
+                        captured_list(State(replay), uri).await
+                    }
+                },
+            ),
         )
         .route("/api/session/{session_id}", get(session).patch(record))
         .route(
@@ -441,7 +471,7 @@ async fn a_prompt_creates_the_session_and_streams_one_turn() {
         .expect("prompt is accepted");
     let events = until_turns_complete(&runtime, 1).await;
 
-    let created = replay.requests_to("/api/session");
+    let created = replay.created_sessions();
     assert_eq!(created.len(), 1);
     let body = &created[0].2;
     assert_eq!(body["location"], json!({ "directory": "/work/project" }));
@@ -683,7 +713,7 @@ async fn resume_falls_back_to_a_new_session_only_when_opencode_lost_it() {
         runtime.resume(&replay.root).await.expect("resumes"),
         replay.root
     );
-    assert!(replay.requests_to("/api/session").is_empty());
+    assert!(replay.created_sessions().is_empty());
     let root_suffix = format!("/api/session/{}", replay.root);
     assert_eq!(
         replay.requests_to(&root_suffix)[0].2["permissions"],
@@ -719,7 +749,7 @@ async fn resume_falls_back_to_a_new_session_only_when_opencode_lost_it() {
             .expect("starts fresh"),
         replay.root
     );
-    assert_eq!(replay.requests_to("/api/session").len(), 1);
+    assert_eq!(replay.created_sessions().len(), 1);
 }
 
 /// A configured Server URL that answers `/api/info` with 2.x gets the V2 wire end to end through
@@ -789,7 +819,7 @@ async fn the_driver_speaks_v2_to_an_opencode_2_server_url() {
     .expect("turn completes");
     assert_eq!(completed.payload["state"], "completed");
     assert_eq!(
-        replay.requests_to("/api/session")[0].2["permissions"],
+        replay.created_sessions()[0].2["permissions"],
         json!([{ "action": "*", "resource": "*", "effect": "allow" }])
     );
     assert_eq!(
@@ -940,4 +970,99 @@ async fn a_resumed_session_that_is_still_executing_gets_a_turn() {
     runtime.resume(&replay.root).await.expect("resumes");
     let started = wait_for(&runtime, "turn.started").await;
     assert!(started.turn_id.is_some());
+}
+
+/// A background subagent on OpenCode 2 is reported as activity: reconciliation reads the session
+/// tree, the active sessions and the child's history from the V2 routes, and the child becomes an
+/// actor that completes.
+#[tokio::test]
+async fn a_background_child_is_reported_as_activity() {
+    use crate::activity::{ActivityLifecycle, ProviderActivityMutation};
+    let (endpoint, replay) = serve("children").await;
+    let runtime = v2_runtime(&endpoint);
+    runtime.start().await.expect("session starts");
+    runtime
+        .send_turn(Some("SPAWN_BACKGROUND please"), Vec::new(), None)
+        .await
+        .expect("prompt is accepted");
+    let mut statuses = Vec::new();
+    let mut completed = 0;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while completed < 2 || !statuses.contains(&ActivityLifecycle::Completed) {
+            let event = runtime.next_event().await.expect("event stream open");
+            if event.event_type == "turn.completed" {
+                completed += 1;
+            }
+            statuses.extend(event.activity.iter().filter_map(|mutation| match mutation {
+                ProviderActivityMutation::UpsertActor(actor) => Some(actor.status),
+                _ => None,
+            }));
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("child activity: {statuses:?}"));
+    // The replay sends the whole stream before reconciliation verifies the child, so the child is
+    // first seen from the session tree and its settled history; live transitions are covered by
+    // `v2_activity` tests.
+    assert_eq!(
+        statuses.first(),
+        Some(&ActivityLifecycle::Waiting),
+        "{statuses:?}"
+    );
+    assert!(
+        !replay.requests_to("/api/session").is_empty(),
+        "reconciliation reads the session tree"
+    );
+    assert!(!replay.requests_to("/api/session/active").is_empty());
+    runtime.stop().await.expect("stop");
+}
+
+/// Drives a background subagent on a real OpenCode 2 server (see `live_opencode_2_round_trip` for
+/// the environment). The scripted model's subagent runs a two-second shell command, so its
+/// activity is seen running and then completed.
+#[tokio::test]
+#[ignore = "needs a live OpenCode 2 server; see live_opencode_2_round_trip"]
+async fn live_opencode_2_background_child() {
+    use crate::activity::{ActivityLifecycle, ProviderActivityMutation};
+    let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
+    let runtime =
+        OpenCodeSessionRuntime::new_with_options_reconciliation_revision_and_agent_activity(
+            &var("BIBCODE_OPENCODE_V2_LIVE"),
+            "live-thread",
+            &var("BIBCODE_OPENCODE_V2_DIRECTORY"),
+            Some(&var("BIBCODE_OPENCODE_V2_MODEL")),
+            Some(&var("BIBCODE_OPENCODE_V2_PASSWORD")),
+            None,
+            0,
+            true,
+        )
+        .expect("runtime");
+    runtime.use_v2_api();
+    runtime.configure_runtime_mode("full-access").await;
+    runtime.start().await.expect("session starts");
+    runtime
+        .send_turn(Some("SPAWN_BACKGROUND please"), Vec::new(), None)
+        .await
+        .expect("prompt");
+    let mut statuses = Vec::new();
+    let mut completed = 0;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while completed < 2 || !statuses.contains(&ActivityLifecycle::Completed) {
+            let event = runtime.next_event().await.expect("event stream open");
+            if event.event_type == "turn.completed" {
+                completed += 1;
+            }
+            statuses.extend(event.activity.iter().filter_map(|mutation| match mutation {
+                ProviderActivityMutation::UpsertActor(actor) => Some(actor.status),
+                _ => None,
+            }));
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("child activity: {statuses:?}"));
+    assert!(
+        statuses.contains(&ActivityLifecycle::Running),
+        "{statuses:?}"
+    );
+    runtime.stop().await.expect("stop");
 }

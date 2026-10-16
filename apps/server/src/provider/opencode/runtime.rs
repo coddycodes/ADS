@@ -41,6 +41,7 @@ use super::{
     },
     sse::OpenCodeSseDecoder,
     v2::{self, FormField, V2Output, V2TurnTranslator},
+    v2_activity::{self, V2ActivityNormalizer},
 };
 
 const PROVIDER: &str = "opencode";
@@ -202,6 +203,7 @@ struct RuntimeInner {
 #[derive(Default)]
 struct V2State {
     translator: Option<V2TurnTranslator>,
+    normalizer: V2ActivityNormalizer,
     permissions: HashMap<String, (Option<String>, String)>,
     forms: HashMap<String, V2PendingForm>,
     /// Asks BiBCode is replying to: OpenCode's own settlement of them is left to the reply, so
@@ -653,6 +655,7 @@ impl OpenCodeSessionRuntime {
         if self.is_v2() {
             let mut v2 = self.inner.v2.lock().await;
             v2.translator = Some(V2TurnTranslator::new(session_id));
+            v2.normalizer = V2ActivityNormalizer::default();
             v2.permissions.clear();
             v2.forms.clear();
             v2.answering.clear();
@@ -1813,12 +1816,15 @@ impl OpenCodeSessionRuntime {
             .await;
     }
 
-    async fn handle_sse_event_observed_at(
+    /// Feeds one OpenCode 1-shaped event to activity tracking: verified children update the
+    /// tracker, and events about known sessions schedule reconciliation. OpenCode 2 events reach
+    /// it through `v2_activity`. Returns whether the event belongs to the root session's chat.
+    async fn observe_activity_event(
         &self,
         session_id: &str,
-        event: Value,
+        event: &Value,
         received_at_ms: u64,
-    ) {
+    ) -> bool {
         let event_type = event
             .get("type")
             .and_then(Value::as_str)
@@ -1829,7 +1835,7 @@ impl OpenCodeSessionRuntime {
             if payload_identity == PayloadSessionIdentity::Missing {
                 self.request_reconciliation(false, None, true).await;
             }
-            return;
+            return false;
         }
         let payload_session_id = match payload_identity {
             PayloadSessionIdentity::Agreed(session_id) => Some(session_id),
@@ -1911,7 +1917,7 @@ impl OpenCodeSessionRuntime {
             }
         }
         match route {
-            OpenCodeEventRoute::Foreign => return,
+            OpenCodeEventRoute::Foreign => false,
             OpenCodeEventRoute::VerifiedChild => {
                 let (activity, generation) = {
                     let mut activity = self.inner.activity.lock().await;
@@ -1921,7 +1927,7 @@ impl OpenCodeSessionRuntime {
                         .as_mut()
                         .map(|tracker| {
                             tracker
-                                .handle_observed_event_at(&event, received_at_ms)
+                                .handle_observed_event_at(event, received_at_ms)
                                 .mutations
                         })
                         .unwrap_or_default();
@@ -1931,10 +1937,29 @@ impl OpenCodeSessionRuntime {
                 if is_activity_text_event(event_type, &properties) {
                     self.schedule_activity_text_flush(generation).await;
                 }
-                return;
+                false
             }
-            OpenCodeEventRoute::Root => {}
+            OpenCodeEventRoute::Root => true,
         }
+    }
+
+    async fn handle_sse_event_observed_at(
+        &self,
+        session_id: &str,
+        event: Value,
+        received_at_ms: u64,
+    ) {
+        if !self
+            .observe_activity_event(session_id, &event, received_at_ms)
+            .await
+        {
+            return;
+        }
+        let event_type = event
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let properties = event.get("properties").cloned().unwrap_or(Value::Null);
         let turn_id = self.inner.active_turn_id.lock().await.clone();
         match event_type {
             "message.updated" => {
@@ -2174,6 +2199,16 @@ impl OpenCodeSessionRuntime {
     }
 
     async fn handle_v2_event(&self, event: Value) {
+        let normalized = self.inner.v2.lock().await.normalizer.normalize(&event);
+        if !normalized.is_empty()
+            && let Ok(root_session_id) = self.session_id().await
+        {
+            let received_at_ms = observation_time_ms();
+            for activity_event in normalized {
+                self.observe_activity_event(&root_session_id, &activity_event, received_at_ms)
+                    .await;
+            }
+        }
         if event.get("type").and_then(Value::as_str) == Some("server.connected") {
             let adopt = std::mem::take(&mut self.inner.v2.lock().await.adopt_on_connect);
             if adopt && let Ok(session_id) = self.session_id().await {
@@ -2691,7 +2726,8 @@ impl OpenCodeSessionRuntime {
         {
             return;
         }
-        activity.tracker = (activity.agent_activity_enabled && !self.is_v2())
+        activity.tracker = activity
+            .agent_activity_enabled
             .then(|| OpenCodeActivityTracker::new(root_session_id));
         activity.root_session_id = Some(root_session_id.to_owned());
         activity.child_support = EndpointSupport::Unknown;
@@ -2901,9 +2937,6 @@ impl OpenCodeSessionRuntime {
         dirty_session_id: Option<&str>,
         force_history: bool,
     ) {
-        if self.is_v2() {
-            return;
-        }
         let activity = self.inner.activity.lock().await;
         if !activity.agent_activity_enabled {
             return;
@@ -3026,12 +3059,24 @@ impl OpenCodeSessionRuntime {
             if parent_depth == MAX_LINEAGE_DEPTH {
                 continue;
             }
-            let url = self
-                .session_request_url(&parent_session_id, &["children"])
-                .map_err(|_| ())?;
-            let response = self
-                .fetch_reconciliation_json::<Vec<OpenCodeChildSessionDto>>(url)
-                .await?;
+            let response = if self.is_v2() {
+                // One page as large as the reconciliation's child budget covers it.
+                let url = self
+                    .v2_url(&["session"], false)
+                    .and_then(|url| append_query_pair(url, "parentID", &parent_session_id))
+                    .and_then(|url| {
+                        append_query_pair(url, "limit", &RECONCILIATION_CHILD_LIMIT.to_string())
+                    })
+                    .map_err(|_| ())?;
+                self.fetch_reconciliation_v2(url, v2_activity::children)
+                    .await?
+            } else {
+                let url = self
+                    .session_request_url(&parent_session_id, &["children"])
+                    .map_err(|_| ())?;
+                self.fetch_reconciliation_json::<Vec<OpenCodeChildSessionDto>>(url)
+                    .await?
+            };
             let mut response = match response {
                 ReconciliationApiResult::Supported(response) => response,
                 ReconciliationApiResult::NotFound => {
@@ -3078,12 +3123,19 @@ impl OpenCodeSessionRuntime {
         let (statuses, status_support) = if known_status_support == EndpointSupport::Unsupported {
             (OpenCodeStatusMapDto::new(), EndpointSupport::Unsupported)
         } else {
-            match self
-                .fetch_reconciliation_json::<OpenCodeStatusMapDto>(
+            let response = if self.is_v2() {
+                self.fetch_reconciliation_v2(
+                    self.v2_url(&["session", "active"], false).map_err(|_| ())?,
+                    v2_activity::statuses,
+                )
+                .await?
+            } else {
+                self.fetch_reconciliation_json::<OpenCodeStatusMapDto>(
                     self.request_url("/session/status").map_err(|_| ())?,
                 )
                 .await?
-            {
+            };
+            match response {
                 ReconciliationApiResult::Supported(statuses) => {
                     (statuses, EndpointSupport::Supported)
                 }
@@ -3111,21 +3163,38 @@ impl OpenCodeSessionRuntime {
             {
                 continue;
             }
-            let url = self
-                .session_request_url(&session_id, &["message"])
-                .map_err(|_| ())?;
-            let url = append_query_pair(url, "limit", &RECONCILIATION_HISTORY_LIMIT.to_string())
-                .map_err(|_| ())?;
-            let response = self
-                .fetch_reconciliation_json::<Vec<OpenCodeMessageDto>>(url)
-                .await?;
+            let response = if self.is_v2() {
+                let url = self
+                    .v2_url(&["session", &session_id, "message"], false)
+                    .and_then(|url| {
+                        append_query_pair(url, "limit", &RECONCILIATION_HISTORY_LIMIT.to_string())
+                    })
+                    .map_err(|_| ())?;
+                let history_session_id = session_id.clone();
+                self.fetch_reconciliation_v2(url, move |response| {
+                    v2_activity::history(&history_session_id, response)
+                })
+                .await?
+            } else {
+                let url = self
+                    .session_request_url(&session_id, &["message"])
+                    .map_err(|_| ())?;
+                let url =
+                    append_query_pair(url, "limit", &RECONCILIATION_HISTORY_LIMIT.to_string())
+                        .map_err(|_| ())?;
+                self.fetch_reconciliation_json::<Vec<OpenCodeMessageDto>>(url)
+                    .await?
+            };
             let messages = match response {
                 ReconciliationApiResult::Supported(messages) => {
                     history_support = EndpointSupport::Supported;
                     bound_history(messages)
                 }
                 ReconciliationApiResult::NotFound => {
-                    if history_support == EndpointSupport::Unknown {
+                    // OpenCode 2 always has message history; a 404 is a session that went away.
+                    if history_support == EndpointSupport::Unknown && self.is_v2() {
+                        history_support = EndpointSupport::Supported;
+                    } else if history_support == EndpointSupport::Unknown {
                         match self.fetch_root_history_capability(root_session_id).await? {
                             EndpointSupport::Supported => {
                                 history_support = EndpointSupport::Supported;
@@ -3152,6 +3221,20 @@ impl OpenCodeSessionRuntime {
             status_support,
             history_support,
         })
+    }
+
+    /// An OpenCode 2 reconciliation read, mapped onto the OpenCode 1 shape the tracker reads.
+    async fn fetch_reconciliation_v2<T: DeserializeOwned>(
+        &self,
+        url: String,
+        map: impl FnOnce(&Value) -> Value,
+    ) -> Result<ReconciliationApiResult<T>, ()> {
+        match self.fetch_reconciliation_json::<Value>(url).await? {
+            ReconciliationApiResult::Supported(response) => serde_json::from_value(map(&response))
+                .map(ReconciliationApiResult::Supported)
+                .map_err(|_| ()),
+            ReconciliationApiResult::NotFound => Ok(ReconciliationApiResult::NotFound),
+        }
     }
 
     async fn fetch_reconciliation_json<T: DeserializeOwned>(

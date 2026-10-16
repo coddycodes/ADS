@@ -5340,12 +5340,14 @@ async fn reconciliation_batches_apply_through_production_projection_from_none_sc
         .await
         .expect("child reconciliation applies atomically");
 
+    // The child is busy and its latest message has no completion time, so it is active. (The
+    // history DTO carries that missing time as `null`, which was once misread as completed.)
     let roster = projection
         .list_roster(
             &scope.scope,
             &scope.scope_id,
             ActivitySection::Subagents,
-            ActivityRosterBucket::Done,
+            ActivityRosterBucket::Active,
             None,
             10,
         )

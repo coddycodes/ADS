@@ -656,16 +656,27 @@ impl OpenCodeActivityTracker {
         };
         self.assistant_messages
             .insert(format!("assistant:{session_id}:{message_id}"));
-        let when = info
+        // History snapshots carry an unfinished message's completion time as `null`.
+        let completed = info
             .pointer("/time/completed")
+            .filter(|completed| !completed.is_null());
+        let when = completed
             .or_else(|| info.pointer("/time/created"))
             .and_then(Value::as_u64)
             .map(timestamp)
             .unwrap_or_else(epoch);
-        if info.get("error").is_some_and(|error| !error.is_null()) {
-            return self.set_status(session_id, ActivityLifecycle::Failed, when);
+        if let Some(error) = info.get("error").filter(|error| !error.is_null()) {
+            // An abort is a cancellation, as on the live `session.error` path.
+            let aborted = string(error, "name") == Some("MessageAbortedError")
+                || string(error, "type") == Some("aborted");
+            let status = if aborted {
+                ActivityLifecycle::Cancelled
+            } else {
+                ActivityLifecycle::Failed
+            };
+            return self.set_status(session_id, status, when);
         }
-        if info.pointer("/time/completed").is_some() || string(info, "finish").is_some() {
+        if completed.is_some() || string(info, "finish").is_some() {
             return self.set_status(session_id, ActivityLifecycle::Completed, when);
         }
         OpenCodeActivityOutput::default()
@@ -1594,6 +1605,37 @@ fn terminal_precedence(status: ActivityLifecycle) -> u8 {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// A history snapshot serializes a missing completion time as `null`. An assistant message
+    /// still in progress must not mark its child completed, or a later `busy` cannot revive it.
+    #[test]
+    fn an_unfinished_history_message_leaves_a_running_child_running() {
+        let mut tracker = OpenCodeActivityTracker::new("root");
+        tracker.reconcile_children(
+            "root",
+            &json!([{"id":"child","parentID":"root","title":"Child","time":{"created":1}}]),
+        );
+        tracker.handle_event(&json!({
+            "type": "session.status",
+            "properties": {"sessionID": "child", "status": {"type": "busy"}}
+        }));
+        assert_eq!(tracker.children["child"].status, ActivityLifecycle::Running);
+        tracker.handle_history(
+            "child",
+            &json!([{
+                "info": {
+                    "id": "msg_1",
+                    "sessionID": "child",
+                    "role": "assistant",
+                    "time": {"created": 2, "completed": null},
+                    "finish": null,
+                    "error": null
+                },
+                "parts": []
+            }]),
+        );
+        assert_eq!(tracker.children["child"].status, ActivityLifecycle::Running);
+    }
 
     #[test]
     fn limited_reconciliation_returns_promoted_child_within_remaining_capacity() {

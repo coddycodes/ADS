@@ -185,7 +185,10 @@ event decoding: on V2, `provider::opencode::v2` folds the global `/api/event`
 stream into the root session's turn (`session.execution.*`,
 `session.text.*`, `session.step.*`), surfaces permission requests and forms of
 the root and its descendant sessions, and reports an execution OpenCode starts
-on its own (a background subagent's result) as a turn. Its V1 → V2 mapping and
+on its own (a background subagent's result) as a turn. Subagent activity uses
+the same tracker on both wires: `provider::opencode::v2_activity` maps V2 events
+and the V2 session tree, active-session and history reads onto the V1 shapes the
+tracker consumes. Its V1 → V2 mapping and
 staging are recorded in
 [the OpenCode V2 client design](../superpowers/specs/2026-10-15-opencode-v2-client-design.md).
 Inventory reads the CLI's `--version` and does not start an OpenCode server it

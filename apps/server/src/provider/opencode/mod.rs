@@ -3,6 +3,7 @@ pub mod model;
 pub mod runtime;
 pub(crate) mod sse;
 pub(crate) mod v2;
+pub(crate) mod v2_activity;
 #[cfg(test)]
 mod v2_runtime_tests;
 

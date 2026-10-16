@@ -23,12 +23,12 @@ the `/api/*` API that replaced it. It picks the API from what the server
 answers, so the same instance works with either version.
 
 With OpenCode 2, chats work: messages and slash commands, streamed replies,
-permission requests (including those of subagents), questions, Stop, and
-OpenCode's own follow-up turns that deliver a background subagent's result.
-Not yet available with OpenCode 2: the provider row does not list OpenCode 2
-models, agents and commands (it shows a notice, and chats use OpenCode's
-default model), subagent activity, rewinding a conversation, and structured
-terminal observation.
+permission requests (including those of subagents), questions, Stop,
+OpenCode's own follow-up turns that deliver a background subagent's result, and
+subagent activity. Not yet available with OpenCode 2: the provider row does not
+list OpenCode 2 models, agents and commands (it shows a notice, and chats use
+OpenCode's default model), rewinding a conversation, and structured terminal
+observation.
 
 A version BiBCode cannot drive (3.x or later) shows an error asking you to set
 **Binary path** to an OpenCode 1.x or 2.x executable; a configured
