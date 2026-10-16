@@ -433,6 +433,12 @@ pub trait ProviderDriver: Send + Sync {
     fn owns_native_work(&self) -> bool {
         true
     }
+    /// Whether the driver holds state only its live runtime knows and that is not settled yet,
+    /// such as an OpenCode 2 rewind whose outcome could not be confirmed. The idle deadline does
+    /// not suspend such a session; it checks again at the next deadline.
+    fn holds_unsettled_work(&self) -> BoxRuntimeFuture<'_, bool> {
+        Box::pin(std::future::ready(false))
+    }
 }
 
 pub trait ProviderDriverFactory: Send + Sync {
@@ -6001,7 +6007,15 @@ async fn run_supervisor(
                         Ok(confirmed_idle) => {
                             let activity_enabled =
                                 activity.agent_activity_controller().snapshot().enabled;
+                            // State only the live runtime holds would be lost by suspension.
+                            let unsettled = match sessions.get(&thread_id) {
+                                Some(entry) if confirmed_idle => {
+                                    entry.driver.holds_unsettled_work().await
+                                }
+                                _ => false,
+                            };
                             confirmed_idle
+                                && !unsettled
                                 && sessions.get(&thread_id).is_some_and(|entry| {
                                     let lifecycle = entry
                                         .activity_lifecycle
@@ -11604,6 +11618,9 @@ impl ProviderDriver for OpenCodeDriver {
     fn owns_native_work(&self) -> bool {
         self.child.is_some()
     }
+    fn holds_unsettled_work(&self) -> BoxRuntimeFuture<'_, bool> {
+        Box::pin(self.runtime.has_unfinished_rewind())
+    }
     fn start(&self) -> BoxRuntimeFuture<'_, Result<StartedSession, ProviderRuntimeError>> {
         Box::pin(async move {
             let id = match &self.resume_session_id {
@@ -15811,6 +15828,7 @@ mod tests {
         targeted_release: Option<Arc<tokio::sync::Notify>>,
         targeted_active: Arc<AtomicUsize>,
         activity_capabilities: crate::activity::ActivityCapabilities,
+        unsettled_work: bool,
     }
 
     struct SupervisorDriver {
@@ -16051,6 +16069,11 @@ mod tests {
     }
 
     impl ProviderDriver for SupervisorDriver {
+        fn holds_unsettled_work(&self) -> super::BoxRuntimeFuture<'_, bool> {
+            Box::pin(std::future::ready(
+                self.state.lock().unwrap().unsettled_work,
+            ))
+        }
         fn owns_native_work(&self) -> bool {
             !self.state.lock().unwrap().externally_owned
         }
@@ -23857,6 +23880,32 @@ done
                 ProviderActivityMutation::set_actor_status("actor:sub", "completed").unwrap(),
             )
             .await;
+        fixture.assert_suspended_after_timeout(3).await;
+        fixture.close().await;
+    }
+
+    /// A rewind whose outcome the provider could not confirm lives only in its runtime (an
+    /// OpenCode 2 commit whose answer and check were lost), so the idle deadline keeps the
+    /// session up until the rewind settles, then suspends it normally.
+    #[tokio::test(start_paused = true)]
+    async fn idle_deadline_keeps_a_session_whose_rewind_is_unsettled() {
+        let _clock = keep_idle_clock_paused();
+        let mut fixture = IdleDeadlineFixture::new(BUSY_SESSION_IDLE_TIMEOUT).await;
+        IdleDeadlineFixture::accepted(fixture.admit("first").await, "idle-turn-1").await;
+        fixture.stream("idle-turn-1", "assistant-first").await;
+        fixture
+            .emit("turn.completed", "idle-turn-1", "assistant-first")
+            .await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Armed { generation: 2 }
+        );
+        fixture.state.lock().unwrap().unsettled_work = true;
+        fixture
+            .assert_busy_after_timeout(2, "the idle deadline suspended an unsettled rewind")
+            .await;
+
+        fixture.state.lock().unwrap().unsettled_work = false;
         fixture.assert_suspended_after_timeout(3).await;
         fixture.close().await;
     }

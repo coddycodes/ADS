@@ -1431,6 +1431,10 @@ async fn an_unknown_rewind_outcome_holds_prompts_until_a_rewind_settles_it() {
         .rollback_thread(1)
         .await
         .expect_err("the outcome is unknown");
+    assert!(
+        runtime.has_unfinished_rewind().await,
+        "the session must not be suspended meanwhile"
+    );
     let error = runtime
         .send_turn(Some("SAY_HELLO please"), Vec::new(), None)
         .await
@@ -1451,6 +1455,7 @@ async fn an_unknown_rewind_outcome_holds_prompts_until_a_rewind_settles_it() {
         1,
         "no further turns are dropped"
     );
+    assert!(!runtime.has_unfinished_rewind().await, "settled");
     runtime
         .send_turn(Some("SAY_HELLO please"), Vec::new(), None)
         .await

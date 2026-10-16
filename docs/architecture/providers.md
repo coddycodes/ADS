@@ -207,8 +207,10 @@ target message is gone counts as done; a stage that did not commit is cleared
 (`DELETE …/revert`), since OpenCode commits a leftover stage with the next
 prompt. Until a rewind reports success the runtime remembers the turns already
 dropped and any revert whose outcome it could not read, so a retry drops only
-the turns still missing and prompts wait. That memory does not outlive the
-runtime; resuming a session clears a leftover stage. Each rewind request is
+the turns still missing and prompts wait. That memory lives in the runtime, so
+the idle deadline keeps the session up until the rewind settles (see Unsettled
+driver state below); a session reopened after a restart clears a leftover stage
+on resume. Each rewind request is
 bounded, because the provider supervisor awaits it.
 
 The OpenCode terminal observer (`provider_terminal::opencode`) serves both
@@ -403,6 +405,10 @@ Idle suspension must never stop work the provider still runs:
   background shells or subagents BiBCode cannot see, so their sessions are not
   idle-suspended; they end with the thread, an explicit stop, or server
   shutdown.
+- **Unsettled driver state.** A driver can report state only its live runtime
+  holds (`ProviderDriver::holds_unsettled_work`): an OpenCode 2 checkpoint
+  rewind that has not reported success. The deadline re-arms instead of
+  suspending until it settles.
 
 Each suspension logs why at INFO (`suspending an idle provider session: no turn,
 subagent, or background task is running`), or at WARN when live work stopped

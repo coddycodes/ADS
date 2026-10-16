@@ -2668,8 +2668,10 @@ impl OpenCodeSessionRuntime {
     /// not commit is cleared, since OpenCode would commit it with the next prompt. Until a rewind
     /// reports success BiBCode's transcript is unchanged, so the turns already dropped (and a
     /// revert whose outcome could not be read) are remembered: a retry, or a rewind to another
-    /// checkpoint, drops only the turns still missing, and prompts wait. This memory does not
-    /// outlive the runtime; a reopened session clears a leftover stage on resume.
+    /// checkpoint, drops only the turns still missing, and prompts wait. The memory lives in this
+    /// runtime, so the driver keeps the session from idle suspension until it settles
+    /// (`has_unfinished_rewind`); a session reopened after a restart clears a leftover stage on
+    /// resume.
     async fn v2_rollback(
         &self,
         num_turns: usize,
@@ -2782,6 +2784,14 @@ impl OpenCodeSessionRuntime {
             "revert clearing",
         )
         .await
+    }
+
+    /// Whether a checkpoint rewind has not reported success yet (turns already dropped, or a
+    /// revert whose outcome is unknown). Only this runtime remembers it, so the session must not
+    /// be suspended meanwhile.
+    pub async fn has_unfinished_rewind(&self) -> bool {
+        let v2 = self.inner.v2.lock().await;
+        v2.rewind.dropped > 0 || v2.rewind.unsettled.is_some()
     }
 
     /// A prompt waits while a checkpoint rewind is unfinished: OpenCode's conversation would no
