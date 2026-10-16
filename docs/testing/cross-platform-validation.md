@@ -111,7 +111,8 @@ chat scenarios (messages, permissions, questions, Stop), subagent activity, the
 model, agent, command and skill catalogs, checkpoint revert with its
 conversation rewind, and observed provider terminals all apply; an observed
 OpenCode 2 terminal runs `opencode --server … --session …` instead of
-`opencode attach`. The focused checks are
+`opencode attach`, and an unobserved one (Chat Activity off) runs
+`opencode --standalone` with the selected model. The focused checks are
 `cargo test -p bibcode-server --lib -j 2 -- opencode`, which replays responses
 captured from a real OpenCode 2.0.29 server, and
 `cargo test -p bibcode-server --test provider_terminal_supervisor -- opencode`.

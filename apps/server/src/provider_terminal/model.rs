@@ -1127,10 +1127,27 @@ pub trait TerminalLaunchPreparer: Send + Sync {
         input: TerminalLaunchPreparationInput,
     ) -> Pin<Box<dyn Future<Output = TerminalLaunchPreparation> + Send + '_>>;
 
+    /// The requested command in the form the installed provider version accepts, when that
+    /// differs (OpenCode 2 has no `--model`). It applies to every launch, observed or not, so it
+    /// runs before `prepare`. `None` keeps the command as requested.
+    fn native_command(
+        &self,
+        _input: &TerminalLaunchPreparationInput,
+    ) -> Pin<Box<dyn Future<Output = Option<NativeTerminalCommand>> + Send + '_>> {
+        Box::pin(std::future::ready(None))
+    }
+
     #[doc(hidden)]
     fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         Box::pin(std::future::ready(()))
     }
+}
+
+/// Replacement arguments for a provider terminal command, and environment entries to set.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeTerminalCommand {
+    pub args: Vec<String>,
+    pub env: BTreeMap<String, String>,
 }
 
 pub enum TerminalLaunchPreparation {

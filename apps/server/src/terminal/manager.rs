@@ -2001,11 +2001,43 @@ impl TerminalManager {
             session_env(&input.thread_id, &mut input.env).await;
         }
 
+        // The provider's native form of the command applies to observed and unobserved
+        // launches alike, so it replaces the requested one first. Only the spawn uses it: the
+        // session keeps the requested command, so a relaunch derives the native form again.
+        let mut native_args = None;
+        if let (Some(preparer), Some(command)) = (
+            self.inner.options.launch_preparer.as_ref(),
+            input.command.as_ref(),
+        ) && let Some(activity) = command.activity.clone()
+        {
+            let request = TerminalLaunchPreparationInput {
+                executable: command.executable.clone(),
+                args: command.args.clone(),
+                cwd: input.cwd.clone(),
+                worktree_path: input.worktree_path.clone(),
+                launch_env: input.env.clone(),
+                activity,
+                generation: generation.observation.clone(),
+            };
+            let preparer = preparer.clone();
+            if let Some(Some(native)) = run_observer_callback(
+                self.inner.callback_isolation.clone(),
+                "native_command",
+                OBSERVER_CALLBACK_TIMEOUT,
+                async move { preparer.native_command(&request).await },
+            )
+            .await
+            {
+                native_args = Some(native.args);
+                input.env.extend(native.env);
+            }
+        }
+
         let mut private_values = Vec::new();
         let original_command_candidate = input.command.as_ref().map(|command| {
             (
                 command.executable.clone(),
-                command.args.clone(),
+                native_args.clone().unwrap_or_else(|| command.args.clone()),
                 input.env.clone(),
             )
         });
@@ -2019,7 +2051,7 @@ impl TerminalManager {
         {
             let preparation = TerminalLaunchPreparationInput {
                 executable: command.executable.clone(),
-                args: command.args.clone(),
+                args: native_args.unwrap_or_else(|| command.args.clone()),
                 cwd: input.cwd.clone(),
                 worktree_path: input.worktree_path.clone(),
                 launch_env: input.env.clone(),

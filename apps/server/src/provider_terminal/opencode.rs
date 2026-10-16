@@ -27,9 +27,9 @@ use tokio::{
 use super::TerminalObserverGeneration;
 use super::model::TerminalObserverGenerationLease;
 use super::{
-    PreparedTerminalLaunch, PreparedTerminalObserver, ProviderTerminalObserverFactory,
-    ProviderTerminalObserverFactoryInput, TerminalAgentActivityAdmission,
-    TerminalAgentActivityControl, TerminalAgentActivityObservation,
+    NativeTerminalCommand, PreparedTerminalLaunch, PreparedTerminalObserver,
+    ProviderTerminalObserverFactory, ProviderTerminalObserverFactoryInput,
+    TerminalAgentActivityAdmission, TerminalAgentActivityControl, TerminalAgentActivityObservation,
     TerminalAgentActivityObservationKind, TerminalAgentActivityState,
     TerminalAgentActivityTransition, TerminalGenerationActivityPublisher,
     TerminalObserverWorkerContext,
@@ -523,7 +523,12 @@ impl OpenCodeTerminalObserverFactory {
         &self,
         input: ProviderTerminalObserverFactoryInput,
     ) -> Option<PreparedTerminalLaunch> {
-        let model = opencode_model_arg(&input.launch.args)?;
+        let model = opencode_model_arg(&input.launch.args).or_else(|| {
+            standalone_model(
+                &input.launch.args,
+                input.launch.launch_env.get("OPENCODE_CONFIG_CONTENT"),
+            )
+        })?;
         validate_opencode_config(input.launch.launch_env.get("OPENCODE_CONFIG_CONTENT"))?;
         let executable = opencode::resolve_owned_executable(
             Platform::current(),
@@ -677,6 +682,35 @@ impl ProviderTerminalObserverFactory for OpenCodeTerminalObserverFactory {
         Box::pin(self.prepare_inner(input))
     }
 
+    /// OpenCode 2 has no `--model`: the requested `--model <model>` becomes a private server
+    /// (`--standalone`) whose configuration (`OPENCODE_CONFIG_CONTENT`) selects the model.
+    /// OpenCode 1 keeps the command as requested.
+    fn native_command(
+        &self,
+        executable: &Path,
+        args: &[String],
+        launch_env: &BTreeMap<String, String>,
+    ) -> Pin<Box<dyn Future<Output = Option<NativeTerminalCommand>> + Send + '_>> {
+        let executable = opencode::resolve_owned_executable(Platform::current(), executable);
+        let model = opencode_model_arg(args);
+        let config = launch_env.get("OPENCODE_CONFIG_CONTENT").cloned();
+        Box::pin(async move {
+            let model = model?;
+            validate_opencode_config(config.as_ref())?;
+            if !self.probe.probe(&executable).await?.server_session {
+                return None;
+            }
+            let mut config = config
+                .and_then(|config| serde_json::from_str::<Value>(&config).ok())
+                .unwrap_or_else(|| json!({}));
+            config["model"] = json!(model);
+            Some(NativeTerminalCommand {
+                args: vec!["--standalone".to_owned()],
+                env: BTreeMap::from([("OPENCODE_CONFIG_CONTENT".to_owned(), config.to_string())]),
+            })
+        })
+    }
+
     fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         self.helper.shutdown()
     }
@@ -693,6 +727,23 @@ fn opencode_model_arg(args: &[String]) -> Option<String> {
             .map(str::to_owned),
         _ => None,
     }
+}
+
+/// The model of an OpenCode 2 command in its native form (`--standalone`, the model in the
+/// configuration).
+fn standalone_model(args: &[String], config: Option<&String>) -> Option<String> {
+    let [flag] = args else {
+        return None;
+    };
+    if flag != "--standalone" {
+        return None;
+    }
+    serde_json::from_str::<Value>(config?)
+        .ok()?
+        .get("model")
+        .and_then(Value::as_str)
+        .filter(|model| valid_model(model))
+        .map(str::to_owned)
 }
 
 fn valid_model(model: &str) -> bool {

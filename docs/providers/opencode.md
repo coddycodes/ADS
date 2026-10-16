@@ -108,5 +108,6 @@ observation leaves the normal terminal command available without structured
 activity. An observed terminal runs against a private OpenCode server that
 BiBCode starts for it: OpenCode 1 opens it with `opencode attach`, OpenCode 2
 with `opencode --server … --session …`. OpenCode 2 has no `--model` flag, so
-the unobserved fallback command (`opencode --model …`) does not start with
-OpenCode 2.
+an unobserved OpenCode 2 terminal runs `opencode --standalone` (its own private
+server) with the selected model in its configuration; OpenCode 1 runs
+`opencode --model …`.

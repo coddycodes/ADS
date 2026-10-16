@@ -21,10 +21,10 @@ pub use codex::{
     CodexRemoteClientFactory, CodexTerminalObserverFactory,
 };
 pub use model::{
-    PreparedTerminalLaunch, PreparedTerminalObserver, TerminalAgentActivityProviderEpochs,
-    TerminalAgentActivityTransition, TerminalGenerationActivityPublisher,
-    TerminalLaunchPreparation, TerminalLaunchPreparationInput, TerminalLaunchPreparer,
-    TerminalObserverCancellationReason, TerminalObserverGeneration,
+    NativeTerminalCommand, PreparedTerminalLaunch, PreparedTerminalObserver,
+    TerminalAgentActivityProviderEpochs, TerminalAgentActivityTransition,
+    TerminalGenerationActivityPublisher, TerminalLaunchPreparation, TerminalLaunchPreparationInput,
+    TerminalLaunchPreparer, TerminalObserverCancellationReason, TerminalObserverGeneration,
     TerminalObserverGenerationLease, TerminalObserverWorkerContext,
     TerminalObserverWorkerSpawnError,
 };

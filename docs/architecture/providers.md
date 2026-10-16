@@ -228,7 +228,13 @@ accepted. The client identifies the helper by its health answer (V1) or
 `/api/event` stream onto the V1 shapes through `provider::opencode::v2_activity`.
 The OpenCode 2 terminal opens the root with
 `opencode --server <url> --session <root> <dir>` and receives the helper
-password as `OPENCODE_PASSWORD`.
+password as `OPENCODE_PASSWORD`. The client requests a provider terminal as
+`opencode --model <model>`; before any preparation the terminal manager asks the
+preparer for the command's native form (`TerminalLaunchPreparer::native_command`),
+which for the configured OpenCode executable follows the same capability probe:
+OpenCode 2, which has no `--model`, gets `--standalone` with the model added to
+`OPENCODE_CONFIG_CONTENT`, so an unobserved terminal starts too, and the
+observer reads the model from there.
 
 Provider-specific events are normalized into shared orchestration contracts;
 provider wire payloads do not leak into React state. See
