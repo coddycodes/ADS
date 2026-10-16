@@ -386,7 +386,10 @@ Idle suspension must never stop work the provider still runs:
   starts itself), the session is also projected `running` with that turn unless
   it already reads so. Cursor, OpenCode, and Grok announce a turn before BiBCode
   sends it, so their announcement does not change the projection: a send that
-  fails reports no completion.
+  fails reports no completion. A turn such a driver did not send, one the
+  provider started itself (an OpenCode 2 execution that delivers a background
+  subagent's result, or one still running when a session is resumed), carries
+  `providerStarted: true` and is projected `running` too.
 - **Live provider work** is the session's in-memory set of actors (Claude
   subagents, Codex child agents) and work items (background tasks and
   terminals) whose latest projected lifecycle is `starting` or `running`

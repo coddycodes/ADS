@@ -8763,7 +8763,10 @@ async fn project_provider_event(
     let created_at = now();
     let command_id = format!("provider:{}", Uuid::new_v4());
     let assistant_message_id = assistant_message_id(&event);
-    if event.event_type == "turn.started" && provider_reports_its_turns(&launch.provider) {
+    if event.event_type == "turn.started"
+        && (provider_reports_its_turns(&launch.provider)
+            || event.payload.get("providerStarted") == Some(&Value::Bool(true)))
+    {
         // A turn the provider started itself (a Codex goal continuation, Claude answering a
         // finished background task) runs like a delivered one: the thread reads running, and idle
         // suspension waits for its `turn.completed`.
@@ -9428,7 +9431,8 @@ async fn session_is_confirmed_idle(
 /// Whether every `turn.started` the driver emits is a turn the provider reported running. Codex
 /// emits it for each `turn/started` notification, and Claude for a turn it starts itself (its
 /// delivered turns begin on their replay). Cursor, OpenCode, and Grok announce a turn before
-/// BiBCode sends it, so a send that then fails would leave the thread reading running.
+/// BiBCode sends it, so a send that then fails would leave the thread reading running; such a
+/// driver marks a turn the provider started itself with `providerStarted: true` instead.
 fn provider_reports_its_turns(provider: &str) -> bool {
     matches!(provider, "codex" | "claude" | "claudeAgent")
 }
@@ -23430,6 +23434,23 @@ done
                 .unwrap();
         }
 
+        async fn emit_payload(&self, event_type: &str, turn_id: &str, payload: Value) {
+            self.events
+                .send(super::ProviderEvent {
+                    native_event_id: None,
+                    event_type: event_type.to_owned(),
+                    thread_id: "t1".to_owned(),
+                    turn_id: Some(turn_id.to_owned()),
+                    item_id: None,
+                    request_id: None,
+                    payload,
+                    activity: Vec::new(),
+                    activity_controls: Default::default(),
+                })
+                .await
+                .unwrap();
+        }
+
         async fn emit_activity(&self, native_event_id: &str, mutation: ProviderActivityMutation) {
             self.emit_activity_batch(native_event_id, vec![mutation])
                 .await;
@@ -24069,6 +24090,56 @@ done
         );
         fixture.assert_projection("ready", None).await;
         fixture.assert_suspended_after_timeout(4).await;
+        fixture.close().await;
+    }
+
+    /// OpenCode announces the turns BiBCode sends before sending them, but marks a turn it started
+    /// itself (an OpenCode 2 execution delivering a background subagent's result): that one runs
+    /// like a delivered turn, so the thread reads running and the idle deadline waits for it.
+    #[tokio::test(start_paused = true)]
+    async fn a_turn_opencode_started_itself_reads_running() {
+        let _clock = keep_idle_clock_paused();
+        let mut fixture =
+            IdleDeadlineFixture::new_for_provider(BUSY_SESSION_IDLE_TIMEOUT, "opencode").await;
+        IdleDeadlineFixture::accepted(fixture.admit("first").await, "idle-turn-1").await;
+        fixture.stream("idle-turn-1", "assistant-first").await;
+        fixture
+            .emit("turn.completed", "idle-turn-1", "assistant-first")
+            .await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Armed { generation: 2 }
+        );
+        fixture
+            .emit_payload(
+                "turn.started",
+                "provider-turn",
+                json!({ "providerStarted": true }),
+            )
+            .await;
+        fixture.stream("provider-turn", "assistant-provider").await;
+        fixture
+            .assert_projection("running", Some("provider-turn"))
+            .await;
+        tokio::time::advance(fixture.idle_timeout * 2).await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Evaluated {
+                generation: 2,
+                outcome: super::IdleDeadlineEvaluation::Stale,
+            }
+        );
+        fixture
+            .assert_live("the idle deadline suspended a turn OpenCode started itself")
+            .await;
+        fixture
+            .emit("turn.completed", "provider-turn", "assistant-provider")
+            .await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Armed { generation: 4 }
+        );
+        fixture.assert_projection("ready", None).await;
         fixture.close().await;
     }
 

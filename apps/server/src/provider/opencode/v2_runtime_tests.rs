@@ -732,6 +732,10 @@ async fn a_background_result_is_reported_as_a_turn_opencode_started() {
     );
     assert_eq!(started[0].turn_id.as_deref(), Some(first.as_str()));
     assert_eq!(started[1].turn_id, completed[1].turn_id);
+    // Only OpenCode's own turn is marked: the supervisor projects it running, as it was not sent
+    // (and so cannot fail to send).
+    assert_eq!(started[0].payload, json!({}));
+    assert_eq!(started[1].payload, json!({ "providerStarted": true }));
     assert_ne!(completed[1].turn_id.as_deref(), Some(first.as_str()));
     assert!(text(&events).ends_with("Background result noted."));
 }

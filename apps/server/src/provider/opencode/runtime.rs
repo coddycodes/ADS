@@ -1320,12 +1320,23 @@ impl OpenCodeSessionRuntime {
     }
 
     async fn begin_turn(&self) -> String {
+        self.begin_turn_with(json!({})).await
+    }
+
+    /// A turn OpenCode started on its own. It is marked so the supervisor projects it running:
+    /// BiBCode's own turns are announced before they are sent, and a send can still fail.
+    async fn begin_provider_started_turn(&self) -> String {
+        self.begin_turn_with(json!({ "providerStarted": true }))
+            .await
+    }
+
+    async fn begin_turn_with(&self, payload: Value) -> String {
         let turn_id = format!("turn-{}", Uuid::new_v4());
         *self.inner.active_user_message_id.lock().await = None;
         self.inner.assistant_message_ids.lock().await.clear();
         self.inner.assistant_text.lock().await.clear();
         *self.inner.active_turn_id.lock().await = Some(turn_id.clone());
-        self.emit("turn.started", Some(turn_id.clone()), None, json!({}))
+        self.emit("turn.started", Some(turn_id.clone()), None, payload)
             .await;
         turn_id
     }
@@ -2279,7 +2290,7 @@ impl OpenCodeSessionRuntime {
                     // OpenCode 2 starts executions on its own, such as to deliver a background
                     // subagent's result. Report them as turns rather than hiding them.
                     if turn_id.is_none() {
-                        self.begin_turn().await;
+                        self.begin_provider_started_turn().await;
                     }
                 }
                 V2Output::TextDelta { message_id, delta } => {
@@ -2612,7 +2623,7 @@ impl OpenCodeSessionRuntime {
                 .is_some_and(|sessions| sessions.contains_key(session_id))
         });
         if running && self.inner.active_turn_id.lock().await.is_none() {
-            self.begin_turn().await;
+            self.begin_provider_started_turn().await;
         }
     }
 
