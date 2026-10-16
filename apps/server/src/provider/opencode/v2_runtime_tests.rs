@@ -16,7 +16,7 @@ use axum::{
     extract::{OriginalUri, Path, State},
     http::{Method, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
 };
 use futures_util::{StreamExt, stream};
 use serde_json::{Value, json};
@@ -85,6 +85,18 @@ struct Replay {
     active: AtomicBool,
     /// The skill and command lists answer HTTP 500.
     fail_catalogs: AtomicBool,
+    /// Fail the next revert staging with HTTP 500.
+    fail_next_stage: AtomicBool,
+    /// Fail the next revert commit with HTTP 500.
+    fail_next_commit: AtomicBool,
+    /// Commit the next revert but answer HTTP 500, as a lost response would.
+    lose_next_commit_response: AtomicBool,
+    /// Single-message lookups answer HTTP 500.
+    fail_message_lookups: AtomicBool,
+    /// The root session reports a staged revert.
+    staged: AtomicBool,
+    /// A revert was committed: message lists answer the scenario's last capture, not its first.
+    reverted: AtomicBool,
 }
 
 impl Replay {
@@ -149,16 +161,39 @@ async fn record(
         replay.replied.notify_one();
         return Json(json!({"interrupted": true})).into_response();
     }
+    if path.ends_with("/revert/stage") {
+        if replay.fail_next_stage.swap(false, Ordering::SeqCst) {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        let body = replay.requests.lock().unwrap().last().unwrap().2.clone();
+        return Json(json!({ "data": { "messageID": body["messageID"], "files": [] } }))
+            .into_response();
+    }
+    if path.ends_with("/revert/commit") {
+        if replay.fail_next_commit.swap(false, Ordering::SeqCst) {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        replay.reverted.store(true, Ordering::SeqCst);
+        if replay
+            .lose_next_commit_response
+            .swap(false, Ordering::SeqCst)
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
     StatusCode::NO_CONTENT.into_response()
 }
 
 async fn session(State(replay): State<Arc<Replay>>, Path(session_id): Path<String>) -> Response {
     if session_id == replay.root {
-        let (_, response) = exchange(
+        let (_, mut response) = exchange(
             replay.scenario,
             "GET",
             &format!("/api/session/{session_id}"),
         );
+        if replay.staged.load(Ordering::SeqCst) {
+            response["data"]["revert"] = json!({ "messageID": "msg_staged", "files": [] });
+        }
         Json(response).into_response()
     } else {
         (
@@ -173,6 +208,16 @@ async fn message(
     State(replay): State<Arc<Replay>>,
     Path((_, message_id)): Path<(String, String)>,
 ) -> Response {
+    if replay.fail_message_lookups.load(Ordering::SeqCst) {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    if replay.reverted.load(Ordering::SeqCst) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"_tag":"MessageNotFoundError","message":"Message not found"})),
+        )
+            .into_response();
+    }
     let exchanges: Value =
         serde_json::from_str(&fixture(&format!("{}.exchanges.json", replay.scenario))).unwrap();
     let found = exchanges["exchanges"]
@@ -236,11 +281,56 @@ async fn captured_list(State(replay): State<Arc<Replay>>, uri: OriginalUri) -> J
                     .is_some_and(|captured| captured.split('?').nth(1) == Some(parent))
             })
         })
-        .or_else(|| gets.last().filter(|_| parent.is_none()));
-    Json(found.map_or_else(
+        .or_else(|| {
+            // Before the revert scenario's revert commits, its messages are those captured
+            // before it.
+            if replay.scenario == "revert"
+                && path.ends_with("/message")
+                && !replay.reverted.load(Ordering::SeqCst)
+            {
+                gets.first().filter(|_| parent.is_none())
+            } else {
+                gets.last().filter(|_| parent.is_none())
+            }
+        });
+    let mut response = found.map_or_else(
         || json!({ "data": [] }),
         |exchange| exchange["response"].clone(),
-    ))
+    );
+    // Message lists honour `type` and `limit` (captured lists are newest first). A paged read
+    // (`order` or `cursor`) gets pages of at most `PAGE` messages, smaller than it asks for, as
+    // a server may answer, so a turn can span pages.
+    const PAGE: usize = 3;
+    let query = |name: &str| {
+        uri.0.query().and_then(|query| {
+            query
+                .split('&')
+                .find_map(|pair| pair.strip_prefix(&format!("{name}=")).map(str::to_owned))
+        })
+    };
+    if let Some(messages) = response["data"].as_array_mut() {
+        if let Some(kind) = query("type") {
+            messages.retain(|message| message["type"] == kind.as_str());
+        }
+        let limit = query("limit").and_then(|limit| limit.parse::<usize>().ok());
+        if let Some(limit) = limit {
+            assert!(limit <= 200, "OpenCode 2 rejects pages over 200 messages");
+        }
+        let cursor = query("cursor");
+        if query("order").is_some() || cursor.is_some() {
+            let offset = cursor
+                .and_then(|cursor| cursor.strip_prefix("offset").and_then(|n| n.parse().ok()))
+                .unwrap_or(0_usize);
+            let end = (offset + limit.unwrap_or(PAGE).min(PAGE)).min(messages.len());
+            let page = messages[offset.min(end)..end].to_vec();
+            let next = (end < messages.len()).then(|| format!("offset{end}"));
+            *messages = page;
+            response["cursor"] = json!({ "next": next });
+        } else if let Some(limit) = limit {
+            messages.truncate(limit);
+        }
+    }
+    Json(response)
 }
 
 async fn models() -> Json<Value> {
@@ -315,6 +405,12 @@ async fn serve(scenario: &'static str) -> (String, Arc<Replay>) {
         lose_next_reply_response: AtomicBool::new(false),
         active: AtomicBool::new(false),
         fail_catalogs: AtomicBool::new(false),
+        fail_next_stage: AtomicBool::new(false),
+        fail_next_commit: AtomicBool::new(false),
+        lose_next_commit_response: AtomicBool::new(false),
+        fail_message_lookups: AtomicBool::new(false),
+        staged: AtomicBool::new(false),
+        reverted: AtomicBool::new(false),
     });
     let app = Router::new()
         .route("/api/session", post(record).get(captured_list))
@@ -343,6 +439,9 @@ async fn serve(scenario: &'static str) -> (String, Arc<Replay>) {
         .route("/api/session/{session_id}/model", post(record))
         .route("/api/session/{session_id}/agent", post(record))
         .route("/api/session/{session_id}/interrupt", post(record))
+        .route("/api/session/{session_id}/revert/stage", post(record))
+        .route("/api/session/{session_id}/revert/commit", post(record))
+        .route("/api/session/{session_id}/revert", delete(record))
         .route(
             "/api/session/{session_id}/permission/{request_id}/reply",
             post(record),
@@ -726,12 +825,6 @@ async fn delivery_lookup_mcp_registration_variants_and_selection_use_v2_routes()
         json!({"model":{"providerID":"mock","id":"mock-model","variant":"high"}})
     );
     until_turns_complete(&runtime, 1).await;
-
-    let error = runtime.rollback_thread(1).await.expect_err("not built yet");
-    assert_eq!(
-        error.to_string(),
-        "Rewinding isn't supported with OpenCode 2 yet."
-    );
 }
 
 #[tokio::test]
@@ -924,6 +1017,15 @@ async fn live_opencode_2_round_trip() {
         of_type(&events, "turn.completed")[0].payload["state"],
         "completed"
     );
+
+    let snapshot = runtime.rollback_thread(2).await.expect("rewind");
+    let prompts = snapshot
+        .turns
+        .iter()
+        .filter(|message| message["type"] == "user")
+        .map(|message| message["text"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert_eq!(prompts, ["SAY_HELLO please"]);
     runtime.stop().await.expect("stop");
 }
 
@@ -1201,6 +1303,215 @@ async fn a_path_prompt_is_not_a_slash_invocation() {
     assert_eq!(
         replay.requests_to("/prompt")[0].2["text"],
         "/tmp/project/file.rs is failing"
+    );
+    runtime.stop().await.expect("stop");
+}
+
+/// Rewinding n turns stages a revert at the first message of the n-th most recent turn, which
+/// drops it and everything after it, and commits the revert.
+#[tokio::test]
+async fn rollback_reverts_from_the_start_of_the_nth_most_recent_turn() {
+    let (endpoint, replay) = serve("revert").await;
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+
+    let snapshot = runtime.rollback_thread(1).await.expect("rewinds");
+
+    let lookups = replay
+        .requests_to("/message")
+        .into_iter()
+        .filter(|(_, uri, _)| uri.contains("order=desc"))
+        .collect::<Vec<_>>();
+    assert_eq!(lookups.len(), 1);
+    assert!(lookups[0].1.contains("limit=200"), "{}", lookups[0].1);
+    assert_eq!(
+        replay.requests_to("/revert/stage")[0].2,
+        json!({ "messageID": "msg_bibcodecapture1792090050661", "files": false })
+    );
+    assert_eq!(replay.requests_to("/revert/commit").len(), 1);
+    assert!(replay.requests_to("/revert").is_empty());
+    assert!(snapshot.turns.is_empty(), "the turn is gone");
+    runtime.stop().await.expect("stop");
+}
+
+/// Rewinding zero turns changes nothing.
+#[tokio::test]
+async fn rollback_of_no_turns_reverts_nothing() {
+    let (endpoint, replay) = serve("revert").await;
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+
+    let snapshot = runtime.rollback_thread(0).await.expect("no-op");
+
+    assert!(replay.requests_to("/revert/stage").is_empty());
+    assert!(replay.requests_to("/revert/commit").is_empty());
+    assert!(!snapshot.turns.is_empty(), "the turn stays");
+    runtime.stop().await.expect("stop");
+}
+
+/// A staging or commit that fails clears the stage (OpenCode would commit it with the next
+/// prompt) and fails the rewind, so the conversation is left as it was.
+#[tokio::test]
+async fn a_revert_that_does_not_commit_clears_the_stage() {
+    for phase in ["stage", "commit"] {
+        let (endpoint, replay) = serve("revert").await;
+        let runtime = v2_runtime(&endpoint);
+        runtime.resume(&replay.root).await.expect("resumes");
+        match phase {
+            "stage" => replay.fail_next_stage.store(true, Ordering::SeqCst),
+            _ => replay.fail_next_commit.store(true, Ordering::SeqCst),
+        }
+
+        runtime
+            .rollback_thread(1)
+            .await
+            .expect_err("the revert did not commit");
+
+        let cleared = replay.requests_to("/revert");
+        assert_eq!(cleared.len(), 1, "{phase}");
+        assert_eq!(cleared[0].0, "DELETE", "{phase}");
+        runtime.stop().await.expect("stop");
+    }
+}
+
+/// A commit whose answer is lost but that landed (the target message is gone) is a rewind: the
+/// conversation changed, so reporting a failure would let a retry drop more turns.
+#[tokio::test]
+async fn a_landed_revert_commit_succeeds_even_when_its_answer_is_lost() {
+    let (endpoint, replay) = serve("revert").await;
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+    replay
+        .lose_next_commit_response
+        .store(true, Ordering::SeqCst);
+
+    runtime.rollback_thread(1).await.expect("the revert landed");
+
+    assert!(replay.requests_to("/revert").is_empty(), "nothing to clear");
+    runtime.stop().await.expect("stop");
+}
+
+/// A rewind of more turns than a page holds reads pages within OpenCode's limit and reverts to
+/// the oldest turn there is.
+#[tokio::test]
+async fn a_long_rewind_reads_bounded_pages() {
+    let (endpoint, replay) = serve("revert").await;
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+
+    runtime.rollback_thread(500).await.expect("rewinds");
+
+    let lookup = replay
+        .requests_to("/message")
+        .into_iter()
+        .find(|(_, uri, _)| uri.contains("order=desc"))
+        .expect("history lookup");
+    assert!(lookup.1.contains("limit=200"), "{}", lookup.1);
+    assert_eq!(
+        replay.requests_to("/revert/stage")[0].2["messageID"],
+        "msg_bibcodecapture1792090050661"
+    );
+    runtime.stop().await.expect("stop");
+}
+
+/// A rewind whose outcome cannot be read (the commit's answer and the lookup both fail) stays
+/// pending: prompts wait, since OpenCode would commit a leftover stage with them, and reverting
+/// again finds the first revert landed and drops nothing more.
+#[tokio::test]
+async fn an_unknown_rewind_outcome_holds_prompts_until_a_rewind_settles_it() {
+    let (endpoint, replay) = serve("revert").await;
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+    replay
+        .lose_next_commit_response
+        .store(true, Ordering::SeqCst);
+    replay.fail_message_lookups.store(true, Ordering::SeqCst);
+
+    runtime
+        .rollback_thread(1)
+        .await
+        .expect_err("the outcome is unknown");
+    let error = runtime
+        .send_turn(Some("SAY_HELLO please"), Vec::new(), None)
+        .await
+        .expect_err("the prompt waits");
+    assert!(
+        matches!(&error, OpenCodeRuntimeError::NotSent(detail) if detail.contains("Revert to that checkpoint again")),
+        "{error:?}"
+    );
+    assert!(replay.requests_to("/prompt").is_empty());
+
+    replay.fail_message_lookups.store(false, Ordering::SeqCst);
+    runtime
+        .rollback_thread(1)
+        .await
+        .expect("the first revert landed");
+    assert_eq!(
+        replay.requests_to("/revert/stage").len(),
+        1,
+        "no further turns are dropped"
+    );
+    runtime
+        .send_turn(Some("SAY_HELLO please"), Vec::new(), None)
+        .await
+        .expect("prompts flow again");
+    runtime.stop().await.expect("stop");
+}
+
+/// A stage left by a rewind that did not finish before the runtime went away is cleared when the
+/// session is reopened, so the next prompt cannot commit it.
+#[tokio::test]
+async fn resuming_clears_a_leftover_revert_stage() {
+    let (endpoint, replay) = serve("revert").await;
+    replay.staged.store(true, Ordering::SeqCst);
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+    let cleared = replay.requests_to("/revert");
+    assert_eq!(cleared.len(), 1);
+    assert_eq!(cleared[0].0, "DELETE");
+
+    replay.staged.store(false, Ordering::SeqCst);
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+    assert_eq!(
+        replay.requests_to("/revert").len(),
+        1,
+        "nothing else to clear"
+    );
+    runtime.stop().await.expect("stop");
+}
+
+/// A turn OpenCode started on its own (a background subagent's result) is a turn: rewinding one
+/// turn drops it alone, from its synthetic opening message, and keeps the prompt's turn.
+#[tokio::test]
+async fn rewinding_a_turn_opencode_started_keeps_the_prompt_turn() {
+    let (endpoint, replay) = serve("background").await;
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+
+    runtime.rollback_thread(1).await.expect("rewinds");
+
+    assert_eq!(
+        replay.requests_to("/revert/stage")[0].2["messageID"],
+        "msg_140e541d2001exT4ib4q81HRCC"
+    );
+    runtime.stop().await.expect("stop");
+
+    // Two turns reach the prompt, across history pages that split both turns.
+    let (endpoint, replay) = serve("background").await;
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+    runtime.rollback_thread(2).await.expect("rewinds");
+    assert_eq!(
+        replay.requests_to("/revert/stage")[0].2["messageID"],
+        "msg_bibcodecapture1792090128476"
+    );
+    assert!(
+        replay
+            .requests_to("/message")
+            .iter()
+            .any(|(_, uri, _)| uri.contains("cursor=offset6")),
+        "the history was paged"
     );
     runtime.stop().await.expect("stop");
 }

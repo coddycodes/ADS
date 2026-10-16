@@ -29,9 +29,9 @@ subagent activity. The provider row lists OpenCode 2 models (with their
 variants), agents, commands and skills; a slash skill attaches the skill to
 your message; a command wins over a skill of the same name. When a configured
 **Server URL** answers but its catalogs can't be read, the row stays ready with
-a notice and chats use the server's default model. Not yet available with
-OpenCode 2: rewinding a conversation and
-structured terminal observation.
+a notice and chats use the server's default model. Reverting to a checkpoint
+rewinds the OpenCode 2 conversation, then restores the files. Not yet available
+with OpenCode 2: structured terminal observation.
 
 A version BiBCode cannot drive (3.x or later) shows an error asking you to set
 **Binary path** to an OpenCode 1.x or 2.x executable; a configured

@@ -196,7 +196,20 @@ cannot drive. On V2 it reads `/api/provider`, `/api/model`, `/api/agent`,
 `/api/command` and `/api/skill` with `location[directory]`, and
 `provider::opencode::v2::catalog` shapes them like the V1 catalogs; V2 skills
 are a separate catalog, so a slash skill is sent as a prompt that attaches it
-rather than through the command route.
+rather than through the command route. Rewinding n turns on V2 stages a revert
+at the first message of the n-th most recent turn (`POST …/revert/stage`),
+which drops it and everything after it, then commits it
+(`POST …/revert/commit`). A turn is one execution, which OpenCode 2 ends with an
+`idle` history entry, so a turn OpenCode started on its own (opened by a
+synthetic message) counts like a prompt's. Only the conversation is reverted (`files: false`);
+checkpoint revert restores the files. A commit whose answer is lost but whose
+target message is gone counts as done; a stage that did not commit is cleared
+(`DELETE …/revert`), since OpenCode commits a leftover stage with the next
+prompt. Until a rewind reports success the runtime remembers the turns already
+dropped and any revert whose outcome it could not read, so a retry drops only
+the turns still missing and prompts wait. That memory does not outlive the
+runtime; resuming a session clears a leftover stage. Each rewind request is
+bounded, because the provider supervisor awaits it.
 
 Provider-specific events are normalized into shared orchestration contracts;
 provider wire payloads do not leak into React state. See

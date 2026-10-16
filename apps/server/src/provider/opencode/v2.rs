@@ -836,6 +836,126 @@ mod tests {
     }
 }
 
+/// Walks an OpenCode 2 history newest first to find where the n-th most recent turn starts. A
+/// turn is one execution, which OpenCode 2 ends with an `idle` entry. Executions OpenCode starts
+/// on its own (a background subagent's result, opened by a synthetic message) are turns too, so
+/// turns are not user messages. Model, agent and location switches belong to the execution they
+/// precede; switches that precede none (a prompt that was never admitted) are not a turn.
+#[derive(Default)]
+pub(crate) struct TurnStartFinder {
+    turns: usize,
+    /// The oldest message seen of the turn being walked.
+    start: Option<String>,
+    /// Whether the turn being walked has more than switches.
+    executed: bool,
+    oldest_start: Option<String>,
+}
+
+impl TurnStartFinder {
+    /// Takes the next message, newest first; returns the n-th turn's first message once it is
+    /// known.
+    pub(crate) fn push(&mut self, message: &Value, n: usize) -> Option<String> {
+        let kind = message.get("type").and_then(Value::as_str);
+        if kind == Some("idle") {
+            return self.close(n);
+        }
+        self.start = Some(message.get("id").and_then(Value::as_str)?.to_owned());
+        self.executed |= !matches!(
+            kind,
+            Some("agent-switched" | "model-switched" | "location-switched")
+        );
+        None
+    }
+
+    /// The history ended: the n-th turn's first message, or the oldest turn's when there are
+    /// fewer.
+    pub(crate) fn finish(mut self, n: usize) -> Option<String> {
+        self.close(n);
+        self.oldest_start
+    }
+
+    fn close(&mut self, n: usize) -> Option<String> {
+        let start = self.start.take()?;
+        if !std::mem::take(&mut self.executed) {
+            return None;
+        }
+        self.turns += 1;
+        self.oldest_start = Some(start.clone());
+        (self.turns == n).then_some(start)
+    }
+}
+
+#[cfg(test)]
+mod turn_tests {
+    use serde_json::json;
+
+    use super::TurnStartFinder;
+
+    /// The captured background scenario, newest first: a prompt's turn, then the turn OpenCode
+    /// started to deliver the subagent's result.
+    #[test]
+    fn turns_start_at_their_first_message_whoever_started_them() {
+        let history = [
+            json!({ "id": "idle-2", "type": "idle" }),
+            json!({ "id": "reply-2", "type": "assistant" }),
+            json!({ "id": "result", "type": "synthetic" }),
+            json!({ "id": "idle-1", "type": "idle" }),
+            json!({ "id": "reply-1b", "type": "assistant" }),
+            json!({ "id": "reply-1a", "type": "assistant" }),
+            json!({ "id": "prompt", "type": "user" }),
+            json!({ "id": "switch", "type": "model-switched" }),
+        ];
+        let start = |n: usize| {
+            let mut finder = TurnStartFinder::default();
+            history
+                .iter()
+                .find_map(|message| finder.push(message, n))
+                .or_else(|| finder.finish(n))
+        };
+        assert_eq!(start(1).as_deref(), Some("result"));
+        assert_eq!(
+            start(2).as_deref(),
+            Some("switch"),
+            "a turn's setup goes with it"
+        );
+        assert_eq!(
+            start(5).as_deref(),
+            Some("switch"),
+            "fewer turns: all of them"
+        );
+        let unadmitted = [
+            json!({ "id": "switch-3", "type": "model-switched" }),
+            json!({ "id": "idle-2", "type": "idle" }),
+            json!({ "id": "reply-2", "type": "assistant" }),
+            json!({ "id": "prompt-2", "type": "user" }),
+            json!({ "id": "idle-1", "type": "idle" }),
+        ];
+        let mut finder = TurnStartFinder::default();
+        assert_eq!(
+            unadmitted
+                .iter()
+                .find_map(|message| finder.push(message, 1))
+                .as_deref(),
+            Some("prompt-2"),
+            "switches no prompt followed are not a turn"
+        );
+        let running = [
+            json!({ "id": "reply-3", "type": "assistant" }),
+            json!({ "id": "prompt-3", "type": "user" }),
+            json!({ "id": "idle-2", "type": "idle" }),
+        ];
+        let mut finder = TurnStartFinder::default();
+        assert_eq!(
+            running
+                .iter()
+                .find_map(|message| finder.push(message, 1))
+                .as_deref(),
+            Some("prompt-3"),
+            "a turn still running counts"
+        );
+    }
+}
+
 /// OpenCode 2 catalogs (`/api/provider`, `/api/model`, `/api/agent`, `/api/command`,
 /// `/api/skill`) as the OpenCode 1 shapes `build_inventory_snapshot` reads.
 pub(crate) mod catalog {

@@ -50,6 +50,15 @@ const RECONCILIATION_HINT_CAPACITY: usize = 1;
 const RECONCILIATION_DEBOUNCE: Duration = Duration::from_millis(250);
 const RECONCILIATION_DEFERRED_DELAY: Duration = Duration::from_millis(10);
 const RECONCILIATION_TIMEOUT: Duration = Duration::from_secs(5);
+/// Bounds each request of an OpenCode 2 rewind, which the provider supervisor awaits.
+const REWIND_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Bounds the whole history scan that finds a rewind's target, however many pages it reads.
+const REWIND_SCAN_TIMEOUT: Duration = Duration::from_secs(30);
+/// Shown while a rewind's outcome is unknown; reverting again settles it.
+const UNFINISHED_REVERT: &str =
+    "A checkpoint revert didn't finish. Revert to that checkpoint again to finish it.";
+/// OpenCode 2's largest message-list page.
+const MESSAGE_PAGE_LIMIT: usize = 200;
 /// Bounds the OpenCode 2 skill and command reads that route a slash invocation.
 const SLASH_CATALOG_TIMEOUT: Duration = Duration::from_secs(5);
 const RECONCILIATION_RETRY_MIN: Duration = Duration::from_millis(100);
@@ -141,9 +150,18 @@ pub enum OpenCodeRuntimeError {
     /// A request failed before the turn itself was submitted, so it was not sent.
     #[error("OpenCode request failed before the turn was sent: {0}")]
     NotSent(String),
-    /// An operation this OpenCode version does not support in BiBCode yet; the text is shown.
-    #[error("{0}")]
-    Unsupported(String),
+}
+
+async fn within_rewind_deadline<T>(
+    request: impl std::future::Future<Output = Result<T, OpenCodeRuntimeError>>,
+) -> Result<T, OpenCodeRuntimeError> {
+    tokio::time::timeout(REWIND_REQUEST_TIMEOUT, request)
+        .await
+        .unwrap_or_else(|_| {
+            Err(OpenCodeRuntimeError::Http(
+                "OpenCode did not answer in time".to_owned(),
+            ))
+        })
 }
 
 /// A failed HTTP request made before the turn's own request did not send the turn.
@@ -208,6 +226,9 @@ struct RuntimeInner {
     /// The server speaks the OpenCode 2 `/api/*` wire. Set once, before `start` or `resume`.
     protocol_v2: AtomicBool,
     v2: Mutex<V2State>,
+    /// Serializes OpenCode 2 rewinds with the settling a prompt does first, so each unsettled
+    /// revert is accounted for once.
+    v2_rewind: Mutex<()>,
 }
 
 /// OpenCode 2 session state: the root-turn translator, the asks waiting for an answer (keyed by
@@ -232,6 +253,17 @@ struct V2State {
     /// A resumed session checks for a running execution once its event stream is connected, so
     /// the execution's end cannot slip between the check and the subscription.
     adopt_on_connect: bool,
+    /// The progress of a checkpoint rewind that has not reported success, counted from BiBCode's
+    /// unchanged transcript. See `v2_rollback`.
+    rewind: V2RewindProgress,
+}
+
+#[derive(Default)]
+struct V2RewindProgress {
+    /// Turns OpenCode is known to have dropped.
+    dropped: usize,
+    /// A revert whose outcome is unknown: the turns it drops and the user message it staged at.
+    unsettled: Option<(usize, String)>,
 }
 
 struct V2PendingForm {
@@ -591,6 +623,7 @@ impl OpenCodeSessionRuntime {
                 }),
                 protocol_v2: AtomicBool::new(false),
                 v2: Mutex::new(V2State::default()),
+                v2_rewind: Mutex::new(()),
             }),
         };
         runtime.start_reconciliation_worker(reconciliation_hint_rx);
@@ -791,6 +824,17 @@ impl OpenCodeSessionRuntime {
             )));
         }
         if self.is_v2() {
+            // A stage left by a rewind that did not finish would commit with the next prompt.
+            let session = response
+                .json::<Value>()
+                .await
+                .map_err(|error| OpenCodeRuntimeError::InvalidResponse(error.to_string()))?;
+            if session
+                .pointer("/data/revert")
+                .is_some_and(|revert| !revert.is_null())
+            {
+                within_rewind_deadline(self.v2_clear_revert(session_id)).await?;
+            }
             // The resumed session keeps the model, agent and permission rules it had. A runtime
             // mode change relaunches with a resume, and OpenCode may keep working on its own, so
             // the permission rules apply now; the model and agent go with the next prompt.
@@ -878,6 +922,7 @@ impl OpenCodeSessionRuntime {
         if self.is_v2() {
             let message_id = message_id.map(v2::message_id);
             let result = async {
+                self.v2_settle_rewind_before_prompt(&session_id).await?;
                 self.v2_sync_selection(&session_id)
                     .await
                     .map_err(not_sent)?;
@@ -952,36 +997,9 @@ impl OpenCodeSessionRuntime {
     pub async fn message_exists(&self, message_id: &str) -> Result<bool, OpenCodeRuntimeError> {
         let session_id = self.session_id().await?;
         if self.is_v2() {
-            let message_id = v2::message_id(message_id);
-            let response = self
-                .inner
-                .client
-                .get(self.v2_url(&["session", &session_id, "message", &message_id], false)?)
-                .send()
-                .await
-                .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
-            if response.status() == reqwest::StatusCode::NOT_FOUND {
-                return Ok(false);
-            }
-            if !response.status().is_success() {
-                return Err(OpenCodeRuntimeError::Http(format!(
-                    "message lookup returned HTTP {}",
-                    response.status()
-                )));
-            }
-            let value: Value = response
-                .json()
-                .await
-                .map_err(|error| OpenCodeRuntimeError::InvalidResponse(error.to_string()))?;
-            let message = value.get("data").unwrap_or(&Value::Null);
-            if message.get("id").and_then(Value::as_str) != Some(message_id.as_str())
-                || message.get("type").and_then(Value::as_str) != Some("user")
-            {
-                return Err(OpenCodeRuntimeError::InvalidResponse(
-                    "message lookup response has invalid identity or shape".to_owned(),
-                ));
-            }
-            return Ok(true);
+            return self
+                .v2_user_message_exists(&session_id, &v2::message_id(message_id))
+                .await;
         }
         let response = self
             .inner
@@ -1043,6 +1061,7 @@ impl OpenCodeSessionRuntime {
             // command and recording the delivery, restart recovery finds no message and sends
             // it again. The window is that of one database write.
             let result = async {
+                self.v2_settle_rewind_before_prompt(&session_id).await?;
                 self.v2_sync_selection(&session_id)
                     .await
                     .map_err(not_sent)?;
@@ -1550,9 +1569,7 @@ impl OpenCodeSessionRuntime {
         num_turns: usize,
     ) -> Result<OpenCodeSessionSnapshot, OpenCodeRuntimeError> {
         if self.is_v2() {
-            return Err(OpenCodeRuntimeError::Unsupported(
-                "Rewinding isn't supported with OpenCode 2 yet.".to_owned(),
-            ));
+            return self.v2_rollback(num_turns).await;
         }
         let session_id = self.session_id().await?;
         let messages = self
@@ -2639,6 +2656,262 @@ impl OpenCodeSessionRuntime {
         };
         Ok(v2::catalog::is_skill(&catalog("skill").await?, name)
             && !v2::catalog::is_command(&catalog("command").await?, name))
+    }
+
+    /// OpenCode 2 reverts in two phases. Staging at a message drops it and everything after it, so
+    /// staging at the first message of the n-th most recent turn drops exactly n turns (every turn
+    /// when there are fewer); committing makes that final. Only the conversation is reverted
+    /// (`files: false`): checkpoint revert restores the files itself.
+    ///
+    /// Once a commit lands the conversation has changed for good, so it counts even if its answer
+    /// is lost (the target message is gone), and the final read is best effort. A stage that does
+    /// not commit is cleared, since OpenCode would commit it with the next prompt. Until a rewind
+    /// reports success BiBCode's transcript is unchanged, so the turns already dropped (and a
+    /// revert whose outcome could not be read) are remembered: a retry, or a rewind to another
+    /// checkpoint, drops only the turns still missing, and prompts wait. This memory does not
+    /// outlive the runtime; a reopened session clears a leftover stage on resume.
+    async fn v2_rollback(
+        &self,
+        num_turns: usize,
+    ) -> Result<OpenCodeSessionSnapshot, OpenCodeRuntimeError> {
+        let session_id = self.session_id().await?;
+        let _rewinding = self.inner.v2_rewind.lock().await;
+        self.v2_settle_unsettled_revert(&session_id).await?;
+        let dropped = self.inner.v2.lock().await.rewind.dropped;
+        let remaining = num_turns.checked_sub(dropped).ok_or_else(|| {
+            OpenCodeRuntimeError::Http("OpenCode already rewound past this checkpoint".to_owned())
+        })?;
+        if remaining > 0
+            && let Some(target) = tokio::time::timeout(
+                REWIND_SCAN_TIMEOUT,
+                self.v2_nth_latest_turn_start(&session_id, remaining),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(OpenCodeRuntimeError::Http(
+                    "OpenCode's history took too long to read".to_owned(),
+                ))
+            })?
+        {
+            let revert = |phase: &'static str| {
+                self.v2_url(&["session", &session_id, "revert", phase], false)
+            };
+            let committed = async {
+                within_rewind_deadline(
+                    self.v2_send(
+                        self.inner
+                            .client
+                            .post(revert("stage")?)
+                            .json(&json!({ "messageID": target, "files": false })),
+                        "revert staging",
+                    ),
+                )
+                .await?;
+                within_rewind_deadline(
+                    self.v2_send(self.inner.client.post(revert("commit")?), "revert commit"),
+                )
+                .await
+            }
+            .await;
+            if let Err(error) = committed {
+                self.inner.v2.lock().await.rewind.unsettled = Some((remaining, target));
+                // The commit may have landed with only its answer lost.
+                if let Err(settling) = self.v2_settle_unsettled_revert(&session_id).await {
+                    tracing::warn!(
+                        provider = "opencode",
+                        error = %settling,
+                        "OpenCode 2 rewind outcome is unknown"
+                    );
+                    return Err(error);
+                }
+                if self.inner.v2.lock().await.rewind.dropped < num_turns {
+                    return Err(error);
+                }
+            }
+        }
+        {
+            let mut v2 = self.inner.v2.lock().await;
+            v2.rewind = V2RewindProgress::default();
+            // The dropped turns may have switched the model or agent; the next prompt sets them.
+            v2.synced_model = None;
+            v2.synced_agent = false;
+        }
+        let turns = within_rewind_deadline(async {
+            Ok(self
+                .v2_get_json(self.v2_url(&["session", &session_id, "message"], false)?)
+                .await)
+        })
+        .await
+        .ok()
+        .flatten()
+        .and_then(|messages| messages.get("data").and_then(Value::as_array).cloned())
+        .unwrap_or_default();
+        Ok(OpenCodeSessionSnapshot {
+            thread_id: self.inner.thread_id.clone(),
+            turns,
+        })
+    }
+
+    /// Settles a revert whose outcome is unknown: one that landed (its target message is gone)
+    /// counts its turns as dropped, and one that did not is cleared so OpenCode cannot commit it
+    /// with the next prompt. Fails, keeping it unsettled, when neither can be confirmed.
+    async fn v2_settle_unsettled_revert(
+        &self,
+        session_id: &str,
+    ) -> Result<(), OpenCodeRuntimeError> {
+        let Some((turns, target)) = self.inner.v2.lock().await.rewind.unsettled.clone() else {
+            return Ok(());
+        };
+        if within_rewind_deadline(self.v2_message_type(session_id, &target))
+            .await?
+            .is_some()
+        {
+            within_rewind_deadline(self.v2_clear_revert(session_id)).await?;
+        } else {
+            self.inner.v2.lock().await.rewind.dropped += turns;
+        }
+        self.inner.v2.lock().await.rewind.unsettled = None;
+        Ok(())
+    }
+
+    async fn v2_clear_revert(&self, session_id: &str) -> Result<(), OpenCodeRuntimeError> {
+        self.v2_send(
+            self.inner
+                .client
+                .delete(self.v2_url(&["session", session_id, "revert"], false)?),
+            "revert clearing",
+        )
+        .await
+    }
+
+    /// A prompt waits while a checkpoint rewind is unfinished: OpenCode's conversation would no
+    /// longer match BiBCode's transcript, and a leftover stage would commit with the prompt.
+    async fn v2_settle_rewind_before_prompt(
+        &self,
+        session_id: &str,
+    ) -> Result<(), OpenCodeRuntimeError> {
+        let _rewinding = self.inner.v2_rewind.lock().await;
+        let settled = self.v2_settle_unsettled_revert(session_id).await;
+        if settled.is_err() || self.inner.v2.lock().await.rewind.dropped > 0 {
+            return Err(OpenCodeRuntimeError::NotSent(UNFINISHED_REVERT.to_owned()));
+        }
+        Ok(())
+    }
+
+    /// The first message of the n-th most recent turn, or of the oldest turn when there are
+    /// fewer. Pages through the history, newest first, within OpenCode's page-size limit.
+    async fn v2_nth_latest_turn_start(
+        &self,
+        session_id: &str,
+        n: usize,
+    ) -> Result<Option<String>, OpenCodeRuntimeError> {
+        let mut turns = v2::TurnStartFinder::default();
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut url = Url::parse(&self.v2_url(&["session", session_id, "message"], false)?)
+                .map_err(|error| OpenCodeRuntimeError::InvalidResponse(error.to_string()))?;
+            {
+                let mut query = url.query_pairs_mut();
+                query.append_pair("limit", &MESSAGE_PAGE_LIMIT.to_string());
+                match cursor.as_deref() {
+                    Some(cursor) => query.append_pair("cursor", cursor),
+                    None => query.append_pair("order", "desc"),
+                };
+            }
+            let page =
+                within_rewind_deadline(async { Ok(self.v2_get_json(url.to_string()).await) })
+                    .await?
+                    .ok_or_else(|| {
+                        OpenCodeRuntimeError::Http("the message list could not be read".to_owned())
+                    })?;
+            let messages = page
+                .get("data")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            for message in messages {
+                if let Some(start) = turns.push(message, n) {
+                    return Ok(Some(start));
+                }
+            }
+            cursor = page
+                .pointer("/cursor/next")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            if messages.is_empty() || cursor.is_none() {
+                return Ok(turns.finish(n));
+            }
+        }
+    }
+
+    async fn v2_user_message_exists(
+        &self,
+        session_id: &str,
+        message_id: &str,
+    ) -> Result<bool, OpenCodeRuntimeError> {
+        match self.v2_message_type(session_id, message_id).await? {
+            None => Ok(false),
+            Some(kind) if kind == "user" => Ok(true),
+            Some(_) => Err(OpenCodeRuntimeError::InvalidResponse(
+                "message lookup response has invalid identity or shape".to_owned(),
+            )),
+        }
+    }
+
+    /// The type of a session message, or `None` when the session has no such message.
+    async fn v2_message_type(
+        &self,
+        session_id: &str,
+        message_id: &str,
+    ) -> Result<Option<String>, OpenCodeRuntimeError> {
+        let response = self
+            .inner
+            .client
+            .get(self.v2_url(&["session", session_id, "message", message_id], false)?)
+            .send()
+            .await
+            .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(OpenCodeRuntimeError::Http(format!(
+                "message lookup returned HTTP {}",
+                response.status()
+            )));
+        }
+        let value: Value = response
+            .json()
+            .await
+            .map_err(|error| OpenCodeRuntimeError::InvalidResponse(error.to_string()))?;
+        let message = value.get("data").unwrap_or(&Value::Null);
+        match (
+            message.get("id").and_then(Value::as_str),
+            message.get("type").and_then(Value::as_str),
+        ) {
+            (Some(id), Some(kind)) if id == message_id => Ok(Some(kind.to_owned())),
+            _ => Err(OpenCodeRuntimeError::InvalidResponse(
+                "message lookup response has invalid identity or shape".to_owned(),
+            )),
+        }
+    }
+
+    async fn v2_send(
+        &self,
+        request: reqwest::RequestBuilder,
+        what: &str,
+    ) -> Result<(), OpenCodeRuntimeError> {
+        let response = request
+            .send()
+            .await
+            .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(OpenCodeRuntimeError::Http(format!(
+                "{what} returned HTTP {}",
+                response.status()
+            )));
+        }
+        Ok(())
     }
 
     /// Gives an OpenCode 2 session the permission rules of BiBCode's runtime mode.
