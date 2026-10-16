@@ -211,7 +211,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     { threadId, patches: true },
     {
       onExpectedFailure: setStreamError,
-      retryExpectedFailureAfter: "250 millis",
+      // A thread can appear just after its view subscribes, so a failure is retried soon. A
+      // deleted thread fails every time; a fixed 250 ms retry hammered the server (#113).
+      retryExpectedFailure: {
+        when: () => true,
+        initialDelay: "250 millis",
+        maxDelay: "30 seconds",
+        resetAfter: "30 seconds",
+      },
     },
   ).pipe(Stream.runForEach(applyItem), Effect.forkScoped);
 

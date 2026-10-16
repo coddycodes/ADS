@@ -30,6 +30,17 @@ probe releases its listener; it does not reserve the port. Isolation excludes
 sibling tests that can fork with copies of open sockets, but an address-in-use
 failure alone does not identify the process that held the port.
 
+A server test that captures `tracing` output with a scoped subscriber
+(`tracing::subscriber::set_default`) runs in a process of its own through
+`test_support::in_own_process` when another test can emit the same event.
+`tracing-core` caches each callsite's interest process-wide on its first hit,
+and while one dispatcher exists it asks only the default of the thread that hit
+it. A sibling test that hits the same `warn!` first on another thread, with no
+subscriber, turns it off for the capture: an expected event is missing, and an
+absence check passes without checking anything (#112). A capture that checks
+absence also emits the event on purpose afterwards and checks that it arrived.
+Captures in integration-test binaries share this exposure.
+
 For WebSocket heartbeat integration, separate exact cadence from connection
 survival. Controlled-clock transport tests pin the 15-second cadence and the
 restart after a scheduler stall; real sockets verify Pong-only survival for

@@ -27,6 +27,13 @@ equivalent status source; clients keep the control visible but disabled.
 steering; Cursor, Grok, and OpenCode omit it. The server checks the same driver
 capability when admitting a steer of the oldest queued message.
 
+`supportsConversationRewind` comes from the same driver capability: `true`
+for Codex and OpenCode, `false` for the others. A checkpoint revert on a
+provider without it restores only the files. The supervisor checks the same
+capability before it asks a provider to rewind. Every snapshot carries the
+flag, so the revert confirmation can say which outcome to expect. It reads an
+absent flag, from an older server, as unknown and keeps the full warning.
+
 ## Workspace capability discovery
 
 The composer reads `server.getProviderCapabilities({ instanceId, cwd })` for its
@@ -95,8 +102,13 @@ promotes one eligible head. Explicit steering uses the same delivery owner and
 
 A durable turn is replayed unchanged, so a launch that fails because the
 selected model or session refuses the turn's own options
-(`ProviderRuntimeError::InvalidOption`) fails that delivery once. Every other
-launch failure, such as a spawn error, stays definitely not sent and is retried.
+(`ProviderRuntimeError::InvalidOption`) fails that delivery once. So does a
+launch refused because BiBCode cannot drive the configured provider, such as an
+unsupported major version (`ProviderRuntimeError::IncompatibleProvider`): the
+delivery fails with the actionable detail instead of relaunching the provider
+in a retry loop, and a retry after the user fixes the setting launches
+normally. Every other launch failure, such as a spawn error, a port race, or a
+server that is slow to start, stays definitely not sent and is retried.
 `InvalidOption` comes from every deterministic option check:
 
 - the shape checks of Claude, Codex and OpenCode: an option without an id, and a
@@ -149,13 +161,26 @@ not list. Fast Mode off asks for nothing and is never refused.
 Each driver translates between the common orchestration model and its native
 protocol:
 
-| Provider | Native integration                             | Steer                 | Activity support                                                                           |
-| -------- | ---------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------ |
-| Codex    | Codex App Server JSON-RPC                      | `turn/steer`          | Structured chat and managed-terminal observation.                                          |
-| Claude   | Claude stream-JSON CLI and authenticated hooks | Stream-JSON user line | Structured chat and managed-terminal observation when required capabilities are available. |
-| Cursor   | Agent Client Protocol                          | Unsupported           | Normal chat only in activity protocol v2.                                                  |
-| Grok     | Agent Client Protocol                          | Unsupported           | No structured Activity observation.                                                        |
-| OpenCode | OpenCode server/events API                     | Unsupported           | Structured chat and managed-terminal observation.                                          |
+| Provider | Native integration                             | Steer                 | Checkpoint revert       | Activity support                                                                           |
+| -------- | ---------------------------------------------- | --------------------- | ----------------------- | ------------------------------------------------------------------------------------------ |
+| Codex    | Codex App Server JSON-RPC                      | `turn/steer`          | Rewinds, then files     | Structured chat and managed-terminal observation.                                          |
+| Claude   | Claude stream-JSON CLI and authenticated hooks | Stream-JSON user line | Files only, with notice | Structured chat and managed-terminal observation when required capabilities are available. |
+| Cursor   | Agent Client Protocol                          | Unsupported           | Files only, with notice | Normal chat only in activity protocol v2.                                                  |
+| Grok     | Agent Client Protocol                          | Unsupported           | Files only, with notice | No structured Activity observation.                                                        |
+| OpenCode | OpenCode server/events API                     | Unsupported           | Rewinds, then files     | Structured chat and managed-terminal observation.                                          |
+
+See [Checkpoint revert](./rpc-and-orchestration.md#checkpoint-revert).
+
+The OpenCode driver speaks the V1 server API of OpenCode 1.x. OpenCode 2
+replaced it with `/api/*` routes and answers V1 GET paths with its web UI as
+HTTP 200, so the adapter identifies the API before use
+(`provider::opencode::probe_server_api`): an authenticated `GET /global/health`
+that returns `{"healthy": true}` is the V1 API, and a `GET /api/info` that
+returns a version is OpenCode 2. A managed server is ready only on the V1
+answer; an OpenCode 2 answer stops it and fails the launch with an actionable
+provider error. A configured Server URL is checked once at launch with the same
+probe. Inventory reads the CLI's `--version` and reports OpenCode 2 as an error
+without starting its server.
 
 Provider-specific events are normalized into shared orchestration contracts;
 provider wire payloads do not leak into React state. See
@@ -299,17 +324,48 @@ the fatal-exit trigger, and intentional stop/idle suspension cancels and joins
 the supervisor event pump before shutting down any driver. Each completion reserves
 an idle deadline generation before `ready` is published; successful projection of a
 non-failed completion arms it. When a current deadline finds a busy session (an
-admitted delivery, a `running` or `starting` projection, an active turn, or live
-provider activity), it immediately re-arms for one idle timeout, and the next
-completion supersedes that re-arm. Live provider activity is the session's
-in-memory set of actors (Claude subagents, Codex child agents) and work items
-(background tasks and terminals) whose latest projected lifecycle is `starting` or
-`running`; `waiting` and `unknown` do not count. It follows the changes the
-projection accepted, not the provider's raw reports, and disabling Agent Activity
-clears it because the projection interrupts that activity. It keeps the session busy only
-while the provider has emitted an event within the last 30 minutes, which bounds
-activity that never reports a terminal state. Removal-time suspension ignores live
-activity. A clean server shutdown retires every live session like idle suspension:
+admitted delivery, a `running` or `starting` projection, an active turn, live
+provider work, or work BiBCode cannot see), it immediately re-arms for one idle
+timeout, and the next completion supersedes that re-arm.
+
+Idle suspension must never stop work the provider still runs:
+
+- **Provider-started turns.** Every `turn.started`, including one the provider
+  starts itself (a Codex goal continuation, Claude answering a finished
+  background task), cancels the pending deadline; the turn's `turn.completed`
+  arms the next one. When the driver emits `turn.started` only for turns the
+  provider reported running (Codex for each `turn/started`, Claude for a turn it
+  starts itself), the session is also projected `running` with that turn unless
+  it already reads so. Cursor, OpenCode, and Grok announce a turn before BiBCode
+  sends it, so their announcement does not change the projection: a send that
+  fails reports no completion.
+- **Live provider work** is the session's in-memory set of actors (Claude
+  subagents, Codex child agents) and work items (background tasks and
+  terminals) whose latest projected lifecycle is `starting` or `running`
+  (`waiting` and `unknown` do not count), plus the background work the provider
+  reports outside Activity in a `session.background-work` event (`liveTasks`).
+  The projected sets follow the changes the projection accepted, not the
+  provider's raw reports, and disabling Chat Activity clears them because the
+  projection interrupts that activity. The reported count does not depend on
+  activity capabilities or on Chat Activity: Claude reports its live background
+  tasks from its own stream (see
+  [Claude background work](../providers/claude.md#background-work-and-idle-suspension)).
+  Live work keeps the session busy only while the provider has emitted an event
+  within the last 30 minutes, which bounds work that never reports a terminal
+  state.
+- **Work BiBCode cannot see.** A session is suspended only when the absence of
+  live work means idle: Claude always, and Codex or OpenCode while Chat Activity
+  is on and their scope reports actors or background work. Cursor, which has no
+  Activity adapter, and Codex or OpenCode with Chat Activity off, can run
+  background shells or subagents BiBCode cannot see, so their sessions are not
+  idle-suspended; they end with the thread, an explicit stop, or server
+  shutdown.
+
+Each suspension logs why at INFO (`suspending an idle provider session: no turn,
+subagent, or background task is running`), or at WARN when live work stopped
+reporting for the 30-minute cap, with the live subagent and background-task
+counts. Removal-time suspension ignores live activity. A clean server shutdown
+retires every live session like idle suspension:
 the runtime row becomes `suspended` with its resume cursor (unless the thread is
 deleted), so the next message after a restart resumes the same native
 conversation. Explicit stop, thread deletion, and provider restart still delete
@@ -344,11 +400,11 @@ session that has never run a turn; and a failed turn. None arms a new idle
 deadline. Idle policy retains the session until a later successfully projected,
 non-failed completion arms one, or an explicit stop/lifecycle cleanup removes
 it. This retains resources longer but avoids treating those events as proof
-that the provider is idle. The existing admission/projection check cannot see
-all unprojected provider work, including a provider-initiated turn or a failed
-running-state write; that limitation remains explicit. Expiring these cases
-would first require an authoritative busy/idle signal and defined failure
-ordering. The current decision is to preserve this retention policy.
+that the provider is idle. A provider turn that never reports `turn.completed`
+likewise leaves no deadline armed. The admission/projection check still cannot
+see a failed running-state write; that limitation remains explicit. Expiring
+these cases would first require an authoritative busy/idle signal and defined
+failure ordering. The current decision is to preserve this retention policy.
 
 The next start delivery,
 including **Send now** on a held queued message, detaches the dead session and

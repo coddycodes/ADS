@@ -1174,6 +1174,13 @@ impl WorktreeCatalogService {
         Ok(snapshot)
     }
 
+    /// Moves whenever a mutation invalidates the project's catalog, so a read made outside
+    /// the project mutation lock can learn under the lock whether a mutation overlapped it.
+    pub(crate) fn mutation_epoch(&self, project_id: &str) -> Option<u64> {
+        let entry = self.entry_for_project(project_id)?;
+        Some(lock(&entry.state).mutation_epoch)
+    }
+
     pub async fn latest(&self, project_id: &str) -> Option<Arc<WorktreeCatalogSnapshot>> {
         let entry = self.entry_for_project(project_id)?;
         let user = self.reserve_active_user(project_id, entry)?;

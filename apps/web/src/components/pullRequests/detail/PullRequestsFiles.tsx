@@ -17,7 +17,6 @@ import type {
 } from "@bibcode/contracts";
 import { projectKey } from "@bibcode/client-runtime/state/entities";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
 import { FileDiffIcon, FileMinusIcon, FilePlusIcon, FolderIcon, MoveRightIcon } from "lucide-react";
 import { memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useClientSettings } from "../../../hooks/useSettings";
@@ -26,6 +25,7 @@ import { DiffWorkerPoolProvider } from "../../DiffWorkerPoolProvider";
 import { PullRequestsExternalLink } from "../shared/PullRequestsMarkdown";
 import { fileTree, type FileTreeRow } from "./pullRequestsDetail.logic";
 import { PullRequestsReviewFile } from "../review/PullRequestsReviewFile";
+import { usePullRequestsFileAnchor, usePullRequestsNavigation } from "./pullRequestsNavigation";
 export interface PullRequestsFilesProps {
   files: Files;
   timeline?: PullRequestsTimeline;
@@ -46,15 +46,6 @@ const EMPTY_VIEWED: readonly string[] = [];
 const rowKey = (row: FileTreeRow) => `${row.kind}:${row.path}`;
 const fileKey = (file: Files["files"][number]) => file.path;
 const treeRowSize = () => 56;
-function pathFromHash(hash: string) {
-  const value = hash.replace(/^#/, "");
-  if (!value.startsWith("file=")) return null;
-  try {
-    return decodeURIComponent(value.slice(5));
-  } catch {
-    return null;
-  }
-}
 const FileTreeEntry = memo(function FileTreeEntry({
   row,
   selected,
@@ -200,9 +191,8 @@ export const PullRequestsFiles = memo(function PullRequestsFiles({
   context,
 }: PullRequestsFilesProps) {
   const isLive = live !== null;
-  const navigate = useNavigate();
-  const { hash } = useLocation();
-  const anchorPath = pathFromHash(hash);
+  const navigation = usePullRequestsNavigation();
+  const anchorPath = usePullRequestsFileAnchor();
   const initialIgnoreWhitespace = useClientSettings((settings) => settings.diffIgnoreWhitespace);
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(initialIgnoreWhitespace);
   const [scrollFailed, setScrollFailed] = useState(false);
@@ -234,15 +224,9 @@ export const PullRequestsFiles = memo(function PullRequestsFiles({
   const selectFile = useCallback(
     (path: string) => {
       scrollToFile(path);
-      void navigate({
-        to: "/project/$environmentId/$projectId/pull-requests/$number",
-        params: { ...projectRef, number: String(detail.number) },
-        search: { tab: "files" },
-        hash: `file=${encodeURIComponent(path)}`,
-        replace: true,
-      });
+      navigation.setFileAnchor(path);
     },
-    [detail.number, navigate, projectRef, scrollToFile],
+    [navigation, scrollToFile],
   );
   const toggleViewed = useCallback(
     (path: string) =>
@@ -390,10 +374,10 @@ export const PullRequestsFiles = memo(function PullRequestsFiles({
         {files.files.length === 0 ? (
           <p className="p-4 text-sm text-muted-foreground">No files changed</p>
         ) : (
-          <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+          <div className="flex min-h-0 flex-1 flex-col @3xl/pull-request:flex-row">
             <nav
               aria-label="Changed files"
-              className="flex h-48 shrink-0 flex-col border-b border-border md:h-auto md:w-64 md:border-r md:border-b-0"
+              className="flex h-48 shrink-0 flex-col border-b border-border @3xl/pull-request:h-auto @3xl/pull-request:w-64 @3xl/pull-request:border-r @3xl/pull-request:border-b-0"
             >
               <LegendList
                 data={rows}

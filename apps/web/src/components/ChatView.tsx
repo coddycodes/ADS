@@ -312,6 +312,7 @@ import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/Compos
 import {
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
+  buildRevertCheckpointConfirmation,
   buildThreadTurnInterruptInput,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
@@ -377,6 +378,11 @@ const PreviewPanel = lazy(() =>
 const DiffPanel = lazy(() => import("./DiffPanel"));
 const SourceControlPanel = lazy(() => import("./SourceControlPanel"));
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+const PullRequestPanelSurface = lazy(() =>
+  import("./pullRequests/PullRequestPanelSurface").then((module) => ({
+    default: module.PullRequestPanelSurface,
+  })),
+);
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -4966,11 +4972,10 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
       const confirmed = await localApi.dialogs.confirm(
-        [
-          `Revert this thread to checkpoint ${turnCount}?`,
-          "This will discard newer messages and turn diffs in this thread.",
-          "This action cannot be undone.",
-        ].join("\n"),
+        buildRevertCheckpointConfirmation({
+          turnCount,
+          provider: activeProviderStatus,
+        }),
       );
       if (!confirmed) {
         return;
@@ -4998,6 +5003,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeThread,
       activeEnvironmentUnavailable,
       activeEnvironmentUnavailableLabel,
+      activeProviderStatus,
       environmentId,
       isConnecting,
       isRevertingCheckpoint,
@@ -6698,6 +6704,17 @@ function ChatViewContent(props: ChatViewProps) {
           gitCwd={gitCwd}
           projectRef={activeProjectRef}
           workspaceUnavailable={workspaceUnavailable}
+        />
+      </Suspense>
+    ) : activeRightPanelSurface?.kind === "pullRequest" ? (
+      <Suspense fallback={null}>
+        <PullRequestPanelSurface
+          key={`${scopedThreadKey(activeThreadRef)}:${activeRightPanelSurface.id}`}
+          threadRef={activeThreadRef}
+          projectRef={activeProjectRef}
+          gitCwd={gitCwd}
+          workspaceUnavailable={workspaceUnavailable}
+          surface={activeRightPanelSurface}
         />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "plan" ? (

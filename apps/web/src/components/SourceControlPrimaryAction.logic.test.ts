@@ -42,6 +42,7 @@ function makeInput(
     stagedCount?: number;
     stageableCount?: number;
     mergeAvailable?: boolean;
+    canOpenInPanel?: boolean;
   } = {},
 ): SourceControlPrimaryActionInput {
   return {
@@ -52,6 +53,7 @@ function makeInput(
     stagedCount: args.stagedCount ?? 0,
     stageableCount: args.stageableCount ?? 0,
     mergeAvailable: args.mergeAvailable ?? true,
+    canOpenInPanel: args.canOpenInPanel ?? true,
   };
 }
 
@@ -407,12 +409,32 @@ describe("buildSourceControlMenuItems — always-rendered, disabled-with-reason"
       "pull",
       "merge",
       "open_pr",
+      "open_pr_panel",
     ]);
     assert.deepInclude(menuItem(items, "open_pr"), {
       label: "View PR",
       disabled: false,
       kind: "open_pr",
     });
+    assert.deepInclude(menuItem(items, "open_pr_panel"), {
+      label: "Open PR in panel",
+      disabled: false,
+      kind: "open_pr_panel",
+      group: "remote",
+    });
+  });
+
+  it("omits the in-panel action where the panel cannot show the request", () => {
+    const items = buildSourceControlMenuItems(
+      makeInput({ status: { aheadCount: 2, pr: OPEN_PR }, canOpenInPanel: false }),
+    );
+    assert.notInclude(menuIds(items), "open_pr_panel");
+    assert.include(menuIds(items), "open_pr");
+  });
+
+  it("offers no in-panel action without an open request", () => {
+    const items = buildSourceControlMenuItems(makeInput({ status: { aheadCount: 2 } }));
+    assert.notInclude(menuIds(items), "open_pr_panel");
   });
 
   it("disables every item with the busy reason while an action is in flight", () => {

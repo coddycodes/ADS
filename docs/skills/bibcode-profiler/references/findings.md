@@ -92,12 +92,19 @@ and `startedAt`.
     query (the `crash-query-cursor` file; the last session's start the first
     time), from a process other than this one and an unclean previous run, such
     as an app relaunched by an update that died before its profiler started, or
-    a crash monitor. A `SIGBUS` (signal 7) of a `--crash-monitor` right after an
+    a crash monitor. The same executable is the same path; for an AppImage,
+    whose `<dir>/.mount_<id>` changes every run, also the same path inside any
+    other mount in that `<dir>`, or that path from the AppDir's root (such as
+    `/usr/bin/bibcode-desktop`), which is how the kernel names it once the mount
+    was detached; a system install at exactly that path cannot be told apart.
+    Another binary of the same name, such as an extracted AppImage or another
+    install, is not reported (#110). A `SIGBUS` (signal 7) of a `--crash-monitor` right after an
     AppImage update under a systemd `.service` unit is that unit's stop taking
     the old mount away; from v0.9.3 the host stops its monitor first, so only an
     update run by an older build leaves one. Fingerprint `unrecorded`, the executable's file name and
     the signal, so repeats group; evidence `source: coredump`, `pid`, `signal`,
-    `exe`, `crashedAt`, `crashId`/`crashIds` (`coredump-<pid>-<time>`, which
+    `exe` (the crashed process's executable path, redacted), `crashedAt`,
+    `crashId`/`crashIds` (`coredump-<pid>-<time>`, which
     keeps it from being raised again) and `rawRef` (`coredumpctl info <pid>`).
 - **Fingerprint:**
   - from a dump: `processKind`, `minidump`, the dump's crash reason (such as

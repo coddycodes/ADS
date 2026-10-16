@@ -290,7 +290,10 @@ function commit(subject: string, body = ""): GitManagerCommitEntry {
 
 const base = { actionId: "action-1", cwd: "/repo", action: "create_pr" } as const;
 
-function finished(prStatus: "created" | "opened_existing"): GitActionProgressEvent {
+function finished(
+  prStatus: "created" | "opened_existing",
+  pr: Partial<GitRunStackedActionResult["pr"]> = {},
+): GitActionProgressEvent {
   const result: GitRunStackedActionResult = {
     action: "create_pr",
     branch: { status: "skipped_not_requested" },
@@ -303,6 +306,7 @@ function finished(prStatus: "created" | "opened_existing"): GitActionProgressEve
       baseBranch: "main",
       headBranch: "feature/reviewed",
       title: "Reviewed",
+      ...pr,
     },
     toast: { title: "Git action completed", cta: { kind: "none" } },
   };
@@ -1250,6 +1254,43 @@ describe("GitManagerCreatePullRequestDialog", () => {
     ).toEqual(["Done"]);
 
     await act(async () => button("Done").click());
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("hands the created request to onDone when Done is pressed", async () => {
+    h.status = status({
+      sourceControlProvider: {
+        kind: "gitlab",
+        name: "GitLab",
+        baseUrl: "https://gitlab.example.test",
+      },
+    });
+    const onDone = vi.fn();
+    const { onOpenChange } = await renderDialog(vi.fn(), vi.fn(), null, { onDone });
+    await chooseTarget("release/next");
+    h.script = [{ outcome: "success", events: [finished("created")] }];
+    await act(async () => button("Publish and create merge request").click());
+    expect(onDone).not.toHaveBeenCalled();
+    await act(async () => button("Done").click());
+    expect(onDone).toHaveBeenCalledWith({ number: 7, provider: "gitlab" });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("only closes on Done when the host returned no request number", async () => {
+    h.status = status({
+      sourceControlProvider: {
+        kind: "gitlab",
+        name: "GitLab",
+        baseUrl: "https://gitlab.example.test",
+      },
+    });
+    const onDone = vi.fn();
+    const { onOpenChange } = await renderDialog(vi.fn(), vi.fn(), null, { onDone });
+    await chooseTarget("release/next");
+    h.script = [{ outcome: "success", events: [finished("created", { number: undefined })] }];
+    await act(async () => button("Publish and create merge request").click());
+    await act(async () => button("Done").click());
+    expect(onDone).not.toHaveBeenCalled();
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 

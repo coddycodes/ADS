@@ -1313,8 +1313,9 @@ interface SidebarPrimaryCardProps {
 
 /**
  * The primary card: the project's main checkout. Its title is the checkout's
- * live branch (the default thread's `branch` is always null), and its PR and
- * dirty state come straight from the passive summary for the same reason.
+ * live branch, and its PR and dirty state come straight from the passive
+ * summary. The default thread's `branch` is only a fallback: the chat header
+ * syncs it while the thread is open, so it lags checkouts made elsewhere.
  */
 const SidebarPrimaryCard = memo(function SidebarPrimaryCard(props: SidebarPrimaryCardProps) {
   const {

@@ -105,6 +105,14 @@ For packaged visual validation on each available supported provider:
 Record unavailable provider/platform scenarios and visual evidence in the
 execution report. Hermetic tests do not establish a packaged native visual pass.
 
+OpenCode scenarios need OpenCode 1.x. Run `opencode --version` with the
+desktop's `PATH` first: OpenCode 2 prints `opencode v2.x.y`. With OpenCode 2,
+verify instead that the OpenCode row and the chat banner show the
+unsupported-version error naming Binary path, then either set Binary path to an
+OpenCode 1.x executable or record the OpenCode scenarios as unavailable. The
+version gate's focused checks are
+`cargo test -p bibcode-server --lib -j 2 -- opencode_readiness opencode_configured_server_url opencode_2_ provider::opencode::server_api_tests`.
+
 ## Revision and worktree preflight
 
 Use GitHub CLI for GitHub metadata and Git for worktree/revision operations.
@@ -2132,7 +2140,13 @@ starts.
     Create menu action must push an unpublished branch first, then open the
     dialog with that branch selected as the source and listed among the origin
     branches; a rejected push must show an error and leave the dialog closed, and
-    cancelling the dialog after the push must not create a request. A branch
+    cancelling the dialog after the push must not create a request. After the
+    request is created or found, **Done** in the dialog opened from Source
+    Control must open it as a right-panel tab beside the thread (one tab per
+    request; Done again does not duplicate it), unless the host is Bitbucket or
+    Azure DevOps or **Pull requests** is off in Settings, where Done only closes
+    the dialog; **Done** from the chat Git action, the Pull Requests page or the
+    Git Manager only closes the dialog. A branch
     created with `git checkout -b feature origin/main` (upstream `origin/main`)
     must open the dialog without a push and publish `origin/feature` only when
     the request is created.
@@ -2311,36 +2325,52 @@ never count a sandbox-denied listener test as passed or skipped.
    resolved/outdated markers, suggestions and system events. Remote images
    must be labelled browser links. A minimized comment opens with Show comment;
    a thread's file link must select Files and scroll to its encoded path.
-   Confirm metadata moves above the merge box below the large-screen breakpoint.
+   Confirm metadata moves above the merge box when the detail is narrower than
+   its container breakpoint (48rem): in a right-panel tab and in a narrow window.
    On GitLab, post an authorized inline suggestion, then refresh Conversation and
    Files: a `DiffNote`/other Note-subtype GlobalID must retain its thread, numeric
    note id, suggestion and actions. Inspect label/milestone add/remove events.
    Measure provider-process counts separately for cold and warm writes/read refreshes.
    Confirm the 30-second context bound, Rescan bypass, and fresh permission/head
    refusal after access is revoked or the request changes within that window.
-9. Verify Commits copy the full SHA and open the host commit. Checks/Pipelines
-   group rows with state, duration and links and distinguish the host's empty
-   state. Refresh reloads detail plus the active tab (including timeline in
-   Files); reopening a cached tab refreshes it before displaying its previous result. Exercise an expired
-   authentication response and verify context recovery and Retry.
-10. Verify real GitHub split patches and GitLab synthetic-header patches render
+9. Right-panel requests: with a thread on a branch that has an open request,
+   choose **Open MR in panel** (**Open PR in panel** on GitHub) from the
+   Source Control menu; it opens one right-panel tab labelled `!N`/`#N` beside
+   the thread, against the thread's checkout. For a Bitbucket or Azure DevOps
+   repository, or with **Pull requests** off in Settings, the item is absent
+   and Done opens no tab. In the tab, switch tabs, follow a conversation file
+   link (it must select Changes and scroll to the file), reload and confirm the
+   tab and its selected section persist, then use **Open full page** and
+   confirm the `?tab=` URL. On a disposable request, a revert must open the
+   revert request as a second tab and a delete must close only its tab. From
+   the full page, **Open beside a thread…** must list the project's threads
+   with those on the request's branch first ("On this branch"), open the
+   request in the chosen thread and navigate to it; with no thread it is
+   disabled with its reason. Remove the thread's worktree and confirm the tab
+   shows the unavailable reason instead of an error.
+10. Verify Commits copy the full SHA and open the host commit. Checks/Pipelines
+    group rows with state, duration and links and distinguish the host's empty
+    state. Refresh reloads detail plus the active tab (including timeline in
+    Files); reopening a cached tab refreshes it before displaying its previous result. Exercise an expired
+    authentication response and verify context recovery and Retry.
+11. Verify real GitHub split patches and GitLab synthetic-header patches render
     in Files, including renamed files. Scroll far enough to exercise list and
     diff virtualization. Viewed must survive tab changes and reload. Test the
     whitespace toggle, binary/unavailable/too-large rows, long-line plain text,
     and the explicit Show diff anyway gate using controlled fixtures.
-11. Exercise the merge readiness states with host data or declared fixtures,
+12. Exercise the merge readiness states with host data or declared fixtures,
     including merged author/time, closed, reviews required and conflicts.
     Every denied action
     must have a hover explanation and screen-reader description. A read-only
     viewer sees the server merge reason without a method select. Allowed method,
     delete-branch and auto-merge values match the server.
     Record fixture-based unit rendering separately from browser/native evidence.
-12. On an explicitly authorized throwaway request, post a comment, preview it,
+13. On an explicitly authorized throwaway request, post a comment, preview it,
     edit it, add/remove a reaction, and delete it through confirmation. Reply
     to and resolve/unresolve a thread. Confirm each action refreshes the header
     and timeline without reloading the page. Copy/Open on host currently use
     the request URL; the comment model has no host permalink.
-13. Add single-line and reverse-drag multi-line inline comments; insert a
+14. Add single-line and reverse-drag multi-line inline comments; insert a
     suggestion with the selected new source lines. Verify amber pending cards,
     Edit/Remove, the sticky counter in both tabs, and review submission. On
     GitLab, Overview shows **Approve** under the description, with **Approval
@@ -2351,7 +2381,7 @@ never count a sandbox-denied listener test as passed or skipped.
     is **Revoke approval**. A denied account still sees **Approve** with the
     server reason. Reload while comment, reply, edit, inline, and review-summary
     drafts exist and verify they survive. Unrenderable lines must retain draft cards below the diff.
-14. Exercise full-success, zero-landed, and partial-landed review receipts with
+15. Exercise full-success, zero-landed, and partial-landed review receipts with
     controlled fixtures or an authorized test host. Only failed comments stay
     pending by path, line, and body; identical duplicate drafts retain their
     candidates for inspection. A posted GitLab summary must not be reposted on
@@ -2359,7 +2389,7 @@ never count a sandbox-denied listener test as passed or skipped.
     the head before submission: retain every draft and show the actionable
     stale-head Refresh toast. Verify own-approval/request-changes denials and
     all unsupported host actions stay visible with server reasons.
-15. Where supported, apply one suggestion with an optional commit message and
+16. Where supported, apply one suggestion with an optional commit message and
     a batch selected from Files. GitHub offers the Apply denial reason and Copy.
     Dismiss a review only after a required message and confirmation; re-request
     an eligible reviewer. Confirm the environment mutation capability also
@@ -2368,7 +2398,7 @@ never count a sandbox-denied listener test as passed or skipped.
     Refresh after removing a commented file from the diff and verify saved
     drafts remain editable/removable. Repeat a failed action and verify draft retention.
     Capture gate output, React/UI reviews, and browser/native evidence separately.
-16. On an authorized disposable request, edit title and description, preview,
+17. On an authorized disposable request, edit title and description, preview,
     save, cancel with Escape, and reload drafts. Add/remove reviewers, assignees,
     labels and milestones; verify author exclusion, milestone Clear, five-second
     Undo, no write on expiry, lazy vocabulary reads and 300 ms truncated search.
@@ -2377,7 +2407,7 @@ never count a sandbox-denied listener test as passed or skipped.
     If that read fails, show Retry rather than allowing edits against stale metadata.
     Change the base with pending comments: Cancel and host failure preserve them,
     and only success clears them after the warning.
-17. On that disposable request, verify repository merge defaults, single-method
+18. On that disposable request, verify repository merge defaults, single-method
     hiding and GitLab's project-method text. Confirm Merge names the method,
     target, branch deletion and auto-merge choice. On GitLab, verify the title is
     **Merge merge request** and recovery/toast, list-state and checkout labels use
@@ -2389,7 +2419,7 @@ never count a sandbox-denied listener test as passed or skipped.
     Move the head before confirming: verify stale-head Refresh and retained drafts,
     with no automatic retry. Simulate a partial-progress failure and preserve the
     exact server message. Verify Update branch merge/rebase and GitLab Skip CI.
-18. Verify Mark ready/Convert to draft, Close/Reopen without unnecessary confirmation,
+19. Verify Mark ready/Convert to draft, Close/Reopen without unnecessary confirmation,
     GitHub lock-reason selection and GitLab reasonless lock, Unlock, Copy URL and
     Open in browser. Revert a merged disposable request after its creation warning
     and verify navigation to the returned number. Delete a GitLab disposable
@@ -2397,13 +2427,13 @@ never count a sandbox-denied listener test as passed or skipped.
     to the list. Check denied actions and the environment mutation capability,
     keyboard operation, and absence of Base UI native-button console errors.
 
-19. On a disposable request, use **Checkout** in the selected clean checkout and
+20. On a disposable request, use **Checkout** in the selected clean checkout and
     verify its branch and head with Git. Dirty the target, then repeat: the
     server reason must appear and existing changes must remain. Repeat with an
     unfinished merge/rebase. Use another project worktree as the target and
     verify the source checkout stays unchanged. For an occupied branch, choose
     **Switch to that worktree**, then confirm the successful result path.
-20. Choose **New worktree…** and verify its branch/head, persisted workspace owner,
+21. Choose **New worktree…** and verify its branch/head, persisted workspace owner,
     and sidebar row. With a conflicting local head branch, verify the new branch
     uses the request suffix and the original tip is unchanged. Repeat with the
     matching head already checked out in the main or another worktree: the name

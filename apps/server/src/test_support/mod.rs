@@ -13,7 +13,6 @@ pub(crate) mod fork_probe;
 pub(crate) mod hermetic_providers;
 #[path = "../../tests/support/isolated_git_config.rs"]
 pub(crate) mod isolated_git_config;
-#[cfg(target_os = "linux")]
 #[path = "../../tests/support/reexec.rs"]
 pub(crate) mod reexec;
 mod sandbox;
@@ -41,6 +40,24 @@ pub(crate) fn reexec_without_provider_path(test_name: &str) -> bool {
         String::from_utf8_lossy(&output.stderr)
     );
     true
+}
+
+/// Runs test `name` (its full path, as `cargo test` prints it) again in a process of its
+/// own, where no other test runs, and returns `None` once it proved entry and completion
+/// there. In that child, returns the phase to complete after the test's assertions.
+///
+/// For tests that capture `tracing` events with a scoped subscriber (`set_default`). Each
+/// callsite caches its interest process-wide when it is first hit, and while one dispatcher
+/// exists, `tracing-core` asks only the default of the thread that hit it. A sibling test that
+/// hits the same `tracing::warn!` first on another thread, with no subscriber, so turns it off
+/// for the capture, which then reads an empty log (#112).
+pub(crate) fn in_own_process(name: &str) -> Option<reexec::ChildPhase> {
+    const PHASE: &str = "own-process";
+    if let Some(child) = reexec::enter(name, PHASE) {
+        return Some(child);
+    }
+    reexec::run(name, PHASE, None, |_| {});
+    None
 }
 
 #[cfg(target_os = "linux")]

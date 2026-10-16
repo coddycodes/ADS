@@ -1418,8 +1418,12 @@ describe("resolveWorkspaceBranchLabel", () => {
     ).toBe("abc1234");
   });
 
-  it("ignores a stale summary", () => {
-    expect(resolveWorkspaceBranchLabel(summary({ stale: true }), "stored")).toBe("stored");
+  // A failed PR lookup republishes a just-read summary as stale; its ref is still
+  // the newest observation, while the recorded branch only follows an open thread.
+  it("keeps a stale summary's ref over the recorded branch", () => {
+    expect(resolveWorkspaceBranchLabel(summary({ refName: "feature", stale: true }), "main")).toBe(
+      "feature",
+    );
   });
 
   it("uses the recorded branch without a status", () => {

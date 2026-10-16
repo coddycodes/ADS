@@ -133,7 +133,12 @@ message's inbound byte permits until it is admitted. A refusal (a missing scope,
 an invalid session, maintenance) that cannot be queued before its 5-second
 deadline goes through the control lane, and one that reaches neither ends the
 session. A periodic task that holds the single database worker therefore delays
-only the requests behind it, and the read loop keeps answering `Ping`.
+only the requests behind it, and the read loop keeps answering `Ping`. When a
+request's task ends, however it ends (a reply, a stream terminal, a refusal, an
+interrupt or a panic), the session cancels the request's cancellation token, so
+work its handler started ends with the request rather than with the connection.
+A stream producer that kept waiting for events after its error terminal held an
+engine event receiver for as long as the socket stayed open (#113).
 
 Each connection has one writer task that owns the socket sink. It drains a
 bounded control lane before every queued message: RPC `Pong`, interrupt exits,
@@ -249,6 +254,10 @@ labels such as the sidebar branch follow a checkout without waiting for the
 deadline; status reads, including watcher-driven reads, also nudge it when
 repository availability (`isRepo` or `repositoryUnavailableReason`) changes, so
 the sidebar follows a break or repair at once.
+The left panel names a card's branch from the latest summary even when it is
+stale, since a failed PR lookup marks a just-read base stale; only the PR and
+dirty indicators wait for a fresh value. A thread's recorded `branch` is the
+fallback when no summary names one.
 Each successful base cycle publishes current local and provider state. A same-ref/provider PR from the immediately prior cycle may be carried
 only into cycle N+1 while enrichment runs or fails, preserving its original
 `observedAt` with `stale: true`; cycle N+2 expires it unless enrichment refreshes
@@ -1893,6 +1902,18 @@ client decodes only the changed fields with the thread's field
 schemas, and `packages/contracts/fixtures/thread-stream/lifecycle.json` pins
 that patches rebuild the server's snapshot exactly. Older clients omit
 `patches` and keep receiving whole snapshots; older servers ignore it.
+A thread stream ends with its first error, such as `Thread … was not found`
+for a missing or deleted thread, whose targeted load reads none of its rows.
+The client retries a failed `subscribeThread` or `subscribeActivity` with
+backoff starting at 250 ms, doubling to a 30 s cap, and resetting after the
+stream stays up for 30 s: a thread can appear just after its view subscribes,
+while a view of a deleted thread retried every 250 ms for as long as it stayed
+mounted (#113).
+The client's thread detail projection keeps every object of a new snapshot or patch
+that equals what it already shows, and remembers which source object resolved
+to which shown one so later patches compare only what they changed. A resync
+snapshot therefore does not hand the UI a second copy of an unchanged thread;
+each copy used to stay pinned by memoized render closures (#96).
 Every shell snapshot, live or from `orchestration.getArchivedShellSnapshot`,
 is read in one SQLite job: projects, the undeleted live or archived threads
 whose project row exists, and per thread only its session, latest turn, the
@@ -1934,8 +1955,11 @@ A launch refused because the selected model or session does not accept the
 turn's own options fails the delivery once, because the unchanged durable
 payload would be refused on every attempt. Its failed delivery carries the
 optional reason `modelSelectionRefused`, also used when a frozen turn's model
-or options are refused before delivery. Other launch failures, such as a
-spawn error, stay definitely not sent and retry with backoff. The delivery
+or options are refused before delivery. A launch refused because the provider
+itself cannot be driven, such as an unsupported version, fails the delivery
+once without a reason; a retry after the setting is fixed launches normally.
+Other launch failures, such as a spawn error, stay definitely not sent and
+retry with backoff. The delivery
 detail is what the turn shows, so every one is plain text from a single
 formatter that names the provider by its instance label, never by a driver id:
 the refusal itself, such as "Fast Mode is not supported by the selected model.";
@@ -2213,6 +2237,46 @@ the prior valid reading for that turn. A malformed row cannot evict a valid row,
 and reverting a turn removes only that turn's projected usage; neither behavior
 creates a separate usage cache.
 
+### Checkpoint revert
+
+`thread.checkpoint.revert` is accepted at once; the orchestration effect does
+the work. A provider cannot undo a rewind, so the effect orders the steps to
+keep a failure from leaving the files and the conversation out of step:
+
+1. It checks that the workspace is a Git repository and that the target
+   checkpoint ref (or `HEAD`, for turn 0) resolves.
+2. It asks the provider to drop the newer turns. If the session was suspended
+   while idle, the supervisor first reopens it with the launch a new message
+   would use: the thread's provider, modes and saved resume cursor. One case
+   differs: a conversation the provider no longer has fails the revert instead
+   of starting a new conversation, because a new one has nothing to rewind.
+   For the same reason, a thread with no saved conversation for its provider
+   fails without starting a session.
+   After the rewind, the session idles again under the normal deadline. A
+   provider that refuses, or a session that cannot be reopened, fails the
+   revert here, and nothing changes.
+3. It restores the files from the checkpoint ref, deletes the newer checkpoint
+   refs, and dispatches `thread.revert.complete`.
+
+Only Codex and OpenCode can rewind a conversation. This is the driver-owned
+`supportsConversationRewind` capability (see
+[Providers](./providers.md)), so the supervisor never asks Claude, Cursor or
+Grok to rewind. For them, step 2 reports `FilesOnly`. The effect then restores
+the files and keeps the thread's messages, checkpoints and turn count, because
+the provider keeps its conversation. It adds an informational
+`checkpoint.revert.files-only` activity that says the conversation was not
+rewound.
+
+The effect also refuses a revert while the thread's session is `running`,
+whichever client asked for it. A running turn would write over the restored
+files, or the rewind would cut it off.
+
+Once the provider has rewound, the revert must be recorded, or a retry would
+rewind the provider again. Shutdown therefore waits for step 3 instead of
+interrupting it, and a restore that fails is still recorded: the work log
+then says the conversation was rewound but the files were not restored. Every
+failure is a `checkpoint.revert.failed` activity.
+
 ## Targeted Activity cancellation flow
 
 Targeted Activity control uses typed WebSocket RPC in browser and desktop
@@ -2318,11 +2382,22 @@ something invalidates it:
   the directories the snapshot already lists rather than walking the tree,
   because adding, renaming, or removing an entry moves its parent directory's
   mtime while an in-place content edit does not. The first subscriber for a root
-  starts the sweep and the last one to leave stops it; the cached index is
-  dropped before the signal is sent, so a subscriber that re-lists on the signal
-  sees the new state. The event carries only `cwd` — the index stays the single
-  source of truth for entry data, so subscribers re-list rather than apply a
-  diff, which also keeps the payload independent of how many files changed;
+  starts the sweep and the last one to leave stops it. The sweep runs every two
+  seconds and reports a burst of changes once, at the first sweep that sees
+  nothing new; while changes keep arriving it reports about every ten seconds.
+  A report drops the cached index and rebuilds it before deciding whether to
+  signal, so a subscriber that re-lists on the signal sees the new state. It
+  stays silent only when the rebuilt entries (paths, kinds, ignored flags, and
+  truncation) match the list it last announced and nothing else (a mutation or
+  an explicit refresh) rebuilt the index since: an atomic save (write a
+  temporary file, rename it over the target) moves its directory but lists the
+  same entries, and every signal costs each subscriber a full re-read. A failed
+  rebuild is signalled. The rebuild holds a path admission and cancels its scan
+  when the workspace is lost, the last subscriber leaves, or the server shuts
+  down, so it holds up none of them. The event carries only `cwd` — the index
+  stays the single source of truth for entry data, so subscribers re-list rather
+  than apply a diff, which also keeps the payload independent of how many files
+  changed;
 - `projects.listEntries` accepts an optional boolean `refresh`. Omitting it, or
   sending `false`, serves the retained index and preserves compatibility for
   older clients. `refresh: true` drops the cached index before listing, so the

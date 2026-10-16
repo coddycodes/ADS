@@ -368,6 +368,32 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("backs off a subscription that keeps failing, as a deleted thread's does", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const subscriptionsAfterSettling = Effect.gen(function* () {
+        for (let attempt = 0; attempt < 100; attempt += 1) yield* Effect.yieldNow;
+        return yield* Ref.get(harness.subscriptionCount);
+      });
+      // Each attempt fails at once. A fixed 250 ms retry opened about 4 subscriptions a
+      // second per deleted thread, for as long as its view stayed mounted (#113).
+      const failAttempt = Queue.offer(harness.inputs, new Error("Thread gone was not found")).pipe(
+        Effect.andThen(subscriptionsAfterSettling),
+      );
+      yield* failAttempt;
+      yield* awaitThreadState(harness.observed, (value) => Option.isSome(value.error));
+      expect(yield* subscriptionsAfterSettling).toBe(1);
+
+      for (const [index, delay] of [250, 500, 1000].entries()) {
+        yield* TestClock.adjust(delay - 1);
+        expect(yield* subscriptionsAfterSettling).toBe(index + 1);
+        yield* TestClock.adjust(1);
+        expect(yield* subscriptionsAfterSettling).toBe(index + 2);
+        yield* failAttempt;
+      }
+    }),
+  );
+
   it.effect("does not overwrite a live snapshot when the supervisor becomes ready", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_THREAD });

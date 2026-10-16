@@ -31,6 +31,7 @@ vi.mock("../rpc/atomRegistry", () => ({
 import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   buildLocalDraftThread,
+  buildRevertCheckpointConfirmation,
   buildExpiredTerminalContextToastCopy,
   buildThreadTurnInterruptInput,
   cloneComposerAttachmentForRetry,
@@ -1750,5 +1751,46 @@ describe("describeUnavailableEnvironment", () => {
       title: "Laptop: Offline",
       description: "Reconnect this environment before sending messages or running actions.",
     });
+  });
+});
+
+describe("buildRevertCheckpointConfirmation", () => {
+  it("warns that a full revert discards the newer messages", () => {
+    expect(
+      buildRevertCheckpointConfirmation({
+        turnCount: 2,
+        provider: { driver: ProviderDriverKind.make("codex"), supportsConversationRewind: true },
+      }),
+    ).toBe(
+      "Revert this thread to checkpoint 2?\nThis will discard newer messages and turn diffs in this thread.\nThis action cannot be undone.",
+    );
+  });
+
+  it("says a provider that cannot rewind keeps the newer messages", () => {
+    expect(
+      buildRevertCheckpointConfirmation({
+        turnCount: 2,
+        provider: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          displayName: "Work Claude",
+          supportsConversationRewind: false,
+        },
+      }),
+    ).toBe(
+      "Restore files to checkpoint 2?\nWork Claude can't rewind its conversation, so the newer messages stay.\nThis action cannot be undone.",
+    );
+  });
+
+  it("keeps the full-revert warning when the capability is unknown", () => {
+    expect(buildRevertCheckpointConfirmation({ turnCount: 1, provider: null })).toContain(
+      "Revert this thread to checkpoint 1?",
+    );
+    // An older server omits the flag even for Codex, which still discards the newer messages.
+    expect(
+      buildRevertCheckpointConfirmation({
+        turnCount: 1,
+        provider: { driver: ProviderDriverKind.make("codex") },
+      }),
+    ).toContain("This will discard newer messages");
   });
 });

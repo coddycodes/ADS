@@ -63,12 +63,12 @@ use crate::{
         operational_logs::{OperationalLogOptions, OperationalLogs},
         orchestration_effects::{
             BoxEffectFuture, EffectsOptions, OrchestrationEffectCallbacks, OrchestrationEffects,
-            SetupScriptLaunch, process_compatible_path,
+            ProviderRewind, SetupScriptLaunch, process_compatible_path,
         },
         orchestration_rpc::register_orchestration_rpc_with_delivery_and_availability,
         provider_runtime::{
             NativeProviderDriverFactory, ProviderRuntimeSupervisor, SupervisorOptions,
-            reconcile_abandoned_provider_sessions,
+            reconcile_abandoned_provider_sessions, rewind_thread_conversation,
         },
         pull_requests_rpc::{PullRequestsRpcServices, register_pull_requests_rpc},
         relay::relay_client_service,
@@ -76,7 +76,8 @@ use crate::{
             ProcessTreeCleanup, ServerTerminalServices, register_server_terminal_rpc,
         },
         transfer_routes,
-        turn_delivery::TurnDeliveryService,
+        turn_delivery::{TurnDeliveryService, workspace_admission_detail},
+        workspace_availability::WorkspaceAdmissionController,
         workspace_preview::{WorkspacePreviewRpcServices, register_workspace_preview_rpc},
         worktree_catalog_rpc::{
             WorktreeCatalogOperationRuntime, WorktreeCatalogRpcServices,
@@ -538,6 +539,12 @@ impl ProductionRuntime {
             git_repository.clone(),
             Arc::new(RuntimeEffectCallbacks {
                 repositories: orchestration.repositories(),
+                engine: orchestration.clone(),
+                settings_root: config.state_dir(),
+                admission: WorkspaceAdmissionController::new(
+                    workspace_availability.clone(),
+                    orchestration.repositories(),
+                ),
                 provider: provider_runtime.clone(),
                 terminals: terminal_services.clone(),
                 workspace: workspace_for_effects,
@@ -831,6 +838,11 @@ impl ProductionRuntime {
 #[derive(Clone)]
 struct RuntimeEffectCallbacks {
     repositories: Repositories,
+    engine: OrchestrationEngine,
+    settings_root: PathBuf,
+    /// Held while a revert may reopen the provider, as a delivery holds it, so a workspace being
+    /// removed gets no new provider process.
+    admission: WorkspaceAdmissionController,
     provider: Arc<ProviderRuntimeSupervisor>,
     terminals: ServerTerminalServices,
     workspace: WorkspaceRpc,
@@ -864,17 +876,25 @@ impl OrchestrationEffectCallbacks for RuntimeEffectCallbacks {
         })
     }
 
-    fn rollback_provider<'a>(&'a self, thread_id: &'a str, turns: i64) -> BoxEffectFuture<'a, ()> {
+    fn rollback_provider<'a>(
+        &'a self,
+        thread_id: &'a str,
+        turns: i64,
+    ) -> BoxEffectFuture<'a, ProviderRewind> {
         Box::pin(async move {
-            self.provider
-                .handle_orchestration(OrchestrationCommand::ThreadCheckpointRevert {
-                    command_id: format!("effects:provider-rollback:{}", uuid::Uuid::new_v4()),
-                    thread_id: thread_id.to_owned(),
-                    turn_count: turns,
-                    created_at: now_iso(),
-                })
+            let _admission = self
+                .admission
+                .acquire_thread(thread_id, std::iter::empty())
                 .await
-                .map_err(|error| error.to_string())
+                .map_err(workspace_admission_detail)?;
+            rewind_thread_conversation(
+                &self.provider,
+                &self.engine,
+                &self.settings_root,
+                thread_id,
+                turns,
+            )
+            .await
         })
     }
 
@@ -2753,6 +2773,12 @@ mod tests {
 
         let callbacks = RuntimeEffectCallbacks {
             repositories: runtime.orchestration.repositories(),
+            engine: runtime.orchestration.clone(),
+            settings_root: config.state_dir(),
+            admission: WorkspaceAdmissionController::new(
+                WorkspaceAvailabilityRegistry::new(),
+                runtime.orchestration.repositories(),
+            ),
             provider: runtime.provider_runtime.clone(),
             terminals: runtime.terminal_services.clone(),
             workspace: WorkspaceRpc::new(WorkspaceService::default()),

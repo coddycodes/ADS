@@ -78,12 +78,15 @@ struct WorkspaceMutationOwnership {
     _admission: Option<WorkspaceAdmissionLease>,
 }
 
-/// How often a watched root is swept, and how long a burst is collected before it is reported.
+/// How often a watched root is swept, and the longest sustained change can defer its report.
 ///
 /// The sweep stats directories rather than files, so the interval trades latency against a cost
-/// proportional to the workspace's directory count.
+/// proportional to the workspace's directory count. A burst is reported at the first sweep that
+/// sees nothing new, so a lone change still surfaces one sweep after it is seen; the window only
+/// caps the wait while changes keep arriving, because every report costs each subscriber a full
+/// re-list.
 const WATCH_POLL_INTERVAL: Duration = Duration::from_secs(2);
-const WATCH_COALESCE_WINDOW: Duration = Duration::from_millis(750);
+const WATCH_COALESCE_WINDOW: Duration = Duration::from_secs(10);
 const WATCH_CHANNEL_CAPACITY: usize = 8;
 const WATCH_BROADCAST_CAPACITY: usize = 8;
 
@@ -195,6 +198,16 @@ impl WatchScope for IndexWatchScope {
             directories
         })
     }
+}
+
+/// The index a watch last told its subscribers to list, and the cache generation it is current at.
+///
+/// While the generation stays put, every list served returns this index. Once anything else drops
+/// the cache (a mutation, an explicit refresh), a subscriber may show a different list, so an equal
+/// rebuild is no longer old news.
+struct AnnouncedIndex {
+    index: WorkspaceSearchIndex,
+    generation: u64,
 }
 
 impl WorkspaceRpc {
@@ -678,11 +691,17 @@ impl WorkspaceRpc {
         // are already on disk when the baseline is taken, so they could never surface as a
         // difference. Rebuild rather than inherit that blind spot.
         self.refresh_index(cwd).await;
-        if let Err(error) = self.index(&cwd.to_string_lossy()).await {
-            subscription.cancel();
-            subscription.stopped().await;
-            return Err(error);
-        }
+        let announced = match self
+            .announceable_index(&canonical, CancellationToken::new())
+            .await
+        {
+            Ok(announced) => announced,
+            Err(error) => {
+                subscription.cancel();
+                subscription.stopped().await;
+                return Err(error);
+            }
+        };
         let mut registry = self.watches.lock().await;
         if self.watch_shutdown.is_cancelled() {
             drop(registry);
@@ -700,68 +719,88 @@ impl WorkspaceRpc {
         }
         let (sender, receiver) = broadcast::channel(WATCH_BROADCAST_CAPACITY);
         registry.insert(canonical.clone(), sender.clone());
-        let indexes = Arc::clone(&self.indexes);
-        let watches = Arc::clone(&self.watches);
-        let shutdown = self.watch_shutdown.clone();
-        #[cfg(test)]
-        let index_test_hooks = self.index_test_hooks.clone();
+        let rpc = self.clone();
         let task = self.watch_tasks.spawn(async move {
-            Self::run_watch(
-                canonical,
-                subscription,
-                sender,
-                indexes,
-                watches,
-                poll_interval,
-                shutdown,
-                #[cfg(test)]
-                index_test_hooks,
-            )
-            .await;
+            rpc.run_watch(canonical, subscription, sender, announced, poll_interval)
+                .await;
         });
         drop(task);
         drop(registry);
         Ok(receiver)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Announces the root's entry changes to its subscribers until shutdown or the last one leaves.
+    ///
+    /// Every announcement costs each subscriber a full re-read, so a sweep event is announced only
+    /// when the rebuilt index lists something different from `announced` (#111): a formatter's
+    /// atomic save moves its directory twice yet lists the same entries. Anything that leaves no
+    /// trustworthy baseline (a failed or raced rebuild, a list rebuilt outside the sweep) is
+    /// announced, so subscribers re-read rather than keep a list nobody compared.
     async fn run_watch(
+        self,
         canonical: PathBuf,
         mut subscription: WatchSubscription,
         sender: broadcast::Sender<()>,
-        indexes: Arc<Mutex<IndexCache>>,
-        watches: Arc<Mutex<HashMap<PathBuf, broadcast::Sender<()>>>>,
+        mut announced: Option<AnnouncedIndex>,
         poll_interval: Duration,
-        shutdown: CancellationToken,
-        #[cfg(test)] index_test_hooks: WorkspaceIndexTestHooks,
     ) {
         let mut idle_check = tokio::time::interval(poll_interval);
         idle_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
-                () = shutdown.cancelled() => break,
+                () = self.watch_shutdown.cancelled() => break,
                 event = subscription.recv() => {
                     if event.is_none() {
                         break;
                     }
-                    // Drop the snapshot before announcing, so a subscriber that lists immediately
-                    // cannot be served the stale index the signal is telling it to replace.
-                    indexes.lock().await.invalidate(&canonical);
+                    // Drop the snapshot before rebuilding, so neither the rebuild nor a subscriber
+                    // that lists meanwhile is served the stale index.
+                    let previous = {
+                        let mut cache = self.indexes.lock().await;
+                        let generation = cache.generation(&canonical);
+                        cache.invalidate(&canonical);
+                        announced
+                            .take()
+                            .filter(|announced| announced.generation == generation)
+                    };
                     #[cfg(test)]
                     pause_workspace_watch_test(
-                        index_test_hooks.watch_event_entered.as_ref(),
-                        index_test_hooks.watch_event_gate.as_ref(),
+                        self.index_test_hooks.watch_event_entered.as_ref(),
+                        self.index_test_hooks.watch_event_gate.as_ref(),
                     )
                     .await;
+                    // The idle check keeps running meanwhile: once nothing listens, the rebuild is
+                    // cancelled rather than left to finish for nobody.
+                    let cancellation = self.watch_shutdown.child_token();
+                    let rebuild = self.rebuild_swept_index(&canonical, cancellation.clone());
+                    tokio::pin!(rebuild);
+                    announced = loop {
+                        tokio::select! {
+                            rebuilt = &mut rebuild => break rebuilt,
+                            _ = idle_check.tick() => {
+                                if sender.receiver_count() == 0 {
+                                    cancellation.cancel();
+                                }
+                            }
+                        }
+                    };
+                    if self.watch_shutdown.is_cancelled() {
+                        break;
+                    }
+                    if let (Some(current), Some(previous)) = (&announced, &previous)
+                        && current.index.same_entries(&previous.index).await
+                    {
+                        continue;
+                    }
                     // A send failure means every receiver has gone; nothing is left to serve.
                     if sender.send(()).is_err() {
                         #[cfg(test)]
                         pause_workspace_watch_test(
-                            index_test_hooks.watch_send_failure_entered.as_ref(),
-                            index_test_hooks.watch_send_failure_gate.as_ref(),
+                            self.index_test_hooks.watch_send_failure_entered.as_ref(),
+                            self.index_test_hooks.watch_send_failure_gate.as_ref(),
                         )
                         .await;
-                        if Self::retire_idle_watch(&canonical, &sender, &watches).await {
+                        if Self::retire_idle_watch(&canonical, &sender, &self.watches).await {
                             subscription.cancel();
                             subscription.stopped().await;
                             return;
@@ -772,7 +811,7 @@ impl WorkspaceRpc {
                 // which on a quiet workspace never comes — the sweep would outlive the panel that
                 // asked for it, and on an in-process server the whole run.
                 _ = idle_check.tick() => {
-                    if Self::retire_idle_watch(&canonical, &sender, &watches).await {
+                    if Self::retire_idle_watch(&canonical, &sender, &self.watches).await {
                         subscription.cancel();
                         subscription.stopped().await;
                         return;
@@ -782,7 +821,52 @@ impl WorkspaceRpc {
         }
         subscription.cancel();
         subscription.stopped().await;
-        Self::retire_watch(&canonical, &sender, &watches).await;
+        Self::retire_watch(&canonical, &sender, &self.watches).await;
+    }
+
+    /// Rebuilds a swept root's index under the same admission a list request takes. `None` when the
+    /// root is unavailable or lost meanwhile, `cancellation` fired, the scan failed (`index`
+    /// records that), or something else dropped the cache while it ran.
+    async fn rebuild_swept_index(
+        &self,
+        canonical: &Path,
+        cancellation: CancellationToken,
+    ) -> Option<AnnouncedIndex> {
+        let admission = self.acquire_path(&canonical.to_string_lossy()).await.ok()?;
+        // Removal waits for a lost workspace's admissions to drain, and no subscriber owns this
+        // one, so a loss stops the scan itself, which then settles promptly.
+        let rebuild = self.announceable_index(canonical, cancellation.clone());
+        let Some(loss) = admission
+            .as_ref()
+            .map(WorkspaceAdmissionLease::loss_cancellation)
+        else {
+            return rebuild.await.ok().flatten();
+        };
+        tokio::pin!(rebuild);
+        tokio::select! {
+            biased;
+            rebuilt = &mut rebuild => rebuilt.ok().flatten(),
+            () = loss.cancelled() => {
+                cancellation.cancel();
+                let _ = rebuild.await;
+                None
+            }
+        }
+    }
+
+    /// The root's index, built or cached, paired with the cache generation it is current at; `None`
+    /// inside when something dropped the cache while it was built.
+    async fn announceable_index(
+        &self,
+        canonical: &Path,
+        cancellation: CancellationToken,
+    ) -> Result<Option<AnnouncedIndex>, WorkspaceError> {
+        let generation = self.indexes.lock().await.generation(canonical);
+        let index = self
+            .index_with_cancellation(&canonical.to_string_lossy(), cancellation)
+            .await?;
+        let current = self.indexes.lock().await.generation(canonical);
+        Ok((current == generation).then_some(AnnouncedIndex { index, generation }))
     }
 
     /// Stops new entry-change subscriptions, cancels every active sweep, and waits for their
@@ -879,6 +963,16 @@ impl WorkspaceRpc {
     }
 
     async fn index(&self, cwd: &str) -> Result<WorkspaceSearchIndex, WorkspaceError> {
+        self.index_with_cancellation(cwd, CancellationToken::new())
+            .await
+    }
+
+    /// `index`, with a build that stops once `cancellation` fires.
+    async fn index_with_cancellation(
+        &self,
+        cwd: &str,
+        cancellation: CancellationToken,
+    ) -> Result<WorkspaceSearchIndex, WorkspaceError> {
         let canonical = normalize_root(Path::new(cwd), false).await?;
         let cache_started = Instant::now();
         #[cfg(test)]
@@ -908,7 +1002,11 @@ impl WorkspaceRpc {
         if let Some(started) = &self.index_test_hooks.build_wait_started {
             let _ = started.send(());
         }
-        let _building = build.lock().await;
+        // A cancelled caller gives up its turn rather than wait out another caller's scan.
+        let _building = tokio::select! {
+            building = build.lock() => building,
+            () = cancellation.cancelled() => return Err(WorkspaceError::Cancelled),
+        };
         // The caller that held the lock may have finished while this one waited.
         if let Some(index) = self.indexes.lock().await.snapshots.get(&canonical).cloned() {
             emit_index_phase(
@@ -937,14 +1035,17 @@ impl WorkspaceRpc {
             if let Some(entered) = &self.index_test_hooks.build_entered {
                 let _ = entered.send(());
             }
-            let _permit = gate.acquire().await.expect("test build gate remains open");
+            let _permit = tokio::select! {
+                permit = gate.acquire() => permit.expect("test build gate remains open"),
+                () = cancellation.cancelled() => return Err(WorkspaceError::Cancelled),
+            };
         }
         let index = WorkspaceSearchIndex::new(canonical.clone(), SearchLimits::default());
         #[cfg(test)]
         let index = index.with_phase_sink(self.index_phase_sink.clone());
         self.index_scans.fetch_add(1, Ordering::Relaxed);
         let build_started = Instant::now();
-        if let Err(error) = index.refresh(CancellationToken::new()).await {
+        if let Err(error) = index.refresh(cancellation).await {
             emit_index_phase(
                 #[cfg(test)]
                 self.index_phase_sink.as_ref(),
@@ -1738,6 +1839,181 @@ mod tests {
             .await
             .expect("replacement signal deadline")
             .expect("replacement signal");
+    }
+
+    /// Removal waits for a lost workspace's admissions to drain, and a sweep's rebuild takes one
+    /// that no subscriber owns. The rebuild has to let go when the workspace is lost instead of
+    /// holding removal until its scan finishes.
+    #[tokio::test]
+    async fn losing_the_workspace_drops_a_sweep_rebuild_holding_its_admission() {
+        let root = tempfile::tempdir().expect("workspace root");
+        std::fs::create_dir_all(root.path().join("nested")).expect("nested directory");
+        std::fs::write(root.path().join("nested/tracked.txt"), "tracked").expect("tracked fixture");
+        let physical_root = std::fs::canonicalize(root.path()).expect("canonical workspace root");
+        let registry = WorkspaceAvailabilityRegistry::new();
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let (wait_tx, _wait_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (entered_tx, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+        let rpc = WorkspaceRpc::new(WorkspaceService::default())
+            .with_availability_registry(registry.clone())
+            .with_watch_timing(Duration::from_millis(25), Duration::from_millis(20))
+            .with_index_build_gate_for_test(Arc::clone(&gate), wait_tx, entered_tx);
+        let subscribing_rpc = rpc.clone();
+        let subscribing_root = root.path().to_path_buf();
+        let subscribing = tokio::spawn(async move {
+            subscribing_rpc
+                .subscribe_entry_changes(&subscribing_root)
+                .await
+        });
+        entered_rx.recv().await.expect("resync build entered");
+        gate.add_permits(1);
+        let subscription = subscribing
+            .await
+            .expect("subscription task")
+            .expect("subscription");
+        // Take the permit back so the sweep's rebuild waits at the gate.
+        gate.acquire().await.expect("gate open").forget();
+        // Like `project_entries_stream`, release the subscription once the workspace is lost.
+        let loss = subscription
+            .loss_cancellation()
+            .expect("admitted subscription");
+        tokio::spawn(async move {
+            loss.cancelled().await;
+            drop(subscription);
+        });
+
+        std::fs::write(root.path().join("nested/added.txt"), "added").expect("outside change");
+        tokio::time::timeout(Duration::from_secs(5), entered_rx.recv())
+            .await
+            .expect("sweep rebuild deadline")
+            .expect("sweep rebuild entered");
+        let transition = WorkspaceLossTransition {
+            thread_id: "workspace-thread".to_owned(),
+            repository_key: "repository-key".to_owned(),
+            generation: 1,
+            path: physical_root,
+            availability: AdoptedWorktreeAvailability::MissingRegistered,
+        };
+        assert!(
+            registry
+                .mark_unavailable(transition.clone())
+                .await
+                .expect("physical identity resolves")
+        );
+
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            registry.wait_for_transition_admissions(&transition),
+        )
+        .await
+        .expect("the sweep's rebuild must release its admission once the workspace is lost");
+    }
+
+    /// Shutdown waits for every watch task, so a sweep's rebuild queued behind a foreground scan of
+    /// the same root must give up its turn rather than hold shutdown until that scan finishes.
+    #[tokio::test]
+    async fn shutdown_does_not_wait_for_a_sweep_rebuild_queued_behind_another_scan() {
+        let root = tempfile::tempdir().expect("workspace root");
+        std::fs::create_dir_all(root.path().join("nested")).expect("nested directory");
+        std::fs::write(root.path().join("nested/tracked.txt"), "tracked").expect("tracked fixture");
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let (wait_tx, mut wait_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (entered_tx, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+        let rpc = WorkspaceRpc::new(WorkspaceService::default())
+            .with_watch_timing(Duration::from_millis(25), Duration::from_millis(20))
+            .with_index_build_gate_for_test(Arc::clone(&gate), wait_tx, entered_tx);
+        let subscribing_rpc = rpc.clone();
+        let subscribing_root = root.path().to_path_buf();
+        let subscribing = tokio::spawn(async move {
+            subscribing_rpc
+                .subscribe_entry_changes(&subscribing_root)
+                .await
+        });
+        entered_rx.recv().await.expect("resync build entered");
+        gate.add_permits(1);
+        let _subscription = subscribing
+            .await
+            .expect("subscription task")
+            .expect("subscription");
+        gate.acquire().await.expect("gate open").forget();
+        wait_rx
+            .recv()
+            .await
+            .expect("resync build waited for its turn");
+
+        // A rescan holds the root's build turn while its scan waits at the gate.
+        let listing_rpc = rpc.clone();
+        let cwd = root.path().to_string_lossy().into_owned();
+        let listing = tokio::spawn(async move {
+            listing_rpc
+                .handle("projects.listEntries", json!({"cwd": cwd, "refresh": true}))
+                .await
+        });
+        entered_rx.recv().await.expect("rescan build entered");
+        wait_rx.recv().await.expect("rescan waited for its turn");
+
+        // At the root, which every sweep stats: the rescan emptied the cache that tells the sweep
+        // about `nested`.
+        std::fs::write(root.path().join("added.txt"), "added").expect("outside change");
+        tokio::time::timeout(Duration::from_secs(5), wait_rx.recv())
+            .await
+            .expect("sweep rebuild deadline")
+            .expect("sweep rebuild queued");
+
+        tokio::time::timeout(Duration::from_secs(2), rpc.shutdown())
+            .await
+            .expect("shutdown must not wait for another request's scan");
+        gate.add_permits(1);
+        listing
+            .await
+            .expect("rescan task")
+            .expect("rescan completes");
+    }
+
+    /// A sweep lives only while something listens, and that includes a rebuild in progress: once
+    /// the last subscriber leaves, the rebuild stops instead of scanning for nobody.
+    #[tokio::test]
+    async fn a_sweep_rebuild_stops_when_its_last_subscriber_leaves() {
+        let root = tempfile::tempdir().expect("workspace root");
+        std::fs::create_dir_all(root.path().join("nested")).expect("nested directory");
+        std::fs::write(root.path().join("nested/tracked.txt"), "tracked").expect("tracked fixture");
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let (wait_tx, _wait_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (entered_tx, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+        let rpc = WorkspaceRpc::new(WorkspaceService::default())
+            .with_watch_timing(Duration::from_millis(25), Duration::from_millis(20))
+            .with_index_build_gate_for_test(Arc::clone(&gate), wait_tx, entered_tx);
+        let subscribing_rpc = rpc.clone();
+        let subscribing_root = root.path().to_path_buf();
+        let subscribing = tokio::spawn(async move {
+            subscribing_rpc
+                .subscribe_entry_changes(&subscribing_root)
+                .await
+        });
+        entered_rx.recv().await.expect("resync build entered");
+        gate.add_permits(1);
+        let subscription = subscribing
+            .await
+            .expect("subscription task")
+            .expect("subscription");
+        gate.acquire().await.expect("gate open").forget();
+
+        std::fs::write(root.path().join("nested/added.txt"), "added").expect("outside change");
+        tokio::time::timeout(Duration::from_secs(5), entered_rx.recv())
+            .await
+            .expect("sweep rebuild deadline")
+            .expect("sweep rebuild entered");
+        drop(subscription);
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while rpc.active_entry_watches().await > 0 && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_eq!(
+            rpc.active_entry_watches().await,
+            0,
+            "the sweep must retire without waiting for its rebuild"
+        );
     }
 
     #[tokio::test]

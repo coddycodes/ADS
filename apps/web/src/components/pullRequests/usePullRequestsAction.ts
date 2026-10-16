@@ -39,6 +39,8 @@ export interface PullRequestsRefreshHandles {
   commits: () => void;
   checks: () => void;
   navigate: (number: number | null) => void;
+  /** Called on delete even after the view unmounted (the panel closes the deleted tab). */
+  discardDeleted?: (() => void) | undefined;
 }
 export type PullRequestsScope = { environmentId: EnvironmentId; cwd: string };
 type Scope = PullRequestsScope;
@@ -46,7 +48,7 @@ type Scope = PullRequestsScope;
 const REFRESH_AFTER_ACTION: Partial<
   Record<
     PullRequestsAction["action"],
-    readonly Exclude<keyof PullRequestsRefreshHandles, "navigate">[]
+    readonly Exclude<keyof PullRequestsRefreshHandles, "navigate" | "discardDeleted">[]
   >
 > = {
   comment: ["timeline"],
@@ -128,6 +130,7 @@ export function useRunPullRequestsAction(
         if (result._tag === "Failure") throw squashAtomCommandFailure(result);
         if (result.value.kind === "deleted") {
           toastManager.add({ type: "success", title: "Request deleted" });
+          refresh.discardDeleted?.();
           if (mounted.current) refresh.navigate(null);
         } else if (result.value.kind === "pullRequestCreated") {
           const created = result.value;

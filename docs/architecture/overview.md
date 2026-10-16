@@ -1677,7 +1677,10 @@ it.
   record that matches the pid and executable name; when `coredumpctl --json`
   fails or is missing (systemd before 250), it queries the journal for
   systemd-coredump's `MESSAGE_ID` and the pid alone, and matches the
-  executable there. Windows reads Application log
+  executable there. At every start Linux also lists the coredumps of this
+  executable that no session covered: the same path or, for an AppImage,
+  another or detached mount of it, never a same-named binary elsewhere (#110).
+  Windows reads Application log
   Event 1000 through `wevtutil`, in both the named and positional event-data
   forms. macOS reads `~/Library/Logs/DiagnosticReports/*.ips` crash reports
   (`bug_type` 309) matched by process name and time. Frames and modules are
@@ -2052,6 +2055,24 @@ See [RPC and orchestration](./rpc-and-orchestration.md) and
   24-hour per-command safety ceiling). Only `gh`, `glab`, and `git` run through
   the module’s process boundary; it owns no HTTP client or background poller. See
   [Pull Requests contract boundary](./rpc-and-orchestration.md#pull-requests-contract-boundary).
+- The right panel (`rightPanelStore`) can show one request per tab, with no new
+  server contract. `pullRequest` surfaces (`pullRequest:<number>`, with the
+  provider and the selected detail tab) host `PullRequestsDetailView` per
+  thread, scoped to the thread's checkout. The detail view and its file links
+  read a `PullRequestsNavigation` (methods only) from React context instead of
+  the router: the full page provides `PullRequestsRouteNavigation` (URLs
+  unchanged), the panel a store adapter (tab, revert-opens-a-tab,
+  delete-closes-the-tab). The Changes tab's file anchor travels in a separate
+  `PullRequestsFileAnchorContext`, so an anchor change does not re-render the
+  whole view; on the full page it is the URL hash, in the panel component
+  state. The detail view and the Changes tab's file tree switch layout at the
+  `@3xl/pull-request` container breakpoint (the detail view's own width), not
+  the window's. A request opens in the panel from the Source Control create
+  dialog's **Done** and the panel's **Open MR in panel** items, and from the
+  full page's **Open beside a thread…**; the first two are gated by
+  `canOpenPullRequestInPanel` (Pull Requests setting on, not Bitbucket or Azure
+  DevOps). Persisted `pullRequest` entries are validated on load, so a corrupted
+  one drops without losing the thread's other tabs.
 - Git Manager force-push always uses `--force-with-lease`. Its execution paths
   forbid bare `--force`, `--ignore-other-worktrees`, forced
   `git worktree add -f`, and plumbing `update-ref` as ways to bypass the

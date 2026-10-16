@@ -14,8 +14,16 @@ import type {
   PullRequestsTimeline,
   ScopedProjectRef,
 } from "@bibcode/contracts";
-import { useNavigate } from "@tanstack/react-router";
-import { lazy, Suspense, useCallback, useEffect, useEffectEvent, useMemo, useState } from "react";
+import {
+  lazy,
+  type ReactNode,
+  Suspense,
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useState,
+} from "react";
 import { PullRequestsActionProvider } from "../usePullRequestsAction";
 import { usePullRequestsStore, type PullRequestsDetailTab } from "../../../pullRequestsStore";
 import { pullRequestsEnvironment } from "../../../state/pullRequests";
@@ -39,6 +47,7 @@ import { PullRequestsConversation } from "./PullRequestsConversation";
 import { PullRequestsSideColumn } from "./PullRequestsSideColumn";
 import { PullRequestsCommits } from "./PullRequestsCommits";
 import { PullRequestsChecks } from "./PullRequestsChecks";
+import { usePullRequestsNavigation } from "./pullRequestsNavigation";
 const PullRequestsFiles = lazy(() =>
   import("./PullRequestsFiles").then((module) => ({ default: module.PullRequestsFiles })),
 );
@@ -49,6 +58,8 @@ export interface PullRequestsDetailViewProps {
   number: number;
   tab: PullRequestsDetailTab;
   mutationsDisabledReason?: string | null;
+  /** Extra actions in the top row, given the loaded detail (the panel's "Open full page"). */
+  headerActions?: ((detail: PullRequestsDetail) => ReactNode) | undefined;
 }
 export function PullRequestsDetailView({
   scope,
@@ -57,8 +68,9 @@ export function PullRequestsDetailView({
   number,
   tab,
   mutationsDisabledReason = null,
+  headerActions,
 }: PullRequestsDetailViewProps) {
-  const navigate = useNavigate();
+  const navigation = usePullRequestsNavigation();
   const request = useMemo(
     () => ({ environmentId: scope.environmentId, input: { cwd: scope.cwd, number } }),
     [number, scope.cwd, scope.environmentId],
@@ -90,20 +102,10 @@ export function PullRequestsDetailView({
   const refreshChecksAtom = useAtomRefresh(checksAtom);
   const navigateAfterAction = useCallback(
     (target: number | null) => {
-      if (target === null)
-        void navigate({
-          to: "/project/$environmentId/$projectId/pull-requests",
-          params: projectRef,
-        });
-      else
-        void navigate({
-          to: "/project/$environmentId/$projectId/pull-requests/$number",
-          params: { ...projectRef, number: String(target) },
-          search: { tab: "conversation" },
-          hash: "",
-        });
+      if (target === null) navigation.requestGone();
+      else navigation.openRequest(target);
     },
-    [navigate, projectRef],
+    [navigation],
   );
   // Action receipts re-read automatically, so they keep an exhausted cut-off latched;
   // a latched query keeps its own failure card with an explicit Retry.
@@ -116,6 +118,7 @@ export function PullRequestsDetailView({
       commits: tab === "commits" ? commitsQuery.revalidate : refreshCommitsAtom,
       checks: tab === "checks" ? checksQuery.revalidate : refreshChecksAtom,
       navigate: navigateAfterAction,
+      discardDeleted: navigation.discardDeleted ?? undefined,
     }),
     [
       detailQuery.revalidate,
@@ -129,6 +132,7 @@ export function PullRequestsDetailView({
       checksQuery.revalidate,
       refreshChecksAtom,
       navigateAfterAction,
+      navigation.discardDeleted,
     ],
   );
   const activeQuery = {
@@ -302,21 +306,22 @@ export function PullRequestsDetailView({
       refresh={actionRefresh}
       disabledReason={mutationsDisabledReason}
     >
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-text-surface="background">
-        <div className="shrink-0 px-4 pt-2">
-          <Button
-            size="sm"
-            variant="link"
-            onClick={() => {
-              void navigate({
-                to: "/project/$environmentId/$projectId/pull-requests",
-                params: projectRef,
-              });
-            }}
-          >
-            Back to {presentation.pluralLongName}
-          </Button>
-        </div>
+      <div
+        className="@container/pull-request flex min-h-0 min-w-0 flex-1 flex-col"
+        data-text-surface="background"
+      >
+        {navigation.back !== null || (headerActions && detail) ? (
+          <div className="flex shrink-0 items-center justify-between gap-2 px-4 pt-2">
+            {navigation.back !== null ? (
+              <Button size="sm" variant="link" onClick={navigation.back}>
+                Back to {presentation.pluralLongName}
+              </Button>
+            ) : (
+              <span />
+            )}
+            {headerActions && detail ? headerActions(detail) : null}
+          </div>
+        ) : null}
         <PullRequestsQueryState
           query={displayedDetailQuery}
           label={`${presentation.longName} ${formatChangeRequestNumber(context.provider, number)}`}
@@ -342,13 +347,7 @@ export function PullRequestsDetailView({
                     value === "checks" ||
                     value === "files"
                   )
-                    void navigate({
-                      to: "/project/$environmentId/$projectId/pull-requests/$number",
-                      params: { ...projectRef, number: String(number) },
-                      search: { tab: value },
-                      hash: "",
-                      replace: true,
-                    });
+                    navigation.selectTab(value);
                 }}
               >
                 <TabsList
@@ -407,7 +406,10 @@ export function PullRequestsDetailView({
                       ) : null}
                     </PullRequestsQueryState>
                   </TabsPanel>
-                  <div className="hidden w-64 shrink-0 overflow-auto border-l border-border lg:block">
+                  <div
+                    data-pull-request-side-column="wide"
+                    className="hidden w-64 shrink-0 overflow-auto border-l border-border @3xl/pull-request:block"
+                  >
                     <PullRequestsSideColumn
                       detail={detail}
                       live={liveDetail}

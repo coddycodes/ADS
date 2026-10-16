@@ -6,6 +6,7 @@ import type { ServerConfig } from "@bibcode/contracts";
 import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  canOpenPullRequestInPanel,
   resolvePullRequestsAvailability,
   resolvePullRequestsMutationsDisabledReason,
 } from "./pullRequestsAvailability";
@@ -75,4 +76,19 @@ describe("resolvePullRequestsAvailability", () => {
     expect(resolvePullRequestsMutationsDisabledReason(null)).not.toBeNull();
     expect(resolvePullRequestsMutationsDisabledReason(config(true, true))).toBeNull();
   });
+});
+
+describe("canOpenPullRequestInPanel", () => {
+  it.each(["github", "gitlab", "unknown"] as const)("opens a %s request when enabled", (kind) => {
+    expect(canOpenPullRequestInPanel({ enabled: true, providerKind: kind })).toBe(true);
+  });
+  it.each(["bitbucket", "azure-devops"] as const)("never opens a %s request", (kind) => {
+    expect(canOpenPullRequestInPanel({ enabled: true, providerKind: kind })).toBe(false);
+  });
+  it.each(["github", "gitlab", "unknown", "bitbucket", "azure-devops"] as const)(
+    "never opens a %s request while Pull Requests is turned off",
+    (kind) => {
+      expect(canOpenPullRequestInPanel({ enabled: false, providerKind: kind })).toBe(false);
+    },
+  );
 });

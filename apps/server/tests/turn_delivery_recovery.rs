@@ -46,7 +46,7 @@ use bibcode_server::{
     production::{
         orchestration_effects::{
             BoxEffectFuture, EffectsOptions, OrchestrationEffectCallbacks, OrchestrationEffects,
-            SetupScriptLaunch,
+            ProviderRewind, SetupScriptLaunch,
         },
         orchestration_rpc::register_orchestration_rpc_with_delivery,
         provider_runtime::{
@@ -1343,8 +1343,8 @@ impl OrchestrationEffectCallbacks for RecoveryCallbacks {
         &'a self,
         _thread_id: &'a str,
         _turns: i64,
-    ) -> BoxEffectFuture<'a, ()> {
-        Box::pin(async { Ok(()) })
+    ) -> BoxEffectFuture<'a, ProviderRewind> {
+        Box::pin(async { Ok(ProviderRewind::Rewound) })
     }
 
     fn stop_provider<'a>(&'a self, _thread_id: &'a str) -> BoxEffectFuture<'a, ()> {

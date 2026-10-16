@@ -344,6 +344,16 @@ that exact digest. A changed path, reason, lock, directory, repository, owner,
 or generation requires a new plan. The server never substitutes recursive
 directory deletion for Git worktree removal.
 
+`worktree.getRemovalPlan` reads Git outside the project mutation lock, so a
+detach or another mutation of the project never waits for a plan's catalog
+refresh, inventory, status inspection, or prune preview. After the read it
+takes the project and repository locks only long enough to confirm that no
+catalog mutation landed and the catalog generation did not move. Otherwise it
+reads once more, and a second miss answers `stale-generation`. The plan stays
+advisory: execution plans again under the lock and compares the token. A plan
+that takes a second or more logs `worktree removal plan was slow` with each
+step's duration and no paths.
+
 Present worktrees require a separate user choice between detach-only and Git
 deletion, plus explicit dirty and prune-impact confirmations when applicable.
 A failed present deletion retains BiBCode ownership. For an already missing

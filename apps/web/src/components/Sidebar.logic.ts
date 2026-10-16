@@ -269,21 +269,19 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
 }
 
 /**
- * The branch a workspace card shows: the fresh VCS status's ref, else its
- * detached HEAD, else the branch the thread recorded. A stale passive summary is
- * ignored rather than presented as the current branch.
+ * The branch a workspace card shows: the VCS status's ref, else its detached
+ * HEAD, else the branch the thread recorded. A stale passive summary still names
+ * the branch: a failed PR lookup marks a just-read summary stale, while the
+ * recorded branch lags checkouts made when its thread was closed.
  */
 export function resolveWorkspaceBranchLabel(
   status: VcsStatusResult | VcsStatusSummary | null | undefined,
   fallbackBranch: string | null,
 ): string | null {
-  if (status && !("stale" in status && status.stale)) {
-    const liveBranch = status.refName ?? ("detachedHead" in status ? status.detachedHead : null);
-    if (liveBranch) {
-      return liveBranch;
-    }
-  }
-  return fallbackBranch;
+  const liveBranch = status
+    ? (status.refName ?? ("detachedHead" in status ? status.detachedHead : null))
+    : null;
+  return liveBranch || fallbackBranch;
 }
 
 /** Whether the checkout has uncommitted changes, per a fresh (not stale) status. */

@@ -17,6 +17,9 @@ vi.mock("../../DiffWorkerPoolProvider", () => ({
   DiffWorkerPoolProvider: ({ children }: { children: ReactNode }) => children,
 }));
 import { PullRequestsFiles } from "./PullRequestsFiles";
+import { PullRequestsRouteNavigation } from "./pullRequestsNavigation";
+
+const projectRef = { environmentId: "env", projectId: "project" } as never;
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -42,18 +45,23 @@ it("updates mounted real LegendList rows for Viewed and whitespace changes", asy
   try {
     await act(async () =>
       root.render(
-        <PullRequestsFiles
-          files={{
-            files: [
-              { ...file, patch: "--- a/src/a.ts\n+++ b/src/a.ts\n@@ -10 +12 @@\n-  same\n+same\n" },
-            ],
-            diffRefs: { baseSha: "base", startSha: "start", headSha: "head" },
-            truncated: false,
-          }}
-          detail={detail}
-          projectRef={{ environmentId: "env", projectId: "project" } as never}
-          context={context}
-        />,
+        <PullRequestsRouteNavigation projectRef={projectRef} number={detail.number}>
+          <PullRequestsFiles
+            files={{
+              files: [
+                {
+                  ...file,
+                  patch: "--- a/src/a.ts\n+++ b/src/a.ts\n@@ -10 +12 @@\n-  same\n+same\n",
+                },
+              ],
+              diffRefs: { baseSha: "base", startSha: "start", headSha: "head" },
+              truncated: false,
+            }}
+            detail={detail}
+            projectRef={projectRef}
+            context={context}
+          />
+        </PullRequestsRouteNavigation>,
       ),
     );
     const boxes = () => [

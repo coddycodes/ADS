@@ -125,6 +125,8 @@ const testState = vi.hoisted(() => ({
   writeProjectFile: vi.fn(),
   openPullRequestLink: vi.fn(),
   rightPanelOpen: vi.fn(),
+  openPullRequest: vi.fn(),
+  pullRequestsEnabled: true,
   selectGitScope: vi.fn(),
   toast: { add: vi.fn(), update: vi.fn(), close: vi.fn() },
   groupByFolder: true,
@@ -376,9 +378,17 @@ vi.mock("~/sourceControlDraft", () => ({
   }),
 }));
 
+vi.mock("~/hooks/useSettings", () => ({
+  usePrimarySettings: (selector: (settings: { pullRequestsEnabled: boolean }) => unknown) =>
+    selector({ pullRequestsEnabled: testState.pullRequestsEnabled }),
+}));
+
 vi.mock("~/rightPanelStore", () => ({
   useRightPanelStore: {
-    getState: () => ({ open: testState.rightPanelOpen }),
+    getState: () => ({
+      open: testState.rightPanelOpen,
+      openPullRequest: testState.openPullRequest,
+    }),
   },
 }));
 
@@ -709,6 +719,8 @@ beforeEach(() => {
   );
   testState.openPullRequestLink = vi.fn().mockResolvedValue(undefined);
   testState.rightPanelOpen.mockReset();
+  testState.openPullRequest.mockReset();
+  testState.pullRequestsEnabled = true;
   testState.selectGitScope.mockReset();
   testState.toast.add.mockReset();
   testState.toast.add.mockReturnValue("toast-1");
@@ -742,6 +754,110 @@ describe("SourceControlPanel", () => {
     render(props);
     expect(captured.createPullRequest).toBeNull();
     expect(testState.runAction).toHaveBeenCalledTimes(1);
+  });
+
+  const OPEN_MR = {
+    number: 89,
+    title: "Fix it",
+    url: "https://gitlab.test/team/repo/-/merge_requests/89",
+    baseRef: "main",
+    headRef: "feature/test",
+    state: "open",
+  } as const;
+
+  it("opens the branch's open merge request in the thread's panel from the menu", () => {
+    testState.statusQuery.data = status({
+      sourceControlProvider: { kind: "gitlab", name: "GitLab", baseUrl: "https://gitlab.test" },
+      pr: OPEN_MR,
+    });
+    const props = buildProps();
+    render(props);
+    menuItemByText("Open MR in panel")?.onClick?.();
+    expect(testState.openPullRequest).toHaveBeenCalledWith(props.threadRef, {
+      number: 89,
+      provider: "gitlab",
+    });
+    expect(testState.openPullRequestLink).not.toHaveBeenCalled();
+  });
+
+  it("opens the open merge request in the thread's panel from the legacy menu", () => {
+    testState.statusQuery.data = legacyStatus({
+      sourceControlProvider: { kind: "gitlab", name: "GitLab", baseUrl: "https://gitlab.test" },
+      pr: OPEN_MR,
+    });
+    const props = buildProps();
+    render(props);
+    menuItemByText("Open MR in panel")?.onClick?.();
+    expect(testState.openPullRequest).toHaveBeenCalledWith(props.threadRef, {
+      number: 89,
+      provider: "gitlab",
+    });
+  });
+
+  it.each([
+    ["Pull Requests is turned off", false, "gitlab"],
+    ["the host is Bitbucket", true, "bitbucket"],
+    ["the host is Azure DevOps", true, "azure-devops"],
+  ] as const)("does not offer the in-panel action when %s", (_name, enabled, kind) => {
+    testState.pullRequestsEnabled = enabled;
+    for (const data of [
+      status({
+        sourceControlProvider: { kind, name: "Host", baseUrl: "https://host.test" },
+        pr: OPEN_MR,
+      }),
+      legacyStatus({
+        sourceControlProvider: { kind, name: "Host", baseUrl: "https://host.test" },
+        pr: OPEN_MR,
+      }),
+    ]) {
+      testState.statusQuery.data = data;
+      render(buildProps());
+      expect(captured.menuItems.map((item) => flattenText(item.children))).not.toContainEqual(
+        expect.stringContaining("in panel"),
+      );
+      expect(menuItemByText("View")).toBeDefined();
+    }
+  });
+
+  it("opens the created merge request beside the thread on Done", async () => {
+    testState.statusQuery.data = status({
+      refName: "feature/test",
+      hasUpstream: false,
+      aheadCount: 1,
+      sourceControlProvider: { kind: "gitlab", name: "GitLab", baseUrl: "https://gitlab.test" },
+    });
+    const props = buildProps();
+    render(props);
+    buttonsByText("Push & create MR")[0]?.onClick?.();
+    await flushPromises();
+    render(props);
+    captured.createPullRequest?.onDone?.({ number: 89, provider: "gitlab" });
+    expect(testState.openPullRequest).toHaveBeenCalledWith(props.threadRef, {
+      number: 89,
+      provider: "gitlab",
+    });
+  });
+
+  it.each([
+    ["Pull Requests is turned off", false, "gitlab"],
+    ["the host is Bitbucket", true, "bitbucket"],
+    ["the host is Azure DevOps", true, "azure-devops"],
+  ] as const)("does not open the created request on Done when %s", async (_name, enabled, kind) => {
+    testState.pullRequestsEnabled = enabled;
+    testState.statusQuery.data = status({
+      refName: "feature/test",
+      hasUpstream: false,
+      aheadCount: 1,
+      sourceControlProvider: { kind, name: "Host", baseUrl: "https://host.test" },
+    });
+    const props = buildProps();
+    render(props);
+    buttonsByText("Push & create")[0]?.onClick?.();
+    await flushPromises();
+    render(props);
+    expect(captured.createPullRequest).toMatchObject({ open: true });
+    captured.createPullRequest?.onDone?.({ number: 89, provider: kind });
+    expect(testState.openPullRequest).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -637,7 +637,14 @@ export const makeEnvironmentActivityState = Effect.fn("EnvironmentActivityState.
                           : SubscriptionRef.update(state, (current) =>
                               stateWithError(current, ACTIVITY_STREAM_ERROR_MESSAGE),
                             ),
-                      retryExpectedFailureAfter: "250 millis",
+                      // A scope that keeps failing backs off instead of retrying every
+                      // 250 ms for as long as its view stays mounted (#113).
+                      retryExpectedFailure: {
+                        when: () => true,
+                        initialDelay: "250 millis",
+                        maxDelay: "30 seconds",
+                        resetAfter: "30 seconds",
+                      },
                     },
                   ).pipe(Stream.map((item) => ({ epoch, item })))
                 : Stream.empty,

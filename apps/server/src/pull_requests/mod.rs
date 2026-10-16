@@ -2249,9 +2249,15 @@ esac"#,
     }
 
     /// A failed action leaves its code in the server log, never its message:
-    /// messages can carry checkout paths and host names.
+    /// messages can carry checkout paths and host names. In a process of its own, where no
+    /// sibling test can turn the warning's callsite off for this capture.
     #[tokio::test]
     async fn run_action_failure_logs_the_code_without_the_message() {
+        let Some(child) = crate::test_support::in_own_process(
+            "pull_requests::service_tests::run_action_failure_logs_the_code_without_the_message",
+        ) else {
+            return;
+        };
         let log = CapturedLog::default();
         let _logging = tracing::subscriber::set_default(
             tracing_subscriber::fmt()
@@ -2280,6 +2286,7 @@ esac"#,
         assert!(log.contains(&format!("code=\"{}\"", error.code)), "{log}");
         assert!(error.message.contains("missing-checkout"));
         assert!(!log.contains("missing-checkout"), "{log}");
+        child.complete();
     }
 
     #[tokio::test]

@@ -1141,7 +1141,9 @@ fn thread_stream(
                 .and_then(|snapshot| HeldThread::of(snapshot, keys.clone()))
         };
         let mut held = hold(&first);
-        if send_snapshot(&sender, first).await.is_err() {
+        // An error ends the stream; a deleted thread has no events to end the loop by (#113).
+        let failed = first.is_err();
+        if send_snapshot(&sender, first).await.is_err() || failed {
             return;
         }
         let mut due: Option<tokio::time::Instant> = None;
@@ -1163,7 +1165,7 @@ fn thread_stream(
                         Some(Some(item)) => sender.send(Ok(vec![item])).await.map_err(|_| ()),
                         None => send_snapshot(&sender, next.clone()).await,
                     };
-                    if sent.is_err() {
+                    if sent.is_err() || next.is_err() {
                         return;
                     }
                     held = hold(&next);
@@ -2585,6 +2587,11 @@ mod tests {
                 "thread {thread_id}"
             );
         }
+        // A view of a deleted thread keeps asking for it; its history stays unread (#113).
+        let deleted = load_thread_snapshot(&repositories, "t-deleted")
+            .await
+            .unwrap();
+        assert!(deleted.threads.is_empty() && deleted.messages.is_empty());
     }
 
     /// Bytes this process has passed to `write(2)` so far: SQLite temporary files included.
@@ -6656,6 +6663,123 @@ mod tests {
         }
         assert!(snapshots <= 2, "{snapshots} shell snapshots for one burst");
         cancellation.cancel();
+        engine.shutdown().await;
+    }
+
+    /// Creates a thread and deletes it: a view that still shows it keeps subscribing.
+    async fn deleted_thread(engine: &OrchestrationEngine) -> &'static str {
+        created_project_thread(engine).await;
+        for command in [
+            json!({"type":"thread.create","commandId":"create","threadId":"gone","projectId":"project","title":"Gone","modelSelection":{"instanceId":"codex","model":"gpt-5"},"runtimeMode":"full-access","branch":null,"worktreePath":null,"createdAt":CREATED_AT}),
+            json!({"type":"thread.delete","commandId":"delete","threadId":"gone"}),
+        ] {
+            engine
+                .dispatch(decode_command(command))
+                .await
+                .expect("setup");
+        }
+        "gone"
+    }
+
+    /// The producer ends with its error instead of waiting for a cancellation or for an
+    /// event of its thread, which a deleted thread never gets (#113).
+    #[tokio::test]
+    async fn thread_stream_ends_after_its_error() {
+        let engine = migrated_engine().await;
+        let thread_id = deleted_thread(&engine).await;
+        let mut stream = thread_stream(
+            engine.clone(),
+            request(
+                "orchestration.subscribeThread",
+                json!({ "threadId": thread_id, "patches": true }),
+            ),
+            CancellationToken::new(),
+        );
+        assert!(stream.recv().await.expect("an item").is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), stream.recv())
+                .await
+                .expect("the stream ends")
+                .is_none()
+        );
+        assert_eq!(engine.event_subscriber_count_for_test(), 0);
+        engine.shutdown().await;
+    }
+
+    /// A failed subscription must end with its request (#113). A client retried a deleted
+    /// thread every 250 ms; each failed attempt left a task holding an engine event receiver,
+    /// so every later event was cloned into tens of thousands of receivers until restart.
+    #[tokio::test]
+    async fn failed_thread_subscriptions_release_their_event_receivers() {
+        const ATTEMPTS: usize = 20;
+        let engine = migrated_engine().await;
+        let thread_id = deleted_thread(&engine).await;
+        let state = tempfile::tempdir().expect("state directory");
+        let mut registry = RpcRegistry::empty();
+        register_orchestration_rpc(&mut registry, engine.clone());
+        let handle = ServerRuntime::start_with_registry(
+            ServerConfig::new(state.path())
+                .with_bind("127.0.0.1", 0)
+                .with_unsafe_no_auth(),
+            registry,
+        )
+        .await
+        .expect("server starts");
+        let (mut socket, _) =
+            tokio_tungstenite::connect_async(format!("ws://{}/ws", handle.local_addr()))
+                .await
+                .expect("socket connects");
+        let baseline = engine.event_subscriber_count_for_test();
+
+        for attempt in 1..=ATTEMPTS {
+            let id = attempt.to_string();
+            let request = json!({
+                "_tag": "Request",
+                "id": id,
+                "tag": "orchestration.subscribeThread",
+                "payload": { "threadId": thread_id, "patches": true },
+                "headers": [],
+            });
+            socket
+                .send(Message::Text(request.to_string().into()))
+                .await
+                .expect("send subscription");
+            let frame = tokio::time::timeout(
+                Duration::from_secs(5),
+                next_frame_past_heartbeat(&mut socket),
+            )
+            .await
+            .expect("subscription answers")
+            .expect("socket open")
+            .expect("frame");
+            let Message::Text(text) = frame else {
+                panic!("expected a text frame, got {frame:?}");
+            };
+            assert!(
+                matches!(
+                    serde_json::from_str::<ServerMessage>(&text).expect("server message"),
+                    ServerMessage::Exit { request_id, exit: RpcExit::Failure { .. } }
+                        if request_id == RequestId::try_from(id.as_str()).unwrap()
+                ),
+                "a deleted thread's subscription fails: {text}"
+            );
+        }
+
+        // The connection stays open, as the client's does between retries.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while engine.event_subscriber_count_for_test() > baseline
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let leaked = engine.event_subscriber_count_for_test() - baseline;
+        assert_eq!(
+            leaked, 0,
+            "{leaked} of {ATTEMPTS} failed subscriptions still hold an event receiver"
+        );
+        drop(socket);
+        handle.shutdown();
+        handle.join().await.expect("server joins");
         engine.shutdown().await;
     }
 

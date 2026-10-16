@@ -62,7 +62,7 @@ use bibcode_server::{
     production::{
         orchestration_effects::{
             self, BoxEffectFuture, EffectsOptions, OrchestrationEffectCallbacks,
-            OrchestrationEffects,
+            OrchestrationEffects, ProviderRewind,
         },
         orchestration_rpc::register_orchestration_rpc_with_delivery,
         turn_delivery::TurnDeliveryService,
@@ -82,7 +82,7 @@ use provider_runtime::{
     build_claude_launch_arguments_for_test, build_claude_launch_arguments_with_settings_for_test,
     claude_output_shutdown_with_open_stream_for_test, deliver_durable_orchestration_turn,
     deliver_orchestration_turn, freeze_delivery_route, reconcile_abandoned_provider_sessions,
-    reconcile_orchestration_turn, route_orchestration_command,
+    reconcile_orchestration_turn, rewind_thread_conversation, route_orchestration_command,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -122,13 +122,18 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       if ($env:BIBCODE_TEST_CODEX_THREAD_RESPONSE_READY_MARKER) {
         [IO.File]::WriteAllText($env:BIBCODE_TEST_CODEX_THREAD_RESPONSE_READY_MARKER, "ready")
       }
-      $response = '{"id":' + $id + ',"result":{"cwd":"C:\\tmp","model":"gpt-5","thread":{"id":"native-codex-thread"}}}'
+      $response = '{"id":' + $id + ',"result":{"cwd":"C:\\tmp","model":"gpt-5","thread":{"id":"native-codex-thread","historyMode":"paginated"}}}'
     }
     "mcpServerStatus/list" { $response = '{"id":' + $id + ',"result":{"data":[],"nextCursor":null}}' }
     "thread/goal/set" { $response = '{"id":' + $id + ',"result":{"goal":{"status":"active"}}}' }
     "turn/start" { $response = '{"id":' + $id + ',"result":{"turn":{"id":"native-codex-turn"}}}' + [Environment]::NewLine + '{"method":"item/started","emittedAtMs":1001,"params":{"threadId":"native-codex-thread","turnId":"native-codex-turn","item":{"id":"spawn-1","type":"collabAgentToolCall","tool":"spawnAgent","status":"inProgress","senderThreadId":"native-codex-thread","receiverThreadIds":["native-child"],"agentsStates":{"native-child":{"status":"running","message":null}}},"startedAtMs":1001}}' + [Environment]::NewLine + '{"method":"turn/started","emittedAtMs":1002,"params":{"threadId":"native-child","turn":{"id":"native-child-turn","status":"inProgress","startedAt":1}}}' }
     "turn/interrupt" { $response = '{"id":' + $id + ',"result":{}}' }
-    "thread/rollback" { $response = '{"id":' + $id + ',"result":{"thread":{"id":"native-codex-thread","turns":[]}}}' }
+    "thread/turns/list" { $response = '{"id":' + $id + ',"result":{"data":[{"id":"native-codex-turn","items":[]}],"nextCursor":null}}' }
+    "thread/revert" {
+      if ([string]$request.params.beforeTurnId -eq "native-codex-turn") {
+        $response = '{"id":' + $id + ',"result":{"thread":{"id":"native-codex-thread","historyMode":"paginated","turns":[]}}}'
+      }
+    }
     "shutdown" { $response = '{"id":' + $id + ',"result":null}' }
   }
   if ($null -ne $response) {
@@ -1289,7 +1294,22 @@ async fn project_session(engine: &OrchestrationEngine, thread_id: &str, status: 
 
 struct SupervisorEffectsCallbacks {
     supervisor: Arc<ProviderRuntimeSupervisor>,
+    engine: OrchestrationEngine,
+    settings: TempDir,
     workspace: PathBuf,
+}
+
+fn supervisor_effects(
+    supervisor: &Arc<ProviderRuntimeSupervisor>,
+    engine: &OrchestrationEngine,
+    workspace: &Path,
+) -> Arc<SupervisorEffectsCallbacks> {
+    Arc::new(SupervisorEffectsCallbacks {
+        supervisor: supervisor.clone(),
+        engine: engine.clone(),
+        settings: TempDir::new().unwrap(),
+        workspace: workspace.to_path_buf(),
+    })
 }
 
 impl OrchestrationEffectCallbacks for SupervisorEffectsCallbacks {
@@ -1300,17 +1320,20 @@ impl OrchestrationEffectCallbacks for SupervisorEffectsCallbacks {
         Box::pin(async move { Ok(Some(self.workspace.clone())) })
     }
 
-    fn rollback_provider<'a>(&'a self, thread_id: &'a str, turns: i64) -> BoxEffectFuture<'a, ()> {
+    fn rollback_provider<'a>(
+        &'a self,
+        thread_id: &'a str,
+        turns: i64,
+    ) -> BoxEffectFuture<'a, ProviderRewind> {
         Box::pin(async move {
-            self.supervisor
-                .handle_orchestration(OrchestrationCommand::ThreadCheckpointRevert {
-                    command_id: format!("effects:provider-rollback:{thread_id}:{turns}"),
-                    thread_id: thread_id.to_owned(),
-                    turn_count: turns,
-                    created_at: NOW.to_owned(),
-                })
-                .await
-                .map_err(|error| error.to_string())
+            rewind_thread_conversation(
+                &self.supervisor,
+                &self.engine,
+                &self.settings.path().to_path_buf(),
+                thread_id,
+                turns,
+            )
+            .await
         })
     }
 
@@ -10872,8 +10895,10 @@ async fn projects_event_aliases_user_input_and_proposed_plans_with_request_conte
     supervisor.shutdown().await.unwrap();
 }
 
+/// The provider rewinds before any file is restored: a rewind cannot be undone, so it runs
+/// first, and the files follow only once it succeeded.
 #[tokio::test]
-async fn checkpoint_rpc_rolls_back_once_after_restore_with_the_computed_delta() {
+async fn checkpoint_rpc_rewinds_the_provider_once_before_restoring_files() {
     let repository = initialize_repository();
     let engine = engine().await;
     for (turn_count, content) in [
@@ -10905,10 +10930,7 @@ async fn checkpoint_rpc_rolls_back_once_after_restore_with_the_computed_delta() 
     let effects = OrchestrationEffects::start(
         engine.clone(),
         Arc::new(GitRepository::default()),
-        Arc::new(SupervisorEffectsCallbacks {
-            supervisor: supervisor.clone(),
-            workspace: repository.path().to_path_buf(),
-        }),
+        supervisor_effects(&supervisor, &engine, repository.path()),
         EffectsOptions::default(),
     )
     .await
@@ -10966,7 +10988,10 @@ async fn checkpoint_rpc_rolls_back_once_after_restore_with_the_computed_delta() 
     {
         let state = state.lock().unwrap();
         assert_eq!(state.rollbacks, [2]);
-        assert_eq!(state.rollback_observations, [(2, Some("one\n".to_owned()))]);
+        assert_eq!(
+            state.rollback_observations,
+            [(2, Some("three\n".to_owned()))]
+        );
     }
     for stale_turn in [2, 3] {
         assert!(!git_succeeds(
@@ -10988,6 +11013,7 @@ async fn checkpoint_rpc_rolls_back_once_after_restore_with_the_computed_delta() 
     engine.shutdown().await;
 }
 
+/// A failed provider rewind leaves everything as it was: files, checkpoint refs and messages.
 #[tokio::test]
 async fn checkpoint_rpc_reports_effect_failure_without_a_direct_or_second_rollback() {
     let repository = initialize_repository();
@@ -11022,10 +11048,7 @@ async fn checkpoint_rpc_reports_effect_failure_without_a_direct_or_second_rollba
     let effects = OrchestrationEffects::start(
         engine.clone(),
         Arc::new(GitRepository::default()),
-        Arc::new(SupervisorEffectsCallbacks {
-            supervisor: supervisor.clone(),
-            workspace: repository.path().to_path_buf(),
-        }),
+        supervisor_effects(&supervisor, &engine, repository.path()),
         EffectsOptions::default(),
     )
     .await
@@ -11079,18 +11102,31 @@ async fn checkpoint_rpc_reports_effect_failure_without_a_direct_or_second_rollba
         std::fs::read_to_string(repository.path().join("tracked.txt"))
             .unwrap()
             .replace("\r\n", "\n"),
-        "one\n"
+        "three\n",
+        "a refused rewind must not restore any file"
     );
     {
         let state = state.lock().unwrap();
         assert_eq!(state.rollbacks, [2]);
-        assert_eq!(state.rollback_observations, [(2, Some("one\n".to_owned()))]);
+        assert_eq!(
+            state.rollback_observations,
+            [(2, Some("three\n".to_owned()))]
+        );
     }
     let events = engine.read_events(0).await.unwrap();
     assert!(
         !events
             .iter()
             .any(|event| event.event.event_type == "thread.reverted")
+    );
+    assert!(
+        events.iter().any(|event| {
+            event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+                && event.event.payload["activity"]["payload"]["detail"]
+                    .as_str()
+                    .is_some_and(|detail| detail.contains("injected provider rollback failure"))
+        }),
+        "the provider's reason reaches the work log"
     );
     for preserved_turn in [2, 3] {
         assert!(git_succeeds(
@@ -11108,6 +11144,551 @@ async fn checkpoint_rpc_reports_effect_failure_without_a_direct_or_second_rollba
     handle.shutdown();
     handle.join().await.unwrap();
     delivery.shutdown().await;
+    supervisor.shutdown().await.unwrap();
+    engine.shutdown().await;
+}
+
+/// A session that reports its work, so the supervisor suspends it once a turn ends and nothing
+/// runs. `starts` sessions are prepared: the first launch, and each relaunch after it.
+fn idle_suspending_state(starts: usize) -> Arc<StdMutex<DriverState>> {
+    Arc::new(StdMutex::new(DriverState {
+        start_results: (0..starts)
+            .map(|_| {
+                Ok(StartedSession {
+                    activity_capabilities: ActivityCapabilities::structured_full(false),
+                    ..started_session_for_provider("codex", "provider-session-1")
+                })
+            })
+            .collect(),
+        ..DriverState::default()
+    }))
+}
+
+/// Ends one turn and waits until the idle deadline has suspended the session.
+async fn finish_a_turn_and_wait_for_idle_suspension(
+    supervisor: &ProviderRuntimeSupervisor,
+    events_tx: &mpsc::Sender<ProviderEvent>,
+) {
+    events_tx
+        .send(ProviderEvent {
+            native_event_id: None,
+            event_type: "turn.completed".to_owned(),
+            thread_id: "t1".to_owned(),
+            turn_id: Some("turn-2".to_owned()),
+            item_id: None,
+            request_id: None,
+            payload: json!({"messageId":"assistant-2","state":"completed"}),
+            activity: Vec::new(),
+            activity_controls: Default::default(),
+        })
+        .await
+        .unwrap();
+    wait_until_suspended(supervisor).await;
+}
+
+async fn wait_until_suspended(supervisor: &ProviderRuntimeSupervisor) {
+    timeout(Duration::from_secs(10), async {
+        while supervisor
+            .capture_session_identity("t1")
+            .await
+            .unwrap()
+            .is_some()
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the idle session is suspended");
+}
+
+const REVERT_IDLE_TIMEOUT: Duration = Duration::from_millis(200);
+
+/// Revert on a thread whose session was suspended after a turn reopens it the way a new message
+/// does, with the saved resume cursor, rewinds, restores the files, and lets it idle again.
+#[tokio::test]
+async fn checkpoint_revert_resumes_an_idle_suspended_session_then_rewinds() {
+    let repository = initialize_repository();
+    let engine = engine().await;
+    for (turn_count, content) in [(0, "baseline\n"), (1, "one\n"), (2, "two\n")] {
+        project_checkpoint(&engine, repository.path(), turn_count, content).await;
+    }
+    let state = idle_suspending_state(2);
+    let (events_tx, events_rx) = mpsc::channel(8);
+    let (_relaunch_events_tx, relaunch_events_rx) = mpsc::channel(8);
+    let supervisor = Arc::new(ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        Arc::new(FakeFactory {
+            state: state.clone(),
+            events: StdMutex::new(VecDeque::from([events_rx, relaunch_events_rx])),
+        }),
+        activity_projection(&engine),
+        SupervisorOptions {
+            session_idle_timeout: REVERT_IDLE_TIMEOUT,
+            ..SupervisorOptions::default()
+        },
+    ));
+    let mut provider_launch = launch();
+    provider_launch.cwd = repository.path().to_path_buf();
+    supervisor.launch(provider_launch).await.unwrap();
+    finish_a_turn_and_wait_for_idle_suspension(&supervisor, &events_tx).await;
+    let effects = OrchestrationEffects::start(
+        engine.clone(),
+        Arc::new(GitRepository::default()),
+        supervisor_effects(&supervisor, &engine, repository.path()),
+        EffectsOptions::default(),
+    )
+    .await
+    .unwrap();
+    let mut events = engine.subscribe_events();
+
+    engine
+        .dispatch(
+            serde_json::from_value(json!({
+                "type":"thread.checkpoint.revert",
+                "commandId":"revert-after-suspension",
+                "threadId":"t1",
+                "turnCount":1,
+                "createdAt":NOW
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    wait_for_event(&mut events, |event| {
+        event.event.event_type == "thread.reverted"
+            || event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+    })
+    .await;
+    effects.shutdown().await;
+
+    let failures = engine
+        .read_events(0)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.event.payload["activity"]["kind"] == "checkpoint.revert.failed")
+        .map(|event| event.event.payload["activity"]["payload"]["detail"].clone())
+        .collect::<Vec<_>>();
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("tracked.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "one\n"
+    );
+    {
+        let state = state.lock().unwrap();
+        assert_eq!(state.rollbacks, [1], "the resumed session rewinds once");
+        assert_eq!(
+            state.launches.len(),
+            2,
+            "the suspended session is relaunched"
+        );
+        assert_eq!(
+            state.launches[1].resume_cursor,
+            Some(json!({"threadId":"provider-session-1"})),
+            "the relaunch resumes the saved conversation"
+        );
+    }
+    wait_until_suspended(&supervisor).await;
+
+    supervisor.shutdown().await.unwrap();
+    engine.shutdown().await;
+}
+
+/// If the suspended session cannot be reopened, the revert fails before any file changes and
+/// says why.
+#[tokio::test]
+async fn checkpoint_revert_that_cannot_resume_the_session_changes_nothing() {
+    let repository = initialize_repository();
+    let engine = engine().await;
+    for (turn_count, content) in [(0, "baseline\n"), (1, "one\n"), (2, "two\n")] {
+        project_checkpoint(&engine, repository.path(), turn_count, content).await;
+    }
+    let state = idle_suspending_state(1);
+    state
+        .lock()
+        .unwrap()
+        .start_results
+        .push_back(Err(ProviderRuntimeError::Spawn {
+            provider: "codex".to_owned(),
+            detail: "the executable exited with status 1".to_owned(),
+        }));
+    let (events_tx, events_rx) = mpsc::channel(8);
+    let (_relaunch_events_tx, relaunch_events_rx) = mpsc::channel(8);
+    let supervisor = Arc::new(ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        Arc::new(FakeFactory {
+            state: state.clone(),
+            events: StdMutex::new(VecDeque::from([events_rx, relaunch_events_rx])),
+        }),
+        activity_projection(&engine),
+        SupervisorOptions {
+            session_idle_timeout: REVERT_IDLE_TIMEOUT,
+            ..SupervisorOptions::default()
+        },
+    ));
+    let mut provider_launch = launch();
+    provider_launch.cwd = repository.path().to_path_buf();
+    supervisor.launch(provider_launch).await.unwrap();
+    finish_a_turn_and_wait_for_idle_suspension(&supervisor, &events_tx).await;
+    let effects = OrchestrationEffects::start(
+        engine.clone(),
+        Arc::new(GitRepository::default()),
+        supervisor_effects(&supervisor, &engine, repository.path()),
+        EffectsOptions::default(),
+    )
+    .await
+    .unwrap();
+    let mut events = engine.subscribe_events();
+
+    engine
+        .dispatch(
+            serde_json::from_value(json!({
+                "type":"thread.checkpoint.revert",
+                "commandId":"revert-resume-fails",
+                "threadId":"t1",
+                "turnCount":1,
+                "createdAt":NOW
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    wait_for_event(&mut events, |event| {
+        event.event.event_type == "thread.activity-appended"
+            && event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+    })
+    .await;
+    effects.shutdown().await;
+
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("tracked.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "two\n",
+        "a failed resume restores no file"
+    );
+    let events = engine.read_events(0).await.unwrap();
+    let detail = events
+        .iter()
+        .find(|event| event.event.payload["activity"]["kind"] == "checkpoint.revert.failed")
+        .and_then(|event| event.event.payload["activity"]["payload"]["detail"].as_str())
+        .expect("failure detail")
+        .to_owned();
+    assert!(
+        detail.contains("so nothing was reverted") && detail.contains("could not start"),
+        "{detail}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event.event_type == "thread.reverted")
+    );
+    assert!(state.lock().unwrap().rollbacks.is_empty());
+
+    supervisor.shutdown().await.unwrap();
+    engine.shutdown().await;
+}
+
+/// A thread with no saved conversation for its provider has nothing to rewind: the revert starts
+/// no session and changes nothing.
+#[tokio::test]
+async fn checkpoint_revert_without_a_saved_conversation_starts_nothing() {
+    let repository = initialize_repository();
+    let engine = engine().await;
+    for (turn_count, content) in [(0, "baseline\n"), (1, "one\n"), (2, "two\n")] {
+        project_checkpoint(&engine, repository.path(), turn_count, content).await;
+    }
+    let state = Arc::new(StdMutex::new(DriverState::default()));
+    let supervisor = Arc::new(ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        Arc::new(FakeFactory {
+            state: state.clone(),
+            events: StdMutex::new(VecDeque::new()),
+        }),
+        activity_projection(&engine),
+        SupervisorOptions::default(),
+    ));
+    let effects = OrchestrationEffects::start(
+        engine.clone(),
+        Arc::new(GitRepository::default()),
+        supervisor_effects(&supervisor, &engine, repository.path()),
+        EffectsOptions::default(),
+    )
+    .await
+    .unwrap();
+    let mut events = engine.subscribe_events();
+
+    engine
+        .dispatch(
+            serde_json::from_value(json!({
+                "type":"thread.checkpoint.revert",
+                "commandId":"revert-without-conversation",
+                "threadId":"t1",
+                "turnCount":1,
+                "createdAt":NOW
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    wait_for_event(&mut events, |event| {
+        event.event.event_type == "thread.activity-appended"
+            && event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+    })
+    .await;
+    effects.shutdown().await;
+
+    assert!(
+        state.lock().unwrap().launches.is_empty(),
+        "no session starts"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("tracked.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "two\n"
+    );
+    assert!(engine.read_events(0).await.unwrap().iter().any(|event| {
+        event.event.payload["activity"]["payload"]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("no saved"))
+    }));
+
+    supervisor.shutdown().await.unwrap();
+    engine.shutdown().await;
+}
+
+/// A provider that cannot rewind its conversation (Claude here) gets its files restored and a
+/// notice that the conversation was not rewound; its messages, checkpoints and turn count stay.
+#[tokio::test]
+async fn checkpoint_revert_on_a_provider_that_cannot_rewind_restores_files_only() {
+    let repository = initialize_repository();
+    let engine = engine().await;
+    for (turn_count, content) in [(0, "baseline\n"), (1, "one\n"), (2, "two\n")] {
+        project_checkpoint(&engine, repository.path(), turn_count, content).await;
+    }
+    let state = Arc::new(StdMutex::new(DriverState::default()));
+    let (_events_tx, events_rx) = mpsc::channel(8);
+    let supervisor = Arc::new(ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        Arc::new(FakeFactory {
+            state: state.clone(),
+            events: StdMutex::new(VecDeque::from([events_rx])),
+        }),
+        activity_projection(&engine),
+        SupervisorOptions::default(),
+    ));
+    let mut provider_launch = launch();
+    provider_launch.provider = "claude".to_owned();
+    provider_launch.provider_label = "Claude".to_owned();
+    provider_launch.provider_instance_id = Some("claude".to_owned());
+    provider_launch.codex_home = None;
+    provider_launch.cwd = repository.path().to_path_buf();
+    supervisor.launch(provider_launch).await.unwrap();
+    let effects = OrchestrationEffects::start(
+        engine.clone(),
+        Arc::new(GitRepository::default()),
+        supervisor_effects(&supervisor, &engine, repository.path()),
+        EffectsOptions::default(),
+    )
+    .await
+    .unwrap();
+    let mut events = engine.subscribe_events();
+
+    engine
+        .dispatch(
+            serde_json::from_value(json!({
+                "type":"thread.checkpoint.revert",
+                "commandId":"files-only-revert",
+                "threadId":"t1",
+                "turnCount":1,
+                "createdAt":NOW
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    wait_for_event(&mut events, |event| {
+        event.event.event_type == "thread.activity-appended"
+            && event.event.payload["activity"]["kind"] == "checkpoint.revert.files-only"
+    })
+    .await;
+
+    effects.shutdown().await;
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("tracked.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "one\n",
+        "the checkpoint files are restored"
+    );
+    assert!(
+        state.lock().unwrap().rollbacks.is_empty(),
+        "a provider that cannot rewind is never asked to"
+    );
+    let events = engine.read_events(0).await.unwrap();
+    let notice = events
+        .iter()
+        .find(|event| event.event.payload["activity"]["kind"] == "checkpoint.revert.files-only")
+        .expect("files-only notice");
+    assert_eq!(notice.event.payload["activity"]["tone"], "info");
+    assert!(
+        notice.event.payload["activity"]["payload"]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("Claude can't rewind its conversation")),
+        "{notice:?}"
+    );
+    assert!(
+        !events.iter().any(|event| {
+            event.event.event_type == "thread.reverted"
+                || event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+        }),
+        "the conversation is kept and the revert is not an error"
+    );
+    assert!(git_succeeds(
+        repository.path(),
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &orchestration_effects::checkpoint_ref("t1", 2),
+        ]
+    ));
+
+    supervisor.shutdown().await.unwrap();
+    engine.shutdown().await;
+}
+
+/// A Codex app-server from before history modes: its threads carry no `historyMode`, and it rejects
+/// any method it does not know while decoding the request.
+const OLD_CODEX_FIXTURE: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"initialize"'*) printf '{"id":%s,"result":{"userAgent":"codex_cli_rs/0.147.0"}}\n' "$id" ;;
+    *'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"/tmp","model":"gpt-5","thread":{"id":"old-codex-thread"}}}\n' "$id" ;;
+    *'"method":"mcpServerStatus/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$id" ;;
+    *'"method":"shutdown"'*) printf '{"id":%s,"result":null}\n' "$id" ;;
+    *) printf '{"id":%s,"error":{"code":-32600,"message":"Invalid request: unknown variant"}}\n' "$id" ;;
+  esac
+done
+"#;
+
+const WINDOWS_OLD_CODEX_FIXTURE: &str = r#"
+while ($null -ne ($line = [Console]::In.ReadLine())) {
+  try { $request = $line | ConvertFrom-Json } catch { continue }
+  if ($null -eq $request.id) { continue }
+  $id = [string]$request.id
+  switch ([string]$request.method) {
+    "initialize" { $response = '{"id":' + $id + ',"result":{"userAgent":"codex_cli_rs/0.147.0"}}' }
+    "thread/start" { $response = '{"id":' + $id + ',"result":{"cwd":"C:\\tmp","model":"gpt-5","thread":{"id":"old-codex-thread"}}}' }
+    "mcpServerStatus/list" { $response = '{"id":' + $id + ',"result":{"data":[],"nextCursor":null}}' }
+    "shutdown" { $response = '{"id":' + $id + ',"result":null}' }
+    default { $response = '{"id":' + $id + ',"error":{"code":-32600,"message":"Invalid request: unknown variant"}}' }
+  }
+  [Console]::Out.WriteLine($response)
+  [Console]::Out.Flush()
+}
+"#;
+
+/// Reverting a thread on a Codex too old to rewind restores no file and says how to fix it.
+#[tokio::test]
+async fn checkpoint_revert_on_an_old_codex_restores_nothing_and_asks_for_an_update() {
+    let repository = initialize_repository();
+    let engine = engine().await;
+    for (turn_count, content) in [(0, "baseline\n"), (1, "one\n"), (2, "two\n")] {
+        project_checkpoint(&engine, repository.path(), turn_count, content).await;
+    }
+    let temp = TempDir::new().unwrap();
+    let executable = executable_fixture(
+        &temp,
+        "old-codex",
+        OLD_CODEX_FIXTURE,
+        WINDOWS_OLD_CODEX_FIXTURE,
+    );
+    let supervisor = Arc::new(ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        Arc::new(NativeProviderDriverFactory::new(
+            temp.path().join("attachments"),
+        )),
+        activity_projection(&engine),
+        SupervisorOptions::default(),
+    ));
+    let mut provider_launch = launch();
+    provider_launch.binary_path = executable.to_string_lossy().into_owned();
+    provider_launch.cwd = repository.path().to_path_buf();
+    timeout(
+        CHECKPOINT_RPC_INTEGRATION_DEADLINE,
+        supervisor.launch(provider_launch),
+    )
+    .await
+    .expect("the old Codex fixture starts in time")
+    .unwrap();
+    let effects = OrchestrationEffects::start(
+        engine.clone(),
+        Arc::new(GitRepository::default()),
+        supervisor_effects(&supervisor, &engine, repository.path()),
+        EffectsOptions::default(),
+    )
+    .await
+    .unwrap();
+    let mut events = engine.subscribe_events();
+
+    engine
+        .dispatch(
+            serde_json::from_value(json!({
+                "type":"thread.checkpoint.revert",
+                "commandId":"old-codex-revert",
+                "threadId":"t1",
+                "turnCount":1,
+                "createdAt":NOW
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    wait_for_event(&mut events, |event| {
+        event.event.event_type == "thread.activity-appended"
+            && event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+    })
+    .await;
+
+    effects.shutdown().await;
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("tracked.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "two\n",
+        "an old Codex must not leave the files reverted"
+    );
+    let events = engine.read_events(0).await.unwrap();
+    assert!(
+        events.iter().any(|event| {
+            event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+                && event.event.payload["activity"]["payload"]["detail"]
+                    .as_str()
+                    .is_some_and(|detail| detail.contains("Update Codex to 0.151.0 or later"))
+        }),
+        "the work log says how to fix it"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event.event_type == "thread.reverted")
+    );
+    assert!(git_succeeds(
+        repository.path(),
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &orchestration_effects::checkpoint_ref("t1", 2),
+        ]
+    ));
+
     supervisor.shutdown().await.unwrap();
     engine.shutdown().await;
 }
@@ -13607,6 +14188,12 @@ fn claude_launch_arguments_preserve_controls_and_gate_activity_flags() {
         );
     }
     assert!(supported.iter().any(|argument| argument == "--mcp-config"));
+    assert!(
+        !supported
+            .iter()
+            .any(|argument| argument.contains("Bearer") || argument.contains("/mcp")),
+        "the MCP server and its token stay off the command line: {supported:?}"
+    );
 
     let unsupported = build_claude_launch_arguments_for_test(
         &request,
@@ -13896,6 +14483,145 @@ async fn claude_activity_probe_retries_transient_failures_without_poisoning_cach
         "a failed version probe must be retried, then cache the successful version/help pair"
     );
     assert_eq!(probe_context.cache_len(), 1);
+}
+
+/// Claude reads the BiBCode MCP server from a file only this user can read: on the command line
+/// its bearer token was readable by every local process. The file goes with the driver.
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_reads_its_mcp_token_from_a_private_file_removed_with_the_driver() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let probe_context = ClaudeActivityProbeTestContext::new();
+    let temp = TempDir::new().unwrap();
+    let captured = temp.path().join("mcp-config-path");
+    let arguments = temp.path().join("arguments");
+    let executable = executable_fixture(
+        &temp,
+        "claude-mcp-file",
+        "#!/bin/sh\ncase \"$1\" in\n  --version) printf '%s\\n' '2.1.300 (Claude Code)'; exit 0;;\n  --help) printf '%s\\n' 'Usage: claude'; exit 0;;\nesac\nprintf '%s\\n' \"$@\" > \"$BIBCODE_TEST_ARGS\"\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = --mcp-config ]; then printf '%s' \"$2\" > \"$BIBCODE_TEST_MCP_CONFIG\"; fi\n  shift\ndone\ncat >/dev/null\n",
+        "",
+    );
+    let factory = probe_context.driver_factory(temp.path().join("attachments"));
+    let mut request = launch();
+    request.provider = "claudeAgent".to_owned();
+    request.binary_path = executable.to_string_lossy().into_owned();
+    request.cwd = temp.path().to_path_buf();
+    request.mcp = Some(ProviderMcpConfig {
+        endpoint: "http://127.0.0.1:1234/mcp".to_owned(),
+        authorization_header: "Bearer private-test-token".to_owned(),
+        provider_session_id: "provider-session".to_owned(),
+    });
+    for (name, path) in [
+        ("BIBCODE_TEST_ARGS", &arguments),
+        ("BIBCODE_TEST_MCP_CONFIG", &captured),
+    ] {
+        request
+            .environment
+            .insert(name.to_owned(), path.to_string_lossy().into_owned());
+    }
+    let driver = factory.create(request).await.unwrap();
+    driver.start().await.unwrap();
+    let config_path = timeout(Duration::from_secs(10), async {
+        loop {
+            if let Ok(path) = std::fs::read_to_string(&captured)
+                && !path.is_empty()
+            {
+                return PathBuf::from(path);
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("Claude was launched with an MCP configuration file");
+
+    let launched = std::fs::read_to_string(&arguments).unwrap();
+    assert!(!launched.contains("private-test-token"), "{launched}");
+    let config: Value = serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+    assert_eq!(
+        config["mcpServers"]["bibcode"]["headers"]["Authorization"],
+        "Bearer private-test-token"
+    );
+    assert_eq!(
+        config["mcpServers"]["bibcode"]["url"],
+        "http://127.0.0.1:1234/mcp"
+    );
+    assert_eq!(
+        std::fs::metadata(&config_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+
+    driver.shutdown().await.unwrap();
+    drop(driver);
+    assert!(!config_path.exists(), "the token file goes with the driver");
+}
+
+/// The background-agent report: one `--help` that failed or ran out of time after `--version`
+/// answered was cached as "no activity flags" for the life of the server, so every later
+/// launch ran without hook events and idle suspension killed its background subagents.
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_activity_probe_retries_a_help_probe_that_failed_once() {
+    assert_claude_probe_recovers_after_one_bad_help("failed", "exit 1").await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_activity_probe_caches_a_help_probe_that_was_slow_once() {
+    // Past the launching caller's two-second wait, within the probe's own budget.
+    assert_claude_probe_recovers_after_one_bad_help("slow", "sleep 3").await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn claude_activity_probe_retries_a_help_probe_that_timed_out_once() {
+    // Past the probe's own budget: the probe is stopped and the next launch probes again.
+    assert_claude_probe_recovers_after_one_bad_help("timed-out", "sleep 12; exit 1").await;
+}
+
+#[cfg(unix)]
+async fn assert_claude_probe_recovers_after_one_bad_help(case: &str, first_help: &str) {
+    let probe_context = ClaudeActivityProbeTestContext::new();
+    let temp = TempDir::new().unwrap();
+    let marker_path = temp.path().join("help-failed-once");
+    let script = format!(
+        "#!/bin/sh\ncase \"$1\" in\n  --version) printf '%s\\n' '2.1.300 (Claude Code)';;\n  --help) if [ ! -f '{marker}' ]; then touch '{marker}'; {first_help}; fi; printf '%s\\n' '--include-hook-events --forward-subagent-text';;\n  *) exit 1;;\nesac\n",
+        marker = marker_path.display(),
+    );
+    let executable = executable_fixture(&temp, &format!("claude-help-{case}"), &script, "");
+    let binary_path = executable.to_string_lossy().into_owned();
+
+    assert_eq!(
+        probe_context.probe(&binary_path).await,
+        ClaudeActivitySupport::default(),
+        "{case}: the launch that met the failure runs without the flags"
+    );
+    // A detached probe may still be finishing its cleanup; the next launch must not reuse
+    // the failure.
+    let later = timeout(Duration::from_secs(20), async {
+        loop {
+            let support = probe_context.probe(&binary_path).await;
+            if support != ClaudeActivitySupport::default() {
+                return support;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .unwrap_or_default();
+    assert_eq!(
+        later,
+        ClaudeActivitySupport {
+            include_hook_events: true,
+            forward_subagent_text: true,
+            transcript_recovery: false,
+        },
+        "{case}: a later launch of the same working Claude gets the activity flags"
+    );
 }
 
 #[cfg(unix)]
@@ -14806,13 +15532,14 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/start"'*)
       [ -z "$BIBCODE_TEST_CODEX_THREAD_RESPONSE_READY_MARKER" ] || : > "$BIBCODE_TEST_CODEX_THREAD_RESPONSE_READY_MARKER"
-      printf '{"id":%s,"result":{"cwd":"/tmp","model":"gpt-5","thread":{"id":"native-codex-thread"}}}\n' "$id"
+      printf '{"id":%s,"result":{"cwd":"/tmp","model":"gpt-5","thread":{"id":"native-codex-thread","historyMode":"paginated"}}}\n' "$id"
       ;;
     *'"method":"mcpServerStatus/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$id" ;;
     *'"method":"thread/goal/set"'*) printf '{"id":%s,"result":{"goal":{"status":"active"}}}\n' "$id" ;;
     *'"method":"turn/start"'*) printf '{"id":%s,"result":{"turn":{"id":"native-codex-turn"}}}\n{"method":"item/started","emittedAtMs":1001,"params":{"threadId":"native-codex-thread","turnId":"native-codex-turn","item":{"id":"spawn-1","type":"collabAgentToolCall","tool":"spawnAgent","status":"inProgress","senderThreadId":"native-codex-thread","receiverThreadIds":["native-child"],"agentsStates":{"native-child":{"status":"running","message":null}}},"startedAtMs":1001}}\n{"method":"turn/started","emittedAtMs":1002,"params":{"threadId":"native-child","turn":{"id":"native-child-turn","status":"inProgress","startedAt":1}}}\n' "$id" ;;
     *'"method":"turn/interrupt"'*) printf '{"id":%s,"result":{}}\n' "$id" ;;
-    *'"method":"thread/rollback"'*) printf '{"id":%s,"result":{"thread":{"id":"native-codex-thread","turns":[]}}}\n' "$id" ;;
+    *'"method":"thread/turns/list"'*) printf '{"id":%s,"result":{"data":[{"id":"native-codex-turn","items":[]}],"nextCursor":null}}\n' "$id" ;;
+    *'"method":"thread/revert"'*'"beforeTurnId":"native-codex-turn"'*) printf '{"id":%s,"result":{"thread":{"id":"native-codex-thread","historyMode":"paginated","turns":[]}}}\n' "$id" ;;
     *'"method":"shutdown"'*) printf '{"id":%s,"result":null}\n' "$id" ;;
   esac
 done
@@ -14945,7 +15672,12 @@ done
             .is_some()
     );
     driver.interrupt(None).await.unwrap();
-    driver.rollback(0).await.unwrap();
+    // Like Codex 0.162.1, the fixture starts a paginated thread and answers `thread/revert`
+    // only before the listed turn.
+    timeout(Duration::from_secs(10), driver.rollback(1))
+        .await
+        .expect("Codex should answer the revert")
+        .expect("Codex should revert the paginated thread");
     assert!(matches!(
         driver.rollback(-1).await,
         Err(ProviderRuntimeError::Provider { provider, .. }) if provider == "codex"

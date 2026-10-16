@@ -19,6 +19,7 @@ use super::model::{
     ReconciliationBackgroundTerminal, ReconciliationThread, ReconciliationThreadItem,
     ReconciliationThreadStatus, decode_thread_list_response, decode_thread_read_response,
 };
+use super::protocol::is_missing_method_error;
 
 pub(crate) const MAX_TRACKED_ACTORS: usize = 256;
 pub(crate) const MAX_TRACKED_WORK_ITEMS: usize = 128;
@@ -563,9 +564,24 @@ impl CodexActivityTracker {
         let Some(request_id) = envelope.get("id").and_then(Value::as_str) else {
             return CodexActivityOutput::default();
         };
+        let recovery_method = if request_id.starts_with("recovery-list") {
+            "thread/list"
+        } else if request_id.starts_with("recovery-read") {
+            "thread/read"
+        } else {
+            ""
+        };
         if let Some(error) = envelope.get("error")
             && request_id.starts_with("recovery-")
-            && error.get("code").and_then(Value::as_i64) == Some(-32601)
+            && let Some(code) = error.get("code").and_then(Value::as_i64)
+            && is_missing_method_error(
+                code,
+                error
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                recovery_method,
+            )
         {
             let mut output = CodexActivityOutput::default();
             output.push(ProviderActivityMutation::SetScope {

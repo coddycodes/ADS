@@ -1436,11 +1436,111 @@ fn usable_control_label(value: &str) -> bool {
     !value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
 }
 
+/// The work Claude runs outside a BiBCode turn: the background tasks it reports live on its stream
+/// (`run_in_background` Bash commands, Monitor watches, background subagents, long MCP calls), and
+/// the turn it owes a finished task. Claude writes these messages whether or not it was launched
+/// with hook events, so idle suspension can spare a working process even when activity observation
+/// is unavailable or turned off. Every uncertainty errs toward reporting work.
+#[derive(Debug, Default)]
+struct ClaudeBackgroundTasks {
+    live: BTreeSet<String>,
+    /// A task was dropped at the bound, so the set no longer proves that nothing runs. Cleared by
+    /// the next complete live set.
+    overflowed: bool,
+    /// Background tasks that finished while no turn ran and whose answer Claude has not yet given:
+    /// each completion produces its own `result` with `origin.kind` `task-notification`. Bridges
+    /// the moment between a task leaving the live set and the turn that answers it. A task that
+    /// finishes during a turn needs no bridge: that turn's completion arms a fresh idle deadline.
+    follow_ups_owed: usize,
+}
+
+impl ClaudeBackgroundTasks {
+    /// Applies one stream message; the live count when it changed or confirmed it.
+    fn observe(&mut self, value: &Value, turn_open: bool) -> Option<usize> {
+        match value.get("type").and_then(Value::as_str)? {
+            "system" => self.observe_task(value, turn_open)?,
+            "result"
+                if self.follow_ups_owed > 0
+                    && value.pointer("/origin/kind").and_then(Value::as_str)
+                        == Some("task-notification") =>
+            {
+                self.follow_ups_owed -= 1;
+            }
+            _ => return None,
+        }
+        Some(self.live.len() + usize::from(self.overflowed) + self.follow_ups_owed)
+    }
+
+    /// Applies a `system` message; `None` when it is not about a task.
+    fn observe_task(&mut self, value: &Value, turn_open: bool) -> Option<()> {
+        let task_id = value.get("task_id").and_then(Value::as_str);
+        let ambient = |value: &Value| value.get("ambient").and_then(Value::as_bool) == Some(true);
+        match value.get("subtype").and_then(Value::as_str)? {
+            // A foreground task keeps its turn open; moving it to the background is a task_updated.
+            "task_started" => {
+                let foreground =
+                    value.get("is_backgrounded").and_then(Value::as_bool) == Some(false);
+                if !ambient(value) && !foreground {
+                    self.insert(task_id?);
+                }
+            }
+            "task_updated" => {
+                let patch = value.get("patch")?;
+                if matches!(
+                    patch.get("status").and_then(Value::as_str),
+                    Some("completed" | "failed" | "killed")
+                ) {
+                    // Its notification, and the turn that answers it, follow.
+                    self.finish(task_id?, turn_open);
+                } else if patch.get("is_backgrounded").and_then(Value::as_bool) == Some(true) {
+                    self.insert(task_id?);
+                }
+            }
+            // Also sent for a foreground task, which its own turn answers.
+            "task_notification" => self.finish(task_id?, turn_open),
+            // The complete live set (Claude Code 2.1.203 and later); it corrects a missed message.
+            "background_tasks_changed" => {
+                let tasks = value.get("tasks")?.as_array()?;
+                self.live.clear();
+                self.overflowed = false;
+                for task in tasks.iter().filter(|task| !ambient(task)) {
+                    if let Some(task_id) = task.get("task_id").and_then(Value::as_str) {
+                        self.insert(task_id);
+                    }
+                }
+            }
+            // A running task's progress changes nothing, but shows Claude is still reporting.
+            "task_progress" => {}
+            _ => return None,
+        }
+        Some(())
+    }
+
+    /// A tracked background task ended; with no turn running, Claude owes the turn that answers
+    /// it.
+    fn finish(&mut self, task_id: &str, turn_open: bool) {
+        if self.live.remove(task_id) && !turn_open {
+            self.follow_ups_owed = self.follow_ups_owed.saturating_add(1);
+        }
+    }
+
+    fn insert(&mut self, task_id: &str) {
+        if self.live.len() < ACTIVITY_PAGE_MAX_LENGTH {
+            self.live.insert(task_id.to_owned());
+        } else if !self.live.contains(task_id) {
+            self.overflowed = true;
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct ClaudeRuntimeOutput {
     pub events: Vec<CanonicalEvent>,
     pub activity: Vec<ProviderActivityMutation>,
     pub native_event_id: Option<String>,
+    /// How much work Claude runs outside a turn (live background tasks, answers it owes), when
+    /// this message changed or confirmed it.
+    pub background_tasks: Option<usize>,
     pub(crate) activity_controls: Vec<ProviderActivityControlUpdate>,
     pub(crate) recovery_request: Option<ClaudeTranscriptRecoveryRequest>,
 }
@@ -1459,6 +1559,9 @@ pub struct ClaudeProviderRuntime {
     session_id: String,
     runtime_mode: Option<RuntimeMode>,
     current_turn_id: Option<String>,
+    /// The current turn has started and its `result` has not arrived. `current_turn_id` outlives
+    /// the turn it names.
+    turn_open: bool,
     /// The write whose replay begins the current turn, until Claude replays it or its
     /// wait ends.
     turn_input_awaiting_replay: Option<u64>,
@@ -1468,6 +1571,7 @@ pub struct ClaudeProviderRuntime {
     pending_approvals: BTreeMap<String, PendingApproval>,
     pending_user_inputs: BTreeMap<String, PendingUserInput>,
     in_flight_tools: BTreeMap<String, InFlightTool>,
+    background_tasks: ClaudeBackgroundTasks,
     activity_tracker: ClaudeActivityTracker,
     task_control_correlator: ClaudeTaskControlCorrelator,
     agent_activity_enabled: bool,
@@ -1502,6 +1606,7 @@ impl ClaudeProviderRuntime {
             session_id,
             runtime_mode: None,
             current_turn_id: None,
+            turn_open: false,
             turn_input_awaiting_replay: None,
             turn_input_cancellation: CancellationToken::new(),
             delivery_acknowledgement_cancellation: CancellationToken::new(),
@@ -1509,6 +1614,7 @@ impl ClaudeProviderRuntime {
             pending_approvals: BTreeMap::new(),
             pending_user_inputs: BTreeMap::new(),
             in_flight_tools: BTreeMap::new(),
+            background_tasks: ClaudeBackgroundTasks::default(),
             activity_tracker,
             task_control_correlator,
             agent_activity_enabled,
@@ -1611,6 +1717,7 @@ impl ClaudeProviderRuntime {
         // reported as the cause of this one's failure.
         self.last_api_error = None;
         self.current_turn_id = Some(input.turn_id.clone());
+        self.turn_open = true;
         self.turn_input_awaiting_replay = None;
         vec![self.event(
             "turn.started",
@@ -1692,14 +1799,43 @@ impl ClaudeProviderRuntime {
         authenticated_hook: bool,
     ) -> ClaudeRuntimeOutput {
         let token_usage = self.token_usage.observe_stream_value(value);
+        let background_tasks = (!authenticated_hook)
+            .then(|| self.background_tasks.observe(value, self.turn_open))
+            .flatten();
+        let provider_turn = if authenticated_hook {
+            Vec::new()
+        } else {
+            self.start_provider_turn(value)
+        };
         let turn_id = self.current_turn_id.clone();
         let mut output = self.handle_non_usage_raw_value(value, emitted_at_ms, authenticated_hook);
+        output.background_tasks = background_tasks;
+        if !provider_turn.is_empty() {
+            output.events.splice(0..0, provider_turn);
+        }
         if let (Some(turn_id), Some(usage)) = (turn_id, token_usage) {
             output
                 .events
                 .insert(0, self.token_usage_event(turn_id, usage));
         }
         output
+    }
+
+    /// Claude answers a finished background task with a turn it starts itself. BiBCode did not
+    /// deliver it, so it gets a turn of its own: the thread reads running and the turn's output and
+    /// `result` belong to it. Not while a delivered message awaits its replay: on resume Claude
+    /// can run that turn before it reads the message, and its `result` is ignored instead.
+    fn start_provider_turn(&mut self, value: &Value) -> Vec<CanonicalEvent> {
+        let follow_up = value.get("type").and_then(Value::as_str) == Some("user")
+            && value.pointer("/origin/kind").and_then(Value::as_str) == Some("task-notification")
+            && value.get("parent_tool_use_id").is_none_or(Value::is_null);
+        if !follow_up || self.turn_open || self.turn_input_awaiting_replay.is_some() {
+            return Vec::new();
+        }
+        self.start_turn(TurnInput {
+            turn_id: uuid::Uuid::new_v4().to_string(),
+            input: String::new(),
+        })
     }
 
     fn handle_non_usage_raw_value(
@@ -1780,6 +1916,7 @@ impl ClaudeProviderRuntime {
                     .or_else(|| claude_hook_native_event_id(value)),
                 activity_controls,
                 recovery_request,
+                background_tasks: None,
             };
         }
 
@@ -1881,6 +2018,7 @@ impl ClaudeProviderRuntime {
                 .flatten(),
             activity_controls,
             recovery_request: None,
+            background_tasks: None,
         }
     }
 
@@ -2112,6 +2250,7 @@ impl ClaudeProviderRuntime {
             native_event_id: Some(recovered.native_event_id),
             activity_controls: Vec::new(),
             recovery_request: None,
+            background_tasks: None,
         }
     }
 
@@ -2303,6 +2442,7 @@ impl ClaudeProviderRuntime {
         self.session_id = snapshot.session_id;
         self.thread_id = snapshot.thread_id;
         self.current_turn_id = snapshot.turn_id;
+        self.turn_open = self.current_turn_id.is_some();
         self.runtime_mode = Some(snapshot.runtime_mode);
         self.pending_approvals = snapshot
             .pending_approvals
@@ -2493,6 +2633,7 @@ impl ClaudeProviderRuntime {
             return Vec::new();
         }
         self.stop_turn_input();
+        self.turn_open = false;
         let mut events = self.flush_incomplete_tools();
         let interrupted = is_interrupted_result(&message);
         let failed = message.is_error && !interrupted;

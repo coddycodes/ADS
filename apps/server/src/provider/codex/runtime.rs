@@ -31,13 +31,13 @@ use super::{
         mcp_server_status_from_notification, refresh_mcp_status_snapshot, run_actor,
     },
     model::{
-        BuildTurnStartInput, CodexProviderSnapshot, CodexRuntimeMode, CodexThreadSnapshot,
-        ReconciliationThread, ThreadBackgroundTerminalsListParams, ThreadListParams,
-        ThreadReadParams, build_initialize_params, build_turn_start_params,
-        build_turn_steer_params, decode_background_terminals_list_response,
-        decode_thread_list_response, decode_thread_read_response, delivery_key_exists,
-        is_recoverable_thread_resume_error, parse_model_list_response, parse_skills_list_response,
-        parse_thread_snapshot, reasoning_effort_label, turn_option_label,
+        BuildTurnStartInput, CodexProviderSnapshot, CodexRuntimeMode, ReconciliationThread,
+        ThreadBackgroundTerminalsListParams, ThreadListParams, ThreadReadParams,
+        build_initialize_params, build_turn_start_params, build_turn_steer_params,
+        decode_background_terminals_list_response, decode_thread_list_response,
+        decode_thread_read_response, delivery_key_exists, is_recoverable_thread_resume_error,
+        parse_model_list_response, parse_skills_list_response, parse_thread_snapshot,
+        reasoning_effort_label, turn_option_label,
     },
     protocol::{IncomingEvent, JsonRpcConnection, ProtocolError},
 };
@@ -168,6 +168,18 @@ pub enum RuntimeError {
     /// every retry.
     #[error("{0}")]
     UnsupportedOption(RefusedOption),
+    /// The thread reports no `historyMode` (a Codex that predates history modes), or Codex
+    /// rejects `thread/turns/list` or `thread/revert` as missing (`thread/revert` arrived in
+    /// 0.148). Codex 0.151 is the first to create the paginated threads it rewinds.
+    #[error(
+        "This Codex version can't rewind conversations. Update Codex to 0.151.0 or later, then start a new thread to use Revert."
+    )]
+    RewindNeedsNewerCodex,
+    /// The thread has legacy history, which `thread/revert` rejects.
+    #[error(
+        "This conversation uses Codex's older history format, which can't be rewound. Start a new thread on Codex 0.151.0 or later to use Revert."
+    )]
+    RewindNeedsNewThread,
 }
 
 impl OptionRefusal for RuntimeError {
@@ -199,6 +211,8 @@ struct RuntimeInner {
     reconciliation_task: StdMutex<Option<JoinHandle<()>>>,
     reconciliation_cancellation: CancellationToken,
     explicit_close: Mutex<bool>,
+    /// The provider thread's `historyMode`; only a `paginated` thread can be rewound.
+    history_mode: Mutex<Option<String>>,
     activity: Mutex<RuntimeActivityState>,
     mcp_status: McpStatusHandle,
     mcp_opening: Mutex<Option<McpOpenReservation>>,
@@ -763,6 +777,7 @@ impl CodexSessionRuntime {
             reconciliation_task: StdMutex::new(None),
             reconciliation_cancellation: reconciliation_cancellation.clone(),
             explicit_close: Mutex::new(false),
+            history_mode: Mutex::new(None),
             mcp_status: mcp_status.clone(),
             mcp_opening: Mutex::new(Some(mcp_opening)),
             mcp_status_actor_task: StdMutex::new(None),
@@ -1158,6 +1173,7 @@ impl CodexSessionRuntime {
             .or_else(|| self.inner.options.model.clone());
         session.resume_cursor = Some(provider_thread_id.clone());
         drop(session);
+        *self.inner.history_mode.lock().await = thread_history_mode(opened.get("thread"));
         let mut activity = self.inner.activity.lock().await;
         if activity.agent_activity_enabled {
             activity.install_root_thread_id(&provider_thread_id);
@@ -1417,31 +1433,47 @@ impl CodexSessionRuntime {
         Ok(())
     }
 
-    pub async fn rollback_thread(
-        &self,
-        num_turns: u64,
-    ) -> Result<CodexThreadSnapshot, RuntimeError> {
+    /// Drops the newest `num_turns` turns from the Codex conversation history with
+    /// `thread/revert`. Codex does not touch files; checkpoint revert restores them from
+    /// BiBCode's own Git refs once this succeeds.
+    pub async fn rollback_thread(&self, num_turns: u64) -> Result<(), RuntimeError> {
+        if num_turns == 0 {
+            return Ok(());
+        }
         let provider_thread_id = self.provider_thread_id().await?;
-        let response = self
-            .inner
-            .connection
-            .lock()
-            .await
-            .clone()
-            .request(
-                "thread/rollback",
-                json!({
-                    "threadId": provider_thread_id,
-                    "numTurns": num_turns,
-                }),
+        match self.inner.history_mode.lock().await.as_deref() {
+            Some("paginated") => {}
+            Some(_) => return Err(RuntimeError::RewindNeedsNewThread),
+            None => return Err(RuntimeError::RewindNeedsNewerCodex),
+        }
+        let connection = self.inner.connection.lock().await.clone();
+        let rewind = async {
+            let before_turn_id =
+                oldest_rolled_back_turn_id(&connection, &provider_thread_id, num_turns).await?;
+            Ok::<_, RuntimeError>(
+                connection
+                    .request(
+                        "thread/revert",
+                        json!({
+                            "threadId": provider_thread_id,
+                            "beforeTurnId": before_turn_id,
+                        }),
+                    )
+                    .await?,
             )
-            .await?;
-        let snapshot = parse_thread_snapshot(&response)
+        };
+        let response = rewind.await.map_err(|error| match error {
+            RuntimeError::Protocol(error) if error.is_missing_method() => {
+                RuntimeError::RewindNeedsNewerCodex
+            }
+            error => error,
+        })?;
+        parse_thread_snapshot(&response)
             .map_err(|message| RuntimeError::InvalidPayload { message })?;
         let mut session = self.inner.session.lock().await;
         session.status = "ready".to_owned();
         session.active_turn_id = None;
-        Ok(snapshot)
+        Ok(())
     }
 
     pub async fn shutdown(&self) -> Result<(), RuntimeError> {
@@ -1784,7 +1816,7 @@ impl CodexSessionRuntime {
                 .await
             {
                 Ok(response) => Some(response),
-                Err(error) if method_is_incompatible(&error) => {
+                Err(error) if error.is_missing_method() => {
                     read_incompatible = true;
                     None
                 }
@@ -1904,7 +1936,7 @@ impl CodexSessionRuntime {
                     .await
                 {
                     Ok(response) => response,
-                    Err(error) if method_is_incompatible(&error) => {
+                    Err(error) if error.is_missing_method() => {
                         list_incompatible = true;
                         break;
                     }
@@ -2019,7 +2051,7 @@ impl CodexSessionRuntime {
                     .await
                 {
                     Ok(response) => response,
-                    Err(error) if method_is_incompatible(&error) => {
+                    Err(error) if error.is_missing_method() => {
                         read_incompatible = true;
                         break;
                     }
@@ -2203,7 +2235,7 @@ impl CodexSessionRuntime {
                     .await
                 {
                     Ok(response) => response,
-                    Err(error) if method_is_incompatible(&error) => {
+                    Err(error) if error.is_missing_method() => {
                         background_incompatible = true;
                         break;
                     }
@@ -2502,6 +2534,8 @@ impl CodexSessionRuntime {
                     .and_then(Value::as_str)
                 {
                     self.inner.session.lock().await.resume_cursor = Some(thread_id.to_owned());
+                    *self.inner.history_mode.lock().await =
+                        thread_history_mode(params.get("thread"));
                     let request_reconciliation = {
                         let mut activity = self.inner.activity.lock().await;
                         if !activity.agent_activity_enabled {
@@ -3425,8 +3459,70 @@ fn pending_actor_transitions_are_valid(
     true
 }
 
-fn method_is_incompatible(error: &ProtocolError) -> bool {
-    matches!(error, ProtocolError::RemoteRequest { code: -32601, .. })
+/// The thread's `historyMode` (`legacy` or `paginated`), absent from Codex before history modes.
+fn thread_history_mode(thread: Option<&Value>) -> Option<String> {
+    thread
+        .and_then(|thread| thread.get("historyMode"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+/// Codex's `thread/turns/list` page-size ceiling.
+const TURNS_PAGE_LIMIT: u64 = 100;
+
+/// `thread/revert` drops `beforeTurnId` and every later turn, so dropping `num_turns` turns
+/// targets the `num_turns`-th newest one. When Codex holds fewer turns (a fallback
+/// `thread/start` replaced the thread), its oldest turn is the target and all are dropped.
+async fn oldest_rolled_back_turn_id(
+    connection: &JsonRpcConnection,
+    thread_id: &str,
+    num_turns: u64,
+) -> Result<String, RuntimeError> {
+    let mut remaining = num_turns;
+    let mut cursor: Option<String> = None;
+    let mut oldest = None;
+    loop {
+        let mut params = json!({
+            "threadId": thread_id,
+            "limit": remaining.min(TURNS_PAGE_LIMIT),
+            "sortDirection": "desc",
+            "itemsView": "notLoaded",
+        });
+        if let Some(cursor) = &cursor {
+            params["cursor"] = json!(cursor);
+        }
+        let page = connection.request("thread/turns/list", params).await?;
+        let turns = page.get("data").and_then(Value::as_array).ok_or_else(|| {
+            RuntimeError::InvalidPayload {
+                message: "thread/turns/list response missing data array".to_owned(),
+            }
+        })?;
+        for turn in turns {
+            if remaining == 0 {
+                break;
+            }
+            let turn_id = turn
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|turn_id| !turn_id.is_empty())
+                .ok_or_else(|| RuntimeError::InvalidPayload {
+                    message: "thread/turns/list turn missing id".to_owned(),
+                })?;
+            oldest = Some(turn_id.to_owned());
+            remaining -= 1;
+        }
+        let next_cursor = page.get("nextCursor").and_then(Value::as_str);
+        if remaining == 0
+            || turns.is_empty()
+            || next_cursor.is_none_or(|next| cursor.as_deref() == Some(next))
+        {
+            break;
+        }
+        cursor = next_cursor.map(str::to_owned);
+    }
+    oldest.ok_or_else(|| RuntimeError::InvalidPayload {
+        message: "thread/turns/list returned no turns to revert".to_owned(),
+    })
 }
 
 fn current_timestamp() -> String {
