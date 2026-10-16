@@ -3526,6 +3526,10 @@ async fn assert_opencode_restart_reconciliation(
             get(
                 move |AxumPath((session_id, message_id)): AxumPath<(String, String)>| async move {
                     match mode {
+                        // Only the delivery key's `msg_` id reads back.
+                        "found" if !message_id.starts_with("msg_") => {
+                            StatusCode::NOT_FOUND.into_response()
+                        }
                         "found" => (
                             StatusCode::OK,
                             Json(json!({
@@ -3643,9 +3647,11 @@ async fn assert_opencode_restart_reconciliation(
     );
 
     if should_resend {
+        // OpenCode rejects an id that does not start with `msg` (1.18 and later), so the key is
+        // sent as a deterministic `msg_` id.
         assert_eq!(
             prompt_bodies.lock().unwrap()[0]["messageID"],
-            row.delivery_key
+            format!("msg_{}", row.delivery_key.replace('-', ""))
         );
     }
 

@@ -962,7 +962,7 @@ impl OpenCodeSessionRuntime {
             "parts": crate::provider::attachments::prompt_parts(text, attachments),
         });
         if let Some(message_id) = message_id {
-            body["messageID"] = json!(message_id);
+            body["messageID"] = json!(v2::message_id(message_id));
         }
         if let Some((provider_id, model_id)) = self.inner.model.lock().await.as_ref() {
             body["model"] = json!({
@@ -1001,6 +1001,8 @@ impl OpenCodeSessionRuntime {
                 .v2_user_message_exists(&session_id, &v2::message_id(message_id))
                 .await;
         }
+        let message_id = v2::message_id(message_id);
+        let message_id = message_id.as_str();
         let response = self
             .inner
             .client
@@ -1106,7 +1108,7 @@ impl OpenCodeSessionRuntime {
             "arguments": arguments.trim(),
         });
         if let Some(message_id) = message_id {
-            body["messageID"] = json!(message_id);
+            body["messageID"] = json!(v2::message_id(message_id));
         }
         if let Some(agent) = self.inner.agent.as_ref() {
             body["agent"] = json!(agent);
@@ -4556,16 +4558,75 @@ mod tests {
             .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
             .await
             .expect("send turn");
+        // Durable delivery keys are UUIDs; OpenCode 1.18 rejects a `messageID` that does not
+        // start with `msg` (HTTP 400), so the key becomes a deterministic `msg_` id.
+        runtime
+            .send_turn(
+                Some("hello"),
+                Vec::new(),
+                Some("e310d932-acde-44f5-aa48-2a07b9c93343"),
+            )
+            .await
+            .expect("send turn");
 
         assert_eq!(
             bodies.lock().await.as_slice(),
-            [json!({
-                "sessionID": "session-1",
-                "messageID": "delivery-1",
-                "parts": [{"type": "text", "text": "hello"}]
-            })]
+            [
+                json!({
+                    "sessionID": "session-1",
+                    "messageID": "msg_delivery1",
+                    "parts": [{"type": "text", "text": "hello"}]
+                }),
+                json!({
+                    "sessionID": "session-1",
+                    "messageID": "msg_e310d932acde44f5aa482a07b9c93343",
+                    "parts": [{"type": "text", "text": "hello"}]
+                })
+            ]
         );
         server.abort();
+    }
+
+    /// Delivers a turn under a UUID delivery key to a real OpenCode 1 server and reads it back.
+    /// Set `BIBCODE_OPENCODE_V1_LIVE` (the server URL), `BIBCODE_OPENCODE_V1_PASSWORD` and
+    /// `BIBCODE_OPENCODE_V1_MODEL`, a scripted local endpoint so no provider credits are spent.
+    #[tokio::test]
+    #[ignore = "needs a live OpenCode 1 server"]
+    async fn live_opencode_1_durable_delivery() {
+        let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
+        let runtime =
+            super::OpenCodeSessionRuntime::new_with_options_reconciliation_revision_and_agent_activity(
+                &var("BIBCODE_OPENCODE_V1_LIVE"),
+                "live-thread",
+                "/tmp",
+                Some(&var("BIBCODE_OPENCODE_V1_MODEL")),
+                Some(&var("BIBCODE_OPENCODE_V1_PASSWORD")),
+                None,
+                0,
+                false,
+            )
+            .expect("runtime");
+        runtime.start().await.expect("session starts");
+        let key = uuid::Uuid::new_v4().to_string();
+        runtime
+            .send_turn(Some("SAY_HELLO please"), Vec::new(), Some(&key))
+            .await
+            .expect("OpenCode 1 accepts the delivery");
+        // `prompt_async` stores the message after it answers.
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !runtime.message_exists(&key).await.expect("lookup") {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the delivered message reads back");
+        assert!(
+            !runtime
+                .message_exists(&uuid::Uuid::new_v4().to_string())
+                .await
+                .expect("lookup")
+        );
+        runtime.stop().await.expect("stop");
     }
 
     #[tokio::test]
@@ -4574,46 +4635,46 @@ mod tests {
             Path((_session_id, message_id)): Path<(String, String)>,
         ) -> impl IntoResponse {
             match message_id.as_str() {
-                "delivery-found" => Json(json!({
+                "msg_deliveryfound" => Json(json!({
                     "info": {
-                        "id": "delivery-found",
+                        "id": "msg_deliveryfound",
                         "sessionID": "session-1",
                         "role": "user"
                     },
                     "parts": []
                 }))
                 .into_response(),
-                "delivery-absent" => StatusCode::NOT_FOUND.into_response(),
-                "delivery-malformed" => Json(json!({})).into_response(),
-                "delivery-assistant" => Json(json!({
+                "msg_deliveryabsent" => StatusCode::NOT_FOUND.into_response(),
+                "msg_deliverymalformed" => Json(json!({})).into_response(),
+                "msg_deliveryassistant" => Json(json!({
                     "info": {
-                        "id": "delivery-assistant",
+                        "id": "msg_deliveryassistant",
                         "sessionID": "session-1",
                         "role": "assistant"
                     },
                     "parts": []
                 }))
                 .into_response(),
-                "delivery-system" => Json(json!({
+                "msg_deliverysystem" => Json(json!({
                     "info": {
-                        "id": "delivery-system",
+                        "id": "msg_deliverysystem",
                         "sessionID": "session-1",
                         "role": "system"
                     },
                     "parts": []
                 }))
                 .into_response(),
-                "delivery-missing-role" => Json(json!({
+                "msg_deliverymissingrole" => Json(json!({
                     "info": {
-                        "id": "delivery-missing-role",
+                        "id": "msg_deliverymissingrole",
                         "sessionID": "session-1"
                     },
                     "parts": []
                 }))
                 .into_response(),
-                "delivery-non-string-role" => Json(json!({
+                "msg_deliverynonstringrole" => Json(json!({
                     "info": {
-                        "id": "delivery-non-string-role",
+                        "id": "msg_deliverynonstringrole",
                         "sessionID": "session-1",
                         "role": 7
                     },

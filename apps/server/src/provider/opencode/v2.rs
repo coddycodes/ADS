@@ -37,7 +37,8 @@ pub(crate) fn permission_rules(runtime_mode: &str) -> Vec<Value> {
     .collect()
 }
 
-/// The OpenCode 2 message id for a durable delivery key. OpenCode 2 requires `msg_` and orders
+/// The OpenCode message id for a durable delivery key, on both wires. OpenCode 2 requires `msg_`,
+/// and OpenCode 1 (1.18 and later) rejects an id that does not start with `msg`. Both order
 /// messages by creation time, so a deterministic id lets reconciliation look the message up
 /// again after a restart.
 pub(crate) fn message_id(delivery_key: &str) -> String {

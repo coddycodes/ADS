@@ -179,7 +179,10 @@ that returns `{"healthy": true}` is V1, and a `GET /api/info` that reports a 2.x
 version is V2. A managed server is ready only on one of those answers; a
 configured Server URL is probed once at launch and falls back to V1 when it does
 not answer. Any other major version stops the launch with an actionable
-`IncompatibleProvider` error. `OpenCodeSessionRuntime` shares its event channel,
+`IncompatibleProvider` error. On both wires a durable delivery is sent with a
+deterministic `msg_` id derived from its key (`provider::opencode::v2::message_id`),
+since OpenCode 2 and OpenCode 1.18 and later reject an id that does not start
+with `msg`, and reconciliation reads that message back. `OpenCodeSessionRuntime` shares its event channel,
 turn state and lifecycle between the wires and branches at the requests and at
 event decoding: on V2, `provider::opencode::v2` folds the global `/api/event`
 stream into the root session's turn (`session.execution.*`,
