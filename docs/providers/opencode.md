@@ -30,8 +30,8 @@ variants), agents, commands and skills; a slash skill attaches the skill to
 your message; a command wins over a skill of the same name. When a configured
 **Server URL** answers but its catalogs can't be read, the row stays ready with
 a notice and chats use the server's default model. Reverting to a checkpoint
-rewinds the OpenCode 2 conversation, then restores the files. Not yet available
-with OpenCode 2: structured terminal observation.
+rewinds the OpenCode 2 conversation, then restores the files. The provider
+terminal is observed too (see below).
 
 A version BiBCode cannot drive (3.x or later) shows an error asking you to set
 **Binary path** to an OpenCode 1.x or 2.x executable; a configured
@@ -105,4 +105,8 @@ colors; it does not replace your normal OpenCode configuration.
 OpenCode chats and provider terminals can publish structured activity when the
 installed provider path supports observation. Failure to prepare terminal
 observation leaves the normal terminal command available without structured
-activity.
+activity. An observed terminal runs against a private OpenCode server that
+BiBCode starts for it: OpenCode 1 opens it with `opencode attach`, OpenCode 2
+with `opencode --server … --session …`. OpenCode 2 has no `--model` flag, so
+the unobserved fallback command (`opencode --model …`) does not start with
+OpenCode 2.

@@ -1643,7 +1643,9 @@ where
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     let local_password = uuid::Uuid::new_v4().to_string();
+    // OpenCode 2 prefers an inherited `OPENCODE_PASSWORD` to `OPENCODE_SERVER_PASSWORD`.
     command.env("OPENCODE_SERVER_PASSWORD", &local_password);
+    command.env("OPENCODE_PASSWORD", &local_password);
     sanitize_provider_subprocess_environment(&mut command);
     let mut child = supervised_command(command).spawn().ok()?;
     let inventory = tokio::select! {

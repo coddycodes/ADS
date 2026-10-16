@@ -211,6 +211,20 @@ the turns still missing and prompts wait. That memory does not outlive the
 runtime; resuming a session clears a leftover stage. Each rewind request is
 bounded, because the provider supervisor awaits it.
 
+The OpenCode terminal observer (`provider_terminal::opencode`) serves both
+majors from one capability probe: OpenCode 1's `attach --help` documents
+`attach <url> --dir --session`, while OpenCode 2, which has no `attach`, prints
+its root help with `--server` and `--session`. The helper is started without
+`--log-level`, whose accepted spelling differs between the majors, and either
+readiness line (`opencode server listening on` or `server listening on`) is
+accepted. The client identifies the helper by its health answer (V1) or
+`/api/info` (V2); on V2 it creates the owned root with `/api/session`, reads
+`/api/session/active`, the session tree and histories, and maps them and the
+`/api/event` stream onto the V1 shapes through `provider::opencode::v2_activity`.
+The OpenCode 2 terminal opens the root with
+`opencode --server <url> --session <root> <dir>` and receives the helper
+password as `OPENCODE_PASSWORD`.
+
 Provider-specific events are normalized into shared orchestration contracts;
 provider wire payloads do not leak into React state. See
 [RPC and orchestration](./rpc-and-orchestration.md).

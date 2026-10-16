@@ -11528,10 +11528,12 @@ impl OpenCodeDriver {
         drop(listener);
         let endpoint = format!("http://127.0.0.1:{port}");
         let local_password = Uuid::new_v4().to_string();
-        request.environment.insert(
-            "OPENCODE_SERVER_PASSWORD".to_owned(),
-            local_password.clone(),
-        );
+        // OpenCode 2 prefers an inherited `OPENCODE_PASSWORD` to `OPENCODE_SERVER_PASSWORD`.
+        for name in ["OPENCODE_SERVER_PASSWORD", "OPENCODE_PASSWORD"] {
+            request
+                .environment
+                .insert(name.to_owned(), local_password.clone());
+        }
         let args = vec![
             "serve".to_owned(),
             "--hostname=127.0.0.1".to_owned(),
