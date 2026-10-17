@@ -2272,7 +2272,12 @@ The effect also refuses a revert while the thread's session holds a turn,
 whichever client asked for it: it is `running` or `starting`, or it still names
 an active turn. This is the same test idle suspension uses for a busy session.
 A running turn would write over the restored files, or the rewind would cut it
-off.
+off. The supervisor likewise refuses, before it rewinds or reports files only,
+while the live session still runs background work that keeps idle suspension
+away: a Claude background task, or a subagent or work item Activity shows
+running, reported within the last 30 minutes. The session reads idle then, but
+its process would write over the restored files. Work BiBCode cannot see does
+not block a revert.
 
 A revert and the thread's turn deliveries exclude each other. The revert
 reserves the thread on `OrchestrationEngine` before its busy check and releases

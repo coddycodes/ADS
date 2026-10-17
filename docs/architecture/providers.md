@@ -33,7 +33,8 @@ provider without it restores only the files. The supervisor checks the same
 capability before it asks a provider to rewind. Every snapshot carries the
 flag, so the revert confirmation can say which outcome to expect. It reads an
 absent flag, from an older server, as unknown and keeps the full warning.
-A revert refuses a session that idle suspension would call busy, and no turn
+A revert refuses a session that idle suspension would call busy, or whose
+reported live work still keeps it from idle suspension, and no turn
 of its thread starts while it runs, including on a session it reopened
 ([Checkpoint revert](./rpc-and-orchestration.md#checkpoint-revert)).
 

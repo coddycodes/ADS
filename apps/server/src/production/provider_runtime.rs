@@ -7656,6 +7656,24 @@ async fn rewind_session(
         .ok_or_else(|| ProviderRuntimeError::SessionNotFound {
             thread_id: thread_id.to_owned(),
         })?;
+    // A finished turn can leave background work running in this process (a Claude background
+    // task, a Codex subagent), and the session then reads idle. Restoring files under it would
+    // not stick and a rewind would cut it off, so neither happens. This is the live work that
+    // keeps idle suspension away; work quiet for the quiet cap no longer counts.
+    if entry
+        .activity_lifecycle
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .has_recent_live_activity()
+    {
+        return Err(ProviderRuntimeError::Provider {
+            provider: entry.launch.provider.clone(),
+            detail: format!(
+                "{} is still running background work. Stop it or wait for it to finish, then revert.",
+                entry.launch.provider_label
+            ),
+        });
+    }
     if !crate::provider::supports_conversation_rewind(&entry.launch.provider) {
         return Ok(ProviderRewind::FilesOnly {
             provider_label: entry.launch.provider_label.clone(),

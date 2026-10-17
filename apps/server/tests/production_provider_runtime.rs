@@ -17571,3 +17571,149 @@ fn attachment_upload_registry() -> bibcode_server::transfer::staging::UploadRegi
         std::sync::Arc::new(tokio::time::Instant::now),
     )
 }
+
+/// A provider event for thread `t1`, without activity.
+fn thread_event(event_type: &str, turn_id: Option<&str>, payload: Value) -> ProviderEvent {
+    ProviderEvent {
+        native_event_id: None,
+        event_type: event_type.to_owned(),
+        thread_id: "t1".to_owned(),
+        turn_id: turn_id.map(str::to_owned),
+        item_id: None,
+        request_id: None,
+        payload,
+        activity: Vec::new(),
+        activity_controls: Default::default(),
+    }
+}
+
+/// Waits until thread `t1`'s session reads `status`, with no active turn once `ready`.
+async fn wait_for_session(engine: &OrchestrationEngine, status: &str) {
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let session = engine
+                .repositories()
+                .get_thread_session("t1".to_owned())
+                .await
+                .unwrap();
+            if session.is_some_and(|session| {
+                session.status == status && (status != "ready" || session.active_turn_id.is_none())
+            }) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the session never read {status}"));
+}
+
+/// After its turn ends, a session can still run background work in the same process (a Claude
+/// background task, a Codex subagent). Restoring files under it would not stick, and a rewind
+/// would cut it off, so revert refuses for providers that rewind and for files-only ones alike.
+#[tokio::test]
+async fn checkpoint_revert_refuses_while_the_session_runs_background_work() {
+    for (provider, label) in [("codex", "Codex"), ("claude", "Claude")] {
+        let repository = initialize_repository();
+        let engine = engine().await;
+        for (turn_count, content) in [(0, "baseline\n"), (1, "one\n"), (2, "two\n")] {
+            project_checkpoint(&engine, repository.path(), turn_count, content).await;
+        }
+        let state = Arc::new(StdMutex::new(DriverState {
+            rollback_workspace: Some(repository.path().to_path_buf()),
+            ..DriverState::default()
+        }));
+        let (events_tx, events_rx) = mpsc::channel(8);
+        let supervisor = Arc::new(ProviderRuntimeSupervisor::start(
+            engine.clone(),
+            Arc::new(FakeFactory {
+                state: state.clone(),
+                events: StdMutex::new(VecDeque::from([events_rx])),
+            }),
+            activity_projection(&engine),
+            SupervisorOptions::default(),
+        ));
+        let mut provider_launch = launch();
+        provider_launch.provider = provider.to_owned();
+        provider_launch.provider_label = label.to_owned();
+        provider_launch.provider_instance_id = Some(provider.to_owned());
+        provider_launch.cwd = repository.path().to_path_buf();
+        supervisor.launch(provider_launch).await.unwrap();
+        let effects = OrchestrationEffects::start(
+            engine.clone(),
+            Arc::new(GitRepository::default()),
+            supervisor_effects(&supervisor, &engine, repository.path()),
+            EffectsOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        // The work is reported, then a turn the provider runs ends: the pump has handled the
+        // report once the session reads ready again.
+        for event in [
+            thread_event("session.background-work", None, json!({"liveTasks": 1})),
+            thread_event("turn.started", Some("barrier"), json!({})),
+        ] {
+            events_tx.send(event).await.unwrap();
+        }
+        wait_for_session(&engine, "running").await;
+        events_tx
+            .send(thread_event(
+                "turn.completed",
+                Some("barrier"),
+                json!({"state": "completed"}),
+            ))
+            .await
+            .unwrap();
+        wait_for_session(&engine, "ready").await;
+
+        let mut events = engine.subscribe_events();
+        engine
+            .dispatch(
+                serde_json::from_value(json!({
+                    "type":"thread.checkpoint.revert", "commandId":"revert", "threadId":"t1",
+                    "turnCount":1, "createdAt":NOW
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        wait_for_event(&mut events, |event| {
+            event.event.event_type == "thread.reverted"
+                || event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+                || event.event.payload["activity"]["kind"] == "checkpoint.revert.files-only"
+        })
+        .await;
+        effects.shutdown().await;
+
+        let failures = engine
+            .read_events(0)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.event.payload["activity"]["kind"] == "checkpoint.revert.failed")
+            .map(|event| event.event.payload["activity"]["payload"]["detail"].clone())
+            .collect::<Vec<_>>();
+        assert!(
+            failures
+                .iter()
+                .any(|detail| detail.as_str().is_some_and(|detail| {
+                    detail.contains(label) && detail.contains("background work")
+                })),
+            "{provider}: the revert names the running work: {failures:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repository.path().join("tracked.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "two\n",
+            "{provider}: no file was restored"
+        );
+        assert!(
+            state.lock().unwrap().rollbacks.is_empty(),
+            "{provider}: the provider was asked to rewind"
+        );
+        supervisor.shutdown().await.unwrap();
+        engine.shutdown().await;
+    }
+}
