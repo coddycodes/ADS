@@ -39,7 +39,9 @@ for the delivery key's `userMessage.clientId`. It stops at the first match and
 reports absent only after the last page. A repeated cursor, or more than 100
 pages (2,000 turns), ends the scan as unavailable instead: a false "absent"
 would send the message twice, while "unavailable" keeps the delivery
-uncertain. Nothing is retained between pages, so
+uncertain. `thread/turns/list` replies carry no thread id, so readback trusts
+Codex to answer for the requested thread. The full read's `thread.id` check has
+no equivalent. Nothing is retained between pages, so
 no size bound applies to the scan. The transport's line limit already bounds
 each page.
 
