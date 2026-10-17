@@ -1584,6 +1584,52 @@ impl std::fmt::Debug for CommandAdmissionClaim {
     }
 }
 
+/// One lock per thread that its checkpoint revert and its turn deliveries each hold for their
+/// whole run, so no turn starts between a revert's busy check and its completion, and a revert
+/// waits for a delivery already in flight. It is in memory only: the effects worker never
+/// replays a revert requested before a restart, so no revert can outlive the process.
+#[derive(Clone, Default)]
+struct ThreadTurnFence {
+    threads: Arc<StdMutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
+}
+
+/// Held while a thread's revert or turn delivery runs; dropping it releases the thread.
+pub(crate) struct ThreadTurnReservation {
+    _guard: OwnedMutexGuard<()>,
+}
+
+impl ThreadTurnFence {
+    async fn reserve(&self, thread_id: &str) -> ThreadTurnReservation {
+        let gate = {
+            let mut threads = self
+                .threads
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            threads.retain(|_, gate| gate.strong_count() > 0);
+            threads
+                .get(thread_id)
+                .and_then(Weak::upgrade)
+                .unwrap_or_else(|| {
+                    let gate = Arc::new(AsyncMutex::new(()));
+                    threads.insert(thread_id.to_owned(), Arc::downgrade(&gate));
+                    gate
+                })
+        };
+        ThreadTurnReservation {
+            _guard: gate.lock_owned().await,
+        }
+    }
+
+    fn is_reserved(&self, thread_id: &str) -> bool {
+        self.threads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(thread_id)
+            .and_then(Weak::upgrade)
+            .is_some_and(|gate| gate.try_lock().is_err())
+    }
+}
+
 #[derive(Clone, Default)]
 struct WorkspaceOwnershipFence {
     keys: Arc<StdMutex<HashMap<String, Weak<WorkspaceOwnershipKey>>>>,
@@ -1809,6 +1855,7 @@ pub struct OrchestrationEngine {
     project_command_effects: Arc<StdMutex<Option<Arc<dyn ProjectCommandEffects>>>>,
     command_admission: CommandAdmissionFence,
     workspace_ownership: WorkspaceOwnershipFence,
+    thread_turns: ThreadTurnFence,
     #[cfg(test)]
     test_hooks: TestHooks,
 }
@@ -1848,6 +1895,7 @@ impl OrchestrationEngine {
             project_command_effects,
             command_admission: CommandAdmissionFence::default(),
             workspace_ownership: WorkspaceOwnershipFence::default(),
+            thread_turns: ThreadTurnFence::default(),
             #[cfg(test)]
             test_hooks: options.test_hooks,
         })
@@ -2486,6 +2534,17 @@ impl OrchestrationEngine {
             .turn_delivery_wake
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(wake);
+    }
+
+    /// Waits until no revert or turn delivery of the thread runs, then holds the thread until the
+    /// reservation drops. See `ThreadTurnFence`.
+    pub(crate) async fn reserve_thread_turns(&self, thread_id: &str) -> ThreadTurnReservation {
+        self.thread_turns.reserve(thread_id).await
+    }
+
+    /// Whether a revert or turn delivery of the thread runs now.
+    pub(crate) fn thread_turns_reserved(&self, thread_id: &str) -> bool {
+        self.thread_turns.is_reserved(thread_id)
     }
 
     pub(crate) fn wake_turn_delivery(&self) {

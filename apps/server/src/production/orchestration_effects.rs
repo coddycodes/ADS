@@ -876,6 +876,23 @@ async fn revert_checkpoint(
     event: &OrchestrationEvent,
     cancellation: &CancellationToken,
 ) -> Result<(), OrchestrationEffectsError> {
+    let thread_id = required_str(&event.event.payload, "threadId")?;
+    // No turn of this thread starts from its busy check until the revert is recorded, whichever
+    // client sends one and even once a reopened session reads ready. A delivery already in
+    // flight finishes first. Delivery holds what arrives meanwhile and resumes when woken.
+    let reservation = engine.reserve_thread_turns(thread_id).await;
+    let result = revert_reserved_checkpoint(engine, callbacks, event, cancellation).await;
+    drop(reservation);
+    engine.wake_turn_delivery();
+    result
+}
+
+async fn revert_reserved_checkpoint(
+    engine: &OrchestrationEngine,
+    callbacks: &dyn OrchestrationEffectCallbacks,
+    event: &OrchestrationEvent,
+    cancellation: &CancellationToken,
+) -> Result<(), OrchestrationEffectsError> {
     let payload = &event.event.payload;
     let thread_id = required_str(payload, "threadId")?;
     let turn_count = payload
