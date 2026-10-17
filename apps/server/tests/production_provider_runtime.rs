@@ -15735,6 +15735,7 @@ while IFS= read -r line; do
       printf '{{"id":%s,"result":{{"cwd":"/tmp","model":"gpt-5","thread":{{"id":"provider-root"}}}}}}\n' "$id"
       ;;
     *'"method":"thread/read"'*) printf '{{"id":%s,"result":{{"thread":{{"id":"provider-root","createdAt":1,"updatedAt":1,"status":{{"type":"idle"}},"turns":[]}}}}}}\n' "$id" ;;
+    *'"method":"thread/turns/list"'*) printf '{{"id":%s,"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}\n' "$id" ;;
     *'"method":"thread/list"'*) printf '{{"id":%s,"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}\n' "$id" ;;
     *'"method":"thread/backgroundTerminals/list"'*) printf '{{"id":%s,"result":{{"data":[],"nextCursor":null}}}}\n' "$id" ;;
     *'"method":"mcpServerStatus/list"'*) printf '{{"id":%s,"result":{{"data":[],"nextCursor":null}}}}\n' "$id" ;;

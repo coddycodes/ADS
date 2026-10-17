@@ -416,7 +416,7 @@ impl std::io::Write for BoundedJsonWriter {
     }
 }
 
-fn ensure_bounded_remote_value(value: &Value) -> Result<(), String> {
+fn ensure_bounded_remote_value(value: &impl Serialize) -> Result<(), String> {
     serde_json::to_writer(
         BoundedJsonWriter {
             remaining: CODEX_REMOTE_MESSAGE_MAX_BYTES,
@@ -458,18 +458,87 @@ pub(crate) fn decode_thread_read_response(mut value: Value) -> Result<ThreadRead
             } else {
                 remaining_items -= items.len();
             }
-            for output in items
-                .iter_mut()
-                .filter_map(|item| item.get_mut("aggregatedOutput"))
-            {
-                if output.as_str().is_some_and(|text| !text.is_empty()) {
-                    *output = Value::String("…".to_owned());
-                }
-            }
+            reduce_command_output(items);
         }
     }
     ensure_bounded_remote_value(&value)?;
     serde_json::from_value(value).map_err(|error| error.to_string())
+}
+
+fn reduce_command_output(items: &mut [Value]) {
+    for output in items
+        .iter_mut()
+        .filter_map(|item| item.get_mut("aggregatedOutput"))
+    {
+        if output.as_str().is_some_and(|text| !text.is_empty()) {
+            *output = Value::String("…".to_owned());
+        }
+    }
+}
+
+/// A `thread/turns/list` page: its turns in the order Codex sent them and the cursor to the next
+/// page. An absent or null cursor ends paging; any other non-string cursor is malformed, because
+/// treating it as the end would accept an incomplete history as complete.
+pub(crate) fn decode_turns_page(mut value: Value) -> Result<(Vec<Value>, Option<String>), String> {
+    let next_cursor = match value.get("nextCursor") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(cursor)) if !cursor.is_empty() => Some(cursor.clone()),
+        Some(_) => return Err("thread/turns/list response has an invalid nextCursor".to_owned()),
+    };
+    let Some(Value::Array(turns)) = value.get_mut("data").map(Value::take) else {
+        return Err("thread/turns/list response missing data array".to_owned());
+    };
+    Ok((turns, next_cursor))
+}
+
+/// Turns gathered newest first across `thread/turns/list` pages, held to what a decoded thread
+/// keeps as each page arrives: the newest `CODEX_RECONCILIATION_TURN_LIMIT` turns, the newest
+/// `CODEX_RECONCILIATION_ITEM_LIMIT` items, command output as a presence marker, and the fixed
+/// byte bound. Only one raw page is alive at a time.
+pub(crate) struct PagedTurns {
+    turns: Vec<Value>,
+    remaining_items: usize,
+}
+
+impl PagedTurns {
+    pub(crate) fn new() -> Self {
+        Self {
+            turns: Vec::new(),
+            remaining_items: CODEX_RECONCILIATION_ITEM_LIMIT,
+        }
+    }
+
+    pub(crate) fn is_full(&self) -> bool {
+        self.turns.len() >= CODEX_RECONCILIATION_TURN_LIMIT
+    }
+
+    pub(crate) fn push_page(&mut self, page: Vec<Value>) -> Result<(), String> {
+        let room = CODEX_RECONCILIATION_TURN_LIMIT.saturating_sub(self.turns.len());
+        for mut turn in page.into_iter().take(room) {
+            if let Some(items) = turn.get_mut("items").and_then(Value::as_array_mut) {
+                if items.len() > self.remaining_items {
+                    items.drain(..items.len() - self.remaining_items);
+                }
+                self.remaining_items -= items.len();
+                reduce_command_output(items);
+            }
+            self.turns.push(turn);
+        }
+        ensure_bounded_remote_value(&self.turns)
+    }
+
+    /// Attaches the turns, oldest first, to their thread's metadata-only `thread/read` and decodes
+    /// the result as a full-history read.
+    pub(crate) fn into_thread(self, mut metadata: Value) -> Result<ThreadReadResponse, String> {
+        let mut turns = self.turns;
+        turns.reverse();
+        metadata
+            .get_mut("thread")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "thread/read response missing thread".to_owned())?
+            .insert("turns".to_owned(), Value::Array(turns));
+        decode_thread_read_response(metadata)
+    }
 }
 
 pub(crate) fn delivery_key_exists(
@@ -1159,6 +1228,69 @@ mod tests {
             response.is_err(),
             "the history kept after trimming stays within the fixed bound"
         );
+    }
+
+    #[test]
+    fn paged_turns_hold_the_item_budget_and_byte_bound_as_pages_arrive() {
+        let page = |first: usize, items_per_turn: usize, text: &str| {
+            (first..first + 5)
+                .map(|turn| {
+                    json!({
+                        "id": format!("turn-{turn}"),
+                        "items": (0..items_per_turn)
+                            .map(|item| json!({
+                                "id": format!("item-{turn}-{item}"),
+                                "type": "agentMessage",
+                                "text": text
+                            }))
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut turns = PagedTurns::new();
+        turns.push_page(page(0, 30, "x")).expect("first page");
+        turns.push_page(page(5, 30, "x")).expect("second page");
+        let kept_items = turns
+            .turns
+            .iter()
+            .map(|turn| turn["items"].as_array().expect("items").len())
+            .collect::<Vec<_>>();
+        assert_eq!(kept_items, [30, 30, 30, 30, 30, 30, 20, 0, 0, 0]);
+        assert_eq!(
+            turns.turns[6]["items"][0]["id"], "item-6-10",
+            "the newest items of the turn that crosses the budget are kept"
+        );
+
+        let mut turns = PagedTurns::new();
+        let large = "x".repeat(CODEX_REMOTE_MESSAGE_MAX_BYTES / 4);
+        turns
+            .push_page(page(0, 1, &large[..CODEX_REMOTE_MESSAGE_MAX_BYTES / 16]))
+            .expect("small page");
+        assert_eq!(
+            turns.push_page(page(5, 1, &large)),
+            Err(CODEX_REMOTE_JSON_TOO_LARGE.to_owned()),
+            "a page that pushes the kept history over the bound fails before the next page"
+        );
+    }
+
+    #[test]
+    fn turns_page_cursor_must_be_absent_null_or_a_string() {
+        for (cursor, expected) in [
+            (json!(null), Ok(None)),
+            (json!("turn-3"), Ok(Some("turn-3".to_owned()))),
+        ] {
+            assert_eq!(
+                decode_turns_page(json!({"data": [], "nextCursor": cursor})).map(|page| page.1),
+                expected
+            );
+        }
+        assert_eq!(
+            decode_turns_page(json!({"data": []})).map(|page| page.1),
+            Ok(None)
+        );
+        assert!(decode_turns_page(json!({"data": [], "nextCursor": 123})).is_err());
+        assert!(decode_turns_page(json!({"data": "turns"})).is_err());
     }
 
     #[test]

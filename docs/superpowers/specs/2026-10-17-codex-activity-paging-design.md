@@ -73,9 +73,15 @@ cursor. Stop when any of these holds:
 
 Items are not a stop condition. The protocol has no per-turn item limit, so
 the items of the turns already fetched are trimmed locally. Each page is
-reduced as it arrives (newest 200 items kept, command output replaced by the
-presence marker), so at most one raw page and the bounded retained history are
-in memory at once.
+reduced as it arrives: the newest 200 items across the turns kept so far stay,
+command output becomes the presence marker, and the 512 KiB bound is checked on
+what is kept. At most one raw page and the bounded retained history are in
+memory at once, and a page that pushes the kept history over the bound fails
+the read before another page is requested.
+
+A `nextCursor` that is absent or null ends paging. A non-string cursor is a
+malformed page, not the end of history, so that an incomplete history is never
+accepted as complete.
 
 Why 20 rather than a smaller page: Codex 0.151 rebuilds the full turn list
 from the rollout on every `thread/turns/list` request for legacy threads ("it

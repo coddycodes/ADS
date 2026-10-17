@@ -366,11 +366,16 @@ The staged buffer is cleared when activity or the root is replaced. History
 recovery is `full` only for
 `supported`/`supported`, `none` only for `unsupported`/`unsupported`, and
 `bounded` for every other list/read pair, including unknown or unproven pairs.
-Only a missing-method answer marks `thread/read` unsupported. A read reply that
-does not decode, including one whose newest 20 turns and 200 items still exceed
-the 512 KiB bound after command output is reduced to a presence marker, skips
-that thread with a log warning; the pass continues and the next pass reads it
-again.
+A history read is a metadata-only `thread/read` followed by `thread/turns/list`
+pages of 20 turns, newest first, until 20 turns are held. The reply size
+therefore depends on the newest turns, not on the thread's length
+([design](../superpowers/specs/2026-10-17-codex-activity-paging-design.md)).
+Only a missing-method answer marks `thread/read` or `thread/turns/list`
+unsupported, and either one downgrades history reads. A reply that does not
+decode, including one whose newest 20 turns and 200 items still exceed the
+512 KiB bound after command output is reduced to a presence marker, skips that
+thread with a log warning. The pass continues, and the next pass reads the
+thread again.
 These recovery downgrades do not disable ordinary Codex chat.
 
 Claude structured control normally joins native task identity only through the

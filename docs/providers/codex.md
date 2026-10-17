@@ -164,7 +164,9 @@ as descendant-thread, history, and background-terminal discovery. Unsupported
 methods degrade the affected activity view instead of inventing data.
 
 BiBCode accepts validated `subAgentActivity` items as bounded child-discovery
-hints and direct-reads those child thread IDs. This remains effective when an
+hints and direct-reads those child thread IDs: thread metadata from
+`thread/read` without turns, then the newest 20 turns from
+`thread/turns/list`. This remains effective when an
 App Server version, including Codex 0.146, omits spawned children from
 `thread/list`; listing remains enabled as a complementary discovery source for
 versions that expose it. Malformed or out-of-scope hints are ignored. When read
