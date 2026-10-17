@@ -31,7 +31,9 @@ use crate::{
 
 const TERMINAL_SCOPE_PREFIX: &str = "terminal:";
 const MAX_OBSERVER_WORKERS_PER_GENERATION: usize = 16;
-const MAX_GLOBAL_OBSERVER_WORKERS: usize = 16;
+// Each observed provider terminal holds one worker (OpenCode briefly two while it launches),
+// so this bounds concurrent observation at about 64 terminals and 128 worker threads.
+const MAX_GLOBAL_OBSERVER_WORKERS: usize = 64;
 const MAX_BLOCKING_THREADS_PER_OBSERVER_WORKER: usize = 1;
 const DROPPED_GENERATION_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(250);
 const DROPPED_GENERATION_WORKER_ABORT_TIMEOUT: Duration = Duration::from_millis(50);
@@ -614,9 +616,10 @@ async fn reap_observer_workers(
 ///
 /// Each admitted worker runs on its own current-thread Tokio runtime, survives
 /// the short-lived preparation callback runtime, and is drained or aborted when
-/// the generation closes. Admission is capped at sixteen workers process-wide;
-/// each worker runtime has at most one blocking-pool thread, for a strict bound
-/// of thirty-two manager-created worker threads. The process permit remains
+/// the generation closes. Admission is capped at sixty-four workers
+/// process-wide; each worker runtime has at most one blocking-pool thread, for a
+/// strict bound of 128 manager-created worker threads. A refused worker is
+/// logged, and its terminal keeps running without activity observation. The process permit remains
 /// paired with the worker's join handle in one process-lifetime reaper until
 /// joining confirms that the worker OS thread has exited, including after
 /// teardown times out. One additional process-lifetime join-reaper thread owns
@@ -640,11 +643,23 @@ impl fmt::Debug for TerminalObserverWorkerContext {
 
 impl TerminalObserverWorkerContext {
     /// Starts one durable, process-bounded worker on manager-owned isolation.
+    ///
+    /// A refusal other than a closing generation is logged here, once: the caller's
+    /// terminal keeps running without activity observation.
     pub fn spawn(
         &self,
         worker: impl Future<Output = ()> + Send + 'static,
     ) -> Result<(), TerminalObserverWorkerSpawnError> {
-        self.inner.spawn(worker)
+        let result = self.inner.spawn(worker);
+        if let Err(error) = result
+            && error != TerminalObserverWorkerSpawnError::GenerationClosing
+        {
+            tracing::warn!(
+                %error,
+                "provider terminal observer worker was refused; the terminal runs without activity observation"
+            );
+        }
+        result
     }
 
     /// Waits for this terminal generation's one-shot cancellation signal.
@@ -1716,12 +1731,12 @@ mod tests {
     use tokio::{runtime::Handle, sync::oneshot};
 
     use super::{
-        MAX_GLOBAL_OBSERVER_WORKERS, TerminalAgentActivityAdmission, TerminalAgentActivityControl,
-        TerminalAgentActivityObservation, TerminalAgentActivityObservationKind,
-        TerminalAgentActivityPublicationTestHook, TerminalAgentActivityTransition,
-        TerminalGenerationActivityPublisher, TerminalObserverCancellationReason,
-        TerminalObserverGeneration, TerminalObserverWorkerSpawnError, WorkerCleanupGraceTestHook,
-        WorkerThreadExitTestHook,
+        MAX_OBSERVER_WORKERS_PER_GENERATION, TerminalAgentActivityAdmission,
+        TerminalAgentActivityControl, TerminalAgentActivityObservation,
+        TerminalAgentActivityObservationKind, TerminalAgentActivityPublicationTestHook,
+        TerminalAgentActivityTransition, TerminalGenerationActivityPublisher,
+        TerminalObserverCancellationReason, TerminalObserverGeneration,
+        TerminalObserverWorkerSpawnError, WorkerCleanupGraceTestHook, WorkerThreadExitTestHook,
     };
 
     const WORKER_LIFECYCLE_INTEGRATION_DEADLINE: Duration = Duration::from_secs(5);
@@ -2338,7 +2353,9 @@ mod tests {
 
     #[tokio::test]
     async fn hardening_worker_slot_is_retained_until_the_os_thread_exits() {
-        let slots = Arc::new(tokio::sync::Semaphore::new(MAX_GLOBAL_OBSERVER_WORKERS));
+        let slots = Arc::new(tokio::sync::Semaphore::new(
+            MAX_OBSERVER_WORKERS_PER_GENERATION,
+        ));
         let generation = TerminalObserverGeneration::new_with_runtime_and_worker_slots(
             "thread".to_owned(),
             "terminal".to_owned(),
@@ -2375,10 +2392,10 @@ mod tests {
             cleanup_finished: Some(cleanup_finished.clone()),
         }));
         let workers = generation.worker_context();
-        for _ in 0..MAX_GLOBAL_OBSERVER_WORKERS {
+        for _ in 0..MAX_OBSERVER_WORKERS_PER_GENERATION {
             workers.spawn(async {}).expect("worker admission");
         }
-        for _ in 0..MAX_GLOBAL_OBSERVER_WORKERS {
+        for _ in 0..MAX_OBSERVER_WORKERS_PER_GENERATION {
             hook.before_completion_reached
                 .acquire()
                 .await
@@ -2386,7 +2403,7 @@ mod tests {
                 .forget();
         }
         hook.release_completion();
-        for _ in 0..MAX_GLOBAL_OBSERVER_WORKERS {
+        for _ in 0..MAX_OBSERVER_WORKERS_PER_GENERATION {
             hook.before_exit_reached
                 .acquire()
                 .await

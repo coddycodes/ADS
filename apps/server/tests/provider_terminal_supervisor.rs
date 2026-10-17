@@ -3658,9 +3658,9 @@ fn hardening_durable_observer_workers_have_a_reusable_process_global_bound() {
 }
 
 async fn assert_durable_observer_worker_global_bound() {
-    const MANAGER_COUNT: usize = 3;
-    const WORKERS_PER_GENERATION: usize = 8;
-    const MAX_GLOBAL_DURABLE_WORKERS: usize = 16;
+    const MANAGER_COUNT: usize = 5;
+    const WORKERS_PER_GENERATION: usize = 16;
+    const MAX_GLOBAL_DURABLE_WORKERS: usize = 64;
 
     let root = tempfile::tempdir().expect("temp dir");
     let state = Arc::new(WorkerContextCaptureState::default());
@@ -13829,4 +13829,375 @@ async fn installed_opencode_1184_cold_topology_reaps_owned_listener() {
     .await
     .expect("owned OpenCode listener reaped on terminal close");
     manager.shutdown().await;
+}
+
+/// Holds process-wide observer worker slots with workers that never finish, one per
+/// generation, as other observed terminals do. Run only in a process of its own.
+struct HeldObserverWorkerSlots(Vec<TerminalObserverGeneration>);
+
+impl HeldObserverWorkerSlots {
+    /// Every slot: workers are admitted until the process-wide cap refuses one.
+    fn all() -> Self {
+        let mut held = Vec::new();
+        loop {
+            let generation = TerminalObserverGeneration::new(
+                "thread-slot-holder".to_owned(),
+                format!("terminal-slot-holder-{}", held.len()),
+            );
+            if generation
+                .worker_context()
+                .spawn(std::future::pending::<()>())
+                .is_err()
+            {
+                return Self(held);
+            }
+            held.push(generation);
+        }
+    }
+
+    /// Every slot but one, so a launch can start one worker before its terminal spawns.
+    async fn all_but_one() -> Self {
+        let capacity = Self::all().0.len();
+        // Released slots return once their worker threads are joined.
+        let mut held = Vec::new();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while held.len() < capacity - 1 {
+                let generation = TerminalObserverGeneration::new(
+                    "thread-slot-holder".to_owned(),
+                    format!("terminal-slot-holder-{}", held.len()),
+                );
+                if generation
+                    .worker_context()
+                    .spawn(std::future::pending::<()>())
+                    .is_ok()
+                {
+                    held.push(generation);
+                } else {
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            }
+        })
+        .await
+        .expect("released observer worker slots return");
+        Self(held)
+    }
+}
+
+/// Installs a process-wide subscriber: a refused worker is logged on the manager's
+/// callback thread, which a scoped subscriber does not see. Installed after the slots are
+/// held, so it sees only the launch's refusals. Run only in a process of its own.
+fn capture_process_logs() -> TraceCapture {
+    let capture = TraceCapture::default();
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(capture.clone())
+            .finish(),
+    )
+    .expect("process-wide subscriber");
+    capture
+}
+
+fn assert_refused_worker_is_logged(capture: &TraceCapture, root: &std::path::Path) {
+    let logs = capture.text();
+    assert_eq!(
+        logs.matches("provider terminal observer worker was refused")
+            .count(),
+        1,
+        "{logs}"
+    );
+    assert!(logs.contains("capacity is exhausted"), "{logs}");
+    assert!(
+        !logs.contains(&*root.to_string_lossy()),
+        "the warning carries no paths: {logs}"
+    );
+}
+
+/// A Claude terminal whose observer worker is refused at the process-wide cap keeps running
+/// its pinned executable with its settings overlay until the terminal closes.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn claude_refused_observer_worker_keeps_the_running_generation_until_close() {
+    own_process!(isolated);
+    let _held = HeldObserverWorkerSlots::all();
+    let capture = capture_process_logs();
+    let root = tempfile::tempdir().expect("fixture root");
+    let configured = root.path().join("configured-claude");
+    std::fs::write(&configured, b"approved").expect("approved Claude");
+    std::fs::set_permissions(&configured, std::fs::Permissions::from_mode(0o700))
+        .expect("Claude permissions");
+    let supervisor =
+        claude_pinning_fixture_supervisor(&root, &configured, Arc::new(CopyClaudeExecutablePinner))
+            .await;
+    let backend = Arc::new(RecordingBackend::new(Arc::new(Mutex::new(Vec::new()))));
+    let manager = TerminalManager::new(
+        backend.clone(),
+        TerminalManagerOptions {
+            launch_preparer: Some(Arc::new(supervisor)),
+            ..TerminalManagerOptions::default()
+        },
+    );
+
+    manager
+        .open(claude_pinning_open_input(
+            &root,
+            &configured,
+            "terminal-claude-refused",
+        ))
+        .await
+        .expect("Claude terminal");
+    let pinned =
+        std::path::PathBuf::from(&backend.spawns().pop().expect("Claude PTY spawn").executable);
+    assert_ne!(pinned, configured, "the prepared launch runs");
+    let generation_dir = pinned.parent().expect("generation directory").to_path_buf();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(
+        std::fs::read(&pinned).expect("the running pinned executable"),
+        b"approved"
+    );
+    assert!(
+        generation_dir.join("settings.json").is_file(),
+        "the running process's settings overlay stays"
+    );
+    assert_refused_worker_is_logged(&capture, root.path());
+
+    manager
+        .close("thread-claude-pin", Some("terminal-claude-refused"))
+        .await
+        .expect("close terminal");
+    assert!(
+        !pinned.exists(),
+        "closing the terminal removes its generation"
+    );
+    manager.shutdown().await;
+    isolated.complete();
+}
+
+/// A Codex terminal whose observer worker is refused at the process-wide cap keeps the App
+/// Server its remote TUI uses until the terminal closes, and publishes no dock.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn codex_refused_observer_worker_keeps_the_app_server_until_close() {
+    own_process!(isolated);
+    let _held = HeldObserverWorkerSlots::all();
+    let capture = capture_process_logs();
+    let fixture = codex_remote_fixture();
+    let root = tempfile::tempdir().expect("fixture root");
+    let configured = root.path().join("configured-codex");
+    std::fs::write(&configured, b"configured").expect("configured executable");
+    let helper = Arc::new(CodexFixtureHelperLauncher::default());
+    let remote_state = Arc::new(CodexFixtureRemoteState::default());
+    let (supervisor, projection) = codex_fixture_supervisor(
+        &root,
+        &configured,
+        helper.clone(),
+        Arc::new(CodexFixtureRemoteFactory {
+            state: remote_state.clone(),
+        }),
+    )
+    .await;
+    let backend = Arc::new(RecordingBackend::new(Arc::new(Mutex::new(Vec::new()))));
+    let manager = TerminalManager::new(
+        backend.clone(),
+        TerminalManagerOptions {
+            launch_preparer: Some(Arc::new(supervisor)),
+            ..TerminalManagerOptions::default()
+        },
+    );
+
+    manager
+        .open(codex_fixture_open_input(
+            &fixture,
+            &configured,
+            &root,
+            "terminal-codex-refused",
+        ))
+        .await
+        .expect("Codex terminal");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(backend.spawns().len(), 1);
+    assert!(
+        backend.spawns()[0]
+            .args
+            .iter()
+            .any(|arg| arg.as_str() == "--remote"),
+        "the remote TUI runs: {:?}",
+        backend.spawns()[0].args
+    );
+    assert!(
+        !helper.processes.lock().expect("helper processes lock")[0]
+            .terminated
+            .load(Ordering::Acquire),
+        "a refused observer must not stop the App Server backing the remote TUI"
+    );
+    assert!(
+        projection
+            .snapshot(&ActivityScopeRef::Terminal {
+                thread_id: "thread-codex".to_owned(),
+                terminal_id: "terminal-codex-refused".to_owned(),
+            })
+            .await
+            .is_err(),
+        "an unobserved terminal publishes no dock"
+    );
+    assert_refused_worker_is_logged(&capture, root.path());
+
+    manager
+        .close("thread-codex", Some("terminal-codex-refused"))
+        .await
+        .expect("close terminal");
+    assert!(
+        helper.processes.lock().expect("helper processes lock")[0]
+            .terminated
+            .load(Ordering::Acquire),
+        "terminal close terminates its owned helper"
+    );
+    manager.shutdown().await;
+    isolated.complete();
+}
+
+/// An OpenCode terminal whose observer worker is refused at the process-wide cap, after its
+/// pre-launch worker took the last slot, keeps its attach session and owned root: closing the
+/// terminal stops the helper but never deletes the session the user worked in.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn opencode_refused_observer_worker_keeps_the_attach_session_and_its_root() {
+    own_process!(isolated);
+    let _held = HeldObserverWorkerSlots::all_but_one().await;
+    let capture = capture_process_logs();
+    let fixture = opencode_attach_fixture();
+    let root = tempfile::tempdir().expect("OpenCode refused-worker root");
+    let configured = root.path().join("configured-opencode");
+    std::fs::write(&configured, b"configured").expect("configured OpenCode executable");
+    let timeline = Arc::new(Mutex::new(Vec::new()));
+    let helper = Arc::new(OpenCodeFixtureHelperLauncher {
+        endpoint: Mutex::new(Some(
+            fixture["endpoint"]
+                .as_str()
+                .expect("OpenCode endpoint fixture")
+                .to_owned(),
+        )),
+        timeline: timeline.clone(),
+        ..OpenCodeFixtureHelperLauncher::default()
+    });
+    let remote_state = Arc::new(OpenCodeFixtureRemoteState {
+        timeline: timeline.clone(),
+        ..OpenCodeFixtureRemoteState::default()
+    });
+    let probe_runner = Arc::new(OpenCodeProbeFixtureRunner {
+        calls: Mutex::new(Vec::new()),
+        outputs: Mutex::new(VecDeque::from([OpenCodeProbeOutput {
+            success: true,
+            stdout: fixture["attachHelp"]
+                .as_str()
+                .expect("OpenCode attach help")
+                .to_owned(),
+            stderr: String::new(),
+        }])),
+        delay: std::time::Duration::ZERO,
+    });
+    let database = Database::open_in_memory().await.expect("database");
+    let mut settings = ProviderSettingsState::default();
+    settings.providers.opencode.binary_path = configured.to_string_lossy().into_owned();
+    let supervisor = ProviderTerminalActivitySupervisor::new(
+        settings.clone(),
+        ProviderTerminalInventory::from_settings(&settings),
+        ActivityProjection::new(ActivityRepository::new(database)),
+        ProcessAttributionRegistry::new(),
+        root.path().join("runtime"),
+        ProviderTerminalObserverFactories {
+            opencode: Some(Arc::new(OpenCodeTerminalObserverFactory::new(
+                Arc::new(CachedOpenCodeCapabilityProbe::new(probe_runner)),
+                helper.clone(),
+                Arc::new(OpenCodeFixtureRemoteFactory {
+                    state: remote_state.clone(),
+                }),
+                std::time::Duration::from_secs(1),
+            ))),
+            ..ProviderTerminalObserverFactories::default()
+        },
+    )
+    .expect("OpenCode refused-worker supervisor");
+    let backend = Arc::new(RecordingBackend::new(timeline));
+    let manager = TerminalManager::new(
+        backend.clone(),
+        TerminalManagerOptions {
+            launch_preparer: Some(Arc::new(supervisor)),
+            ..TerminalManagerOptions::default()
+        },
+    );
+    let mut input = TerminalOpenInput::new(
+        "thread-opencode-refused",
+        "terminal-opencode-refused",
+        root.path().to_path_buf(),
+        80,
+        24,
+    );
+    input.command = Some(TerminalLaunchCommand {
+        executable: configured.to_string_lossy().into_owned(),
+        args: vec!["--model".to_owned(), "openai/gpt-5.2".to_owned()],
+        label: Some("OpenCode".to_owned()),
+        activity: Some(ProviderTerminalActivityLaunch {
+            driver_kind: "opencode".to_owned(),
+            provider_instance_id: "opencode".to_owned(),
+        }),
+        env: None,
+    });
+
+    manager.open(input).await.expect("OpenCode attach terminal");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(
+        backend
+            .spawns()
+            .first()
+            .and_then(|spawn| spawn.args.first())
+            .map(String::as_str),
+        Some("attach"),
+        "the prepared attach launch runs"
+    );
+    assert!(
+        !helper
+            .processes
+            .lock()
+            .expect("OpenCode helper processes")
+            .first()
+            .expect("OpenCode helper process")
+            .terminated
+            .load(Ordering::Acquire),
+        "a refused observer must not stop the server the attach session uses"
+    );
+    assert_refused_worker_is_logged(&capture, root.path());
+
+    manager
+        .close("thread-opencode-refused", Some("terminal-opencode-refused"))
+        .await
+        .expect("close terminal");
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if helper
+                .processes
+                .lock()
+                .expect("OpenCode helper processes")
+                .first()
+                .is_some_and(|process| process.terminated.load(Ordering::Acquire))
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("OpenCode helper stops with the terminal");
+    let calls = remote_state
+        .calls
+        .lock()
+        .expect("OpenCode remote calls")
+        .clone();
+    assert!(
+        !calls.iter().any(|call| call.starts_with("delete:")),
+        "the launched root holds the user's session: {calls:?}"
+    );
+    manager.shutdown().await;
+    isolated.complete();
 }

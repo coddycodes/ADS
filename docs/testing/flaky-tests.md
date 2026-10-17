@@ -45,18 +45,20 @@ the test's bare name. To reproduce, let a sibling test with no subscriber reach
 the callsite after the capture is installed; the expected event goes missing
 every time.
 
-Provider-terminal observer workers share a process-wide admission cap of
-sixteen. A test in `provider_terminal_supervisor` that starts one runs in its
-own process (`own_process!`), because the binary's concurrent tests together
-reach that cap even on an idle host, and a refused worker fails open without a
-log line: OpenCode and Codex never report their initial observation or
-handshake, and Claude removes its generation directory, so the pinned
-executable and the settings overlay are missing. CPU contention and CPU quotas
-do not reproduce this. Evicting the test binary from the page cache
-(`posix_fadvise(POSIX_FADV_DONTNEED)`) before each run does, as does a sibling
-that holds every slot through `TerminalObserverGeneration::worker_context`.
-Widening the tests' readiness waits does not help: the observation never
-arrives. A new test that starts an observer worker uses `own_process!` too.
+Provider-terminal observer workers share a process-wide admission cap. A test
+in `provider_terminal_supervisor` that starts one runs in its own process
+(`own_process!`), so the binary's concurrent tests cannot hold the slots it
+needs: a refused worker leaves its terminal unobserved, and the test waits for
+an observation that never arrives. OpenCode and Codex then never report their
+initial observation or handshake. Widening the tests' readiness waits does not
+help. CPU contention and CPU quotas did not reproduce this while the cap was
+sixteen. Evicting the test binary from the page cache
+(`posix_fadvise(POSIX_FADV_DONTNEED)`) before each run did, and so does a
+sibling that holds every slot through `TerminalObserverGeneration::worker_context`.
+The tests that cover a refused worker hold the slots that way in their own
+process and install a process-wide subscriber after holding them, because the
+refusal is logged on the manager's callback thread. A new test that starts an
+observer worker uses `own_process!` too.
 
 For WebSocket heartbeat integration, separate exact cadence from connection
 survival. Controlled-clock transport tests pin the 15-second cadence and the

@@ -728,14 +728,13 @@ impl PreparedTerminalObserver for OpenCodePreparedTerminalObserver {
             return;
         }
         let inner = self.inner.clone();
-        if workers
-            .spawn(async move {
-                run_opencode_observer(inner, generation).await;
-            })
-            .is_ok()
-        {
-            self.inner.resources.transfer_ownership();
-        }
+        // The attach session runs whether or not its observer starts, so the pre-launch
+        // cleanup must not delete its root. A refused worker leaves the terminal unobserved;
+        // the observer's drop stops the helper when the terminal generation ends.
+        let _ = workers.spawn(async move {
+            run_opencode_observer(inner, generation).await;
+        });
+        self.inner.resources.transfer_ownership();
     }
 
     fn set_agent_activity_enabled(

@@ -639,14 +639,11 @@ impl PreparedTerminalObserver for CodexPreparedTerminalObserver {
             return;
         }
         let inner = self.inner.clone();
-        if workers
-            .spawn(async move {
-                run_codex_observer(inner, generation).await;
-            })
-            .is_err()
-        {
-            self.inner.cleanup();
-        }
+        // A refused worker leaves the terminal unobserved. Its remote TUI still uses the App
+        // Server, which the observer's drop stops when the terminal generation ends.
+        let _ = workers.spawn(async move {
+            run_codex_observer(inner, generation).await;
+        });
     }
 
     fn set_agent_activity_enabled(

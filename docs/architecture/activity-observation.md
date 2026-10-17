@@ -451,6 +451,22 @@ and invalidates further activity publication, then continues creating and
 registering the prepared PTY as the running terminal. It does not respawn the
 original command.
 
+Observer workers are admitted under a process-wide cap of sixty-four, and
+sixteen per terminal generation. An observed terminal holds one worker; an
+OpenCode launch briefly holds a second until its terminal spawns. A worker
+refused at the cap, or because the runtime or its thread is unavailable, is
+logged once as a warning, and is not queued or retried. If the refusal comes
+before spawning, the launch passes through to the original command. If it comes
+in `on_spawned`, the prepared command keeps running unobserved: no activity
+scope is published, and the resources it runs on stay until the terminal
+generation ends. Claude keeps its pinned executable and settings overlay,
+Codex and OpenCode keep the helper their TUI attaches to, and the OpenCode
+root session is not deleted when the terminal closes. The cap sits above
+ordinary use, so a refusal signals overload, and the warning reports it.
+Admitting the worker when a slot frees later would need a waiting queue with
+its own bound and cancellation, and the observer would start after the events
+it should have seen.
+
 Provider root correlation is asynchronous after `on_spawned`. A correlation or
 later observer failure does not replace the running prepared command with the
 original command. Until correlation succeeds, no activity scope is published.
