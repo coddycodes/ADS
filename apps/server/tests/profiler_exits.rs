@@ -1,7 +1,11 @@
 //! Subprocess and webview deaths recorded through the profiler's process-global handle. The
 //! handle is shared, so the scenarios run in sequence on one runtime.
 
-use std::{path::Path, process::ExitStatus, time::Duration};
+use std::{
+    path::Path,
+    process::ExitStatus,
+    time::{Duration, Instant},
+};
 
 use bibcode_server::diagnostics::profiler::{
     exits::{self, Exited, Watch},
@@ -49,7 +53,7 @@ async fn unrequested_deaths_are_recorded_while_the_profiler_is_on() {
         label: "git",
         exe: "/usr/bin/git",
         pid: 4_000_000_001,
-        uptime: Duration::from_secs(90),
+        started: Instant::now() - Duration::from_secs(90),
     };
     exits::report_exit(Watch::Signals, &git, &crashed(), false);
     let crash_id = id("subprocess.crash", &["command", "git", CRASH]);
@@ -151,7 +155,9 @@ async fn unrequested_deaths_are_recorded_while_the_profiler_is_on() {
     );
     let crash = persisted(state.path(), &crash_id).unwrap();
     assert_eq!(crash["evidence"]["pid"], 4_000_000_001_u32);
-    assert_eq!(crash["evidence"]["uptimeMs"], 90_000);
+    // It started 90 s before the report; the report itself runs a little later.
+    let uptime_ms = crash["evidence"]["uptimeMs"].as_u64().expect("uptimeMs");
+    assert!((90_000..150_000).contains(&uptime_ms), "{uptime_ms}");
     assert_eq!(crash["evidence"]["likelyOom"], false);
     let failure = persisted(state.path(), &failed_id).unwrap();
     assert_eq!(failure["evidence"]["exitCode"], -1_073_741_819);

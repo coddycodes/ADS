@@ -8609,7 +8609,7 @@ fn spawn_event_pump(
                     label: &launch.provider,
                     exe: &launch.binary_path,
                     pid,
-                    uptime: started.elapsed(),
+                    started,
                 },
                 &status,
                 false,

@@ -58,15 +58,6 @@ that holds every slot through `TerminalObserverGeneration::worker_context`.
 Widening the tests' readiness waits does not help: the observation never
 arrives. A new test that starts an observer worker uses `own_process!` too.
 
-The profiler's exit-report test for a stop BiBCode noted
-(`a_provider_process_bibcode_stopped_is_not_reported`, the `Noted` case) notes
-the stop microseconds after the event pump records the process start.
-`report_exit` rebuilds that start as `Instant::now() - uptime` from a second
-clock read, so a preemption between the two reads moves it past the note, and
-the exit is reported as a crash. A sleep before the second read makes the case
-fail every time. This is a product imprecision, not test synchronisation; do
-not mask it with a delay before the note.
-
 For WebSocket heartbeat integration, separate exact cadence from connection
 survival. Controlled-clock transport tests pin the 15-second cadence and the
 restart after a scheduler stall; real sockets verify Pong-only survival for

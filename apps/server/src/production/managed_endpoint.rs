@@ -429,7 +429,7 @@ fn report_connector_exit(active: &ActiveConnector, status: &std::process::ExitSt
                 label: &label,
                 exe: &active.exe,
                 pid: active.pid,
-                uptime: active.started.elapsed(),
+                started: active.started,
             },
             status,
             false,

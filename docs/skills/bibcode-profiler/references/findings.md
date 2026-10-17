@@ -228,7 +228,10 @@ A panic that ended the process also leaves a `crash.unclean-exit` or
 ## subprocess.crash
 
 - **Severity:** `error` for a signal or exception, `warn` for a non-zero exit.
-- **Raised when:** a process BiBCode runs dies without being asked to stop:
+- **Raised when:** a process BiBCode runs dies without being asked to stop. A
+  stop counts for that process when it was requested in the last minute and
+  after the process started; one requested earlier was for an earlier process
+  with the same pid:
   - provider CLIs: signals and non-zero exits, except 129, 130 and 143 (exit
     codes for a caught `SIGHUP`, `SIGINT` or `SIGTERM`);
   - terminal sessions: crash signals only (`SIGQUIT` and `SIGKILL` are typed by

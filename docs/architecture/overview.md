@@ -1742,7 +1742,9 @@ it.
   people do not type (not `Ctrl-\` or `kill -9`). SIGTERM, SIGHUP, and SIGINT (on
   Windows the Ctrl-C status), and a provider's exit codes 129, 130, and 143,
   are deliberate and never count. A stop that BiBCode or the user requested in
-  the last minute is not reported, and once BiBCode has received a termination
+  the last minute, after the process started, is not reported; the comparison
+  uses the start instant the exit path recorded, so a late report cannot move
+  it. Once BiBCode has received a termination
   signal, nothing that dies with it is. A SIGKILL BiBCode did not send is
   labelled likely OOM.
 - **Webview.** On desktop, the end of the main window's web content process (on
