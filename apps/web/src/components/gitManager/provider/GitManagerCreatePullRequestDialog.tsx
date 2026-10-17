@@ -648,10 +648,11 @@ function CreatePullRequestReviewDialog({
         </DialogPanel>
         <DialogFooter>
           {settled ? (
-            // The request exists: the form is a read-only record and closing is the only action.
+            // The request exists: the form is a read-only record. Done closes it and hands the
+            // request to onDone, which opens it beside the thread when the host can show it.
             <Button
               onClick={() => {
-                if (settled && progress.number !== null && provider !== null)
+                if (progress.number !== null && provider !== null)
                   onDone?.({ number: progress.number, provider: provider.kind });
                 onOpenChange(false);
               }}

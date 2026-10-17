@@ -966,7 +966,7 @@ Azure DevOps repository, which Pull Requests does not support.
 Each request is its own tab, labelled `!N` (`#N` on GitHub); opening one that is
 already open selects its tab. The tab and its selected section survive a reload.
 **Open full page** shows the request on the Pull Requests page for the thread's
-checkout. Deleting the request closes its tab, and a revert request opens in a
+checkout, and switches that page's **Worktree** picker to it. Deleting the request closes its tab, and a revert request opens in a
 new one. A tab whose Pull Requests setting is off, environment is
 disconnected, workspace was removed or host is unsupported explains what to do
 instead of showing an error, and recovers when the workspace returns. The detail
