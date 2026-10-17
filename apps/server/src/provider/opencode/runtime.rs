@@ -918,22 +918,24 @@ impl OpenCodeSessionRuntime {
         message_id: Option<&str>,
     ) -> Result<String, OpenCodeRuntimeError> {
         let session_id = self.session_id().await?;
-        let turn_id = self.begin_turn().await;
         if self.is_v2() {
             let message_id = message_id.map(v2::message_id);
+            // The checks run before the turn is announced: when one fails nothing was sent, and
+            // a started turn would wait for a completion that never comes.
+            let mut body = v2::prompt_body(text, &attachments, message_id.as_deref());
+            self.v2_settle_rewind_before_prompt(&session_id).await?;
+            self.v2_sync_selection(&session_id)
+                .await
+                .map_err(not_sent)?;
+            // A slash skill with attachments arrives here rather than as a command.
+            if let Some((name, rest)) = text.and_then(crate::provider::parse_provider_command)
+                && self.v2_is_skill(name).await?
+            {
+                body = v2::prompt_body(Some(rest), &attachments, message_id.as_deref());
+                body["skills"] = json!([{ "id": name }]);
+            }
+            let turn_id = self.begin_turn().await;
             let result = async {
-                self.v2_settle_rewind_before_prompt(&session_id).await?;
-                self.v2_sync_selection(&session_id)
-                    .await
-                    .map_err(not_sent)?;
-                let mut body = v2::prompt_body(text, &attachments, message_id.as_deref());
-                // A slash skill with attachments arrives here rather than as a command.
-                if let Some((name, rest)) = text.and_then(crate::provider::parse_provider_command)
-                    && self.v2_is_skill(name).await?
-                {
-                    body = v2::prompt_body(Some(rest), &attachments, message_id.as_deref());
-                    body["skills"] = json!([{ "id": name }]);
-                }
                 let response = self
                     .inner
                     .client
@@ -957,6 +959,7 @@ impl OpenCodeSessionRuntime {
             }
             return Ok(turn_id);
         }
+        let turn_id = self.begin_turn().await;
         let mut body = json!({
             "sessionID": session_id,
             "parts": crate::provider::attachments::prompt_parts(text, attachments),
@@ -1056,30 +1059,31 @@ impl OpenCodeSessionRuntime {
                 "command name cannot be empty".to_owned(),
             ));
         }
-        let turn_id = self.begin_turn().await;
         if self.is_v2() {
             // OpenCode 2 takes no message id for a command, so a command's delivery cannot be
             // looked up exactly afterwards: if BiBCode stops between OpenCode accepting the
             // command and recording the delivery, restart recovery finds no message and sends
             // it again. The window is that of one database write.
+            // The checks run before the turn is announced: when one fails nothing was sent.
+            self.v2_settle_rewind_before_prompt(&session_id).await?;
+            self.v2_sync_selection(&session_id)
+                .await
+                .map_err(not_sent)?;
+            // OpenCode 2 skills are not commands: a slash skill is a prompt that attaches the
+            // skill (and, unlike a command, takes a message id, so it is looked up exactly).
+            let (route, body) = if self.v2_is_skill(command).await? {
+                let mut body = v2::prompt_body(
+                    Some(arguments.trim()),
+                    &[],
+                    message_id.map(v2::message_id).as_deref(),
+                );
+                body["skills"] = json!([{ "id": command }]);
+                ("prompt", body)
+            } else {
+                ("command", v2::command_body(command, arguments.trim()))
+            };
+            let turn_id = self.begin_turn().await;
             let result = async {
-                self.v2_settle_rewind_before_prompt(&session_id).await?;
-                self.v2_sync_selection(&session_id)
-                    .await
-                    .map_err(not_sent)?;
-                // OpenCode 2 skills are not commands: a slash skill is a prompt that attaches the
-                // skill (and, unlike a command, takes a message id, so it is looked up exactly).
-                let (route, body) = if self.v2_is_skill(command).await? {
-                    let mut body = v2::prompt_body(
-                        Some(arguments.trim()),
-                        &[],
-                        message_id.map(v2::message_id).as_deref(),
-                    );
-                    body["skills"] = json!([{ "id": command }]);
-                    ("prompt", body)
-                } else {
-                    ("command", v2::command_body(command, arguments.trim()))
-                };
                 let response = self
                     .inner
                     .client
@@ -1103,6 +1107,7 @@ impl OpenCodeSessionRuntime {
             }
             return Ok(turn_id);
         }
+        let turn_id = self.begin_turn().await;
         let mut body = json!({
             "command": command,
             "arguments": arguments.trim(),

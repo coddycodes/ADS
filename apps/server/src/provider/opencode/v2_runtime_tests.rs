@@ -1241,6 +1241,7 @@ async fn slash_invocations_fail_when_the_catalogs_cannot_be_read() {
     let (endpoint, replay) = serve("hello").await;
     let runtime = v2_runtime(&endpoint);
     runtime.start().await.expect("session starts");
+    drain(&runtime).await;
     replay.fail_catalogs.store(true, Ordering::SeqCst);
     let error = runtime
         .send_command("review", "", Some("command-key"))
@@ -1250,8 +1251,19 @@ async fn slash_invocations_fail_when_the_catalogs_cannot_be_read() {
         matches!(error, OpenCodeRuntimeError::NotSent(_)),
         "nothing was sent, so the delivery can be retried: {error:?}"
     );
+    runtime
+        .send_turn(
+            Some("/review now"),
+            vec![json!({ "url": "file:///work/project/log.png", "filename": "log.png" })],
+            Some("prompt-key"),
+        )
+        .await
+        .expect_err("the route is unknown");
     assert!(replay.requests_to("/command").is_empty());
     assert!(replay.requests_to("/prompt").is_empty());
+    // A turn that was never sent never starts, so no start waits for a completion.
+    let events = drain(&runtime).await;
+    assert!(of_type(&events, "turn.started").is_empty(), "{events:#?}");
     runtime.stop().await.expect("stop");
 }
 
