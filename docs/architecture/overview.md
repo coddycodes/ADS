@@ -2016,8 +2016,10 @@ RPC. On the first media subscriber, `device/android/scrcpy.rs` pushes the embedd
 scrcpy-server v4.1 jar to `/data/local/tmp/bibcode-scrcpy-server-v4.1.jar`
 unless `sha256sum` on the device already matches, runs it through
 `adb shell` as a registered helper (`android-scrcpy`) with
-`max_size=1280 video_bit_rate=4000000 max_fps=30`, forwards a loopback port to
-it, and reads the scrcpy v4.1 wire format:
+`max_size=1280 video_bit_rate=4000000 max_fps=30` and `cleanup=false` (scrcpy's
+cleanup helper would delete the jar as it starts, defeating the hash check, and
+restores only options BiBCode never sets), forwards a loopback port to it, and
+reads the scrcpy v4.1 wire format:
 
 - the video socket starts with one dummy byte (forward tunnel), a 4-byte
   big-endian codec id (`h264`), and a 12-byte session packet;

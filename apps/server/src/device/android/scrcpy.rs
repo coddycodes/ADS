@@ -170,6 +170,9 @@ pub(crate) fn server_args(scid: u32) -> Vec<String> {
         "send_device_meta=false".into(),
         // Nothing reads the control socket, so the server must not write clipboard changes.
         "clipboard_autosync=false".into(),
+        // With cleanup on, scrcpy's CleanUp helper deletes the jar as it starts, so every
+        // session would push it again. It restores only options BiBCode never sets.
+        "cleanup=false".into(),
     ]
     .into()
 }
@@ -766,6 +769,8 @@ mod tests {
             "max_fps=30",
             "send_device_meta=false",
             "clipboard_autosync=false",
+            // Keeps the pushed jar on the device, so the next session skips the push.
+            "cleanup=false",
         ] {
             assert!(args.iter().any(|arg| arg == expected), "{expected}");
         }
