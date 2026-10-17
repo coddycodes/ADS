@@ -13462,7 +13462,7 @@ async fn native_factory_routes_resume_to_the_native_adapter_without_a_fallback()
     };
     assert!(matches!(
         error,
-        ProviderRuntimeError::Spawn { provider, .. } if provider == "opencode"
+        ProviderRuntimeError::MissingExecutable { provider, .. } if provider == "opencode"
     ));
 }
 
@@ -13491,7 +13491,7 @@ async fn native_factory_routes_every_supported_provider_to_its_native_adapter() 
         };
 
         assert!(
-            matches!(error, ProviderRuntimeError::Spawn { provider: ref actual, .. } if actual == provider),
+            matches!(error, ProviderRuntimeError::MissingExecutable { provider: ref actual, .. } if actual == provider),
             "unexpected native adapter error for {provider}: {error:?}"
         );
     }

@@ -506,6 +506,13 @@ pub enum ProviderRuntimeError {
     ActivityTargetUnsupported { provider: String },
     #[error("failed to spawn {provider} provider process: {detail}")]
     Spawn { provider: String, detail: String },
+    /// The provider's executable does not exist. Every launch is refused the same way until the
+    /// user installs it or changes its Binary path, so a delivery fails once instead of retrying.
+    /// The Display equals the `Spawn` it replaces, so logs and RPC errors read as before.
+    #[error(
+        "failed to spawn {provider} provider process: provider executable was not found: {binary}"
+    )]
+    MissingExecutable { provider: String, binary: String },
     #[error("{provider} provider operation failed: {detail}")]
     Provider { provider: String, detail: String },
     /// Only absent/cursorless matching runtime state; conflicting identities remain rejected.
@@ -1945,13 +1952,15 @@ fn frozen_failure_outcome(
 }
 
 /// A durable turn is replayed unchanged, so a launch refused for the turn's own options fails the
-/// delivery once, and so does a provider this BiBCode cannot drive (it is refused again until its
-/// settings change). Every other launch failure, such as a spawn error, is retried.
+/// delivery once, and so does a provider this BiBCode cannot drive or whose executable is missing
+/// (each is refused again until its settings or installation change). Every other launch failure,
+/// such as another spawn error, is retried with backoff.
 fn launch_failure_outcome(error: &ProviderRuntimeError, label: &str) -> ProviderDeliveryOutcome {
     let detail = delivery_detail(error, Some(label));
     match error {
         ProviderRuntimeError::InvalidOption { .. } => ProviderDeliveryOutcome::Refused { detail },
-        ProviderRuntimeError::IncompatibleProvider { .. } => {
+        ProviderRuntimeError::IncompatibleProvider { .. }
+        | ProviderRuntimeError::MissingExecutable { .. } => {
             ProviderDeliveryOutcome::Rejected { detail }
         }
         _ => ProviderDeliveryOutcome::DefinitelyNotSent { detail },
@@ -2053,6 +2062,14 @@ pub(crate) fn delivery_detail(
         ProviderRuntimeError::Spawn { provider, detail } => {
             format!("{} could not start: {detail}", label(provider))
         }
+        ProviderRuntimeError::MissingExecutable { provider, binary } => format!(
+            // Retry keeps the turn's original route, so it launches only once the executable
+            // exists at the same path. A changed Binary path takes a new message, and the failed
+            // one holds back the thread's later messages until it is dismissed.
+            "{} could not start: {binary} was not found. Install it there and retry, or set its \
+             Binary path in Settings → Providers, then dismiss this message and send it again.",
+            label(provider)
+        ),
         ProviderRuntimeError::UnsupportedProvider { provider } => format!(
             "{} is turned off or not set up. Check it in Settings → Providers.",
             label(provider)
@@ -2210,6 +2227,7 @@ fn delivery_detail_names_provider(error: &ProviderRuntimeError) -> bool {
     matches!(
         error,
         ProviderRuntimeError::Spawn { .. }
+            | ProviderRuntimeError::MissingExecutable { .. }
             | ProviderRuntimeError::UnsupportedProvider { .. }
             | ProviderRuntimeError::UnsupportedCapability { .. }
             | ProviderRuntimeError::ActivityTargetUnsupported { .. }
@@ -7058,7 +7076,9 @@ fn normalize_agent_activity_transition_error(error: ProviderRuntimeError) -> Pro
         ProviderRuntimeError::UnsupportedProvider { .. } => "unsupported provider",
         ProviderRuntimeError::UnsupportedCapability { .. } => "unsupported capability",
         ProviderRuntimeError::ActivityTargetUnsupported { .. } => "targeted activity unsupported",
-        ProviderRuntimeError::Spawn { .. } => "provider spawn failure",
+        ProviderRuntimeError::Spawn { .. } | ProviderRuntimeError::MissingExecutable { .. } => {
+            "provider spawn failure"
+        }
         ProviderRuntimeError::Provider { .. }
         | ProviderRuntimeError::InvalidOption { .. }
         | ProviderRuntimeError::FrozenSessionUnavailable { .. }
@@ -10297,9 +10317,9 @@ where
             .iter()
             .map(|(name, value)| (name.as_os_str(), value.as_os_str())),
     )
-    .ok_or_else(|| ProviderRuntimeError::Spawn {
+    .ok_or_else(|| ProviderRuntimeError::MissingExecutable {
         provider: provider.clone(),
-        detail: format!("provider executable was not found: {}", request.binary_path),
+        binary: request.binary_path.clone(),
     })?;
     let executable = if provider == "opencode" {
         crate::provider::opencode::resolve_owned_executable(Platform::current(), &executable)
@@ -17152,6 +17172,60 @@ mod tests {
             super::delivery_route_fingerprint(&standard).expect("standard route fingerprint"),
             super::delivery_route_fingerprint(&fast).expect("fast route fingerprint")
         );
+    }
+
+    /// A provider whose executable is missing is refused the same way on every launch, so the
+    /// delivery fails once with what to do, instead of retrying a launch that cannot succeed.
+    #[tokio::test]
+    async fn a_missing_provider_executable_fails_the_delivery_once_with_what_to_do() {
+        let temp = TempDir::new().expect("provider fixture directory");
+        let mut request = native_launch(&temp, "claudeAgent");
+        // An absolute path: the hermetic guard refuses a search of the ambient PATH.
+        request.binary_path = temp.path().join("claude").to_string_lossy().into_owned();
+        let binary = request.binary_path.clone();
+        let error = match super::spawn_child(
+            &request,
+            &[],
+            false,
+            crate::diagnostics::ProcessAttributionRegistry::new(),
+        )
+        .await
+        {
+            Ok(_) => panic!("a missing executable cannot start"),
+            Err(error) => error,
+        };
+        let expected = format!(
+            "Work Claude could not start: {binary} was not found. Install it there and retry, or \
+             set its Binary path in Settings → Providers, then dismiss this message and send it \
+             again."
+        );
+        assert_eq!(
+            super::launch_failure_outcome(&error, "Work Claude"),
+            super::ProviderDeliveryOutcome::Rejected {
+                detail: expected.clone()
+            }
+        );
+        assert_eq!(
+            super::frozen_failure_outcome(&error, Some("Work Claude")),
+            super::ProviderDeliveryOutcome::Rejected { detail: expected }
+        );
+        // Logs and RPC errors read as before.
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "failed to spawn claudeAgent provider process: provider executable was not found: \
+                 {binary}"
+            )
+        );
+        // Any other spawn failure may pass, so it is still retried.
+        let other = super::ProviderRuntimeError::Spawn {
+            provider: "claudeAgent".to_owned(),
+            detail: "Resource temporarily unavailable".to_owned(),
+        };
+        assert!(matches!(
+            super::launch_failure_outcome(&other, "Work Claude"),
+            super::ProviderDeliveryOutcome::DefinitelyNotSent { .. }
+        ));
     }
 
     #[test]

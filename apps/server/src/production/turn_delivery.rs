@@ -36,6 +36,10 @@ const DELETED_THREAD_DETAIL: &str =
 const MAX_CONCURRENT_THREADS: usize = 4;
 const RETRY_BACKOFF_MIN: Duration = Duration::from_millis(50);
 const RETRY_BACKOFF_MAX: Duration = Duration::from_secs(1);
+/// The longest wait between attempts at one delivery that keeps failing. A provider that cannot
+/// start fails every attempt the same way, and each attempt costs a launch; capped at a second, it
+/// retried every second for as long as the turn stayed pending.
+const DELIVERY_RETRY_BACKOFF_MAX: Duration = Duration::from_secs(30);
 const SHUTDOWN_TASK_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const FORCE_CANCEL_TASK_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
 const RECONCILIATION_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -629,7 +633,7 @@ fn schedule_retry(retry_backoffs: &mut HashMap<String, DeliveryRetry>, command_i
         command_id,
         DeliveryRetry {
             ready_at: Instant::now() + delay,
-            next_delay: next_backoff(delay),
+            next_delay: next_delivery_backoff(delay),
         },
     );
 }
@@ -1057,6 +1061,10 @@ fn next_backoff(current: Duration) -> Duration {
     current.saturating_mul(2).min(RETRY_BACKOFF_MAX)
 }
 
+fn next_delivery_backoff(current: Duration) -> Duration {
+    current.saturating_mul(2).min(DELIVERY_RETRY_BACKOFF_MAX)
+}
+
 fn persisted_delivery_retry(row: &ProviderTurnDelivery, now: Instant) -> DeliveryRetry {
     let delay = retry_delay_for_attempts(row.attempts);
     let elapsed = OffsetDateTime::parse(&row.updated_at, &Rfc3339)
@@ -1071,14 +1079,14 @@ fn persisted_delivery_retry(row: &ProviderTurnDelivery, now: Instant) -> Deliver
     let remaining = delay.saturating_sub(elapsed);
     DeliveryRetry {
         ready_at: now + remaining,
-        next_delay: next_backoff(delay),
+        next_delay: next_delivery_backoff(delay),
     }
 }
 
 fn retry_delay_for_attempts(attempts: i64) -> Duration {
     let mut delay = RETRY_BACKOFF_MIN;
     for _ in 1..attempts.max(1) {
-        delay = next_backoff(delay);
+        delay = next_delivery_backoff(delay);
     }
     delay
 }
@@ -3097,6 +3105,77 @@ mod tests {
         tokio::time::advance(RETRY_BACKOFF_MIN).await;
         wait_for_count(&effects.attempts, &effects.attempted, 3).await;
 
+        service.shutdown().await;
+        engine.shutdown().await;
+    }
+
+    /// A delivery that keeps failing backs off to half a minute between attempts; capped at a
+    /// second, a provider that could not start was retried every second indefinitely.
+    #[test]
+    fn a_failing_delivery_backs_off_to_thirty_seconds() {
+        let mut retries = HashMap::new();
+        let mut delays = Vec::new();
+        for _ in 0..12 {
+            schedule_retry(&mut retries, "command".to_owned());
+            delays.push(retries["command"].next_delay);
+        }
+        assert_eq!(delays[0], RETRY_BACKOFF_MIN * 2);
+        assert!(delays.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert_eq!(delays.last(), Some(&Duration::from_secs(30)));
+        // A restarted server resumes the same schedule from the persisted attempt count.
+        assert_eq!(retry_delay_for_attempts(20), Duration::from_secs(30));
+    }
+
+    /// Retries that fail the same way change nothing the thread shows, so they emit no thread
+    /// update: a provider that could not start updated its thread every second indefinitely.
+    #[tokio::test(start_paused = true)]
+    async fn repeated_identical_failures_emit_one_update() {
+        let database = Database::open_in_memory().await.expect("database");
+        database
+            .call(|connection| Ok(run_migrations(connection, None)?))
+            .await
+            .expect("migrations");
+        seed_pending(&database, "transient", "thread", 1).await;
+        let engine = OrchestrationEngine::start(database, EngineOptions::default())
+            .await
+            .expect("engine");
+        let mut events = engine.subscribe_events();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let router: ProviderDeliveryRouter = Arc::new({
+            let calls = calls.clone();
+            move |_, _| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Box::pin(ready(ProviderDeliveryOutcome::DefinitelyNotSent {
+                    detail: "Codex could not start: the session is restarting".to_owned(),
+                }))
+            }
+        });
+        let service = TurnDeliveryService::start_with_delivery_router(
+            engine.clone(),
+            1,
+            router,
+            Arc::new(|_| Box::pin(ready(ProviderReconciliationOutcome::Absent))),
+        );
+        // Each failed attempt is persisted off the runtime, so wait for its retry to be scheduled
+        // before moving the clock on to the next attempt.
+        for attempt in 1..=3 {
+            service.wait_for_retries_scheduled(attempt).await;
+            while calls.load(Ordering::SeqCst) <= attempt {
+                tokio::time::advance(RETRY_BACKOFF_MIN).await;
+                tokio::task::yield_now().await;
+            }
+        }
+        service.wait_for_retries_scheduled(4).await;
+        let mut updates = 0;
+        while let Ok(event) = events.try_recv() {
+            if event.event.event_type == "thread.turn-delivery-updated" {
+                updates += 1;
+            }
+        }
+        assert_eq!(
+            updates, 1,
+            "retries that change nothing must not update the thread"
+        );
         service.shutdown().await;
         engine.shutdown().await;
     }

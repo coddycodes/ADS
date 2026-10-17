@@ -1976,10 +1976,16 @@ turn's own options fails the delivery once, because the unchanged durable
 payload would be refused on every attempt. Its failed delivery carries the
 optional reason `modelSelectionRefused`, also used when a frozen turn's model
 or options are refused before delivery. A launch refused because the provider
-itself cannot be driven, such as an unsupported version, fails the delivery
-once without a reason; a retry after the setting is fixed launches normally.
-Other launch failures, such as a spawn error, stay definitely not sent and
-retry with backoff. The delivery
+itself cannot be driven, such as an unsupported version, or because its
+executable is missing (`ProviderRuntimeError::MissingExecutable`), fails the
+delivery once without a reason; a retry after the setting is fixed, or once the
+executable exists at the same path, launches normally (a retry keeps the
+turn's original route). Other launch failures, such as another spawn error,
+stay definitely not sent and retry with backoff: 50 ms, doubling to a 30-second
+cap per delivery (a one-second cap retried a provider that could not start
+every second). A retry that fails again with the same detail returns the
+delivery to exactly what the thread already shows, so it records the attempt
+but appends no `thread.turn-delivery-updated` event. The delivery
 detail is what the turn shows, so every one is plain text from a single
 formatter that names the provider by its instance label, never by a driver id:
 the refusal itself, such as "Fast Mode is not supported by the selected model.";

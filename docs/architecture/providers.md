@@ -113,11 +113,18 @@ A durable turn is replayed unchanged, so a launch that fails because the
 selected model or session refuses the turn's own options
 (`ProviderRuntimeError::InvalidOption`) fails that delivery once. So does a
 launch refused because BiBCode cannot drive the configured provider, such as an
-unsupported major version (`ProviderRuntimeError::IncompatibleProvider`): the
-delivery fails with the actionable detail instead of relaunching the provider
-in a retry loop, and a retry after the user fixes the setting launches
-normally. Every other launch failure, such as a spawn error, a port race, or a
-server that is slow to start, stays definitely not sent and is retried.
+unsupported major version (`ProviderRuntimeError::IncompatibleProvider`), and a
+launch whose executable is missing (`ProviderRuntimeError::MissingExecutable`,
+"Claude could not start: claude was not found. Install it there and retry, or
+set its Binary path in Settings → Providers, then dismiss this message and send
+it again."): the delivery fails with the actionable detail instead of
+relaunching the provider in a retry loop. A retry keeps the turn's original
+route, so it launches once the executable exists at that path; a changed
+Binary path takes a new message, sent after dismissing the failed one, which
+holds back the thread's later messages. Every other
+launch failure, such as another spawn error, a port race, or a server that is
+slow to start, stays definitely not sent and is retried with backoff up to 30
+seconds between attempts.
 `InvalidOption` comes from every deterministic option check:
 
 - the shape checks of Claude, Codex and OpenCode: an option without an id, and a
