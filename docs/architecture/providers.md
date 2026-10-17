@@ -52,6 +52,15 @@ call. Changed provider settings drop every cached catalog; failures and
 catalogs that report discovery issues are never cached, so a retry discovers
 again; and at most 64 catalogs are kept, the oldest leaving first.
 
+The client keys its capability query by a revision of the server config. A
+provider-status or settings update always moves the revision, because settings
+arrive with secrets redacted and an equal payload can still hide a changed
+secret. The snapshot every reconnect resends moves it only when its providers or
+settings differ. A snapshot equal to the config already held leaves the whole
+projection in place, so no reader re-renders with a copy. The new connection
+already re-reads the mounted query, so a reconnect costs one capability read
+rather than one more per reconnect.
+
 The result contains `slashCommands`, `skills`, `agents`, and `issues`. Codex
 initializes an App Server in the requested directory and calls `skills/list`
 without an account/model query, using the session launch's configured Codex
