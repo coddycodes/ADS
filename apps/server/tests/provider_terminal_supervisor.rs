@@ -13532,9 +13532,18 @@ async fn opencode_terminal_arguments_follow_the_installed_major_version() {
                            --standalone            Run with a private server\n  \
                            --server string         Connect to a server URL\n  \
                            --session, -s string    Session ID to continue\n";
-    for (help, expected_args, expected_config) in [
+    for (help, probe_delay, expected_args, expected_config) in [
         (
             opencode_2_help.to_owned(),
+            std::time::Duration::ZERO,
+            vec!["--standalone".to_owned()],
+            serde_json::json!({ "theme": "system", "model": "mock/mock-model" }),
+        ),
+        // A cold capability probe may take most of its 900 ms budget; the native form still
+        // applies.
+        (
+            opencode_2_help.to_owned(),
+            std::time::Duration::from_millis(700),
             vec!["--standalone".to_owned()],
             serde_json::json!({ "theme": "system", "model": "mock/mock-model" }),
         ),
@@ -13543,6 +13552,7 @@ async fn opencode_terminal_arguments_follow_the_installed_major_version() {
                 .as_str()
                 .expect("OpenCode 1 attach help")
                 .to_owned(),
+            std::time::Duration::ZERO,
             vec!["--model".to_owned(), "mock/mock-model".to_owned()],
             serde_json::json!({ "theme": "system" }),
         ),
@@ -13562,7 +13572,7 @@ async fn opencode_terminal_arguments_follow_the_installed_major_version() {
                 stdout: help,
                 stderr: String::new(),
             }])),
-            delay: std::time::Duration::ZERO,
+            delay: probe_delay,
         });
         let factory = Arc::new(OpenCodeTerminalObserverFactory::new(
             Arc::new(CachedOpenCodeCapabilityProbe::new(runner)),
