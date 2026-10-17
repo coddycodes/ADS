@@ -27,7 +27,7 @@ use super::{
     methods::{ACTIVE_RPC_METHODS, MethodMode},
     transport::{
         self, CHUNKED_RPC_SUBPROTOCOL, CONTROL_LANE_CAPACITY, ConnectionEnd, ConnectionLiveness,
-        OutboundFraming,
+        DEFLATE_RPC_SUBPROTOCOL, OutboundFraming,
     },
 };
 use crate::{
@@ -689,13 +689,14 @@ pub(crate) async fn run_session(
     context: RpcSessionContext,
     session_shutdown: CancellationToken,
 ) {
-    let framing = if socket
-        .protocol()
-        .is_some_and(|protocol| protocol.as_bytes() == CHUNKED_RPC_SUBPROTOCOL.as_bytes())
-    {
-        OutboundFraming::PlainRecords
-    } else {
-        OutboundFraming::Whole
+    let framing = match socket.protocol().map(axum::http::HeaderValue::as_bytes) {
+        Some(protocol) if protocol == CHUNKED_RPC_SUBPROTOCOL.as_bytes() => {
+            OutboundFraming::PlainRecords { deflate: false }
+        }
+        Some(protocol) if protocol == DEFLATE_RPC_SUBPROTOCOL.as_bytes() => {
+            OutboundFraming::PlainRecords { deflate: true }
+        }
+        _ => OutboundFraming::Whole,
     };
     let liveness = ConnectionLiveness::new();
     let (socket_writer, socket_reader) = socket.split();
