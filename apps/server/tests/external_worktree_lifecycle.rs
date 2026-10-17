@@ -142,12 +142,13 @@ async fn adopted_external_worktree_uses_normal_rpc_paths_and_survives_the_full_l
     );
     let discovered = timeout(Duration::from_secs(5), async {
         loop {
-            let snapshot = chunk(&mut socket, "2").await;
+            let snapshots = chunk_values(&mut socket, "2").await;
             ack(&mut socket, "2").await;
-            if snapshot["worktrees"]
-                .as_array()
-                .is_some_and(|worktrees| worktrees.len() == 2)
-            {
+            if let Some(snapshot) = snapshots.into_iter().find(|snapshot| {
+                snapshot["worktrees"]
+                    .as_array()
+                    .is_some_and(|worktrees| worktrees.len() == 2)
+            }) {
                 break snapshot;
             }
         }
@@ -339,16 +340,17 @@ async fn adopted_external_worktree_uses_normal_rpc_paths_and_survives_the_full_l
     success(&mut socket, "30").await;
     let terminal_cwd = timeout(Duration::from_secs(15), async {
         loop {
-            let output = chunk(&mut terminal_output_socket, "27").await;
+            let outputs = chunk_values(&mut terminal_output_socket, "27").await;
             ack(&mut terminal_output_socket, "27").await;
-            if output["type"] == "output"
-                && output["data"].as_str().is_some_and(|data| {
-                    data.contains(&format!(
-                        "BIBCODE_ACTUAL_CWD={}",
-                        adopted_path.to_string_lossy()
-                    ))
-                })
-            {
+            if let Some(output) = outputs.into_iter().find(|output| {
+                output["type"] == "output"
+                    && output["data"].as_str().is_some_and(|data| {
+                        data.contains(&format!(
+                            "BIBCODE_ACTUAL_CWD={}",
+                            adopted_path.to_string_lossy()
+                        ))
+                    })
+            }) {
                 break output;
             }
         }
@@ -536,12 +538,13 @@ async fn adopted_external_worktree_uses_normal_rpc_paths_and_survives_the_full_l
     );
     let terminal_quiesced = timeout(Duration::from_secs(15), async {
         loop {
-            let metadata = chunk(&mut terminal_metadata_socket, "28").await;
+            let updates = chunk_values(&mut terminal_metadata_socket, "28").await;
             ack(&mut terminal_metadata_socket, "28").await;
-            if metadata["type"] == "upsert"
-                && metadata["terminal"]["terminalId"] == "lifecycle-terminal"
-                && metadata["terminal"]["status"] == "exited"
-            {
+            if let Some(metadata) = updates.into_iter().find(|metadata| {
+                metadata["type"] == "upsert"
+                    && metadata["terminal"]["terminalId"] == "lifecycle-terminal"
+                    && metadata["terminal"]["status"] == "exited"
+            }) {
                 break metadata;
             }
         }
@@ -1056,13 +1059,23 @@ async fn next(socket: &mut TestSocket) -> ServerMessage {
 
 #[cfg(unix)]
 async fn chunk(socket: &mut TestSocket, request_id: &str) -> Value {
+    chunk_values(socket, request_id)
+        .await
+        .into_iter()
+        .next()
+        .expect("stream value")
+}
+
+/// Every value of the next chunk: items queued behind an unacknowledged chunk share one.
+#[cfg(unix)]
+async fn chunk_values(socket: &mut TestSocket, request_id: &str) -> Vec<Value> {
     loop {
         match next(socket).await {
             ServerMessage::Chunk {
                 request_id: actual,
                 values,
             } if actual.as_str() == request_id => {
-                return values.into_iter().next().expect("stream value");
+                return values;
             }
             ServerMessage::Chunk { request_id, .. } => ack(socket, request_id.as_str()).await,
             other => panic!("expected {request_id} stream chunk: {other:?}"),
