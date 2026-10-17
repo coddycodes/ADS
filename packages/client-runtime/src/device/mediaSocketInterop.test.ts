@@ -6,7 +6,9 @@
 //
 // No device runs here (the real runtime has no fake SDK), so streaming is verified natively.
 // What crosses the boundary is checked: the Noise handshake with the media prologue, the
-// ticket inside the record layer, and the refusals.
+// ticket inside the record layer, and the refusals. Device previews are on, since both media
+// routes answer 503 before the upgrade while they are off. The server may then list the host's
+// emulators and simulators, but no ticket here is real, so no device opens.
 // @effect-diagnostics globalTimers:off - The harness bounds each wait.
 import { afterAll, beforeAll, describe, expect, it } from "@effect/vitest";
 
@@ -51,7 +53,7 @@ describe.skipIf(serverBinary === undefined)("device media socket against the Rus
   let hostKey: string;
 
   beforeAll(async () => {
-    server = await startServer();
+    server = await startServer({ settings: { enableDevicePreviews: true } });
     wsBase = server.httpBaseUrl.replace(/^http/, "ws");
     hostKey = base64Url(readHostPublicKey(server.dataRoot));
   }, 60_000);

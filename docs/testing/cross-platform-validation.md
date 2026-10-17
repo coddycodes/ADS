@@ -947,7 +947,9 @@ binary from `packages/client-runtime`:
 BIBCODE_E2EE_SERVER_BIN="$(git rev-parse --show-toplevel)/target/debug/bibcode" vp test run src/device/mediaSocketInterop.test.ts
 ```
 
-No device runs there, so the suite proves the boundary without streaming:
+The suite starts the server with `enableDevicePreviews` on, because both media
+routes answer `503` before the upgrade while previews are off. No device runs
+there, so the suite proves the boundary without streaming:
 
 - a bogus ticket closes `expired` well inside the server's ticket wait, on the
   plain route and after a media-prologue handshake on the E2EE route;

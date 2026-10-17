@@ -19,8 +19,22 @@ export interface RunningServer {
   adminAccessToken?: string;
 }
 
-export async function startServer(): Promise<RunningServer> {
+export interface StartServerOptions {
+  /** Written as the server's `settings.json` before it starts, e.g. to turn a feature on. */
+  settings?: Record<string, unknown>;
+}
+
+export async function startServer(options: StartServerOptions = {}): Promise<RunningServer> {
   const dataRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bibcode-e2ee-"));
+  if (options.settings !== undefined) {
+    // `serve --base-dir` keeps its state, settings included, under `userdata/`.
+    const stateDir = NodePath.join(dataRoot, "userdata");
+    NodeFS.mkdirSync(stateDir, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(stateDir, "settings.json"),
+      JSON.stringify(options.settings),
+    );
+  }
   const child = NodeChildProcess.spawn(serverBinary!, [
     "serve",
     "--host",
