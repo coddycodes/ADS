@@ -31,10 +31,10 @@ use super::{
         mcp_server_status_from_notification, refresh_mcp_status_snapshot, run_actor,
     },
     model::{
-        BuildTurnStartInput, CODEX_RECONCILIATION_TURN_LIMIT, CODEX_REMOTE_JSON_TOO_LARGE,
-        CodexProviderSnapshot, CodexRuntimeMode, PagedTurns, ReconciliationThread,
+        BuildTurnStartInput, CODEX_HISTORY_TURNS_PAGE_LIMIT, CODEX_REMOTE_JSON_TOO_LARGE,
+        CodexProviderSnapshot, CodexRuntimeMode, ReconciliationThread,
         ThreadBackgroundTerminalsListParams, ThreadListParams, ThreadReadParams,
-        ThreadReadResponse, build_initialize_params, build_turn_start_params,
+        ThreadReadResponse, TurnsPager, build_initialize_params, build_turn_start_params,
         build_turn_steer_params, decode_background_terminals_list_response,
         decode_thread_list_response, decode_thread_read_response, decode_turns_page,
         delivery_key_in_turns, is_recoverable_thread_resume_error, parse_model_list_response,
@@ -1335,7 +1335,7 @@ impl CodexSessionRuntime {
         for _ in 0..DELIVERY_READBACK_PAGE_LIMIT {
             let mut params = json!({
                 "threadId": provider_thread_id,
-                "limit": HISTORY_TURNS_PAGE_LIMIT,
+                "limit": CODEX_HISTORY_TURNS_PAGE_LIMIT,
                 "sortDirection": "desc",
                 "itemsView": "full",
             });
@@ -3561,10 +3561,6 @@ async fn oldest_rolled_back_turn_id(
     })
 }
 
-/// Turns per `thread/turns/list` page for activity history. One page normally holds every turn
-/// activity keeps (`docs/superpowers/specs/2026-10-17-codex-activity-paging-design.md`).
-const HISTORY_TURNS_PAGE_LIMIT: usize = CODEX_RECONCILIATION_TURN_LIMIT;
-
 /// Pages delivery readback scans (2,000 turns) before the delivery is reported unknown.
 const DELIVERY_READBACK_PAGE_LIMIT: usize = 100;
 
@@ -3624,43 +3620,19 @@ async fn read_thread_history(
             }
         });
     }
-    let mut turns = PagedTurns::new();
-    let mut cursor: Option<String> = None;
-    let mut seen_cursors = HashSet::new();
-    while !turns.is_full() {
-        let mut params = json!({
-            "threadId": thread_id,
-            "limit": HISTORY_TURNS_PAGE_LIMIT,
-            "sortDirection": "desc",
-            "itemsView": "full",
-        });
-        if let Some(cursor) = &cursor {
-            params["cursor"] = json!(cursor);
-        }
+    let undecodable = |error| HistoryReadFailure::Undecodable {
+        method: "thread/turns/list",
+        error,
+    };
+    let mut pager = TurnsPager::new(thread_id);
+    while let Some(params) = pager.next_params() {
         let page = connection
             .request_cancellable("thread/turns/list", params, cancellation)
             .await
             .map_err(|error| history_request_failure("thread/turns/list", error))?;
-        let undecodable = |error| HistoryReadFailure::Undecodable {
-            method: "thread/turns/list",
-            error,
-        };
-        let (page_turns, next_cursor) = decode_turns_page(page).map_err(undecodable)?;
-        if page_turns.is_empty() {
-            break;
-        }
-        turns.push_page(page_turns).map_err(undecodable)?;
-        match next_cursor {
-            Some(next) if seen_cursors.insert(next.clone()) => cursor = Some(next),
-            _ => break,
-        }
+        pager.accept_page(page).map_err(undecodable)?;
     }
-    turns
-        .into_thread(metadata)
-        .map_err(|error| HistoryReadFailure::Undecodable {
-            method: "thread/turns/list",
-            error,
-        })
+    pager.into_thread(metadata).map_err(undecodable)
 }
 
 fn current_timestamp() -> String {

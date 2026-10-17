@@ -491,6 +491,68 @@ pub(crate) fn decode_turns_page(mut value: Value) -> Result<(Vec<Value>, Option<
     Ok((turns, next_cursor))
 }
 
+/// Turns per `thread/turns/list` page for activity history. One page normally holds every turn
+/// activity keeps (`docs/superpowers/specs/2026-10-17-codex-activity-paging-design.md`).
+pub(crate) const CODEX_HISTORY_TURNS_PAGE_LIMIT: usize = CODEX_RECONCILIATION_TURN_LIMIT;
+
+/// The newest-first `thread/turns/list` paging every Codex transport uses to recover a thread's
+/// history: what to ask next, when to stop, and what to keep.
+pub(crate) struct TurnsPager {
+    thread_id: String,
+    turns: PagedTurns,
+    cursor: Option<String>,
+    seen_cursors: std::collections::HashSet<String>,
+    done: bool,
+}
+
+impl TurnsPager {
+    pub(crate) fn new(thread_id: &str) -> Self {
+        Self {
+            thread_id: thread_id.to_owned(),
+            turns: PagedTurns::new(),
+            cursor: None,
+            seen_cursors: std::collections::HashSet::new(),
+            done: false,
+        }
+    }
+
+    /// The next page's params, or `None` once activity holds the turns it keeps or Codex has no
+    /// more.
+    pub(crate) fn next_params(&self) -> Option<Value> {
+        if self.done || self.turns.is_full() {
+            return None;
+        }
+        let mut params = serde_json::json!({
+            "threadId": self.thread_id,
+            "limit": CODEX_HISTORY_TURNS_PAGE_LIMIT,
+            "sortDirection": "desc",
+            "itemsView": "full",
+        });
+        if let Some(cursor) = &self.cursor {
+            params["cursor"] = Value::String(cursor.clone());
+        }
+        Some(params)
+    }
+
+    pub(crate) fn accept_page(&mut self, page: Value) -> Result<(), String> {
+        let (turns, next_cursor) = decode_turns_page(page)?;
+        if turns.is_empty() {
+            self.done = true;
+            return Ok(());
+        }
+        self.turns.push_page(turns)?;
+        match next_cursor {
+            Some(next) if self.seen_cursors.insert(next.clone()) => self.cursor = Some(next),
+            _ => self.done = true,
+        }
+        Ok(())
+    }
+
+    pub(crate) fn into_thread(self, metadata: Value) -> Result<ThreadReadResponse, String> {
+        self.turns.into_thread(metadata)
+    }
+}
+
 /// Turns gathered newest first across `thread/turns/list` pages, held to what a decoded thread
 /// keeps as each page arrives: the newest `CODEX_RECONCILIATION_TURN_LIMIT` turns, the newest
 /// `CODEX_RECONCILIATION_ITEM_LIMIT` items, command output as a presence marker, and the fixed

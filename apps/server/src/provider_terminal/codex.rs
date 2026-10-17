@@ -40,7 +40,10 @@ use crate::process::supervised::{
     run_supervised_with_spawn_observer, run_supervised_with_spawn_observer_until,
 };
 #[cfg(unix)]
+#[cfg(all(test, unix))]
 use crate::provider::codex::model::CODEX_REMOTE_MESSAGE_MAX_BYTES;
+#[cfg(unix)]
+use crate::provider::codex::protocol::CODEX_TRANSPORT_MESSAGE_MAX_BYTES;
 use crate::{
     activity::{ActivityCapabilities, ActivityObservationState, ProviderActivityMutation},
     diagnostics::{
@@ -57,7 +60,8 @@ use crate::{
         build_initialize_params,
         model::{
             CODEX_RECONCILIATION_BACKGROUND_LIMIT, CODEX_RECONCILIATION_THREAD_LIMIT,
-            ThreadBackgroundTerminalsListParams, ThreadListParams, ThreadReadParams,
+            CODEX_REMOTE_JSON_TOO_LARGE, ThreadBackgroundTerminalsListParams, ThreadListParams,
+            ThreadReadParams, ThreadReadResponse, TurnsPager,
             decode_background_terminals_list_response, decode_thread_list_response,
             decode_thread_read_response, is_recoverable_thread_resume_error,
         },
@@ -77,7 +81,10 @@ const CODEX_ROOT_DISCOVERY_LIMIT: usize = 50;
 const CODEX_ROOT_DISCOVERY_REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
 const CODEX_RESUME_MATERIALIZATION_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const CODEX_RECONCILIATION_REQUEST_TIMEOUT: Duration = Duration::from_millis(100);
-const CODEX_RECONCILIATION_PASS_TIMEOUT: Duration = Duration::from_millis(300);
+/// One pass can always finish background terminals, the descendant list, and one descendant's
+/// metadata read and first turns page, each at its full request timeout.
+const CODEX_RECONCILIATION_PASS_TIMEOUT: Duration =
+    CODEX_RECONCILIATION_REQUEST_TIMEOUT.saturating_mul(4);
 const CODEX_ACTIVITY_ENABLE_BARRIER_METHOD: &str = "account/read";
 const CODEX_ACTIVITY_RETRY_MIN: Duration = Duration::from_millis(50);
 const CODEX_ACTIVITY_RETRY_MAX: Duration = Duration::from_secs(1);
@@ -512,6 +519,7 @@ impl CodexTerminalObserverFactory {
                 connection_epoch: AtomicU64::new(0),
                 activity: Arc::new(TerminalAgentActivityControl::enabled()),
                 reattach_timeout: self.reattach_timeout,
+                warned_undecodable_history: Mutex::default(),
             }),
         };
         Some(PreparedTerminalLaunch {
@@ -746,6 +754,8 @@ struct CodexObserverInner {
     connection_epoch: AtomicU64,
     activity: Arc<TerminalAgentActivityControl>,
     reattach_timeout: Duration,
+    /// Causes already logged for a descendant history that could not be decoded.
+    warned_undecodable_history: Mutex<std::collections::HashSet<&'static str>>,
 }
 
 impl fmt::Debug for CodexObserverInner {
@@ -1680,6 +1690,67 @@ async fn bounded_codex_reconciliation_request(
     .map_err(|_| ())
 }
 
+/// Reads a descendant as the structured runtime does: metadata without turns, then
+/// `thread/turns/list` pages newest first, bounded as they arrive. `Ok(None)` is a failed
+/// request, which leaves the thread for a later pass; `Err` is a reply that cannot be decoded.
+async fn read_codex_terminal_thread_history(
+    client: &mut dyn CodexRemoteClient,
+    thread_id: &str,
+) -> Result<Option<ThreadReadResponse>, String> {
+    let Ok(metadata) = bounded_codex_reconciliation_request(
+        client,
+        "thread/read",
+        serde_json::to_value(ThreadReadParams {
+            thread_id,
+            include_turns: false,
+        })
+        .expect("Codex terminal thread/read params serialize"),
+    )
+    .await
+    else {
+        return Ok(None);
+    };
+    if metadata.pointer("/thread/id").and_then(Value::as_str) != Some(thread_id) {
+        return decode_thread_read_response(metadata).map(Some);
+    }
+    // The observer's pass budget holds one page per descendant. A full page is every turn
+    // activity keeps; a short page still yields the newest turns, and nothing is lost to a
+    // deadline that cuts paging short.
+    let mut pager = TurnsPager::new(thread_id);
+    if let Some(params) = pager.next_params() {
+        let Ok(page) =
+            bounded_codex_reconciliation_request(client, "thread/turns/list", params).await
+        else {
+            return Ok(None);
+        };
+        pager.accept_page(page)?;
+    }
+    pager.into_thread(metadata).map(Some)
+}
+
+/// A descendant history that cannot be decoded, usually one too large to keep, is skipped and
+/// read again later; the connection stays up. Logs once per cause, with no reply content.
+fn warn_undecodable_terminal_history(inner: &CodexObserverInner, thread_id: &str, error: &str) {
+    let cause = if error == CODEX_REMOTE_JSON_TOO_LARGE {
+        "too_large"
+    } else {
+        "unexpected_shape"
+    };
+    let first = inner
+        .warned_undecodable_history
+        .lock()
+        .expect("Codex terminal history warning lock")
+        .insert(cause);
+    if first {
+        tracing::warn!(
+            provider = "codex",
+            thread_id,
+            cause,
+            "skipped a Codex terminal descendant history activity cannot decode; later passes read it again"
+        );
+    }
+}
+
 async fn reconcile_codex_terminal_inner(
     inner: &CodexObserverInner,
     native_event_key_prefix: &str,
@@ -1741,20 +1812,15 @@ async fn reconcile_codex_terminal_inner(
         )
         .await;
         for thread_id in descendants.threads_to_read {
-            let thread = bounded_codex_reconciliation_request(
-                client,
-                "thread/read",
-                serde_json::to_value(ThreadReadParams {
-                    thread_id: &thread_id,
-                    include_turns: true,
-                })
-                .expect("Codex terminal thread/read params serialize"),
-            )
-            .await
-            .and_then(|value| decode_thread_read_response(value).map_err(|_| ()));
-            let thread = thread
-                .ok()
-                .filter(|thread| thread.thread.id.as_deref() == Some(thread_id.as_str()));
+            let thread = match read_codex_terminal_thread_history(client, &thread_id).await {
+                Ok(thread) => thread,
+                Err(error) => {
+                    warn_undecodable_terminal_history(inner, &thread_id, &error);
+                    None
+                }
+            };
+            let thread =
+                thread.filter(|thread| thread.thread.id.as_deref() == Some(thread_id.as_str()));
             if let Some(thread) = thread {
                 let output = tracker.reconcile_thread_history(&thread.thread);
                 apply_activity_output(
@@ -2617,8 +2683,8 @@ impl CodexRemoteClientFactory for SystemCodexRemoteClientFactory {
                     .await
                     .map_err(|error| format!("failed to connect to Codex App Server: {error}"))?;
                 let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
-                    .max_message_size(Some(CODEX_REMOTE_MESSAGE_MAX_BYTES))
-                    .max_frame_size(Some(CODEX_REMOTE_MESSAGE_MAX_BYTES));
+                    .max_message_size(Some(CODEX_TRANSPORT_MESSAGE_MAX_BYTES))
+                    .max_frame_size(Some(CODEX_TRANSPORT_MESSAGE_MAX_BYTES));
                 let (socket, _) = tokio_tungstenite::client_async_with_config(
                     "ws://localhost/rpc",
                     stream,
@@ -2655,13 +2721,13 @@ impl SystemCodexRemoteClient {
             let message = message.map_err(|error| format!("Codex remote read failed: {error}"))?;
             let value = match message {
                 tokio_tungstenite::tungstenite::Message::Text(text) => {
-                    if text.len() > CODEX_REMOTE_MESSAGE_MAX_BYTES {
+                    if text.len() > CODEX_TRANSPORT_MESSAGE_MAX_BYTES {
                         return Err("Codex remote message exceeded its fixed bound".to_owned());
                     }
                     serde_json::from_slice(text.as_bytes())
                 }
                 tokio_tungstenite::tungstenite::Message::Binary(bytes) => {
-                    if bytes.len() > CODEX_REMOTE_MESSAGE_MAX_BYTES {
+                    if bytes.len() > CODEX_TRANSPORT_MESSAGE_MAX_BYTES {
                         return Err("Codex remote message exceeded its fixed bound".to_owned());
                     }
                     serde_json::from_slice(bytes.as_ref())
@@ -4061,7 +4127,7 @@ mod tests {
                     serde_json::json!({
                         "id": request["id"],
                         "result": {
-                            "payload": "x".repeat(CODEX_REMOTE_MESSAGE_MAX_BYTES)
+                            "payload": "x".repeat(CODEX_TRANSPORT_MESSAGE_MAX_BYTES)
                         },
                     })
                     .to_string()
@@ -4081,6 +4147,66 @@ mod tests {
             result.is_err(),
             "oversized WebSocket messages must fail before serde allocates their JSON graph"
         );
+        drop(client);
+        server.await.expect("UDS server");
+    }
+
+    /// A history page over the 512 KiB decoder bound is a large reply, not a broken socket: the
+    /// client receives it and the same connection keeps serving requests, so the observer can
+    /// skip the thread instead of reconnecting.
+    #[tokio::test]
+    async fn system_remote_client_keeps_the_socket_after_a_reply_over_the_decoder_bound() {
+        let root = tempfile::tempdir().expect("UDS directory");
+        let socket_path = root.path().join("large-reply-app-server.sock");
+        let listener = tokio::net::UnixListener::bind(&socket_path).expect("bind UDS");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept UDS client");
+            let mut socket = tokio_tungstenite::accept_async(stream)
+                .await
+                .expect("accept WebSocket");
+            for result in [
+                json!({"data": [{"id": "turn-1", "items": [{
+                    "id": "message-1",
+                    "type": "agentMessage",
+                    "text": "x".repeat(CODEX_REMOTE_MESSAGE_MAX_BYTES + 1024)
+                }]}], "nextCursor": null}),
+                json!({"data": [], "nextCursor": null}),
+            ] {
+                let Some(Ok(request)) = socket.next().await else {
+                    return;
+                };
+                let request: Value =
+                    serde_json::from_str(&request.into_text().expect("text request"))
+                        .expect("request JSON");
+                let _ = socket
+                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                        json!({"id": request["id"], "result": result})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await;
+            }
+        });
+        let endpoint = format!("unix://{}", socket_path.to_string_lossy());
+        let mut client = SystemCodexRemoteClientFactory
+            .connect(&endpoint)
+            .await
+            .expect("connect real UDS");
+
+        let large = client
+            .request("thread/turns/list", json!({"threadId": "large-child"}))
+            .await
+            .expect("a reply over the decoder bound still arrives");
+        assert_eq!(
+            TurnsPager::new("large-child").accept_page(large),
+            Err(CODEX_REMOTE_JSON_TOO_LARGE.to_owned()),
+            "the decoder, not the socket, rejects the oversized history"
+        );
+        let next = client
+            .request("thread/turns/list", json!({"threadId": "small-child"}))
+            .await
+            .expect("the same socket serves the next request");
+        assert_eq!(next["data"], json!([]));
         drop(client);
         server.await.expect("UDS server");
     }

@@ -178,13 +178,29 @@ New coverage:
 - Delivery: found on the first page, found on a later page, absent after the
   last page.
 
+## Provider-terminal observer
+
+The provider-terminal observer (`provider_terminal/codex.rs`) reads
+descendants the same way, through the shared `TurnsPager` in
+`provider/codex/model.rs`: a metadata `thread/read`, then a bounded
+`thread/turns/list` page. The observer reads one page per descendant: its
+reconciliation pass has a fixed budget (four request timeouts: background
+terminals, the descendant list, the metadata read, and one page), and paging
+progress is not kept between passes. A full page is every turn activity keeps.
+When Codex returns a short page, the observer keeps the newest turns it got
+rather than losing the whole read to the deadline.
+
+Its WebSocket client used to cap every message at the 512 KiB decoder bound. A
+larger reply was a read error, and that error broke the socket: the observer
+went unavailable and reconnected, possibly in a loop, because the same
+descendant was read again after every reconnect. The client now caps a message
+at `CODEX_TRANSPORT_MESSAGE_MAX_BYTES` (8 MiB), the stdio line limit, so both
+transports share one limit. The 512 KiB bound applies to what the decoder
+keeps. A descendant whose newest turns are too large to keep is therefore
+received, skipped with one `tracing::warn!` per cause per observer, and read
+again on a later pass, while the connection stays up. The observer may now hold
+one reply of up to 8 MiB at a time, as the stdio runtime already can.
+
 ## Out of scope
 
-- The provider-terminal observer (`provider_terminal/codex.rs`) still reads
-  descendants with full `thread/read`. Its WebSocket client rejects any
-  message over 512 KiB as a read error (`SystemCodexRemoteClient::read_value`).
-  That error fails the observer connection, which moves it into
-  unavailable/reconnect recovery, so a long descendant thread can repeatedly
-  knock the terminal observer offline. This is a remaining risk. The observer
-  should adopt the same paging in a follow-up.
 - Item-level paging for legacy threads, which Codex does not offer.
