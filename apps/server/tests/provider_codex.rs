@@ -6468,7 +6468,7 @@ async fn reconciliation_wrong_thread_read_does_not_prove_support_or_apply_histor
 }
 
 #[tokio::test]
-async fn reconciliation_read_schema_incompatibility_degrades_history_to_bounded() {
+async fn reconciliation_read_method_not_found_degrades_history_to_bounded() {
     let (connection, _protocol_incoming, mut peer) = scripted_peer();
     let (incoming_tx, incoming_rx) = mpsc::unbounded_channel();
     let runtime = CodexSessionRuntime::new(
@@ -6509,7 +6509,11 @@ async fn reconciliation_read_schema_incompatibility_degrades_history_to_bounded(
                 "thread/read",
                 json!({"threadId": "provider-root", "includeTurns": true}),
             )
-            .respond(json!({"unexpected": "schema"}));
+            .respond_error(json!({
+                "code": -32601,
+                "message": "Method not found",
+                "data": null
+            }));
         }
         peer.expect_request(
             "thread/list",
@@ -6561,10 +6565,9 @@ async fn reconciliation_read_schema_incompatibility_degrades_history_to_bounded(
     })
     .await
     .expect("read downgrade events");
-    assert!(
-        warning.payload["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("thread/read"))
+    assert_eq!(
+        warning.payload["message"],
+        "Codex activity method thread/read is unsupported"
     );
     assert!(
         first_reconciliation
@@ -6629,7 +6632,320 @@ async fn reconciliation_read_schema_incompatibility_degrades_history_to_bounded(
         timeout(Duration::from_millis(150), runtime.next_event())
             .await
             .is_err(),
-        "schema incompatibility warns once and skips future reads"
+        "a missing thread/read warns once and skips future reads"
+    );
+
+    runtime.shutdown().await.expect("runtime shuts down");
+    peer_task.await.expect("peer task");
+}
+
+/// #120: a successful `thread/read` one byte over the 512 KiB decoder bound, inflated by command
+/// output the activity log never shows, is a large thread, not a missing method.
+#[tokio::test]
+async fn reconciliation_oversized_thread_read_keeps_the_method_supported_and_recovers() {
+    let child_read = json!({
+        "thread": {
+            "id": "diagnostic-child",
+            "parentThreadId": "provider-root",
+            "createdAt": 1,
+            "updatedAt": 2,
+            "status": {"type": "idle"},
+            "turns": [{
+                "id": "fixture-turn",
+                "status": "completed",
+                "startedAt": 1,
+                "completedAt": 2,
+                "items": [{
+                    "type": "commandExecution",
+                    "id": "fixture-command",
+                    "command": "echo fixture",
+                    "status": "completed",
+                    "aggregatedOutput": "x".repeat(523_955)
+                }]
+            }]
+        }
+    });
+    assert_eq!(
+        serde_json::to_vec(&child_read).expect("child read").len(),
+        512 * 1024 + 1,
+        "the reply must be one byte over the decoder bound"
+    );
+    let (connection, _protocol_incoming, mut peer) = scripted_peer();
+    let (incoming_tx, incoming_rx) = mpsc::unbounded_channel();
+    let runtime = CodexSessionRuntime::new(codex_activity_options(None), connection, incoming_rx);
+    peer.expect_request("initialize", fixture("initialize-params.json"))
+        .respond(json!({}));
+    peer.expect_notification("initialized");
+    peer.expect_request(
+        "thread/start",
+        json!({
+            "cwd": "/tmp/project",
+            "approvalPolicy": "never",
+            "sandbox": "danger-full-access",
+            "model": "gpt-5.3-codex",
+            "serviceTier": null,
+        }),
+    )
+    .respond(json!({
+        "thread": {"id": "provider-root"},
+        "cwd": "/tmp/project",
+        "model": "gpt-5.3-codex"
+    }));
+    peer.expect_request(
+        "thread/read",
+        json!({"threadId": "provider-root", "includeTurns": true}),
+    )
+    .respond(empty_root_thread_read_result());
+    peer.expect_request(
+        "thread/list",
+        json!({"ancestorThreadId": "provider-root", "limit": 50}),
+    )
+    .respond(json!({
+        "data": [{
+            "id": "diagnostic-child",
+            "parentThreadId": "provider-root",
+            "createdAt": 1,
+            "updatedAt": 2,
+            "status": {"type": "idle"}
+        }],
+        "nextCursor": null,
+        "backwardsCursor": null
+    }));
+    peer.expect_request(
+        "thread/read",
+        json!({"threadId": "diagnostic-child", "includeTurns": true}),
+    )
+    .respond(child_read);
+    peer.expect_request(
+        "thread/backgroundTerminals/list",
+        json!({"threadId": "provider-root", "limit": 128}),
+    )
+    .respond(json!({"data": [], "nextCursor": null}));
+    peer.expect_request("shutdown", Value::Null)
+        .respond(Value::Null);
+    let peer_task = tokio::spawn(peer.run());
+
+    runtime.start().await.expect("runtime starts");
+    runtime.collect_events(2).await;
+    incoming_tx
+        .send(IncomingEvent::Notification {
+            method: "thread/started".to_owned(),
+            params: json!({"thread": {"id": "provider-root"}}),
+            emitted_at_ms: 1_000,
+        })
+        .expect("root notification");
+
+    let mut warnings = Vec::new();
+    let reconciliation = timeout(Duration::from_secs(5), async {
+        loop {
+            let event = runtime.next_event().await.expect("reconciliation event");
+            if event.event_type == "runtime.warning" {
+                warnings.push(event.payload["message"].clone());
+            } else if event.native_event_id.as_deref() == Some("codex:reconciliation:0") {
+                return event;
+            }
+        }
+    })
+    .await
+    .expect("first reconciliation");
+    assert!(
+        warnings.is_empty(),
+        "a successful thread/read must not be reported unsupported: {warnings:?}"
+    );
+    assert!(reconciliation.activity.iter().any(|mutation| matches!(
+        mutation,
+        ProviderActivityMutation::SetScope { capabilities, .. }
+            if capabilities.history_recovery
+                == bibcode_server::activity::ActivityHistoryRecovery::Full
+    )));
+    assert!(
+        reconciliation.activity.iter().any(|mutation| matches!(
+            mutation,
+            ProviderActivityMutation::AppendEntry(entry)
+                if entry.detail.as_deref() == Some("[redacted command output]")
+        )),
+        "the large thread's history is recovered"
+    );
+
+    runtime.shutdown().await.expect("runtime shuts down");
+    peer_task.await.expect("peer task");
+}
+
+/// A `thread/read` reply that fails to decode is a failed read of that thread, not a missing
+/// method: the pass reads the remaining threads, warns nobody, and the next pass reads again.
+#[tokio::test]
+async fn reconciliation_undecodable_thread_read_is_retried_instead_of_downgrading() {
+    let (connection, _protocol_incoming, mut peer) = scripted_peer();
+    let (incoming_tx, incoming_rx) = mpsc::unbounded_channel();
+    let runtime = CodexSessionRuntime::new(codex_activity_options(None), connection, incoming_rx);
+    let child_read = |thread_id: &str, message: &str| {
+        json!({
+            "thread": {
+                "id": thread_id,
+                "parentThreadId": "provider-root",
+                "createdAt": 1,
+                "updatedAt": 2,
+                "status": {"type": "idle"},
+                "turns": [{
+                    "id": format!("{thread_id}-turn"),
+                    "status": "completed",
+                    "startedAt": 1,
+                    "completedAt": 2,
+                    "items": [{
+                        "type": "agentMessage",
+                        "id": format!("{thread_id}-message"),
+                        "text": message
+                    }]
+                }]
+            }
+        })
+    };
+    let children = ["child-a", "child-b"].map(|id| {
+        json!({
+            "id": id,
+            "parentThreadId": "provider-root",
+            "createdAt": 1,
+            "updatedAt": 2,
+            "status": {"type": "idle"}
+        })
+    });
+    let listed_children = json!({
+        "data": children,
+        "nextCursor": null,
+        "backwardsCursor": null
+    });
+    peer.expect_request("initialize", fixture("initialize-params.json"))
+        .respond(json!({}));
+    peer.expect_notification("initialized");
+    peer.expect_request(
+        "thread/start",
+        json!({
+            "cwd": "/tmp/project",
+            "approvalPolicy": "never",
+            "sandbox": "danger-full-access",
+            "model": "gpt-5.3-codex",
+            "serviceTier": null,
+        }),
+    )
+    .respond(json!({
+        "thread": {"id": "provider-root"},
+        "cwd": "/tmp/project",
+        "model": "gpt-5.3-codex"
+    }));
+    peer.expect_request(
+        "thread/read",
+        json!({"threadId": "provider-root", "includeTurns": true}),
+    )
+    .respond(json!({"unexpected": "schema"}));
+    peer.expect_request(
+        "thread/list",
+        json!({"ancestorThreadId": "provider-root", "limit": 50}),
+    )
+    .respond(listed_children.clone());
+    peer.expect_request(
+        "thread/read",
+        json!({"threadId": "child-a", "includeTurns": true}),
+    )
+    .respond(json!({"unexpected": "schema"}));
+    peer.expect_request(
+        "thread/read",
+        json!({"threadId": "child-b", "includeTurns": true}),
+    )
+    .respond(child_read("child-b", "Child B history"));
+    peer.expect_request(
+        "thread/backgroundTerminals/list",
+        json!({"threadId": "provider-root", "limit": 128}),
+    )
+    .respond(json!({"data": [], "nextCursor": null}));
+    peer.expect_request(
+        "thread/read",
+        json!({"threadId": "provider-root", "includeTurns": true}),
+    )
+    .respond(empty_root_thread_read_result());
+    peer.expect_request(
+        "thread/list",
+        json!({"ancestorThreadId": "provider-root", "limit": 50}),
+    )
+    .respond(listed_children);
+    peer.expect_request(
+        "thread/read",
+        json!({"threadId": "child-a", "includeTurns": true}),
+    )
+    .respond(child_read("child-a", "Child A history"));
+    peer.expect_request(
+        "thread/backgroundTerminals/list",
+        json!({"threadId": "provider-root", "limit": 128}),
+    )
+    .respond(json!({"data": [], "nextCursor": null}));
+    peer.expect_request("shutdown", Value::Null)
+        .respond(Value::Null);
+    let peer_task = tokio::spawn(peer.run());
+
+    runtime.start().await.expect("runtime starts");
+    runtime.collect_events(2).await;
+    incoming_tx
+        .send(IncomingEvent::Notification {
+            method: "thread/started".to_owned(),
+            params: json!({"thread": {"id": "provider-root"}}),
+            emitted_at_ms: 1_000,
+        })
+        .expect("root notification");
+    let mut warnings = Vec::new();
+    let mut reconciliation_events = Vec::new();
+    for sequence in 0..2 {
+        if sequence == 1 {
+            incoming_tx
+                .send(IncomingEvent::Notification {
+                    method: "item/started".to_owned(),
+                    params: json!({
+                        "threadId": "provider-root",
+                        "turnId": "root-turn",
+                        "item": {
+                            "id": "wait-for-child-a",
+                            "type": "collabAgentToolCall",
+                            "tool": "wait",
+                            "status": "completed",
+                            "senderThreadId": "provider-root",
+                            "receiverThreadIds": ["child-a"],
+                            "agentsStates": {}
+                        }
+                    }),
+                    emitted_at_ms: 1_001,
+                })
+                .expect("second reconciliation hint");
+        }
+        let native_event_id = format!("codex:reconciliation:{sequence}");
+        let event = timeout(Duration::from_secs(5), async {
+            loop {
+                let event = runtime.next_event().await.expect("reconciliation event");
+                if event.event_type == "runtime.warning" {
+                    warnings.push(event.payload["message"].clone());
+                } else if event.native_event_id.as_deref() == Some(native_event_id.as_str()) {
+                    return event;
+                }
+            }
+        })
+        .await
+        .expect("reconciliation");
+        reconciliation_events.push(event);
+    }
+    assert!(warnings.is_empty(), "no method downgrade: {warnings:?}");
+    let has_entry = |event: &RuntimeEvent, detail: &str| {
+        event.activity.iter().any(|mutation| {
+            matches!(
+                mutation,
+                ProviderActivityMutation::AppendEntry(entry)
+                    if entry.detail.as_deref() == Some(detail)
+            )
+        })
+    };
+    assert!(
+        has_entry(&reconciliation_events[0], "Child B history"),
+        "an undecodable thread does not stop the pass reading the next one"
+    );
+    assert!(
+        has_entry(&reconciliation_events[1], "Child A history"),
+        "the next pass reads the thread that failed to decode"
     );
 
     runtime.shutdown().await.expect("runtime shuts down");

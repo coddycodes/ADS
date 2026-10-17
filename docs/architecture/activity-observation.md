@@ -366,6 +366,11 @@ The staged buffer is cleared when activity or the root is replaced. History
 recovery is `full` only for
 `supported`/`supported`, `none` only for `unsupported`/`unsupported`, and
 `bounded` for every other list/read pair, including unknown or unproven pairs.
+Only a missing-method answer marks `thread/read` unsupported. A read reply that
+does not decode, including one whose newest 20 turns and 200 items still exceed
+the 512 KiB bound after command output is reduced to a presence marker, skips
+that thread with a log warning; the pass continues and the next pass reads it
+again.
 These recovery downgrades do not disable ordinary Codex chat.
 
 Claude structured control normally joins native task identity only through the

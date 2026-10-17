@@ -389,6 +389,8 @@ pub(crate) struct ReconciliationBackgroundTerminal {
 }
 
 pub(crate) const CODEX_REMOTE_MESSAGE_MAX_BYTES: usize = 512 * 1024;
+/// The decode error for a payload over `CODEX_REMOTE_MESSAGE_MAX_BYTES`.
+pub(crate) const CODEX_REMOTE_JSON_TOO_LARGE: &str = "Codex remote JSON exceeded its fixed bound";
 pub(crate) const CODEX_RECONCILIATION_THREAD_LIMIT: usize = 50;
 pub(crate) const CODEX_RECONCILIATION_BACKGROUND_LIMIT: usize = 128;
 pub(crate) const CODEX_RECONCILIATION_TURN_LIMIT: usize = 20;
@@ -421,7 +423,7 @@ fn ensure_bounded_remote_value(value: &Value) -> Result<(), String> {
         },
         value,
     )
-    .map_err(|error| format!("Codex remote JSON exceeded its fixed bound: {error}"))
+    .map_err(|_| CODEX_REMOTE_JSON_TOO_LARGE.to_owned())
 }
 
 pub(crate) fn decode_thread_list_response(mut value: Value) -> Result<ThreadListResponse, String> {
@@ -432,8 +434,10 @@ pub(crate) fn decode_thread_list_response(mut value: Value) -> Result<ThreadList
     serde_json::from_value(value).map_err(|error| error.to_string())
 }
 
+/// The transport's line limit bounds what Codex sends; the fixed bound applies to what is kept.
+/// A long thread is trimmed to its newest turns and items, and command output, which activity
+/// shows only as present (`safe_command_output`), is reduced to a marker before the check.
 pub(crate) fn decode_thread_read_response(mut value: Value) -> Result<ThreadReadResponse, String> {
-    ensure_bounded_remote_value(&value)?;
     if let Some(turns) = value
         .pointer_mut("/thread/turns")
         .and_then(Value::as_array_mut)
@@ -454,8 +458,17 @@ pub(crate) fn decode_thread_read_response(mut value: Value) -> Result<ThreadRead
             } else {
                 remaining_items -= items.len();
             }
+            for output in items
+                .iter_mut()
+                .filter_map(|item| item.get_mut("aggregatedOutput"))
+            {
+                if output.as_str().is_some_and(|text| !text.is_empty()) {
+                    *output = Value::String("…".to_owned());
+                }
+            }
         }
     }
+    ensure_bounded_remote_value(&value)?;
     serde_json::from_value(value).map_err(|error| error.to_string())
 }
 
@@ -1144,7 +1157,64 @@ mod tests {
 
         assert!(
             response.is_err(),
-            "fake and real transports must share the same pre-decode payload bound"
+            "the history kept after trimming stays within the fixed bound"
+        );
+    }
+
+    #[test]
+    fn thread_read_bounds_the_trimmed_history_not_the_reply() {
+        let message = "x".repeat(20 * 1024);
+        let turns = (0..CODEX_RECONCILIATION_TURN_LIMIT + 10)
+            .map(|index| {
+                json!({
+                    "id": format!("turn-{index}"),
+                    "items": [{
+                        "id": format!("message-{index}"),
+                        "type": "agentMessage",
+                        "text": message
+                    }]
+                })
+            })
+            .collect::<Vec<_>>();
+        let long_thread = json!({"thread": {"id": "long-thread", "turns": turns}});
+        assert!(
+            serde_json::to_vec(&long_thread).expect("long thread").len()
+                > CODEX_REMOTE_MESSAGE_MAX_BYTES
+        );
+        let response = decode_thread_read_response(long_thread).expect("trimmed long thread");
+        assert_eq!(response.thread.turns.len(), CODEX_RECONCILIATION_TURN_LIMIT);
+
+        let response = decode_thread_read_response(json!({
+            "thread": {
+                "id": "large-output",
+                "turns": [{
+                    "id": "turn-1",
+                    "items": [
+                        {
+                            "id": "command-1",
+                            "type": "commandExecution",
+                            "aggregatedOutput": "x".repeat(CODEX_REMOTE_MESSAGE_MAX_BYTES)
+                        },
+                        {"id": "command-2", "type": "commandExecution", "aggregatedOutput": ""}
+                    ]
+                }]
+            }
+        }))
+        .expect("command output is not retained");
+        let outputs = response.thread.turns[0]
+            .items
+            .iter()
+            .map(|item| match item {
+                ReconciliationThreadItem::CommandExecution {
+                    aggregated_output, ..
+                } => aggregated_output.as_deref(),
+                _ => panic!("command item"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            outputs,
+            [Some("…"), Some("")],
+            "output presence survives, its text does not"
         );
     }
 

@@ -169,10 +169,11 @@ App Server version, including Codex 0.146, omits spawned children from
 `thread/list`; listing remains enabled as a complementary discovery source for
 versions that expose it. Malformed or out-of-scope hints are ignored. When read
 and list methods are incompatible, recovery capabilities downgrade truthfully
-without disabling ordinary chat. Valid mutations accepted before a later
-transient failure or same-root reconnect remain pending until a current
-reconciliation publication succeeds; replacing the root or disabling activity
-discards that root-owned pending state. Pending recovery coalesces superseded
+without disabling ordinary chat. A large or undecodable `thread/read` reply is a
+failed read of that thread, retried on the next pass, never a missing method.
+Valid mutations accepted before a later transient failure or same-root
+reconnect remain pending until a current reconciliation publication succeeds;
+replacing the root or disabling activity discards that root-owned pending state. Pending recovery coalesces superseded
 record states while preserving retained per-actor chronology, and orders each
 parent state before the child or reparent state that depends on it. Unsortable
 or cyclic topology stays pending behind a runtime warning. Valid publication is

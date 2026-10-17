@@ -31,13 +31,13 @@ use super::{
         mcp_server_status_from_notification, refresh_mcp_status_snapshot, run_actor,
     },
     model::{
-        BuildTurnStartInput, CodexProviderSnapshot, CodexRuntimeMode, ReconciliationThread,
-        ThreadBackgroundTerminalsListParams, ThreadListParams, ThreadReadParams,
-        build_initialize_params, build_turn_start_params, build_turn_steer_params,
-        decode_background_terminals_list_response, decode_thread_list_response,
-        decode_thread_read_response, delivery_key_exists, is_recoverable_thread_resume_error,
-        parse_model_list_response, parse_skills_list_response, parse_thread_snapshot,
-        reasoning_effort_label, turn_option_label,
+        BuildTurnStartInput, CODEX_REMOTE_JSON_TOO_LARGE, CodexProviderSnapshot, CodexRuntimeMode,
+        ReconciliationThread, ThreadBackgroundTerminalsListParams, ThreadListParams,
+        ThreadReadParams, build_initialize_params, build_turn_start_params,
+        build_turn_steer_params, decode_background_terminals_list_response,
+        decode_thread_list_response, decode_thread_read_response, delivery_key_exists,
+        is_recoverable_thread_resume_error, parse_model_list_response, parse_skills_list_response,
+        parse_thread_snapshot, reasoning_effort_label, turn_option_label,
     },
     protocol::{IncomingEvent, JsonRpcConnection, ProtocolError},
 };
@@ -242,6 +242,7 @@ struct RuntimeActivityState {
     thread_read_support: ReconciliationMethodSupport,
     background_list_support: ReconciliationMethodSupport,
     warned_incompatible_methods: HashSet<&'static str>,
+    warned_undecodable_reads: HashSet<&'static str>,
     capabilities: ActivityCapabilities,
     reconciliation_epoch: u64,
     reconciliation_pass_cancellation: CancellationToken,
@@ -798,6 +799,7 @@ impl CodexSessionRuntime {
                 thread_read_support: ReconciliationMethodSupport::Unknown,
                 background_list_support: ReconciliationMethodSupport::Unknown,
                 warned_incompatible_methods: HashSet::new(),
+                warned_undecodable_reads: HashSet::new(),
                 capabilities: ActivityCapabilities {
                     actors: true,
                     attributed_activity: true,
@@ -1761,6 +1763,32 @@ impl CodexSessionRuntime {
             .take()
     }
 
+    /// A `thread/read` reply that does not decode is a failed read of one thread, never a missing
+    /// method: the thread is skipped and the next pass reads it again. Logs once per cause, with
+    /// no reply content.
+    async fn warn_undecodable_thread_read(&self, thread_id: &str, error: &str) {
+        let cause = if error == CODEX_REMOTE_JSON_TOO_LARGE {
+            "too_large"
+        } else {
+            "unexpected_shape"
+        };
+        if self
+            .inner
+            .activity
+            .lock()
+            .await
+            .warned_undecodable_reads
+            .insert(cause)
+        {
+            tracing::warn!(
+                provider = PROVIDER,
+                thread_id,
+                cause,
+                "skipped a Codex thread/read reply activity cannot decode; later passes read it again"
+            );
+        }
+    }
+
     async fn reconcile_once(&self) {
         let root_thread_id = match self.provider_thread_id().await {
             Ok(root_thread_id) => root_thread_id,
@@ -1884,7 +1912,10 @@ impl CodexSessionRuntime {
                         }
                     }
                     Ok(_) => {}
-                    Err(_) => read_incompatible = true,
+                    Err(error) => {
+                        self.warn_undecodable_thread_read(&root_thread_id, &error)
+                            .await;
+                    }
                 }
             }
         }
@@ -2064,9 +2095,9 @@ impl CodexSessionRuntime {
                 };
                 let response = match decode_thread_read_response(response) {
                     Ok(response) => response,
-                    Err(_) => {
-                        read_incompatible = true;
-                        break;
+                    Err(error) => {
+                        self.warn_undecodable_thread_read(&thread_id, &error).await;
+                        continue;
                     }
                 };
                 if response.thread.id.as_deref() != Some(thread_id.as_str()) {
