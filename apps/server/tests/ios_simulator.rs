@@ -52,6 +52,21 @@ fn simctl_state(udid: &str) -> Option<String> {
         .and_then(|device| device["state"].as_str().map(str::to_owned))
 }
 
+/// Fails at once when Xcode's first launch is pending, for example after an Xcode update
+/// whose CoreSimulator is not installed yet: every `xcrun simctl` call would then start
+/// `xcodebuild -runFirstLaunch`, which waits for an administrator, and the test would hang.
+fn assert_first_launch_done() {
+    let status = Command::new("/usr/bin/xcrun")
+        .args(["xcodebuild", "-checkFirstLaunchStatus"])
+        .status()
+        .expect("xcodebuild -checkFirstLaunchStatus");
+    assert!(
+        status.success(),
+        "Xcode's first launch is pending ({status}); open Xcode once or run \
+         `sudo xcodebuild -runFirstLaunch`, then run these tests again"
+    );
+}
+
 /// A `Shutdown` iPhone simulator to boot.
 fn pick_simulator() -> String {
     if let Ok(udid) = std::env::var("BIBCODE_IOS_SIM_UDID") {
@@ -102,6 +117,7 @@ struct IosHarness {
 impl IosHarness {
     /// Boots a `Shutdown` iPhone through the device manager and waits until it is ready.
     async fn start() -> Self {
+        assert_first_launch_done();
         let udid = pick_simulator();
         assert_eq!(
             simctl_state(&udid).as_deref(),

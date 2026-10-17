@@ -3157,7 +3157,10 @@ xcrun simctl list devices | grep Booted   # nothing the test booted is left runn
 ```
 
 The tests are not in CI. Never run them while the same simulator is open in
-BiBCode or Simulator: they find it busy.
+BiBCode or Simulator: they find it busy. They fail at once with "Xcode's first
+launch is pending" when `xcodebuild -checkFirstLaunchStatus` exits non-zero,
+as after an Xcode update whose CoreSimulator is not installed yet; open Xcode
+once or run `sudo xcodebuild -runFirstLaunch`, then run them again.
 
 Then run the packaged-app procedure in
 [macOS iOS Simulator previews](./macos-desktop.md#ios-simulator-previews).
