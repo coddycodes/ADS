@@ -73,8 +73,11 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
   ) {
     const bearerToken = yield* auth.bearerToken;
     if (Option.isNone(bearerToken)) {
+      // The platform fetched this descriptor to register the environment; the first
+      // attempt reuses it instead of paying another round trip.
       const descriptor = yield* fetchRemoteEnvironmentDescriptor({
         httpBaseUrl: target.httpBaseUrl,
+        reuseHandOff: true,
       }).pipe(
         Effect.mapError(mapRemoteEnvironmentError),
         Effect.provideService(HttpClient.HttpClient, httpClient),

@@ -13,6 +13,10 @@ public package has no root export; callers use focused subpaths such as
   complete current `ExecutionEnvironmentDescriptor`; an unauthenticated primary
   fetches the public descriptor, and bearer plus fresh or cached DPoP attempts
   fetch it during every preparation rather than inferring it from a saved token.
+  The one exception saves a round trip: the web platform fetches the primary's
+  descriptor to register it and hands that result to the environment's next
+  attempt, which takes it once, within 10 seconds, instead of fetching it again.
+  Every later attempt, a reconnect included, fetches a fresh one.
 - Environment bootstrap decodes and retains the complete environment
   descriptor on `KnownEnvironment`, including its nullable
   `storageInstanceId`, rather than reducing it to a label and logical ID.

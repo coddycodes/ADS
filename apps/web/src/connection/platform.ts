@@ -409,8 +409,10 @@ const capabilitiesLayer = Layer.effectContext(
 const loadPrimaryConnectionRegistration = Effect.fn(
   "web.connectionPlatform.loadPrimaryConnectionRegistration",
 )(function* (target: PrimaryEnvironmentTarget["target"]) {
+  // Handed off to the connection's first attempt, which then skips its own fetch.
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({
     httpBaseUrl: target.httpBaseUrl,
+    handOff: true,
   }).pipe(Effect.provide(primaryEnvironmentHttpLayer), Effect.mapError(mapRemoteEnvironmentError));
   return new PrimaryConnectionRegistration({
     target: new PrimaryConnectionTarget({
