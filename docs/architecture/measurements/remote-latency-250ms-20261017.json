@@ -1,0 +1,1345 @@
+{
+  "capturedOn": "2026-10-17",
+  "serverBuild": "debug",
+  "typingIntervalMs": 100,
+  "seedMessages": 3,
+  "before": [
+    {
+      "action": "composer: type 40 characters",
+      "rttMs": 0,
+      "visibleMs": 4106,
+      "rpcs": 0,
+      "rpcTags": {},
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 513,
+      "bytesReceived": 20195
+    },
+    {
+      "action": "send message: user message visible",
+      "rttMs": 0,
+      "visibleMs": 24,
+      "rpcs": 1,
+      "rpcTags": {
+        "orchestration.dispatchCommand": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 777,
+      "bytesReceived": 8017
+    },
+    {
+      "action": "send message: response visible",
+      "rttMs": 0,
+      "visibleMs": 138,
+      "rpcs": 1,
+      "rpcTags": {
+        "orchestration.dispatchCommand": 1
+      },
+      "criticalPath": 1,
+      "criticalChain": ["orchestration.dispatchCommand"],
+      "bytesSent": 986,
+      "bytesReceived": 12961
+    },
+    {
+      "action": "switch thread: to an empty thread",
+      "rttMs": 0,
+      "visibleMs": 28,
+      "rpcs": 8,
+      "rpcTags": {
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 2,
+        "orchestration.dispatchCommand": 5
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 2877,
+      "bytesReceived": 7269
+    },
+    {
+      "action": "switch thread: back to a thread with history",
+      "rttMs": 0,
+      "visibleMs": 38,
+      "rpcs": 2,
+      "rpcTags": {
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 898,
+      "bytesReceived": 3463
+    },
+    {
+      "action": "source control: open panel",
+      "rttMs": 0,
+      "visibleMs": 342,
+      "rpcs": 0,
+      "rpcTags": {},
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 210,
+      "bytesReceived": 4953
+    },
+    {
+      "action": "files: open panel",
+      "rttMs": 0,
+      "visibleMs": 372,
+      "rpcs": 2,
+      "rpcTags": {
+        "subscribeProjectEntries": 1,
+        "projects.listEntries": 1
+      },
+      "criticalPath": 1,
+      "criticalChain": ["subscribeProjectEntries"],
+      "bytesSent": 781,
+      "bytesReceived": 6086
+    },
+    {
+      "action": "terminal: open",
+      "rttMs": 0,
+      "visibleMs": 92,
+      "rpcs": 5,
+      "rpcTags": {
+        "terminal.open": 1,
+        "terminal.attach": 1,
+        "terminal.beginInput": 1,
+        "terminal.resize": 2
+      },
+      "criticalPath": 1,
+      "criticalChain": ["terminal.open"],
+      "bytesSent": 2571,
+      "bytesReceived": 3729
+    },
+    {
+      "action": "terminal: type 40 characters",
+      "rttMs": 0,
+      "visibleMs": 4110,
+      "rpcs": 41,
+      "rpcTags": {
+        "terminal.writeInput": 41
+      },
+      "criticalPath": 1,
+      "criticalChain": ["terminal.writeInput"],
+      "bytesSent": 14681,
+      "bytesReceived": 29253,
+      "echoLagP50Ms": 45,
+      "echoLagP95Ms": 69
+    },
+    {
+      "action": "open thread after reload, no local cache",
+      "rttMs": 0,
+      "visibleMs": 566,
+      "rpcs": 24,
+      "rpcTags": {
+        "subscribeServerConfig": 1,
+        "previewAutomation.connect": 1,
+        "subscribeTerminalMetadata": 2,
+        "subscribePreviewEvents": 1,
+        "orchestration.subscribeShell": 1,
+        "subscribeServerLifecycle": 1,
+        "orchestration.getArchivedShellSnapshot": 1,
+        "updater.status": 1,
+        "previewAutomation.focusHost": 1,
+        "assets.createUrl": 2,
+        "subscribeWorktreeCatalog": 2,
+        "subscribeDiscoveredLocalServers": 1,
+        "subscribeVcsStatusSummary": 2,
+        "orchestration.subscribeThread": 2,
+        "subscribeVcsStatus": 1,
+        "projects.listEntries": 1,
+        "server.discoverSourceControl": 1,
+        "server.getProviderCapabilities": 1,
+        "subscribeActivity": 1
+      },
+      "criticalPath": 3,
+      "criticalChain": [
+        "subscribeServerConfig",
+        "previewAutomation.connect",
+        "previewAutomation.focusHost"
+      ],
+      "bytesSent": 7665,
+      "bytesReceived": 56628
+    },
+    {
+      "action": "reconnect: dropped socket until thread resynced",
+      "rttMs": 0,
+      "visibleMs": 1113,
+      "rpcs": 25,
+      "rpcTags": {
+        "subscribeServerConfig": 1,
+        "previewAutomation.connect": 1,
+        "subscribeTerminalMetadata": 2,
+        "subscribePreviewEvents": 1,
+        "orchestration.subscribeShell": 1,
+        "subscribeServerLifecycle": 1,
+        "subscribeWorktreeCatalog": 2,
+        "subscribeDiscoveredLocalServers": 1,
+        "subscribeVcsStatusSummary": 2,
+        "orchestration.subscribeThread": 2,
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 1,
+        "orchestration.getArchivedShellSnapshot": 1,
+        "updater.status": 1,
+        "assets.createUrl": 2,
+        "projects.listEntries": 1,
+        "server.discoverSourceControl": 1,
+        "server.getProviderCapabilities": 2,
+        "previewAutomation.focusHost": 1
+      },
+      "criticalPath": 3,
+      "criticalChain": [
+        "subscribeServerConfig",
+        "previewAutomation.connect",
+        "previewAutomation.focusHost"
+      ],
+      "bytesSent": 7428,
+      "bytesReceived": 53635
+    },
+    {
+      "action": "composer: type 40 characters",
+      "rttMs": 250,
+      "visibleMs": 4121,
+      "rpcs": 0,
+      "rpcTags": {},
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 513,
+      "bytesReceived": 21117
+    },
+    {
+      "action": "send message: user message visible",
+      "rttMs": 250,
+      "visibleMs": 27,
+      "rpcs": 1,
+      "rpcTags": {
+        "orchestration.dispatchCommand": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 777,
+      "bytesReceived": 6552
+    },
+    {
+      "action": "send message: response visible",
+      "rttMs": 250,
+      "visibleMs": 394,
+      "rpcs": 1,
+      "rpcTags": {
+        "orchestration.dispatchCommand": 1
+      },
+      "criticalPath": 1,
+      "criticalChain": ["orchestration.dispatchCommand"],
+      "bytesSent": 807,
+      "bytesReceived": 9973
+    },
+    {
+      "action": "switch thread: to an empty thread",
+      "rttMs": 250,
+      "visibleMs": 26,
+      "rpcs": 3,
+      "rpcTags": {
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 1,
+        "orchestration.dispatchCommand": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 1016,
+      "bytesReceived": 1103
+    },
+    {
+      "action": "switch thread: back to a thread with history",
+      "rttMs": 250,
+      "visibleMs": 32,
+      "rpcs": 2,
+      "rpcTags": {
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 690,
+      "bytesReceived": 1771
+    },
+    {
+      "action": "source control: open panel",
+      "rttMs": 250,
+      "visibleMs": 356,
+      "rpcs": 0,
+      "rpcTags": {},
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 31,
+      "bytesReceived": 3427
+    },
+    {
+      "action": "files: open panel",
+      "rttMs": 250,
+      "visibleMs": 361,
+      "rpcs": 2,
+      "rpcTags": {
+        "subscribeProjectEntries": 1,
+        "projects.listEntries": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 964,
+      "bytesReceived": 7617
+    },
+    {
+      "action": "terminal: open",
+      "rttMs": 250,
+      "visibleMs": 325,
+      "rpcs": 5,
+      "rpcTags": {
+        "terminal.open": 1,
+        "terminal.attach": 1,
+        "terminal.beginInput": 1,
+        "terminal.resize": 2
+      },
+      "criticalPath": 1,
+      "criticalChain": ["terminal.open"],
+      "bytesSent": 2517,
+      "bytesReceived": 7984
+    },
+    {
+      "action": "terminal: type 40 characters",
+      "rttMs": 250,
+      "visibleMs": 10544,
+      "rpcs": 41,
+      "rpcTags": {
+        "terminal.writeInput": 41
+      },
+      "criticalPath": 14,
+      "criticalChain": [
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput"
+      ],
+      "bytesSent": 16357,
+      "bytesReceived": 66842,
+      "echoLagP50Ms": 3458,
+      "echoLagP95Ms": 6376
+    },
+    {
+      "action": "open thread after reload, no local cache",
+      "rttMs": 250,
+      "visibleMs": 2016,
+      "rpcs": 24,
+      "rpcTags": {
+        "subscribeServerConfig": 1,
+        "previewAutomation.connect": 1,
+        "subscribeTerminalMetadata": 2,
+        "subscribePreviewEvents": 1,
+        "orchestration.subscribeShell": 1,
+        "subscribeServerLifecycle": 1,
+        "orchestration.getArchivedShellSnapshot": 1,
+        "updater.status": 1,
+        "previewAutomation.focusHost": 1,
+        "assets.createUrl": 2,
+        "subscribeWorktreeCatalog": 2,
+        "subscribeDiscoveredLocalServers": 1,
+        "subscribeVcsStatusSummary": 2,
+        "orchestration.subscribeThread": 2,
+        "subscribeVcsStatus": 1,
+        "projects.listEntries": 1,
+        "server.discoverSourceControl": 1,
+        "server.getProviderCapabilities": 1,
+        "subscribeActivity": 1
+      },
+      "criticalPath": 3,
+      "criticalChain": [
+        "subscribeServerConfig",
+        "previewAutomation.connect",
+        "previewAutomation.focusHost"
+      ],
+      "bytesSent": 7617,
+      "bytesReceived": 53617
+    },
+    {
+      "action": "reconnect: dropped socket until thread resynced",
+      "rttMs": 250,
+      "visibleMs": 2166,
+      "rpcs": 25,
+      "rpcTags": {
+        "subscribeServerConfig": 1,
+        "previewAutomation.connect": 1,
+        "subscribeTerminalMetadata": 2,
+        "subscribePreviewEvents": 1,
+        "orchestration.subscribeShell": 1,
+        "subscribeServerLifecycle": 1,
+        "subscribeWorktreeCatalog": 2,
+        "subscribeDiscoveredLocalServers": 1,
+        "subscribeVcsStatusSummary": 2,
+        "orchestration.subscribeThread": 2,
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 1,
+        "orchestration.getArchivedShellSnapshot": 1,
+        "updater.status": 1,
+        "assets.createUrl": 2,
+        "projects.listEntries": 1,
+        "server.discoverSourceControl": 1,
+        "server.getProviderCapabilities": 2,
+        "previewAutomation.focusHost": 1
+      },
+      "criticalPath": 2,
+      "criticalChain": ["subscribeServerConfig", "previewAutomation.connect"],
+      "bytesSent": 7444,
+      "bytesReceived": 53673
+    }
+  ],
+  "after": [
+    {
+      "action": "composer: type 40 characters",
+      "rttMs": 0,
+      "visibleMs": 4118,
+      "rpcs": 0,
+      "rpcTags": {},
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 513,
+      "bytesReceived": 20120
+    },
+    {
+      "action": "send message: user message visible",
+      "rttMs": 0,
+      "visibleMs": 27,
+      "rpcs": 1,
+      "rpcTags": {
+        "orchestration.dispatchCommand": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 777,
+      "bytesReceived": 7687
+    },
+    {
+      "action": "send message: response visible",
+      "rttMs": 0,
+      "visibleMs": 141,
+      "rpcs": 1,
+      "rpcTags": {
+        "orchestration.dispatchCommand": 1
+      },
+      "criticalPath": 1,
+      "criticalChain": ["orchestration.dispatchCommand"],
+      "bytesSent": 807,
+      "bytesReceived": 11102
+    },
+    {
+      "action": "switch thread: to an empty thread",
+      "rttMs": 0,
+      "visibleMs": 25,
+      "rpcs": 8,
+      "rpcTags": {
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 2,
+        "orchestration.dispatchCommand": 5
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 2698,
+      "bytesReceived": 5793
+    },
+    {
+      "action": "switch thread: back to a thread with history",
+      "rttMs": 0,
+      "visibleMs": 44,
+      "rpcs": 2,
+      "rpcTags": {
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 719,
+      "bytesReceived": 1936
+    },
+    {
+      "action": "source control: open panel",
+      "rttMs": 0,
+      "visibleMs": 362,
+      "rpcs": 0,
+      "rpcTags": {},
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 31,
+      "bytesReceived": 3427
+    },
+    {
+      "action": "files: open panel",
+      "rttMs": 0,
+      "visibleMs": 358,
+      "rpcs": 2,
+      "rpcTags": {
+        "subscribeProjectEntries": 1,
+        "projects.listEntries": 1
+      },
+      "criticalPath": 1,
+      "criticalChain": ["subscribeProjectEntries"],
+      "bytesSent": 960,
+      "bytesReceived": 7581
+    },
+    {
+      "action": "terminal: open",
+      "rttMs": 0,
+      "visibleMs": 103,
+      "rpcs": 5,
+      "rpcTags": {
+        "terminal.open": 1,
+        "terminal.attach": 1,
+        "terminal.beginInput": 1,
+        "terminal.resize": 2
+      },
+      "criticalPath": 1,
+      "criticalChain": ["terminal.open"],
+      "bytesSent": 2688,
+      "bytesReceived": 5137
+    },
+    {
+      "action": "terminal: type 40 characters",
+      "rttMs": 0,
+      "visibleMs": 4110,
+      "rpcs": 41,
+      "rpcTags": {
+        "terminal.writeInput": 41
+      },
+      "criticalPath": 1,
+      "criticalChain": ["terminal.writeInput"],
+      "bytesSent": 15260,
+      "bytesReceived": 32216,
+      "echoLagP50Ms": 44,
+      "echoLagP95Ms": 55
+    },
+    {
+      "action": "open thread after reload, no local cache",
+      "rttMs": 0,
+      "visibleMs": 553,
+      "rpcs": 24,
+      "rpcTags": {
+        "subscribeServerConfig": 1,
+        "previewAutomation.connect": 1,
+        "subscribeTerminalMetadata": 2,
+        "subscribePreviewEvents": 1,
+        "orchestration.subscribeShell": 1,
+        "subscribeServerLifecycle": 1,
+        "orchestration.getArchivedShellSnapshot": 1,
+        "updater.status": 1,
+        "previewAutomation.focusHost": 1,
+        "assets.createUrl": 2,
+        "subscribeWorktreeCatalog": 2,
+        "subscribeDiscoveredLocalServers": 1,
+        "subscribeVcsStatusSummary": 2,
+        "orchestration.subscribeThread": 2,
+        "subscribeVcsStatus": 1,
+        "projects.listEntries": 1,
+        "server.discoverSourceControl": 1,
+        "server.getProviderCapabilities": 1,
+        "subscribeActivity": 1
+      },
+      "criticalPath": 4,
+      "criticalChain": [
+        "subscribeServerConfig",
+        "previewAutomation.connect",
+        "previewAutomation.focusHost",
+        "subscribeDiscoveredLocalServers"
+      ],
+      "bytesSent": 7635,
+      "bytesReceived": 41526
+    },
+    {
+      "action": "reconnect: dropped socket until thread resynced",
+      "rttMs": 0,
+      "visibleMs": 1105,
+      "rpcs": 25,
+      "rpcTags": {
+        "subscribeServerConfig": 1,
+        "previewAutomation.connect": 1,
+        "subscribeTerminalMetadata": 2,
+        "subscribePreviewEvents": 1,
+        "orchestration.subscribeShell": 1,
+        "subscribeServerLifecycle": 1,
+        "subscribeWorktreeCatalog": 2,
+        "subscribeDiscoveredLocalServers": 1,
+        "subscribeVcsStatusSummary": 2,
+        "orchestration.subscribeThread": 2,
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 1,
+        "orchestration.getArchivedShellSnapshot": 1,
+        "updater.status": 1,
+        "assets.createUrl": 2,
+        "projects.listEntries": 1,
+        "server.discoverSourceControl": 1,
+        "server.getProviderCapabilities": 2,
+        "previewAutomation.focusHost": 1
+      },
+      "criticalPath": 2,
+      "criticalChain": ["subscribeServerConfig", "previewAutomation.connect"],
+      "bytesSent": 7397,
+      "bytesReceived": 38563
+    },
+    {
+      "action": "composer: type 40 characters",
+      "rttMs": 250,
+      "visibleMs": 4106,
+      "rpcs": 0,
+      "rpcTags": {},
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 513,
+      "bytesReceived": 20124
+    },
+    {
+      "action": "send message: user message visible",
+      "rttMs": 250,
+      "visibleMs": 25,
+      "rpcs": 1,
+      "rpcTags": {
+        "orchestration.dispatchCommand": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 777,
+      "bytesReceived": 8015
+    },
+    {
+      "action": "send message: response visible",
+      "rttMs": 250,
+      "visibleMs": 389,
+      "rpcs": 1,
+      "rpcTags": {
+        "orchestration.dispatchCommand": 1
+      },
+      "criticalPath": 1,
+      "criticalChain": ["orchestration.dispatchCommand"],
+      "bytesSent": 986,
+      "bytesReceived": 12930
+    },
+    {
+      "action": "switch thread: to an empty thread",
+      "rttMs": 250,
+      "visibleMs": 27,
+      "rpcs": 3,
+      "rpcTags": {
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 1,
+        "orchestration.dispatchCommand": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 1195,
+      "bytesReceived": 2595
+    },
+    {
+      "action": "switch thread: back to a thread with history",
+      "rttMs": 250,
+      "visibleMs": 42,
+      "rpcs": 2,
+      "rpcTags": {
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 690,
+      "bytesReceived": 3270
+    },
+    {
+      "action": "source control: open panel",
+      "rttMs": 250,
+      "visibleMs": 345,
+      "rpcs": 0,
+      "rpcTags": {},
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 31,
+      "bytesReceived": 4922
+    },
+    {
+      "action": "files: open panel",
+      "rttMs": 250,
+      "visibleMs": 355,
+      "rpcs": 2,
+      "rpcTags": {
+        "subscribeProjectEntries": 1,
+        "projects.listEntries": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 785,
+      "bytesReceived": 6088
+    },
+    {
+      "action": "terminal: open",
+      "rttMs": 250,
+      "visibleMs": 327,
+      "rpcs": 5,
+      "rpcTags": {
+        "terminal.open": 1,
+        "terminal.attach": 1,
+        "terminal.beginInput": 1,
+        "terminal.resize": 2
+      },
+      "criticalPath": 1,
+      "criticalChain": ["terminal.open"],
+      "bytesSent": 2517,
+      "bytesReceived": 6454
+    },
+    {
+      "action": "terminal: type 40 characters",
+      "rttMs": 250,
+      "visibleMs": 4340,
+      "rpcs": 41,
+      "rpcTags": {
+        "terminal.writeInput": 41
+      },
+      "criticalPath": 14,
+      "criticalChain": [
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput"
+      ],
+      "bytesSent": 13966,
+      "bytesReceived": 31562,
+      "echoLagP50Ms": 362,
+      "echoLagP95Ms": 477
+    },
+    {
+      "action": "open thread after reload, no local cache",
+      "rttMs": 250,
+      "visibleMs": 1956,
+      "rpcs": 24,
+      "rpcTags": {
+        "subscribeServerConfig": 1,
+        "previewAutomation.connect": 1,
+        "subscribeTerminalMetadata": 2,
+        "subscribePreviewEvents": 1,
+        "orchestration.subscribeShell": 1,
+        "subscribeServerLifecycle": 1,
+        "orchestration.getArchivedShellSnapshot": 1,
+        "updater.status": 1,
+        "previewAutomation.focusHost": 1,
+        "assets.createUrl": 2,
+        "subscribeWorktreeCatalog": 2,
+        "subscribeDiscoveredLocalServers": 1,
+        "subscribeVcsStatusSummary": 2,
+        "orchestration.subscribeThread": 2,
+        "subscribeVcsStatus": 1,
+        "projects.listEntries": 1,
+        "server.discoverSourceControl": 1,
+        "server.getProviderCapabilities": 1,
+        "subscribeActivity": 1
+      },
+      "criticalPath": 3,
+      "criticalChain": [
+        "subscribeServerConfig",
+        "previewAutomation.connect",
+        "previewAutomation.focusHost"
+      ],
+      "bytesSent": 7587,
+      "bytesReceived": 38495
+    },
+    {
+      "action": "reconnect: dropped socket until thread resynced",
+      "rttMs": 250,
+      "visibleMs": 2213,
+      "rpcs": 25,
+      "rpcTags": {
+        "subscribeServerConfig": 1,
+        "previewAutomation.connect": 1,
+        "subscribeTerminalMetadata": 2,
+        "subscribePreviewEvents": 1,
+        "orchestration.subscribeShell": 1,
+        "subscribeServerLifecycle": 1,
+        "subscribeWorktreeCatalog": 2,
+        "subscribeDiscoveredLocalServers": 1,
+        "subscribeVcsStatusSummary": 2,
+        "orchestration.subscribeThread": 2,
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 1,
+        "orchestration.getArchivedShellSnapshot": 1,
+        "updater.status": 1,
+        "assets.createUrl": 2,
+        "projects.listEntries": 1,
+        "server.discoverSourceControl": 1,
+        "server.getProviderCapabilities": 2,
+        "previewAutomation.focusHost": 1
+      },
+      "criticalPath": 2,
+      "criticalChain": ["subscribeServerConfig", "previewAutomation.connect"],
+      "bytesSent": 7444,
+      "bytesReceived": 36019
+    }
+  ],
+  "beforeJitter20": [
+    {
+      "action": "composer: type 40 characters",
+      "rttMs": 250,
+      "visibleMs": 4119,
+      "rpcs": 0,
+      "rpcTags": {},
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 513,
+      "bytesReceived": 19076
+    },
+    {
+      "action": "send message: user message visible",
+      "rttMs": 250,
+      "visibleMs": 25,
+      "rpcs": 1,
+      "rpcTags": {
+        "orchestration.dispatchCommand": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 777,
+      "bytesReceived": 6402
+    },
+    {
+      "action": "send message: response visible",
+      "rttMs": 250,
+      "visibleMs": 397,
+      "rpcs": 1,
+      "rpcTags": {
+        "orchestration.dispatchCommand": 1
+      },
+      "criticalPath": 1,
+      "criticalChain": ["orchestration.dispatchCommand"],
+      "bytesSent": 986,
+      "bytesReceived": 11350
+    },
+    {
+      "action": "switch thread: to an empty thread",
+      "rttMs": 250,
+      "visibleMs": 25,
+      "rpcs": 3,
+      "rpcTags": {
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 1,
+        "orchestration.dispatchCommand": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 1195,
+      "bytesReceived": 2632
+    },
+    {
+      "action": "switch thread: back to a thread with history",
+      "rttMs": 250,
+      "visibleMs": 43,
+      "rpcs": 2,
+      "rpcTags": {
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 690,
+      "bytesReceived": 3300
+    },
+    {
+      "action": "source control: open panel",
+      "rttMs": 250,
+      "visibleMs": 345,
+      "rpcs": 0,
+      "rpcTags": {},
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 31,
+      "bytesReceived": 4728
+    },
+    {
+      "action": "files: open panel",
+      "rttMs": 250,
+      "visibleMs": 357,
+      "rpcs": 2,
+      "rpcTags": {
+        "subscribeProjectEntries": 1,
+        "projects.listEntries": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 785,
+      "bytesReceived": 5864
+    },
+    {
+      "action": "terminal: open",
+      "rttMs": 250,
+      "visibleMs": 359,
+      "rpcs": 5,
+      "rpcTags": {
+        "terminal.open": 1,
+        "terminal.attach": 1,
+        "terminal.beginInput": 1,
+        "terminal.resize": 2
+      },
+      "criticalPath": 1,
+      "criticalChain": ["terminal.open"],
+      "bytesSent": 2696,
+      "bytesReceived": 6230
+    },
+    {
+      "action": "terminal: type 40 characters",
+      "rttMs": 250,
+      "visibleMs": 11263,
+      "rpcs": 41,
+      "rpcTags": {
+        "terminal.writeInput": 41
+      },
+      "criticalPath": 14,
+      "criticalChain": [
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput"
+      ],
+      "bytesSent": 16387,
+      "bytesReceived": 65336,
+      "echoLagP50Ms": 3737,
+      "echoLagP95Ms": 7076
+    },
+    {
+      "action": "open thread after reload, no local cache",
+      "rttMs": 250,
+      "visibleMs": 2181,
+      "rpcs": 24,
+      "rpcTags": {
+        "subscribeServerConfig": 1,
+        "subscribeServerLifecycle": 1,
+        "previewAutomation.connect": 1,
+        "subscribeTerminalMetadata": 2,
+        "subscribePreviewEvents": 1,
+        "orchestration.subscribeShell": 1,
+        "orchestration.getArchivedShellSnapshot": 1,
+        "updater.status": 1,
+        "previewAutomation.focusHost": 1,
+        "assets.createUrl": 2,
+        "subscribeWorktreeCatalog": 2,
+        "subscribeDiscoveredLocalServers": 1,
+        "subscribeVcsStatusSummary": 2,
+        "orchestration.subscribeThread": 2,
+        "subscribeVcsStatus": 1,
+        "projects.listEntries": 1,
+        "server.discoverSourceControl": 1,
+        "server.getProviderCapabilities": 1,
+        "subscribeActivity": 1
+      },
+      "criticalPath": 3,
+      "criticalChain": [
+        "subscribeServerConfig",
+        "previewAutomation.connect",
+        "previewAutomation.focusHost"
+      ],
+      "bytesSent": 7581,
+      "bytesReceived": 53306
+    },
+    {
+      "action": "reconnect: dropped socket until thread resynced",
+      "rttMs": 250,
+      "visibleMs": 2336,
+      "rpcs": 25,
+      "rpcTags": {
+        "subscribeServerConfig": 1,
+        "subscribeServerLifecycle": 1,
+        "previewAutomation.connect": 1,
+        "subscribeTerminalMetadata": 2,
+        "subscribePreviewEvents": 1,
+        "orchestration.subscribeShell": 1,
+        "subscribeWorktreeCatalog": 2,
+        "subscribeDiscoveredLocalServers": 1,
+        "subscribeVcsStatusSummary": 2,
+        "orchestration.subscribeThread": 2,
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 1,
+        "orchestration.getArchivedShellSnapshot": 1,
+        "updater.status": 1,
+        "assets.createUrl": 2,
+        "projects.listEntries": 1,
+        "server.discoverSourceControl": 1,
+        "server.getProviderCapabilities": 2,
+        "previewAutomation.focusHost": 1
+      },
+      "criticalPath": 2,
+      "criticalChain": ["subscribeServerConfig", "subscribeServerLifecycle"],
+      "bytesSent": 7444,
+      "bytesReceived": 53453
+    }
+  ],
+  "afterJitter20": [
+    {
+      "action": "composer: type 40 characters",
+      "rttMs": 250,
+      "visibleMs": 4109,
+      "rpcs": 0,
+      "rpcTags": {},
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 513,
+      "bytesReceived": 19008
+    },
+    {
+      "action": "send message: user message visible",
+      "rttMs": 250,
+      "visibleMs": 22,
+      "rpcs": 1,
+      "rpcTags": {
+        "orchestration.dispatchCommand": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 777,
+      "bytesReceived": 7794
+    },
+    {
+      "action": "send message: response visible",
+      "rttMs": 250,
+      "visibleMs": 451,
+      "rpcs": 1,
+      "rpcTags": {
+        "orchestration.dispatchCommand": 1
+      },
+      "criticalPath": 1,
+      "criticalChain": ["orchestration.dispatchCommand"],
+      "bytesSent": 986,
+      "bytesReceived": 12710
+    },
+    {
+      "action": "switch thread: to an empty thread",
+      "rttMs": 250,
+      "visibleMs": 32,
+      "rpcs": 3,
+      "rpcTags": {
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 1,
+        "orchestration.dispatchCommand": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 1016,
+      "bytesReceived": 2597
+    },
+    {
+      "action": "switch thread: back to a thread with history",
+      "rttMs": 250,
+      "visibleMs": 47,
+      "rpcs": 2,
+      "rpcTags": {
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 690,
+      "bytesReceived": 3268
+    },
+    {
+      "action": "source control: open panel",
+      "rttMs": 250,
+      "visibleMs": 352,
+      "rpcs": 0,
+      "rpcTags": {},
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 31,
+      "bytesReceived": 3203
+    },
+    {
+      "action": "files: open panel",
+      "rttMs": 250,
+      "visibleMs": 360,
+      "rpcs": 2,
+      "rpcTags": {
+        "subscribeProjectEntries": 1,
+        "projects.listEntries": 1
+      },
+      "criticalPath": 0,
+      "criticalChain": [],
+      "bytesSent": 785,
+      "bytesReceived": 5864
+    },
+    {
+      "action": "terminal: open",
+      "rttMs": 250,
+      "visibleMs": 344,
+      "rpcs": 5,
+      "rpcTags": {
+        "terminal.open": 1,
+        "terminal.attach": 1,
+        "terminal.beginInput": 1,
+        "terminal.resize": 2
+      },
+      "criticalPath": 1,
+      "criticalChain": ["terminal.open"],
+      "bytesSent": 2696,
+      "bytesReceived": 6230
+    },
+    {
+      "action": "terminal: type 40 characters",
+      "rttMs": 250,
+      "visibleMs": 4500,
+      "rpcs": 41,
+      "rpcTags": {
+        "terminal.writeInput": 41
+      },
+      "criticalPath": 14,
+      "criticalChain": [
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput",
+        "terminal.writeInput"
+      ],
+      "bytesSent": 13935,
+      "bytesReceived": 30399,
+      "echoLagP50Ms": 411,
+      "echoLagP95Ms": 551
+    },
+    {
+      "action": "open thread after reload, no local cache",
+      "rttMs": 250,
+      "visibleMs": 2053,
+      "rpcs": 24,
+      "rpcTags": {
+        "subscribeServerConfig": 1,
+        "previewAutomation.connect": 1,
+        "subscribeTerminalMetadata": 2,
+        "subscribePreviewEvents": 1,
+        "subscribeServerLifecycle": 1,
+        "orchestration.subscribeShell": 1,
+        "orchestration.getArchivedShellSnapshot": 1,
+        "updater.status": 1,
+        "previewAutomation.focusHost": 1,
+        "assets.createUrl": 2,
+        "subscribeWorktreeCatalog": 2,
+        "subscribeDiscoveredLocalServers": 1,
+        "subscribeVcsStatusSummary": 2,
+        "orchestration.subscribeThread": 2,
+        "subscribeVcsStatus": 1,
+        "projects.listEntries": 1,
+        "server.discoverSourceControl": 1,
+        "server.getProviderCapabilities": 1,
+        "subscribeActivity": 1
+      },
+      "criticalPath": 3,
+      "criticalChain": [
+        "subscribeServerConfig",
+        "previewAutomation.connect",
+        "previewAutomation.focusHost"
+      ],
+      "bytesSent": 7587,
+      "bytesReceived": 38278
+    },
+    {
+      "action": "reconnect: dropped socket until thread resynced",
+      "rttMs": 250,
+      "visibleMs": 2355,
+      "rpcs": 25,
+      "rpcTags": {
+        "subscribeServerConfig": 1,
+        "previewAutomation.connect": 1,
+        "subscribeTerminalMetadata": 2,
+        "subscribePreviewEvents": 1,
+        "subscribeServerLifecycle": 1,
+        "orchestration.subscribeShell": 1,
+        "subscribeWorktreeCatalog": 2,
+        "subscribeDiscoveredLocalServers": 1,
+        "subscribeVcsStatusSummary": 2,
+        "orchestration.subscribeThread": 2,
+        "subscribeVcsStatus": 1,
+        "subscribeActivity": 1,
+        "orchestration.getArchivedShellSnapshot": 1,
+        "updater.status": 1,
+        "assets.createUrl": 2,
+        "projects.listEntries": 1,
+        "server.discoverSourceControl": 1,
+        "server.getProviderCapabilities": 2,
+        "previewAutomation.focusHost": 1
+      },
+      "criticalPath": 2,
+      "criticalChain": ["subscribeServerConfig", "previewAutomation.connect"],
+      "bytesSent": 7413,
+      "bytesReceived": 38369
+    }
+  ],
+  "largeThread100Exchanges": {
+    "compressionOff": [
+      {
+        "action": "open thread after reload, no local cache",
+        "rttMs": 250,
+        "visibleMs": 2083,
+        "rpcs": 24,
+        "rpcTags": {
+          "subscribeServerConfig": 1,
+          "subscribeServerLifecycle": 1,
+          "previewAutomation.connect": 1,
+          "subscribeTerminalMetadata": 2,
+          "subscribePreviewEvents": 1,
+          "orchestration.subscribeShell": 1,
+          "orchestration.getArchivedShellSnapshot": 1,
+          "updater.status": 1,
+          "previewAutomation.focusHost": 1,
+          "assets.createUrl": 2,
+          "subscribeWorktreeCatalog": 2,
+          "subscribeDiscoveredLocalServers": 1,
+          "subscribeVcsStatusSummary": 2,
+          "orchestration.subscribeThread": 2,
+          "subscribeVcsStatus": 1,
+          "projects.listEntries": 1,
+          "server.discoverSourceControl": 1,
+          "server.getProviderCapabilities": 1,
+          "subscribeActivity": 1
+        },
+        "criticalPath": 3,
+        "criticalChain": [
+          "subscribeServerConfig",
+          "subscribeServerLifecycle",
+          "previewAutomation.focusHost"
+        ],
+        "bytesSent": 7587,
+        "bytesReceived": 180533
+      },
+      {
+        "action": "reconnect: dropped socket until thread resynced",
+        "rttMs": 250,
+        "visibleMs": 2113,
+        "rpcs": 25,
+        "rpcTags": {
+          "subscribeServerConfig": 1,
+          "subscribeServerLifecycle": 1,
+          "previewAutomation.connect": 1,
+          "subscribeTerminalMetadata": 2,
+          "subscribePreviewEvents": 1,
+          "orchestration.subscribeShell": 1,
+          "subscribeWorktreeCatalog": 2,
+          "subscribeDiscoveredLocalServers": 1,
+          "subscribeVcsStatusSummary": 2,
+          "orchestration.subscribeThread": 2,
+          "subscribeVcsStatus": 1,
+          "subscribeActivity": 1,
+          "orchestration.getArchivedShellSnapshot": 1,
+          "updater.status": 1,
+          "assets.createUrl": 2,
+          "projects.listEntries": 1,
+          "server.discoverSourceControl": 1,
+          "server.getProviderCapabilities": 2,
+          "previewAutomation.focusHost": 1
+        },
+        "criticalPath": 2,
+        "criticalChain": ["subscribeServerConfig", "subscribeServerLifecycle"],
+        "bytesSent": 7413,
+        "bytesReceived": 180626
+      }
+    ],
+    "compressionOn": [
+      {
+        "action": "open thread after reload, no local cache",
+        "rttMs": 250,
+        "visibleMs": 1959,
+        "rpcs": 24,
+        "rpcTags": {
+          "subscribeServerConfig": 1,
+          "previewAutomation.connect": 1,
+          "subscribeTerminalMetadata": 2,
+          "subscribePreviewEvents": 1,
+          "orchestration.subscribeShell": 1,
+          "subscribeServerLifecycle": 1,
+          "orchestration.getArchivedShellSnapshot": 1,
+          "updater.status": 1,
+          "previewAutomation.focusHost": 1,
+          "assets.createUrl": 2,
+          "subscribeWorktreeCatalog": 2,
+          "subscribeDiscoveredLocalServers": 1,
+          "subscribeVcsStatusSummary": 2,
+          "orchestration.subscribeThread": 2,
+          "subscribeVcsStatus": 1,
+          "projects.listEntries": 1,
+          "server.discoverSourceControl": 1,
+          "server.getProviderCapabilities": 1,
+          "subscribeActivity": 1
+        },
+        "criticalPath": 3,
+        "criticalChain": [
+          "subscribeServerConfig",
+          "previewAutomation.connect",
+          "previewAutomation.focusHost"
+        ],
+        "bytesSent": 7587,
+        "bytesReceived": 50677
+      },
+      {
+        "action": "reconnect: dropped socket until thread resynced",
+        "rttMs": 250,
+        "visibleMs": 2021,
+        "rpcs": 25,
+        "rpcTags": {
+          "subscribeServerConfig": 1,
+          "previewAutomation.connect": 1,
+          "subscribeTerminalMetadata": 2,
+          "subscribePreviewEvents": 1,
+          "orchestration.subscribeShell": 1,
+          "subscribeServerLifecycle": 1,
+          "subscribeWorktreeCatalog": 2,
+          "subscribeDiscoveredLocalServers": 1,
+          "subscribeVcsStatusSummary": 2,
+          "orchestration.subscribeThread": 2,
+          "subscribeVcsStatus": 1,
+          "subscribeActivity": 1,
+          "orchestration.getArchivedShellSnapshot": 1,
+          "updater.status": 1,
+          "assets.createUrl": 2,
+          "projects.listEntries": 1,
+          "server.discoverSourceControl": 1,
+          "server.getProviderCapabilities": 2,
+          "previewAutomation.focusHost": 1
+        },
+        "criticalPath": 1,
+        "criticalChain": ["subscribeServerConfig"],
+        "bytesSent": 7413,
+        "bytesReceived": 50774
+      }
+    ]
+  }
+}
