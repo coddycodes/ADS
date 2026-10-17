@@ -97,6 +97,10 @@ struct Replay {
     fail_message_lookups: AtomicBool,
     /// The root session reports a staged revert.
     staged: AtomicBool,
+    /// The root session's metadata, as `PATCH /api/session/{root}` last wrote it.
+    metadata: StdMutex<Value>,
+    /// Apply the next metadata write that removes the rewind record, but answer HTTP 500.
+    lose_next_record_removal_response: AtomicBool,
     /// A revert was committed: message lists answer the scenario's last capture, not its first.
     reverted: AtomicBool,
 }
@@ -127,8 +131,22 @@ async fn record(
     uri: OriginalUri,
     body: Bytes,
 ) -> Response {
-    let body = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
     let path = uri.0.path().to_owned();
+    // OpenCode replaces the metadata whole, and ignores a null.
+    if method == Method::PATCH
+        && path == format!("/api/session/{}", replay.root)
+        && let Some(metadata) = body.get("metadata").filter(|metadata| !metadata.is_null())
+    {
+        *replay.metadata.lock().unwrap() = metadata.clone();
+        if metadata.pointer("/bibcode/rewind").is_none()
+            && replay
+                .lose_next_record_removal_response
+                .swap(false, Ordering::SeqCst)
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
     replay
         .requests
         .lock()
@@ -200,6 +218,10 @@ async fn session(State(replay): State<Arc<Replay>>, Path(session_id): Path<Strin
         );
         if replay.staged.load(Ordering::SeqCst) {
             response["data"]["revert"] = json!({ "messageID": "msg_staged", "files": [] });
+        }
+        let metadata = replay.metadata.lock().unwrap().clone();
+        if !metadata.is_null() {
+            response["data"]["metadata"] = metadata;
         }
         Json(response).into_response()
     } else {
@@ -418,6 +440,8 @@ async fn serve(scenario: &'static str) -> (String, Arc<Replay>) {
         lose_next_commit_response: AtomicBool::new(false),
         fail_message_lookups: AtomicBool::new(false),
         staged: AtomicBool::new(false),
+        metadata: StdMutex::new(Value::Null),
+        lose_next_record_removal_response: AtomicBool::new(false),
         reverted: AtomicBool::new(false),
     });
     let app = Router::new()
@@ -1573,5 +1597,112 @@ async fn a_failed_opencode_2_request_settles_the_turn_it_announced() {
         assert_eq!(completed.turn_id, started.turn_id);
         assert_eq!(completed.payload["state"], "cancelled");
     }
+    runtime.stop().await.expect("stop");
+}
+
+/// A rewind whose outcome could not be read is kept with the OpenCode session (its metadata), so
+/// a runtime started after a restart settles it instead of dropping the turns again, and removes
+/// the record once the rewind reports success.
+#[tokio::test]
+async fn an_unknown_rewind_outcome_survives_a_restart() {
+    let (endpoint, replay) = serve("revert").await;
+    replay
+        .metadata
+        .lock()
+        .unwrap()
+        .clone_from(&json!({ "other": "kept" }));
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+    replay
+        .lose_next_commit_response
+        .store(true, Ordering::SeqCst);
+    replay.fail_message_lookups.store(true, Ordering::SeqCst);
+    runtime
+        .rollback_thread(1)
+        .await
+        .expect_err("the outcome is unknown");
+    runtime.stop().await.expect("stop");
+    {
+        let metadata = replay.metadata.lock().unwrap().clone();
+        assert_eq!(metadata["other"], "kept");
+        assert_eq!(
+            metadata["bibcode"]["rewind"]["unsettled"]["target"],
+            "msg_bibcodecapture1792090050661"
+        );
+    }
+
+    // A new runtime, as after a restart.
+    replay.fail_message_lookups.store(false, Ordering::SeqCst);
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+    assert!(
+        runtime.has_unfinished_rewind().await,
+        "the progress is restored"
+    );
+    runtime
+        .rollback_thread(1)
+        .await
+        .expect("the first revert landed");
+    assert_eq!(
+        replay.requests_to("/revert/stage").len(),
+        1,
+        "no further turns are dropped"
+    );
+    assert!(!runtime.has_unfinished_rewind().await);
+    assert_eq!(
+        *replay.metadata.lock().unwrap(),
+        json!({ "other": "kept" }),
+        "the record is removed, the rest kept"
+    );
+    runtime.stop().await.expect("stop");
+}
+
+/// A revert still staged on the session has not landed, even if its target cannot be found.
+#[tokio::test]
+async fn a_revert_still_staged_is_cleared_not_counted() {
+    let (endpoint, replay) = serve("revert").await;
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+    // The commit's answer is lost and the target reads as gone, but the session still has the
+    // stage.
+    replay
+        .lose_next_commit_response
+        .store(true, Ordering::SeqCst);
+    replay.staged.store(true, Ordering::SeqCst);
+
+    runtime
+        .rollback_thread(1)
+        .await
+        .expect_err("the stage did not commit");
+
+    let cleared = replay.requests_to("/revert");
+    assert_eq!(cleared.len(), 1);
+    assert_eq!(cleared[0].0, "DELETE");
+    assert!(!runtime.has_unfinished_rewind().await);
+    runtime.stop().await.expect("stop");
+}
+
+/// The record's removal may apply with only its answer lost; the session then has no record, so
+/// the rewind reports success instead of failing with nothing left to remove after a restart.
+#[tokio::test]
+async fn a_lost_answer_to_the_record_removal_still_completes_the_rewind() {
+    let (endpoint, replay) = serve("revert").await;
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+    replay
+        .lose_next_record_removal_response
+        .store(true, Ordering::SeqCst);
+
+    runtime.rollback_thread(1).await.expect("rewinds");
+
+    assert!(
+        replay
+            .metadata
+            .lock()
+            .unwrap()
+            .pointer("/bibcode/rewind")
+            .is_none()
+    );
+    assert!(!runtime.has_unfinished_rewind().await);
     runtime.stop().await.expect("stop");
 }

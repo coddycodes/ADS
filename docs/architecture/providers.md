@@ -210,10 +210,13 @@ target message is gone counts as done; a stage that did not commit is cleared
 (`DELETE …/revert`), since OpenCode commits a leftover stage with the next
 prompt. Until a rewind reports success the runtime remembers the turns already
 dropped and any revert whose outcome it could not read, so a retry drops only
-the turns still missing and prompts wait. That memory lives in the runtime, so
-the idle deadline keeps the session up until the rewind settles (see Unsettled
-driver state below); a session reopened after a restart clears a leftover stage
-on resume. Each rewind request is
+the turns still missing and prompts wait. The idle deadline keeps the session up
+until the rewind settles (see Unsettled driver state below), and the progress is
+also kept with the OpenCode session itself, in its metadata under
+`bibcode.rewind` (no BiBCode schema): it is written before each stage, removed
+before the rewind reports success, and restored when a session is resumed after a
+restart, which also clears a leftover stage. A revert still staged on the session
+(`revert` set) is cleared, never counted as landed. Each rewind request is
 bounded, because the provider supervisor awaits it.
 
 The OpenCode terminal observer (`provider_terminal::opencode`) serves both

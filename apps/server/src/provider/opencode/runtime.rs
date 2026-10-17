@@ -258,12 +258,35 @@ struct V2State {
     rewind: V2RewindProgress,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default, Eq, PartialEq)]
 struct V2RewindProgress {
     /// Turns OpenCode is known to have dropped.
     dropped: usize,
     /// A revert whose outcome is unknown: the turns it drops and the user message it staged at.
     unsettled: Option<(usize, String)>,
+}
+
+impl V2RewindProgress {
+    /// The progress as kept in the OpenCode 2 session's metadata (`bibcode.rewind`).
+    fn to_json(&self) -> Value {
+        let mut record = json!({ "dropped": self.dropped });
+        if let Some((turns, target)) = &self.unsettled {
+            record["unsettled"] = json!({ "turns": turns, "target": target });
+        }
+        record
+    }
+
+    fn from_json(record: &Value) -> Option<Self> {
+        let dropped = usize::try_from(record.get("dropped")?.as_u64()?).ok()?;
+        let unsettled = match record.get("unsettled") {
+            None | Some(Value::Null) => None,
+            Some(unsettled) => Some((
+                usize::try_from(unsettled.get("turns")?.as_u64()?).ok()?,
+                unsettled.get("target")?.as_str()?.to_owned(),
+            )),
+        };
+        Some(Self { dropped, unsettled })
+    }
 }
 
 struct V2PendingForm {
@@ -834,6 +857,14 @@ impl OpenCodeSessionRuntime {
                 .is_some_and(|revert| !revert.is_null())
             {
                 within_rewind_deadline(self.v2_clear_revert(session_id)).await?;
+            }
+            // A checkpoint rewind that had not reported success when the runtime went away
+            // continues from the progress kept with the session.
+            if let Some(progress) = session
+                .pointer("/data/metadata/bibcode/rewind")
+                .and_then(V2RewindProgress::from_json)
+            {
+                self.inner.v2.lock().await.rewind = progress;
             }
             // The resumed session keeps the model, agent and permission rules it had. A runtime
             // mode change relaunches with a resume, and OpenCode may keep working on its own, so
@@ -2772,9 +2803,10 @@ impl OpenCodeSessionRuntime {
     /// reports success BiBCode's transcript is unchanged, so the turns already dropped (and a
     /// revert whose outcome could not be read) are remembered: a retry, or a rewind to another
     /// checkpoint, drops only the turns still missing, and prompts wait. The memory lives in this
-    /// runtime, so the driver keeps the session from idle suspension until it settles
-    /// (`has_unfinished_rewind`); a session reopened after a restart clears a leftover stage on
-    /// resume.
+    /// runtime and, so a BiBCode restart finds it, in the OpenCode session's own metadata
+    /// (`bibcode.rewind`): it is written before each stage and removed before the rewind reports
+    /// success, and a resumed session restores it. The driver keeps the session from idle
+    /// suspension until it settles (`has_unfinished_rewind`).
     async fn v2_rollback(
         &self,
         num_turns: usize,
@@ -2798,6 +2830,12 @@ impl OpenCodeSessionRuntime {
                 ))
             })?
         {
+            // Kept with the session before anything changes, so a restart mid-rewind settles it.
+            let intent = V2RewindProgress {
+                dropped,
+                unsettled: Some((remaining, target.clone())),
+            };
+            self.v2_store_rewind(&session_id, &intent).await?;
             let revert = |phase: &'static str| {
                 self.v2_url(&["session", &session_id, "revert", phase], false)
             };
@@ -2834,6 +2872,37 @@ impl OpenCodeSessionRuntime {
                 }
             }
         }
+        // The kept progress goes before success is reported: a record left behind would make a
+        // later rewind skip turns. If it cannot be removed, the rewind fails and a retry, which
+        // has nothing left to drop, removes it.
+        let finished = V2RewindProgress {
+            dropped: num_turns,
+            unsettled: None,
+        };
+        self.inner.v2.lock().await.rewind = finished;
+        if let Err(error) = self
+            .v2_store_rewind(&session_id, &V2RewindProgress::default())
+            .await
+        {
+            // The removal may have applied with only its answer lost: what the session now holds
+            // decides, so a removed record is not mistaken for one still to remove.
+            let kept = within_rewind_deadline(async {
+                self.v2_get_json(self.v2_url(&["session", &session_id], false)?)
+                    .await
+                    .ok_or_else(|| {
+                        OpenCodeRuntimeError::Http("the session could not be read".to_owned())
+                    })
+            })
+            .await
+            .map(|session| {
+                session
+                    .pointer("/data/metadata/bibcode/rewind")
+                    .is_some_and(|record| !record.is_null())
+            });
+            if kept.unwrap_or(true) {
+                return Err(error);
+            }
+        }
         {
             let mut v2 = self.inner.v2.lock().await;
             v2.rewind = V2RewindProgress::default();
@@ -2867,16 +2936,95 @@ impl OpenCodeSessionRuntime {
         let Some((turns, target)) = self.inner.v2.lock().await.rewind.unsettled.clone() else {
             return Ok(());
         };
-        if within_rewind_deadline(self.v2_message_type(session_id, &target))
-            .await?
-            .is_some()
+        // A revert still staged on the session has not landed, whatever its target's lookup says.
+        let staged = within_rewind_deadline(async {
+            self.v2_get_json(self.v2_url(&["session", session_id], false)?)
+                .await
+                .ok_or_else(|| {
+                    OpenCodeRuntimeError::Http("the session could not be read".to_owned())
+                })
+        })
+        .await?
+        .pointer("/data/revert")
+        .is_some_and(|revert| !revert.is_null());
+        if staged
+            || within_rewind_deadline(self.v2_message_type(session_id, &target))
+                .await?
+                .is_some()
         {
             within_rewind_deadline(self.v2_clear_revert(session_id)).await?;
         } else {
             self.inner.v2.lock().await.rewind.dropped += turns;
         }
-        self.inner.v2.lock().await.rewind.unsettled = None;
+        let progress = {
+            let mut v2 = self.inner.v2.lock().await;
+            v2.rewind.unsettled = None;
+            v2.rewind.clone()
+        };
+        // The kept record still names the unsettled revert, which settles the same way again.
+        if let Err(error) = self.v2_store_rewind(session_id, &progress).await {
+            tracing::warn!(
+                provider = "opencode",
+                %error,
+                "OpenCode 2 rewind progress could not be kept with the session"
+            );
+        }
         Ok(())
+    }
+
+    /// Keeps the rewind progress in the OpenCode 2 session's metadata (`bibcode.rewind`), so a
+    /// BiBCode restart finds it; an empty progress removes it. OpenCode replaces the metadata
+    /// whole, so the rest of it is read and written back.
+    async fn v2_store_rewind(
+        &self,
+        session_id: &str,
+        progress: &V2RewindProgress,
+    ) -> Result<(), OpenCodeRuntimeError> {
+        let url = self.v2_url(&["session", session_id], false)?;
+        let session = within_rewind_deadline(async {
+            self.v2_get_json(url.clone()).await.ok_or_else(|| {
+                OpenCodeRuntimeError::Http("the session could not be read".to_owned())
+            })
+        })
+        .await?;
+        let mut metadata = session
+            .pointer("/data/metadata")
+            .filter(|metadata| metadata.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        let mut bibcode = metadata
+            .get("bibcode")
+            .filter(|bibcode| bibcode.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        let empty = *progress == V2RewindProgress::default();
+        if empty && bibcode.get("rewind").is_none() {
+            return Ok(());
+        }
+        if let Some(bibcode) = bibcode.as_object_mut() {
+            if empty {
+                bibcode.remove("rewind");
+            } else {
+                bibcode.insert("rewind".to_owned(), progress.to_json());
+            }
+        }
+        if let Some(entries) = metadata.as_object_mut() {
+            if bibcode.as_object().is_some_and(serde_json::Map::is_empty) {
+                entries.remove("bibcode");
+            } else {
+                entries.insert("bibcode".to_owned(), bibcode);
+            }
+        }
+        within_rewind_deadline(
+            self.v2_send(
+                self.inner
+                    .client
+                    .patch(url)
+                    .json(&json!({ "metadata": metadata })),
+                "rewind progress",
+            ),
+        )
+        .await
     }
 
     async fn v2_clear_revert(&self, session_id: &str) -> Result<(), OpenCodeRuntimeError> {
