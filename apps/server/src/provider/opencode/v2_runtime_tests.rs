@@ -85,6 +85,8 @@ struct Replay {
     active: AtomicBool,
     /// The skill and command lists answer HTTP 500.
     fail_catalogs: AtomicBool,
+    /// Prompts and commands are refused (HTTP 400).
+    fail_sends: AtomicBool,
     /// Fail the next revert staging with HTTP 500.
     fail_next_stage: AtomicBool,
     /// Fail the next revert commit with HTTP 500.
@@ -135,6 +137,11 @@ async fn record(
     if path == "/api/session" {
         let (_, response) = exchange(replay.scenario, "POST", "/api/session");
         return Json(response).into_response();
+    }
+    if (path.ends_with("/prompt") || path.ends_with("/command"))
+        && replay.fail_sends.load(Ordering::SeqCst)
+    {
+        return StatusCode::BAD_REQUEST.into_response();
     }
     if path.ends_with("/prompt") {
         replay.prompted.notify_one();
@@ -405,6 +412,7 @@ async fn serve(scenario: &'static str) -> (String, Arc<Replay>) {
         lose_next_reply_response: AtomicBool::new(false),
         active: AtomicBool::new(false),
         fail_catalogs: AtomicBool::new(false),
+        fail_sends: AtomicBool::new(false),
         fail_next_stage: AtomicBool::new(false),
         fail_next_commit: AtomicBool::new(false),
         lose_next_commit_response: AtomicBool::new(false),
@@ -1534,5 +1542,36 @@ async fn rewinding_a_turn_opencode_started_keeps_the_prompt_turn() {
             .any(|(_, uri, _)| uri.contains("cursor=offset6")),
         "the history was paged"
     );
+    runtime.stop().await.expect("stop");
+}
+
+/// A turn announced for a request OpenCode 2 refused settles as cancelled, so its start does not
+/// wait for a completion that never comes.
+#[tokio::test]
+async fn a_failed_opencode_2_request_settles_the_turn_it_announced() {
+    let (endpoint, replay) = serve("hello").await;
+    let runtime = v2_runtime(&endpoint);
+    runtime.start().await.expect("session starts");
+    drain(&runtime).await;
+    replay.fail_sends.store(true, Ordering::SeqCst);
+
+    runtime
+        .send_turn(Some("SAY_HELLO please"), Vec::new(), Some("prompt-key"))
+        .await
+        .expect_err("the prompt is refused");
+    runtime
+        .send_command("review", "", Some("command-key"))
+        .await
+        .expect_err("the command is refused");
+
+    let events = drain(&runtime).await;
+    let started = of_type(&events, "turn.started");
+    let completed = of_type(&events, "turn.completed");
+    assert_eq!(started.len(), 2, "{events:#?}");
+    assert_eq!(completed.len(), 2, "{events:#?}");
+    for (started, completed) in started.iter().zip(&completed) {
+        assert_eq!(completed.turn_id, started.turn_id);
+        assert_eq!(completed.payload["state"], "cancelled");
+    }
     runtime.stop().await.expect("stop");
 }

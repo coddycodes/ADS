@@ -392,7 +392,11 @@ Idle suspension must never stop work the provider still runs:
   starts itself), the session is also projected `running` with that turn unless
   it already reads so. Cursor, OpenCode, and Grok announce a turn before BiBCode
   sends it, so their announcement does not change the projection: a send that
-  fails reports no completion. A turn such a driver did not send, one the
+  fails reports no completion (OpenCode settles a turn whose request it never
+  accepted, a 4xx refusal or a connection that never opened, with a `cancelled`
+  completion, `stopReason: "not_sent"`, which re-arms the idle deadline; a
+  request whose answer was lost, or a server or gateway error, keeps its turn
+  for OpenCode's own events to end). A turn such a driver did not send, one the
   provider started itself (an OpenCode 2 execution that delivers a background
   subagent's result, or one still running when a session is resumed), carries
   `providerStarted: true` and is projected `running` too.
