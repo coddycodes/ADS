@@ -30,6 +30,7 @@ function sameAgentRow(left: AgentRow, right: AgentRow): boolean {
     left === right ||
     (left.key === right.key &&
       left.shell === right.shell &&
+      left.branch === right.branch &&
       left.environmentLabel === right.environmentLabel &&
       left.environmentLive === right.environmentLive &&
       left.environmentStatus === right.environmentStatus &&
@@ -51,8 +52,8 @@ export const AgentsRow = memo(
     const eyebrow = row.projectTitle || row.environmentLabel;
     // Orca's card hierarchy: the branch is the line the eye lands on, the thread
     // title explains it, and the preview shows what the agent is doing now.
-    const primaryLine = row.shell.branch ?? row.shell.title;
-    const secondaryLine = row.shell.branch === null ? null : row.shell.title;
+    const primaryLine = row.branch ?? row.shell.title;
+    const secondaryLine = row.branch === null ? null : row.shell.title;
     const live = row.environmentLive;
 
     const handleSelect = useCallback(() => {

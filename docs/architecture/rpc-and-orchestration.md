@@ -259,7 +259,8 @@ summary even when it is stale: a failed PR lookup marks a just-read base stale,
 and a stale PR is the last one the server read for the summary's own ref and
 provider. Hiding them would show an older branch, a missing PR, or a clean
 checkout. A thread's recorded `branch` is the fallback when no summary names
-one, and a workspace card's PR badge matches the branch the card names.
+one, and a workspace card's PR badge matches the branch the card names. An
+Agents view row names its branch by the same rule while its environment is live.
 Each successful base cycle publishes current local and provider state. A same-ref/provider PR from the immediately prior cycle may be carried
 only into cycle N+1 while enrichment runs or fails, preserving its original
 `observedAt` with `stale: true`; cycle N+2 expires it unless enrichment refreshes

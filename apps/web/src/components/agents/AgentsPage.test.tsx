@@ -10,7 +10,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const h = vi.hoisted(() => ({
   pathname: "/agents",
   shells: [] as EnvironmentThreadShell[],
-  projects: [] as Array<{ id: string; title: string }>,
+  projects: [] as Array<{
+    id: string;
+    title: string;
+    environmentId?: string;
+    workspaceRoot?: string;
+  }>,
+  vcsSummaryByCwd: {} as Record<string, string>,
   environments: [] as Array<{ environmentId: string; label: string }>,
   availability: [] as Array<{ environmentId: string; status: string }>,
   unreadThreadKeys: [] as string[],
@@ -26,6 +32,7 @@ const h = vi.hoisted(() => ({
     h.pathname = "/agents";
     h.shells = [];
     h.projects = [];
+    h.vcsSummaryByCwd = {};
     h.environments = [];
     h.availability = [];
     h.unreadThreadKeys = [];
@@ -67,6 +74,17 @@ vi.mock("../../state/entities", () => ({
   useThreadShells: () => h.shells,
   useProjects: () => h.projects,
   setActiveEnvironmentId: h.setActiveEnvironmentId,
+}));
+
+// The hook reads each checkout's passive summary; here a summary is its ref name.
+vi.mock("./useAgentLiveBranches", () => ({
+  useAgentLiveBranches: (checkouts: ReadonlyArray<{ key: string; cwd: string }>) =>
+    new Map(
+      checkouts.flatMap((checkout) => {
+        const refName = h.vcsSummaryByCwd[checkout.cwd];
+        return typeof refName === "string" ? [[checkout.key, refName]] : [];
+      }),
+    ),
 }));
 
 vi.mock("../../state/environments", () => ({
@@ -513,6 +531,61 @@ describe("AgentsPage", () => {
     expect(row!.textContent).toContain("Working");
     expect(row!.textContent).toContain("Local");
     expect(row!.className).not.toContain("opacity-");
+  });
+
+  // A Git Manager checkout moves the checkout without the thread's recorded branch;
+  // the row names the live branch like the left panel, even from a stale summary.
+  it("names the checkout's live branch over the thread's recorded one", async () => {
+    h.shells = [
+      workingShell({
+        id: ThreadId.make("thread-live"),
+        title: "Live agent",
+        branch: "main",
+        worktreePath: "/wt/live",
+      }),
+    ];
+    h.vcsSummaryByCwd["/wt/live"] = "feature/live";
+    const { container } = await mount(<AgentsPage />);
+
+    const lines = Array.from(
+      queryAgentRow(container, "Live agent")!.querySelectorAll<HTMLElement>("div.truncate"),
+    ).map((element) => element.textContent);
+    expect(lines.slice(0, 2)).toEqual(["feature/live", "Live agent"]);
+
+    const input = container.querySelector<HTMLInputElement>('[data-testid="agents-filter-input"]');
+    await changeInput(input!, "feature/live");
+    expect(queryAgentRow(container, "Live agent")).not.toBeNull();
+  });
+
+  it("reads a local thread's branch from its project's checkout", async () => {
+    h.projects = h.projects.map((project) =>
+      project.id === PROJECT_ALPHA
+        ? { ...project, environmentId: ENVIRONMENT_LOCAL, workspaceRoot: "/repo/alpha" }
+        : project,
+    );
+    h.shells = [workingShell({ id: ThreadId.make("thread-local"), title: "Local agent" })];
+    h.vcsSummaryByCwd["/repo/alpha"] = "develop";
+    const { container } = await mount(<AgentsPage />);
+
+    expect(queryAgentRow(container, "Local agent")!.textContent).toContain("develop");
+  });
+
+  it("keeps the recorded branch while the environment is not live", async () => {
+    h.availability = [{ environmentId: ENVIRONMENT_LOCAL, status: "synchronizing" }];
+    h.shells = [
+      workingShell({
+        id: ThreadId.make("thread-offline"),
+        title: "Offline agent",
+        branch: "main",
+        worktreePath: "/wt/offline",
+      }),
+    ];
+    h.vcsSummaryByCwd["/wt/offline"] = "feature/old";
+    const { container } = await mount(<AgentsPage />);
+
+    const row = queryAgentRow(container, "Offline agent", "Working", "Local");
+    expect(row!.textContent).toContain("main");
+    expect(row!.textContent).not.toContain("feature/old");
   });
 
   it("switches grouping from Status to Project", async () => {

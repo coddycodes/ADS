@@ -70,7 +70,8 @@ The view's list column provides a filter, grouping by **Status** (the default),
 read**. Status groups have counts and appear in fixed **Working** → **Pending
 Approval** → **Awaiting Input** → **Done** order, with Done collapsed by
 default. Each row opens with the project name, the provider icon, the status
-dot, and the relative time, then shows the branch as its main line, the thread
+dot, and the relative time, then shows the branch as its main line (the
+checkout's current branch, as in the left panel), the thread
 title, a one-line conversation preview, and a footer with the status, the
 provider, and the environment badge. While a thread is working, the preview
 shows its current tool; otherwise it shows the latest assistant message or
