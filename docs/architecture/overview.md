@@ -1959,8 +1959,9 @@ Each failure becomes the `availability` of the catalog's Android entry
 (`sdkMissing`, `adbMissing`, `noAvds`, or `accelerationUnavailable`) with an
 actionable message. The catalog lists one entry per platform, each with its
 own `availability` and `images` (`{ id, displayName, inUseElsewhere? }`), and
-every device as `{ deviceId, platform, imageId, state, orientation, canRotate }`. A
-discovery result serves for 30 s; the MCP `device_list` tool always reruns it.
+every device as
+`{ deviceId, platform, imageId, state, orientation, canRotate }`. A discovery
+result serves for 30 s; the MCP `device_list` tool always reruns it.
 
 **Lifecycle.** `DeviceManager` owns the catalog (`device.subscribeCatalog`) and
 allows one running device per platform; a second `device.open` on that
@@ -1991,8 +1992,9 @@ in the catalog so their reason stays visible.
   known, within 180 s. The gRPC client connects only
   to `127.0.0.1`; adb uses the user's adb server and BiBCode never passes `-a`.
 - A stop asks the emulator to shut down over gRPC, kills its process group
-  after 10 s, and removes its discovery file. An exit nobody asked for, checked every second, fails the device
-  with `exited` and raises `subprocess.crash`.
+  after 10 s, and removes its discovery file. An exit nobody asked for,
+  checked every second, fails the device with `exited` and raises
+  `subprocess.crash`.
 
 **JPEG frames.** `device.subscribeFrames` streams the emulator's
 `streamScreenshot` as base64 JPEG, at most 720 px wide, quality 70, and at
@@ -2105,8 +2107,9 @@ thread per stream wraps the current surface in a `CVPixelBuffer`, turns it
 with `VTPixelRotationSession` when the UI is not portrait, and encodes the
 screen at full size, Main profile at an automatic level (5.1 or above for a
 full-size screen), at most 60 fps, 6 bits per pixel per second clamped to
-2–12 Mbit/s, with key frames no more than 120 frames or 2 s apart. A new output size (a rotation) builds a new
-session, whose config and key units go out first. The units feed the same
+2–12 Mbit/s, with key frames no more than 120 frames or 2 s apart. A new
+output size (a rotation) builds a new session, whose config and key units go
+out first. The units feed the same
 `MediaHub`, tickets, and sockets as Android.
 
 **Input.** A live simulator takes input in-process. Touches, keys, and
@@ -2127,7 +2130,7 @@ afterwards can arrive before the pasted text.
 
 **Rotation and orientation.** `device.rotate` sends the target orientation to
 the simulator's `PurpleWorkspacePort` and then reads back the reported
-orientation for about a second; `canRotate` is true for live simulators with
+orientation for about 1.5 s; `canRotate` is true for live simulators with
 input. The orientation convention is Android's: `landscape` is the phone
 turned left (counter-clockwise), the client's **Rotate left** from portrait,
 Android's `Surface.ROTATION_90` and rotation vector `[0, 0, -90]`. On iOS that
