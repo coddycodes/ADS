@@ -1208,7 +1208,10 @@ gap, when the manager stalls for longer than 1024 reads.
 Every terminal's events go through one shared channel of 512 events. A
 `terminal.attach` stream sends the events already waiting together in one chunk
 (at most 64 items or 32 KiB, which bounds its 64-chunk queue at about 2 MiB), so a burst of output does not wait for one
-acknowledgement per event. A stream that still falls further behind than the
+acknowledgement per event. The RPC session then sends the chunks already queued
+behind an unacknowledged one as a single chunk (see
+[RPC and orchestration](rpc-and-orchestration.md#wire-protocol)), so echo
+arriving faster than one chunk per round trip catches up instead of queueing. A stream that still falls further behind than the
 channel holds no longer skips the lost events, which left lines missing from
 the terminal. It sends the session's state instead, with history and sequence
 read together under the session lock, and then only newer events. A chunk with

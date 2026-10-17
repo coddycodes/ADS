@@ -122,6 +122,14 @@ from the schema-only `WsRpcGroup`. The Rust mirror is
 | Server to client | `Pong`                | Answer a protocol probe.                                                          |
 | Server to client | `ClientProtocolError` | Report malformed or unsupported client protocol input.                            |
 
+A stream has one `Chunk` in flight: the server sends the next only after the
+client's `Ack` for the previous one. Items the handler queued meanwhile leave
+together in that next `Chunk`, in order, up to 64 KiB of encoded values (or the
+connection's message limit when smaller); a failure or an item that does not
+fit goes out after it. A slow link therefore costs a stream one round trip per
+`Chunk` rather than one per item: before this, typing over a 250 ms link echoed
+one key per round trip.
+
 Schemas validate payloads at the client boundary. The Rust session validates
 request IDs, registered method names, authorization scopes, cancellation, and
 stream flow before invoking handlers. The read loop never waits on the

@@ -375,24 +375,23 @@ async fn eof_still_allows_stream_acknowledgements_before_shutdown() {
         }),
     )
     .await;
-    assert!(matches!(
-        next_server_message(&mut socket).await,
-        ServerMessage::Chunk { .. }
-    ));
+    let ServerMessage::Chunk { mut values, .. } = next_server_message(&mut socket).await else {
+        panic!("the stream starts with a chunk");
+    };
     send_json(&mut socket, json!({ "_tag": "Eof" })).await;
-    send_json(&mut socket, json!({ "_tag": "Ack", "requestId": "10" })).await;
-    assert!(matches!(
-        next_server_message(&mut socket).await,
-        ServerMessage::Chunk { .. }
-    ));
-    send_json(&mut socket, json!({ "_tag": "Ack", "requestId": "10" })).await;
-    assert!(matches!(
-        next_server_message(&mut socket).await,
-        ServerMessage::Exit {
-            exit: RpcExit::Success { value: None },
-            ..
+    // Every Ack after the Eof still lets the stream go on; queued items may share a chunk.
+    loop {
+        send_json(&mut socket, json!({ "_tag": "Ack", "requestId": "10" })).await;
+        match next_server_message(&mut socket).await {
+            ServerMessage::Chunk { values: more, .. } => values.extend(more),
+            ServerMessage::Exit {
+                exit: RpcExit::Success { value: None },
+                ..
+            } => break,
+            other => panic!("unexpected message {other:?}"),
         }
-    ));
+    }
+    assert_eq!(values, vec![json!(1), json!(2)]);
 
     handle.shutdown();
     handle.join().await.expect("server joins");
