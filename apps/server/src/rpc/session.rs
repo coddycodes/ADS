@@ -1078,6 +1078,9 @@ fn spawn_request(
     let request_shutdown = session_shutdown.clone();
     let task = tokio::spawn(async move {
         let execution = AssertUnwindSafe(async move {
+            // However the request ends, the work its handler started ends with it: a stream
+            // producer still waiting for events after its terminal held a receiver forever (#113).
+            let _request_ended = request_cancellation.clone().drop_guard();
             let admitted = admit_request(
                 &request,
                 scope,
@@ -2292,6 +2295,81 @@ mod tests {
             .await
             .expect("teardown bounds in-flight joins and aborts stragglers")
             .expect("session task joins");
+    }
+
+    /// Work a handler starts ends with its request, not with the connection: a stream producer
+    /// that kept waiting for events after its error terminal held a receiver until restart
+    /// (#113).
+    #[tokio::test]
+    async fn a_finished_request_cancels_the_work_its_handler_started() {
+        let tokens = Arc::new(std::sync::Mutex::new(Vec::<CancellationToken>::new()));
+        let mut registry = RpcRegistry::empty();
+        let stream_tokens = Arc::clone(&tokens);
+        registry.register_stream("test.fails", move |_request, cancellation| {
+            stream_tokens.lock().unwrap().push(cancellation);
+            let (sender, receiver) = mpsc::channel(1);
+            let _ = sender.try_send(Err(json!({ "_tag": "Gone" })));
+            receiver
+        });
+        let unary_tokens = Arc::clone(&tokens);
+        registry.register_unary("test.answers", move |_request, cancellation| {
+            unary_tokens.lock().unwrap().push(cancellation);
+            async { Ok(json!({})) }
+        });
+        let (written, mut frames) = mpsc::unbounded_channel();
+        let sink = Box::pin(futures_util::sink::unfold(
+            written,
+            |written, message: Message| async move {
+                let _ = written.send(message);
+                Ok::<_, Infallible>(written)
+            },
+        ));
+        let (inbound_sender, inbound_receiver) = mpsc::channel(1);
+        let reader = stream::unfold(inbound_receiver, |mut receiver| async {
+            receiver.recv().await.map(|item| (Ok(item), receiver))
+        });
+        let shutdown = CancellationToken::new();
+        let session = tokio::spawn(run_session_split_budgeted(
+            sink,
+            OutboundFraming::Whole,
+            ConnectionLiveness::new(),
+            reader,
+            registry,
+            RpcSessionContext::unauthenticated(),
+            shutdown.clone(),
+            None,
+        ));
+        let requests = json!([
+            { "_tag": "Request", "id": "1", "tag": "test.fails", "payload": {}, "headers": [] },
+            { "_tag": "Request", "id": "2", "tag": "test.answers", "payload": {}, "headers": [] },
+        ]);
+        inbound_sender
+            .send(RpcInboundFrame::plain(Message::Text(
+                requests.to_string().into(),
+            )))
+            .await
+            .expect("send requests");
+        for _ in 0..2 {
+            timeout(Duration::from_secs(2), frames.recv())
+                .await
+                .expect("every request is answered")
+                .expect("response frame");
+        }
+
+        // The connection stays open.
+        let tokens = tokens.lock().unwrap().clone();
+        assert_eq!(tokens.len(), 2);
+        for token in tokens {
+            timeout(Duration::from_secs(1), token.cancelled())
+                .await
+                .expect("a finished request's token is cancelled");
+        }
+        shutdown.cancel();
+        drop(inbound_sender);
+        timeout(Duration::from_secs(2), session)
+            .await
+            .expect("session cleanup deadline")
+            .expect("session joins");
     }
 
     /// Issue #84: the bounded join awaited a handle that already returned when the timeout

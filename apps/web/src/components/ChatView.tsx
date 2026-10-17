@@ -313,6 +313,7 @@ import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/Compos
 import {
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
+  buildRevertCheckpointConfirmation,
   buildThreadTurnInterruptInput,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
@@ -380,6 +381,11 @@ const SourceControlPanel = lazy(() => import("./SourceControlPanel"));
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
 const DevicePanel = lazy(() =>
   import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
+);
+const PullRequestPanelSurface = lazy(() =>
+  import("./pullRequests/PullRequestPanelSurface").then((module) => ({
+    default: module.PullRequestPanelSurface,
+  })),
 );
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
@@ -4977,11 +4983,10 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
       const confirmed = await localApi.dialogs.confirm(
-        [
-          `Revert this thread to checkpoint ${turnCount}?`,
-          "This will discard newer messages and turn diffs in this thread.",
-          "This action cannot be undone.",
-        ].join("\n"),
+        buildRevertCheckpointConfirmation({
+          turnCount,
+          provider: activeProviderStatus,
+        }),
       );
       if (!confirmed) {
         return;
@@ -5009,6 +5014,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeThread,
       activeEnvironmentUnavailable,
       activeEnvironmentUnavailableLabel,
+      activeProviderStatus,
       environmentId,
       isConnecting,
       isRevertingCheckpoint,
@@ -6714,6 +6720,17 @@ function ChatViewContent(props: ChatViewProps) {
     ) : activeRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel environmentId={activeThreadRef.environmentId} />
+      </Suspense>
+    ) : activeRightPanelSurface?.kind === "pullRequest" ? (
+      <Suspense fallback={null}>
+        <PullRequestPanelSurface
+          key={`${scopedThreadKey(activeThreadRef)}:${activeRightPanelSurface.id}`}
+          threadRef={activeThreadRef}
+          projectRef={activeProjectRef}
+          gitCwd={gitCwd}
+          workspaceUnavailable={workspaceUnavailable}
+          surface={activeRightPanelSurface}
+        />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "plan" ? (
       <PlanSidebar

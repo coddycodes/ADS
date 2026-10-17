@@ -65,6 +65,7 @@ export type SourceControlMenuItemId =
   | "pull"
   | "create_pr"
   | "open_pr"
+  | "open_pr_panel"
   | "publish"
   | "merge";
 
@@ -79,7 +80,7 @@ export interface SourceControlMenuItem {
    * actions below it. The caller renders the separator between groups.
    */
   group: "commit" | "remote";
-  kind: "run_stacked" | "run_pull" | "open_pr" | "open_publish" | "open_merge";
+  kind: "run_stacked" | "run_pull" | "open_pr" | "open_pr_panel" | "open_publish" | "open_merge";
   stackedAction?: GitStackedAction;
   commitStagedIndexAsIs?: boolean;
 }
@@ -95,6 +96,8 @@ export interface SourceControlPrimaryActionInput {
   stageableCount: number;
   /** The environment runs Git Manager fetch and merge operations for this project. */
   mergeAvailable: boolean;
+  /** The thread's right panel can show this branch's request (setting on, host supported). */
+  canOpenInPanel: boolean;
 }
 
 function resolveChangeRequestTerminology(
@@ -412,6 +415,15 @@ export function buildSourceControlMenuItems(
             ),
           }
         : null,
+    changeRequestsEnabled && hasOpenPr && input.canOpenInPanel
+      ? {
+          id: "open_pr_panel",
+          label: `Open ${terminology.shortLabel} in panel`,
+          group: "remote",
+          kind: "open_pr_panel",
+          ...gate(undefined),
+        }
+      : null,
   ];
 
   if (pushEnabledForRef) {

@@ -119,6 +119,38 @@ describe("useRunPullRequestsAction", () => {
     expect(refresh.navigate).not.toHaveBeenCalled();
     expect(h.toast).toHaveBeenCalledWith(expect.objectContaining({ type: "success" }));
   });
+  it("lets the panel discard a request deleted after its view unmounted", async () => {
+    const discardDeleted = vi.fn();
+    await act(async () =>
+      root.render(
+        <PullRequestsActionProvider
+          requestKind="pull request"
+          scope={{ environmentId: "env" as EnvironmentId, cwd: "Z:\\repo" }}
+          number={14}
+          refresh={{ ...refresh, discardDeleted }}
+        >
+          <Probe />
+        </PullRequestsActionProvider>,
+      ),
+    );
+    let finish!: (result: unknown) => void;
+    h.command.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    let current!: Promise<unknown>;
+    act(() => {
+      current = actions.run({ action: "delete" });
+    });
+    await act(async () => root.unmount());
+    await act(async () => {
+      finish({ _tag: "Success", value: { kind: "deleted" } });
+      await current;
+    });
+    expect(discardDeleted).toHaveBeenCalledOnce();
+    expect(refresh.navigate).not.toHaveBeenCalled();
+  });
   it("disables controls and refuses dispatch when the environment does not support mutations", async () => {
     await act(async () =>
       root.render(

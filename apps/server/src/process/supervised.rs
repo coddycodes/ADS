@@ -1283,10 +1283,17 @@ mod tests {
     }
 
     /// The path that logged "supervised process cleanup was incomplete" for an
-    /// already-exited group: a failed run hands its child to owned cleanup.
+    /// already-exited group: a failed run hands its child to owned cleanup. In a
+    /// process of its own, where no sibling test can turn the warning off for this
+    /// capture and so pass the absence check without checking anything.
     #[cfg(unix)]
     #[tokio::test]
     async fn owned_cleanup_of_an_already_reaped_process_group_logs_no_warning() {
+        let Some(isolated) = crate::test_support::in_own_process(
+            "process::supervised::tests::owned_cleanup_of_an_already_reaped_process_group_logs_no_warning",
+        ) else {
+            return;
+        };
         let log = CapturedLog::default();
         let _logging = tracing::subscriber::set_default(
             tracing_subscriber::fmt()
@@ -1305,9 +1312,16 @@ mod tests {
 
         terminate_and_wait_owned(child, PROCESS_CLEANUP_WAIT_TIMEOUT, "supervised process").await;
 
-        let log =
-            String::from_utf8(log.0.lock().expect("captured log").clone()).expect("UTF-8 log");
-        assert!(!log.contains("cleanup was incomplete"), "{log}");
+        let text =
+            || String::from_utf8(log.0.lock().expect("captured log").clone()).expect("UTF-8 log");
+        assert!(!text().contains("cleanup was incomplete"), "{}", text());
+
+        // The same warning, for a cleanup that did fail, reaches this capture.
+        let mut failed = ProcessCleanupReport::default();
+        failed.record_failure("probe");
+        log_cleanup_failures("supervised process", &failed);
+        assert!(text().contains("cleanup was incomplete"), "{}", text());
+        isolated.complete();
     }
 
     /// Only a target that no longer exists is exempt: any other kill error is

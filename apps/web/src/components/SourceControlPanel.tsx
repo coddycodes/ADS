@@ -45,6 +45,7 @@ import { Textarea } from "~/components/ui/textarea";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useDiffPanelStore } from "~/diffPanelStore";
 import { usePreferredEditor } from "~/editorPreferences";
+import { usePrimarySettings } from "~/hooks/useSettings";
 import { openPullRequestLink } from "~/lib/openPullRequestLink";
 import {
   useGitStackedAction,
@@ -112,6 +113,7 @@ import { GIT_MANAGER_STASH_MERGE_DISABLED_REASON } from "./gitManager/gitManager
 import { GitManagerInProgressStrip } from "./gitManager/GitManagerInProgressStrip";
 import { GitManagerMergeDialog } from "./gitManager/merge/GitManagerMergeDialog";
 import { GitManagerOperationBanner } from "./gitManager/toolbar/GitManagerOperationBanner";
+import { canOpenPullRequestInPanel } from "./pullRequests/pullRequestsAvailability";
 import { SourceControlMergeChanges } from "./SourceControlMergeChanges";
 import {
   GitManagerCreatePullRequestDialog,
@@ -178,6 +180,7 @@ export default function SourceControlPanel({
 }: SourceControlPanelProps) {
   const environmentId = threadRef.environmentId;
   const scope = useMemo(() => ({ environmentId, cwd: gitCwd }), [environmentId, gitCwd]);
+  const pullRequestsEnabled = usePrimarySettings((settings) => settings.pullRequestsEnabled);
 
   const statusQuery = useEnvironmentQuery(
     gitCwd === null || workspaceUnavailable !== null
@@ -343,9 +346,13 @@ export default function SourceControlPanel({
     () => resolveQuickAction(status, isBusy, isDefaultRef, hasPrimaryRemote),
     [status, isBusy, isDefaultRef, hasPrimaryRemote],
   );
+  const canOpenInPanel = canOpenPullRequestInPanel({
+    enabled: pullRequestsEnabled,
+    providerKind: status?.sourceControlProvider?.kind ?? "unknown",
+  });
   const menuItems = useMemo(
-    () => buildMenuItems(status, isBusy, hasPrimaryRemote),
-    [status, isBusy, hasPrimaryRemote],
+    () => buildMenuItems(status, isBusy, hasPrimaryRemote, canOpenInPanel),
+    [status, isBusy, hasPrimaryRemote, canOpenInPanel],
   );
 
   // Staging-area servers use the commit-first Source Control ladder (staged ->
@@ -361,8 +368,18 @@ export default function SourceControlPanel({
       stagedCount,
       stageableCount,
       mergeAvailable,
+      canOpenInPanel,
     }),
-    [status, isBusy, isDefaultRef, hasPrimaryRemote, stagedCount, stageableCount, mergeAvailable],
+    [
+      status,
+      isBusy,
+      isDefaultRef,
+      hasPrimaryRemote,
+      stagedCount,
+      stageableCount,
+      mergeAvailable,
+      canOpenInPanel,
+    ],
   );
   const primaryAction = useMemo(
     () => resolveSourceControlPrimaryAction(primaryActionInput),
@@ -795,6 +812,15 @@ export default function SourceControlPanel({
     void openPullRequestLink(api.shell, prUrl);
   }, [status]);
 
+  const openPrInPanel = useCallback(() => {
+    const pr = status?.pr?.state === "open" ? status.pr : null;
+    if (!pr) return;
+    useRightPanelStore.getState().openPullRequest(threadRef, {
+      number: pr.number,
+      provider: status?.sourceControlProvider?.kind ?? "unknown",
+    });
+  }, [status, threadRef]);
+
   const onPrimaryAction = useCallback(() => {
     if (quickAction.kind === "open_pr") return openPr();
     if (quickAction.kind === "run_pull") return void runPull();
@@ -840,6 +866,9 @@ export default function SourceControlPanel({
         case "open_pr":
           openPr();
           return;
+        case "open_pr_panel":
+          openPrInPanel();
+          return;
         case "open_publish":
           // The publish wizard lives in the (frozen) chat-header GitActionsControl;
           // the panel renders this item disabled and no-ops here.
@@ -849,7 +878,7 @@ export default function SourceControlPanel({
           return;
       }
     },
-    [openPr, runGitAction, runPull],
+    [openPr, openPrInPanel, runGitAction, runPull],
   );
 
   const onRequestDiscardFile = useCallback((file: WorkingTreeFile) => {
@@ -1194,6 +1223,7 @@ export default function SourceControlPanel({
                               (hasAreas ? groups.staged.length === 0 : files.length === 0))
                           }
                           onClick={() => {
+                            if (item.kind === "open_pr_panel") return openPrInPanel();
                             if (item.kind === "open_pr") return openPr();
                             if (item.dialogAction) return void runGitAction(item.dialogAction);
                           }}
@@ -1396,6 +1426,15 @@ export default function SourceControlPanel({
           onSettled={(result) => {
             if (result.commit.status === "created") draft.clear();
             reloadCommits();
+          }}
+          onDone={(request) => {
+            if (
+              canOpenPullRequestInPanel({
+                enabled: pullRequestsEnabled,
+                providerKind: request.provider,
+              })
+            )
+              useRightPanelStore.getState().openPullRequest(threadRef, request);
           }}
         />
       ) : null}

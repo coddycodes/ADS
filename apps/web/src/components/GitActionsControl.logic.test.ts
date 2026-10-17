@@ -49,6 +49,34 @@ describe("when: ref is clean and has an open PR", () => {
     assert.deepInclude(quick, { kind: "open_pr", label: "View PR", disabled: false });
   });
 
+  it("buildMenuItems offers opening the PR in the thread's panel only when asked", () => {
+    const withPr = status({
+      pr: {
+        number: 11,
+        title: "Existing PR",
+        url: "https://example.com/pr/11",
+        baseRef: "main",
+        headRef: "feature/test",
+        state: "open",
+      },
+    });
+    assert.notInclude(
+      buildMenuItems(withPr, false).map((item) => item.id),
+      "pr_panel",
+    );
+    assert.deepInclude(buildMenuItems(withPr, false, true, true).at(-1), {
+      id: "pr_panel",
+      label: "Open PR in panel",
+      disabled: false,
+      icon: "pr",
+      kind: "open_pr_panel",
+    });
+    assert.notInclude(
+      buildMenuItems(status(), false, true, true).map((item) => item.id),
+      "pr_panel",
+    );
+  });
+
   it("buildMenuItems disables commit/push and enables open PR", () => {
     const items = buildMenuItems(
       status({

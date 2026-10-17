@@ -319,7 +319,7 @@ impl TurnDeliveryService {
     }
 }
 
-fn workspace_admission_detail(error: WorkspaceAdmissionError) -> String {
+pub(crate) fn workspace_admission_detail(error: WorkspaceAdmissionError) -> String {
     match error {
         WorkspaceAdmissionError::Unavailable(error) => error.message,
         WorkspaceAdmissionError::Identity(error) => error.message,

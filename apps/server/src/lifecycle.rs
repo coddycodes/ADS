@@ -372,7 +372,7 @@ impl ServerRuntime {
                         ConnectMcpConfig {
                             environment_id: config.environment_id.clone(),
                             descriptor,
-                            mcp_endpoint: format!("http://{local_addr}/mcp"),
+                            mcp_endpoint: provider_mcp_endpoint(local_addr),
                             open_url_endpoint: format!(
                                 "{}/api/preview/open-url",
                                 local_http_base(local_addr)
@@ -845,6 +845,12 @@ fn appimage_entry(
         .then_some(image)
 }
 
+/// The MCP endpoint providers on this host are given. A wildcard bind answers on loopback, so a
+/// desktop listening on every interface does not send its providers there.
+fn provider_mcp_endpoint(local_addr: SocketAddr) -> String {
+    format!("{}/mcp", local_http_base(local_addr))
+}
+
 /// How a process on this host reaches the server; a wildcard bind answers on loopback.
 fn local_http_base(local_addr: SocketAddr) -> String {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -959,6 +965,15 @@ mod tests {
         ] {
             assert_eq!(local_http_base(SocketAddr::new(ip, 3773)), expected);
         }
+    }
+
+    #[test]
+    fn providers_reach_the_mcp_endpoint_on_loopback() {
+        use std::net::{IpAddr, Ipv4Addr};
+        assert_eq!(
+            provider_mcp_endpoint(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 3773)),
+            "http://127.0.0.1:3773/mcp"
+        );
     }
 
     #[test]

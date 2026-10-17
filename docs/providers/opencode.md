@@ -16,6 +16,15 @@ Server URL: empty
 Server password: empty
 ```
 
+## Supported versions
+
+BiBCode drives OpenCode 1.x through its V1 server API. OpenCode 2 replaced that
+API with `/api/*` routes and is not supported yet. When the resolved `opencode`
+reports version 2 or later, the provider shows an error asking you to set
+**Binary path** to an OpenCode 1.x executable, and inventory does not start an
+OpenCode 2 server. A configured **Server URL** that runs OpenCode 2 reports the
+same error, naming **Server URL** instead.
+
 ## Updates and version advisories
 
 BiBCode selects an update source from the resolved `opencode` executable and
@@ -46,8 +55,12 @@ session:
 opencode serve --hostname=127.0.0.1 --port=<available-port>
 ```
 
-BiBCode generates a temporary password, waits for the loopback endpoint to
-become ready, and stops the child process with the provider session. Inventory
+BiBCode generates a temporary password, waits until the loopback endpoint's
+authenticated `GET /global/health` answers `{"healthy": true}`, and stops the
+child process with the provider session. Any other answer, such as the HTML that
+OpenCode 2 serves for V1 paths, is not readiness. An OpenCode 2 server is
+identified by its `GET /api/info` version and stopped at once with the
+unsupported-version error. Inventory
 uses the same managed-server approach to discover authentication state, models,
 agents, and commands. On Windows, a standard npm `opencode.cmd` installation is
 resolved to its packaged native `opencode.exe` for managed launches so the

@@ -62,6 +62,7 @@ vi.mock("../../DiffWorkerPoolProvider", () => ({
   DiffWorkerPoolProvider: ({ children }: { children: ReactNode }) => children,
 }));
 import { PullRequestsFiles } from "../detail/PullRequestsFiles";
+import { PullRequestsRouteNavigation } from "../detail/pullRequestsNavigation";
 let view: Awaited<ReturnType<typeof mount>>;
 const files = {
   files: [
@@ -74,13 +75,15 @@ const files = {
   truncated: false,
 };
 const ui = (
-  <PullRequestsFiles
-    files={files}
-    detail={{ ...detail, permissions: { ...detail.permissions, review: allowed } }}
-    projectRef={projectRef}
-    context={context}
-    timeline={{ items: [{ ...thread, path: file.path, line: 1 }], truncated: false }}
-  />
+  <PullRequestsRouteNavigation projectRef={projectRef} number={detail.number}>
+    <PullRequestsFiles
+      files={files}
+      detail={{ ...detail, permissions: { ...detail.permissions, review: allowed } }}
+      projectRef={projectRef}
+      context={context}
+      timeline={{ items: [{ ...thread, path: file.path, line: 1 }], truncated: false }}
+    />
+  </PullRequestsRouteNavigation>
 );
 beforeEach(() => {
   usePullRequestsStore.setState({ byProjectKey: {} });
@@ -119,30 +122,32 @@ describe("Files review integration", () => {
   it("offers Apply N selected in the Files header and sends the selected suggestion ids", async () => {
     const suggestion = thread.comments[0]!.suggestion!;
     view = await mount(
-      <PullRequestsFiles
-        files={files}
-        detail={{ ...detail, permissions: { ...detail.permissions, applySuggestion: allowed } }}
-        context={context}
-        projectRef={projectRef}
-        timeline={{
-          items: [
-            {
-              ...thread,
-              path: file.path,
-              line: 1,
-              comments: [
-                { ...thread.comments[0]!, suggestion: { ...suggestion, id: "101" } },
-                {
-                  ...thread.comments[0]!,
-                  id: "rc:2:node",
-                  suggestion: { ...suggestion, id: "102" },
-                },
-              ],
-            },
-          ],
-          truncated: false,
-        }}
-      />,
+      <PullRequestsRouteNavigation projectRef={projectRef} number={detail.number}>
+        <PullRequestsFiles
+          files={files}
+          detail={{ ...detail, permissions: { ...detail.permissions, applySuggestion: allowed } }}
+          context={context}
+          projectRef={projectRef}
+          timeline={{
+            items: [
+              {
+                ...thread,
+                path: file.path,
+                line: 1,
+                comments: [
+                  { ...thread.comments[0]!, suggestion: { ...suggestion, id: "101" } },
+                  {
+                    ...thread.comments[0]!,
+                    id: "rc:2:node",
+                    suggestion: { ...suggestion, id: "102" },
+                  },
+                ],
+              },
+            ],
+            truncated: false,
+          }}
+        />
+      </PullRequestsRouteNavigation>,
     );
     await click("Show diff");
     const checkboxes = view.container.querySelectorAll<HTMLInputElement>(

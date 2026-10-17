@@ -17,6 +17,51 @@ import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./t
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
 
+function isPlainObject(value: unknown): value is Readonly<Record<string, unknown>> {
+  if (typeof value !== "object" || value === null) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * `next`, keeping `previous` wherever the two are deep-equal.
+ *
+ * Only arrays and plain objects are compared, element by element and key by key; any other value
+ * is kept from `previous` only when identical. A thread is decoded JSON, so this covers all of it.
+ *
+ * `shared` remembers what each `next` object resolved to. A patch keeps every object it did not
+ * change, so a source that still holds one costs a lookup rather than another deep comparison,
+ * even when the UI holds the copy an earlier resend was matched to.
+ */
+function shareUnchanged<T>(previous: unknown, next: T, shared: WeakMap<object, unknown>): T {
+  if (Object.is(previous, next) || typeof next !== "object" || next === null) return next;
+  if (shared.has(next) && shared.get(next) === previous) return previous as T;
+  let result: unknown = next;
+  if (Array.isArray(previous) && Array.isArray(next)) {
+    let unchanged = previous.length === next.length;
+    const items = next.map((item: unknown, index) => {
+      const value = shareUnchanged(previous[index], item, shared);
+      if (value !== previous[index]) unchanged = false;
+      return value;
+    });
+    result = unchanged ? previous : items;
+  } else if (isPlainObject(previous) && isPlainObject(next)) {
+    const keys = Object.keys(next);
+    let unchanged = keys.length === Object.keys(previous).length;
+    // Own keys only, and `fromEntries` defines data properties, so a payload's own `__proto__`
+    // key stays a key instead of reaching the prototype accessor.
+    const entries = keys.map((key) => {
+      const owned = Object.hasOwn(previous, key);
+      const value = shareUnchanged(owned ? previous[key] : undefined, next[key], shared);
+      if (!owned || value !== previous[key]) unchanged = false;
+      return [key, value] as const;
+    });
+    result = unchanged ? previous : Object.fromEntries(entries);
+  }
+  shared.set(next, result);
+  return result as T;
+}
+
 const EMPTY_MESSAGES: ReadonlyArray<OrchestrationMessage> = Object.freeze([]);
 const EMPTY_ACTIVITIES: ReadonlyArray<OrchestrationThreadActivity> = Object.freeze([]);
 const EMPTY_PROPOSED_PLANS: ReadonlyArray<OrchestrationProposedPlan> = Object.freeze([]);
@@ -84,13 +129,19 @@ export function createEnvironmentThreadDetailAtoms<E>(
     const ref = parseThreadKey(key);
     let previousSource: OrchestrationThread | null = null;
     let previousValue: EnvironmentThread | null = null;
+    const shared = new WeakMap<object, unknown>();
     return Atom.make((get) => {
       const source = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
       if (source === previousSource) {
         return previousValue;
       }
       previousSource = source;
-      previousValue = source === null ? null : scopeThread(ref.environmentId, source);
+      // A reconnect resends the whole thread as a new object graph. Keep what did not change, so
+      // the UI neither re-renders for it nor pins each superseded copy in memoized closures (#96).
+      previousValue =
+        source === null
+          ? null
+          : shareUnchanged(previousValue, scopeThread(ref.environmentId, source), shared);
       return previousValue;
     }).pipe(
       Atom.setIdleTTL(THREAD_STATE_IDLE_TTL_MS),

@@ -93,6 +93,17 @@ describe("ServerProvider", () => {
     ).toThrow();
   });
 
+  it("keeps older snapshots compatible with the optional conversation-rewind capability", () => {
+    expect(decodeServerProvider(baseProviderSnapshot).supportsConversationRewind).toBeUndefined();
+    expect(
+      decodeServerProvider({ ...baseProviderSnapshot, supportsConversationRewind: true })
+        .supportsConversationRewind,
+    ).toBe(true);
+    expect(() =>
+      decodeServerProvider({ ...baseProviderSnapshot, supportsConversationRewind: "true" }),
+    ).toThrow();
+  });
+
   it("defaults capability arrays when decoding provider snapshots", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",

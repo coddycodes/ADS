@@ -200,6 +200,52 @@ is unavailable, returns to the queue with its reason on the card. Interrupts and
 errors keep queued messages on hold until you use **Send now**. See
 [Queued messages](../user/workspace-ui.md#queued-messages) for queue controls.
 
+## BiBCode tools
+
+Each Claude chat session gets the BiBCode MCP server (`bibcode`) with a
+credential scoped to its thread. BiBCode writes that server's configuration,
+bearer token included, to a file only your user can read (mode `0600` on Linux
+and macOS, an owner-only access list on Windows) in the system temporary directory and passes the file's path to
+`--mcp-config`, so the token never appears on Claude's command line, where any
+local process could read it. The file is removed when the session ends. The
+server's MCP URL uses loopback (`127.0.0.1`) even when BiBCode listens on every
+interface.
+
+The credential is a random token that exists only in the running server's
+memory, as a hash. It expires after eight hours, is replaced when a message
+starts the thread's session again after it was suspended or stopped, and is
+discarded when BiBCode quits. To retire a token that may have been exposed, quit
+and restart BiBCode, or stop the thread's session and send it a new message.
+
+## Background work and idle suspension
+
+BiBCode suspends an idle chat session 60 seconds after its turn ends and
+resumes the same conversation on the next message. A Claude session is not idle
+while Claude still runs work outside a turn: `run_in_background` Bash commands,
+Monitor watches, background subagents, or MCP calls Claude moved to the
+background. Claude reports these on its stream-JSON output, with or without hook
+events and whatever the Chat Activity setting, in `system` messages
+(`task_started`, `task_progress`, `task_updated`, `task_notification`, and
+`background_tasks_changed`, which carries the complete live set in Claude Code
+2.1.203 and later; see the
+[Agent SDK reference](https://code.claude.com/docs/en/agent-sdk/typescript)).
+BiBCode counts tasks that are neither foreground nor `ambient` and keeps the
+session while the count is non-zero and Claude has written something in the
+last 30 minutes.
+
+When a background task finishes, Claude answers it in a turn it starts itself:
+a `user` message and a `result` whose `origin.kind` is `task-notification`.
+BiBCode gives that answer a turn of its own, so the thread reads running and
+idle suspension waits for its result. Between the finished task and that turn
+the session stays busy.
+
+If a session was stopped while background work ran (for example by an earlier
+version of BiBCode), resuming it makes Claude deliver the stopped tasks'
+notification first. Claude can report that turn's `result` before it reads the
+new message; BiBCode ignores that `result` and logs `ignored a Claude result
+that arrived before the turn's input was read`, then the new message runs as
+its own turn.
+
 ## Activity observation
 
 BiBCode detects Claude activity features from the configured executable instead
@@ -213,6 +259,17 @@ only when help advertises both exact switches:
 
 If either switch is unavailable or the bounded probe fails, Claude still runs in
 its normal stream-JSON mode without structured hook activity.
+
+A launch waits up to two seconds for the probe. The probe itself may run for up
+to five seconds, so a slow first `--help` still records its answer for the next
+launch. BiBCode caches only a probe in which both commands answered, keyed by the
+executable's identity and version. A failed or timed-out probe is not cached,
+so the next launch probes again instead of running without the switches for the
+life of the server. Each probe run writes one line to `server.log`: `Claude
+activity probe finished` with `outcome` (`supported` or `unsupported`), the
+version, and the elapsed time, or a `Claude activity probe failed` warning with
+`outcome` (`failed` or `timed out`) and the reason. A launch that stops waiting
+logs `launching Claude without activity flags`.
 
 Structured chat control correlation is stricter than display observation.
 BiBCode exposes a private task target only after one session and Activity

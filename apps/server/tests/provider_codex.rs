@@ -1676,6 +1676,55 @@ fn codex_activity_automatic_sequences_remain_unique_past_u64_max() {
 }
 
 #[test]
+fn codex_activity_downgrades_recovery_only_for_a_missing_method() {
+    let downgrades = |request_id: &str, error: Value| {
+        CodexActivityFixtureAdapter::new(Some("root-1"))
+            .handle_envelope(&json!({ "id": request_id, "error": error }))
+            .mutations
+            .iter()
+            .any(|mutation| {
+                matches!(
+                    mutation,
+                    ProviderActivityMutation::SetScope { capabilities, .. }
+                        if capabilities.history_recovery
+                            == bibcode_server::activity::ActivityHistoryRecovery::None
+                )
+            })
+    };
+    assert!(downgrades(
+        "recovery-list-1",
+        json!({"code": -32601, "message": "Method not found: thread/list"})
+    ));
+    // Codex's request decoding rejects a method it lacks with -32600.
+    assert!(downgrades(
+        "recovery-list-1",
+        json!({
+            "code": -32600,
+            "message": "Invalid request: unknown variant `thread/list`, expected one of `initialize`, `thread/start`"
+        })
+    ));
+    assert!(downgrades(
+        "recovery-read-1",
+        json!({
+            "code": -32600,
+            "message": "Invalid request: unknown variant `thread/read`, expected one of `initialize`, `thread/start`"
+        })
+    ));
+    // Other invalid requests, including a bad enum parameter, are not a missing method.
+    assert!(!downgrades(
+        "recovery-list-1",
+        json!({"code": -32600, "message": "Invalid request: missing field `ancestorThreadId`"})
+    ));
+    assert!(!downgrades(
+        "recovery-list-1",
+        json!({
+            "code": -32600,
+            "message": "Invalid request: unknown variant `sideways`, expected `asc` or `desc`"
+        })
+    ));
+}
+
+#[test]
 fn codex_activity_ignores_unknown_items_and_bounds_internal_state() {
     let mut tracker = CodexActivityFixtureAdapter::new(Some("root-1"));
     let receivers = (0..600)
@@ -5690,6 +5739,142 @@ async fn reconciliation_repairs_missed_history_and_official_background_terminals
 
 #[tokio::test]
 async fn reconciliation_background_method_downgrade_isolated_and_warned_once() {
+    assert_background_list_downgrades_once(json!({
+        "code": -32601,
+        "message": "Method not found",
+        "data": null
+    }))
+    .await;
+}
+
+/// Codex rejects a method its request enum lacks while decoding the request, with -32600
+/// (`deserialize_client_request` in `codex-rs/app-server/src/message_processor.rs`; the same
+/// shape `thread/rollback` gets from a live 0.162.1).
+#[tokio::test]
+async fn reconciliation_downgrades_a_method_codex_rejects_as_an_unknown_variant() {
+    assert_background_list_downgrades_once(json!({
+        "code": -32600,
+        "message": "Invalid request: unknown variant `thread/backgroundTerminals/list`, expected one of `initialize`, `thread/start`, `thread/resume`"
+    }))
+    .await;
+}
+
+/// A -32600 that is not about the method name is an invalid request, not a missing method:
+/// the pass is stale and the next pass asks again.
+#[tokio::test]
+async fn reconciliation_retries_an_invalid_request_instead_of_downgrading() {
+    let (connection, _protocol_incoming, mut peer) = scripted_peer();
+    let (incoming_tx, incoming_rx) = mpsc::unbounded_channel();
+    let runtime = project_runtime(connection, incoming_rx);
+    peer.expect_request("initialize", fixture("initialize-params.json"))
+        .respond(json!({}));
+    peer.expect_notification("initialized");
+    peer.expect_request(
+        "thread/start",
+        fixture("reconnect-scenario.json")["initialThreadStartRequest"].clone(),
+    )
+    .respond(json!({
+        "thread": {"id": "provider-root"},
+        "cwd": "/tmp/project",
+        "model": "gpt-5.3-codex"
+    }));
+    for background_list in [
+        Err(json!({
+            "code": -32600,
+            "message": "Invalid request: missing field `threadId`"
+        })),
+        Ok(empty_background_terminal_list_result()),
+    ] {
+        peer.expect_request(
+            "thread/read",
+            json!({"threadId": "provider-root", "includeTurns": true}),
+        )
+        .respond(empty_root_thread_read_result());
+        peer.expect_request(
+            "thread/list",
+            json!({"ancestorThreadId": "provider-root", "limit": 50}),
+        )
+        .respond(empty_thread_list_result());
+        let step = peer.expect_request(
+            "thread/backgroundTerminals/list",
+            json!({"threadId": "provider-root", "limit": 128}),
+        );
+        match background_list {
+            Ok(result) => step.respond(result),
+            Err(error) => step.respond_error(error),
+        };
+    }
+    peer.expect_request("shutdown", Value::Null)
+        .respond(Value::Null);
+    let peer_task = tokio::spawn(peer.run());
+
+    runtime.start().await.expect("runtime starts");
+    runtime.collect_events(2).await;
+    incoming_tx
+        .send(IncomingEvent::Notification {
+            method: "thread/started".to_owned(),
+            params: json!({"thread": {"id": "provider-root"}}),
+            emitted_at_ms: 1_000,
+        })
+        .expect("root notification");
+    let stale = timeout(Duration::from_secs(2), async {
+        loop {
+            let event = runtime.next_event().await.expect("reconciliation event");
+            assert_ne!(
+                event.event_type, "runtime.warning",
+                "an invalid request must not be reported as an unsupported method"
+            );
+            if event.native_event_id.as_deref() == Some("codex:reconciliation:0") {
+                return event;
+            }
+        }
+    })
+    .await
+    .expect("stale reconciliation");
+    assert!(stale.activity.iter().any(|mutation| matches!(
+        mutation,
+        ProviderActivityMutation::SetScope {
+            observation_state: ActivityObservationState::Stale,
+            ..
+        }
+    )));
+
+    incoming_tx
+        .send(IncomingEvent::Notification {
+            method: "item/started".to_owned(),
+            params: json!({
+                "threadId": "provider-root",
+                "turnId": "root-turn",
+                "item": {
+                    "id": "spawn-after-invalid-request",
+                    "type": "collabAgentToolCall",
+                    "tool": "spawnAgent",
+                    "status": "inProgress",
+                    "senderThreadId": "provider-root",
+                    "receiverThreadIds": ["child-after-invalid-request"],
+                    "agentsStates": {}
+                }
+            }),
+            emitted_at_ms: 1_001,
+        })
+        .expect("follow-up collaboration hint");
+    let retried = next_codex_event_matching(&runtime, |event| {
+        event.native_event_id.as_deref() == Some("codex:reconciliation:1")
+    })
+    .await;
+    assert!(retried.activity.iter().any(|mutation| matches!(
+        mutation,
+        ProviderActivityMutation::SetScope {
+            observation_state: ActivityObservationState::Live,
+            ..
+        }
+    )));
+
+    runtime.shutdown().await.expect("runtime shuts down");
+    peer_task.await.expect("peer task");
+}
+
+async fn assert_background_list_downgrades_once(missing_method_error: Value) {
     let (connection, _protocol_incoming, mut peer) = scripted_peer();
     let (incoming_tx, incoming_rx) = mpsc::unbounded_channel();
     let runtime = CodexSessionRuntime::new(
@@ -5742,11 +5927,7 @@ async fn reconciliation_background_method_downgrade_isolated_and_warned_once() {
         "thread/backgroundTerminals/list",
         json!({"threadId": "provider-root", "limit": 128}),
     )
-    .respond_error(json!({
-        "code": -32601,
-        "message": "Method not found",
-        "data": null
-    }));
+    .respond_error(missing_method_error);
     peer.expect_request(
         "thread/read",
         json!({"threadId": "provider-root", "includeTurns": true}),
@@ -8565,22 +8746,6 @@ async fn reconnect_resume_fallback_and_shutdown_stay_correlated() {
         )
         .respond(json!({"data": [], "nextCursor": null}));
     peer_b
-        .expect_request(
-            "thread/rollback",
-            json!({
-                "threadId": "provider-thread-2",
-                "numTurns": 1
-            }),
-        )
-        .respond(json!({
-            "thread": {
-                "id": "provider-thread-2",
-                "turns": [
-                    { "id": "fixture-turn", "items": [] }
-                ]
-            }
-        }));
-    peer_b
         .expect_request("shutdown", Value::Null)
         .respond(Value::Null);
     let peer_b_task = tokio::spawn(peer_b.run());
@@ -8600,10 +8765,216 @@ async fn reconnect_resume_fallback_and_shutdown_stay_correlated() {
             ..
         }
     )));
-    let rollback = runtime.rollback_thread(1).await.expect("rollback");
-    assert_eq!(rollback.thread_id, "provider-thread-2");
     runtime.shutdown().await.expect("shutdown");
     peer_b_task.await.expect("peer b");
+}
+
+fn project_runtime(
+    connection: JsonRpcConnection,
+    incoming: mpsc::UnboundedReceiver<IncomingEvent>,
+) -> CodexSessionRuntime {
+    CodexSessionRuntime::new(
+        CodexSessionOptions {
+            version: "0.1.1".to_owned(),
+            thread_id: "fixture-thread".to_owned(),
+            cwd: "/tmp/project".to_owned(),
+            runtime_mode: CodexRuntimeMode::FullAccess,
+            model: Some("gpt-5.3-codex".to_owned()),
+            service_tier: None,
+            effort: None,
+            resume_cursor: None,
+        },
+        connection,
+        incoming,
+    )
+}
+
+/// Codex 0.151+ starts every new thread with paginated history and rewinds it through
+/// `thread/revert` before a turn ID. Older Codex omits `historyMode` (`None`).
+fn expect_rewind_session_start(peer: &mut ScriptedPeer, history_mode: Option<&str>) {
+    let reconnect_fixture = fixture("reconnect-scenario.json");
+    let mut thread = json!({ "id": "provider-thread-1", "turns": [] });
+    if let Some(history_mode) = history_mode {
+        thread["historyMode"] = json!(history_mode);
+    }
+    peer.expect_request("initialize", fixture("initialize-params.json"))
+        .respond(json!({ "userAgent": "bibcode_desktop/0.162.1" }));
+    peer.expect_notification("initialized");
+    peer.expect_request(
+        "thread/start",
+        reconnect_fixture["initialThreadStartRequest"].clone(),
+    )
+    .respond(json!({
+        "cwd": "/tmp/project",
+        "model": "gpt-5.3-codex",
+        "thread": thread
+    }));
+}
+
+#[tokio::test]
+async fn paginated_thread_rollback_reverts_before_the_oldest_rolled_back_turn() {
+    let (connection, incoming, mut peer) = scripted_peer();
+    let runtime = project_runtime(connection, incoming);
+    expect_rewind_session_start(&mut peer, Some("paginated"));
+    // Three turns back, across two newest-first pages.
+    peer.expect_request(
+        "thread/turns/list",
+        json!({
+            "threadId": "provider-thread-1",
+            "limit": 3,
+            "sortDirection": "desc",
+            "itemsView": "notLoaded"
+        }),
+    )
+    .respond(json!({
+        "data": [{ "id": "turn-5", "items": [] }, { "id": "turn-4", "items": [] }],
+        "nextCursor": "page-2",
+        "backwardsCursor": "turn-5"
+    }));
+    peer.expect_request(
+        "thread/turns/list",
+        json!({
+            "threadId": "provider-thread-1",
+            "limit": 1,
+            "sortDirection": "desc",
+            "itemsView": "notLoaded",
+            "cursor": "page-2"
+        }),
+    )
+    .respond(json!({
+        "data": [{ "id": "turn-3", "items": [] }],
+        "nextCursor": "page-3",
+        "backwardsCursor": "turn-3"
+    }));
+    let revert_response = json!({
+        "thread": {
+            "id": "provider-thread-1",
+            "historyMode": "paginated",
+            "turns": []
+        },
+        "turnsBackwardsCursor": null,
+        "itemsBackwardsCursor": null
+    });
+    peer.expect_request(
+        "thread/revert",
+        json!({ "threadId": "provider-thread-1", "beforeTurnId": "turn-3" }),
+    )
+    .respond(revert_response.clone());
+    // Codex holds fewer turns than requested: rewind everything it still has.
+    peer.expect_request(
+        "thread/turns/list",
+        json!({
+            "threadId": "provider-thread-1",
+            "limit": 5,
+            "sortDirection": "desc",
+            "itemsView": "notLoaded"
+        }),
+    )
+    .respond(json!({
+        "data": [{ "id": "turn-2", "items": [] }, { "id": "turn-1", "items": [] }],
+        "nextCursor": null,
+        "backwardsCursor": "turn-2"
+    }));
+    peer.expect_request(
+        "thread/revert",
+        json!({ "threadId": "provider-thread-1", "beforeTurnId": "turn-1" }),
+    )
+    .respond(revert_response);
+    peer.expect_request("shutdown", Value::Null)
+        .respond(Value::Null);
+    let peer_task = tokio::spawn(peer.run());
+
+    runtime.start().await.expect("start");
+    runtime
+        .rollback_thread(0)
+        .await
+        .expect("rolling back no turns sends nothing");
+    runtime
+        .rollback_thread(3)
+        .await
+        .expect("paginated rollback reverts three turns");
+    runtime
+        .rollback_thread(5)
+        .await
+        .expect("paginated rollback reverts every remaining turn");
+    runtime.shutdown().await.expect("shutdown");
+    peer_task.await.expect("peer");
+}
+
+/// Only a paginated thread can be rewound. A Codex that reports no `historyMode` predates
+/// `thread/revert`; a `legacy` thread is rejected by it. Both fail without a request.
+#[tokio::test]
+async fn rewind_without_paginated_history_fails_before_contacting_codex() {
+    for (history_mode, next_step) in [
+        (None, "Update Codex to 0.151.0 or later"),
+        (
+            Some("legacy"),
+            "Start a new thread on Codex 0.151.0 or later",
+        ),
+    ] {
+        let (connection, incoming, mut peer) = scripted_peer();
+        let runtime = project_runtime(connection, incoming);
+        expect_rewind_session_start(&mut peer, history_mode);
+        // The next request the peer accepts is shutdown: no rewind request may come first.
+        peer.expect_request("shutdown", Value::Null)
+            .respond(Value::Null);
+        let peer_task = tokio::spawn(peer.run());
+
+        runtime.start().await.expect("start");
+        let error = runtime
+            .rollback_thread(1)
+            .await
+            .expect_err("only a paginated thread can be rewound")
+            .to_string();
+        assert!(
+            error.contains(next_step),
+            "{history_mode:?}: the error must say what to do next: {error}"
+        );
+        runtime.shutdown().await.expect("shutdown");
+        peer_task.await.expect("peer");
+    }
+}
+
+/// A Codex without `thread/revert` rejects it while decoding the request (-32600).
+#[tokio::test]
+async fn rewind_rejected_as_a_missing_method_asks_for_a_newer_codex() {
+    let (connection, incoming, mut peer) = scripted_peer();
+    let runtime = project_runtime(connection, incoming);
+    expect_rewind_session_start(&mut peer, Some("paginated"));
+    peer.expect_request(
+        "thread/turns/list",
+        json!({
+            "threadId": "provider-thread-1",
+            "limit": 1,
+            "sortDirection": "desc",
+            "itemsView": "notLoaded"
+        }),
+    )
+    .respond(json!({ "data": [{ "id": "turn-1", "items": [] }], "nextCursor": null }));
+    peer.expect_request(
+        "thread/revert",
+        json!({ "threadId": "provider-thread-1", "beforeTurnId": "turn-1" }),
+    )
+    .respond_error(json!({
+        "code": -32600,
+        "message": "Invalid request: unknown variant `thread/revert`, expected one of `initialize`, `thread/start`"
+    }));
+    peer.expect_request("shutdown", Value::Null)
+        .respond(Value::Null);
+    let peer_task = tokio::spawn(peer.run());
+
+    runtime.start().await.expect("start");
+    let error = runtime
+        .rollback_thread(1)
+        .await
+        .expect_err("a missing thread/revert cannot rewind")
+        .to_string();
+    assert!(
+        error.contains("Update Codex to 0.151.0 or later") && !error.contains("unknown variant"),
+        "{error}"
+    );
+    runtime.shutdown().await.expect("shutdown");
+    peer_task.await.expect("peer");
 }
 
 #[tokio::test]

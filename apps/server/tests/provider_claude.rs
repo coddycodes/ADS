@@ -3754,3 +3754,297 @@ fn compact_fixture_timestamps(value: &mut Value) {
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
 }
+
+fn claude_system(subtype: &str, fields: Value) -> Value {
+    let mut value = json!({
+        "type": "system",
+        "subtype": subtype,
+        "session_id": "session-root",
+        "uuid": format!("{subtype}-uuid"),
+    });
+    value
+        .as_object_mut()
+        .unwrap()
+        .extend(fields.as_object().unwrap().clone());
+    value
+}
+
+fn claude_result_frame(origin: Option<&str>) -> Value {
+    let mut value = json!({
+        "type": "result",
+        "subtype": "success",
+        "is_error": false,
+        "stop_reason": "end_turn",
+        "session_id": "session-root",
+        "uuid": "result-uuid",
+    });
+    if let Some(kind) = origin {
+        value["origin"] = json!({ "kind": kind });
+    }
+    value
+}
+
+fn claude_task_notification_turn() -> Value {
+    json!({
+        "type": "user",
+        "message": {"role": "user", "content": "<task-notification>done</task-notification>"},
+        "origin": {"kind": "task-notification"},
+        "parent_tool_use_id": null,
+        "session_id": "session-root",
+        "uuid": "follow-up-user",
+    })
+}
+
+fn claude_task_started(task_id: &str, task_type: &str, fields: Value) -> Value {
+    let mut started = claude_system(
+        "task_started",
+        json!({"task_id": task_id, "task_type": task_type, "description": task_id}),
+    );
+    started
+        .as_object_mut()
+        .unwrap()
+        .extend(fields.as_object().unwrap().clone());
+    started
+}
+
+/// Idle suspension keeps a Claude session while it reports background work, read from Claude's
+/// own `system` task messages: they arrive without hook events and with Chat Activity off.
+#[test]
+fn claude_runtime_counts_background_work_from_its_stream() {
+    let mut runtime = ClaudeProviderRuntime::new("thread-1".to_owned(), "session-root".to_owned());
+    runtime.set_agent_activity_enabled(false);
+    let mut live = |value: Value| runtime.handle_raw_value(&value, 1_000).background_tasks;
+
+    assert_eq!(
+        live(claude_task_started(
+            "bash",
+            "local_bash",
+            json!({"is_backgrounded": true})
+        )),
+        Some(1),
+        "a run_in_background Bash command"
+    );
+    assert_eq!(
+        live(claude_task_started(
+            "agent",
+            "local_agent",
+            json!({"is_backgrounded": true})
+        )),
+        Some(2)
+    );
+    assert_eq!(
+        live(claude_task_started(
+            "foreground",
+            "local_agent",
+            json!({"is_backgrounded": false})
+        )),
+        Some(2),
+        "a foreground task holds its turn open instead"
+    );
+    assert_eq!(
+        live(claude_task_started(
+            "watch",
+            "local_bash",
+            json!({"ambient": true})
+        )),
+        Some(2),
+        "Claude's own ambient tasks are not the session's work"
+    );
+    assert_eq!(
+        live(claude_system(
+            "task_progress",
+            json!({"task_id": "agent", "description": "agent", "usage": {"total_tokens": 1, "tool_uses": 1, "duration_ms": 1}})
+        )),
+        Some(2),
+        "progress confirms the count"
+    );
+    assert_eq!(
+        live(claude_system(
+            "task_updated",
+            json!({"task_id": "foreground", "patch": {"is_backgrounded": true}})
+        )),
+        Some(3),
+        "a foreground task moved to the background"
+    );
+    assert_eq!(
+        live(claude_system(
+            "task_updated",
+            json!({"task_id": "bash", "patch": {"status": "killed"}})
+        )),
+        Some(3),
+        "a finished background task leaves the turn that answers it owed"
+    );
+    assert_eq!(
+        live(claude_system(
+            "background_tasks_changed",
+            json!({"tasks": [
+                {"task_id": "agent", "task_type": "local_agent", "description": "agent"},
+                {"task_id": "watch", "task_type": "local_bash", "description": "watch", "ambient": true}
+            ]})
+        )),
+        Some(2),
+        "the complete live set replaces the tasks"
+    );
+    assert_eq!(
+        live(claude_system(
+            "task_notification",
+            json!({"task_id": "agent", "status": "completed", "output_file": "/tmp/agent", "summary": "Done."})
+        )),
+        Some(2),
+        "the turns that answer the two finished tasks are still owed"
+    );
+    assert_eq!(
+        live(claude_system(
+            "background_tasks_changed",
+            json!({"tasks": []})
+        )),
+        Some(2)
+    );
+    assert_eq!(live(claude_task_notification_turn()), None);
+    assert_eq!(
+        live(claude_result_frame(None)),
+        None,
+        "an ordinary turn's result does not settle the owed answer"
+    );
+    assert_eq!(
+        live(claude_result_frame(Some("task-notification"))),
+        Some(1),
+        "each finished task gets its own answer"
+    );
+    assert_eq!(
+        live(claude_result_frame(Some("task-notification"))),
+        Some(0)
+    );
+    assert_eq!(
+        live(claude_task_started(
+            "inline",
+            "local_agent",
+            json!({"is_backgrounded": false})
+        )),
+        Some(0)
+    );
+    assert_eq!(
+        live(claude_system(
+            "task_notification",
+            json!({"task_id": "inline", "status": "completed", "output_file": "/tmp/inline", "summary": "Done."})
+        )),
+        Some(0),
+        "a foreground task is answered in its own turn"
+    );
+    assert_eq!(live(claude_system("init", json!({}))), None);
+}
+
+/// Claude answers a finished background task with a turn it starts itself; it gets a turn of its
+/// own. Not while a delivered message awaits its replay: on resume Claude can run that turn before
+/// it reads the message, and its result is ignored (#93).
+#[test]
+fn claude_runtime_gives_its_own_follow_up_turn_a_turn() {
+    let mut runtime = ClaudeProviderRuntime::new("thread-1".to_owned(), "session-root".to_owned());
+    runtime.start_turn(TurnInput {
+        turn_id: "delivered".to_owned(),
+        input: "start".to_owned(),
+    });
+    let delivered = runtime.handle_raw_value(&claude_result_frame(None), 1_000);
+    assert!(delivered.events.iter().any(|event| {
+        event.event_type == "turn.completed" && event.turn_id.as_deref() == Some("delivered")
+    }));
+
+    let follow_up = runtime.handle_raw_value(&claude_task_notification_turn(), 2_000);
+    let started = follow_up
+        .events
+        .iter()
+        .find(|event| event.event_type == "turn.started")
+        .expect("Claude's own turn starts a turn");
+    let follow_up_turn = started.turn_id.clone().expect("a turn id");
+    assert_ne!(follow_up_turn, "delivered");
+    let ended = runtime.handle_raw_value(&claude_result_frame(Some("task-notification")), 3_000);
+    assert!(ended.events.iter().any(|event| {
+        event.event_type == "turn.completed" && event.turn_id.as_deref() == Some(&follow_up_turn)
+    }));
+
+    runtime.start_turn(TurnInput {
+        turn_id: "resumed".to_owned(),
+        input: "next".to_owned(),
+    });
+    runtime.await_turn_input(7);
+    let early = runtime.handle_raw_value(&claude_task_notification_turn(), 4_000);
+    assert!(
+        early
+            .events
+            .iter()
+            .all(|event| event.event_type != "turn.started"),
+        "the delivered message's turn stays current"
+    );
+    assert!(
+        runtime
+            .handle_raw_value(&claude_result_frame(Some("task-notification")), 5_000)
+            .events
+            .is_empty(),
+        "the result before the replay is ignored"
+    );
+}
+
+/// Past the bound a task is not tracked, but the count never reaches zero until Claude's complete
+/// live set shows nothing runs.
+#[test]
+fn claude_runtime_keeps_reporting_work_past_its_task_bound() {
+    let mut runtime = ClaudeProviderRuntime::new("thread-1".to_owned(), "session-root".to_owned());
+    let mut last = None;
+    for index in 0..201 {
+        last = runtime
+            .handle_raw_value(
+                &claude_task_started(
+                    &format!("task-{index}"),
+                    "local_bash",
+                    json!({"is_backgrounded": true}),
+                ),
+                1_000,
+            )
+            .background_tasks;
+    }
+    assert_eq!(last, Some(201));
+    for index in 0..200 {
+        runtime.handle_raw_value(
+            &claude_system(
+                "task_notification",
+                json!({"task_id": format!("task-{index}"), "status": "completed", "output_file": "/tmp/task", "summary": "Done."}),
+            ),
+            2_000,
+        );
+        last = runtime
+            .handle_raw_value(&claude_result_frame(Some("task-notification")), 2_000)
+            .background_tasks;
+    }
+    assert_eq!(last, Some(1), "the untracked task still counts");
+    let settled = runtime
+        .handle_raw_value(
+            &claude_system("background_tasks_changed", json!({"tasks": []})),
+            3_000,
+        )
+        .background_tasks;
+    assert_eq!(settled, Some(0));
+}
+
+/// A task that finishes during a turn needs no bridge: that turn's completion arms a fresh idle
+/// deadline, and a separate answer starts its own turn right after it.
+#[test]
+fn claude_runtime_owes_no_answer_for_a_task_finished_during_a_turn() {
+    let mut runtime = ClaudeProviderRuntime::new("thread-1".to_owned(), "session-root".to_owned());
+    runtime.start_turn(TurnInput {
+        turn_id: "delivered".to_owned(),
+        input: "start".to_owned(),
+    });
+    let started = runtime.handle_raw_value(
+        &claude_task_started("bash", "local_bash", json!({"is_backgrounded": true})),
+        1_000,
+    );
+    assert_eq!(started.background_tasks, Some(1));
+    let finished = runtime.handle_raw_value(
+        &claude_system(
+            "task_notification",
+            json!({"task_id": "bash", "status": "completed", "output_file": "/tmp/bash", "summary": "Done."}),
+        ),
+        2_000,
+    );
+    assert_eq!(finished.background_tasks, Some(0));
+}

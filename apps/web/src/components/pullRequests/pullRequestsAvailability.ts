@@ -1,5 +1,5 @@
 import type { SupervisorConnectionState } from "@bibcode/client-runtime/connection";
-import type { ServerConfig } from "@bibcode/contracts";
+import type { ServerConfig, SourceControlProviderKind } from "@bibcode/contracts";
 
 export type PullRequestsAvailability =
   | { readonly kind: "ready" }
@@ -66,4 +66,18 @@ export function resolvePullRequestsMutationsDisabledReason(
   return serverConfig?.environment.capabilities.pullRequestsMutations === true
     ? null
     : "This environment does not support Pull Requests actions.";
+}
+
+/**
+ * Whether a request on this host can be shown in a thread's right panel. Transient states (a
+ * disconnected environment) still open the tab, which explains them; a setting that is off or a
+ * host without request details would only leave a dead-end tab.
+ */
+export function canOpenPullRequestInPanel(input: {
+  readonly enabled: boolean;
+  readonly providerKind: SourceControlProviderKind;
+}): boolean {
+  return (
+    input.enabled && input.providerKind !== "bitbucket" && input.providerKind !== "azure-devops"
+  );
 }

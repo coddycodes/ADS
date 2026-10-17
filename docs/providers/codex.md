@@ -129,6 +129,33 @@ is ready; interruptions and errors keep queued messages on hold until you use
 **Send now**. See [Queued messages](../user/workspace-ui.md#queued-messages) for
 cancellation, attachments, and reload behavior.
 
+## Reverting to a checkpoint
+
+**Revert to this message** first asks Codex to drop the newer turns from its
+conversation history. Only after that succeeds does BiBCode restore the
+workspace files from its own Git checkpoint refs, so a refused rewind changes
+nothing (see
+[Checkpoint revert](../architecture/rpc-and-orchestration.md#checkpoint-revert)).
+Codex never restores files.
+
+Rewinding needs **Codex 0.151.0 or later**. BiBCode rewinds only with
+`thread/revert`: it pages newest-first through `thread/turns/list`, then sends
+`thread/revert` with the ID of the oldest turn to drop as `beforeTurnId`. When
+Codex holds fewer turns than BiBCode is dropping, every remaining turn is
+dropped. `thread/revert` arrived in Codex 0.148.0 but rewinds only threads with
+paginated history, and Codex 0.151.0 is the first to create those by default.
+
+Codex reports each thread's `historyMode` in its `thread/start` and
+`thread/resume` responses. BiBCode checks it before asking for anything, and a
+revert it cannot do fails without changing anything:
+
+- No `historyMode` means a Codex that predates history modes. The work log
+  asks you to update Codex to 0.151.0 or later and then start a new thread. A
+  Codex that rejects `thread/revert` as an unknown method gets the same advice.
+- `legacy` means a thread that cannot be rewound: one an older Codex started,
+  or any thread on a Codex before 0.151.0. The work log asks you to start a new
+  thread on Codex 0.151.0 or later.
+
 ## Activity observation
 
 Structured Codex chats run through `codex app-server`. BiBCode uses App Server

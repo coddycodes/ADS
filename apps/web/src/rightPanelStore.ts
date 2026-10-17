@@ -9,11 +9,17 @@
  * surfaces.
  */
 import { scopedThreadKey } from "@bibcode/client-runtime/environment";
-import { ACTIVITY_ID_MAX_LENGTH, type ScopedThreadRef } from "@bibcode/contracts";
+import {
+  ACTIVITY_ID_MAX_LENGTH,
+  type ScopedThreadRef,
+  SourceControlProviderKind,
+} from "@bibcode/contracts";
+import * as Schema from "effect/Schema";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
+import type { PullRequestsDetailTab } from "./pullRequestsStore";
 import { MAX_TERMINALS_PER_GROUP } from "./types";
 
 export const RIGHT_PANEL_KINDS = [
@@ -26,6 +32,7 @@ export const RIGHT_PANEL_KINDS = [
   "terminal",
   "activity",
   "device",
+  "pullRequest",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -36,6 +43,14 @@ export type ActivityRightPanelSurface = {
   section: "subagents" | "backgroundTasks";
   selectedRecordKind: "actor" | "workItem" | null;
   selectedRecordId: string | null;
+};
+
+export type PullRequestRightPanelSurface = {
+  id: `pullRequest:${number}`;
+  kind: "pullRequest";
+  number: number;
+  provider: SourceControlProviderKind;
+  tab: PullRequestsDetailTab;
 };
 
 export type RightPanelSurface =
@@ -61,7 +76,8 @@ export type RightPanelSurface =
     }
   | { id: "plan"; kind: "plan" }
   | { id: "device"; kind: "device" }
-  | ActivityRightPanelSurface;
+  | ActivityRightPanelSurface
+  | PullRequestRightPanelSurface;
 
 const RIGHT_PANEL_STORAGE_KEY = "bibcode:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 10;
@@ -72,12 +88,14 @@ export interface ThreadRightPanelState {
   surfaces: RightPanelSurface[];
 }
 
+type GenericRightPanelKind = Exclude<
+  RightPanelKind,
+  "file" | "terminal" | "activity" | "pullRequest"
+>;
+
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
-  open: (
-    ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "activity">,
-  ) => void;
+  open: (ref: ScopedThreadRef, kind: GenericRightPanelKind) => void;
   openActivity: (
     ref: ScopedThreadRef,
     section: ActivityRightPanelSurface["section"],
@@ -89,6 +107,12 @@ interface RightPanelStoreState {
   ) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  openPullRequest: (
+    ref: ScopedThreadRef,
+    request: { number: number; provider: SourceControlProviderKind },
+    tab?: PullRequestsDetailTab,
+  ) => void;
+  setPullRequestTab: (ref: ScopedThreadRef, number: number, tab: PullRequestsDetailTab) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -114,10 +138,7 @@ interface RightPanelStoreState {
   show: (ref: ScopedThreadRef) => void;
   close: (ref: ScopedThreadRef) => void;
   toggleVisibility: (ref: ScopedThreadRef) => void;
-  toggle: (
-    ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "activity">,
-  ) => void;
+  toggle: (ref: ScopedThreadRef, kind: GenericRightPanelKind) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
 
@@ -127,9 +148,7 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
   surfaces: [],
 };
 
-const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "activity">,
-): RightPanelSurface => {
+const singletonSurface = (kind: Exclude<GenericRightPanelKind, "preview">): RightPanelSurface => {
   switch (kind) {
     case "diff":
       return { id: "diff", kind };
@@ -241,6 +260,37 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
   terminalIds: [terminalId],
   activeTerminalId: terminalId,
 });
+
+const PULL_REQUEST_DETAIL_TABS: ReadonlySet<unknown> = new Set<PullRequestsDetailTab>([
+  "conversation",
+  "commits",
+  "checks",
+  "files",
+]);
+const isPullRequestDetailTab = (value: unknown): value is PullRequestsDetailTab =>
+  PULL_REQUEST_DETAIL_TABS.has(value);
+const isSourceControlProviderKind = Schema.is(SourceControlProviderKind);
+
+export function pullRequestSurfaceId(number: number): `pullRequest:${number}` {
+  return `pullRequest:${number}`;
+}
+
+function normalizePullRequestSurface(
+  value: Record<string, unknown>,
+): PullRequestRightPanelSurface | null {
+  const { number, provider, tab } = value;
+  if (typeof number !== "number" || !Number.isSafeInteger(number) || number < 1) return null;
+  if (value.id !== pullRequestSurfaceId(number) || !isSourceControlProviderKind(provider)) {
+    return null;
+  }
+  return {
+    id: pullRequestSurfaceId(number),
+    kind: "pullRequest",
+    number,
+    provider,
+    tab: isPullRequestDetailTab(tab) ? tab : "conversation",
+  };
+}
 
 const upsertSurface = (
   current: ThreadRightPanelState,
@@ -356,6 +406,8 @@ function normalizePersistedSurface(value: unknown): RightPanelSurface | null {
           : {}),
       };
     }
+    case "pullRequest":
+      return normalizePullRequestSurface(value);
     default:
       return null;
   }
@@ -495,6 +547,45 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               ? current.surfaces.filter((entry) => entry.id !== "browser:new")
               : current.surfaces;
             return upsertSurface({ ...current, surfaces: withoutPlaceholder }, surface);
+          }),
+        })),
+      openPullRequest: (ref, request, tab) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            const id = pullRequestSurfaceId(request.number);
+            const existing = current.surfaces.find((surface) => surface.id === id);
+            if (existing) {
+              return {
+                isOpen: true,
+                activeSurfaceId: id,
+                surfaces:
+                  tab === undefined
+                    ? current.surfaces
+                    : current.surfaces.map((surface) =>
+                        surface.id === id ? { ...surface, tab } : surface,
+                      ),
+              };
+            }
+            return upsertSurface(current, {
+              id,
+              kind: "pullRequest",
+              number: request.number,
+              provider: request.provider,
+              tab: tab ?? "conversation",
+            });
+          }),
+        })),
+      setPullRequestTab: (ref, number, tab) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            const id = pullRequestSurfaceId(number);
+            if (!current.surfaces.some((surface) => surface.id === id)) return current;
+            return {
+              ...current,
+              surfaces: current.surfaces.map((surface) =>
+                surface.id === id && surface.kind === "pullRequest" ? { ...surface, tab } : surface,
+              ),
+            };
           }),
         })),
       openFile: (ref, relativePath, line) =>

@@ -4,6 +4,7 @@ import type {
   GitManagerCommitEntry,
   GitRunStackedActionInput,
   GitRunStackedActionResult,
+  SourceControlProviderKind,
   VcsStatusResult,
 } from "@bibcode/contracts";
 import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
@@ -100,6 +101,8 @@ export interface GitManagerCreatePullRequestDialogProps {
   readonly onOpenChange: (open: boolean) => void;
   /** Called once a pull request was created or found so the pane can refresh. */
   readonly onSettled: (result: GitRunStackedActionResult) => void;
+  /** Done after a request was created or found; the Source Control panel opens it beside the thread. */
+  readonly onDone?: (request: { number: number; provider: SourceControlProviderKind }) => void;
   /** Legacy combined actions review the request before committing and publishing. */
   readonly commitInput?: Pick<
     GitRunStackedActionInput,
@@ -132,6 +135,7 @@ function CreatePullRequestReviewDialog({
   scope,
   onOpenChange,
   onSettled,
+  onDone,
   providerHint = null,
   commitInput,
 }: GitManagerCreatePullRequestDialogProps) {
@@ -645,7 +649,15 @@ function CreatePullRequestReviewDialog({
         <DialogFooter>
           {settled ? (
             // The request exists: the form is a read-only record and closing is the only action.
-            <Button onClick={() => onOpenChange(false)}>Done</Button>
+            <Button
+              onClick={() => {
+                if (settled && progress.number !== null && provider !== null)
+                  onDone?.({ number: progress.number, provider: provider.kind });
+                onOpenChange(false);
+              }}
+            >
+              Done
+            </Button>
           ) : (
             <>
               <Button

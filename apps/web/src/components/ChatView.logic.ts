@@ -587,6 +587,30 @@ export function deliveryProviderLabel(
   );
 }
 
+/**
+ * The confirmation for "Revert to this message". A provider that cannot rewind its conversation
+ * (`supportsConversationRewind: false`) gets only its files back and keeps the newer messages.
+ * Anything else, including an older server that omits the flag, keeps the full-revert warning.
+ */
+export function buildRevertCheckpointConfirmation(input: {
+  turnCount: number;
+  provider: Pick<ServerProvider, "displayName" | "driver" | "supportsConversationRewind"> | null;
+}): string {
+  if (input.provider?.supportsConversationRewind === false) {
+    const name = input.provider.displayName?.trim() || providerDriverLabel(input.provider.driver);
+    return [
+      `Restore files to checkpoint ${input.turnCount}?`,
+      `${name} can't rewind its conversation, so the newer messages stay.`,
+      "This action cannot be undone.",
+    ].join("\n");
+  }
+  return [
+    `Revert this thread to checkpoint ${input.turnCount}?`,
+    "This will discard newer messages and turn diffs in this thread.",
+    "This action cannot be undone.",
+  ].join("\n");
+}
+
 export function isQueuedTimelineMessage(message: ChatMessage): boolean {
   const delivery = message.delivery;
   return (

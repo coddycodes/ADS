@@ -49,6 +49,10 @@ use crate::{
 const MAX_BASELINE_PATHS: usize = 512;
 const PRODUCTION_MAX_IN_FLIGHT_WORKTREE_OPERATIONS: usize = 64;
 const REMOVAL_ADMISSION_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+/// Reads of a removal plan before a catalog that keeps moving answers `stale-generation`.
+const REMOVAL_PLAN_READS: usize = 2;
+/// A plan this slow logs its steps; the profiler's `rpc.slow` warns from the same floor.
+const REMOVAL_PLAN_SLOW: Duration = Duration::from_secs(1);
 /// The profiler's name for `worktree.removeFromBibCode`, beside the `worktree.remove` modes.
 const DETACH_ONLY: &str = "detach-only";
 
@@ -1808,27 +1812,48 @@ async fn get_removal_plan(
     cancellation: CancellationToken,
 ) -> RpcResult {
     let input = decode::<WorktreeGetRemovalPlanInput>(request)?;
-    let project_id = input.project_id.clone();
-    let catalog = services.catalog.clone();
-    catalog
-        .with_project_mutation_lock_cancellation(&project_id, &cancellation, || async {
-            let plan = build_removal_plan(
-                services,
-                &input.project_id,
-                &input.thread_id,
-                None,
-                true,
-                &cancellation,
-            )
-            .await?;
-            Ok(encode(plan.wire))
-        })
-        .await
-        .unwrap_or_else(|| {
-            Err(encode(removal_orchestration_error(
+    let (project_id, thread_id) = (input.project_id.as_str(), input.thread_id.as_str());
+    let catalog = &services.catalog;
+    let mut current_generation = None;
+    for _ in 0..REMOVAL_PLAN_READS {
+        if cancellation.is_cancelled() {
+            return Err(encode(removal_orchestration_error(
                 OrchestrationError::Cancelled,
-            )))
-        })
+            )));
+        }
+        // Git runs outside the project mutation lock, so a detach never waits for it (#114).
+        // The plan is advisory: execution plans again under the lock and compares the token.
+        let epoch = catalog.mutation_epoch(project_id);
+        let plan =
+            build_removal_plan(services, project_id, thread_id, None, true, &cancellation).await;
+        // The lock waits out a mutation in flight, then confirms that nothing moved.
+        let (unchanged, generation) = catalog
+            .with_project_mutation_lock_cancellation(project_id, &cancellation, || async {
+                let generation = catalog
+                    .latest(project_id)
+                    .await
+                    .map(|snapshot| snapshot.generation);
+                // An absent entry stays `None` only if the read failed before its refresh
+                // made one; a plan's refresh always makes one, so a cold catalog reads twice.
+                let unchanged = catalog.mutation_epoch(project_id) == epoch
+                    && plan
+                        .as_ref()
+                        .ok()
+                        .is_none_or(|plan| generation == Some(plan.wire.generation));
+                (unchanged, generation)
+            })
+            .await
+            .ok_or_else(|| encode(removal_orchestration_error(OrchestrationError::Cancelled)))?;
+        if unchanged {
+            return plan.map(|plan| encode(plan.wire));
+        }
+        current_generation = generation;
+    }
+    Err(encode(removal_error(
+        WorktreeRemovalErrorReason::StaleGeneration,
+        "The worktree changed while its removal details loaded. Load them again.",
+        current_generation,
+    )))
 }
 
 async fn remove_from_bibcode(
@@ -2468,6 +2493,38 @@ async fn resolve_removal_thread_with_ownership(
     Ok((ownership, resolved))
 }
 
+/// How long each step of one removal plan took. On drop, whatever the outcome, a slow plan
+/// logs them with ids only, so an `rpc.slow` on the plan names its slow step.
+struct RemovalPlanTiming<'a> {
+    project_id: &'a str,
+    thread_id: &'a str,
+    started: Instant,
+    refresh: Duration,
+    anchor: Duration,
+    inventory: Duration,
+    inspect: Duration,
+    prune_preview: Duration,
+}
+
+impl Drop for RemovalPlanTiming<'_> {
+    fn drop(&mut self) {
+        let total = self.started.elapsed();
+        if total >= REMOVAL_PLAN_SLOW {
+            tracing::info!(
+                project_id = self.project_id,
+                thread_id = self.thread_id,
+                ?total,
+                refresh = ?self.refresh,
+                anchor = ?self.anchor,
+                inventory = ?self.inventory,
+                inspect = ?self.inspect,
+                prune_preview = ?self.prune_preview,
+                "worktree removal plan was slow"
+            );
+        }
+    }
+}
+
 async fn build_removal_plan(
     services: &WorktreeCatalogRpcServices,
     project_id: &str,
@@ -2476,8 +2533,19 @@ async fn build_removal_plan(
     refresh: bool,
     cancellation: &CancellationToken,
 ) -> Result<ResolvedRemovalPlan, Value> {
+    let mut timing = RemovalPlanTiming {
+        project_id,
+        thread_id,
+        started: Instant::now(),
+        refresh: Duration::ZERO,
+        anchor: Duration::ZERO,
+        inventory: Duration::ZERO,
+        inspect: Duration::ZERO,
+        prune_preview: Duration::ZERO,
+    };
     let resolved = resolve_removal_thread(services, project_id, thread_id).await?;
     let path = resolved.path;
+    let step = Instant::now();
     let snapshot = if refresh {
         services
             .catalog
@@ -2487,8 +2555,10 @@ async fn build_removal_plan(
         services.catalog.latest(project_id).await.ok_or_else(|| {
             CatalogError::new(CatalogErrorReason::StaleGeneration, "Removal plan expired.")
         })
-    }
-    .map_err(|error| encode(removal_catalog_error(error, expected_generation)))?;
+    };
+    timing.refresh = step.elapsed();
+    let snapshot =
+        snapshot.map_err(|error| encode(removal_catalog_error(error, expected_generation)))?;
     if !snapshot.authoritative {
         return Err(encode(removal_error(
             WorktreeRemovalErrorReason::RepositoryMismatch,
@@ -2503,10 +2573,13 @@ async fn build_removal_plan(
             Some(snapshot.generation),
         )));
     }
+    let step = Instant::now();
     let trusted_anchor = services
         .catalog
         .resolve_trusted_repository_anchor(project_id, &path, cancellation)
-        .await
+        .await;
+    timing.anchor = step.elapsed();
+    let trusted_anchor = trusted_anchor
         .map_err(|error| encode(removal_catalog_error(error, Some(snapshot.generation))))?;
     if trusted_anchor.repository_key != snapshot.repository_key {
         return Err(encode(removal_error(
@@ -2523,10 +2596,12 @@ async fn build_removal_plan(
             Some(snapshot.generation),
         ))
     })?;
+    let step = Instant::now();
     let inventory = repository
         .inventory(anchor.clone(), cancellation.clone())
-        .await
-        .map_err(|_| encode(removal_git_failed(Some(snapshot.generation))))?;
+        .await;
+    timing.inventory = step.elapsed();
+    let inventory = inventory.map_err(|_| encode(removal_git_failed(Some(snapshot.generation))))?;
     let common_dir = tokio::fs::canonicalize(&inventory.common_dir)
         .await
         .map_err(|_| encode(removal_git_failed(Some(snapshot.generation))))?;
@@ -2583,6 +2658,7 @@ async fn build_removal_plan(
         (None, false) => "missing-unregistered",
         (None, true) => unreachable!("replacement conflict returned above"),
     };
+    let step = Instant::now();
     let inspection = if availability == "present" {
         repository
             .inspect(
@@ -2591,18 +2667,23 @@ async fn build_removal_plan(
                 cancellation.clone(),
             )
             .await
-            .map_err(|_| encode(removal_git_failed(Some(snapshot.generation))))?
     } else {
-        Default::default()
+        Ok(Default::default())
     };
+    timing.inspect = step.elapsed();
+    let inspection =
+        inspection.map_err(|_| encode(removal_git_failed(Some(snapshot.generation))))?;
+    let step = Instant::now();
     let prune_impact = if record.as_ref().is_some_and(|record| record.is_prunable) {
         repository
             .preview_prune(anchor.clone(), cancellation.clone())
             .await
-            .map_err(|_| encode(removal_git_failed(Some(snapshot.generation))))?
     } else {
-        Vec::new()
+        Ok(Vec::new())
     };
+    timing.prune_preview = step.elapsed();
+    let prune_impact =
+        prune_impact.map_err(|_| encode(removal_git_failed(Some(snapshot.generation))))?;
     let locked = record.as_ref().is_some_and(|record| record.locked);
     let lock_reason = record
         .as_ref()
@@ -4883,6 +4964,255 @@ mod mutation_invalidation_tests {
         assert!(fixture.linked.join("README.md").exists());
         assert_eq!(fixture.quiesce_calls.load(Ordering::SeqCst), 1);
         fixture.handler.shutdown().await;
+    }
+
+    /// A removal plan reads Git outside the project mutation lock (#114).
+    mod plan_lock {
+        use std::sync::atomic::AtomicBool;
+
+        use super::*;
+        use crate::{
+            git::{
+                GitPrunableWorktree, GitWorktreeInventory, GitWorktreeRecord,
+                GitWorktreeRemovalInspection,
+            },
+            production::worktree_catalog_rpc::{WorktreeRemovalGit, WorktreeRemovalGitFuture},
+        };
+
+        /// Real Git whose next inventory, once armed, waits for `release`.
+        #[derive(Clone)]
+        struct GatedInventoryGit {
+            git: GitRepository,
+            armed: Arc<AtomicBool>,
+            entered: Arc<Semaphore>,
+            release: Arc<Semaphore>,
+            inventories: Arc<AtomicUsize>,
+        }
+
+        impl WorktreeRemovalGit for GatedInventoryGit {
+            fn inventory(
+                &self,
+                anchor: PathBuf,
+                cancellation: CancellationToken,
+            ) -> WorktreeRemovalGitFuture<GitWorktreeInventory> {
+                let gate = self.clone();
+                Box::pin(async move {
+                    gate.inventories.fetch_add(1, Ordering::SeqCst);
+                    if gate.armed.swap(false, Ordering::SeqCst) {
+                        gate.entered.add_permits(1);
+                        gate.release.acquire().await.expect("gate open").forget();
+                    }
+                    WorktreeRemovalGit::inventory(&gate.git, anchor, cancellation).await
+                })
+            }
+            fn inspect(
+                &self,
+                anchor: PathBuf,
+                record: GitWorktreeRecord,
+                cancellation: CancellationToken,
+            ) -> WorktreeRemovalGitFuture<GitWorktreeRemovalInspection> {
+                WorktreeRemovalGit::inspect(&self.git, anchor, record, cancellation)
+            }
+            fn preview_prune(
+                &self,
+                anchor: PathBuf,
+                cancellation: CancellationToken,
+            ) -> WorktreeRemovalGitFuture<Vec<GitPrunableWorktree>> {
+                WorktreeRemovalGit::preview_prune(&self.git, anchor, cancellation)
+            }
+            fn remove(
+                &self,
+                anchor: PathBuf,
+                record: GitWorktreeRecord,
+                force_dirty: bool,
+                cancellation: CancellationToken,
+            ) -> WorktreeRemovalGitFuture<()> {
+                WorktreeRemovalGit::remove(&self.git, anchor, record, force_dirty, cancellation)
+            }
+            fn prune(
+                &self,
+                anchor: PathBuf,
+                record: GitWorktreeRecord,
+                digest: String,
+                cancellation: CancellationToken,
+            ) -> WorktreeRemovalGitFuture<()> {
+                WorktreeRemovalGit::prune(&self.git, anchor, record, digest, cancellation)
+            }
+        }
+
+        async fn gated_fixture() -> (RemovalFixture, GatedInventoryGit) {
+            let mut fixture = RemovalFixture::new().await;
+            let gate = GatedInventoryGit {
+                git: GitRepository::default(),
+                armed: Arc::default(),
+                entered: Arc::new(Semaphore::new(0)),
+                release: Arc::new(Semaphore::new(0)),
+                inventories: Arc::default(),
+            };
+            fixture.handler.services = fixture
+                .handler
+                .services
+                .with_removal_git(Arc::new(gate.clone()));
+            (fixture, gate)
+        }
+
+        /// Starts a plan whose inventory waits on the gate, and returns once it does.
+        async fn plan_in_flight(
+            fixture: &RemovalFixture,
+            gate: &GatedInventoryGit,
+        ) -> tokio::task::JoinHandle<crate::rpc::RpcResult> {
+            gate.armed.store(true, Ordering::SeqCst);
+            let services = fixture.handler.services.clone();
+            let plan = tokio::spawn(async move {
+                get_removal_plan(
+                    &services,
+                    request(
+                        "worktree.getRemovalPlan",
+                        json!({"projectId":"project-1", "threadId":"removed-thread"}),
+                    ),
+                    CancellationToken::new(),
+                )
+                .await
+            });
+            tokio::time::timeout(Duration::from_secs(30), gate.entered.acquire())
+                .await
+                .expect("the plan reaches its Git inventory")
+                .expect("gate open")
+                .forget();
+            plan
+        }
+
+        #[tokio::test]
+        async fn detach_does_not_wait_for_a_plan_reading_git() {
+            let (fixture, gate) = gated_fixture().await;
+            let plan = plan_in_flight(&fixture, &gate).await;
+
+            let detached = tokio::time::timeout(
+                Duration::from_secs(10),
+                remove_from_bibcode(
+                    &fixture.handler.services,
+                    request(
+                        "worktree.removeFromBibCode",
+                        json!({
+                            "commandId":"detach-command",
+                            "projectId":"project-1",
+                            "threadId":"removed-thread"
+                        }),
+                    ),
+                    CancellationToken::new(),
+                ),
+            )
+            .await
+            .expect("the detach does not wait for the plan's Git inventory")
+            .expect("detach succeeds");
+            assert_eq!(detached["threadRemoved"], true);
+
+            gate.release.add_permits(1);
+            let error = plan
+                .await
+                .expect("plan joins")
+                .expect_err("a plan that raced a detach reads the result again");
+            assert_eq!(error["reason"], "thread-not-found");
+            fixture.handler.shutdown().await;
+        }
+
+        #[tokio::test]
+        async fn plan_reads_again_when_the_generation_moves_during_its_git() {
+            let (fixture, gate) = gated_fixture().await;
+            fixture.payload().await;
+            assert_eq!(
+                gate.inventories.load(Ordering::SeqCst),
+                1,
+                "a quiet plan reads Git once"
+            );
+
+            let plan = plan_in_flight(&fixture, &gate).await;
+            let moved = fixture
+                .handler
+                .catalog
+                .refresh("project-1", CatalogRefreshTrigger::Explicit)
+                .await
+                .expect("refresh while the plan reads Git")
+                .generation;
+            gate.release.add_permits(1);
+            let plan = plan
+                .await
+                .expect("plan joins")
+                .expect("the plan reads again after the generation moved");
+            let current = fixture
+                .handler
+                .catalog
+                .latest("project-1")
+                .await
+                .expect("catalog")
+                .generation;
+            assert!(plan["generation"].as_u64().expect("generation") > moved);
+            assert_eq!(plan["generation"], current);
+            assert_eq!(gate.inventories.load(Ordering::SeqCst), 3);
+
+            let result = fixture
+                .remove(json!({
+                    "commandId":"remove-command", "projectId":"project-1",
+                    "threadId":"removed-thread", "mode":"delete-git-worktree",
+                    "expectedGeneration":plan["generation"], "planToken":plan["planToken"],
+                    "forceDirty":false, "confirmRepositoryWidePrune":false
+                }))
+                .await
+                .expect("the re-read plan is current");
+            assert_eq!(result["gitOutcome"], "removed");
+            fixture.handler.shutdown().await;
+        }
+
+        #[tokio::test]
+        async fn plan_keeps_its_error_when_the_project_has_no_catalog() {
+            let (fixture, gate) = gated_fixture().await;
+            let error = get_removal_plan(
+                &fixture.handler.services,
+                request(
+                    "worktree.getRemovalPlan",
+                    json!({"projectId":"project-without-catalog", "threadId":"removed-thread"}),
+                ),
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("an unknown project has no removal plan");
+            assert_eq!(error["reason"], "thread-not-found");
+            assert_eq!(gate.inventories.load(Ordering::SeqCst), 0);
+            fixture.handler.shutdown().await;
+        }
+
+        #[tokio::test]
+        async fn plan_answers_stale_generation_when_the_catalog_keeps_moving() {
+            let (fixture, gate) = gated_fixture().await;
+            let refresh = || {
+                fixture
+                    .handler
+                    .catalog
+                    .refresh("project-1", CatalogRefreshTrigger::Explicit)
+            };
+            let plan = plan_in_flight(&fixture, &gate).await;
+            refresh().await.expect("refresh during the first read");
+            gate.armed.store(true, Ordering::SeqCst);
+            gate.release.add_permits(1);
+            tokio::time::timeout(Duration::from_secs(30), gate.entered.acquire())
+                .await
+                .expect("the plan reads again")
+                .expect("gate open")
+                .forget();
+            let moved = refresh()
+                .await
+                .expect("refresh during the second read")
+                .generation;
+            gate.release.add_permits(1);
+            let error = plan
+                .await
+                .expect("plan joins")
+                .expect_err("a catalog that keeps moving answers stale-generation");
+            assert_eq!(error["reason"], "stale-generation");
+            assert_eq!(error["currentGeneration"], moved);
+            assert_eq!(gate.inventories.load(Ordering::SeqCst), 2);
+            fixture.handler.shutdown().await;
+        }
     }
 
     #[tokio::test]

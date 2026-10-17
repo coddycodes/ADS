@@ -7,6 +7,43 @@
 - A **Device** panel shows an Android emulator running on the environment's server beside the chat, and you can touch it, type into it, paste into it, rotate it, and use its buttons. Turn it on per environment at **Settings → Diagnostics → Device previews**; the server needs the Android SDK with at least one virtual device. The screen is H.264 video, end-to-end encrypted on connections that pin the server's key, and falls back to still images, with the reason, where video can't play, such as a browser on plain HTTP. Coding agents can list, open, screenshot and close the same device. (#70)
 - On a macOS server with Xcode, the same panel runs iOS simulators, next to an Android emulator if you like. The simulator's screen is live video, takes a single touch, keys and text (text a US keyboard can't type is pasted, so iOS may ask to **Allow Paste**), and rotates. When BiBCode can't use the installed Xcode's simulator interfaces, simulators open view only, as still screenshots without touch, and the panel says why. BiBCode shuts down only the simulators it started. (#70)
 
+## [v0.9.4] - 2026-10-15
+
+BiBCode v0.9.4 opens pull and merge requests in a thread's right panel, keeps Claude background agents and other provider work running after a turn ends, stops the server from burning CPU on failed thread subscriptions, makes **Revert to this message** work again, keeps the Claude MCP token off the command line, and reports OpenCode 2 as not supported yet instead of failing late. This release includes the changes since v0.9.3.
+
+### Pull and merge requests
+
+- A pull or merge request can open as a tab in a thread's right panel, beside the conversation. **Done** after creating one from the Source Control panel opens it there, **Open MR in panel** (**Open PR in panel** on GitHub) opens the branch's open request, and the full Pull Requests page offers **Open beside a thread…**.
+
+### Responsiveness and memory
+
+- A view of a deleted thread no longer makes the server use several CPU cores after a few hours. Each failed subscription to the thread left a task on the server that received every agent event until the app restarted, and the client retried every 250 ms. A failed subscription now ends with its request, and the client waits longer between retries, up to 30 s. (#113)
+- Reconnecting to a long thread no longer leaves another full copy of the thread in the app's memory. The app keeps the parts of a resent thread that did not change; in a test with a 200-message thread, six reconnects grew the web view's memory by 20 MB instead of 58 MB. (#96)
+- The Files panel no longer re-reads the whole file list when a formatter or editor saves files without adding or removing any. A burst of new files costs one read when it ends, or one about every 10 s while it lasts, instead of one every few seconds. (#111)
+
+### Providers
+
+- In the chat panel, Claude background subagents, background shells and Monitor watches are no longer stopped about a minute after the turn ends, and Claude's reply when one of them finishes runs as its own turn. A failed check of Claude's activity flags is retried on the next launch instead of turning off subagent tracking until BiBCode restarts, and each check writes one line to the server log.
+- An idle chat session is no longer stopped while its provider may still be working: a turn the provider starts itself counts as running, Chat Activity being off no longer lets idle sessions stop running subagents, and Cursor sessions are not stopped while idle. The server log says why a session was suspended.
+- The BiBCode MCP token is no longer visible on Claude's command line: Claude reads it from a file only your account can open, removed when the session ends. Providers reach BiBCode's MCP server on loopback (`127.0.0.1`) instead of the wildcard address.
+- OpenCode 2 is reported as not supported yet, in Settings and when you send a message, with the setting to change (point **Binary path** at an OpenCode 1.x executable), instead of failing later with "HTTP 405" or "error decoding response body". BiBCode now waits for the OpenCode 1.x API to answer before it treats a server as ready.
+- **Revert to this message** works again, including a minute or more after a turn: BiBCode reopens the idle session, asks the agent to rewind, and only then restores the files, so a rewind the agent refuses leaves your workspace and conversation as they were. A revert is refused while a turn is running.
+- Codex rewinds use `thread/revert` and need Codex 0.151.0 or later; an older Codex, or a thread started in Codex's older history format, gets a message saying to update Codex or start a new thread. Codex's answer for a removed method now counts as a missing method, so activity falls back correctly.
+- Claude, Cursor and Grok cannot rewind their conversation, so for them revert restores the files and says the conversation was not rewound; the confirmation says so before you agree.
+
+### Left panel and Git Manager
+
+- After you check out another branch in the Git Manager, the left panel's cards show the new branch even when the repository's pull request lookup fails. They used to go back to the thread's old branch about half a second later.
+- Removing a worktree thread from BiBCode no longer waits for the removal dialog's Git details to finish loading: those details are read without holding the project's lock. A slow load logs how long each of its steps took. (#114)
+
+### Profiler
+
+- The startup crash scan reports only crashes of this BiBCode executable: the same path, or another mount of the same AppImage. An extracted AppImage or another build with the same file name no longer raises a `crash.native` finding. (#110)
+
+### Release reliability
+
+- Server tests that check log output run in a process of their own, so a test running beside them can no longer switch off the warning they look for. One of them failed a release check. (#112)
+
 ## [v0.9.3] - 2026-10-14
 
 BiBCode v0.9.3 ends the macOS freezes caused by a page-wide label scan after every render, keeps long conversations smooth to scroll, stops terminals from losing output, stops the server from growing while threads stay open during agent turns, opens remote development servers at their real address on the Linux desktop, exits cleanly when Windows shuts down, and makes the Profiler's findings more accurate. This release includes the changes since v0.9.2.

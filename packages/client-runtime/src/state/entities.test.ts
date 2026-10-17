@@ -496,6 +496,160 @@ describe("environment entity projections", () => {
     expect(harness.registry.get(activitiesAtom)).toBe(activities);
   });
 
+  // A reconnect resends the whole thread as a new object graph. Handing that to the UI as a new
+  // thread re-renders it, and memoized closures from earlier renders keep each superseded copy
+  // alive (#96), so unchanged parts keep the identity they already had.
+  it("keeps the identity of everything a resent thread did not change", () => {
+    const harness = makeHarness();
+    const ref = { environmentId: ENVIRONMENT_ID, threadId: THREAD_ID };
+    const detailAtom = harness.threadDetails.detailAtom(ref);
+    const messagesAtom = harness.threadDetails.messagesAtom(ref);
+    const snapshot = (texts: ReadonlyArray<string>): OrchestrationThread => ({
+      ...THREAD_SHELL,
+      deletedAt: null,
+      messages: texts.map((text, index) => ({
+        id: MessageId.make(`message-${index}`),
+        role: "assistant",
+        text,
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      })),
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+    });
+    const receive = (thread: OrchestrationThread) =>
+      harness.registry.set(
+        harness.threadStateAtom(THREAD_ID),
+        AsyncResult.success<EnvironmentThreadState>({
+          data: Option.some(thread),
+          status: "live",
+          error: Option.none(),
+        }),
+      );
+
+    receive(snapshot(["first", "second"]));
+    const detail = harness.registry.get(detailAtom);
+    const messages = harness.registry.get(messagesAtom);
+
+    receive(snapshot(["first", "second"]));
+    expect(harness.registry.get(detailAtom)).toBe(detail);
+    expect(harness.registry.get(messagesAtom)).toBe(messages);
+
+    receive(snapshot(["first", "edited"]));
+    const edited = harness.registry.get(messagesAtom);
+    expect(edited).not.toBe(messages);
+    expect(edited[0]).toBe(messages[0]);
+    expect(edited[1]).toMatchObject({ text: "edited" });
+    expect(harness.registry.get(detailAtom)).toMatchObject({ messages: edited });
+  });
+
+  // Patches share every object they did not change with the source they patched. After a resend
+  // those objects are not the ones the UI holds, yet a streaming patch must still not re-compare
+  // the whole history on every token.
+  it("does not re-compare history a patch left untouched after a resend", () => {
+    const harness = makeHarness();
+    const ref = { environmentId: ENVIRONMENT_ID, threadId: THREAD_ID };
+    const messagesAtom = harness.threadDetails.messagesAtom(ref);
+    let historyReads = 0;
+    const message = (index: number, text: string, counted = false) => {
+      const fields = {
+        id: MessageId.make(`message-${index}`),
+        role: "assistant" as const,
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      };
+      return counted
+        ? Object.defineProperty(
+            { ...fields } as typeof fields & { readonly text: string },
+            "text",
+            {
+              enumerable: true,
+              get: () => {
+                historyReads += 1;
+                return text;
+              },
+            },
+          )
+        : { ...fields, text };
+    };
+    const thread = (messages: OrchestrationThread["messages"]): OrchestrationThread => ({
+      ...THREAD_SHELL,
+      deletedAt: null,
+      messages,
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+    });
+    const receive = (value: OrchestrationThread) => {
+      harness.registry.set(
+        harness.threadStateAtom(THREAD_ID),
+        AsyncResult.success<EnvironmentThreadState>({
+          data: Option.some(value),
+          status: "live",
+          error: Option.none(),
+        }),
+      );
+      return harness.registry.get(messagesAtom);
+    };
+
+    const shown = receive(thread([message(0, "history"), message(1, "reply")]));
+    const resent = thread([message(0, "history", true), message(1, "reply")]);
+    expect(receive(resent)).toBe(shown);
+    historyReads = 0;
+
+    const patched = receive(thread([resent.messages[0]!, message(1, "reply, streaming")]));
+
+    expect(patched[0]).toBe(shown[0]);
+    expect(patched[1]).toMatchObject({ text: "reply, streaming" });
+    expect(historyReads).toBe(0);
+  });
+
+  it("keeps a changed payload's own __proto__ key as data", () => {
+    const harness = makeHarness();
+    const ref = { environmentId: ENVIRONMENT_ID, threadId: THREAD_ID };
+    const activitiesAtom = harness.threadDetails.activitiesAtom(ref);
+    const receive = (payloadJson: string) =>
+      harness.registry.set(
+        harness.threadStateAtom(THREAD_ID),
+        AsyncResult.success<EnvironmentThreadState>({
+          data: Option.some({
+            ...THREAD_SHELL,
+            deletedAt: null,
+            messages: [],
+            proposedPlans: [],
+            activities: [
+              {
+                id: EventId.make("activity-1"),
+                tone: "tool",
+                kind: "tool.call",
+                summary: "Tool call",
+                payload: JSON.parse(payloadJson),
+                turnId: null,
+                createdAt: "2026-06-01T00:00:00.000Z",
+              },
+            ],
+            checkpoints: [],
+          }),
+          status: "live",
+          error: Option.none(),
+        }),
+      );
+
+    receive('{"__proto__":{"tool":"old"},"value":1}');
+    harness.registry.get(activitiesAtom);
+    receive('{"__proto__":{"tool":"new"},"value":2}');
+
+    const payload = harness.registry.get(activitiesAtom)[0]?.payload as object;
+    expect(Object.getPrototypeOf(payload)).toBe(Object.prototype);
+    expect(Object.getOwnPropertyDescriptor(payload, "__proto__")?.value).toEqual({ tool: "new" });
+    expect(payload).toMatchObject({ value: 2 });
+  });
+
   it("projects every detail collection, status, error, session, and latest turn", () => {
     const harness = makeHarness();
     const ref = { environmentId: ENVIRONMENT_ID, threadId: THREAD_ID };

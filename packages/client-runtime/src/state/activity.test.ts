@@ -1252,28 +1252,34 @@ describe("environment activity stream state", () => {
     }),
   );
 
-  it.effect("sets a user-safe stream error and retries after 250 milliseconds", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      yield* Queue.offer(harness.inputs, new Error("sensitive transport detail"));
+  it.effect(
+    "sets a user-safe stream error and retries after 250 milliseconds, then backs off",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const subscriptionsAfterSettling = Effect.gen(function* () {
+          for (let attempt = 0; attempt < 100; attempt += 1) yield* Effect.yieldNow;
+          return yield* Ref.get(harness.subscriptionCount);
+        });
+        yield* Queue.offer(harness.inputs, new Error("sensitive transport detail"));
 
-      const failed = yield* awaitState(harness.state, (state) => Option.isSome(state.error));
-      expect(Option.getOrThrow(failed.error)).toBe("Could not synchronize activity.");
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+        const failed = yield* awaitState(harness.state, (state) => Option.isSome(state.error));
+        expect(Option.getOrThrow(failed.error)).toBe("Could not synchronize activity.");
+        expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
 
-      yield* TestClock.adjust("249 millis");
-      yield* Effect.yieldNow;
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+        yield* TestClock.adjust("249 millis");
+        expect(yield* subscriptionsAfterSettling).toBe(1);
+        yield* TestClock.adjust("1 millis");
+        expect(yield* subscriptionsAfterSettling).toBe(2);
 
-      yield* TestClock.adjust("1 millis");
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* Ref.get(harness.subscriptionCount)) === 2) {
-          break;
-        }
-        yield* Effect.yieldNow;
-      }
-      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
-    }),
+        // A scope that keeps failing waits twice as long each time (#113).
+        yield* Queue.offer(harness.inputs, new Error("sensitive transport detail"));
+        expect(yield* subscriptionsAfterSettling).toBe(2);
+        yield* TestClock.adjust("499 millis");
+        expect(yield* subscriptionsAfterSettling).toBe(2);
+        yield* TestClock.adjust("1 millis");
+        expect(yield* subscriptionsAfterSettling).toBe(3);
+      }),
   );
 
   it.effect("does not subscribe when the activity protocol is unsupported", () =>
