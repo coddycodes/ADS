@@ -2004,10 +2004,13 @@ from what the emulator reports, never from a rotate command.
 
 **Input.** `device.input` takes batches of at most 64 touch, key, and text
 events (text at most 1,000 characters) and the client keeps one batch in
-flight. Touch points are normalized `0..1` of the oriented display and mapped
-to display pixels in `input::to_device_pixels`. A pointer still down when the
-device's input stream is reopened or the device stops is released where it
-was. `device.rotate` tilts the virtual sensor with `setPhysicalModel` and then
+flight. Touch points are normalized `0..1` of the upright picture. The
+emulator's `Touch.x`/`y` is the physical location on the unrotated panel, so
+`android::input::to_panel_pixels` turns each point into natural portrait panel
+pixels for the orientation the guest reported (measured on a real AVD: before
+this mapping, a landscape tap at (109, 66) of the 2400×1080 picture arrived as
+panel (109, 66)). A pointer still down when the device's input stream is
+reopened or the device stops is released where it was, in panel pixels. `device.rotate` tilts the virtual sensor with `setPhysicalModel` and then
 reads back the reported orientation; the screen turns only when auto-rotate is
 on and the foreground app allows it.
 
@@ -2150,13 +2153,15 @@ afterwards can arrive before the pasted text.
 **Rotation and orientation.** `device.rotate` sends the target orientation to
 the simulator's `PurpleWorkspacePort` and then reads back the reported
 orientation for about 1.2 s; `canRotate` is true for live simulators with
-input. The orientation convention is Android's: `landscape` is the phone
-turned left (counter-clockwise), the client's **Rotate left** from portrait,
-Android's `Surface.ROTATION_90` and rotation vector `[0, 0, -90]`. On iOS that
-is `uiOrientation` 4, sent as Purple value 3 (`reverseLandscape` is 3 and
-Purple 4, `reversePortrait` Purple 2, `portrait` Purple 1). Android's −90
-vector is still an unverified native item (below); if it proves reversed, the
-Android vector changes, not iOS.
+input. One convention covers both platforms, with iOS as the reference:
+`landscape` is the phone turned left (counter-clockwise), the client's
+**Rotate left** from portrait, with the UI's top along the device's right
+edge, so a cutout or Dynamic Island shows on the picture's left. That is
+Android's `Surface.ROTATION_90`, reached with rotation vector `[0, 0, 90]`
+(a real Pixel_8 AVD turned to `ROTATION_270` for `-90`), and `reverseLandscape`
+is `ROTATION_270` with `[0, 0, -90]`. On iOS `landscape` is `uiOrientation` 4,
+sent as Purple value 3 (`reverseLandscape` is 3 and Purple 4,
+`reversePortrait` Purple 2, `portrait` Purple 1).
 
 **View-only.** A view-only simulator shows `simctl io screenshot` JPEGs
 about every 500 ms at full size, has no video (a media ticket is refused with
@@ -2220,14 +2225,14 @@ manager emits
 `is_long_running` because they wait on discovery, the emulator, or the
 simulator.
 
-**Native verification items.** These behaviors are coded against an
-assumption kept in one function each and have not yet been confirmed on a
-real SDK: the discovery file and `-grpc-use-token`
-(`emulator::default_discovery_dirs`, `EMULATOR_GRPC_FLAGS`), the rotation
-vectors (`input::rotation_vector`), whether reported frame sizes are already
-oriented and touches use oriented display pixels (`input::oriented_size`,
-`input::to_device_pixels`, and the client's `displaySize`), and the scrcpy
-v4.1 stream after a rotation (`device::scrcpy`). The
+**Native verification items.** Each of these behaviors lives in one function
+and was checked on a real Pixel_8 AVD (API 35, macOS host): the discovery file
+and `-grpc-use-token` (`emulator::default_discovery_dirs`,
+`EMULATOR_GRPC_FLAGS`), the rotation vectors (`input::rotation_vector`), that
+frame sizes arrive oriented while touches use unrotated panel pixels
+(`input::oriented_size`, `android::input::to_panel_pixels`, and the client's
+`displaySize`), and the scrcpy v4.1 stream after a rotation
+(`device::scrcpy`). The
 [device preview runbook](../testing/cross-platform-validation.md#android-device-previews)
 checks each one. The iOS live path was checked on Xcode 27 with the iOS 26.5
 runtime only; the

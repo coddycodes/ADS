@@ -3031,7 +3031,11 @@ their client change. Everything below needs a real Android SDK.
 (`emulator -accel-check` succeeds), the Hypervisor framework on macOS, or
 WHPX/AEHD on Windows. Record the SDK path, `emulator -version`, `adb version`,
 the AVD's name, API level, and ABI, and the platform page's acceleration
-check. Start the server with `ANDROID_HOME` set in its own environment (a
+check. The AVD needs `hw.keyboard=yes` in its `config.ini`: without it, Back,
+Home, Recents, and volume silently do nothing, and avdmanager-created AVDs
+default to `no`. On macOS, `-no-window` falls back to a software GPU
+(lavapipe), which wedged or crashed the guest in the first native run; record
+it if the guest stops answering. Start the server with `ANDROID_HOME` set in its own environment (a
 service manager does not read a login shell), on an address a second machine
 reaches. Use a fresh `BIBCODE_HOME` and enable the
 [Profiler](../architecture/overview.md#profiler) so `device.lifecycle` and
@@ -3083,7 +3087,11 @@ Record each client's OS, app or browser version, and profile type.
    all four orientations. For each, record the orientation the catalog shows,
    `adb -s <serial> shell dumpsys input | grep -i SurfaceOrientation`, the
    video's and the still images' width and height (landscape is wider than
-   tall), and the pointer location of a corner tap. The video must keep
+   tall), and the pointer location of a corner tap. **Rotate left** from
+   portrait in Chrome must give `mCurrentRotation=ROTATION_90`
+   (`adb -s <serial> shell dumpsys window displays | grep mCurrentRotation`)
+   with the camera cutout's band on the picture's **left**, and a landscape
+   tap on the address bar must focus it. The video must keep
    playing at the new size without a fallback, which proves scrcpy's new
    session and config packets were read. With auto-rotate off, a rotate
    command leaves the screen and the catalog in portrait.

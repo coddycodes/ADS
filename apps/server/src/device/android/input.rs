@@ -15,7 +15,7 @@ use super::{
 use crate::device::{
     DeviceError, DeviceOpError,
     catalog::Orientation,
-    input::{DeviceInputEvent, DeviceKey, KeyAction, TouchAction, oriented_size, to_device_pixels},
+    input::{DeviceInputEvent, DeviceKey, KeyAction, TouchAction, oriented_size},
 };
 
 /// How long one event may wait for room in the emulator's input stream.
@@ -45,13 +45,14 @@ pub(crate) fn w3c_key(key: DeviceKey) -> &'static str {
 }
 
 /// The `setPhysicalModel(ROTATION)` vector that tilts the virtual device toward
-/// `orientation` (native verification item 2).
+/// `orientation` (native verification item 2). A positive z turns it counter-clockwise:
+/// `-90` gave `ROTATION_270` on a real Pixel_8 AVD, so `Landscape` (`ROTATION_90`) is `+90`.
 pub(crate) fn rotation_vector(orientation: Orientation) -> [f32; 3] {
     match orientation {
         Orientation::Portrait => [0.0, 0.0, 0.0],
-        Orientation::Landscape => [0.0, 0.0, -90.0],
+        Orientation::Landscape => [0.0, 0.0, 90.0],
         Orientation::ReversePortrait => [0.0, 0.0, 180.0],
-        Orientation::ReverseLandscape => [0.0, 0.0, 90.0],
+        Orientation::ReverseLandscape => [0.0, 0.0, -90.0],
     }
 }
 
@@ -63,6 +64,34 @@ pub(crate) fn reported_orientation(rotation: i32) -> Option<Orientation> {
         SkinRotation::ReversePortrait => Orientation::ReversePortrait,
         SkinRotation::ReverseLandscape => Orientation::ReverseLandscape,
     })
+}
+
+/// Natural-panel pixels for a point `(u, v)` normalized to `0..1` in the upright picture of
+/// a device turned to `orientation`, whose native portrait panel is `width` x `height`. The
+/// emulator's `Touch.x`/`y` is "the physical location on the screen", the unrotated panel,
+/// whatever the guest's rotation (native verification item 3): a tap at (109, 66) of a
+/// 2400x1080 landscape picture arrived as panel (109, 66) before this mapping.
+pub(crate) fn to_panel_pixels(
+    u: f64,
+    v: f64,
+    width: u32,
+    height: u32,
+    orientation: Orientation,
+) -> (i32, i32) {
+    // Saturating float-to-int casts; the clamps keep the point on the panel.
+    let forward =
+        |t: f64, n: u32| ((t.clamp(0.0, 1.0) * f64::from(n)) as u32).min(n.saturating_sub(1));
+    let reversed = |t: f64, n: u32| n.saturating_sub(1) - forward(t, n);
+    let (x, y) = match orientation {
+        Orientation::Portrait => (forward(u, width), forward(v, height)),
+        // Turned counter-clockwise: the picture's top is the panel's right edge.
+        Orientation::Landscape => (reversed(v, width), forward(u, height)),
+        Orientation::ReversePortrait => (reversed(u, width), reversed(v, height)),
+        // Turned clockwise: the picture's top is the panel's left edge.
+        Orientation::ReverseLandscape => (forward(v, width), reversed(u, height)),
+    };
+    let pixel = |value: u32| i32::try_from(value).unwrap_or(i32::MAX);
+    (pixel(x), pixel(y))
 }
 
 /// A device's long-lived input stream and the pointers it holds down.
@@ -184,7 +213,9 @@ async fn deliver(
 }
 
 /// Forwards `events`, in order, on the device's input stream. `native` is the portrait
-/// display size and `orientation` the catalog's current one.
+/// display size and `orientation` the catalog's current one, the orientation the guest
+/// last reported. Pointers are kept in panel pixels, so a release after a turn still lands
+/// where the pointer went down.
 pub(super) async fn send_batch(
     client: &EmulatorClient,
     tasks: &TaskTracker,
@@ -203,7 +234,7 @@ pub(super) async fn send_batch(
                 x,
                 y,
             } => {
-                let (x, y) = to_device_pixels(x, y, width, height, orientation);
+                let (x, y) = to_panel_pixels(x, y, width, height, orientation);
                 let down = matches!(action, TouchAction::Down | TouchAction::Move);
                 (
                     touch_event(x, y, pointer_id, i32::from(down)),
@@ -261,10 +292,20 @@ pub(super) async fn rotate(
             tokio::time::sleep(ROTATION_POLL_INTERVAL).await;
         }
         let reported = match client.screenshot(ImgFormat::Png, 1).await {
-            Ok(image) => image
-                .format
-                .and_then(|format| format.rotation)
-                .and_then(|rotation| reported_orientation(rotation.rotation)),
+            Ok(image) => {
+                let skin = image
+                    .format
+                    .and_then(|format| format.rotation)
+                    .map(|rotation| rotation.rotation);
+                let reported = skin.and_then(reported_orientation);
+                tracing::debug!(
+                    ?skin,
+                    ?reported,
+                    requested = ?orientation,
+                    "device reported its rotation"
+                );
+                reported
+            }
             Err(error) => {
                 tracing::debug!(%error, "reading the device's orientation failed");
                 None
@@ -286,20 +327,113 @@ mod tests {
     use super::*;
 
     #[test]
-    fn maps_keys_rotations_and_reported_orientations() {
+    fn maps_keys() {
         assert_eq!(w3c_key(DeviceKey::Back), "GoBack");
         assert_eq!(w3c_key(DeviceKey::Home), "GoHome");
         assert_eq!(w3c_key(DeviceKey::VolumeDown), "AudioVolumeDown");
-        assert_eq!(rotation_vector(Orientation::Landscape), [0.0, 0.0, -90.0]);
+    }
+
+    /// The first native run sent `-90` for `Landscape` and the guest reported `ROTATION_270`
+    /// with the cutout on the picture's right (`android-native/13-rotation.txt`): turned
+    /// clockwise. `Landscape` is counter-clockwise, so it is `+90`.
+    #[test]
+    fn landscape_tilts_counter_clockwise() {
+        assert_eq!(rotation_vector(Orientation::Portrait), [0.0, 0.0, 0.0]);
+        assert_eq!(rotation_vector(Orientation::Landscape), [0.0, 0.0, 90.0]);
+        assert_eq!(
+            rotation_vector(Orientation::ReversePortrait),
+            [0.0, 0.0, 180.0]
+        );
         assert_eq!(
             rotation_vector(Orientation::ReverseLandscape),
-            [0.0, 0.0, 90.0]
+            [0.0, 0.0, -90.0]
+        );
+    }
+
+    #[test]
+    fn reported_rotations_map_name_for_name() {
+        for (skin, orientation) in [
+            (SkinRotation::Portrait, Orientation::Portrait),
+            (SkinRotation::Landscape, Orientation::Landscape),
+            (SkinRotation::ReversePortrait, Orientation::ReversePortrait),
+            (
+                SkinRotation::ReverseLandscape,
+                Orientation::ReverseLandscape,
+            ),
+        ] {
+            assert_eq!(
+                reported_orientation(skin as i32),
+                Some(orientation),
+                "{skin:?}"
+            );
+        }
+        assert_eq!(reported_orientation(42), None);
+    }
+
+    const PANEL: (u32, u32) = (1080, 2400);
+
+    fn panel(u: f64, v: f64, orientation: Orientation) -> (i32, i32) {
+        to_panel_pixels(u, v, PANEL.0, PANEL.1, orientation)
+    }
+
+    #[test]
+    fn upright_points_map_to_the_unrotated_panel() {
+        // (u, v) = (0.25, 0.75) of the upright picture, each orientation's row of the table.
+        assert_eq!(panel(0.25, 0.75, Orientation::Portrait), (270, 1800));
+        assert_eq!(panel(0.25, 0.75, Orientation::Landscape), (1079 - 810, 600));
+        assert_eq!(
+            panel(0.25, 0.75, Orientation::ReversePortrait),
+            (1079 - 270, 2399 - 1800)
         );
         assert_eq!(
-            reported_orientation(SkinRotation::ReverseLandscape as i32),
-            Some(Orientation::ReverseLandscape)
+            panel(0.25, 0.75, Orientation::ReverseLandscape),
+            (810, 2399 - 600)
         );
-        assert_eq!(reported_orientation(42), None);
+    }
+
+    /// The native run's measured tap: (109, 66) of the 2400x1080 landscape picture.
+    #[test]
+    fn the_measured_landscape_tap_lands_on_the_panel_where_the_picture_shows_it() {
+        let (u, v) = (109.0 / 2400.0, 66.0 / 1080.0);
+        assert_eq!(panel(u, v, Orientation::Landscape), (1013, 109));
+    }
+
+    #[test]
+    fn each_orientation_maps_its_corners_to_the_right_panel_corners() {
+        let (right, bottom) = (1079, 2399);
+        // The picture's top-left, top-right, bottom-left, and bottom-right corners.
+        let corners = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)];
+        for (orientation, expected) in [
+            (
+                Orientation::Portrait,
+                [(0, 0), (right, 0), (0, bottom), (right, bottom)],
+            ),
+            // Counter-clockwise: the picture's top-left is the panel's top-right.
+            (
+                Orientation::Landscape,
+                [(right, 0), (right, bottom), (0, 0), (0, bottom)],
+            ),
+            (
+                Orientation::ReversePortrait,
+                [(right, bottom), (0, bottom), (right, 0), (0, 0)],
+            ),
+            // Clockwise: the picture's top-left is the panel's bottom-left.
+            (
+                Orientation::ReverseLandscape,
+                [(0, bottom), (0, 0), (right, bottom), (right, 0)],
+            ),
+        ] {
+            let mapped = corners.map(|(u, v)| panel(u, v, orientation));
+            assert_eq!(mapped, expected, "{orientation:?}");
+        }
+    }
+
+    #[test]
+    fn points_off_the_picture_are_clamped_to_the_panel() {
+        assert_eq!(panel(1.2, -0.1, Orientation::Portrait), (1079, 0));
+        assert_eq!(panel(1.2, -0.1, Orientation::Landscape), (1079, 2399));
+        assert_eq!(panel(1.2, -0.1, Orientation::ReversePortrait), (0, 2399));
+        assert_eq!(panel(1.2, -0.1, Orientation::ReverseLandscape), (0, 0));
     }
 
     #[tokio::test]

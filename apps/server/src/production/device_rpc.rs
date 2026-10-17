@@ -506,7 +506,8 @@ mod tests {
             .expect("rotation is requested");
         assert_eq!(
             fixture.controller.rotations.lock().unwrap().last(),
-            Some(&[0.0, 0.0, -90.0])
+            // Landscape is turned counter-clockwise (`ROTATION_90`).
+            Some(&[0.0, 0.0, 90.0])
         );
         fixture.controller.fail_rotation();
         let failed = harness

@@ -1215,7 +1215,10 @@ has no device previews. Update the server to use them."
   `platform-tools`, at least one virtual device created in Android Studio's
   Device Manager, and hardware acceleration (KVM on Linux). The server finds
   the SDK through `ANDROID_HOME` or `ANDROID_SDK_ROOT`, or in the platform's
-  default location.
+  default location. If **Back**, **Home**, **Recents**, or the volume buttons
+  do nothing, set `hw.keyboard=yes` in the virtual device's `config.ini`
+  (under `~/.android/avd/<name>.avd/`) and start it again: devices created
+  with `avdmanager` default to `no`, and the emulator then ignores those keys.
 - **iOS** needs a macOS server with Xcode installed and set up (open it once,
   or run `sudo xcodebuild -runFirstLaunch`) and at least one iPhone or iPad
   simulator, created in Xcode under **Window → Devices and Simulators**.

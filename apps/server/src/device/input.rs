@@ -96,33 +96,15 @@ pub enum DeviceKey {
     ArrowRight,
 }
 
-/// The display size in `orientation` of a device whose native (portrait) display is
-/// `width` x `height`. Assumes the emulator swaps the display's axes when it rotates
-/// (native verification item 3).
+/// The upright picture's size in `orientation` of a device whose native (portrait) display
+/// is `width` x `height`: a landscape screen swaps the axes, as the emulator's rotated video
+/// does (native verification item 3). Touches are not mapped here: each backend turns the
+/// upright picture's points into what its input path expects.
 pub(crate) fn oriented_size(width: u32, height: u32, orientation: Orientation) -> (u32, u32) {
     match orientation {
         Orientation::Portrait | Orientation::ReversePortrait => (width, height),
         Orientation::Landscape | Orientation::ReverseLandscape => (height, width),
     }
-}
-
-/// Display pixels for a point normalized to `0..1` in the current orientation, clamped to the
-/// display. Assumes touches use the current orientation's display pixels (native
-/// verification item 3).
-pub(crate) fn to_device_pixels(
-    x: f64,
-    y: f64,
-    width: u32,
-    height: u32,
-    orientation: Orientation,
-) -> (i32, i32) {
-    let (width, height) = oriented_size(width, height, orientation);
-    let axis = |value: f64, size: u32| {
-        // Saturating float-to-int casts; the clamp keeps the value inside the display.
-        let pixel = (value.clamp(0.0, 1.0) * f64::from(size)) as u32;
-        i32::try_from(pixel.min(size.saturating_sub(1))).unwrap_or(i32::MAX)
-    };
-    (axis(x, width), axis(y, height))
 }
 
 fn validate(events: &[DeviceInputEvent]) -> Result<(), DeviceOpError> {
@@ -188,19 +170,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn maps_normalized_coordinates_per_orientation() {
-        assert_eq!(
-            to_device_pixels(0.5, 0.25, 1080, 2400, Orientation::Portrait),
-            (540, 600)
-        );
-        assert_eq!(
-            to_device_pixels(0.5, 0.25, 1080, 2400, Orientation::Landscape),
-            (1200, 270)
-        );
-        assert_eq!(
-            to_device_pixels(1.2, -0.1, 1080, 2400, Orientation::Portrait),
-            (1079, 0)
-        );
+    fn landscape_pictures_swap_the_native_axes() {
+        // The emulator's rotated video measured 1280x576 for a 576x1280 portrait stream.
+        for (orientation, size) in [
+            (Orientation::Portrait, (1080, 2400)),
+            (Orientation::ReversePortrait, (1080, 2400)),
+            (Orientation::Landscape, (2400, 1080)),
+            (Orientation::ReverseLandscape, (2400, 1080)),
+        ] {
+            assert_eq!(
+                oriented_size(1080, 2400, orientation),
+                size,
+                "{orientation:?}"
+            );
+        }
     }
 
     #[test]
@@ -401,7 +384,7 @@ mod device_tests {
             .unwrap();
         assert_eq!(
             fixture.controller.rotations.lock().unwrap().last(),
-            Some(&[0.0, 0.0, -90.0])
+            Some(&[0.0, 0.0, 90.0])
         );
         assert_eq!(fixture.snapshot().orientation, Orientation::Portrait);
         fixture.controller.report_rotation(SkinRotation::Landscape);
@@ -413,14 +396,15 @@ mod device_tests {
         fixture.wait_orientation(Orientation::Landscape).await;
         let snapshot = fixture.snapshot();
         assert_eq!((snapshot.width, snapshot.height), (Some(2400), Some(1080)));
-        // Touches still land in the rotated display.
+        // A touch on the upright landscape picture reaches the emulator in unrotated panel
+        // pixels: turned counter-clockwise, the picture's top is the panel's right edge.
         fixture
             .manager
             .input(&fixture.id, vec![touch(TouchAction::Down, 0.5, 0.25)])
             .await
             .unwrap();
         let inputs = fixture.controller.wait_inputs(1).await;
-        assert_eq!(touch_xy(&inputs[0]), (1200, 270));
+        assert_eq!(touch_xy(&inputs[0]), (1079 - 270, 1200));
     }
 
     #[tokio::test]

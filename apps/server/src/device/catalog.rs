@@ -66,12 +66,19 @@ pub enum DeviceState {
     Failed,
 }
 
+/// How the device is turned from its natural portrait position, one convention for every
+/// platform (iOS is the reference).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Orientation {
     Portrait,
+    /// Turned counter-clockwise ("Rotate left"), right edge up: the UI's top lies along the
+    /// device's right edge, so a camera cutout or Dynamic Island shows on the picture's left.
+    /// Android `ROTATION_90`.
     Landscape,
+    /// Turned 180 degrees. Android `ROTATION_180`.
     ReversePortrait,
+    /// Turned clockwise, left edge up. Android `ROTATION_270`.
     ReverseLandscape,
 }
 
