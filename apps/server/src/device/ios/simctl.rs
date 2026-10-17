@@ -331,13 +331,14 @@ impl SimctlRunner {
         succeeded(&command, output)
     }
 
-    /// Runs `xcrun <args>` (not `simctl`) and returns its output, failed or not.
+    /// Runs `xcrun <args>` within `timeout` and returns its output, failed or not.
     pub(crate) async fn xcrun_output(
         &self,
         args: &[&str],
+        timeout: Duration,
     ) -> Result<SupervisedRunOutput, SimctlError> {
         let command = format!("xcrun {}", args.join(" "));
-        run(&self.xcrun, args, None, LIST_TIMEOUT, SMALL_OUTPUT_BYTES)
+        run(&self.xcrun, args, None, timeout, SMALL_OUTPUT_BYTES)
             .await
             .map_err(|error| run_error(&command, error))
     }

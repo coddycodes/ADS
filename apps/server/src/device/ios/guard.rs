@@ -7,13 +7,13 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use super::{
     coresim::CoreSim,
     lock,
-    simctl::{SimDevice, SimctlRunner},
+    simctl::{SimDevice, SimctlError, SimctlRunner},
 };
 use crate::device::catalog::{Availability, AvailabilityKind};
 
@@ -47,10 +47,11 @@ pub(crate) enum XcodeStatus {
     },
 }
 
-/// Remembers the last `Ready` status, so a refresh re-runs the three `xcrun` probes only when
-/// the active developer directory or its Xcode's `version.plist` changed. A refresh still
-/// runs `xcode-select -p`; a status that is not `Ready` is never kept, so finishing Xcode
-/// setup shows on the next refresh.
+/// Remembers the last `Ready` status, so a refresh re-runs the `xcrun` probes only when the
+/// active developer directory or its Xcode's `version.plist` changed. A refresh still runs
+/// `xcode-select -p`; a status that is not `Ready` is never kept, so finishing Xcode setup
+/// (which leaves `version.plist` alone) shows on the next refresh. A pending first launch is
+/// found by `xcodebuild -checkFirstLaunchStatus`, which spawns no installer.
 #[derive(Default)]
 pub(crate) struct XcodeCache {
     last: Mutex<Option<(PathBuf, Option<SystemTime>, XcodeStatus)>>,
@@ -397,8 +398,18 @@ fn asks_for_setup(stderr: &[u8]) -> bool {
     .any(|needle| stderr.contains(needle))
 }
 
-/// Runs `xcode-select -p`, `xcrun simctl help`, and `xcrun xcodebuild -version`.
+/// How long `xcodebuild -checkFirstLaunchStatus` may take; it only reads what is installed.
+const FIRST_LAUNCH_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long `simctl help` and `xcodebuild -version` may take.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Runs `xcode-select -p`, `xcrun xcodebuild -checkFirstLaunchStatus`, `xcrun simctl help`,
+/// and `xcrun xcodebuild -version`.
 pub(crate) async fn xcode_status(runner: &SimctlRunner) -> XcodeStatus {
+    xcode_status_within(runner, PROBE_TIMEOUT).await
+}
+
+async fn xcode_status_within(runner: &SimctlRunner, probe_timeout: Duration) -> XcodeStatus {
     let developer_dir = match runner.developer_dir().await {
         Ok(dir) => dir,
         Err(error) => {
@@ -406,19 +417,47 @@ pub(crate) async fn xcode_status(runner: &SimctlRunner) -> XcodeStatus {
             return XcodeStatus::Missing;
         }
     };
-    match runner.xcrun_output(&["simctl", "help"]).await {
+    // With the first launch pending (an Xcode update whose CoreSimulator is not installed
+    // yet), Xcode's `simctl` wrapper starts `xcodebuild -runFirstLaunch`, which waits for an
+    // administrator. This check spawns nothing and answers at once.
+    match runner
+        .xcrun_output(
+            &["xcodebuild", "-checkFirstLaunchStatus"],
+            FIRST_LAUNCH_CHECK_TIMEOUT,
+        )
+        .await
+    {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            tracing::debug!(status = %output.status, "Xcode's first launch is pending");
+            return XcodeStatus::SetupIncomplete;
+        }
+        Err(error) => tracing::debug!(%error, "could not check Xcode's first launch"),
+    }
+    match runner
+        .xcrun_output(&["simctl", "help"], probe_timeout)
+        .await
+    {
         Ok(output) if output.status.success() => {}
         Ok(output) if asks_for_setup(&output.stderr.bytes) => return XcodeStatus::SetupIncomplete,
         Ok(output) => {
             tracing::debug!(status = %output.status, "simctl is unavailable");
             return XcodeStatus::Missing;
         }
+        // A `simctl` that never answers is waiting on Xcode's first-launch installer.
+        Err(SimctlError::Timeout { .. }) => {
+            tracing::debug!("simctl help timed out");
+            return XcodeStatus::SetupIncomplete;
+        }
         Err(error) => {
             tracing::debug!(%error, "simctl is unavailable");
             return XcodeStatus::Missing;
         }
     }
-    let version = match runner.xcrun_output(&["xcodebuild", "-version"]).await {
+    let version = match runner
+        .xcrun_output(&["xcodebuild", "-version"], probe_timeout)
+        .await
+    {
         Ok(output) if output.status.success() => parse_version(&output.stdout.bytes),
         Ok(output) if asks_for_setup(&output.stderr.bytes) => return XcodeStatus::SetupIncomplete,
         _ => None,
@@ -595,6 +634,45 @@ mod tests {
         let mut missing = FakeXcrun::new().write().runner();
         missing.xcode_select = "/nonexistent/xcode-select".into();
         assert_eq!(xcode_status(&missing).await, XcodeStatus::Missing);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_pending_first_launch_is_setup_incomplete_without_running_simctl() {
+        use crate::device::ios::testing::FakeXcrun;
+        let sim = FakeXcrun::new()
+            .first_launch_pending()
+            .device("UDID-1", "iPhone 17 Pro", "iOS 27.0")
+            .write();
+        let cache = XcodeCache::default();
+        for _ in 0..2 {
+            let status = cache.status(&sim.runner()).await;
+            assert_eq!(status, XcodeStatus::SetupIncomplete);
+            let availability = availability_for(&status, &[], None);
+            assert_eq!(availability.kind, AvailabilityKind::XcodeSetupIncomplete);
+            assert_eq!(availability.message, XCODE_SETUP_MESSAGE);
+        }
+        // `simctl help` would start `xcodebuild -runFirstLaunch` through Xcode's wrapper.
+        assert!(sim.calls().is_empty(), "simctl ran: {:?}", sim.calls());
+        assert_eq!(
+            sim.first_launch_checks(),
+            2,
+            "SetupIncomplete is not cached"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_simctl_help_that_never_answers_is_setup_incomplete() {
+        use crate::device::ios::testing::FakeXcrun;
+        let sim = FakeXcrun::new().simctl_help_hangs().write();
+        let started = std::time::Instant::now();
+        assert_eq!(
+            xcode_status_within(&sim.runner(), std::time::Duration::from_millis(500)).await,
+            XcodeStatus::SetupIncomplete
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        assert_eq!(sim.calls(), ["help"]);
     }
 
     #[test]

@@ -34,6 +34,8 @@ pub(crate) struct FakeXcrun {
     states: Vec<(String, String)>,
     boot_failure: Option<String>,
     help_failure: Option<String>,
+    help_hangs: bool,
+    first_launch_pending: bool,
     bootstatus_blocks: bool,
 }
 
@@ -45,6 +47,8 @@ impl FakeXcrun {
             states: Vec::new(),
             boot_failure: None,
             help_failure: None,
+            help_hangs: false,
+            first_launch_pending: false,
             bootstatus_blocks: false,
         }
     }
@@ -80,6 +84,19 @@ impl FakeXcrun {
         self
     }
 
+    /// `simctl help` never finishes, like Xcode's wrapper waiting on
+    /// `xcodebuild -runFirstLaunch` for an administrator.
+    pub(crate) fn simctl_help_hangs(mut self) -> Self {
+        self.help_hangs = true;
+        self
+    }
+
+    /// `xcodebuild -checkFirstLaunchStatus` exits 69: Xcode's first launch is pending.
+    pub(crate) fn first_launch_pending(mut self) -> Self {
+        self.first_launch_pending = true;
+        self
+    }
+
     pub(crate) fn write(self) -> Self {
         use std::{fs, os::unix::fs::PermissionsExt};
         let root = self.dir.path();
@@ -107,10 +124,15 @@ impl FakeXcrun {
 
     fn xcrun_script(&self) -> String {
         let dir = self.dir.path().display();
-        let help = self.help_failure.as_ref().map_or_else(
-            || "exit 0".to_owned(),
-            |message| format!("echo '{message}' >&2; exit 1"),
-        );
+        let help = if self.help_hangs {
+            "sleep 60".to_owned()
+        } else {
+            self.help_failure.as_ref().map_or_else(
+                || "exit 0".to_owned(),
+                |message| format!("echo '{message}' >&2; exit 1"),
+            )
+        };
+        let first_launch = if self.first_launch_pending { 69 } else { 0 };
         let boot = self.boot_failure.as_ref().map_or_else(
             || format!("echo Booted > \"{dir}/state/$2\""),
             |message| {
@@ -118,7 +140,7 @@ impl FakeXcrun {
             },
         );
         format!(
-            "#!/bin/sh\ndir=\"{dir}\"\nif [ \"$1\" = xcodebuild ]; then echo 'Xcode 27.0'; echo 'Build version 27A266a'; exit 0; fi\n[ \"$1\" = simctl ] && shift\necho \"$*\" >> \"$dir/calls\"\ncase \"$1\" in\n  help) {help} ;;\n  list) {list} ;;\n  boot) {boot} ;;\n  bootstatus) {bootstatus} ;;\n  shutdown) echo Shutdown > \"$dir/state/$2\" ;;\n  io) cp \"$dir/screenshot.jpg\" \"$5\" ;;\n  pbcopy) cat > \"$dir/pasteboard\" ;;\n  *) echo \"unknown simctl command $1\" >&2; exit 1 ;;\nesac\n",
+            "#!/bin/sh\ndir=\"{dir}\"\nif [ \"$1\" = xcodebuild ] && [ \"$2\" = -checkFirstLaunchStatus ]; then echo checkFirstLaunchStatus >> \"$dir/first-launch-checks\"; exit {first_launch}; fi\nif [ \"$1\" = xcodebuild ]; then echo 'Xcode 27.0'; echo 'Build version 27A266a'; exit 0; fi\n[ \"$1\" = simctl ] && shift\necho \"$*\" >> \"$dir/calls\"\ncase \"$1\" in\n  help) {help} ;;\n  list) {list} ;;\n  boot) {boot} ;;\n  bootstatus) {bootstatus} ;;\n  shutdown) echo Shutdown > \"$dir/state/$2\" ;;\n  io) cp \"$dir/screenshot.jpg\" \"$5\" ;;\n  pbcopy) cat > \"$dir/pasteboard\" ;;\n  *) echo \"unknown simctl command $1\" >&2; exit 1 ;;\nesac\n",
             list = self.list_script(),
             bootstatus = if self.bootstatus_blocks {
                 "sleep 60"
@@ -179,6 +201,14 @@ impl FakeXcrun {
             .lines()
             .map(str::to_owned)
             .collect()
+    }
+
+    /// How many times `xcodebuild -checkFirstLaunchStatus` ran.
+    pub(crate) fn first_launch_checks(&self) -> usize {
+        std::fs::read_to_string(self.dir.path().join("first-launch-checks"))
+            .unwrap_or_default()
+            .lines()
+            .count()
     }
 
     /// What `simctl pbcopy` last received.

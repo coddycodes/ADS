@@ -1507,6 +1507,7 @@ mod platform_tests {
 
     #[tokio::test]
     async fn lifecycle_events_name_the_platform() {
+        // The capture records whether or not the profiler is on; the gate is not covered here.
         let capture = lifecycle_capture::start();
         let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
         let (manager, _enabled) = fake_manager(vec![ios]);
