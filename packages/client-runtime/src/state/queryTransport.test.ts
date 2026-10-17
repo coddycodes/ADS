@@ -39,6 +39,7 @@ const makeHarness = Effect.fn("TestQueryTransport.makeHarness")(function* (
   refreshIntervalMs?: number,
   /** A tiny operation budget makes the query fibers yield to each other after almost every step. */
   maxOpsBeforeYield?: number,
+  cache?: { readonly staleTimeMs: number; readonly idleTtlMs: number },
 ) {
   let calls = 0;
   // A "blocked" call waits here until the test releases it, so it can be interrupted in flight.
@@ -69,6 +70,7 @@ const makeHarness = Effect.fn("TestQueryTransport.makeHarness")(function* (
     {
       label: "test:query-transport",
       staleTimeMs: 0, // Remount really attempts SWR revalidation in these regressions.
+      ...cache,
       transportCutoffKey: (_input: { readonly refreshCacheKey: string }) => ({}),
       ...(refreshIntervalMs === undefined ? {} : { refreshIntervalMs }),
       execute: () =>
@@ -423,6 +425,26 @@ describe("createEnvironmentQueryAtomFamily after transport cut-offs", () => {
       expect(AsyncResult.isFailure(registry.get(h.atom))).toBe(true);
       expect(isEnvironmentQueryAwaitingRetry(h.atom, registry.get(h.atom))).toBe(true);
       registry.dispose();
+    }),
+  );
+});
+
+// The Files panel's list (`fileTreeEntries`) relies on this: with no idle retention, a remount
+// reads again even while the last value would still count as fresh.
+describe("createEnvironmentQueryAtomFamily without idle retention", () => {
+  it.effect("reads again on every mount", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness([], undefined, undefined, {
+        staleTimeMs: 60_000,
+        idleTtlMs: 0,
+      });
+      const unmount = h.registry.mount(h.atom);
+      yield* Effect.promise(() => vi.waitFor(() => expect(h.calls()).toBe(1)));
+      unmount();
+      yield* settle();
+      h.registry.mount(h.atom);
+      yield* Effect.promise(() => vi.waitFor(() => expect(h.calls()).toBe(2)));
+      h.registry.dispose();
     }),
   );
 });
