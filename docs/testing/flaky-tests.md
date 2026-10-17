@@ -39,7 +39,33 @@ it. A sibling test that hits the same `warn!` first on another thread, with no
 subscriber, turns it off for the capture: an expected event is missing, and an
 absence check passes without checking anything (#112). A capture that checks
 absence also emits the event on purpose afterwards and checks that it arrived.
-Captures in integration-test binaries share this exposure.
+Captures in integration-test binaries share this exposure: they include
+`tests/support/reexec.rs` by `#[path]` and call `reexec::in_own_process` with
+the test's bare name. To reproduce, let a sibling test with no subscriber reach
+the callsite after the capture is installed; the expected event goes missing
+every time.
+
+Provider-terminal observer workers share a process-wide admission cap of
+sixteen. A test in `provider_terminal_supervisor` that starts one runs in its
+own process (`own_process!`), because the binary's concurrent tests together
+reach that cap even on an idle host, and a refused worker fails open without a
+log line: OpenCode and Codex never report their initial observation or
+handshake, and Claude removes its generation directory, so the pinned
+executable and the settings overlay are missing. CPU contention and CPU quotas
+do not reproduce this. Evicting the test binary from the page cache
+(`posix_fadvise(POSIX_FADV_DONTNEED)`) before each run does, as does a sibling
+that holds every slot through `TerminalObserverGeneration::worker_context`.
+Widening the tests' readiness waits does not help: the observation never
+arrives. A new test that starts an observer worker uses `own_process!` too.
+
+The profiler's exit-report test for a stop BiBCode noted
+(`a_provider_process_bibcode_stopped_is_not_reported`, the `Noted` case) notes
+the stop microseconds after the event pump records the process start.
+`report_exit` rebuilds that start as `Instant::now() - uptime` from a second
+clock read, so a preemption between the two reads moves it past the note, and
+the exit is reported as a crash. A sleep before the second read makes the case
+fail every time. This is a product imprecision, not test synchronisation; do
+not mask it with a delay before the note.
 
 For WebSocket heartbeat integration, separate exact cadence from connection
 survival. Controlled-clock transport tests pin the 15-second cadence and the

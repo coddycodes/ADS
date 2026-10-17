@@ -10,6 +10,9 @@ mod hermetic_providers;
 #[path = "support/executable_fixture.rs"]
 mod executable_fixture;
 
+#[path = "support/reexec.rs"]
+mod reexec;
+
 use bibcode_server::production::provider_runtime;
 
 use std::{
@@ -8212,8 +8215,15 @@ async fn shutdown_compensates_a_stale_write_already_queued_on_sqlite() {
     assert_eq!(snapshot.observation_state, ActivityObservationState::Live);
 }
 
+/// In a process of its own, where no sibling test can turn the warning's callsite off for this
+/// capture and so pass the absence checks without checking anything (#112).
 #[tokio::test(flavor = "current_thread")]
 async fn invalid_native_ids_drop_only_activity_without_leaking_sensitive_text() {
+    let Some(isolated) = reexec::in_own_process(
+        "invalid_native_ids_drop_only_activity_without_leaking_sensitive_text",
+    ) else {
+        return;
+    };
     let capture = TraceCapture::default();
     let subscriber = tracing_subscriber::fmt()
         .without_time()
@@ -8305,8 +8315,17 @@ async fn invalid_native_ids_drop_only_activity_without_leaking_sensitive_text() 
     let traces = capture.text();
     assert!(!traces.contains("SENSITIVE_CONTROL_ID"));
     assert!(!traces.contains("SENSITIVE_OVERSIZED_ID"));
+    // The warning for each dropped batch reached this capture, so the checks above saw it.
+    assert_eq!(
+        traces
+            .matches("dropped activity batch without a stable native event key")
+            .count(),
+        3,
+        "{traces}"
+    );
 
     supervisor.shutdown().await.unwrap();
+    isolated.complete();
 }
 
 #[tokio::test]
@@ -8801,8 +8820,15 @@ async fn recovered_provider_replacement_survives_a_paused_old_workspace_loss_sto
     assert_eq!(state.lock().unwrap().shutdowns, 2);
 }
 
+/// In a process of its own, where no sibling test can turn the warning's callsite off for this
+/// capture and so pass the absence check without checking anything (#112).
 #[tokio::test(flavor = "current_thread")]
 async fn late_provider_events_after_thread_deletion_do_not_warn() {
+    let Some(isolated) =
+        reexec::in_own_process("late_provider_events_after_thread_deletion_do_not_warn")
+    else {
+        return;
+    };
     let capture = TraceCapture::default();
     let subscriber = tracing_subscriber::fmt()
         .without_time()
@@ -8860,6 +8886,54 @@ async fn late_provider_events_after_thread_deletion_do_not_warn() {
             .contains("failed to project provider runtime event"),
         "late shutdown events should not be reported as unexpected projection failures"
     );
+
+    // The same warning, for an event whose projection did fail, reaches this capture.
+    let supervisor = fail_one_event_projection().await;
+    timeout(Duration::from_secs(5), async {
+        while !capture
+            .text()
+            .contains("failed to project provider runtime event")
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("projection warning reaches the capture: {}", capture.text()));
+    supervisor.shutdown().await.unwrap();
+    isolated.complete();
+}
+
+/// Starts a session and sends it one event for a thread that does not exist, whose
+/// projection fails and logs "failed to project provider runtime event".
+async fn fail_one_event_projection() -> ProviderRuntimeSupervisor {
+    let engine = engine().await;
+    let (events_tx, events_rx) = mpsc::channel(1);
+    let factory = Arc::new(FakeFactory {
+        state: Arc::new(StdMutex::new(DriverState::default())),
+        events: StdMutex::new(VecDeque::from([events_rx])),
+    });
+    let supervisor = ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        factory,
+        activity_projection(&engine),
+        SupervisorOptions::default(),
+    );
+    supervisor.launch(launch()).await.unwrap();
+    events_tx
+        .send(ProviderEvent {
+            native_event_id: None,
+            event_type: "content.delta".to_owned(),
+            thread_id: "missing-thread".to_owned(),
+            turn_id: None,
+            item_id: None,
+            request_id: None,
+            payload: json!({"delta":"unprojected"}),
+            activity: Vec::new(),
+            activity_controls: Default::default(),
+        })
+        .await
+        .unwrap();
+    supervisor
 }
 
 #[tokio::test]

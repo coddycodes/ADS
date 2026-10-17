@@ -4,6 +4,30 @@
 #[path = "support/hermetic_providers.rs"]
 mod hermetic_providers;
 
+#[path = "support/reexec.rs"]
+mod reexec;
+
+/// Runs the calling test again in a process of its own and returns from it; in that child,
+/// binds `$isolated` to the phase the test completes after its last assertion.
+///
+/// For tests that start provider observer workers: admission is capped at sixteen workers
+/// process-wide, and sibling tests together exceed it, so a test's observer silently fails
+/// open. Also for tests that capture `tracing` output, whose callsites a sibling can turn off
+/// (#112). See `docs/testing/flaky-tests.md`.
+macro_rules! own_process {
+    ($isolated:ident) => {
+        fn here() {}
+        // `<binary>::<test>::{{closure}}::here`: the test's name in this binary.
+        let name = std::any::type_name_of_val(&here)
+            .split("::")
+            .nth(1)
+            .expect("test name");
+        let Some($isolated) = reexec::in_own_process(name) else {
+            return;
+        };
+    };
+}
+
 use std::{
     collections::{BTreeMap, VecDeque},
     future::Future,
@@ -3455,6 +3479,7 @@ enum DurableWorkerCleanup {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn hardening_observer_workers_survive_callback_and_teardown_with_generation() {
+    own_process!(isolated);
     for (cleanup, expected_reason) in [
         (
             DurableWorkerCleanup::Close,
@@ -3557,10 +3582,12 @@ async fn hardening_observer_workers_survive_callback_and_teardown_with_generatio
             "{cleanup:?} delivered cancellation more than once"
         );
     }
+    isolated.complete();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hardening_on_spawned_setup_has_no_ambient_disposable_tokio_runtime() {
+    own_process!(isolated);
     let root = tempfile::tempdir().expect("temp dir");
     let state = Arc::new(ObserverSetupBoundaryState::default());
     let manager = TerminalManager::new(
@@ -3597,6 +3624,7 @@ async fn hardening_on_spawned_setup_has_no_ambient_disposable_tokio_runtime() {
         !state.ambient_runtime_present.load(Ordering::Acquire),
         "on_spawned setup exposed a disposable ambient Tokio runtime"
     );
+    isolated.complete();
 }
 
 #[test]
@@ -3759,6 +3787,7 @@ async fn assert_durable_observer_worker_global_bound() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hardening_pass_through_preparation_reaps_registered_workers() {
+    own_process!(isolated);
     let root = tempfile::tempdir().expect("temp dir");
     let state = Arc::new(PassThroughWorkerState::default());
     let manager = TerminalManager::new(
@@ -3789,6 +3818,7 @@ async fn hardening_pass_through_preparation_reaps_registered_workers() {
         "pass-through preparation left a registered worker alive"
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -4122,6 +4152,7 @@ async fn hardening_diagnostics_attempted_args_and_backend_errors_redact_private_
 
 #[tokio::test(flavor = "current_thread")]
 async fn hardening_rejected_hint_diagnostics_are_bounded_to_provider_strategy_and_status() {
+    own_process!(isolated);
     let fixture = tempfile::tempdir().expect("fixture root");
     let configured = fixture.path().join("configured-codex");
     std::fs::write(&configured, b"configured").expect("configured binary");
@@ -4194,6 +4225,7 @@ async fn hardening_rejected_hint_diagnostics_are_bounded_to_provider_strategy_an
     ] {
         assert!(!diagnostic.contains(secret), "{diagnostic}");
     }
+    isolated.complete();
 }
 
 #[tokio::test]
@@ -5184,6 +5216,7 @@ async fn wait_for_codex_root_detail(
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_codex_retains_connection_and_crosses_ordered_barrier() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -5303,11 +5336,13 @@ async fn agent_activity_toggle_codex_retains_connection_and_crosses_ordered_barr
         .await
         .expect("close retained Codex terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_codex_barrier_failure_stays_dormant_then_recovers() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -5414,11 +5449,13 @@ async fn agent_activity_toggle_codex_barrier_failure_stays_dormant_then_recovers
         .await
         .expect("close barrier Codex terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_codex_stale_epoch_barrier_cannot_mark_replacement_live() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -5526,11 +5563,13 @@ async fn agent_activity_toggle_codex_stale_epoch_barrier_cannot_mark_replacement
         .await
         .expect("close stale Codex terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_clean_close_before_root_discovery_reconnects_on_a_fresh_epoch() {
+    own_process!(isolated);
     // Mutations caught:
     // - polling the first client's permanent EOF instead of reconnecting;
     // - continuing root discovery on the stale transport boundary;
@@ -5596,11 +5635,13 @@ async fn codex_clean_close_before_root_discovery_reconnects_on_a_fresh_epoch() {
         .await
         .expect("close pre-root clean-close Codex terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_pre_root_reconnect_failure_publishes_unavailable_and_parks() {
+    own_process!(isolated);
     // Mutations caught:
     // - retrying past the reattach deadline;
     // - retaining or polling the closed discovery client;
@@ -5681,11 +5722,13 @@ async fn codex_pre_root_reconnect_failure_publishes_unavailable_and_parks() {
         .await
         .expect("close unavailable pre-root Codex terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_codex_clean_close_advances_epoch_and_recovers() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -5767,6 +5810,7 @@ async fn agent_activity_toggle_codex_clean_close_advances_epoch_and_recovers() {
         .await
         .expect("close clean-close Codex terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
@@ -6031,6 +6075,7 @@ async fn codex_probe_success_cache_evicts_the_oldest_unique_executable() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_helper_precedes_pty_and_generation_worker_owns_remote_transport() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -6359,11 +6404,13 @@ async fn codex_helper_precedes_pty_and_generation_worker_owns_remote_transport()
     );
     assert!(!socket.exists(), "owned socket must be removed on close");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_resume_atomically_recovers_history_then_receives_scoped_live_events() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -6515,11 +6562,13 @@ async fn codex_resume_atomically_recovers_history_then_receives_scoped_live_even
         .await
         .expect("close terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_resume_retries_transient_materialization_without_losing_pending_events() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -6617,11 +6666,13 @@ async fn codex_resume_retries_transient_materialization_without_losing_pending_e
         .await
         .expect("close materialization-retry terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_resume_reconnects_after_the_remote_tui_replaces_the_materializing_connection() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -6788,11 +6839,13 @@ async fn codex_resume_reconnects_after_the_remote_tui_replaces_the_materializing
         .await
         .expect("close reconnected terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_resume_non_materialization_error_fails_closed_without_retry() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -6846,11 +6899,13 @@ async fn codex_resume_non_materialization_error_fails_closed_without_retry() {
         .await
         .expect("close invalid-resume terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_resume_materialization_retry_is_cancelled_without_a_late_request() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -6891,11 +6946,13 @@ async fn codex_resume_materialization_retry_is_cancelled_without_a_late_request(
         "generation cancellation must prevent a delayed materialization retry"
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_resume_immediately_reconciles_pre_subscription_descendants_and_background_work() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -7059,11 +7116,13 @@ async fn codex_resume_immediately_reconciles_pre_subscription_descendants_and_ba
         .await
         .expect("close terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_reconciliation_stalled_thread_list_does_not_starve_background_snapshot() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -7124,11 +7183,13 @@ async fn codex_reconciliation_stalled_thread_list_does_not_starve_background_sna
         .await
         .expect("close terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_reconciliation_stalled_thread_read_does_not_starve_background_snapshot() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -7206,11 +7267,13 @@ async fn codex_reconciliation_stalled_thread_read_does_not_starve_background_sna
         .await
         .expect("close terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_live_reconciliation_timeout_resumes_queued_event_processing() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -7301,11 +7364,13 @@ async fn codex_live_reconciliation_timeout_resumes_queued_event_processing() {
         .await
         .expect("close terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_startup_failures_fail_open_without_interrupting_remote_tui() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     for phase in ["helper", "connect", "initialize"] {
         let root = tempfile::tempdir().expect("fixture root");
@@ -7459,6 +7524,7 @@ async fn codex_startup_failures_fail_open_without_interrupting_remote_tui() {
         );
         manager.shutdown().await;
     }
+    isolated.complete();
 }
 
 #[cfg(unix)]
@@ -7552,6 +7618,7 @@ async fn codex_generation_slot_exhaustion_fails_open_without_growing_the_namespa
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_list_discovery_correlates_root_when_broadcast_is_absent() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -7694,11 +7761,13 @@ async fn codex_list_discovery_correlates_root_when_broadcast_is_absent() {
             .load(Ordering::Acquire)
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_stalled_list_discovery_returns_to_live_root_notifications_without_overlap() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -7783,11 +7852,13 @@ async fn codex_stalled_list_discovery_returns_to_live_root_notifications_without
         .await
         .expect("close stalled-discovery terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_list_discovery_retries_only_after_the_timed_out_response_is_drained() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -7894,11 +7965,13 @@ async fn codex_list_discovery_retries_only_after_the_timed_out_response_is_drain
         .await
         .expect("close late-response terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_slow_worker_connect_does_not_consume_preparation_budget_or_interrupt_remote_tui() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -7992,11 +8065,13 @@ async fn codex_slow_worker_connect_does_not_consume_preparation_budget_or_interr
         "slow-connect terminal close cleanup",
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_terminals_isolate_endpoints_scopes_and_owned_helper_cleanup() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -8131,6 +8206,7 @@ async fn codex_terminals_isolate_endpoints_scopes_and_owned_helper_cleanup() {
     );
     assert_empty_retired_generation(&directory_b, "terminal B cleanup");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[derive(Debug, Default)]
@@ -8377,6 +8453,7 @@ async fn agent_activity_toggle_disabled_launch_is_pure_pass_through() {
 #[tokio::test]
 async fn agent_activity_toggle_disable_racing_preparation_drops_owned_resources_and_passes_through()
 {
+    own_process!(isolated);
     let fixture = tempfile::tempdir().expect("fixture root");
     let configured = fixture.path().join("configured-codex");
     std::fs::write(&configured, b"configured").expect("configured binary");
@@ -8469,6 +8546,7 @@ async fn agent_activity_toggle_disable_racing_preparation_drops_owned_resources_
         0,
         "the raced prepared observer and its owned resources are dropped"
     );
+    isolated.complete();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -8995,16 +9073,20 @@ async fn assert_claude_source_mutation_cannot_change_pinned_spawn(mutation: Clau
 #[cfg(unix)]
 #[tokio::test]
 async fn claude_atomic_replacement_after_preparation_cannot_change_pinned_spawn() {
+    own_process!(isolated);
     assert_claude_source_mutation_cannot_change_pinned_spawn(
         ClaudeSourceMutation::AtomicReplacement,
     )
     .await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn claude_in_place_mutation_after_preparation_cannot_change_pinned_spawn() {
+    own_process!(isolated);
     assert_claude_source_mutation_cannot_change_pinned_spawn(ClaudeSourceMutation::InPlace).await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
@@ -9706,6 +9788,7 @@ async fn complete_claude_hook_body(
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_claude_hook_is_dormant_without_stopping_terminal() {
+    own_process!(isolated);
     let fixture = claude_hook_fixture();
     let (root, manager, backend, projection, scope, _database, _factory) =
         claude_fixture_terminal("terminal-claude-dormant").await;
@@ -9832,11 +9915,13 @@ async fn agent_activity_toggle_claude_hook_is_dormant_without_stopping_terminal(
     .await
     .expect("terminal exit removes dormant-capable Claude resources");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn claude_overlay_is_private_additive_and_first_authenticated_root_hook_gates_capability() {
+    own_process!(isolated);
     let fixture = claude_hook_fixture();
     let (root, manager, backend, projection, scope, _database, _factory) =
         claude_fixture_terminal("terminal-claude").await;
@@ -9883,12 +9968,14 @@ async fn claude_overlay_is_private_additive_and_first_authenticated_root_hook_ga
         "closing the terminal must stop the hook sink"
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn claude_hook_sink_rejects_wrong_credentials_session_content_type_and_size_without_mutation()
 {
+    own_process!(isolated);
     let fixture = claude_hook_fixture();
     let (root, manager, backend, projection, scope, _database, _factory) =
         claude_fixture_terminal("terminal-rejections").await;
@@ -10106,11 +10193,13 @@ async fn claude_hook_sink_rejects_wrong_credentials_session_content_type_and_siz
     );
 
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn claude_authenticated_stop_recovers_a_bounded_correlated_child_transcript() {
+    own_process!(isolated);
     let fixture = claude_hook_fixture();
     let (root, manager, backend, projection, scope, _database, _factory) =
         claude_fixture_terminal("terminal-recovery").await;
@@ -10179,11 +10268,13 @@ async fn claude_authenticated_stop_recovers_a_bounded_correlated_child_transcrip
             .contains("Recovered terminal commentary")
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn claude_terminal_restart_interrupts_old_activity_before_a_new_root_handshake() {
+    own_process!(isolated);
     let fixture = claude_hook_fixture();
     let (root, manager, backend, projection, scope, _database, _factory) =
         claude_fixture_terminal("terminal-restart").await;
@@ -10289,11 +10380,13 @@ async fn claude_terminal_restart_interrupts_old_activity_before_a_new_root_hands
     .expect("new Claude root correlation");
     assert_ne!(replacement.scope_id, old_scope_id);
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn claude_failed_stop_projection_is_staged_until_cancellation_can_interrupt_history() {
+    own_process!(isolated);
     let fixture = claude_hook_fixture();
     let (root, manager, backend, projection, scope, database, _factory) =
         claude_fixture_terminal("terminal-failed-stop").await;
@@ -10370,6 +10463,7 @@ async fn claude_failed_stop_projection_is_staged_until_cancellation_can_interrup
         "failed terminal mutations must not remove actors from observer state before persistence"
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[derive(Debug, Default)]
@@ -11324,6 +11418,7 @@ fn opencode_fixture_probe(
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_feature_probe_requires_serve_and_attach_support() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     let (runner, factory) = opencode_fixture_probe(&fixture);
     let root = tempfile::tempdir().expect("OpenCode probe root");
@@ -11409,11 +11504,13 @@ async fn opencode_feature_probe_requires_serve_and_attach_support() {
         Some(false),
         "attach builds without exact-session selection must fail closed"
     );
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_cancelled_preparation_terminates_ready_helper_before_pass_through() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     let root = tempfile::tempdir().expect("OpenCode cancellation root");
     let configured = root.path().join("configured-opencode");
@@ -11537,11 +11634,13 @@ async fn opencode_cancelled_preparation_terminates_ready_helper_before_pass_thro
         "preparation fallback must allow the generation worker to reap the helper asynchronously"
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_spawn_failure_deletes_owned_root_before_terminating_helper() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     let root = tempfile::tempdir().expect("OpenCode spawn-failure root");
     let configured = root.path().join("configured-opencode");
@@ -11658,11 +11757,13 @@ async fn opencode_spawn_failure_deletes_owned_root_before_terminating_helper() {
             .any(|call| call == "delete:root-tui-session")
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_root_correlation_timeout_keeps_attach_usable_until_terminal_closes() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     let root = tempfile::tempdir().expect("OpenCode correlation-timeout root");
     let configured = root.path().join("configured-opencode");
@@ -11814,11 +11915,13 @@ async fn opencode_root_correlation_timeout_keeps_attach_usable_until_terminal_cl
             .any(|call| call == "abort:root-tui-session")
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_publication_failure_keeps_attach_usable_until_terminal_closes() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     let root = tempfile::tempdir().expect("OpenCode publication-failure root");
     let configured = root.path().join("configured-opencode");
@@ -11954,6 +12057,7 @@ async fn opencode_publication_failure_keeps_attach_usable_until_terminal_closes(
             .any(|call| call == "abort:root-tui-session")
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
@@ -12245,6 +12349,7 @@ async fn wait_for_opencode_discard_count(state: &OpenCodeFixtureRemoteState, exp
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_opencode_drains_raw_dormant_stream() {
+    own_process!(isolated);
     let fixture = OpenCodeToggleFixture::open(vec![OpenCodeFixtureStreamScript::new([Ok(
         opencode_fixture_connected_frame(),
     )])])
@@ -12269,11 +12374,13 @@ async fn agent_activity_toggle_opencode_drains_raw_dormant_stream() {
     );
     assert!(!fixture.backend.latest().killed.load(Ordering::Acquire));
     fixture.finish().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_opencode_handoff_requires_server_connected() {
+    own_process!(isolated);
     let fixture = OpenCodeToggleFixture::open(vec![
         OpenCodeFixtureStreamScript::new([Ok(opencode_fixture_connected_frame())]),
         OpenCodeFixtureStreamScript::new([]),
@@ -12310,12 +12417,14 @@ async fn agent_activity_toggle_opencode_handoff_requires_server_connected() {
     );
     assert!(!fixture.backend.latest().killed.load(Ordering::Acquire));
     fixture.finish().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_opencode_busy_dormant_stream_does_not_starve_connected_replacement()
 {
+    own_process!(isolated);
     let fixture = OpenCodeToggleFixture::open(vec![
         OpenCodeFixtureStreamScript::busy_dormant([Ok(opencode_fixture_connected_frame())]),
         OpenCodeFixtureStreamScript::new([Ok(opencode_fixture_connected_frame())]),
@@ -12340,11 +12449,13 @@ async fn agent_activity_toggle_opencode_busy_dormant_stream_does_not_starve_conn
             <= 2
     );
     fixture.finish().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_opencode_busy_dormant_stream_does_not_starve_handoff_deadline() {
+    own_process!(isolated);
     let fixture = OpenCodeToggleFixture::open_with_reattach_timeout(
         vec![
             OpenCodeFixtureStreamScript::busy_dormant([Ok(opencode_fixture_connected_frame())]),
@@ -12377,11 +12488,13 @@ async fn agent_activity_toggle_opencode_busy_dormant_stream_does_not_starve_hand
         "the timed-out replacement is dropped while the dormant stream remains"
     );
     fixture.finish().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_opencode_retries_latest_enabled_generation_after_supersession() {
+    own_process!(isolated);
     let (fixture, activity_transition) =
         OpenCodeToggleFixture::open_with_activity_transition_probe(vec![
             OpenCodeFixtureStreamScript::new([Ok(opencode_fixture_connected_frame())]),
@@ -12472,11 +12585,13 @@ async fn agent_activity_toggle_opencode_retries_latest_enabled_generation_after_
             <= 2
     );
     fixture.finish().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_opencode_failed_handoff_stays_dormant() {
+    own_process!(isolated);
     let fixture = OpenCodeToggleFixture::open(vec![
         OpenCodeFixtureStreamScript::new([Ok(opencode_fixture_connected_frame())]),
         OpenCodeFixtureStreamScript::new([Err("injected replacement stream failure".to_owned())]),
@@ -12510,11 +12625,13 @@ async fn agent_activity_toggle_opencode_failed_handoff_stays_dormant() {
     );
     assert!(!fixture.backend.latest().killed.load(Ordering::Acquire));
     fixture.finish().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_opencode_repeated_handoffs_return_to_one_stream() {
+    own_process!(isolated);
     let fixture = OpenCodeToggleFixture::open(vec![
         OpenCodeFixtureStreamScript::new([Ok(opencode_fixture_connected_frame())]),
         OpenCodeFixtureStreamScript::new([Ok(opencode_fixture_connected_frame())]),
@@ -12546,6 +12663,7 @@ async fn agent_activity_toggle_opencode_repeated_handoffs_return_to_one_stream()
     );
     assert!(!fixture.backend.latest().killed.load(Ordering::Acquire));
     fixture.finish().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
@@ -12578,6 +12696,7 @@ async fn begin_activity_controller_disables(
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn repeated_activity_toggle_across_providers_keeps_resources_bounded_and_releases_them() {
+    own_process!(isolated);
     let (
         _claude_root,
         claude_manager,
@@ -12987,11 +13106,13 @@ async fn repeated_activity_toggle_across_providers_keeps_resources_bounded_and_r
     claude_manager.shutdown().await;
     codex_manager.shutdown().await;
     opencode.manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_parallel_terminals_have_unique_endpoints_credentials_roots_and_scopes() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     let root = tempfile::tempdir().expect("OpenCode parallel root");
     let configured = root.path().join("configured-opencode");
@@ -13131,11 +13252,13 @@ async fn opencode_parallel_terminals_have_unique_endpoints_credentials_roots_and
         .await
         .expect("close terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_helper_already_exited_before_prepared_observer_is_rejected() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     let root = tempfile::tempdir().expect("OpenCode early-helper-exit root");
     let configured = root.path().join("configured-opencode");
@@ -13239,11 +13362,13 @@ async fn opencode_helper_already_exited_before_prepared_observer_is_rejected() {
             .any(|call| call == "delete:root-tui-session"),
         "factory rejection deletes the pre-spawn root"
     );
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_helper_exit_in_manager_gap_falls_back_to_original_pty() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     let root = tempfile::tempdir().expect("OpenCode helper-exit root");
     let configured = root.path().join("configured-opencode");
@@ -13388,11 +13513,13 @@ async fn opencode_helper_exit_in_manager_gap_falls_back_to_original_pty() {
         "pre-spawn root cleanup runs before pass-through"
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_helper_failure_and_unsafe_args_are_exact_pass_through() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     for (args, config, helper_fail, connect_fail) in [
         (
@@ -13563,6 +13690,7 @@ async fn opencode_helper_failure_and_unsafe_args_are_exact_pass_through() {
         }
         manager.shutdown().await;
     }
+    isolated.complete();
 }
 
 #[cfg(all(unix, target_os = "macos"))]
