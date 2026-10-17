@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildSourceControlRows,
   fileCountLabel,
   folderActionTarget,
   folderCheckboxState,
   groupFilesByDirectory,
   ROOT_FOLDER_LABEL,
+  sectionItemKey,
+  type SourceControlListRow,
 } from "./SourceControlChangesList.logic";
 import type { WorkingTreeFile } from "./SourceControlPanel.logic";
 
@@ -91,5 +94,78 @@ describe("fileCountLabel", () => {
   it("pluralizes every other count", () => {
     expect(fileCountLabel(0)).toBe("0 files");
     expect(fileCountLabel(4)).toBe("4 files");
+  });
+});
+
+describe("buildSourceControlRows", () => {
+  const NONE: ReadonlySet<string> = new Set();
+  const sections = [
+    { title: "Staged Changes", files: [file("src/app.ts")] },
+    { title: "Changes", files: [file("src/app.ts"), file("README.md")] },
+    { title: "Untracked Files", files: [] },
+  ];
+  const describeRow = (row: SourceControlListRow) =>
+    row.kind === "section"
+      ? `section ${row.sectionIndex}${row.collapsed ? " collapsed" : ""}`
+      : row.kind === "folder"
+        ? `folder ${row.group.label}${row.collapsed ? " collapsed" : ""}`
+        : `file ${row.file.path}${row.showDirectory ? " flat" : ""}`;
+
+  it("flattens non-empty sections into headers, folders and files", () => {
+    const rows = buildSourceControlRows(sections, {
+      groupByFolder: true,
+      collapsedSections: NONE,
+      collapsedFolders: NONE,
+    });
+    expect(rows.map(describeRow)).toEqual([
+      "section 0",
+      "folder src",
+      "file src/app.ts",
+      "section 1",
+      "folder /",
+      "file README.md",
+      "folder src",
+      "file src/app.ts",
+    ]);
+  });
+
+  it("keys rows per section so a partially staged path stays unique", () => {
+    const rows = buildSourceControlRows(sections, {
+      groupByFolder: true,
+      collapsedSections: NONE,
+      collapsedFolders: NONE,
+    });
+    const keys = rows.map((row) => row.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("lists files flat with their directories when grouping is off", () => {
+    const rows = buildSourceControlRows(sections, {
+      groupByFolder: false,
+      collapsedSections: NONE,
+      collapsedFolders: NONE,
+    });
+    expect(rows.map(describeRow)).toEqual([
+      "section 0",
+      "file src/app.ts flat",
+      "section 1",
+      "file src/app.ts flat",
+      "file README.md flat",
+    ]);
+  });
+
+  it("keeps only the header of a collapsed section or folder", () => {
+    const rows = buildSourceControlRows(sections, {
+      groupByFolder: true,
+      collapsedSections: new Set(["Staged Changes"]),
+      collapsedFolders: new Set([sectionItemKey("Changes", "src")]),
+    });
+    expect(rows.map(describeRow)).toEqual([
+      "section 0 collapsed",
+      "section 1",
+      "folder /",
+      "file README.md",
+      "folder src collapsed",
+    ]);
   });
 });

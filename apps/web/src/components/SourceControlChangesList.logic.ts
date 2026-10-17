@@ -77,3 +77,84 @@ export function folderActionTarget(group: SourceControlFolderGroup): string {
 export function fileCountLabel(count: number): string {
   return `${count} ${count === 1 ? "file" : "files"}`;
 }
+
+/**
+ * One row of the virtualized Source Control list. Every section, folder header
+ * and file is a row of one flat list, so only the rows in view mount (#119).
+ * `sectionIndex` points into the sections the list was built from.
+ */
+export type SourceControlListRow =
+  | {
+      readonly kind: "section";
+      readonly key: string;
+      readonly sectionIndex: number;
+      readonly collapsed: boolean;
+    }
+  | {
+      readonly kind: "folder";
+      readonly key: string;
+      readonly sectionIndex: number;
+      readonly group: SourceControlFolderGroup;
+      readonly collapsed: boolean;
+    }
+  | {
+      readonly kind: "file";
+      readonly key: string;
+      readonly sectionIndex: number;
+      readonly file: WorkingTreeFile;
+      readonly showDirectory: boolean;
+    };
+
+/**
+ * Identifies a folder within its section. A path can be both staged and
+ * unstaged, so folders and files are keyed per section.
+ */
+export function sectionItemKey(sectionTitle: string, item: string): string {
+  return `${sectionTitle}\u0000${item}`;
+}
+
+/**
+ * Flattens the sections into list rows: a header per non-empty section, then
+ * its folder headers and files unless collapsed. Grouping off lists the files
+ * flat with their own directories.
+ */
+export function buildSourceControlRows(
+  sections: ReadonlyArray<{ readonly title: string; readonly files: readonly WorkingTreeFile[] }>,
+  options: {
+    readonly groupByFolder: boolean;
+    readonly collapsedSections: ReadonlySet<string>;
+    readonly collapsedFolders: ReadonlySet<string>;
+  },
+): SourceControlListRow[] {
+  const rows: SourceControlListRow[] = [];
+  sections.forEach((section, sectionIndex) => {
+    if (section.files.length === 0) return;
+    const collapsed = options.collapsedSections.has(section.title);
+    rows.push({ kind: "section", key: `section:${section.title}`, sectionIndex, collapsed });
+    if (collapsed) return;
+    if (!options.groupByFolder) {
+      for (const file of section.files) {
+        const key = `file:${sectionItemKey(section.title, file.path)}`;
+        rows.push({ kind: "file", key, sectionIndex, file, showDirectory: true });
+      }
+      return;
+    }
+    for (const group of groupFilesByDirectory(section.files)) {
+      const folderKey = sectionItemKey(section.title, group.label);
+      const folderCollapsed = options.collapsedFolders.has(folderKey);
+      rows.push({
+        kind: "folder",
+        key: `folder:${folderKey}`,
+        sectionIndex,
+        group,
+        collapsed: folderCollapsed,
+      });
+      if (folderCollapsed) continue;
+      for (const file of group.files) {
+        const key = `file:${sectionItemKey(section.title, file.path)}`;
+        rows.push({ kind: "file", key, sectionIndex, file, showDirectory: false });
+      }
+    }
+  });
+  return rows;
+}

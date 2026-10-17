@@ -1393,8 +1393,9 @@ surfaces therefore mark the content wrapper inside their scroller with
 `data-text-surface="background|card|sidebar|popover"`, which the Linux CSS paints with
 the matching opaque token, and the Linux CSS removes the `ScrollArea`
 scroll-fade mask, so Linux has no scroll fade. Coverage today is the sidebar
-content, the chat timeline rows, the settings column, the Agents list, and the
-Create pull/merge request dialog with its branch and option lists. Other
+content, the chat timeline rows, the settings column, the Agents list, the
+Source Control change and conflict lists, and the Create pull/merge request
+dialog with its branch and option lists. Other
 scrollers, including remaining menus, dialogs, popovers, the git manager lists,
 and file preview, render grayscale text on Linux until they adopt a wrapper.
 Any new scrollable reading surface must add one.
