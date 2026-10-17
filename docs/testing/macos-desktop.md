@@ -566,8 +566,10 @@ xcrun simctl list devices | grep <udid>   # Shutdown
 pgrep -fl <udid>                          # no process BiBCode started
 ```
 
-1. **Setting.** Turn on **Settings → Diagnostics → Device previews**. Open
-   **Device** from the right panel's `+` menu. The picker lists the simulator
+1. **Setting.** Turn on **Settings → Diagnostics → Device previews**. With a
+   thread open, open **Device** from the right panel's `+` menu or run **Open
+   device preview** from the command palette; neither is offered without an
+   active thread. The picker lists the simulator
    under **iOS**, named like `iPhone 17 Pro · iOS 26.5`; a simulator already
    booted outside BiBCode is listed disabled with "— Running outside
    BiBCode". If the iOS group says view only, record its message and run the

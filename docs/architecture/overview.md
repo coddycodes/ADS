@@ -2054,9 +2054,15 @@ refusal are in [Remote architecture](./remote.md#device-media-sockets).
 The iOS backend runs only on a macOS server with Xcode; elsewhere the catalog
 has no iOS entry. It never creates or deletes simulators.
 
-**Discovery and availability.** A refresh runs `xcode-select -p`, and, only
-when the developer directory or its Xcode's `version.plist` changed,
-`xcrun simctl help` and `xcrun xcodebuild -version`. It lists the available
+**Discovery and availability.** A refresh runs `xcode-select -p`. After a
+`ready` result it runs nothing more until the developer directory or its
+Xcode's `version.plist` changes; otherwise it runs
+`xcrun xcodebuild -checkFirstLaunchStatus`, then `xcrun simctl help` and
+`xcrun xcodebuild -version`. A pending first launch (as after an Xcode update
+whose CoreSimulator is not installed yet) is `xcodeSetupIncomplete` without
+running `simctl`, whose wrapper would start `xcodebuild -runFirstLaunch` and
+wait for an administrator; a `simctl help` that times out is also
+`xcodeSetupIncomplete`. It lists the available
 simulators of iOS runtimes with `simctl list devices available -j`, newest
 runtime first, named like `iPhone 17 Pro · iOS 26.5`. A simulator that is not
 `Shutdown` and that BiBCode did not boot is listed with `inUseElsewhere`, and
@@ -2130,7 +2136,7 @@ afterwards can arrive before the pasted text.
 
 **Rotation and orientation.** `device.rotate` sends the target orientation to
 the simulator's `PurpleWorkspacePort` and then reads back the reported
-orientation for about 1.5 s; `canRotate` is true for live simulators with
+orientation for about 1.2 s; `canRotate` is true for live simulators with
 input. The orientation convention is Android's: `landscape` is the phone
 turned left (counter-clockwise), the client's **Rotate left** from portrait,
 Android's `Surface.ROTATION_90` and rotation vector `[0, 0, -90]`. On iOS that
