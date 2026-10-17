@@ -1759,9 +1759,10 @@ async fn a_retried_rewind_after_a_restart_is_applied_once() {
     runtime.stop().await.expect("stop");
 }
 
-/// Marking the rewind finished may fail, applied or not. The rewind then fails, and its retry with
-/// the same key after a restart drops nothing more; once it succeeds, no later runtime holds
-/// prompts for it.
+/// Marking the rewind finished may lose its answer, applied or not. A mark that landed is read
+/// back and the rewind succeeds, so BiBCode records it; one that did not fails the rewind, holds
+/// prompts, and its retry with the same key after a restart drops nothing more. Either way no
+/// later runtime holds prompts once the rewind succeeded.
 #[tokio::test]
 async fn a_lost_finished_mark_still_applies_the_rewind_once() {
     for applied in [true, false] {
@@ -1775,13 +1776,12 @@ async fn a_lost_finished_mark_still_applies_the_rewind_once() {
             .apply_lost_finished_record
             .store(applied, Ordering::SeqCst);
 
-        runtime
-            .rollback_thread(1, "transcript-a")
-            .await
-            .expect_err("success is not recorded with the session");
-        assert!(
+        let rewound = runtime.rollback_thread(1, "transcript-a").await;
+        assert_eq!(rewound.is_ok(), applied, "the mark landed: {applied}");
+        assert_eq!(
             runtime.has_unfinished_rewind().await,
-            "prompts wait for the retry"
+            !applied,
+            "prompts wait only for a retry"
         );
         runtime.stop().await.expect("stop");
 

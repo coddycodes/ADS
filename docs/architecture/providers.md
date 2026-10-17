@@ -223,7 +223,8 @@ afresh. The idle deadline keeps the session up until the rewind settles (see
 Unsettled driver state below), and the progress is also kept with the OpenCode
 session itself, in its metadata under `bibcode.rewind` (no BiBCode schema): it
 is written before each stage, marked finished before the rewind reports success
-(a failed mark fails the rewind, and its retry drops nothing more), and restored when a session is resumed after a restart, which also
+(a mark whose answer is lost is read back: one that landed succeeds, and any
+other fails the rewind, whose retry drops nothing more), and restored when a session is resumed after a restart, which also
 clears a leftover stage. A same-key retry after a finished rewind drops
 nothing, so a rewind that succeeded but whose completion BiBCode never recorded
 is applied once. Other providers ignore the key: Codex `thread/revert` takes no

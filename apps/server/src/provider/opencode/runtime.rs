@@ -2952,13 +2952,33 @@ impl OpenCodeSessionRuntime {
             finished: false,
         };
         // Success needs the record marked finished, or a later runtime would restore the progress
-        // and hold prompts for a retry that never comes. A failed write fails the rewind, and its
-        // retry (same key) marks it finished, applied or not, without dropping more.
+        // and hold prompts for a retry that never comes. A failed write may still have landed, and
+        // a later runtime would then release prompts while BiBCode's transcript still shows the
+        // dropped turns, so the record is read back: a finished one for this rewind succeeds.
+        // Anything else fails the rewind, and its retry (same key) marks it finished without
+        // dropping more.
         let finished = V2RewindProgress {
             finished: true,
             ..self.inner.v2.lock().await.rewind.clone()
         };
-        self.v2_store_rewind(&session_id, &finished).await?;
+        if let Err(error) = self.v2_store_rewind(&session_id, &finished).await {
+            let recorded = within_rewind_deadline(async {
+                Ok(self
+                    .v2_get_json(self.v2_url(&["session", &session_id], false)?)
+                    .await)
+            })
+            .await
+            .ok()
+            .flatten()
+            .and_then(|session| {
+                session
+                    .pointer("/data/metadata/bibcode/rewind")
+                    .and_then(V2RewindProgress::from_json)
+            });
+            if recorded.as_ref() != Some(&finished) {
+                return Err(error);
+            }
+        }
         {
             let mut v2 = self.inner.v2.lock().await;
             v2.rewind = V2RewindProgress::default();
