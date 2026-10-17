@@ -1066,16 +1066,36 @@ impl OpenCodeSessionRuntime {
                 .v2_user_message_exists(&session_id, &v2::message_id(message_id))
                 .await;
         }
-        let message_id = v2::message_id(message_id);
-        let message_id = message_id.as_str();
+        // Deliveries are sent under the key's `msg_` id. One sent before that carried the raw key
+        // (OpenCode accepted it before 1.18), so a delivery found under either form exists.
+        let derived = v2::message_id(message_id);
+        if self.v1_user_message_exists(&session_id, &derived).await? {
+            return Ok(true);
+        }
+        if derived == message_id {
+            return Ok(false);
+        }
+        self.v1_user_message_exists(&session_id, message_id).await
+    }
+
+    /// Whether an OpenCode 1 session has the user message `message_id`. A refused id (HTTP 400:
+    /// OpenCode 1.18 and later accept only `msg` ids) cannot name a message there.
+    async fn v1_user_message_exists(
+        &self,
+        session_id: &str,
+        message_id: &str,
+    ) -> Result<bool, OpenCodeRuntimeError> {
         let response = self
             .inner
             .client
-            .get(self.session_request_url(&session_id, &["message", message_id])?)
+            .get(self.session_request_url(session_id, &["message", message_id])?)
             .send()
             .await
             .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
+        if response.status() == reqwest::StatusCode::NOT_FOUND
+            || (response.status() == reqwest::StatusCode::BAD_REQUEST
+                && !message_id.starts_with("msg"))
+        {
             return Ok(false);
         }
         if !response.status().is_success() {
@@ -1097,7 +1117,7 @@ impl OpenCodeSessionRuntime {
                 )
             })?;
         if info.get("id").and_then(Value::as_str) != Some(message_id)
-            || info.get("sessionID").and_then(Value::as_str) != Some(session_id.as_str())
+            || info.get("sessionID").and_then(Value::as_str) != Some(session_id)
             || info.get("role").and_then(Value::as_str) != Some("user")
             || value.get("parts").and_then(Value::as_array).is_none()
         {
@@ -4994,6 +5014,55 @@ mod tests {
         runtime.stop().await.expect("stop");
     }
 
+    /// A delivery sent before BiBCode derived `msg_` ids carried the raw key as its OpenCode 1
+    /// message id (accepted before 1.18). Reconciliation finds it under either form, so it is not
+    /// sent again; OpenCode 1.18 and later refuse a raw id (HTTP 400), which means no such
+    /// message exists there.
+    #[tokio::test]
+    async fn reconciliation_finds_a_delivery_under_its_legacy_raw_id() {
+        const LEGACY: &str = "e310d932-acde-44f5-aa48-2a07b9c93343";
+        const REFUSED: &str = "3f0c2a5e-0000-4000-8000-000000000001";
+        const ABSENT: &str = "3f0c2a5e-0000-4000-8000-000000000002";
+        async fn message(
+            Path((_session_id, message_id)): Path<(String, String)>,
+        ) -> impl IntoResponse {
+            if message_id == LEGACY {
+                return Json(json!({
+                    "info": { "id": LEGACY, "sessionID": "session-1", "role": "user" },
+                    "parts": []
+                }))
+                .into_response();
+            }
+            if message_id == REFUSED {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "name": "BadRequest", "data": { "kind": "Params" } })),
+                )
+                    .into_response();
+            }
+            StatusCode::NOT_FOUND.into_response()
+        }
+
+        let app = Router::new().route("/session/{session_id}/message/{message_id}", get(message));
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+        let runtime = super::OpenCodeSessionRuntime::new(
+            &format!("http://{address}"),
+            "unit-thread",
+            "/tmp/unit",
+            None,
+        );
+        *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
+
+        assert!(runtime.message_exists(LEGACY).await.expect("lookup"));
+        assert!(!runtime.message_exists(REFUSED).await.expect("lookup"));
+        assert!(!runtime.message_exists(ABSENT).await.expect("lookup"));
+        server.abort();
+    }
+
     #[tokio::test]
     async fn exact_message_readback_distinguishes_found_absent_and_unavailable() {
         async fn message(
@@ -5009,7 +5078,7 @@ mod tests {
                     "parts": []
                 }))
                 .into_response(),
-                "msg_deliveryabsent" => StatusCode::NOT_FOUND.into_response(),
+                "msg_deliveryabsent" | "delivery-absent" => StatusCode::NOT_FOUND.into_response(),
                 "msg_deliverymalformed" => Json(json!({})).into_response(),
                 "msg_deliveryassistant" => Json(json!({
                     "info": {
