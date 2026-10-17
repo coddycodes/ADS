@@ -2281,9 +2281,11 @@ reservation from just before its claim until the provider has the turn. A
 revert therefore waits for a delivery already in flight, and then usually
 refuses its running turn. No turn starts from its busy check until it ends,
 whichever client sent the message, and also when a session the revert reopened
-reads `ready`. Delivery skips the reserved thread instead of claiming or
-promoting its messages, so a message sent or queued meanwhile keeps its place
-and is delivered after the revert, in queue order; the release wakes delivery.
+reads `ready`. Delivery skips the reserved thread instead of claiming its
+messages or promoting its queue automatically, so a message sent or queued
+meanwhile keeps its place and is delivered after the revert, in queue order;
+the release wakes delivery. A client's **Send now** still moves the queue head
+to pending, where it waits the same way.
 The reservation is in memory only. That is enough because a revert never
 outlives its process: the effects worker does not replay a revert requested
 before a restart.
