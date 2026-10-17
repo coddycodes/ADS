@@ -375,7 +375,10 @@ unsupported, and either one downgrades history reads. A reply that does not
 decode, including one whose newest 20 turns and 200 items still exceed the
 512 KiB bound after command output is reduced to a presence marker, skips that
 thread with a log warning. The pass continues, and the next pass reads the
-thread again.
+thread again. The same rule holds for `thread/list` and
+`thread/backgroundTerminals/list`: an undecodable page ends that method's paging
+for the pass with a log warning, the snapshot stays partial (background work is
+not treated as authoritative), and the next pass asks again.
 These recovery downgrades do not disable ordinary Codex chat.
 
 Claude structured control normally joins native task identity only through the

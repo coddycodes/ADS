@@ -36,7 +36,10 @@ For each thread read by a reconciliation pass:
 Durable delivery reconciliation (`delivery_exists`) also pages:
 `thread/turns/list` with the same parameters, scanning each page newest first
 for the delivery key's `userMessage.clientId`. It stops at the first match and
-reports absent only after the last page. Nothing is retained between pages, so
+reports absent only after the last page. A repeated cursor, or more than 100
+pages (2,000 turns), ends the scan as unavailable instead: a false "absent"
+would send the message twice, while "unavailable" keeps the delivery
+uncertain. Nothing is retained between pages, so
 no size bound applies to the scan. The transport's line limit already bounds
 each page.
 
@@ -137,7 +140,7 @@ answer** (-32601, or -32600 "unknown variant `<method>`",
 | Metadata or page fails to decode, or exceeds the bound after reduction | That thread is skipped. One `tracing::warn!` per method and cause per runtime (no reply content). The pass continues, and the next pass reads the thread again. |
 | Any other request error (transport, -32600 such as an invalidated cursor, cancellation) | Unchanged transient path: the pass publishes stale and returns, or returns on cancellation. |
 | `thread/list` or `thread/backgroundTerminals/list` page fails to decode | No longer a downgrade. Warn once, stop paging that method for this pass, and treat the snapshot as partial. For background terminals this means non-authoritative: no interruption is inferred. |
-| `delivery_exists` page fails to decode or a request fails | The reconciliation outcome is `Unavailable`, as today. |
+| `delivery_exists` page fails to decode, a request fails, a cursor repeats, or the page cap is reached | The reconciliation outcome is `Unavailable`. |
 
 ## Test migration
 

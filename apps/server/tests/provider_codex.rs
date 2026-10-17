@@ -7238,6 +7238,211 @@ async fn reconciliation_undecodable_turns_page_is_retried() {
     assert!(appended_details(&reconciliations[1]).contains(&"message-2".to_owned()));
 }
 
+/// `thread/list` and `thread/backgroundTerminals/list` pages that do not decode are failed reads,
+/// not missing methods: no warning, and the next pass asks both methods again.
+#[tokio::test]
+async fn reconciliation_undecodable_list_pages_are_retried_instead_of_downgrading() {
+    let (connection, _protocol_incoming, mut peer) = scripted_peer();
+    let (incoming_tx, incoming_rx) = mpsc::unbounded_channel();
+    let runtime = CodexSessionRuntime::new(codex_activity_options(None), connection, incoming_rx);
+    peer.expect_request("initialize", fixture("initialize-params.json"))
+        .respond(json!({}));
+    peer.expect_notification("initialized");
+    peer.expect_request(
+        "thread/start",
+        json!({
+            "cwd": "/tmp/project",
+            "approvalPolicy": "never",
+            "sandbox": "danger-full-access",
+            "model": "gpt-5.3-codex",
+            "serviceTier": null,
+        }),
+    )
+    .respond(json!({
+        "thread": {"id": "provider-root"},
+        "cwd": "/tmp/project",
+        "model": "gpt-5.3-codex"
+    }));
+    let root_read = || json!({"threadId": "provider-root", "includeTurns": false});
+    let list = || json!({"ancestorThreadId": "provider-root", "limit": 50});
+    let background = || json!({"threadId": "provider-root", "limit": 128});
+    peer.expect_request("thread/read", root_read())
+        .respond_history(empty_root_thread_read_result());
+    peer.expect_request("thread/list", list())
+        .respond(json!({"data": "not threads", "nextCursor": null}));
+    peer.expect_request("thread/backgroundTerminals/list", background())
+        .respond(json!({"data": "not terminals", "nextCursor": null}));
+    peer.expect_request("thread/read", root_read())
+        .respond_history(empty_root_thread_read_result());
+    peer.expect_request("thread/list", list())
+        .respond(empty_thread_list_result());
+    peer.expect_request("thread/backgroundTerminals/list", background())
+        .respond(empty_background_terminal_list_result());
+    peer.expect_request("shutdown", Value::Null)
+        .respond(Value::Null);
+    let peer_task = tokio::spawn(peer.run());
+
+    runtime.start().await.expect("runtime starts");
+    runtime.collect_events(2).await;
+    incoming_tx
+        .send(IncomingEvent::Notification {
+            method: "thread/started".to_owned(),
+            params: json!({"thread": {"id": "provider-root"}}),
+            emitted_at_ms: 1_000,
+        })
+        .expect("root notification");
+    let mut warnings = Vec::new();
+    for sequence in 0..2 {
+        if sequence == 1 {
+            incoming_tx
+                .send(IncomingEvent::Notification {
+                    method: "item/started".to_owned(),
+                    params: json!({
+                        "threadId": "provider-root",
+                        "turnId": "root-turn",
+                        "item": {
+                            "id": "wait-for-list-child",
+                            "type": "collabAgentToolCall",
+                            "tool": "wait",
+                            "status": "completed",
+                            "senderThreadId": "provider-root",
+                            "receiverThreadIds": ["list-child"],
+                            "agentsStates": {}
+                        }
+                    }),
+                    emitted_at_ms: 1_001,
+                })
+                .expect("second reconciliation hint");
+        }
+        let native_event_id = format!("codex:reconciliation:{sequence}");
+        timeout(Duration::from_secs(5), async {
+            loop {
+                let event = runtime.next_event().await.expect("reconciliation event");
+                if event.event_type == "runtime.warning" {
+                    warnings.push(event.payload["message"].clone());
+                } else if event.native_event_id.as_deref() == Some(native_event_id.as_str()) {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("reconciliation");
+    }
+    assert!(warnings.is_empty(), "no method downgrade: {warnings:?}");
+
+    runtime.shutdown().await.expect("runtime shuts down");
+    peer_task.await.expect("peer task");
+}
+
+/// A thread with `turn_count` turns, newest last; turn `delivered_turn`, if any, holds the user
+/// message delivered with `delivery-1`.
+fn delivery_thread(turn_count: usize, delivered_turn: Option<usize>) -> Value {
+    let turns = (0..turn_count)
+        .map(|index| {
+            let client_id = if Some(index) == delivered_turn {
+                json!("delivery-1")
+            } else {
+                json!(format!("other-{index}"))
+            };
+            json!({
+                "id": format!("turn-{index}"),
+                "items": [{
+                    "type": "userMessage",
+                    "id": format!("user-{index}"),
+                    "clientId": client_id,
+                    "content": []
+                }]
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({"thread": {"id": "provider-root", "turns": turns}})
+}
+
+async fn delivery_readback(
+    thread: Value,
+    serve_page: impl Fn(&Value, &Value) -> Value + Send + 'static,
+) -> (Result<bool, String>, Vec<Value>) {
+    let (connection, _protocol_incoming, peer) = scripted_peer();
+    let (_incoming_tx, incoming_rx) = mpsc::unbounded_channel();
+    let runtime = CodexSessionRuntime::new(codex_activity_options(None), connection, incoming_rx);
+    let (peer_task, log) = spawn_paging_peer(
+        peer,
+        json!({}),
+        Box::new(move |params, _| Ok(serve_page(params, &thread))),
+    );
+    runtime.start().await.expect("runtime starts");
+    let outcome = runtime
+        .delivery_exists("delivery-1")
+        .await
+        .map_err(|error| error.to_string());
+    runtime.shutdown().await.expect("runtime shuts down");
+    peer_task.await.expect("peer task");
+    let pages = turns_page_requests(&log.lock().expect("paging peer log"), "provider-root");
+    (outcome, pages)
+}
+
+/// Delivery readback pages newest first and stops at the first match.
+#[tokio::test]
+async fn delivery_readback_finds_the_key_on_a_later_page() {
+    let (outcome, pages) = delivery_readback(delivery_thread(3, Some(1)), |params, thread| {
+        let mut one_turn = params.clone();
+        one_turn["limit"] = json!(1);
+        thread_turns_page(&one_turn, thread)
+    })
+    .await;
+    assert_eq!(outcome, Ok(true));
+    assert_eq!(
+        pages
+            .iter()
+            .map(|params| params["cursor"].clone())
+            .collect::<Vec<_>>(),
+        [Value::Null, json!("turn-2")]
+    );
+    assert!(pages.iter().all(|params| params["sortDirection"] == "desc"
+        && params["itemsView"] == "full"
+        && params.get("includeTurns").is_none()));
+}
+
+/// Delivery readback is absent only after the last page.
+#[tokio::test]
+async fn delivery_readback_is_absent_only_after_the_last_page() {
+    let (outcome, pages) = delivery_readback(delivery_thread(3, None), |params, thread| {
+        let mut one_turn = params.clone();
+        one_turn["limit"] = json!(1);
+        thread_turns_page(&one_turn, thread)
+    })
+    .await;
+    assert_eq!(outcome, Ok(false));
+    assert_eq!(pages.len(), 3);
+}
+
+/// Paging that cannot reach the last page leaves delivery unknown rather than absent, so a
+/// delivered message is never sent twice.
+#[tokio::test]
+async fn delivery_readback_without_a_last_page_is_unavailable() {
+    let (repeated, _) = delivery_readback(
+        delivery_thread(3, None),
+        |_, _| json!({"data": [{"id": "turn-x", "items": []}], "nextCursor": "same"}),
+    )
+    .await;
+    assert!(
+        repeated.is_err(),
+        "a repeated cursor is not the end: {repeated:?}"
+    );
+
+    let next = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (endless, pages) = delivery_readback(delivery_thread(3, None), move |_, _| {
+        let page = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        json!({"data": [{"id": format!("turn-{page}"), "items": []}], "nextCursor": format!("cursor-{page}")})
+    })
+    .await;
+    assert!(
+        endless.is_err(),
+        "endless paging is not absence: {endless:?}"
+    );
+    assert_eq!(pages.len(), 100, "readback gives up at its page cap");
+}
+
 /// A `thread/read` reply that fails to decode is a failed read of that thread, not a missing
 /// method: the pass reads the remaining threads, warns nobody, and the next pass reads again.
 #[tokio::test]

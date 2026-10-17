@@ -37,7 +37,7 @@ use super::{
         ThreadReadResponse, build_initialize_params, build_turn_start_params,
         build_turn_steer_params, decode_background_terminals_list_response,
         decode_thread_list_response, decode_thread_read_response, decode_turns_page,
-        delivery_key_exists, is_recoverable_thread_resume_error, parse_model_list_response,
+        delivery_key_in_turns, is_recoverable_thread_resume_error, parse_model_list_response,
         parse_skills_list_response, parse_thread_snapshot, reasoning_effort_label,
         turn_option_label,
     },
@@ -1323,24 +1323,43 @@ impl CodexSessionRuntime {
             })
     }
 
+    /// Pages the thread newest first for the user message delivered with `delivery_key`. Absent
+    /// is proven only by the last page; a thread that cannot be paged to its end is an error, so
+    /// a delivered message is never sent twice.
     pub async fn delivery_exists(&self, delivery_key: &str) -> Result<bool, RuntimeError> {
         let provider_thread_id = self.provider_thread_id().await?;
-        let response = self
-            .inner
-            .connection
-            .lock()
-            .await
-            .clone()
-            .request(
-                "thread/read",
-                json!({
-                    "threadId": provider_thread_id,
-                    "includeTurns": true,
-                }),
-            )
-            .await?;
-        delivery_key_exists(&response, &provider_thread_id, delivery_key)
-            .map_err(|message| RuntimeError::InvalidPayload { message })
+        let connection = self.inner.connection.lock().await.clone();
+        let invalid = |message| RuntimeError::InvalidPayload { message };
+        let mut cursor: Option<String> = None;
+        let mut seen_cursors = HashSet::new();
+        for _ in 0..DELIVERY_READBACK_PAGE_LIMIT {
+            let mut params = json!({
+                "threadId": provider_thread_id,
+                "limit": HISTORY_TURNS_PAGE_LIMIT,
+                "sortDirection": "desc",
+                "itemsView": "full",
+            });
+            if let Some(cursor) = &cursor {
+                params["cursor"] = json!(cursor);
+            }
+            let page = connection.request("thread/turns/list", params).await?;
+            let (turns, next_cursor) = decode_turns_page(page).map_err(invalid)?;
+            if delivery_key_in_turns(&turns, delivery_key).map_err(invalid)? {
+                return Ok(true);
+            }
+            let Some(next_cursor) = next_cursor else {
+                return Ok(false);
+            };
+            if !seen_cursors.insert(next_cursor.clone()) {
+                return Err(invalid(
+                    "thread/turns/list repeated a cursor before the last page".to_owned(),
+                ));
+            }
+            cursor = Some(next_cursor);
+        }
+        Err(invalid(format!(
+            "thread/turns/list had more than {DELIVERY_READBACK_PAGE_LIMIT} pages"
+        )))
     }
 
     pub async fn set_goal(&self, objective: &str) -> Result<(), RuntimeError> {
@@ -1969,8 +1988,9 @@ impl CodexSessionRuntime {
                 };
                 let response = match decode_thread_list_response(response) {
                     Ok(response) => response,
-                    Err(_) => {
-                        list_incompatible = true;
+                    Err(error) => {
+                        self.warn_undecodable_reply("thread/list", &root_thread_id, &error)
+                            .await;
                         break;
                     }
                 };
@@ -2259,8 +2279,13 @@ impl CodexSessionRuntime {
                 };
                 let response = match decode_background_terminals_list_response(response) {
                     Ok(response) => response,
-                    Err(_) => {
-                        background_incompatible = true;
+                    Err(error) => {
+                        self.warn_undecodable_reply(
+                            "thread/backgroundTerminals/list",
+                            &root_thread_id,
+                            &error,
+                        )
+                        .await;
                         break;
                     }
                 };
@@ -3539,6 +3564,9 @@ async fn oldest_rolled_back_turn_id(
 /// Turns per `thread/turns/list` page for activity history. One page normally holds every turn
 /// activity keeps (`docs/superpowers/specs/2026-10-17-codex-activity-paging-design.md`).
 const HISTORY_TURNS_PAGE_LIMIT: usize = CODEX_RECONCILIATION_TURN_LIMIT;
+
+/// Pages delivery readback scans (2,000 turns) before the delivery is reported unknown.
+const DELIVERY_READBACK_PAGE_LIMIT: usize = 100;
 
 /// Why a reconciliation history read produced no thread.
 enum HistoryReadFailure {

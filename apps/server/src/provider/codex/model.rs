@@ -541,55 +541,45 @@ impl PagedTurns {
     }
 }
 
-pub(crate) fn delivery_key_exists(
-    value: &Value,
-    thread_id: &str,
-    delivery_key: &str,
-) -> Result<bool, String> {
-    ensure_bounded_remote_value(value)?;
-    let thread = value
-        .get("thread")
-        .and_then(Value::as_object)
-        .ok_or_else(|| "thread/read response missing thread".to_owned())?;
-    if thread.get("id").and_then(Value::as_str) != Some(thread_id) {
-        return Err("thread/read response has the wrong thread.id".to_owned());
-    }
-    let turns = thread
-        .get("turns")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "thread/read response missing complete thread.turns".to_owned())?;
+/// Whether one `thread/turns/list` page holds the user message delivered with `delivery_key`.
+/// Nothing is retained, so no size bound applies beyond the transport's line limit.
+pub(crate) fn delivery_key_in_turns(turns: &[Value], delivery_key: &str) -> Result<bool, String> {
     for turn in turns {
         let turn = turn
             .as_object()
-            .ok_or_else(|| "thread/read response contains an invalid turn".to_owned())?;
+            .ok_or_else(|| "thread/turns/list response contains an invalid turn".to_owned())?;
         if turn.get("id").and_then(Value::as_str).is_none() {
-            return Err("thread/read response turn is missing id".to_owned());
+            return Err("thread/turns/list response turn is missing id".to_owned());
         }
         let items = turn
             .get("items")
             .and_then(Value::as_array)
-            .ok_or_else(|| "thread/read response turn is missing items".to_owned())?;
+            .ok_or_else(|| "thread/turns/list response turn is missing items".to_owned())?;
         for item in items {
             let item = item
                 .as_object()
-                .ok_or_else(|| "thread/read response contains an invalid item".to_owned())?;
+                .ok_or_else(|| "thread/turns/list response contains an invalid item".to_owned())?;
             let item_type = item
                 .get("type")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "thread/read response item is missing type".to_owned())?;
+                .ok_or_else(|| "thread/turns/list response item is missing type".to_owned())?;
             if item_type != "userMessage" {
                 continue;
             }
             if item.get("id").and_then(Value::as_str).is_none()
                 || item.get("content").and_then(Value::as_array).is_none()
             {
-                return Err("thread/read response contains an incomplete userMessage".to_owned());
+                return Err(
+                    "thread/turns/list response contains an incomplete userMessage".to_owned(),
+                );
             }
             match item.get("clientId") {
                 Some(Value::String(client_id)) if client_id == delivery_key => return Ok(true),
                 Some(Value::String(_) | Value::Null) | None => {}
                 Some(_) => {
-                    return Err("thread/read response userMessage.clientId is invalid".to_owned());
+                    return Err(
+                        "thread/turns/list response userMessage.clientId is invalid".to_owned()
+                    );
                 }
             }
         }
@@ -1592,43 +1582,39 @@ mod tests {
 
     #[test]
     fn delivery_readback_requires_a_complete_exact_client_id_match() {
-        let found = json!({
-            "thread": {
-                "id": "provider-thread-1",
-                "turns": [{
-                    "id": "turn-1",
-                    "items": [{
-                        "type": "userMessage",
-                        "id": "user-1",
-                        "clientId": "delivery-1",
-                        "content": [{"type": "text", "text": "hello"}]
-                    }]
-                }]
-            }
-        });
-        let absent = json!({
-            "thread": {
-                "id": "provider-thread-1",
-                "turns": [{"id": "turn-1", "items": []}]
-            }
-        });
+        let found = [json!({
+            "id": "turn-1",
+            "items": [{
+                "type": "userMessage",
+                "id": "user-1",
+                "clientId": "delivery-1",
+                "content": [{"type": "text", "text": "hello"}]
+            }]
+        })];
+        let other = [json!({
+            "id": "turn-1",
+            "items": [{
+                "type": "userMessage",
+                "id": "user-1",
+                "clientId": "delivery-2",
+                "content": []
+            }]
+        })];
 
+        assert_eq!(delivery_key_in_turns(&found, "delivery-1"), Ok(true));
+        assert_eq!(delivery_key_in_turns(&other, "delivery-1"), Ok(false));
         assert_eq!(
-            delivery_key_exists(&found, "provider-thread-1", "delivery-1"),
-            Ok(true)
-        );
-        assert_eq!(
-            delivery_key_exists(&absent, "provider-thread-1", "delivery-1"),
+            delivery_key_in_turns(&[json!({"id": "turn-1", "items": []})], "delivery-1"),
             Ok(false)
         );
-        assert!(delivery_key_exists(&json!({}), "provider-thread-1", "delivery-1").is_err());
+        assert!(delivery_key_in_turns(&[json!({})], "delivery-1").is_err());
         assert!(
-            delivery_key_exists(
-                &json!({"thread":{"id":"provider-thread-1","turns":[{}]}}),
-                "provider-thread-1",
+            delivery_key_in_turns(
+                &[json!({"id": "turn-1", "items": [{"type": "userMessage", "id": "user-1"}]})],
                 "delivery-1"
             )
-            .is_err()
+            .is_err(),
+            "an incomplete userMessage cannot prove absence"
         );
     }
 }
