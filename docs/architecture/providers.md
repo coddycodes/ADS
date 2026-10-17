@@ -362,7 +362,15 @@ Idle suspension must never stop work the provider still runs:
   Activity adapter, and Codex or OpenCode with Chat Activity off, can run
   background shells or subagents BiBCode cannot see, so their sessions are not
   idle-suspended; they end with the thread, an explicit stop, or server
-  shutdown.
+  shutdown. Turning Chat Activity back on does not make such a session
+  suspendable at once: its live sets are empty until the driver's
+  reconciliation rediscovers the children that kept running. A session that
+  Chat Activity was turned off for, or that started while it was off, stays
+  unseen until the provider reports its activity scope `live` again, which a
+  successful reconciliation pass does with the children it found, even when
+  that report changes nothing in the projection. A pass that never succeeds
+  keeps the session. A session that always ran with Chat Activity on waits for
+  no rediscovery.
 
 Each suspension logs why at INFO (`suspending an idle provider session: no turn,
 subagent, or background task is running`), or at WARN when live work stopped

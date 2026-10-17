@@ -860,6 +860,9 @@ struct ProviderActivityLifecycleState {
     /// of activity capabilities.
     live_background_tasks: usize,
     last_provider_event_at: Option<tokio::time::Instant>,
+    /// Chat Activity was turned on and the provider has not yet reported its scope live, so the
+    /// live sets may still miss children that ran while it was off.
+    awaiting_rediscovery: bool,
 }
 
 type SharedActivityLifecycle = Arc<StdMutex<ProviderActivityLifecycleState>>;
@@ -892,6 +895,23 @@ impl ProviderActivityLifecycleState {
             live_work_item_ids: HashSet::new(),
             live_background_tasks: 0,
             last_provider_event_at: None,
+            awaiting_rediscovery: false,
+        }
+    }
+
+    /// A live scope from the provider ends the wait for rediscovery: its reconciliation reports
+    /// the scope with the children it found. Applies also when the projection changed nothing.
+    fn observe_rediscovery(&mut self, mutations: &[ProviderActivityMutation]) {
+        if mutations.iter().any(|mutation| {
+            matches!(
+                mutation,
+                ProviderActivityMutation::SetScope {
+                    observation_state: ActivityObservationState::Live,
+                    ..
+                }
+            )
+        }) {
+            self.awaiting_rediscovery = false;
         }
     }
 
@@ -6966,11 +6986,12 @@ async fn set_live_agent_activity_enabled(
             entry.activity_control.write().await.take();
             cancel_and_reap_activity_tasks(entry).await;
             // Disabling interrupts the projected activity, and no terminal report follows.
-            entry
+            let mut lifecycle = entry
                 .activity_lifecycle
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .forget_live_activity();
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            lifecycle.forget_live_activity();
+            lifecycle.awaiting_rediscovery = true;
         }
         match entry.driver.set_agent_activity_enabled(enabled).await {
             Ok(()) => {
@@ -7155,8 +7176,9 @@ async fn launch_session(
         runtime_payload_with_context_handoff(None, context_handoff),
     )
     .await?;
+    let activity_enabled_at_launch = activity_controller.snapshot().enabled;
     driver
-        .set_agent_activity_enabled(activity_controller.snapshot().enabled)
+        .set_agent_activity_enabled(activity_enabled_at_launch)
         .await?;
     let started = match driver.start().await {
         Ok(started) => started,
@@ -7248,6 +7270,13 @@ async fn launch_session(
             started.activity_capabilities.clone(),
         )))
     });
+    // A process started with Chat Activity off runs work unseen until turning it on has
+    // rediscovered it. One started with it on has nothing to rediscover, whatever an earlier
+    // process of the same session left behind.
+    activity_lifecycle
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .awaiting_rediscovery = !activity_enabled_at_launch;
     let activity_capable = provider_supports_agent_activity(&request.provider);
     if activity_capable && activity_controller.snapshot().enabled {
         let effective_activity_capabilities = activity_lifecycle
@@ -8370,14 +8399,17 @@ fn spawn_event_pump(
                                     }
                                     false
                                 }
-                                Ok(deltas) if !deltas.is_empty() => {
-                                    activity_lifecycle
+                                Ok(deltas) => {
+                                    let mut lifecycle = activity_lifecycle
                                         .lock()
-                                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                        .observe_projected_batch(&lifecycle_mutations, &deltas);
+                                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                                    if !deltas.is_empty() {
+                                        lifecycle
+                                            .observe_projected_batch(&lifecycle_mutations, &deltas);
+                                    }
+                                    lifecycle.observe_rediscovery(&lifecycle_mutations);
                                     true
                                 }
-                                Ok(_) => true,
                             };
                             if projection_succeeded
                                 && let Some(generation) = observed_generation
@@ -9441,7 +9473,8 @@ fn provider_reports_its_turns(provider: &str) -> bool {
 /// Whether BiBCode can see the session's work outside a turn, so its absence means idle. Claude
 /// reports its background tasks on its own stream. Other providers report subagents and background
 /// work only through Activity, so with Chat Activity off, or for Cursor and Grok, which have no
-/// Activity adapter, an idle-looking session may still be working and is not suspended.
+/// Activity adapter, an idle-looking session may still be working and is not suspended. Nor is
+/// one whose Chat Activity was just turned back on, until the provider has rediscovered its work.
 fn session_reports_its_work(
     entry: &SessionEntry,
     lifecycle: &ProviderActivityLifecycleState,
@@ -9450,6 +9483,7 @@ fn session_reports_its_work(
     matches!(entry.launch.provider.as_str(), "claude" | "claudeAgent")
         || (entry.activity_capable
             && activity_enabled
+            && !lifecycle.awaiting_rediscovery
             && (lifecycle.capabilities.actors || lifecycle.capabilities.background_work))
 }
 
@@ -23944,6 +23978,135 @@ done
                 "the idle deadline suspended a session whose subagent Chat Activity no longer shows",
             )
             .await;
+        fixture.close().await;
+    }
+
+    /// Turns Chat Activity off and back on, as the settings handler does, after a turn whose
+    /// subagent still runs. Turning it off forgets the subagent, and nothing has rediscovered it.
+    async fn toggle_activity_monitoring_off_and_on(fixture: &mut IdleDeadlineFixture) {
+        fixture.complete_first_turn_with_actor("running").await;
+        fixture.activity.agent_activity_controller().disable().await;
+        fixture
+            .supervisor
+            .set_agent_activity_enabled(false)
+            .await
+            .unwrap();
+        fixture.activity.agent_activity_controller().enable();
+        fixture
+            .supervisor
+            .set_agent_activity_enabled(true)
+            .await
+            .unwrap();
+    }
+
+    /// The provider's reconciliation pass after Chat Activity is turned back on: the scope is
+    /// live again, with the children it found.
+    fn rediscovery(children: Vec<ProviderActivityMutation>) -> Vec<ProviderActivityMutation> {
+        let mut batch = vec![ProviderActivityMutation::SetScope {
+            capabilities: crate::activity::ActivityCapabilities::structured_full(false),
+            observation_state: crate::activity::ActivityObservationState::Live,
+        }];
+        batch.extend(children);
+        batch
+    }
+
+    /// Turning Chat Activity back on makes a Codex or OpenCode session's work visible again before
+    /// the provider has rediscovered the subagents still running. No suspension happens until that
+    /// rediscovery lands.
+    #[tokio::test(start_paused = true)]
+    async fn idle_deadline_waits_for_rediscovery_after_activity_monitoring_is_reenabled() {
+        let _clock = keep_idle_clock_paused();
+        let mut fixture = IdleDeadlineFixture::new(BUSY_SESSION_IDLE_TIMEOUT).await;
+        toggle_activity_monitoring_off_and_on(&mut fixture).await;
+        fixture
+            .assert_busy_after_timeout(
+                2,
+                "the idle deadline suspended a session before Chat Activity rediscovered its subagent",
+            )
+            .await;
+
+        fixture
+            .emit_activity_batch(
+                "rediscovery",
+                rediscovery(vec![
+                    ProviderActivityMutation::upsert_actor("actor:sub", None, "Sub", "running")
+                        .unwrap(),
+                ]),
+            )
+            .await;
+        fixture
+            .assert_busy_after_timeout(3, "the idle deadline suspended a rediscovered subagent")
+            .await;
+        fixture
+            .emit_activity(
+                "subagent-stop",
+                ProviderActivityMutation::set_actor_status("actor:sub", "completed").unwrap(),
+            )
+            .await;
+        fixture.assert_suspended_after_timeout(4).await;
+        fixture.close().await;
+    }
+
+    /// Turning Chat Activity on for a session that already ran with it on starts no rediscovery,
+    /// so it must not wait for one.
+    #[tokio::test(start_paused = true)]
+    async fn idle_deadline_needs_no_rediscovery_when_activity_monitoring_was_never_off() {
+        let _clock = keep_idle_clock_paused();
+        let mut fixture = IdleDeadlineFixture::new(BUSY_SESSION_IDLE_TIMEOUT).await;
+        IdleDeadlineFixture::accepted(fixture.admit("first").await, "idle-turn-1").await;
+        fixture.stream("idle-turn-1", "assistant-first").await;
+        fixture
+            .emit("turn.completed", "idle-turn-1", "assistant-first")
+            .await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Armed { generation: 2 }
+        );
+        fixture
+            .supervisor
+            .set_agent_activity_enabled(true)
+            .await
+            .unwrap();
+        fixture.assert_suspended_after_timeout(2).await;
+        fixture.close().await;
+    }
+
+    /// A rediscovery that finds nothing running settles the hold, and the session idles again.
+    /// The live scope it reports is already projected, so the projection changes nothing.
+    #[tokio::test(start_paused = true)]
+    async fn idle_deadline_suspends_once_rediscovery_finds_nothing_running() {
+        let _clock = keep_idle_clock_paused();
+        let mut fixture = IdleDeadlineFixture::new(BUSY_SESSION_IDLE_TIMEOUT).await;
+        toggle_activity_monitoring_off_and_on(&mut fixture).await;
+        fixture
+            .assert_busy_after_timeout(2, "the idle deadline suspended before rediscovery")
+            .await;
+        fixture
+            .events
+            .send(super::ProviderEvent {
+                native_event_id: Some(
+                    super::ProviderNativeEventId::new("rediscovery".to_owned()).unwrap(),
+                ),
+                event_type: super::ACTIVITY_ONLY_PROVIDER_EVENT_TYPE.to_owned(),
+                thread_id: "t1".to_owned(),
+                turn_id: None,
+                item_id: None,
+                request_id: None,
+                payload: json!({}),
+                activity: rediscovery(Vec::new()),
+                activity_controls: Default::default(),
+            })
+            .await
+            .unwrap();
+        // A batch the projection does apply, so the pump has handled the rediscovery before it.
+        fixture
+            .emit_activity(
+                "after-rediscovery",
+                ProviderActivityMutation::upsert_actor("actor:done", None, "Done", "completed")
+                    .unwrap(),
+            )
+            .await;
+        fixture.assert_suspended_after_timeout(3).await;
         fixture.close().await;
     }
 
