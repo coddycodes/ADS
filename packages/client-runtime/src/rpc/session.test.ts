@@ -1,3 +1,5 @@
+import * as NodeZlib from "node:zlib";
+
 import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
@@ -969,7 +971,7 @@ describe("RpcSessionFactory", () => {
       }),
     ).pipe(withFixedRandom),
   );
-  it.effect("offers the chunked subprotocol on plain sockets only", () =>
+  it.effect("offers the chunked subprotocols, compression first, on plain sockets only", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
       yield* Effect.scoped(
@@ -977,7 +979,10 @@ describe("RpcSessionFactory", () => {
           const session = yield* factory.connect(PREPARED);
           yield* Effect.forkChild(session.ready);
           const socket = yield* awaitSocket(sockets);
-          expect(socket.protocols).toEqual(["bibcode.rpc.chunked.v1"]);
+          expect(socket.protocols).toEqual([
+            "bibcode.rpc.chunked-deflate.v1",
+            "bibcode.rpc.chunked.v1",
+          ]);
           expect(socket.binaryType).toBe("arraybuffer");
         }),
       );
@@ -1014,6 +1019,38 @@ describe("RpcSessionFactory", () => {
         socket.serverMessage(record(0x01, body.subarray(0, 10)));
         socket.serverMessage(record(0x02, new TextEncoder().encode(encodeJson({ _tag: "Pong" }))));
         socket.serverMessage(record(0x00, body.subarray(10)));
+        expect(yield* Fiber.join(settings)).toEqual(DEFAULT_SERVER_SETTINGS);
+      }),
+    ),
+  );
+
+  it.effect("inflates compressed records when the server selected compression", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const ready = yield* Effect.forkChild(session.ready);
+        const socket = yield* awaitSocket(sockets);
+        socket.protocol = "bibcode.rpc.chunked-deflate.v1";
+        socket.open();
+        yield* completeInitialConfig(socket);
+        yield* Fiber.join(ready);
+
+        const settings = yield* Effect.forkChild(session.client[WS_METHODS.serverGetSettings]({}));
+        const request = yield* awaitRequest(socket, 1);
+        const body = new TextEncoder().encode(
+          encodeJson({
+            _tag: "Exit",
+            requestId: request.id,
+            exit: { _tag: "Success", value: encodeServerSettings(DEFAULT_SERVER_SETTINGS) },
+          }),
+        );
+        const deflated = NodeZlib.deflateRawSync(body);
+        const record = new Uint8Array(1 + 4 + deflated.length);
+        record[0] = 0x10;
+        new DataView(record.buffer).setUint32(1, body.length);
+        record.set(deflated, 5);
+        socket.serverMessage(record);
         expect(yield* Fiber.join(settings)).toEqual(DEFAULT_SERVER_SETTINGS);
       }),
     ),

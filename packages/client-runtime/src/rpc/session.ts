@@ -28,7 +28,7 @@ import {
   ConnectionTransientError as ConnectionTransientErrorClass,
 } from "../connection/model.ts";
 
-import { CHUNKED_RPC_SUBPROTOCOL, makeChunkedSocket } from "./chunkedSocket.ts";
+import { makeChunkedSocket, plainSocketProtocols } from "./chunkedSocket.ts";
 import { withInputAdmission } from "./inputAdmission.ts";
 import { makeInboundActivity } from "./liveness.ts";
 import { makeLivenessProtocol, type RpcDisconnect } from "./livenessProtocol.ts";
@@ -197,14 +197,18 @@ export const make = Effect.gen(function* () {
       Socket.Socket,
       Socket.makeWebSocket(connection.socketUrl, {
         openTimeout: SOCKET_OPEN_TIMEOUT,
-        ...(connection.e2ee === null ? { protocols: [CHUNKED_RPC_SUBPROTOCOL] } : {}),
+        ...(connection.e2ee === null
+          ? {
+              protocols: plainSocketProtocols({
+                socketUrl: connection.socketUrl,
+                tunnelled: connection.target._tag === "SshConnectionTarget",
+              }),
+            }
+          : {}),
       }).pipe(
         Effect.map((plainSocket) => {
           if (connection.e2ee === null) {
-            return makeChunkedSocket(
-              plainSocket,
-              () => rawSocket?.protocol === CHUNKED_RPC_SUBPROTOCOL,
-            );
+            return makeChunkedSocket(plainSocket, () => rawSocket?.protocol);
           }
           const encryptedSocket = makeE2eeSocket(plainSocket, {
             hostKey: connection.e2ee.hostKey,

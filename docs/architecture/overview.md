@@ -612,7 +612,9 @@ listener exists; public candidates are labeled, never defaulted, and require an
 explicit warning acknowledgement. Plain `/ws` caps individual frames at 16 MiB
 while retaining the 64 MiB reassembled-message cap; a client that offers the
 `bibcode.rpc.chunked.v1` subprotocol receives messages over 64 KiB as binary
-records instead.
+records instead, and one that offers `bibcode.rpc.chunked-deflate.v1` (a remote
+or SSH server) also receives server messages of 16 KiB or more raw-deflate
+compressed.
 Hosted pairing rejects URL userinfo and renders and submits one normalized host;
 legacy query credentials are scrubbed after capture. Saved blank host keys
 normalize to the legacy plain-transport representation. The environment registry
