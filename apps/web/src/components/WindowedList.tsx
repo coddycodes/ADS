@@ -120,7 +120,13 @@ export function WindowedList<T>(props: WindowedListProps<T>) {
   return (
     <div
       ref={scrollerRef}
-      className={cn("overflow-y-auto", props.className)}
+      // A Tab stop like the ScrollArea viewport it replaces, so the keyboard
+      // can scroll the list; WebKit does not focus scrollers on its own.
+      tabIndex={0}
+      className={cn(
+        "overflow-y-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        props.className,
+      )}
       style={props.style}
       role={props.role}
       aria-label={props["aria-label"]}
