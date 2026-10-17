@@ -382,9 +382,11 @@ mod device_tests {
             .rotate(&fixture.id, Orientation::Landscape)
             .await
             .unwrap();
+        // The turn never showed within the window: the sensor goes back to portrait, so it
+        // matches the screen again.
         assert_eq!(
-            fixture.controller.rotations.lock().unwrap().last(),
-            Some(&[0.0, 0.0, 90.0])
+            *fixture.controller.rotations.lock().unwrap(),
+            [[0.0, 0.0, 90.0], [0.0, 0.0, 0.0]]
         );
         assert_eq!(fixture.snapshot().orientation, Orientation::Portrait);
         fixture.controller.report_rotation(SkinRotation::Landscape);

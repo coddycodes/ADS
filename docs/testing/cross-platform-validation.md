@@ -3094,7 +3094,13 @@ Record each client's OS, app or browser version, and profile type.
    tap on the address bar must focus it. The video must keep
    playing at the new size without a fallback, which proves scrcpy's new
    session and config packets were read. With auto-rotate off, a rotate
-   command leaves the screen and the catalog in portrait.
+   command leaves the screen and the catalog in portrait. Refusals: on the home
+   screen (the Pixel launcher refuses landscape), **Rotate left** leaves the
+   catalog in portrait, the sensor goes back within about 2.5 s (a later app
+   does not turn on its own), and a tap on an app icon opens it. From landscape
+   in Chrome, **Rotate left** again asks for 180°, which phones refuse: the
+   catalog stays on what the guest shows (`mCurrentRotation`) and a tap lands
+   where the picture shows it.
 7. **scrcpy session (native item 4).** After the first video session, record
    `adb -s <serial> shell sha256sum /data/local/tmp/bibcode-scrcpy-server-v4.1.jar`
    (it equals `SCRCPY_SERVER_SHA256` in `device/android/scrcpy.rs`) and

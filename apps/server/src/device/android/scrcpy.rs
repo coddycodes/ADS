@@ -31,6 +31,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     device::{
         DeviceError,
+        android::orientation::DisplayHandle,
         stderr_tail::{STDERR_DRAIN_GRACE, StderrTail},
         video::{UnitKind, VideoUnit},
     },
@@ -203,11 +204,13 @@ pub(crate) struct ScrcpySession {
 impl ScrcpySession {
     /// Pushes the jar when the device lacks it, forwards a loopback port to the server's
     /// socket, runs the server, and reads its stream headers. On failure everything started
-    /// so far is stopped.
+    /// so far is stopped. `display` hears the guest's display size from the codec header and
+    /// each session packet, and is cleared when the session ends.
     pub(crate) async fn start(
         adb: &Path,
         serial: &str,
         registry: &ProcessAttributionRegistry,
+        display: DisplayHandle,
     ) -> Result<Self, DeviceError> {
         ensure_jar(adb, serial).await?;
         let scid = getrandom::u32()
@@ -228,13 +231,16 @@ impl ScrcpySession {
                 control,
                 stderr,
             }) => {
+                display.set(codec.width, codec.height);
                 let (sender, units) = mpsc::channel(UNIT_QUEUE);
                 let ended = Arc::new(OnceLock::new());
                 let reader = tokio::spawn({
                     let ended = ended.clone();
                     async move {
                         let mut video = video;
-                        let end = match read_units(&mut video, &sender).await {
+                        // Owned by the reader, so the size clears when it ends or is aborted.
+                        let on_session = |width, height| display.set(width, height);
+                        let end = match read_units(&mut video, &sender, on_session).await {
                             Ok(()) => {
                                 tracing::debug!("scrcpy video consumer went away");
                                 StreamEnd::ConsumerLeft
@@ -322,11 +328,13 @@ impl ScrcpySession {
     }
 }
 
-/// Reads packets until the stream ends or breaks, sending each media unit to `units`. Returns
-/// `Ok` once nobody receives units any more.
+/// Reads packets until the stream ends or breaks, sending each media unit to `units` and
+/// each session packet's display size to `on_session`. Returns `Ok` once nobody receives
+/// units any more.
 async fn read_units(
     video: &mut (impl AsyncRead + Unpin),
     units: &mpsc::Sender<VideoUnit>,
+    on_session: impl Fn(u32, u32),
 ) -> Result<(), DeviceError> {
     let mut header = [0_u8; 12];
     loop {
@@ -334,6 +342,7 @@ async fn read_units(
         if let Some((width, height)) = session_dimensions(&header) {
             // The config unit that follows carries the new size for decoders.
             tracing::debug!(width, height, "scrcpy video session changed");
+            on_session(width, height);
             continue;
         }
         let (kind, pts_us, len) = parse_packet_header(header);
@@ -793,13 +802,18 @@ mod tests {
         ]
         .concat();
         let (sender, mut units) = mpsc::channel(8);
-        let error = read_units(&mut stream.as_slice(), &sender)
-            .await
-            .unwrap_err();
+        let sessions = std::cell::RefCell::new(Vec::new());
+        let error = read_units(&mut stream.as_slice(), &sender, |width, height| {
+            sessions.borrow_mut().push((width, height));
+        })
+        .await
+        .unwrap_err();
         assert!(
             matches!(error, DeviceError::Io(_)),
             "the stream ended: {error}"
         );
+        // A session packet reports the guest's new display size (a rotation).
+        assert_eq!(sessions.into_inner(), [(1280, 720)]);
         let mut kinds = Vec::new();
         while let Ok(unit) = units.try_recv() {
             kinds.push((unit.kind, unit.pts_us, unit.data.len()));
@@ -821,7 +835,7 @@ mod tests {
             let mut header = 5_u64.to_be_bytes().to_vec();
             header.extend(len.to_be_bytes());
             let (sender, mut units) = mpsc::channel(8);
-            let error = read_units(&mut header.as_slice(), &sender)
+            let error = read_units(&mut header.as_slice(), &sender, |_, _| {})
                 .await
                 .unwrap_err();
             assert!(matches!(error, DeviceError::Protocol(_)), "{len}: {error}");
@@ -834,7 +848,9 @@ mod tests {
         let stream = [config_unit(), key_unit(1)].concat();
         let (sender, units) = mpsc::channel(8);
         drop(units);
-        read_units(&mut stream.as_slice(), &sender).await.unwrap();
+        read_units(&mut stream.as_slice(), &sender, |_, _| {})
+            .await
+            .unwrap();
     }
 
     #[cfg(unix)]
@@ -846,13 +862,20 @@ mod tests {
         };
         let source = FakeScrcpySource::spawn(vec![config_unit(), key_unit(1), delta_unit(2)]).await;
         let sdk = FakeSdk::new().adb_forwards_to(source.port).write();
+        let tracker = crate::device::android::orientation::OrientationTracker::new();
         let mut session = ScrcpySession::start(
             &sdk.adb(),
             "emulator-5554",
             &ProcessAttributionRegistry::new(),
+            tracker.start_display(),
         )
         .await
         .unwrap();
+        // The codec header's tall display overrules a landscape skin while the session runs.
+        assert_eq!(
+            tracker.report_skin(crate::device::catalog::Orientation::Landscape),
+            crate::device::catalog::Orientation::Portrait
+        );
         assert_eq!(session.codec.codec_id, 0x6832_3634);
         assert_eq!(
             (session.codec.width, session.codec.height),
@@ -873,6 +896,11 @@ mod tests {
         let pid = session.helper.pid;
         session.stop(false).await;
         assert!(!crate::device::android::testing::process_alive(pid));
+        // Stopped: the display is gone, so the skin decides again.
+        assert_eq!(
+            tracker.report_skin(crate::device::catalog::Orientation::Landscape),
+            crate::device::catalog::Orientation::Landscape
+        );
 
         let log = sdk.adb_log();
         assert!(log.contains("forward --remove tcp:"), "{log}");
@@ -937,6 +965,7 @@ mod tests {
             &sdk.adb(),
             "emulator-5554",
             &ProcessAttributionRegistry::new(),
+            crate::device::android::orientation::OrientationTracker::new().start_display(),
         )
         .await
         .err()
@@ -958,6 +987,7 @@ mod tests {
             &sdk.adb(),
             "emulator-5554",
             &crate::diagnostics::ProcessAttributionRegistry::new(),
+            crate::device::android::orientation::OrientationTracker::new().start_display(),
         )
         .await
     }

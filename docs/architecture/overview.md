@@ -2010,9 +2010,23 @@ emulator's `Touch.x`/`y` is the physical location on the unrotated panel, so
 pixels for the orientation the guest reported (measured on a real AVD: before
 this mapping, a landscape tap at (109, 66) of the 2400×1080 picture arrived as
 panel (109, 66)). A pointer still down when the device's input stream is
-reopened or the device stops is released where it was, in panel pixels. `device.rotate` tilts the virtual sensor with `setPhysicalModel` and then
-reads back the reported orientation; the screen turns only when auto-rotate is
-on and the foreground app allows it.
+reopened or the device stops is released where it was, in panel pixels.
+`device.rotate` tilts the virtual sensor with `setPhysicalModel` and then
+follows what the guest shows; the screen turns only when auto-rotate is on and
+the foreground app allows it. The emulator's `SkinRotation` follows the sensor,
+not the guest, so it cannot tell a refused turn (the Pixel launcher refuses
+landscape, phones refuse 180°) from a real one. `android::orientation` derives
+the orientation instead: while a scrcpy session runs, its display size (codec
+header, then each session packet) decides portrait versus landscape and the
+skin picks the exact orientation only when its class agrees; otherwise the
+previous orientation stays, or, when that disagrees too, `portrait` or
+`landscape` by shape. With no scrcpy session (still images) the skin decides,
+because the gRPC screenshots are rotated by it. A turn the derived orientation
+has not taken within 2.5 s (measured: the display changed 0.67–0.90 s after
+`setPhysicalModel`) counts as refused, and the sensor is put back to the
+previous orientation so it matches the screen. The catalog, touch mapping,
+JPEG frames, PNG screenshots, and `orientation_changes` (which follows turns
+the guest makes on its own) all read that derived orientation.
 
 **H.264 video.** Device video is the only application traffic outside typed
 RPC. On the first media subscriber, `device/android/scrcpy.rs` pushes the embedded

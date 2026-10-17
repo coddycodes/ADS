@@ -11,6 +11,7 @@ use super::{
         EmulatorClient,
         proto::{self, image_format::ImgFormat, rotation::SkinRotation},
     },
+    orientation::OrientationTracker,
 };
 use crate::device::{
     DeviceError, DeviceOpError,
@@ -20,9 +21,11 @@ use crate::device::{
 
 /// How long one event may wait for room in the emulator's input stream.
 const INPUT_SEND_TIMEOUT: Duration = Duration::from_secs(5);
-/// How often `rotate` reads the orientation the emulator reports, and how far apart.
-const ROTATION_POLLS: usize = 5;
-const ROTATION_POLL_INTERVAL: Duration = Duration::from_millis(300);
+/// How long `rotate` waits for the guest to turn before it takes the turn as refused. On a
+/// real Pixel_8 AVD the scrcpy display changed 0.67-0.90 s after `setPhysicalModel`.
+const ROTATION_WINDOW: Duration = Duration::from_millis(2_500);
+/// How often `rotate` reads the orientation back within [`ROTATION_WINDOW`].
+const ROTATION_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// The W3C `KeyboardEvent.key` value the emulator maps to `key`.
 pub(crate) fn w3c_key(key: DeviceKey) -> &'static str {
@@ -275,50 +278,72 @@ pub(super) async fn send_batch(
     Ok(())
 }
 
-/// Asks the emulator to turn toward `orientation`, then follows what it reports: `report`
-/// hears each orientation and display size the screen actually took.
+/// Asks the emulator to turn toward `orientation`, then follows what the guest shows:
+/// `report` hears each orientation `tracker` derives, with its display size. The skin
+/// follows the sensor even when the screen refuses the turn (the launcher refuses
+/// landscape, phones refuse 180 degrees), so a turn the derived orientation has not taken
+/// within [`ROTATION_WINDOW`] counts as refused, and the sensor is put back to the
+/// orientation shown before. The sensor then matches the screen: the press did nothing, and
+/// a later app does not turn the screen unexpectedly. A guest slower than the window has
+/// its turn undone, and the user presses again.
 pub(super) async fn rotate(
     client: &EmulatorClient,
     (width, height): (u32, u32),
+    tracker: &OrientationTracker,
     orientation: Orientation,
     report: &(dyn Fn(Orientation, u32, u32) + Send + Sync),
 ) -> Result<(), DeviceOpError> {
+    let report_derived = |derived: Orientation| {
+        let (width, height) = oriented_size(width, height, derived);
+        report(derived, width, height);
+    };
+    let previous = tracker.current();
     client
         .set_rotation(rotation_vector(orientation))
         .await
         .map_err(|error| emulator_failure("rotate", &error))?;
-    for poll in 0..ROTATION_POLLS {
-        if poll > 0 {
-            tokio::time::sleep(ROTATION_POLL_INTERVAL).await;
-        }
-        let reported = match client.screenshot(ImgFormat::Png, 1).await {
-            Ok(image) => {
-                let skin = image
-                    .format
-                    .and_then(|format| format.rotation)
-                    .map(|rotation| rotation.rotation);
-                let reported = skin.and_then(reported_orientation);
-                tracing::debug!(
-                    ?skin,
-                    ?reported,
-                    requested = ?orientation,
-                    "device reported its rotation"
-                );
-                reported
-            }
+    let deadline = tokio::time::Instant::now() + ROTATION_WINDOW;
+    loop {
+        let skin = match client.screenshot(ImgFormat::Png, 1).await {
+            Ok(image) => image
+                .format
+                .and_then(|format| format.rotation)
+                .map(|rotation| rotation.rotation),
             Err(error) => {
                 tracing::debug!(%error, "reading the device's orientation failed");
                 None
             }
         };
-        if let Some(reported) = reported {
-            let (width, height) = oriented_size(width, height, reported);
-            report(reported, width, height);
-            if reported == orientation {
-                break;
+        let skin_orientation = skin.and_then(reported_orientation);
+        let derived = skin_orientation.map(|skin| tracker.report_skin(skin));
+        tracing::debug!(
+            ?skin,
+            ?derived,
+            requested = ?orientation,
+            "device reported its rotation"
+        );
+        if let Some(derived) = derived {
+            report_derived(derived);
+            if derived == orientation {
+                return Ok(());
             }
         }
+        if tokio::time::Instant::now() + ROTATION_POLL_INTERVAL > deadline {
+            break;
+        }
+        tokio::time::sleep(ROTATION_POLL_INTERVAL).await;
     }
+    tracing::debug!(
+        requested = ?orientation,
+        ?previous,
+        "the device did not turn; the sensor goes back"
+    );
+    client
+        .set_rotation(rotation_vector(previous))
+        .await
+        .map_err(|error| emulator_failure("rotate", &error))?;
+    // The skin follows the sensor, so it is back at `previous` too.
+    report_derived(tracker.report_skin(previous));
     Ok(())
 }
 
@@ -434,6 +459,86 @@ mod tests {
         assert_eq!(panel(1.2, -0.1, Orientation::Landscape), (1079, 2399));
         assert_eq!(panel(1.2, -0.1, Orientation::ReversePortrait), (0, 2399));
         assert_eq!(panel(1.2, -0.1, Orientation::ReverseLandscape), (0, 0));
+    }
+
+    /// A fake emulator whose skin already reports landscape, and a tracker with a running
+    /// scrcpy session whose display is tall.
+    async fn landscape_skin_tall_display() -> (
+        crate::device::android::testing::FakeHandle,
+        EmulatorClient,
+        std::sync::Arc<OrientationTracker>,
+        crate::device::android::orientation::DisplayHandle,
+    ) {
+        let fake = crate::device::android::testing::FakeController::spawn().await;
+        fake.report_rotation(SkinRotation::Landscape);
+        let client = EmulatorClient::connect(fake.port, Some("test-token".into()))
+            .await
+            .unwrap();
+        let tracker = OrientationTracker::new();
+        let display = tracker.start_display();
+        display.set(576, 1280);
+        (fake, client, tracker, display)
+    }
+
+    /// The launcher's refusal: the skin follows the sensor to landscape while the guest's
+    /// display stays tall, so the turn is undone and portrait is reported.
+    #[tokio::test]
+    async fn a_turn_the_display_never_takes_puts_the_sensor_back() {
+        let (fake, client, tracker, _display) = landscape_skin_tall_display().await;
+        let reports = std::sync::Mutex::new(Vec::new());
+        rotate(
+            &client,
+            PANEL,
+            &tracker,
+            Orientation::Landscape,
+            &|o, w, h| {
+                reports.lock().unwrap().push((o, w, h));
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            *fake.rotations.lock().unwrap(),
+            [[0.0, 0.0, 90.0], [0.0, 0.0, 0.0]]
+        );
+        let reports = reports.into_inner().unwrap();
+        assert!(
+            reports
+                .iter()
+                .all(|report| *report == (Orientation::Portrait, 1080, 2400)),
+            "{reports:?}"
+        );
+        assert_eq!(tracker.current(), Orientation::Portrait);
+    }
+
+    /// Chrome's turn: the display becomes wide within the window, so the turn stands.
+    #[tokio::test]
+    async fn a_turn_the_display_takes_within_the_window_stands() {
+        let (fake, client, tracker, display) = landscape_skin_tall_display().await;
+        let turned = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(700)).await;
+            display.set(1280, 576);
+            display
+        });
+        let last = std::sync::Mutex::new(None);
+        rotate(
+            &client,
+            PANEL,
+            &tracker,
+            Orientation::Landscape,
+            &|o, w, h| {
+                *last.lock().unwrap() = Some((o, w, h));
+            },
+        )
+        .await
+        .unwrap();
+        let _display = turned.await.unwrap();
+        assert_eq!(*fake.rotations.lock().unwrap(), [[0.0, 0.0, 90.0]]);
+        assert_eq!(
+            last.into_inner().unwrap(),
+            Some((Orientation::Landscape, 2400, 1080))
+        );
+        assert_eq!(tracker.current(), Orientation::Landscape);
     }
 
     #[tokio::test]

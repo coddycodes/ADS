@@ -504,10 +504,11 @@ mod tests {
             )
             .await
             .expect("rotation is requested");
+        // Landscape is turned counter-clockwise (`ROTATION_90`). The fake's screen never
+        // turns, so the sensor is put back to portrait once the window passes.
         assert_eq!(
-            fixture.controller.rotations.lock().unwrap().last(),
-            // Landscape is turned counter-clockwise (`ROTATION_90`).
-            Some(&[0.0, 0.0, 90.0])
+            *fixture.controller.rotations.lock().unwrap(),
+            [[0.0, 0.0, 90.0], [0.0, 0.0, 0.0]]
         );
         fixture.controller.fail_rotation();
         let failed = harness

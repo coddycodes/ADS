@@ -3,6 +3,7 @@
 pub(crate) mod emulator;
 pub(crate) mod grpc;
 pub(crate) mod input;
+pub(crate) mod orientation;
 pub(crate) mod scrcpy;
 pub(crate) mod sdk;
 #[cfg(test)]
@@ -13,7 +14,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
-use futures_util::{StreamExt as _, future::BoxFuture};
+use futures_util::{StreamExt as _, future::BoxFuture, stream::BoxStream};
 use tokio::time::Instant;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
@@ -24,6 +25,7 @@ use self::{
         proto::{self, image_format::ImgFormat},
     },
     input::{InputState, reported_orientation},
+    orientation::OrientationTracker,
     sdk::{AndroidSdk, SdkEnv},
 };
 use super::{
@@ -159,8 +161,9 @@ struct RunningAndroid {
     input: tokio::sync::Mutex<Option<InputState>>,
     /// The input stream's task; a stop waits for it.
     input_tasks: TaskTracker,
-    /// The orientation the emulator last reported, for frames that report none.
-    orientation: Arc<Mutex<Orientation>>,
+    /// The orientation the guest really shows, derived from the emulator's skin rotation
+    /// and the running scrcpy session's display size.
+    orientation: Arc<OrientationTracker>,
 }
 
 impl RunningAndroid {
@@ -176,7 +179,7 @@ impl RunningAndroid {
             registry,
             input: tokio::sync::Mutex::new(None),
             input_tasks: TaskTracker::new(),
-            orientation: Arc::new(Mutex::new(Orientation::Portrait)),
+            orientation: OrientationTracker::new(),
         }
     }
 
@@ -219,7 +222,10 @@ impl RunningDevice for RunningAndroid {
             let orientation = format
                 .and_then(|format| format.rotation.as_ref())
                 .and_then(|rotation| reported_orientation(rotation.rotation))
-                .unwrap_or_else(|| *lock(&self.orientation));
+                .map_or_else(
+                    || self.orientation.current(),
+                    |skin| self.orientation.report_skin(skin),
+                );
             Ok(Png {
                 png: image.image,
                 mime_type: "image/png",
@@ -232,8 +238,13 @@ impl RunningDevice for RunningAndroid {
 
     fn video(&self) -> BoxFuture<'_, Result<Box<dyn ErasedVideoSource>, DeviceError>> {
         Box::pin(async move {
-            let session =
-                scrcpy::ScrcpySession::start(&self.adb, &self.serial, &self.registry).await?;
+            let session = scrcpy::ScrcpySession::start(
+                &self.adb,
+                &self.serial,
+                &self.registry,
+                self.orientation.start_display(),
+            )
+            .await?;
             tracing::debug!(
                 width = session.codec.width,
                 height = session.codec.height,
@@ -241,6 +252,22 @@ impl RunningDevice for RunningAndroid {
             );
             Ok(Box::new(session) as Box<dyn ErasedVideoSource>)
         })
+    }
+
+    /// The derived orientation as it changes, so a turn the guest makes on its own (an app
+    /// that forces landscape, seen as a new scrcpy display size) reaches the catalog. `rotate`
+    /// reports the same derived values, so the two settle on one orientation.
+    fn orientation_changes(&self) -> Option<BoxStream<'static, Orientation>> {
+        let mut changes = self.orientation.subscribe();
+        changes.mark_changed();
+        Some(
+            futures_util::stream::unfold(changes, |mut changes| async move {
+                changes.changed().await.ok()?;
+                let orientation = *changes.borrow_and_update();
+                Some((orientation, changes))
+            })
+            .boxed(),
+        )
     }
 
     fn input(
@@ -263,13 +290,13 @@ impl RunningDevice for RunningAndroid {
         to: Orientation,
         report: &'a (dyn Fn(Orientation, u32, u32) + Send + Sync),
     ) -> BoxFuture<'a, Result<(), DeviceOpError>> {
-        Box::pin(async move {
-            let follow = |reported: Orientation, width: u32, height: u32| {
-                *lock(&self.orientation) = reported;
-                report(reported, width, height);
-            };
-            input::rotate(&self.client, self.native, to, &follow).await
-        })
+        Box::pin(input::rotate(
+            &self.client,
+            self.native,
+            &self.orientation,
+            to,
+            report,
+        ))
     }
 
     fn exited(&self) -> Option<String> {
@@ -311,11 +338,11 @@ impl RunningDevice for RunningAndroid {
 }
 
 /// The newest image of `stream` as a JPEG at most every [`JPEG_MIN_INTERVAL`]; images that
-/// arrive in between replace the pending one unencoded. A frame without a rotation keeps
-/// `orientation`, the last one the emulator reported.
+/// arrive in between replace the pending one unencoded. Each frame carries the orientation
+/// derived from its rotation (a frame without one keeps the current orientation).
 fn jpeg_frames(
     stream: tonic::Streaming<proto::Image>,
-    orientation: Arc<Mutex<Orientation>>,
+    orientation: Arc<OrientationTracker>,
 ) -> JpegStream {
     let frames = FrameStream {
         stream,
@@ -339,7 +366,7 @@ struct FrameStream {
     /// Whether this stream already warned about a frame it could not encode; the rest are
     /// logged at debug.
     warned_malformed: bool,
-    orientation: Arc<Mutex<Orientation>>,
+    orientation: Arc<OrientationTracker>,
     /// Set after the stream yielded its error; it ends next.
     failed: bool,
 }
@@ -400,13 +427,10 @@ impl FrameStream {
                 return None;
             }
         };
-        let orientation = {
-            let mut current = lock(&self.orientation);
-            if let Some(reported) = reported {
-                *current = reported;
-            }
-            *current
-        };
+        let orientation = reported.map_or_else(
+            || self.orientation.current(),
+            |skin| self.orientation.report_skin(skin),
+        );
         Some(RawJpeg {
             jpeg,
             width,
