@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { type ScopedThreadRef } from "@bibcode/contracts";
+import { scopedThreadKey } from "@bibcode/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -1042,6 +1043,14 @@ export default function GitActionsControl({
     });
   }, []);
 
+  // The server thread's branch changes only when its update echoes back, while the
+  // status stream keeps publishing the new ref: write once per thread version and
+  // target. Any newer thread state (the echo, another client, a resync) re-decides.
+  const pendingBranchUpdateRef = useRef<{
+    readonly threadKey: string;
+    readonly threadUpdatedAt: string;
+    readonly to: string | null;
+  } | null>(null);
   const persistThreadBranchSync = useCallback(
     (branch: string | null) => {
       if (!activeThreadRef) {
@@ -1052,6 +1061,20 @@ export default function GitActionsControl({
         if (activeServerThread.branch === branch) {
           return;
         }
+        const request = {
+          threadKey: scopedThreadKey(activeThreadRef),
+          threadUpdatedAt: activeServerThread.updatedAt,
+          to: branch,
+        };
+        const pending = pendingBranchUpdateRef.current;
+        if (
+          pending?.threadKey === request.threadKey &&
+          pending.threadUpdatedAt === request.threadUpdatedAt &&
+          pending.to === request.to
+        ) {
+          return;
+        }
+        pendingBranchUpdateRef.current = request;
 
         void updateThreadMetadata({
           environmentId: activeThreadRef.environmentId,
@@ -1059,6 +1082,11 @@ export default function GitActionsControl({
             threadId: activeThreadRef.threadId,
             branch,
           },
+        }).then((result) => {
+          // A rejected write may retry on the next status publication.
+          if (result._tag === "Failure" && pendingBranchUpdateRef.current === request) {
+            pendingBranchUpdateRef.current = null;
+          }
         });
 
         return;
