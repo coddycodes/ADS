@@ -32,6 +32,12 @@ interface Size {
 }
 
 /** A typical phone shape, until the device reports its own. */
+/**
+ * The canvas's bezel: `ring-4` (and `focus-visible:ring-primary`) draws a 4 px box-shadow
+ * outside the canvas, so the screen is letterboxed this far inside the `overflow-hidden`
+ * container or the bezel is clipped on the edges the screen touches.
+ */
+const BEZEL_WIDTH_PX = 4;
 const PLACEHOLDER_SIZE: Size = { width: 1080, height: 2340 };
 
 const sameSize = (left: Size | null, right: Size | null) =>
@@ -254,7 +260,14 @@ export function DeviceScreen({
   // Video and JPEG sizes both arrive oriented; neither is swapped again.
   const deviceSize = (jpeg ? frameSize : videoSize) ?? reported ?? PLACEHOLDER_SIZE;
   const box = useMemo(
-    () => letterbox(containerSize.width, containerSize.height, deviceSize.width, deviceSize.height),
+    () =>
+      letterbox(
+        containerSize.width,
+        containerSize.height,
+        deviceSize.width,
+        deviceSize.height,
+        BEZEL_WIDTH_PX,
+      ),
     [containerSize.width, containerSize.height, deviceSize.width, deviceSize.height],
   );
 

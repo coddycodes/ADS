@@ -11,6 +11,21 @@ describe("deviceGeometry", () => {
     expect(letterbox(400, 1000, 2400, 1080)).toEqual({ x: 0, y: 410, width: 400, height: 180 });
   });
 
+  it("keeps a bezel inset clear on every side of a portrait device in a wide container", () => {
+    // 992x800 left inside the inset: the screen touches the top and bottom of that area.
+    expect(letterbox(1000, 808, 1080, 2400, 4)).toEqual({ x: 320, y: 4, width: 360, height: 800 });
+  });
+
+  it("keeps a bezel inset clear on every side of a landscape device in a tall container", () => {
+    // 400x992 left inside the inset: the screen touches its left and right.
+    expect(letterbox(408, 1000, 2400, 1080, 4)).toEqual({ x: 4, y: 410, width: 400, height: 180 });
+  });
+
+  it("gives an empty box when the inset leaves no room", () => {
+    expect(letterbox(8, 800, 1080, 2400, 4)).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+    expect(letterbox(1000, 6, 1080, 2400, 4)).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+  });
+
   it("gives an empty box when either size is unknown", () => {
     expect(letterbox(0, 800, 1080, 2400)).toEqual({ x: 0, y: 0, width: 0, height: 0 });
     expect(letterbox(1000, 800, 0, 2400)).toEqual({ x: 0, y: 0, width: 0, height: 0 });
