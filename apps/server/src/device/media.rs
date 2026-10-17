@@ -41,6 +41,11 @@ const MAX_TICKETS_PER_PRINCIPAL: usize = 8;
 /// unit stream for long.
 const RESET_WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 const FRAME_HEADER_BYTES: usize = 9;
+/// A socket hears from its hub at least this often while the source is open: a quiet
+/// source (an unchanged iOS screen sends nothing) gets a [`KEEPALIVE_FRAME`] instead.
+pub(crate) const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
+/// Kind 3 with pts 0 and no payload: the stream is alive, and there is nothing to decode.
+pub(crate) const KEEPALIVE_FRAME: [u8; FRAME_HEADER_BYTES] = [3, 0, 0, 0, 0, 0, 0, 0, 0];
 
 /// The connection a ticket was minted on, and the only one that may redeem it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -91,7 +96,8 @@ impl MediaAttachError {
     }
 }
 
-/// `[kind u8][pts u64 BE][Annex-B data]`, kind 0 config, 1 key, 2 delta.
+/// `[kind u8][pts u64 BE][Annex-B data]`, kind 0 config, 1 key, 2 delta; the hub's own
+/// [`KEEPALIVE_FRAME`] is kind 3.
 pub(crate) fn encode_frame(unit: &VideoUnit) -> Vec<u8> {
     let kind = match unit.kind {
         UnitKind::Config => 0,
@@ -447,6 +453,18 @@ impl MediaHub {
         self.reset.notify_one();
     }
 
+    /// Tells every socket with nothing queued that the stream is still open. A socket with
+    /// frames queued already has its proof of life, so a keepalive never waits behind them
+    /// and never grows a stalled socket's queue.
+    fn keepalive(&self) {
+        static FRAME: Bytes = Bytes::from_static(&KEEPALIVE_FRAME);
+        let mut state = self.lock();
+        state.subscribers.retain(|slot| {
+            slot.queued_bytes.load(Ordering::Acquire) > 0
+                || !matches!(slot.offer(&FRAME, false), Offer::Closed)
+        });
+    }
+
     /// Sends one unit to every socket: deltas skip sockets waiting for a key unit, and a
     /// socket whose queue is full drops what it has queued and waits for the next key.
     fn dispatch(&self, unit: &VideoUnit) {
@@ -555,6 +573,9 @@ pub(super) async fn run<S: VideoSource>(
             }
         },
     };
+    // A quiet source (an unchanged iOS screen sends nothing) still proves the stream alive
+    // to its sockets, which treat a long silence as a stall.
+    let mut keepalive_at = Instant::now() + KEEPALIVE_INTERVAL;
     let failed = loop {
         tokio::select! {
             biased;
@@ -567,9 +588,16 @@ pub(super) async fn run<S: VideoSource>(
                 }
             }
             unit = source.next_unit() => match unit {
-                Some(unit) => hub.dispatch(&unit),
+                Some(unit) => {
+                    hub.dispatch(&unit);
+                    keepalive_at = Instant::now() + KEEPALIVE_INTERVAL;
+                }
                 None => break source.failed(),
             },
+            () = tokio::time::sleep_until(keepalive_at) => {
+                hub.keepalive();
+                keepalive_at = Instant::now() + KEEPALIVE_INTERVAL;
+            }
         }
     };
     if failed {
@@ -941,6 +969,7 @@ mod tests {
                     0 => "config",
                     1 => "key",
                     2 => "delta",
+                    3 => "keepalive",
                     other => panic!("unknown kind {other}"),
                 };
                 let pts = u64::from_be_bytes(frame[1..9].try_into().expect("pts"));
@@ -983,6 +1012,74 @@ mod tests {
         task.await.unwrap();
         // The erased source was stopped through its concrete `stop`.
         assert_eq!(stopped.get(), Some(&false));
+    }
+
+    #[test]
+    fn a_keepalive_is_kind_3_with_no_payload() {
+        // The bytes the TypeScript parser's keepalive case reads, too.
+        assert_eq!(&KEEPALIVE_FRAME[..], &[3, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    /// The next frame's kind and when it arrived, waiting up to `within`.
+    async fn next_kind(watcher: &mut Watcher, within: Duration) -> Option<(u8, Instant)> {
+        tokio::time::timeout(within, watcher.subscriber.next_frame())
+            .await
+            .ok()
+            .flatten()
+            .map(|frame| (frame[0], Instant::now()))
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_quiet_source_keeps_its_sockets_alive_once_a_second() {
+        let hub = HubFixture::new();
+        let mut watcher = hub.subscribe();
+        hub.feed([config(), key(1)]).await;
+        let fed = Instant::now();
+        assert_eq!(watcher.kinds().await, ["config", "key"]);
+        // Nothing more from the source: a keepalive within about a second, then one a second.
+        let (kind, first) = next_kind(&mut watcher, Duration::from_millis(1_100))
+            .await
+            .expect("a keepalive within 1.1 s");
+        assert_eq!(kind, 3);
+        assert!(first - fed >= KEEPALIVE_INTERVAL);
+        let (kind, second) = next_kind(&mut watcher, Duration::from_millis(1_100))
+            .await
+            .expect("another keepalive a second later");
+        assert_eq!(kind, 3);
+        assert_eq!(second - first, KEEPALIVE_INTERVAL);
+        // Stopped: the socket's stream ends and no keepalive follows.
+        hub.hub.stop();
+        assert_eq!(next_kind(&mut watcher, Duration::from_secs(3)).await, None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn no_keepalive_while_units_flow() {
+        let hub = HubFixture::new();
+        let mut watcher = hub.subscribe();
+        hub.feed([config(), key(1)]).await;
+        // A delta every half second for three seconds: the units alone prove liveness.
+        for pts in 2..8 {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            hub.feed([delta(pts)]).await;
+        }
+        let kinds = watcher.kinds().await;
+        assert!(!kinds.contains(&"keepalive"), "{kinds:?}");
+        assert_eq!(kinds.len(), 8);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_keepalive_never_queues_behind_unsent_frames() {
+        let hub = HubFixture::new();
+        // A socket that reads nothing: its queue holds the config and the key.
+        let watcher = hub.subscribe();
+        hub.feed([config(), key(1)]).await;
+        let queued = watcher.subscriber.queued_bytes.load(Ordering::Acquire);
+        tokio::time::sleep(KEEPALIVE_INTERVAL * 3).await;
+        assert_eq!(
+            watcher.subscriber.queued_bytes.load(Ordering::Acquire),
+            queued,
+            "no keepalive joins a queue that still holds frames"
+        );
     }
 
     #[test]

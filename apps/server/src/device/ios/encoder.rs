@@ -3,8 +3,7 @@
 //! One named thread per stream owns every VideoToolbox and CoreVideo object: the
 //! compression session, the rotation session and its pixel-buffer pool. It waits for the
 //! screen's frame signal (and, while a key frame or a failed encode is pending, every
-//! [`RETRY_INTERVAL`], so a still screen recovers; and after [`IDLE_INTERVAL`] without a
-//! frame, so an idle screen keeps streaming), at most one frame per
+//! [`RETRY_INTERVAL`], so a still screen recovers), at most one frame per
 //! [`MIN_FRAME_INTERVAL`], wraps the current
 //! framebuffer IOSurface in a `CVPixelBuffer`, turns it into the UI orientation with
 //! `VTPixelRotationSession` when the UI is not portrait (the surface itself always stays
@@ -66,10 +65,6 @@ use crate::device::{
     video::{UnitKind, VideoUnit},
 };
 
-/// An unchanged screen is encoded again after this long without a frame, so a viewer
-/// sees about one frame a second from an idle screen and never mistakes it for a stall
-/// (spec §4). SimScreen signals only when the screen changes.
-const IDLE_INTERVAL: Duration = Duration::from_secs(1);
 /// At most 60 frames a second.
 const MIN_FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 /// How often the encoder thread wakes without a signal to look for a pending key frame or a
@@ -1025,10 +1020,9 @@ impl<F: FnMut(IosOrientation, bool) -> Result<(), DeviceError>> Encode for F {}
 
 /// The encoder loop: one frame per frame signal or reset, at most one per
 /// [`MIN_FRAME_INTERVAL`]; while a key frame or a failed encode is pending, also every
-/// [`RETRY_INTERVAL`] without a signal, and otherwise once per [`IDLE_INTERVAL`] of a still
-/// screen (a delta frame unless a key is pending). Runs until stopped or [`MAX_FAILURES`]
-/// encodes in a row fail. Reports whether the first frame encoded, then returns whether the
-/// stream failed.
+/// [`RETRY_INTERVAL`] without a signal. Runs until stopped or [`MAX_FAILURES`] encodes in a
+/// row fail. Reports whether the first frame encoded, then returns whether the stream
+/// failed.
 fn run_encoder(
     signals: &mut Signals,
     requests: &Requests,
@@ -1042,8 +1036,7 @@ fn run_encoder(
     signals.damage.mark_changed();
     loop {
         // The wait wakes every `RETRY_INTERVAL` to see a key request the output callback
-        // made after the last encode (the callback only `try_send`s and never wakes us)
-        // and to send the idle heartbeat.
+        // made after the last encode: the callback only `try_send`s and never wakes us.
         let woke = block_on(
             async {
                 tokio::select! {
@@ -1058,11 +1051,8 @@ fn run_encoder(
         match woke {
             Some(false) => return false,
             Some(true) => {}
-            // No signal: encode the same frame again for a pending key, a failure, or an
-            // idle heartbeat once no frame has gone out for `IDLE_INTERVAL`.
-            None if failures > 0
-                || requests.force_key.load(Ordering::Acquire)
-                || last.is_some_and(|last| last.elapsed() >= IDLE_INTERVAL) => {}
+            // No signal: encode the same frame again only for a pending key or a failure.
+            None if failures > 0 || requests.force_key.load(Ordering::Acquire) => {}
             None => continue,
         }
         if let Some(last) = last {
@@ -1747,35 +1737,6 @@ mod tests {
         // With nothing pending, a still screen is not encoded again.
         assert!(calls.recv_timeout(RETRY_INTERVAL * 3).is_err());
         VideoSource::stop(source.video, false).await;
-    }
-
-    #[tokio::test]
-    async fn an_idle_screen_still_sends_a_frame_every_second_until_stopped() {
-        let mut source = scripted(|_| Ok(())).await;
-        assert!(next(&mut source.video).await.is_some(), "the first frame");
-        let calls = &source.calls;
-        assert_eq!(calls.recv_timeout(Duration::from_secs(5)), Ok(false));
-        // No damage, no pending key, no failure: the heartbeat still encodes the screen,
-        // as a normal (delta) frame, about once a second.
-        let started = Instant::now();
-        for _ in 0..2 {
-            assert_eq!(calls.recv_timeout(IDLE_INTERVAL * 2), Ok(false));
-        }
-        let elapsed = started.elapsed();
-        assert!(
-            elapsed >= IDLE_INTERVAL * 2 - RETRY_INTERVAL,
-            "two heartbeats took {elapsed:?}, faster than one a second"
-        );
-        // Each heartbeat reached the stream as a unit.
-        for _ in 0..2 {
-            assert!(next(&mut source.video).await.is_some(), "a heartbeat unit");
-        }
-        // Stopping the stream ends the heartbeat: the thread drops its encoder.
-        VideoSource::stop(source.video, false).await;
-        assert_eq!(
-            calls.recv_timeout(IDLE_INTERVAL * 2),
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
-        );
     }
 
     #[tokio::test]

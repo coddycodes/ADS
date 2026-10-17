@@ -2037,8 +2037,14 @@ dropping the oldest. The client opens `GET /api/device-media` (plain) or
 prologue `bibcode-device-media/1`) on the main listener and sends the ticket
 as the first message, never in the URL; the routes accept no cookie or bearer.
 Each binary message is a 1-byte kind (`0` config, `1` key, `2` delta), an
-8-byte big-endian PTS in microseconds, and the Annex-B payload. The client
-sends only `{"type":"keyframe"}` after a decoder error.
+8-byte big-endian PTS in microseconds, and the Annex-B payload. Kind `3` is a
+keepalive with PTS 0 and no payload (9 bytes): when the source has produced no
+unit for 1 s the hub's task sends one to every socket whose queue is empty
+(queued frames already prove liveness, so a keepalive never grows a queue), and
+again every second while the source stays quiet and open. It passes through
+the E2EE record layer like any frame. The client resets its stall clock on it
+and never decodes it; it does not count as a first frame. The client sends
+only `{"type":"keyframe"}` after a decoder error.
 
 Each socket has a 2 MiB, 256-frame queue. On overflow the hub drops that
 socket's queued deltas, forwards nothing until the next key unit, and sends
@@ -2116,10 +2122,9 @@ with `VTPixelRotationSession` when the UI is not portrait, and encodes the
 screen at full size, Main profile at an automatic level (5.1 or above for a
 full-size screen), at most 60 fps, 6 bits per pixel per second clamped to
 2–12 Mbit/s, with key frames no more than 120 frames or 2 s apart. SimScreen
-signals only when the screen changes, so after 1 s without a frame the thread
-encodes the unchanged surface again: an idle screen sends about one frame per
-second (a delta frame unless a key is pending), which keeps the client's 5 s
-stall check from firing on a still picture. A new
+signals only when the screen changes, so an unchanged screen encodes nothing;
+its sockets get the hub's once-a-second keepalive instead (below), which keeps
+the client's 5 s stall check from firing on a still picture. A new
 output size (a rotation) builds a new session, whose config and key units go
 out first. The units feed the same
 `MediaHub`, tickets, and sockets as Android.

@@ -452,12 +452,22 @@ struct MediaUnit {
     data: Vec<u8>,
 }
 
-/// The next unit of `media`, decoded from `[kind u8][pts u64 BE][Annex B data]`.
+/// Kind 3 on the media socket: the stream is alive, with nothing to decode.
+const KEEPALIVE: u8 = 3;
+
+/// The next unit of `media`, decoded from `[kind u8][pts u64 BE][Annex B data]`; keepalives
+/// are skipped.
 async fn next_unit(media: &mut MediaFramesForTests, timeout: Duration) -> MediaUnit {
-    let frame = tokio::time::timeout(timeout, media.next_frame())
-        .await
-        .expect("a video unit in time")
-        .expect("the stream is open");
+    let deadline = tokio::time::Instant::now() + timeout;
+    let frame = loop {
+        let frame = tokio::time::timeout_at(deadline, media.next_frame())
+            .await
+            .expect("a video unit in time")
+            .expect("the stream is open");
+        if frame[0] != KEEPALIVE {
+            break frame;
+        }
+    };
     let kind = match frame[0] {
         0 => UnitKind::Config,
         1 => UnitKind::Key,
@@ -844,6 +854,9 @@ async fn first_key_frame_decodes_to_the_screen_size() {
             continue;
         };
         let frame = frame.expect("the stream is open");
+        if frame[0] == KEEPALIVE {
+            continue;
+        }
         let pts = u64::from_be_bytes(frame[1..9].try_into().expect("pts"));
         assert!(pts >= last_pts, "pts never goes back");
         last_pts = pts;
@@ -870,54 +883,59 @@ async fn first_key_frame_decodes_to_the_screen_size() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_idle_home_screen_keeps_streaming() {
+async fn an_idle_home_screen_keeps_the_media_socket_alive() {
     if !enabled() {
         return;
     }
     let _serial = ONE_AT_A_TIME.lock().await;
     let harness = IosHarness::start().await;
     let (_, mut media) = harness.first_video_units(Duration::from_secs(20)).await;
-    // Settled: three gaps in a row of most of a second between units mean the screen
-    // stopped changing and only the idle heartbeat is left. Before the heartbeat, a
-    // settled screen sent nothing and this wait timed out.
+    let next = async |media: &mut MediaFramesForTests| {
+        tokio::time::timeout(Duration::from_secs(3), media.next_frame())
+            .await
+            .expect("a frame or a keepalive within 3 s")
+            .expect("the stream is open")
+    };
+    // Settled: three keepalives in a row mean the screen stopped changing.
     let settling = Instant::now();
-    let (mut last, mut quiet) = (Instant::now(), 0);
+    let mut quiet = 0;
     while quiet < 3 {
         assert!(
             settling.elapsed() < Duration::from_secs(90),
             "the home screen never settled"
         );
-        next_unit(&mut media, Duration::from_secs(5)).await;
-        let gap = last.elapsed();
-        last = Instant::now();
-        quiet = if gap >= Duration::from_millis(800) {
-            quiet + 1
-        } else {
-            0
-        };
+        let frame = next(&mut media).await;
+        quiet = if frame[0] == KEEPALIVE { quiet + 1 } else { 0 };
     }
     println!("home screen settled after {:?}", settling.elapsed());
-    // A still screen keeps sending about a frame a second, well inside the client's 5 s
-    // stall check, for at least 3 s.
+    // A still screen sends keepalives about once a second and no video, so the client's 5 s
+    // stall rule never fires.
     let window = Instant::now();
-    let (mut count, mut keys, mut bytes, mut widest) = (0u32, 0u32, 0usize, Duration::ZERO);
-    while window.elapsed() < Duration::from_secs(4) {
-        let unit = next_unit(&mut media, Duration::from_secs(2)).await;
+    let (mut keepalives, mut units, mut video_bytes) = (0u32, 0u32, 0usize);
+    let (mut last, mut widest) = (Instant::now(), Duration::ZERO);
+    while window.elapsed() < Duration::from_secs(5) {
+        let frame = next(&mut media).await;
         widest = widest.max(last.elapsed());
         last = Instant::now();
-        count += 1;
-        keys += u32::from(unit.kind == UnitKind::Key);
-        bytes += unit.data.len();
-        println!("  {:?} {} bytes", unit.kind, unit.data.len());
+        if frame[0] == KEEPALIVE {
+            assert_eq!(frame.len(), 9, "a keepalive has no payload");
+            keepalives += 1;
+        } else {
+            units += 1;
+            video_bytes += frame.len();
+        }
     }
-    // VideoToolbox may code a heartbeat as a key frame on its own; the server asks for
-    // none, so `keys` is reported, not asserted.
+    let seconds = window.elapsed().as_secs_f64();
     println!(
-        "idle: {count} units ({keys} keys, {bytes} bytes) in {:?}, widest gap {widest:?}",
-        window.elapsed()
+        "idle: {keepalives} keepalives, {units} video units ({video_bytes} bytes, {:.0} bytes/s) \
+         in {seconds:.2} s, widest gap {widest:?}",
+        video_bytes as f64 / seconds
     );
-    assert!(count >= 3, "only {count} units from an idle screen in 4 s");
-    assert!(widest < Duration::from_secs(2), "an idle gap of {widest:?}");
+    assert!(keepalives >= 4, "only {keepalives} keepalives in 5 s");
+    assert!(
+        widest < Duration::from_millis(1_500),
+        "a silence of {widest:?}"
+    );
     drop(media);
     harness.stop().await;
 }

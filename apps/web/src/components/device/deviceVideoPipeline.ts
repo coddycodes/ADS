@@ -21,6 +21,8 @@ export type DeviceVideoWorkerEvent<F = VideoFrame> =
   | { readonly type: "error" }
   /** This client cannot decode the stream's codec; video is over for this session. */
   | { readonly type: "unsupported" }
+  /** The socket had nothing else to send for a second: the stream is alive and still. */
+  | { readonly type: "alive" }
   /** The media socket ended; `reason` is its close reason. */
   | { readonly type: "closed"; readonly reason: string }
   | { readonly type: "stopped" };
@@ -247,7 +249,7 @@ export function createDecoderPipeline<F extends DecodedVideoFrame>(
 
   return {
     push(frame) {
-      if (stopped) return;
+      if (stopped || frame.kind === "keepalive") return;
       if (frame.kind === "config") {
         let codec: string;
         try {
@@ -415,7 +417,10 @@ export function createDeviceVideoWorkerRuntime<F extends DecodedVideoFrame>(
     socket?.close();
     const current = deps.openSocket(request.target, request.ticket, {
       onFrame: (frame) => {
-        if (socket === current) pipeline.push(frame);
+        if (socket !== current) return;
+        // Liveness for the stall check; there is nothing to decode.
+        if (frame.kind === "keepalive") return deps.post({ type: "alive" });
+        pipeline.push(frame);
       },
       onClose: (reason) => {
         if (socket !== current) return;

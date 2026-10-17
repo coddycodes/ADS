@@ -373,6 +373,17 @@ describe("createDeviceVideoWorkerRuntime", () => {
     ]);
   });
 
+  it("reports a keepalive as liveness and never decodes it", () => {
+    const { decoders, handle, posted, sockets } = runtime();
+    handle({ type: "start", target, ticket: "T1" });
+    sockets[0]!.handlers.onFrame(config(SPS_PORTRAIT));
+    sockets[0]!.handlers.onFrame(key(1));
+    const decoded = decoders[0]!.decoded.length;
+    sockets[0]!.handlers.onFrame({ kind: "keepalive", ptsUs: 0n, data: new Uint8Array() });
+    expect(decoders[0]!.decoded).toHaveLength(decoded);
+    expect(posted.at(-1)).toEqual({ type: "alive" });
+  });
+
   it("replaces the socket on a new start and ignores the old one", () => {
     const { handle, posted, sockets } = runtime();
     handle({ type: "start", target, ticket: "ticket-a" });

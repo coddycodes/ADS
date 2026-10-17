@@ -30,8 +30,17 @@ describe("device media frames", () => {
     expect(() => parseMediaFrame(new Uint8Array([1, 0]))).toThrow(MediaFrameError);
   });
 
+  it("reads kind 3 as a keepalive with nothing to decode", () => {
+    // The server's `KEEPALIVE_FRAME` bytes (apps/server/src/device/media.rs).
+    expect(parseMediaFrame(new Uint8Array([3, 0, 0, 0, 0, 0, 0, 0, 0]))).toEqual({
+      kind: "keepalive",
+      ptsUs: 0n,
+      data: new Uint8Array(),
+    });
+  });
+
   it("rejects an unknown kind", () => {
-    expect(() => parseMediaFrame(new Uint8Array([3, 0, 0, 0, 0, 0, 0, 0, 0]))).toThrow(
+    expect(() => parseMediaFrame(new Uint8Array([4, 0, 0, 0, 0, 0, 0, 0, 0]))).toThrow(
       MediaFrameError,
     );
   });

@@ -248,7 +248,9 @@ on the plain route.
 
 Server → client binary messages: `[u8 kind (0 config, 1 key, 2 delta)]
 [u64 big-endian PTS µs][Annex-B payload]`. Client → server: only
-`{"type":"keyframe"}` after a decoder error.
+`{"type":"keyframe"}` after a decoder error. (Addition, iOS previews: kind 3
+is a payload-free keepalive the hub sends to an idle socket after 1 s without
+a unit; see the iOS design §4 Pacing and the architecture overview.)
 
 Each socket has a 2 MiB outbound queue. On overflow the server discards queued
 deltas, marks the socket as waiting for a keyframe, forwards nothing until the

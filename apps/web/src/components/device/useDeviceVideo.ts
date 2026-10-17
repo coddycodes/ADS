@@ -26,8 +26,8 @@ export type VideoMode =
 export const PROBE_CODEC = "avc1.42E01F";
 export const FIRST_FRAME_TIMEOUT_MS = 5_000;
 /**
- * scrcpy repeats the last frame of a still screen and the iOS encoder sends one about every
- * second, so a silent stream this long has stalled.
+ * A frame or the server's once-a-second keepalive arrives on any open stream, still screen or
+ * not, so a silent stream this long has stalled.
  */
 export const STALL_TIMEOUT_MS = 5_000;
 export const MAX_RECONNECTS_PER_WINDOW = 3;
@@ -155,11 +155,11 @@ export class DeviceVideoSession {
     if (event.type === "frame") {
       if (this.ended) return event.frame.close();
       this.deps.draw(event.frame);
-      this.lastFrameAt = this.now();
-      if (this.stalled) {
-        this.stalled = false;
-        this.deps.onMode({ kind: "h264", stalled: false });
-      }
+      return this.live();
+    }
+    // A keepalive proves the stream open and the picture current, but is no first frame.
+    if (event.type === "alive") {
+      if (!this.ended && this.playing) this.live();
       return;
     }
     if (this.ended) {
@@ -221,6 +221,15 @@ export class DeviceVideoSession {
 
   private now(): number {
     return this.deps.now?.() ?? Date.now();
+  }
+
+  /** The stream is alive now: restart the stall clock and clear a stall. */
+  private live(): void {
+    this.lastFrameAt = this.now();
+    if (this.stalled) {
+      this.stalled = false;
+      this.deps.onMode({ kind: "h264", stalled: false });
+    }
   }
 
   /** One timer for the whole stream, re-armed for the time left rather than on every frame. */

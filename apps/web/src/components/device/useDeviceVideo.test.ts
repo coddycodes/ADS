@@ -288,6 +288,35 @@ describe("DeviceVideoSession", () => {
     expect(modes).toHaveLength(4);
   });
 
+  it("counts a keepalive as a live stream: it holds off and clears a stall", async () => {
+    const { advance, drawn, modes, video, worker } = session();
+    video.start();
+    await flush();
+    worker().emit({ type: "firstFrame" });
+    // A still screen: no frames, only keepalives once a second.
+    for (let second = 0; second < 10; second += 1) {
+      await advance(1_000);
+      worker().emit({ type: "alive" });
+    }
+    expect(modes).toEqual([{ kind: "probing" }, { kind: "h264", stalled: false }]);
+    expect(drawn).toEqual([]);
+    await advance(STALL_TIMEOUT_MS);
+    expect(modes.at(-1)).toEqual({ kind: "h264", stalled: true });
+    worker().emit({ type: "alive" });
+    expect(modes.at(-1)).toEqual({ kind: "h264", stalled: false });
+  });
+
+  it("does not take a keepalive for the first frame", async () => {
+    const { advance, modes, video, worker } = session();
+    video.start();
+    await flush();
+    for (let second = 0; second < 5; second += 1) {
+      await advance(1_000);
+      worker().emit({ type: "alive" });
+    }
+    expect(modes.at(-1)).toEqual({ kind: "jpeg", reason: "noFirstFrame" });
+  });
+
   it("falls back as unsupported, without retrying, when the stream's codec is not", async () => {
     const { advance, mintTicket, modes, video, worker } = session();
     video.start();

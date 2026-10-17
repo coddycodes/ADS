@@ -1,8 +1,10 @@
 /**
  * Device media frames as the server's media socket sends them:
- * `[kind u8][pts u64 big-endian, µs][Annex-B payload]`, kind 0 config, 1 key, 2 delta.
+ * `[kind u8][pts u64 big-endian, µs][Annex-B payload]`, kind 0 config, 1 key, 2 delta, and
+ * 3 keepalive: no payload, sent when the stream has had nothing else for a second, so a
+ * still screen is not taken for a stalled stream. A keepalive is never decoded.
  */
-export type MediaFrameKind = "config" | "key" | "delta";
+export type MediaFrameKind = "config" | "key" | "delta" | "keepalive";
 
 export interface MediaFrame {
   readonly kind: MediaFrameKind;
@@ -16,7 +18,7 @@ const FRAME_HEADER_BYTES = 9;
 /** The server refuses scrcpy packets over 8 MiB; a frame adds its 9-byte header. */
 export const MAX_DEVICE_MEDIA_FRAME_BYTES = 8 * 1024 * 1024 + FRAME_HEADER_BYTES;
 
-const KINDS: ReadonlyArray<MediaFrameKind> = ["config", "key", "delta"];
+const KINDS: ReadonlyArray<MediaFrameKind> = ["config", "key", "delta", "keepalive"];
 const NAL_TYPE_SPS = 7;
 
 export function parseMediaFrame(bytes: Uint8Array): MediaFrame {

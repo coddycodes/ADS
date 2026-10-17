@@ -954,6 +954,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_idle_stream_sends_encrypted_keepalives() {
+        let harness = Harness::start().await;
+        let ticket = harness.ticket(MediaChannel::E2ee);
+        let mut client = harness.connect_e2ee(&ticket).await;
+        let kinds = [
+            client.recv().await.0[0],
+            client.recv().await.0[0],
+            client.recv().await.0[0],
+        ];
+        assert_eq!(kinds, [0, 1, 2]);
+        // The fake source has nothing more: the hub keeps the socket alive, through the
+        // record layer like any frame.
+        for _ in 0..2 {
+            let started = Instant::now();
+            let (frame, records) = client.recv().await;
+            assert_eq!((frame, records), (vec![3, 0, 0, 0, 0, 0, 0, 0, 0], 1));
+            assert!(started.elapsed() < Duration::from_millis(1_500));
+        }
+        client.socket.close(None).await.expect("close");
+        harness.fixture.manager.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn plain_ticket_is_refused_on_e2ee_route() {
         let harness = Harness::start().await;
         let ticket = harness.ticket(MediaChannel::Plain);
