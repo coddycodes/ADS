@@ -671,8 +671,9 @@ only when Xcode's path or version changes.
   `ProcessAttributionRegistry::register_identity` (identity
   `ios-simulator`). An unrequested exit calls
   `diagnostics::profiler::exits::report_exit` with `Watch::Failures`.
-- **RPC methods.** No new methods are added. `device.close`, `device.input`
-  and `device.rotate` stay in `is_long_running`.
+- **RPC methods.** No new methods are added. `device.open`, `device.close`,
+  `device.input` and `device.rotate` are in `is_long_running` (`device.open`
+  waits on discovery and `simctl list`).
 - **Events.** `device.lifecycle` gains `platform`. Document it in
   `docs/skills/bibcode-profiler/references/events.md` and the overview's
   Profiler section.

@@ -2048,6 +2048,24 @@ fn device_tools_are_listed_only_when_enabled() {
 }
 
 #[test]
+fn device_screenshot_describes_both_image_formats() {
+    let tools = tool_descriptors(true);
+    let screenshot = tools
+        .iter()
+        .find(|tool| tool["name"] == "device_screenshot")
+        .expect("device_screenshot is listed");
+    let description = screenshot["description"].as_str().unwrap();
+    assert!(
+        description.contains("a PNG at most 1080 px wide"),
+        "{description}"
+    );
+    assert!(
+        description.contains("a full-size JPEG for a view-only iOS simulator"),
+        "{description}"
+    );
+}
+
+#[test]
 fn device_open_takes_a_platform_and_an_image() {
     let tools = tool_descriptors(true);
     let open = tools

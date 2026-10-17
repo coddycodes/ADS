@@ -1446,22 +1446,26 @@ impl LegacyHid {
         let handler: *const Block<dyn Fn(Id)> = &*handler;
         let queue: Id = DispatchRetained::as_ptr(&self.queue).as_ptr().cast();
         let selector = c"sendWithMessage:freeWhenDone:completionQueue:completion:";
-        if !self.client.responds(selector) {
-            return Err(missing(selector));
-        }
-        let pointer = buffer.into_raw();
-        // SAFETY: `v44@0:8^{IndigoHIDMessageStruct=…}16B24@28@?36`: the message, which
-        // the client frees (`freeWhenDone:YES`), a queue and a completion it copies. If
-        // this raises, the message may or may not have been freed, so it is leaked.
-        guarded(selector, || unsafe {
-            send4::<*mut u8, Bool, Id, *const Block<dyn Fn(Id)>>(
-                self.client.ptr(),
-                sel(selector),
-                pointer,
-                Bool::YES,
-                queue,
-                handler,
-            );
+        // This runs on a Tokio worker or blocking thread, which drains no autorelease pool,
+        // so whatever these messages autorelease is released here.
+        autoreleasepool(|_| {
+            if !self.client.responds(selector) {
+                return Err(missing(selector));
+            }
+            let pointer = buffer.into_raw();
+            // SAFETY: `v44@0:8^{IndigoHIDMessageStruct=…}16B24@28@?36`: the message, which
+            // the client frees (`freeWhenDone:YES`), a queue and a completion it copies. If
+            // this raises, the message may or may not have been freed, so it is leaked.
+            guarded(selector, || unsafe {
+                send4::<*mut u8, Bool, Id, *const Block<dyn Fn(Id)>>(
+                    self.client.ptr(),
+                    sel(selector),
+                    pointer,
+                    Bool::YES,
+                    queue,
+                    handler,
+                );
+            })
         })?;
         Ok(done)
     }

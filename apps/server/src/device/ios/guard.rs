@@ -400,6 +400,9 @@ fn asks_for_setup(stderr: &[u8]) -> bool {
 
 /// How long `xcodebuild -checkFirstLaunchStatus` may take; it only reads what is installed.
 const FIRST_LAUNCH_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
+/// What `xcodebuild -checkFirstLaunchStatus` exits with while the first launch is pending
+/// (`EX_UNAVAILABLE`).
+const FIRST_LAUNCH_PENDING_STATUS: i32 = 69;
 /// How long `simctl help` and `xcodebuild -version` may take.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -419,7 +422,9 @@ async fn xcode_status_within(runner: &SimctlRunner, probe_timeout: Duration) -> 
     };
     // With the first launch pending (an Xcode update whose CoreSimulator is not installed
     // yet), Xcode's `simctl` wrapper starts `xcodebuild -runFirstLaunch`, which waits for an
-    // administrator. This check spawns nothing and answers at once.
+    // administrator. This check spawns nothing and answers at once: it exits 69 when the first
+    // launch is pending. Any other failure (`xcrun` exits 72 when only the Command Line Tools
+    // are selected) says nothing about the first launch, so `simctl help` decides.
     match runner
         .xcrun_output(
             &["xcodebuild", "-checkFirstLaunchStatus"],
@@ -427,10 +432,13 @@ async fn xcode_status_within(runner: &SimctlRunner, probe_timeout: Duration) -> 
         )
         .await
     {
-        Ok(output) if output.status.success() => {}
-        Ok(output) => {
+        Ok(output) if output.status.code() == Some(FIRST_LAUNCH_PENDING_STATUS) => {
             tracing::debug!(status = %output.status, "Xcode's first launch is pending");
             return XcodeStatus::SetupIncomplete;
+        }
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            tracing::debug!(status = %output.status, "could not check Xcode's first launch");
         }
         Err(error) => tracing::debug!(%error, "could not check Xcode's first launch"),
     }
@@ -659,6 +667,28 @@ mod tests {
             2,
             "SetupIncomplete is not cached"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn command_line_tools_only_is_xcode_missing_not_setup_incomplete() {
+        use crate::device::ios::testing::FakeXcrun;
+        // Measured with only the Command Line Tools selected: `xcrun` exits 72 for
+        // `xcodebuild -checkFirstLaunchStatus` and cannot find `simctl` either.
+        let sim = FakeXcrun::new()
+            .first_launch_check_exits(72)
+            .simctl_help_fails(
+                "xcrun: error: unable to find utility \"simctl\", not a developer tool or in PATH",
+            )
+            .write();
+        let status = xcode_status(&sim.runner()).await;
+        assert_eq!(status, XcodeStatus::Missing);
+        assert_eq!(
+            availability_for(&status, &[], None).kind,
+            AvailabilityKind::XcodeMissing
+        );
+        assert_eq!(sim.first_launch_checks(), 1);
+        assert_eq!(sim.calls(), ["help"], "simctl help decides");
     }
 
     #[cfg(unix)]

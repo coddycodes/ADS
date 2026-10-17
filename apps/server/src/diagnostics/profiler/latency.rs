@@ -144,6 +144,9 @@ pub fn is_long_running(method: &str) -> bool {
             // included.
             | "worktree.remove"
             | "agentSessions.import"
+            // Waits on discovery and `simctl`: `check_available` lists simulators (up to
+            // 15 s), and a rediscovery runs the Xcode probes.
+            | "device.open"
             // Wait on the emulator: stopping it (up to 10 s), a stalled input stream (up to
             // 5 s), and reading back a rotation (about 1.5 s).
             | "device.close"
@@ -1114,6 +1117,7 @@ mod tests {
             "pullRequests.list",
             "gitManager.commit",
             "worktree.remove",
+            "device.open",
             "device.close",
             "device.input",
             "device.rotate",

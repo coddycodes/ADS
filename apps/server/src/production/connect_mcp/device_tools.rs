@@ -328,7 +328,7 @@ pub(super) fn device_tool_descriptors() -> Vec<Value> {
             "device_screenshot",
             "Screenshot a device",
             format!(
-                "Take a PNG screenshot (at most 1080 px wide) of a running device, one of the {kinds}. Omit deviceId when one device is running."
+                "Take a screenshot of a running device, one of the {kinds}: a PNG at most 1080 px wide, or a full-size JPEG for a view-only iOS simulator. Omit deviceId when one device is running."
             ),
             json!({
                 "type": "object",

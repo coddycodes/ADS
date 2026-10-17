@@ -2059,10 +2059,12 @@ has no iOS entry. It never creates or deletes simulators.
 Xcode's `version.plist` changes; otherwise it runs
 `xcrun xcodebuild -checkFirstLaunchStatus`, then `xcrun simctl help` and
 `xcrun xcodebuild -version`. A pending first launch (as after an Xcode update
-whose CoreSimulator is not installed yet) is `xcodeSetupIncomplete` without
-running `simctl`, whose wrapper would start `xcodebuild -runFirstLaunch` and
-wait for an administrator; a `simctl help` that times out is also
-`xcodeSetupIncomplete`. It lists the available
+whose CoreSimulator is not installed yet) makes the check exit 69, which is
+`xcodeSetupIncomplete` without running `simctl`, whose wrapper would start
+`xcodebuild -runFirstLaunch` and wait for an administrator; a `simctl help`
+that times out is also `xcodeSetupIncomplete`. Any other check failure (`xcrun`
+exits 72 when only the Command Line Tools are selected) leaves the answer to
+`simctl help`, so a Mac without Xcode is `xcodeMissing`. It lists the available
 simulators of iOS runtimes with `simctl list devices available -j`, newest
 runtime first, named like `iPhone 17 Pro · iOS 26.5`. A simulator that is not
 `Shutdown` and that BiBCode did not boot is listed with `inUseElsewhere`, and
@@ -2203,8 +2205,9 @@ so a dropped `device.close` or `device_close` request still stops the device,
 and closing a device that just failed waits for its process to be reaped. The
 manager emits
 `device.lifecycle` while the profiler is on (see [Profiler](#profiler)), and
-`device.close`, `device.input`, and `device.rotate` are in `is_long_running`
-because they wait on the emulator or simulator.
+`device.open`, `device.close`, `device.input`, and `device.rotate` are in
+`is_long_running` because they wait on discovery, the emulator, or the
+simulator.
 
 **Native verification items.** These behaviors are coded against an
 assumption kept in one function each and have not yet been confirmed on a

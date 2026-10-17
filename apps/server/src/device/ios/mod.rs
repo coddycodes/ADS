@@ -18,11 +18,11 @@ pub(crate) mod simctl;
 pub(crate) mod testing;
 
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     path::PathBuf,
     sync::{
         Arc, Mutex, MutexGuard, PoisonError,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -138,7 +138,7 @@ pub(crate) struct IosBackend {
     guard: Arc<GuardCache>,
     mode: Mutex<LaunchMode>,
     /// UDIDs BiBCode booted and has not shut down; only those are never `in_use_elsewhere`.
-    booted: Arc<Mutex<HashSet<String>>>,
+    booted: Arc<Booted>,
     #[cfg(test)]
     hid_for_tests: Option<HidFactory>,
 }
@@ -164,16 +164,16 @@ impl IosBackend {
             id: device.udid.clone(),
             display_name: simctl::display_name(device),
             in_use_elsewhere: device.state != SimState::Shutdown
-                && !lock(&self.booted).contains(&device.udid),
+                && !self.booted.contains(&device.udid),
         }
     }
 
-    /// Shuts down a simulator this launch booted, logging a failure.
-    async fn shut_down_own(&self, udid: &str) {
+    /// Shuts down a simulator `launch` booted, logging a failure.
+    async fn shut_down_own(&self, udid: &str, launch: u64) {
         if let Err(error) = self.runner.shutdown(udid).await {
             tracing::warn!(%error, "could not shut down the simulator BiBCode booted");
         }
-        lock(&self.booted).remove(udid);
+        self.booted.remove(udid, launch);
     }
 
     /// The private-API guard's result for `status`; it loads frameworks, so it runs on a
@@ -212,7 +212,7 @@ impl IosBackend {
             return Err(LaunchFailure::Busy);
         }
         let mode = lock(&self.mode).clone();
-        lock(&self.booted).insert(udid.to_owned());
+        let launch = self.booted.insert(udid);
         on_phase(DeviceState::Booting);
         let booted = tokio::select! {
             () = cancel.cancelled() => None,
@@ -222,18 +222,18 @@ impl IosBackend {
             Some(Ok(())) => {}
             // `simctl boot` failed, so it may be someone else's: leave it alone.
             Some(Err(error @ SimctlError::Failed { .. })) if error_is_boot(&error) => {
-                lock(&self.booted).remove(udid);
+                self.booted.remove(udid, launch);
                 return Err(LaunchFailure::Spawn(error.reason()));
             }
             Some(Err(error)) => {
-                self.shut_down_own(udid).await;
+                self.shut_down_own(udid, launch).await;
                 return Err(match error {
                     SimctlError::Timeout { .. } => LaunchFailure::BootTimeout,
                     other => LaunchFailure::Exited(other.reason()),
                 });
             }
             None => {
-                self.shut_down_own(udid).await;
+                self.shut_down_own(udid, launch).await;
                 return Err(LaunchFailure::Cancelled);
             }
         }
@@ -244,7 +244,7 @@ impl IosBackend {
         let (native, display, control) = match display {
             Ok(display) => display,
             Err(error) => {
-                self.shut_down_own(udid).await;
+                self.shut_down_own(udid, launch).await;
                 return Err(error);
             }
         };
@@ -260,7 +260,10 @@ impl IosBackend {
             display,
             control,
             self.runner.clone(),
-            self.booted.clone(),
+            Ownership {
+                booted: self.booted.clone(),
+                launch,
+            },
             process,
         )))
     }
@@ -445,6 +448,40 @@ fn sink_error(error: HidError, failed: &str) -> DeviceOpError {
     }
 }
 
+/// The simulators BiBCode booted, each with the launch that booted it.
+#[derive(Default)]
+struct Booted {
+    next_launch: AtomicU64,
+    launches: Mutex<HashMap<String, u64>>,
+}
+
+impl Booted {
+    /// Records that a new launch boots `udid` and returns that launch's id.
+    fn insert(&self, udid: &str) -> u64 {
+        let launch = self.next_launch.fetch_add(1, Ordering::Relaxed);
+        lock(&self.launches).insert(udid.to_owned(), launch);
+        launch
+    }
+
+    fn contains(&self, udid: &str) -> bool {
+        lock(&self.launches).contains_key(udid)
+    }
+
+    /// Forgets `udid` only while `launch` is the one that booted it.
+    fn remove(&self, udid: &str, launch: u64) {
+        let mut launches = lock(&self.launches);
+        if launches.get(udid) == Some(&launch) {
+            launches.remove(udid);
+        }
+    }
+}
+
+/// A running simulator's claim on its [`Booted`] entry.
+struct Ownership {
+    booted: Arc<Booted>,
+    launch: u64,
+}
+
 /// A simulator BiBCode booted.
 struct RunningSimulator {
     shared: Arc<Shared>,
@@ -463,7 +500,8 @@ struct Shared {
     /// One input batch at a time, so batches arrive in order.
     input_lock: tokio::sync::Mutex<()>,
     runner: Arc<SimctlRunner>,
-    booted: Arc<Mutex<HashSet<String>>>,
+    /// Its entry in the backend's booted set, which only this launch's stop removes.
+    ownership: Ownership,
     /// Why the simulator ended without BiBCode asking; set by the state poll.
     exit: Mutex<Option<String>>,
     /// Cancels the state poll.
@@ -481,7 +519,7 @@ impl RunningSimulator {
         display: Display,
         control: Control,
         runner: Arc<SimctlRunner>,
-        booted: Arc<Mutex<HashSet<String>>>,
+        ownership: Ownership,
         process: Option<SimulatorProcess>,
     ) -> Self {
         let shared = Arc::new(Shared {
@@ -493,7 +531,7 @@ impl RunningSimulator {
             held: Mutex::new(None),
             input_lock: tokio::sync::Mutex::new(()),
             runner,
-            booted,
+            ownership,
             exit: Mutex::new(None),
             poll: CancellationToken::new(),
             poll_task: Mutex::new(None),
@@ -575,7 +613,11 @@ impl Shared {
         if !ended_outside && let Err(error) = self.runner.shutdown(&self.udid).await {
             tracing::warn!(%error, "could not shut down the simulator");
         }
-        lock(&self.booted).remove(&self.udid);
+        // A newer launch of the same simulator (reopened after an outside shutdown, before
+        // this stop finished) keeps its entry.
+        self.ownership
+            .booted
+            .remove(&self.udid, self.ownership.launch);
     }
 
     /// Plans and sends one validated batch in order; a paste is `simctl pbcopy` then Cmd+V.
@@ -1344,6 +1386,61 @@ mod tests {
         assert!(
             sim.calls().iter().all(|c| !c.starts_with("shutdown")),
             "BiBCode did not shut it down: {:?}",
+            sim.calls()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_old_stop_keeps_a_reopened_simulator_owned_by_bibcode() {
+        use super::{IosBackend, IosBackendConfig, guard::GuardCache, guard::GuardResult};
+        use crate::device::{backend::DeviceBackend, catalog::AvailabilityKind};
+        use tokio_util::sync::CancellationToken;
+        let sim = FakeXcrun::new()
+            .device("UDID-1", "iPhone 17 Pro", "iOS 27.0")
+            .write();
+        let backend = IosBackend::new(IosBackendConfig {
+            runner: sim.runner(),
+            boot_timeout: std::time::Duration::from_secs(10),
+            guard: GuardCache::with_prober(Box::new(|_| GuardResult::ViewOnly {
+                kind: AvailabilityKind::XcodeUnsupported,
+                missing: "fake Xcode".to_owned(),
+            })),
+            hid_for_tests: None,
+        });
+        let cancel = CancellationToken::new();
+        let first = backend
+            .launch("UDID-1", Box::new(|_| {}), &cancel)
+            .await
+            .unwrap_or_else(|_| panic!("first launch failed"));
+        sim.set_state("UDID-1", "Shutdown");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while first.exited().is_none() {
+            assert!(std::time::Instant::now() < deadline, "no outside shutdown");
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        // Reopened before the failed device's stop finished.
+        let second = backend
+            .launch("UDID-1", Box::new(|_| {}), &cancel)
+            .await
+            .unwrap_or_else(|_| panic!("second launch failed"));
+        first.stop().await;
+        let in_use = |discovery: crate::device::backend::PlatformDiscovery| {
+            discovery.images[0].in_use_elsewhere
+        };
+        assert!(
+            !in_use(backend.discover().await),
+            "BiBCode's own simulator is not running outside BiBCode"
+        );
+        second.stop().await;
+        sim.set_state("UDID-1", "Booted");
+        assert!(in_use(backend.discover().await), "the last stop forgets it");
+        assert_eq!(
+            sim.calls()
+                .iter()
+                .filter(|c| c.starts_with("shutdown"))
+                .count(),
+            1,
+            "only the second launch shuts it down: {:?}",
             sim.calls()
         );
     }

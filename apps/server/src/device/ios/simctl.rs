@@ -302,7 +302,6 @@ impl SimctlRunner {
     }
 
     /// Puts `text` on the simulator's pasteboard.
-    #[cfg_attr(not(test), allow(dead_code))] // Live mode's text input pastes through it.
     pub(crate) async fn pbcopy(&self, udid: &str, text: &str) -> Result<(), SimctlError> {
         self.simctl(
             &["pbcopy", udid],

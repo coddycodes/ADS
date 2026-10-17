@@ -35,7 +35,8 @@ pub(crate) struct FakeXcrun {
     boot_failure: Option<String>,
     help_failure: Option<String>,
     help_hangs: bool,
-    first_launch_pending: bool,
+    /// Exit status of `xcodebuild -checkFirstLaunchStatus`.
+    first_launch_status: i32,
     bootstatus_blocks: bool,
 }
 
@@ -48,7 +49,7 @@ impl FakeXcrun {
             boot_failure: None,
             help_failure: None,
             help_hangs: false,
-            first_launch_pending: false,
+            first_launch_status: 0,
             bootstatus_blocks: false,
         }
     }
@@ -93,7 +94,14 @@ impl FakeXcrun {
 
     /// `xcodebuild -checkFirstLaunchStatus` exits 69: Xcode's first launch is pending.
     pub(crate) fn first_launch_pending(mut self) -> Self {
-        self.first_launch_pending = true;
+        self.first_launch_status = 69;
+        self
+    }
+
+    /// `xcodebuild -checkFirstLaunchStatus` exits `status`; 72 is what `xcrun` returns when
+    /// only the Command Line Tools are selected and it cannot find `xcodebuild`.
+    pub(crate) fn first_launch_check_exits(mut self, status: i32) -> Self {
+        self.first_launch_status = status;
         self
     }
 
@@ -132,7 +140,7 @@ impl FakeXcrun {
                 |message| format!("echo '{message}' >&2; exit 1"),
             )
         };
-        let first_launch = if self.first_launch_pending { 69 } else { 0 };
+        let first_launch = self.first_launch_status;
         let boot = self.boot_failure.as_ref().map_or_else(
             || format!("echo Booted > \"{dir}/state/$2\""),
             |message| {
