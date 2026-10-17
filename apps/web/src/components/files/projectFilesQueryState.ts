@@ -5,7 +5,7 @@ import type {
   ProjectReadFileResult,
 } from "@bibcode/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -29,8 +29,12 @@ interface ProjectQueryState<A> {
 }
 
 export function getProjectEntriesQueryAtom(environmentId: EnvironmentId, cwd: string) {
-  return projectEnvironment.listEntries({ environmentId, input: { cwd } });
+  return projectEnvironment.fileTreeEntries({ environmentId, input: { cwd } });
 }
+
+const WAITING_ENTRIES_ATOM = Atom.make(AsyncResult.initial<ProjectListEntriesResult>(true)).pipe(
+  Atom.withLabel("web-project-entries:waiting"),
+);
 
 export function getProjectFileQueryAtom(
   environmentId: EnvironmentId,
@@ -120,11 +124,16 @@ function errorMessage<A>(result: AsyncResult.AsyncResult<A, unknown>): string | 
     : null;
 }
 
+/**
+ * The Files panel's entry list. While `enabled` is false nothing is read and the list shows as
+ * loading; every switch to enabled reads it once.
+ */
 export function useProjectEntriesQuery(
   environmentId: EnvironmentId,
   cwd: string,
+  enabled = true,
 ): ProjectQueryState<ProjectListEntriesResult> {
-  const atom = getProjectEntriesQueryAtom(environmentId, cwd);
+  const atom = enabled ? getProjectEntriesQueryAtom(environmentId, cwd) : WAITING_ENTRIES_ATOM;
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
   const refresh = useCallback(() => retryEnvironmentQuery(atom, refreshAtom), [atom, refreshAtom]);

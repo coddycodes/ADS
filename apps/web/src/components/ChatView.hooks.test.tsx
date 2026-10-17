@@ -640,12 +640,6 @@ vi.mock("./files/FilePreviewPanel", () => ({
     return <div data-mock="file-preview-panel" />;
   },
 }));
-vi.mock("./files/ProjectFilesPreloader", () => ({
-  ProjectFilesPreloader: (props: Record<string, unknown>) => {
-    h.capture("projectFilesPreloader", props);
-    return null;
-  },
-}));
 
 import ChatView, { eventPathContainsSelector, shouldTypeToFocusComposer } from "./ChatView";
 import type { ChatMessage, Project, Thread } from "../types";
@@ -2580,17 +2574,6 @@ describe("ChatView right panel handlers", () => {
     renderServerRoute();
     return capturedProps("rightPanelTabs");
   }
-
-  it("preloads project files before a file surface is opened", () => {
-    seedConnectedServerThread();
-
-    renderServerRoute();
-
-    expect(capturedProps("projectFilesPreloader")).toEqual({
-      environmentId,
-      cwd: "X:/demo",
-    });
-  });
 
   it("publishes the visible active file to the editing registry", () => {
     const setActivePath = vi.spyOn(FileEditingSessionRegistry.prototype, "setActivePath");

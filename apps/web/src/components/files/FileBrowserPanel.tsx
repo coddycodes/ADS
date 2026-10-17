@@ -206,16 +206,21 @@ export default function FileBrowserPanel({
   workspaceUnavailable = null,
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
-  const entriesQuery = useProjectEntriesQuery(environmentId, cwd);
-  const entries = entriesQuery.data?.entries ?? NO_ENTRIES;
-  const vcsStatusQuery = useEnvironmentQuery(
-    cwd.length > 0 ? vcsEnvironment.status({ environmentId, input: { cwd } }) : null,
-  );
   // The server sweeps a subscribed workspace for changes made outside the app and drops its cached
   // index before signalling, so re-reading the query here is enough — the signal carries no entries
   // of its own.
   const entryChanges = useEnvironmentQuery(
     cwd.length > 0 ? projectEnvironment.subscribeEntries({ environmentId, input: { cwd } }) : null,
+  );
+  // Subscribing resyncs the server's index and then signals. A list read before that signal could
+  // predate the resync and would have to be read again, so the list waits for it: opening the panel
+  // reads the whole list once. A failed subscription lets the list read, and show its own error.
+  const entryChangesStarted =
+    cwd.length === 0 || entryChanges.data !== null || entryChanges.error !== null;
+  const entriesQuery = useProjectEntriesQuery(environmentId, cwd, entryChangesStarted);
+  const entries = entriesQuery.data?.entries ?? NO_ENTRIES;
+  const vcsStatusQuery = useEnvironmentQuery(
+    cwd.length > 0 ? vcsEnvironment.status({ environmentId, input: { cwd } }) : null,
   );
   const gitStatus = useMemo(
     () => buildFileTreeGitStatus(entries, vcsStatusQuery.data),
@@ -735,23 +740,28 @@ export default function FileBrowserPanel({
   useEffect(() => model.setGitStatus(gitStatus), [gitStatus, model]);
 
   const entryChangeSignal = entryChanges.data;
-  // Tracks the signal already acted on. The server starts each subscription with a resync signal
-  // after establishing the watcher, so the first value must refresh a list that may have raced it.
+  // Tracks the signal already acted on, per workspace. The list is read fresh whenever it mounts,
+  // which happens at the first signal this panel sees for a workspace (or with it, when that
+  // workspace's subscription is already running), so only later signals re-read.
   //
   // Recording it is what makes the effect idempotent. `entriesQuery` is a fresh object on every
   // render, so an effect depending on it re-runs constantly; without this the refresh it triggers
   // re-renders, re-runs the effect, and refreshes again in a hot loop. Depend on the stable
   // `revalidate` callback rather than the wrapper object for the same reason; a signal is an
   // automatic read, so it keeps a transport cut-off latched until the user rescans.
-  const handledEntryChangeRef = useRef<typeof entryChangeSignal>(null);
+  const handledEntryChangeRef = useRef<{
+    readonly cwd: string;
+    readonly signal: NonNullable<typeof entryChangeSignal>;
+  } | null>(null);
   const revalidateEntries = entriesQuery.revalidate;
   useEffect(() => {
-    if (entryChangeSignal === null || entryChangeSignal === handledEntryChangeRef.current) {
+    const handled = handledEntryChangeRef.current;
+    if (entryChangeSignal === null || entryChangeSignal === handled?.signal) {
       return;
     }
-    handledEntryChangeRef.current = entryChangeSignal;
-    revalidateEntries();
-  }, [entryChangeSignal, revalidateEntries]);
+    handledEntryChangeRef.current = { cwd, signal: entryChangeSignal };
+    if (handled?.cwd === cwd) revalidateEntries();
+  }, [cwd, entryChangeSignal, revalidateEntries]);
 
   const fileCount = useMemo(
     () => entries.reduce((count, entry) => count + (entry.kind === "file" ? 1 : 0), 0),

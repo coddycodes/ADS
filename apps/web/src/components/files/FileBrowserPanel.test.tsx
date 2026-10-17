@@ -95,6 +95,9 @@ const testState = vi.hoisted(() => ({
   closeFileSurfacesUnder: (() => {}) as (...args: unknown[]) => void,
   vcsStatus: null as VcsStatusResult | null,
   entryChangeSignal: null as { cwd: string } | null,
+  entryChangeError: null as string | null,
+  /** Whether each render let `useProjectEntriesQuery` read the list. */
+  entriesQueryEnabled: [] as boolean[],
   openFileInPreview: (async () => ({ _tag: "Success" })) as (input: unknown) => Promise<{
     _tag: string;
     error?: unknown;
@@ -234,7 +237,7 @@ vi.mock("~/state/preview", () => ({
 vi.mock("~/state/query", () => ({
   useEnvironmentQuery: (atom: { kind?: string } | null) =>
     atom?.kind === "entry-changes"
-      ? { data: testState.entryChangeSignal }
+      ? { data: testState.entryChangeSignal, error: testState.entryChangeError }
       : { data: testState.vcsStatus },
 }));
 
@@ -311,7 +314,10 @@ vi.mock("./projectFilesQueryState", () => {
   // function keeps the entry-signal effect's dependency unchanged across renders.
   const revalidate = () => testState.entriesQuery.refresh();
   return {
-    useProjectEntriesQuery: () => ({ ...testState.entriesQuery, revalidate }),
+    useProjectEntriesQuery: (_environmentId: unknown, _cwd: unknown, enabled = true) => {
+      testState.entriesQueryEnabled.push(enabled);
+      return { ...testState.entriesQuery, revalidate };
+    },
   };
 });
 
@@ -488,6 +494,8 @@ beforeEach(() => {
   testState.openFileInPreview = vi.fn(async () => ({ _tag: "Success" }));
   testState.commandCalls = [];
   testState.entryChangeSignal = null;
+  testState.entryChangeError = null;
+  testState.entriesQueryEnabled = [];
   testState.commandResults = {};
   testState.toastAdd = vi.fn();
   testState.fileTree.resetPaths = vi.fn();
@@ -1125,20 +1133,53 @@ describe("refresh", () => {
     expect(refresh).toHaveBeenCalledOnce();
   });
 
-  it("re-lists when the subscription starts with a server resync signal", () => {
+  // The server resyncs its index when a subscription starts and then signals. A list read before
+  // that signal may predate the resync, so it would have to be read again: opening the panel would
+  // read the whole list twice.
+  it("reads the list once, after the subscription's resync signal", () => {
+    harness.persistRefs = true;
+    setEntries([entry("src", "directory")]);
+    const refresh = vi.fn();
+    testState.entriesQuery.refresh = refresh;
+
+    renderPanel();
+    harness.runEffects();
+    expect(testState.entriesQueryEnabled).toEqual([false]);
+
+    testState.entryChangeSignal = { cwd: "/workspace/demo" };
+    renderPanel();
+    harness.runEffects();
+
+    // Enabling the query is the read; the resync signal must not add a second one.
+    expect(testState.entriesQueryEnabled.at(-1)).toBe(true);
+    expect(refresh).not.toHaveBeenCalled();
+    // The signal carries no entries, so the panel re-reads rather than asking for another rescan:
+    // the server already dropped its cached index before signalling.
+    expect(testState.commandCalls.some((call) => call.label === "refreshEntries")).toBe(false);
+  });
+
+  it("reads a newly selected workspace's list once", () => {
     harness.persistRefs = true;
     setEntries([entry("src", "directory")]);
     const refresh = vi.fn();
     testState.entriesQuery.refresh = refresh;
     testState.entryChangeSignal = { cwd: "/workspace/demo" };
-
     renderPanel();
     harness.runEffects();
 
-    expect(refresh).toHaveBeenCalledOnce();
-    // The signal carries no entries, so the panel re-reads rather than asking for another rescan:
-    // the server already dropped its cached index before signalling.
-    expect(testState.commandCalls.some((call) => call.label === "refreshEntries")).toBe(false);
+    // The other workspace's subscription is already running, so its last signal is there at once.
+    testState.entryChangeSignal = { cwd: "/workspace/other" };
+    renderPanel({ ...baseProps(), cwd: "/workspace/other" });
+    harness.runEffects();
+
+    expect(testState.entriesQueryEnabled.at(-1)).toBe(true);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("reads the list when the entry-change subscription fails", () => {
+    testState.entryChangeError = "subscription failed";
+    renderPanel();
+    expect(testState.entriesQueryEnabled).toEqual([true]);
   });
 
   // A refresh re-renders, and `useProjectEntriesQuery` hands back a fresh object each render. An
@@ -1150,6 +1191,7 @@ describe("refresh", () => {
     const refresh = vi.fn();
     testState.entriesQuery.refresh = refresh;
 
+    testState.entryChangeSignal = { cwd: "/workspace/demo" };
     renderPanel();
     harness.runEffects();
     expect(refresh).not.toHaveBeenCalled();

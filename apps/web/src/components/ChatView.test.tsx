@@ -689,7 +689,6 @@ vi.mock("./files/FilePreviewPanel", () => {
     },
   };
 });
-vi.mock("./files/ProjectFilesPreloader", () => ({ ProjectFilesPreloader: () => null }));
 
 vi.mock("./activity/ActivityDock", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./activity/ActivityDock")>();

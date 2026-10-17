@@ -2404,7 +2404,10 @@ something invalidates it:
   down, so it holds up none of them. The event carries only `cwd` — the index
   stays the single source of truth for entry data, so subscribers re-list rather
   than apply a diff, which also keeps the payload independent of how many files
-  changed;
+  changed. Subscribing resyncs the index and then signals, so a list read
+  before that first signal could predate the resync. The Files panel therefore
+  reads its list only once its subscription has signalled (or failed), and
+  re-reads on each later signal: opening it reads the whole list once;
 - `projects.listEntries` accepts an optional boolean `refresh`. Omitting it, or
   sending `false`, serves the retained index and preserves compatibility for
   older clients. `refresh: true` drops the cached index before listing, so the
