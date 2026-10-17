@@ -1525,22 +1525,64 @@ async fn fetch_opencode_catalog(
             Some((providers?, agents?, commands?))
         }
         opencode::OpenCodeProtocol::V2 => {
-            let get = |route: &'static str| {
-                get_opencode_v2_json(client, endpoint, route, server_password, cwd)
-            };
-            let (providers, models, agents, commands, skills) = tokio::join!(
-                get("provider"),
-                get("model"),
-                get("agent"),
-                get("command"),
-                get("skill"),
-            );
+            let [providers, models, agents, commands, skills] = read_opencode_v2_catalogs(
+                client,
+                endpoint,
+                server_password,
+                cwd,
+                ["provider", "model", "agent", "command", "skill"],
+            )
+            .await?;
             use opencode::v2::catalog;
             Some((
-                catalog::provider_list(&providers?, &models?),
-                catalog::agents(&agents?),
-                catalog::commands(&commands?, &skills?),
+                catalog::provider_list(&providers, &models),
+                catalog::agents(&agents),
+                catalog::commands(&commands, &skills),
             ))
+        }
+    }
+}
+
+/// Waits before each re-read of a just-started OpenCode 2 server's catalogs: 1.5 s in all.
+const OPENCODE_2_CATALOG_RETRY_DELAYS: [Duration; 4] = [
+    Duration::from_millis(100),
+    Duration::from_millis(200),
+    Duration::from_millis(400),
+    Duration::from_millis(800),
+];
+
+/// Reads OpenCode 2 catalogs together (`routes` must include `agent`). A just-started server
+/// answers before it has loaded them: its agent list, which always holds the built-in agents,
+/// reads empty for about 100 ms (seen on 2.0.29). So an empty agent list is read again, after a
+/// bounded backoff, rather than published as no agents.
+pub(super) async fn read_opencode_v2_catalogs<const N: usize>(
+    client: &reqwest::Client,
+    endpoint: &str,
+    server_password: Option<&str>,
+    cwd: Option<&Path>,
+    routes: [&'static str; N],
+) -> Option<[Value; N]> {
+    let agent = routes.iter().position(|route| *route == "agent");
+    let mut delays = OPENCODE_2_CATALOG_RETRY_DELAYS.iter();
+    loop {
+        let reads = futures_util::future::join_all(
+            routes.map(|route| get_opencode_v2_json(client, endpoint, route, server_password, cwd)),
+        )
+        .await;
+        let catalogs: [Value; N] = reads
+            .into_iter()
+            .collect::<Option<Vec<_>>>()?
+            .try_into()
+            .ok()?;
+        let agents_loaded = agent.is_none_or(|agent| {
+            catalogs[agent]
+                .get("data")
+                .and_then(Value::as_array)
+                .is_none_or(|agents| !agents.is_empty())
+        });
+        match delays.next() {
+            Some(delay) if !agents_loaded => tokio::time::sleep(*delay).await,
+            _ => return Some(catalogs),
         }
     }
 }
@@ -2268,7 +2310,14 @@ mod tests {
 
     /// An OpenCode 2 server's catalogs, as captured from 2.0.29, behind its `/api/info`.
     fn opencode_2_catalog_server() -> axum::Router {
+        opencode_2_catalog_server_with_cold_agents(0)
+    }
+
+    /// As `opencode_2_catalog_server`, but its first `cold` agent lists are empty, as a
+    /// just-started OpenCode 2 server answers before it has loaded its agents.
+    fn opencode_2_catalog_server_with_cold_agents(cold: usize) -> axum::Router {
         use axum::{extract::OriginalUri, http::HeaderMap, routing::any};
+        let agent_reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let path = format!(
             "{}/tests/fixtures/opencode-v2/catalog.exchanges.json",
             env!("CARGO_MANIFEST_DIR")
@@ -2281,6 +2330,7 @@ mod tests {
             "/api/{route}",
             any(move |uri: OriginalUri, headers: HeaderMap| {
                 let exchanges = exchanges.clone();
+                let agent_reads = agent_reads.clone();
                 async move {
                     let expected = format!(
                         "Basic {}",
@@ -2298,6 +2348,11 @@ mod tests {
                         uri.0
                     );
                     let route = uri.0.path().to_owned();
+                    if route == "/api/agent"
+                        && agent_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < cold
+                    {
+                        return Json(json!({ "data": [] }));
+                    }
                     Json(
                         exchanges["exchanges"]
                             .as_array()
@@ -2314,6 +2369,50 @@ mod tests {
                 }
             }),
         )
+    }
+
+    /// A just-started OpenCode 2 server lists no agents for its first ~100 ms (seen on 2.0.29),
+    /// though it always has built-in ones; its catalogs are read again until they are listed.
+    #[tokio::test]
+    async fn a_just_started_opencode_2_server_is_read_again_until_its_agents_load() {
+        use crate::provider::opencode::server_fixtures;
+        let sandbox = tempfile::tempdir().unwrap();
+        let missing =
+            crate::test_support::hermetic_providers::missing_provider_executable(sandbox.path());
+        let (endpoint, server) =
+            server_fixtures::serve(opencode_2_catalog_server_with_cold_agents(2)).await;
+        let settings = json!({
+            "enableProviderUpdateChecks": false,
+            "providerInstances": {
+                "remote": {
+                    "driver": "opencode",
+                    "enabled": true,
+                    "config": {
+                        "binaryPath": missing,
+                        "serverUrl": endpoint,
+                        "serverPassword": "secret"
+                    }
+                }
+            }
+        });
+
+        let providers = probe_full(
+            &settings,
+            Some("remote"),
+            sandbox.path(),
+            &ProviderMaintenance::new(),
+        )
+        .await;
+        server.abort();
+
+        let agents = providers[0].snapshot["agents"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            agents.iter().any(|agent| agent["name"] == "build"),
+            "{agents:?}"
+        );
     }
 
     #[tokio::test]

@@ -253,15 +253,18 @@ async fn opencode_capabilities(
         }
         opencode::OpenCodeProtocol::V2 => {
             // Only the slash-menu catalogs: a failing model list must not hide skills.
-            let get = |route: &'static str| {
-                get_opencode_v2_json(&client, endpoint, route, password, Some(cwd))
-            };
-            let (agents, commands, skills) =
-                tokio::join!(get("agent"), get("command"), get("skill"));
+            let [agents, commands, skills] = read_opencode_v2_catalogs(
+                &client,
+                endpoint,
+                password,
+                Some(cwd),
+                ["agent", "command", "skill"],
+            )
+            .await?;
             use opencode::v2::catalog;
             (
-                catalog::commands(&commands?, &skills?),
-                catalog::agents(&agents?),
+                catalog::commands(&commands, &skills),
+                catalog::agents(&agents),
             )
         }
     };

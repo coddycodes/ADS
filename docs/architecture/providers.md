@@ -200,7 +200,10 @@ staging are recorded in
 Inventory reads the CLI's `--version` and does not start an OpenCode server it
 cannot drive. On V2 it reads `/api/provider`, `/api/model`, `/api/agent`,
 `/api/command` and `/api/skill` with `location[directory]`, and
-`provider::opencode::v2::catalog` shapes them like the V1 catalogs; V2 skills
+`provider::opencode::v2::catalog` shapes them like the V1 catalogs. A
+just-started OpenCode 2 server answers before it has loaded them (its agent
+list, which always holds the built-in agents, reads empty for about 100 ms), so
+an empty agent list is read again with a bounded backoff (1.5 s in all); V2 skills
 are a separate catalog, so a slash skill is sent as a prompt that attaches it
 rather than through the command route. Rewinding n turns on V2 stages a revert
 at the first message of the n-th most recent turn (`POST …/revert/stage`),
