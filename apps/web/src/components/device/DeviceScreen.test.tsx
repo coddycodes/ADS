@@ -133,6 +133,36 @@ describe("DeviceScreen", () => {
     expect(atoms.restarts.at(-1)).toBe((restartsBefore ?? 0) + 1);
   });
 
+  it("lets touches reach the screen under the stall notice; only its button takes the pointer", async () => {
+    atoms.videoMode = { kind: "h264", stalled: true };
+    const canvas = await render();
+    const notice = container!.querySelector<HTMLElement>("[data-screen-stalled]")!;
+    expect(notice.textContent).toContain("The screen stopped updating.");
+    // happy-dom does no hit testing, so the pass-through is the overlay's pointer-events.
+    expect(notice.classList).toContain("pointer-events-none");
+    const reconnect = notice.querySelector("button")!;
+    expect(reconnect.classList).toContain("pointer-events-auto");
+    for (const element of notice.querySelectorAll<HTMLElement>("*")) {
+      if (element !== reconnect && !reconnect.contains(element)) {
+        expect(element.classList).not.toContain("pointer-events-auto");
+      }
+    }
+    await act(async () => {
+      canvas.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          pointerId: 1,
+          pointerType: "mouse",
+          button: 0,
+          clientX: 500,
+          clientY: 400,
+        }),
+      );
+    });
+    await settle();
+    expect(sent).toContainEqual({ type: "touch", action: "down", pointerId: 0, x: 0.5, y: 0.5 });
+  });
+
   it("waits for the screen while video is starting", async () => {
     atoms.videoMode = { kind: "probing" };
     await render();

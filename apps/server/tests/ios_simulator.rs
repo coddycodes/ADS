@@ -868,3 +868,55 @@ async fn first_key_frame_decodes_to_the_screen_size() {
     drop(media);
     harness.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_idle_home_screen_keeps_streaming() {
+    if !enabled() {
+        return;
+    }
+    let _serial = ONE_AT_A_TIME.lock().await;
+    let harness = IosHarness::start().await;
+    let (_, mut media) = harness.first_video_units(Duration::from_secs(20)).await;
+    // Settled: three gaps in a row of most of a second between units mean the screen
+    // stopped changing and only the idle heartbeat is left. Before the heartbeat, a
+    // settled screen sent nothing and this wait timed out.
+    let settling = Instant::now();
+    let (mut last, mut quiet) = (Instant::now(), 0);
+    while quiet < 3 {
+        assert!(
+            settling.elapsed() < Duration::from_secs(90),
+            "the home screen never settled"
+        );
+        next_unit(&mut media, Duration::from_secs(5)).await;
+        let gap = last.elapsed();
+        last = Instant::now();
+        quiet = if gap >= Duration::from_millis(800) {
+            quiet + 1
+        } else {
+            0
+        };
+    }
+    println!("home screen settled after {:?}", settling.elapsed());
+    // A still screen keeps sending about a frame a second, well inside the client's 5 s
+    // stall check, for at least 3 s.
+    let window = Instant::now();
+    let (mut count, mut keys, mut bytes, mut widest) = (0u32, 0u32, 0usize, Duration::ZERO);
+    while window.elapsed() < Duration::from_secs(4) {
+        let unit = next_unit(&mut media, Duration::from_secs(2)).await;
+        widest = widest.max(last.elapsed());
+        last = Instant::now();
+        count += 1;
+        keys += u32::from(unit.kind == UnitKind::Key);
+        bytes += unit.data.len();
+    }
+    // VideoToolbox may code a heartbeat as a key frame on its own; the server asks for
+    // none, so `keys` is reported, not asserted.
+    println!(
+        "idle: {count} units ({keys} keys, {bytes} bytes) in {:?}, widest gap {widest:?}",
+        window.elapsed()
+    );
+    assert!(count >= 3, "only {count} units from an idle screen in 4 s");
+    assert!(widest < Duration::from_secs(2), "an idle gap of {widest:?}");
+    drop(media);
+    harness.stop().await;
+}

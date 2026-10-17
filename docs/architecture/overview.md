@@ -2115,7 +2115,11 @@ thread per stream wraps the current surface in a `CVPixelBuffer`, turns it
 with `VTPixelRotationSession` when the UI is not portrait, and encodes the
 screen at full size, Main profile at an automatic level (5.1 or above for a
 full-size screen), at most 60 fps, 6 bits per pixel per second clamped to
-2–12 Mbit/s, with key frames no more than 120 frames or 2 s apart. A new
+2–12 Mbit/s, with key frames no more than 120 frames or 2 s apart. SimScreen
+signals only when the screen changes, so after 1 s without a frame the thread
+encodes the unchanged surface again: an idle screen sends about one frame per
+second (a delta frame unless a key is pending), which keeps the client's 5 s
+stall check from firing on a still picture. A new
 output size (a rotation) builds a new session, whose config and key units go
 out first. The units feed the same
 `MediaHub`, tickets, and sockets as Android.

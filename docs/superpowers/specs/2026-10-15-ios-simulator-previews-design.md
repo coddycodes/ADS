@@ -530,8 +530,15 @@ Amended after the spikes (§0 Results); §0 names every call.
   forces the next frame to be a key frame. A change of output size (a
   rotation, or a new surface) tears down and recreates the session, then emits
   a new config unit.
-- **Pacing.** Frames go out only on `frameCallback`, capped at 60 fps.
-  Backpressure, slow-viewer handling and the JPEG fallback rules are unchanged
+- **Pacing.** Frames go out on `frameCallback`, capped at 60 fps. The
+  callback fires only when the screen changes, so the encoder thread (which
+  already wakes every 100 ms) re-encodes the current surface when no frame
+  has gone out for 1 s: an idle screen sends about one frame per second. A
+  heartbeat frame is a normal delta frame unless a key frame is pending, and
+  heartbeats end with the stream. Without it a still screen sent nothing and
+  the client, which treats 5 s without a frame as a stall, covered a live
+  picture with "The screen stopped updating." (Correction, native
+  validation.) Backpressure, slow-viewer handling and the JPEG fallback rules are unchanged
   from Android.
 - **JPEG.** `snapshot_jpeg` locks the current surface, honors its row stride,
   rotates, and encodes with `jpeg-encoder` (already a dependency) at the

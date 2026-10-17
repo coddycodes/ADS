@@ -52,14 +52,26 @@ const waitingForScreen = (
   </div>
 );
 
-/** The screen stopped updating, with the way to get it going again. */
+/**
+ * The screen stopped updating, with the way to get it going again. The notice sits on a
+ * backdrop so it reads over any picture, and only its button takes the pointer: touches
+ * anywhere else still reach the screen underneath.
+ */
 function ScreenStalled({ onReconnect }: { readonly onReconnect: () => void }) {
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
-      <p className="text-xs text-foreground">The screen stopped updating.</p>
-      <Button size="xs" variant="outline" onClick={onReconnect}>
-        Reconnect screen
-      </Button>
+    <div
+      data-screen-stalled
+      className="pointer-events-none absolute inset-0 flex items-center justify-center p-4"
+    >
+      <div
+        role="status"
+        className="flex flex-col items-center gap-2 rounded-lg border border-border/80 bg-popover/92 px-3 py-2 text-center shadow-sm backdrop-blur-sm"
+      >
+        <p className="text-xs text-popover-foreground">The screen stopped updating.</p>
+        <Button size="xs" variant="outline" className="pointer-events-auto" onClick={onReconnect}>
+          Reconnect screen
+        </Button>
+      </div>
     </div>
   );
 }

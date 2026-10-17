@@ -25,7 +25,10 @@ export type VideoMode =
 /** The baseline codec probed before any ticket is minted; the stream's own is checked on use. */
 export const PROBE_CODEC = "avc1.42E01F";
 export const FIRST_FRAME_TIMEOUT_MS = 5_000;
-/** scrcpy repeats the last frame of a still screen, so a silent stream this long has stalled. */
+/**
+ * scrcpy repeats the last frame of a still screen and the iOS encoder sends one about every
+ * second, so a silent stream this long has stalled.
+ */
 export const STALL_TIMEOUT_MS = 5_000;
 export const MAX_RECONNECTS_PER_WINDOW = 3;
 export const RECONNECT_WINDOW_MS = 60_000;
