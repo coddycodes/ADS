@@ -3322,10 +3322,12 @@ staticDescribe("primary row", () => {
     );
   });
 
+  // A stale summary is still the newest observation: a failed PR lookup marks a
+  // just-read base stale, and the server carries a PR only for the same ref.
   it.each([
     { label: "fresh passive summary", status: { stale: false }, showsIndicators: true },
     { label: "full status result", status: {}, showsIndicators: true },
-    { label: "stale passive summary", status: { stale: true }, showsIndicators: false },
+    { label: "stale passive summary", status: { stale: true }, showsIndicators: true },
   ])("reads primary PR/dirty state directly from $label", ({ status, showsIndicators }) => {
     baseScenario();
     h.state.threads = [threadDefault];
@@ -4103,6 +4105,26 @@ staticDescribe("SidebarThreadRow direct rendering", () => {
     expect(markup).toContain("Editing src/export/invoiceDates.ts");
     expect(markup).toContain(">opus<");
     expect(markup).toContain("2 more chats");
+  });
+
+  // A Git Manager checkout while the thread was closed: the recorded branch lags,
+  // and the PR lookup failed, so the summary that names the new branch is stale.
+  it("shows the PR and dirty state of the branch the card names, from a stale summary", () => {
+    const thread = makeThread("thread-lagging", {
+      title: "Lagging branch",
+      branch: "main",
+      worktreePath: "C:/wt/lagging",
+    });
+    h.state.vcsStatusByCwd["C:/wt/lagging"] = {
+      refName: "feature",
+      hasWorkingTreeChanges: true,
+      pr: { url: "https://example.com/pr/58" },
+      stale: true,
+    };
+    const markup = render(<SidebarThreadRow {...rowProps(thread)} />);
+    expect(markup).toContain(">feature<");
+    expect(markup).toContain("#1");
+    expect(markup).toContain('aria-label="Uncommitted changes"');
   });
 
   it("names the card button by status, title and flags and describes it by its lines", () => {

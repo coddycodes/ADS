@@ -663,8 +663,8 @@ vi.mock("../composerDraftStore", () => ({
 
 vi.mock("./ThreadStatusIndicators", () => ({
   ChangeRequestStatusIcon: h.mk("ChangeRequestStatusIcon", "span"),
-  resolveThreadPr: (branch: string | null, data: { pr?: unknown } | null) =>
-    branch && data?.pr ? data.pr : null,
+  resolveThreadPr: (branch: string | null, data: { pr?: unknown; refName?: string } | null) =>
+    branch !== null && data?.refName === branch && data.pr ? data.pr : null,
   prStatusIndicator: (pr: { url: string } | null) =>
     pr ? { url: pr.url, tooltip: "PR open", colorClass: "pr-color", numberLabel: "#1" } : null,
   terminalStatusFromRunningIds: (ids: readonly string[]) =>

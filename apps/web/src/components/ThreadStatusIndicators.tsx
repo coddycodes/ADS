@@ -83,12 +83,9 @@ export function resolveThreadPr(
   threadBranch: string | null,
   gitStatus: ThreadVcsStatus | null,
 ): ThreadPr | null {
-  if (
-    threadBranch === null ||
-    gitStatus === null ||
-    ("stale" in gitStatus && gitStatus.stale) ||
-    gitStatus.refName !== threadBranch
-  ) {
+  // A stale summary still counts: the server carries its PR only for the same ref
+  // and provider, and a failed first lookup publishes `pr: null`.
+  if (threadBranch === null || gitStatus === null || gitStatus.refName !== threadBranch) {
     return null;
   }
 
