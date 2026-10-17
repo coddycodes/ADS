@@ -214,14 +214,20 @@ synthetic message) counts like a prompt's. Only the conversation is reverted (`f
 checkpoint revert restores the files. A commit whose answer is lost but whose
 target message is gone counts as done; a stage that did not commit is cleared
 (`DELETE …/revert`), since OpenCode commits a leftover stage with the next
-prompt. Until a rewind reports success the runtime remembers the turns already
-dropped and any revert whose outcome it could not read, so a retry drops only
-the turns still missing and prompts wait. The idle deadline keeps the session up
-until the rewind settles (see Unsettled driver state below), and the progress is
-also kept with the OpenCode session itself, in its metadata under
-`bibcode.rewind` (no BiBCode schema): it is written before each stage, removed
-before the rewind reports success, and restored when a session is resumed after a
-restart, which also clears a leftover stage. A revert still staged on the session
+prompt. Each rewind carries an idempotency key from the checkpoint revert,
+naming the transcript it counts from (`{thread}/{newest checkpoint turn}`).
+Until a rewind reports success the runtime remembers the turns already dropped
+and any revert whose outcome it could not read, so a retry with the same key
+drops only the turns still missing and prompts wait; a different key starts
+afresh. The idle deadline keeps the session up until the rewind settles (see
+Unsettled driver state below), and the progress is also kept with the OpenCode
+session itself, in its metadata under `bibcode.rewind` (no BiBCode schema): it
+is written before each stage, marked finished before the rewind reports success
+(a failed mark fails the rewind, and its retry drops nothing more), and restored when a session is resumed after a restart, which also
+clears a leftover stage. A same-key retry after a finished rewind drops
+nothing, so a rewind that succeeded but whose completion BiBCode never recorded
+is applied once. Other providers ignore the key: Codex `thread/revert` takes no
+idempotency field. A revert still staged on the session
 (`revert` set) is cleared, never counted as landed. Each rewind request is
 bounded, because the provider supervisor awaits it.
 

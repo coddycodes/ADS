@@ -99,8 +99,10 @@ struct Replay {
     staged: AtomicBool,
     /// The root session's metadata, as `PATCH /api/session/{root}` last wrote it.
     metadata: StdMutex<Value>,
-    /// Apply the next metadata write that removes the rewind record, but answer HTTP 500.
-    lose_next_record_removal_response: AtomicBool,
+    /// The next metadata write that marks the rewind finished answers HTTP 500: applied first
+    /// when `apply_lost_finished_record` is set, else not applied.
+    fail_next_finished_record: AtomicBool,
+    apply_lost_finished_record: AtomicBool,
     /// A revert was committed: message lists answer the scenario's last capture, not its first.
     reverted: AtomicBool,
 }
@@ -138,14 +140,18 @@ async fn record(
         && path == format!("/api/session/{}", replay.root)
         && let Some(metadata) = body.get("metadata").filter(|metadata| !metadata.is_null())
     {
-        *replay.metadata.lock().unwrap() = metadata.clone();
-        if metadata.pointer("/bibcode/rewind").is_none()
+        let finishing = metadata.pointer("/bibcode/rewind/finished") == Some(&json!(true));
+        if finishing
             && replay
-                .lose_next_record_removal_response
+                .fail_next_finished_record
                 .swap(false, Ordering::SeqCst)
         {
+            if replay.apply_lost_finished_record.load(Ordering::SeqCst) {
+                *replay.metadata.lock().unwrap() = metadata.clone();
+            }
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
+        *replay.metadata.lock().unwrap() = metadata.clone();
     }
     replay
         .requests
@@ -441,7 +447,8 @@ async fn serve(scenario: &'static str) -> (String, Arc<Replay>) {
         fail_message_lookups: AtomicBool::new(false),
         staged: AtomicBool::new(false),
         metadata: StdMutex::new(Value::Null),
-        lose_next_record_removal_response: AtomicBool::new(false),
+        fail_next_finished_record: AtomicBool::new(false),
+        apply_lost_finished_record: AtomicBool::new(false),
         reverted: AtomicBool::new(false),
     });
     let app = Router::new()
@@ -1054,7 +1061,10 @@ async fn live_opencode_2_round_trip() {
         "completed"
     );
 
-    let snapshot = runtime.rollback_thread(2).await.expect("rewind");
+    let snapshot = runtime
+        .rollback_thread(2, "rewind-key")
+        .await
+        .expect("rewind");
     let prompts = snapshot
         .turns
         .iter()
@@ -1363,7 +1373,10 @@ async fn rollback_reverts_from_the_start_of_the_nth_most_recent_turn() {
     let runtime = v2_runtime(&endpoint);
     runtime.resume(&replay.root).await.expect("resumes");
 
-    let snapshot = runtime.rollback_thread(1).await.expect("rewinds");
+    let snapshot = runtime
+        .rollback_thread(1, "rewind-key")
+        .await
+        .expect("rewinds");
 
     let lookups = replay
         .requests_to("/message")
@@ -1389,7 +1402,10 @@ async fn rollback_of_no_turns_reverts_nothing() {
     let runtime = v2_runtime(&endpoint);
     runtime.resume(&replay.root).await.expect("resumes");
 
-    let snapshot = runtime.rollback_thread(0).await.expect("no-op");
+    let snapshot = runtime
+        .rollback_thread(0, "rewind-key")
+        .await
+        .expect("no-op");
 
     assert!(replay.requests_to("/revert/stage").is_empty());
     assert!(replay.requests_to("/revert/commit").is_empty());
@@ -1411,7 +1427,7 @@ async fn a_revert_that_does_not_commit_clears_the_stage() {
         }
 
         runtime
-            .rollback_thread(1)
+            .rollback_thread(1, "rewind-key")
             .await
             .expect_err("the revert did not commit");
 
@@ -1433,7 +1449,10 @@ async fn a_landed_revert_commit_succeeds_even_when_its_answer_is_lost() {
         .lose_next_commit_response
         .store(true, Ordering::SeqCst);
 
-    runtime.rollback_thread(1).await.expect("the revert landed");
+    runtime
+        .rollback_thread(1, "rewind-key")
+        .await
+        .expect("the revert landed");
 
     assert!(replay.requests_to("/revert").is_empty(), "nothing to clear");
     runtime.stop().await.expect("stop");
@@ -1447,7 +1466,10 @@ async fn a_long_rewind_reads_bounded_pages() {
     let runtime = v2_runtime(&endpoint);
     runtime.resume(&replay.root).await.expect("resumes");
 
-    runtime.rollback_thread(500).await.expect("rewinds");
+    runtime
+        .rollback_thread(500, "rewind-key")
+        .await
+        .expect("rewinds");
 
     let lookup = replay
         .requests_to("/message")
@@ -1476,7 +1498,7 @@ async fn an_unknown_rewind_outcome_holds_prompts_until_a_rewind_settles_it() {
     replay.fail_message_lookups.store(true, Ordering::SeqCst);
 
     runtime
-        .rollback_thread(1)
+        .rollback_thread(1, "rewind-key")
         .await
         .expect_err("the outcome is unknown");
     assert!(
@@ -1495,7 +1517,7 @@ async fn an_unknown_rewind_outcome_holds_prompts_until_a_rewind_settles_it() {
 
     replay.fail_message_lookups.store(false, Ordering::SeqCst);
     runtime
-        .rollback_thread(1)
+        .rollback_thread(1, "rewind-key")
         .await
         .expect("the first revert landed");
     assert_eq!(
@@ -1542,7 +1564,10 @@ async fn rewinding_a_turn_opencode_started_keeps_the_prompt_turn() {
     let runtime = v2_runtime(&endpoint);
     runtime.resume(&replay.root).await.expect("resumes");
 
-    runtime.rollback_thread(1).await.expect("rewinds");
+    runtime
+        .rollback_thread(1, "rewind-key")
+        .await
+        .expect("rewinds");
 
     assert_eq!(
         replay.requests_to("/revert/stage")[0].2["messageID"],
@@ -1554,7 +1579,10 @@ async fn rewinding_a_turn_opencode_started_keeps_the_prompt_turn() {
     let (endpoint, replay) = serve("background").await;
     let runtime = v2_runtime(&endpoint);
     runtime.resume(&replay.root).await.expect("resumes");
-    runtime.rollback_thread(2).await.expect("rewinds");
+    runtime
+        .rollback_thread(2, "rewind-key")
+        .await
+        .expect("rewinds");
     assert_eq!(
         replay.requests_to("/revert/stage")[0].2["messageID"],
         "msg_bibcodecapture1792090128476"
@@ -1601,8 +1629,8 @@ async fn a_failed_opencode_2_request_settles_the_turn_it_announced() {
 }
 
 /// A rewind whose outcome could not be read is kept with the OpenCode session (its metadata), so
-/// a runtime started after a restart settles it instead of dropping the turns again, and removes
-/// the record once the rewind reports success.
+/// a runtime started after a restart settles it instead of dropping the turns again, and marks
+/// the record finished once the rewind reports success.
 #[tokio::test]
 async fn an_unknown_rewind_outcome_survives_a_restart() {
     let (endpoint, replay) = serve("revert").await;
@@ -1618,7 +1646,7 @@ async fn an_unknown_rewind_outcome_survives_a_restart() {
         .store(true, Ordering::SeqCst);
     replay.fail_message_lookups.store(true, Ordering::SeqCst);
     runtime
-        .rollback_thread(1)
+        .rollback_thread(1, "rewind-key")
         .await
         .expect_err("the outcome is unknown");
     runtime.stop().await.expect("stop");
@@ -1640,7 +1668,7 @@ async fn an_unknown_rewind_outcome_survives_a_restart() {
         "the progress is restored"
     );
     runtime
-        .rollback_thread(1)
+        .rollback_thread(1, "rewind-key")
         .await
         .expect("the first revert landed");
     assert_eq!(
@@ -1649,11 +1677,15 @@ async fn an_unknown_rewind_outcome_survives_a_restart() {
         "no further turns are dropped"
     );
     assert!(!runtime.has_unfinished_rewind().await);
-    assert_eq!(
-        *replay.metadata.lock().unwrap(),
-        json!({ "other": "kept" }),
-        "the record is removed, the rest kept"
-    );
+    {
+        let metadata = replay.metadata.lock().unwrap().clone();
+        assert_eq!(
+            metadata["other"], "kept",
+            "the rest of the metadata is kept"
+        );
+        assert_eq!(metadata["bibcode"]["rewind"]["finished"], true);
+        assert_eq!(metadata["bibcode"]["rewind"]["key"], "rewind-key");
+    }
     runtime.stop().await.expect("stop");
 }
 
@@ -1671,7 +1703,7 @@ async fn a_revert_still_staged_is_cleared_not_counted() {
     replay.staged.store(true, Ordering::SeqCst);
 
     runtime
-        .rollback_thread(1)
+        .rollback_thread(1, "rewind-key")
         .await
         .expect_err("the stage did not commit");
 
@@ -1682,26 +1714,112 @@ async fn a_revert_still_staged_is_cleared_not_counted() {
     runtime.stop().await.expect("stop");
 }
 
-/// The record's removal may apply with only its answer lost; the session then has no record, so
-/// the rewind reports success instead of failing with nothing left to remove after a restart.
+/// A rewind that succeeded but whose completion BiBCode never recorded (it stopped first) is
+/// retried from the same transcript, so with the same key: after a restart it drops nothing more.
 #[tokio::test]
-async fn a_lost_answer_to_the_record_removal_still_completes_the_rewind() {
-    let (endpoint, replay) = serve("revert").await;
+async fn a_retried_rewind_after_a_restart_is_applied_once() {
+    let (endpoint, replay) = serve("background").await;
     let runtime = v2_runtime(&endpoint);
     runtime.resume(&replay.root).await.expect("resumes");
-    replay
-        .lose_next_record_removal_response
-        .store(true, Ordering::SeqCst);
+    runtime
+        .rollback_thread(1, "transcript-a")
+        .await
+        .expect("rewinds");
+    runtime.stop().await.expect("stop");
 
-    runtime.rollback_thread(1).await.expect("rewinds");
-
+    // A new runtime, as after a restart; BiBCode retries the same checkpoint revert.
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
     assert!(
+        !runtime.has_unfinished_rewind().await,
+        "prompts are not held"
+    );
+    runtime
+        .rollback_thread(1, "transcript-a")
+        .await
+        .expect("the rewind already happened");
+    assert_eq!(
+        replay.requests_to("/revert/stage").len(),
+        1,
+        "no further turns are dropped"
+    );
+
+    // A rewind from another transcript (BiBCode recorded the first one) starts afresh.
+    runtime
+        .rollback_thread(1, "transcript-b")
+        .await
+        .expect("rewinds");
+    assert_eq!(replay.requests_to("/revert/stage").len(), 2);
+    runtime.stop().await.expect("stop");
+}
+
+/// Marking the rewind finished may fail, applied or not. The rewind then fails, and its retry with
+/// the same key after a restart drops nothing more; once it succeeds, no later runtime holds
+/// prompts for it.
+#[tokio::test]
+async fn a_lost_finished_mark_still_applies_the_rewind_once() {
+    for applied in [true, false] {
+        let (endpoint, replay) = serve("background").await;
+        let runtime = v2_runtime(&endpoint);
+        runtime.resume(&replay.root).await.expect("resumes");
         replay
-            .metadata
-            .lock()
-            .unwrap()
-            .pointer("/bibcode/rewind")
-            .is_none()
+            .fail_next_finished_record
+            .store(true, Ordering::SeqCst);
+        replay
+            .apply_lost_finished_record
+            .store(applied, Ordering::SeqCst);
+
+        runtime
+            .rollback_thread(1, "transcript-a")
+            .await
+            .expect_err("success is not recorded with the session");
+        assert!(
+            runtime.has_unfinished_rewind().await,
+            "prompts wait for the retry"
+        );
+        runtime.stop().await.expect("stop");
+
+        let runtime = v2_runtime(&endpoint);
+        runtime.resume(&replay.root).await.expect("resumes");
+        runtime
+            .rollback_thread(1, "transcript-a")
+            .await
+            .expect("the rewind already happened");
+        assert_eq!(
+            replay.requests_to("/revert/stage").len(),
+            1,
+            "applied: {applied}"
+        );
+        assert!(!runtime.has_unfinished_rewind().await);
+        runtime.stop().await.expect("stop");
+
+        // A later runtime, as after an idle suspension, does not hold prompts.
+        let runtime = v2_runtime(&endpoint);
+        runtime.resume(&replay.root).await.expect("resumes");
+        assert!(!runtime.has_unfinished_rewind().await, "applied: {applied}");
+        runtime.stop().await.expect("stop");
+    }
+}
+
+/// A record saved before rewinds were keyed belongs to the rewind retried after the restart.
+#[tokio::test]
+async fn a_keyless_rewind_record_is_continued_not_restarted() {
+    let (endpoint, replay) = serve("background").await;
+    replay
+        .metadata
+        .lock()
+        .unwrap()
+        .clone_from(&json!({ "bibcode": { "rewind": { "dropped": 1 } } }));
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+    assert!(runtime.has_unfinished_rewind().await);
+    runtime
+        .rollback_thread(1, "transcript-a")
+        .await
+        .expect("the turn was already dropped");
+    assert!(
+        replay.requests_to("/revert/stage").is_empty(),
+        "no further turns are dropped"
     );
     assert!(!runtime.has_unfinished_rewind().await);
     runtime.stop().await.expect("stop");

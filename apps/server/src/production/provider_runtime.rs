@@ -419,7 +419,14 @@ pub trait ProviderDriver: Send + Sync {
         &self,
         options: Vec<Value>,
     ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>>;
-    fn rollback(&self, turn_count: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>>;
+    /// Drops the newest `turn_count` turns. `rewind_key` identifies the checkpoint revert (the
+    /// thread's transcript it counts from), so a driver that can make a retried rewind apply once
+    /// does; others ignore it.
+    fn rollback(
+        &self,
+        turn_count: i64,
+        rewind_key: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>>;
     fn next_event(&self) -> BoxRuntimeFuture<'_, Option<ProviderEvent>>;
     fn shutdown(&self) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>>;
     /// The pid and exit status of the provider process this driver owns, once it has exited.
@@ -584,6 +591,7 @@ enum SupervisorMessage {
     Rewind {
         thread_id: String,
         turn_count: i64,
+        rewind_key: String,
         response: oneshot::Sender<Result<ProviderRewind, ProviderRuntimeError>>,
     },
     CaptureSessionIdentity {
@@ -1182,10 +1190,12 @@ impl ProviderRuntimeSupervisor {
         &self,
         thread_id: &str,
         turn_count: i64,
+        rewind_key: &str,
     ) -> Result<ProviderRewind, ProviderRuntimeError> {
         self.request(|response| SupervisorMessage::Rewind {
             thread_id: thread_id.to_owned(),
             turn_count,
+            rewind_key: rewind_key.to_owned(),
             response,
         })
         .await
@@ -2667,7 +2677,11 @@ mod workspace_loss_tests {
             Box::pin(async { Ok(()) })
         }
 
-        fn rollback(&self, _: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+        fn rollback(
+            &self,
+            _: i64,
+            _: String,
+        ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
             Box::pin(async { Ok(()) })
         }
 
@@ -5389,9 +5403,10 @@ async fn run_supervisor(
             SupervisorMessage::Rewind {
                 thread_id,
                 turn_count,
+                rewind_key,
                 response,
             } => {
-                let result = rewind_session(&sessions, &thread_id, turn_count).await;
+                let result = rewind_session(&sessions, &thread_id, turn_count, rewind_key).await;
                 let _ = response.send(result);
             }
             SupervisorMessage::CaptureSessionIdentity {
@@ -7633,6 +7648,7 @@ async fn rewind_session(
     sessions: &HashMap<String, SessionEntry>,
     thread_id: &str,
     turn_count: i64,
+    rewind_key: String,
 ) -> Result<ProviderRewind, ProviderRuntimeError> {
     let entry = sessions
         .get(thread_id)
@@ -7644,7 +7660,7 @@ async fn rewind_session(
             provider_label: entry.launch.provider_label.clone(),
         });
     }
-    let rewound = entry.driver.rollback(turn_count).await;
+    let rewound = entry.driver.rollback(turn_count, rewind_key).await;
     // A rewind uses the session like a turn does: it idles again under the normal deadline,
     // also when the session was reopened only for this revert.
     let generation = entry.idle_generation.fetch_add(1, Ordering::Relaxed) + 1;
@@ -7672,8 +7688,9 @@ pub async fn rewind_thread_conversation(
     settings_root: &PathBuf,
     thread_id: &str,
     turn_count: i64,
+    rewind_key: &str,
 ) -> Result<ProviderRewind, String> {
-    match supervisor.rewind(thread_id, turn_count).await {
+    match supervisor.rewind(thread_id, turn_count, rewind_key).await {
         Err(ProviderRuntimeError::SessionNotFound { .. }) => {}
         outcome => return outcome.map_err(|error| delivery_detail(&error, None)),
     }
@@ -7708,7 +7725,7 @@ pub async fn rewind_thread_conversation(
         ));
     }
     supervisor
-        .rewind(thread_id, turn_count)
+        .rewind(thread_id, turn_count, rewind_key)
         .await
         .map_err(|error| delivery_detail(&error, Some(&label)))
 }
@@ -10978,7 +10995,14 @@ impl ProviderDriver for CodexDriver {
             Ok(())
         })
     }
-    fn rollback(&self, turn_count: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    // Codex's `thread/revert` takes only `threadId` and `beforeTurnId` (ThreadRevertParams from
+    // `codex app-server generate-json-schema`, codex-cli 0.163.0): no idempotency field, so the
+    // rewind key is not used.
+    fn rollback(
+        &self,
+        turn_count: i64,
+        _rewind_key: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async move {
             let count = u64::try_from(turn_count).map_err(|_| ProviderRuntimeError::Provider {
                 provider: "codex".to_owned(),
@@ -11245,7 +11269,11 @@ impl ProviderDriver for CursorDriver {
                 .map_err(|error| option_error("cursor", error))
         })
     }
-    fn rollback(&self, _: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        _: i64,
+        _: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         unsupported("cursor", "checkpoint rollback")
     }
     fn next_event(&self) -> BoxRuntimeFuture<'_, Option<ProviderEvent>> {
@@ -11450,7 +11478,11 @@ impl ProviderDriver for GrokDriver {
     ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         reject_unsupported_options("grok", options)
     }
-    fn rollback(&self, _: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        _: i64,
+        _: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         unsupported("grok", "checkpoint rollback")
     }
     fn next_event(&self) -> BoxRuntimeFuture<'_, Option<ProviderEvent>> {
@@ -11794,14 +11826,18 @@ impl ProviderDriver for OpenCodeDriver {
                 .map_err(|error| option_error("opencode", error))
         })
     }
-    fn rollback(&self, count: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        count: i64,
+        rewind_key: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async move {
             let count = usize::try_from(count).map_err(|_| ProviderRuntimeError::Provider {
                 provider: "opencode".to_owned(),
                 detail: "turn count must be non-negative".to_owned(),
             })?;
             self.runtime
-                .rollback_thread(count)
+                .rollback_thread(count, &rewind_key)
                 .await
                 .map(|_| ())
                 .map_err(provider_error("opencode"))
@@ -14630,7 +14666,11 @@ impl ProviderDriver for ClaudeDriver {
             })
         })
     }
-    fn rollback(&self, _: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        _: i64,
+        _: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         unsupported("claude", "checkpoint rollback")
     }
     fn next_event(&self) -> BoxRuntimeFuture<'_, Option<ProviderEvent>> {
@@ -16285,6 +16325,7 @@ mod tests {
         fn rollback(
             &self,
             turn_count: i64,
+            _rewind_key: String,
         ) -> super::BoxRuntimeFuture<'_, Result<(), super::ProviderRuntimeError>> {
             Box::pin(async move {
                 self.state.lock().unwrap().rollbacks.push(turn_count);
@@ -25243,7 +25284,7 @@ done
                 .unwrap();
         }
         assert_eq!(
-            supervisor.rewind("t1", 2).await.unwrap(),
+            supervisor.rewind("t1", 2, "rewind-key").await.unwrap(),
             ProviderRewind::Rewound
         );
         let revert_command: OrchestrationCommand = serde_json::from_value(json!({
@@ -25608,7 +25649,7 @@ done
             .await
             .expect("Claude interaction mode should update");
         assert!(claude.set_model("other".to_owned()).await.is_err());
-        assert!(claude.rollback(1).await.is_err());
+        assert!(claude.rollback(1, "rewind-key".to_owned()).await.is_err());
         assert_eq!(
             match deadline.observe(claude.next_event()).await {
                 Ok(event) => event.expect("Claude stderr event"),
@@ -25783,8 +25824,11 @@ done
                 .is_some()
         );
         codex.interrupt(None).await.expect("Codex should interrupt");
-        codex.rollback(0).await.expect("Codex should roll back");
-        assert!(codex.rollback(-1).await.is_err());
+        codex
+            .rollback(0, "rewind-key".to_owned())
+            .await
+            .expect("Codex should roll back");
+        assert!(codex.rollback(-1, "rewind-key".to_owned()).await.is_err());
         assert!(
             codex
                 .set_mode("approval-required".to_owned())
@@ -25895,7 +25939,7 @@ done
                 .set_interaction_mode("plan".to_owned())
                 .await
                 .expect("ACP interaction mode should update");
-            assert!(driver.rollback(1).await.is_err());
+            assert!(driver.rollback(1, "rewind-key".to_owned()).await.is_err());
             assert!(
                 driver
                     .approve("unknown".to_owned(), "accept".to_owned())
@@ -26172,8 +26216,11 @@ done
             .set_model("openai/gpt-5.4".to_owned())
             .await
             .expect("OpenCode model should update");
-        driver.rollback(0).await.expect("OpenCode should roll back");
-        assert!(driver.rollback(-1).await.is_err());
+        driver
+            .rollback(0, "rewind-key".to_owned())
+            .await
+            .expect("OpenCode should roll back");
+        assert!(driver.rollback(-1, "rewind-key".to_owned()).await.is_err());
         assert!(driver.set_mode("full-access".to_owned()).await.is_err());
         assert!(
             driver

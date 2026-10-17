@@ -525,7 +525,11 @@ impl ProviderDriver for FakeDriver {
         })
     }
 
-    fn rollback(&self, turn_count: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        turn_count: i64,
+        _rewind_key: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async move {
             let (workspace, error) = {
                 let mut state = self.state.lock().unwrap();
@@ -1324,6 +1328,7 @@ impl OrchestrationEffectCallbacks for SupervisorEffectsCallbacks {
         &'a self,
         thread_id: &'a str,
         turns: i64,
+        rewind_key: &'a str,
     ) -> BoxEffectFuture<'a, ProviderRewind> {
         Box::pin(async move {
             rewind_thread_conversation(
@@ -1332,6 +1337,7 @@ impl OrchestrationEffectCallbacks for SupervisorEffectsCallbacks {
                 &self.settings.path().to_path_buf(),
                 thread_id,
                 turns,
+                rewind_key,
             )
             .await
         })
@@ -13646,7 +13652,7 @@ async fn native_claude_driver_supports_the_complete_live_command_surface() {
         Err(ProviderRuntimeError::UnsupportedCapability { provider, .. }) if provider == "claude"
     ));
     assert!(matches!(
-        driver.rollback(1).await,
+        driver.rollback(1, "rewind-key".to_owned()).await,
         Err(ProviderRuntimeError::UnsupportedCapability { provider, .. }) if provider == "claude"
     ));
 
@@ -15453,9 +15459,9 @@ async fn native_opencode_driver_supports_session_turn_and_control_commands() {
     );
     driver.interrupt(None).await.unwrap();
     driver.set_model("openai/gpt-5.4".to_owned()).await.unwrap();
-    driver.rollback(0).await.unwrap();
+    driver.rollback(0, "rewind-key".to_owned()).await.unwrap();
     assert!(matches!(
-        driver.rollback(-1).await,
+        driver.rollback(-1, "rewind-key".to_owned()).await,
         Err(ProviderRuntimeError::Provider { provider, .. }) if provider == "opencode"
     ));
     assert!(matches!(
@@ -15680,12 +15686,15 @@ done
     driver.interrupt(None).await.unwrap();
     // Like Codex 0.162.1, the fixture starts a paginated thread and answers `thread/revert`
     // only before the listed turn.
-    timeout(Duration::from_secs(10), driver.rollback(1))
-        .await
-        .expect("Codex should answer the revert")
-        .expect("Codex should revert the paginated thread");
+    timeout(
+        Duration::from_secs(10),
+        driver.rollback(1, "rewind-key".to_owned()),
+    )
+    .await
+    .expect("Codex should answer the revert")
+    .expect("Codex should revert the paginated thread");
     assert!(matches!(
-        driver.rollback(-1).await,
+        driver.rollback(-1, "rewind-key".to_owned()).await,
         Err(ProviderRuntimeError::Provider { provider, .. }) if provider == "codex"
     ));
     assert!(matches!(
@@ -17286,7 +17295,7 @@ done
         .await
         .unwrap();
     assert!(matches!(
-        cursor.rollback(1).await,
+        cursor.rollback(1, "rewind-key".to_owned()).await,
         Err(ProviderRuntimeError::UnsupportedCapability { provider, .. }) if provider == "cursor"
     ));
     assert!(matches!(
@@ -17328,7 +17337,7 @@ done
         .await
         .unwrap();
     assert!(matches!(
-        grok.rollback(1).await,
+        grok.rollback(1, "rewind-key".to_owned()).await,
         Err(ProviderRuntimeError::UnsupportedCapability { provider, .. }) if provider == "grok"
     ));
     assert!(matches!(

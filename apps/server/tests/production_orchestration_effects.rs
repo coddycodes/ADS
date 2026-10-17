@@ -38,6 +38,7 @@ impl WorktreeBaseDirectoryProvider for StaticWorktreeBaseDirectory {
 struct CallbackState {
     cwd: Mutex<Option<PathBuf>>,
     rollbacks: Mutex<Vec<(String, i64)>>,
+    rewind_keys: Mutex<Vec<String>>,
     stopped: Mutex<Vec<String>>,
     terminals: Mutex<Vec<String>>,
     refreshed: Mutex<Vec<PathBuf>>,
@@ -58,12 +59,14 @@ impl OrchestrationEffectCallbacks for CallbackState {
         &'a self,
         thread_id: &'a str,
         turns: i64,
+        rewind_key: &'a str,
     ) -> BoxEffectFuture<'a, ProviderRewind> {
         Box::pin(async move {
             self.rollbacks
                 .lock()
                 .unwrap()
                 .push((thread_id.to_owned(), turns));
+            self.rewind_keys.lock().unwrap().push(rewind_key.to_owned());
             Ok(ProviderRewind::Rewound)
         })
     }
@@ -773,6 +776,11 @@ async fn reverts_workspace_provider_history_and_stale_checkpoint_refs() {
         callbacks.rollbacks.lock().unwrap().as_slice(),
         &[("t1".to_owned(), 1)]
     );
+    // The rewind is keyed by the transcript it counts from, named by its newest turn.
+    assert_eq!(
+        callbacks.rewind_keys.lock().unwrap().as_slice(),
+        &["t1/turn-2".to_owned()]
+    );
     assert!(!git_succeeds(
         repository.path(),
         &[
@@ -962,6 +970,7 @@ async fn revert_records_a_completed_rewind_when_files_fail_to_restore() {
             &'a self,
             thread_id: &'a str,
             turns: i64,
+            _rewind_key: &'a str,
         ) -> BoxEffectFuture<'a, ProviderRewind> {
             Box::pin(async move {
                 self.rollbacks
@@ -1082,6 +1091,7 @@ async fn thread_deletion_attempts_provider_and_terminal_cleanup_independently() 
             &'a self,
             _: &'a str,
             _: i64,
+            _rewind_key: &'a str,
         ) -> BoxEffectFuture<'a, ProviderRewind> {
             Box::pin(async { Ok(ProviderRewind::Rewound) })
         }

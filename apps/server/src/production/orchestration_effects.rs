@@ -72,10 +72,13 @@ pub trait OrchestrationEffectCallbacks: Send + Sync {
         thread_id: &'a str,
     ) -> BoxEffectFuture<'a, Option<PathBuf>>;
 
+    /// `rewind_key` identifies the revert by the transcript it starts from, so a retried rewind
+    /// is applied once.
     fn rollback_provider<'a>(
         &'a self,
         thread_id: &'a str,
         turns: i64,
+        rewind_key: &'a str,
     ) -> BoxEffectFuture<'a, ProviderRewind>;
 
     fn stop_provider<'a>(&'a self, thread_id: &'a str) -> BoxEffectFuture<'a, ()>;
@@ -954,9 +957,17 @@ async fn revert_checkpoint(
         return Err(missing_checkpoint());
     }
     let rolled_back_turns = current_turn_count.saturating_sub(turn_count);
+    // The rewind's idempotency key: the transcript it counts from, named by its newest turn. A
+    // retry from the same transcript (its earlier completion was not recorded) reuses it; once
+    // the revert is recorded the newest turn changes, and so does the key.
+    let rewind_key = checkpoints
+        .iter()
+        .max_by_key(|checkpoint| checkpoint.checkpoint_turn_count)
+        .map(|checkpoint| format!("{thread_id}/{}", checkpoint.turn_id))
+        .unwrap_or_else(|| format!("{thread_id}/{current_turn_count}"));
     if rolled_back_turns > 0
         && let ProviderRewind::FilesOnly { provider_label } = callbacks
-            .rollback_provider(thread_id, rolled_back_turns)
+            .rollback_provider(thread_id, rolled_back_turns, &rewind_key)
             .await
             .map_err(OrchestrationEffectsError::Effect)?
     {
@@ -1945,6 +1956,7 @@ mod tests {
                 &'a self,
                 _: &'a str,
                 _: i64,
+                _rewind_key: &'a str,
             ) -> BoxEffectFuture<'a, ProviderRewind> {
                 self.0.fetch_add(1, Ordering::Relaxed);
                 Box::pin(async { Ok(ProviderRewind::Rewound) })
@@ -1980,7 +1992,7 @@ mod tests {
             .await
             .expect("workspace callback");
         callbacks
-            .rollback_provider("thread", 1)
+            .rollback_provider("thread", 1, "rewind-key")
             .await
             .expect("rollback callback");
         callbacks
@@ -2177,6 +2189,7 @@ mod tests {
                 &'a self,
                 _: &'a str,
                 _: i64,
+                _rewind_key: &'a str,
             ) -> BoxEffectFuture<'a, ProviderRewind> {
                 Box::pin(async { Ok(ProviderRewind::Rewound) })
             }

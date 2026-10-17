@@ -256,22 +256,45 @@ struct V2State {
     /// The progress of a checkpoint rewind that has not reported success, counted from BiBCode's
     /// unchanged transcript. See `v2_rollback`.
     rewind: V2RewindProgress,
+    /// The last rewind that reported success, as kept with the session: a retry of it (same key,
+    /// from a BiBCode transcript that did not record its completion) drops nothing more.
+    finished_rewind: Option<V2RewindProgress>,
 }
 
 #[derive(Clone, Default, Eq, PartialEq)]
 struct V2RewindProgress {
+    /// The checkpoint revert's idempotency key: the BiBCode transcript the turns are counted
+    /// from. A rewind with another key starts afresh.
+    key: Option<String>,
     /// Turns OpenCode is known to have dropped.
     dropped: usize,
     /// A revert whose outcome is unknown: the turns it drops and the user message it staged at.
     unsettled: Option<(usize, String)>,
+    /// The rewind reported success.
+    finished: bool,
 }
 
 impl V2RewindProgress {
+    fn for_key(key: &str) -> Self {
+        Self {
+            key: Some(key.to_owned()),
+            ..Self::default()
+        }
+    }
+
+    /// Turns dropped, or a revert in doubt, that BiBCode's transcript does not show yet.
+    fn is_unfinished(&self) -> bool {
+        !self.finished && (self.dropped > 0 || self.unsettled.is_some())
+    }
+
     /// The progress as kept in the OpenCode 2 session's metadata (`bibcode.rewind`).
     fn to_json(&self) -> Value {
-        let mut record = json!({ "dropped": self.dropped });
+        let mut record = json!({ "key": self.key, "dropped": self.dropped });
         if let Some((turns, target)) = &self.unsettled {
             record["unsettled"] = json!({ "turns": turns, "target": target });
+        }
+        if self.finished {
+            record["finished"] = json!(true);
         }
         record
     }
@@ -285,7 +308,12 @@ impl V2RewindProgress {
                 unsettled.get("target")?.as_str()?.to_owned(),
             )),
         };
-        Some(Self { dropped, unsettled })
+        Some(Self {
+            key: record.get("key").and_then(Value::as_str).map(str::to_owned),
+            dropped,
+            unsettled,
+            finished: record.get("finished").and_then(Value::as_bool) == Some(true),
+        })
     }
 }
 
@@ -864,7 +892,12 @@ impl OpenCodeSessionRuntime {
                 .pointer("/data/metadata/bibcode/rewind")
                 .and_then(V2RewindProgress::from_json)
             {
-                self.inner.v2.lock().await.rewind = progress;
+                let mut v2 = self.inner.v2.lock().await;
+                if progress.finished {
+                    v2.finished_rewind = Some(progress);
+                } else {
+                    v2.rewind = progress;
+                }
             }
             // The resumed session keeps the model, agent and permission rules it had. A runtime
             // mode change relaunches with a resume, and OpenCode may keep working on its own, so
@@ -1718,12 +1751,15 @@ impl OpenCodeSessionRuntime {
         Ok(())
     }
 
+    /// `rewind_key` identifies the checkpoint revert (the BiBCode transcript it counts from), so
+    /// a retry is applied once. OpenCode 1 reverts in one request and does not use it.
     pub async fn rollback_thread(
         &self,
         num_turns: usize,
+        rewind_key: &str,
     ) -> Result<OpenCodeSessionSnapshot, OpenCodeRuntimeError> {
         if self.is_v2() {
-            return self.v2_rollback(num_turns).await;
+            return self.v2_rollback(num_turns, rewind_key).await;
         }
         let session_id = self.session_id().await?;
         let messages = self
@@ -2824,16 +2860,41 @@ impl OpenCodeSessionRuntime {
     /// revert whose outcome could not be read) are remembered: a retry, or a rewind to another
     /// checkpoint, drops only the turns still missing, and prompts wait. The memory lives in this
     /// runtime and, so a BiBCode restart finds it, in the OpenCode session's own metadata
-    /// (`bibcode.rewind`): it is written before each stage and removed before the rewind reports
-    /// success, and a resumed session restores it. The driver keeps the session from idle
-    /// suspension until it settles (`has_unfinished_rewind`).
+    /// (`bibcode.rewind`), keyed by the checkpoint revert's `rewind_key`: it is written before
+    /// each stage and marked finished when the rewind succeeds, and a resumed session restores
+    /// it. A retry with the same key continues from it, or drops nothing more once it finished,
+    /// so the rewind is applied once even if BiBCode lost its completion; a rewind with another
+    /// key starts afresh. The driver keeps the session from idle suspension while it is
+    /// unfinished (`has_unfinished_rewind`).
     async fn v2_rollback(
         &self,
         num_turns: usize,
+        rewind_key: &str,
     ) -> Result<OpenCodeSessionSnapshot, OpenCodeRuntimeError> {
         let session_id = self.session_id().await?;
         let _rewinding = self.inner.v2_rewind.lock().await;
+        // A revert in doubt settles first, whatever rewind it belonged to.
         self.v2_settle_unsettled_revert(&session_id).await?;
+        {
+            let mut v2 = self.inner.v2.lock().await;
+            if v2.rewind.key.is_none() && v2.rewind.is_unfinished() {
+                // Progress restored from a record that predates keys: this is its retry.
+                v2.rewind.key = Some(rewind_key.to_owned());
+            } else if v2.rewind.key.as_deref() != Some(rewind_key) {
+                // Progress of another rewind: BiBCode's transcript moved on since. A finished
+                // rewind with this key is a retry of it.
+                let finished = v2
+                    .finished_rewind
+                    .take()
+                    .filter(|finished| finished.key.as_deref() == Some(rewind_key));
+                v2.rewind = finished
+                    .map(|finished| V2RewindProgress {
+                        finished: false,
+                        ..finished
+                    })
+                    .unwrap_or_else(|| V2RewindProgress::for_key(rewind_key));
+            }
+        }
         let dropped = self.inner.v2.lock().await.rewind.dropped;
         let remaining = num_turns.checked_sub(dropped).ok_or_else(|| {
             OpenCodeRuntimeError::Http("OpenCode already rewound past this checkpoint".to_owned())
@@ -2852,8 +2913,10 @@ impl OpenCodeSessionRuntime {
         {
             // Kept with the session before anything changes, so a restart mid-rewind settles it.
             let intent = V2RewindProgress {
+                key: Some(rewind_key.to_owned()),
                 dropped,
                 unsettled: Some((remaining, target.clone())),
+                finished: false,
             };
             self.v2_store_rewind(&session_id, &intent).await?;
             let revert = |phase: &'static str| {
@@ -2892,40 +2955,26 @@ impl OpenCodeSessionRuntime {
                 }
             }
         }
-        // The kept progress goes before success is reported: a record left behind would make a
-        // later rewind skip turns. If it cannot be removed, the rewind fails and a retry, which
-        // has nothing left to drop, removes it.
-        let finished = V2RewindProgress {
+        // Every turn is dropped, but BiBCode's transcript shows that only once this reports
+        // success; until then the progress holds prompts and a retry drops nothing more.
+        self.inner.v2.lock().await.rewind = V2RewindProgress {
+            key: Some(rewind_key.to_owned()),
             dropped: num_turns,
             unsettled: None,
+            finished: false,
         };
-        self.inner.v2.lock().await.rewind = finished;
-        if let Err(error) = self
-            .v2_store_rewind(&session_id, &V2RewindProgress::default())
-            .await
-        {
-            // The removal may have applied with only its answer lost: what the session now holds
-            // decides, so a removed record is not mistaken for one still to remove.
-            let kept = within_rewind_deadline(async {
-                self.v2_get_json(self.v2_url(&["session", &session_id], false)?)
-                    .await
-                    .ok_or_else(|| {
-                        OpenCodeRuntimeError::Http("the session could not be read".to_owned())
-                    })
-            })
-            .await
-            .map(|session| {
-                session
-                    .pointer("/data/metadata/bibcode/rewind")
-                    .is_some_and(|record| !record.is_null())
-            });
-            if kept.unwrap_or(true) {
-                return Err(error);
-            }
-        }
+        // Success needs the record marked finished, or a later runtime would restore the progress
+        // and hold prompts for a retry that never comes. A failed write fails the rewind, and its
+        // retry (same key) marks it finished, applied or not, without dropping more.
+        let finished = V2RewindProgress {
+            finished: true,
+            ..self.inner.v2.lock().await.rewind.clone()
+        };
+        self.v2_store_rewind(&session_id, &finished).await?;
         {
             let mut v2 = self.inner.v2.lock().await;
             v2.rewind = V2RewindProgress::default();
+            v2.finished_rewind = Some(finished);
             // The dropped turns may have switched the model or agent; the next prompt sets them.
             v2.synced_model = None;
             v2.synced_agent = false;
@@ -3061,8 +3110,7 @@ impl OpenCodeSessionRuntime {
     /// revert whose outcome is unknown). Only this runtime remembers it, so the session must not
     /// be suspended meanwhile.
     pub async fn has_unfinished_rewind(&self) -> bool {
-        let v2 = self.inner.v2.lock().await;
-        v2.rewind.dropped > 0 || v2.rewind.unsettled.is_some()
+        self.inner.v2.lock().await.rewind.is_unfinished()
     }
 
     /// A prompt waits while a checkpoint rewind is unfinished: OpenCode's conversation would no
@@ -3073,7 +3121,7 @@ impl OpenCodeSessionRuntime {
     ) -> Result<(), OpenCodeRuntimeError> {
         let _rewinding = self.inner.v2_rewind.lock().await;
         let settled = self.v2_settle_unsettled_revert(session_id).await;
-        if settled.is_err() || self.inner.v2.lock().await.rewind.dropped > 0 {
+        if settled.is_err() || self.inner.v2.lock().await.rewind.is_unfinished() {
             return Err(OpenCodeRuntimeError::NotSent(UNFINISHED_REVERT.to_owned()));
         }
         Ok(())

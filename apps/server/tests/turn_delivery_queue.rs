@@ -572,7 +572,11 @@ impl ProviderDriver for SteerDriver {
     fn set_options(&self, _: Vec<Value>) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async { Ok(()) })
     }
-    fn rollback(&self, _: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        _: i64,
+        _: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async { Ok(()) })
     }
     fn next_event(&self) -> BoxRuntimeFuture<'_, Option<ProviderEvent>> {
