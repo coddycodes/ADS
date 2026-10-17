@@ -461,6 +461,42 @@ describe("tauriDesktopBridge", () => {
     expect(topologyReads()).toBe(afterFirstRead + 1);
   });
 
+  it("keeps the restarted topology when a read from before backend-ready finishes later", async () => {
+    const restarted = {
+      ...defaultLocalEnvironmentBootstrap,
+      httpBaseUrl: "http://127.0.0.1:4888",
+      wsBaseUrl: "ws://127.0.0.1:4888",
+      bootstrapToken: "new-token",
+    };
+    const harness = installTauriHarness();
+    const bridge = await installBridge();
+    let finishStaleRead: (bootstraps: readonly unknown[]) => void = () => {};
+    const staleRead = new Promise<readonly unknown[]>((resolve) => {
+      finishStaleRead = resolve;
+    });
+    harness.invoke.mockImplementationOnce(() => staleRead);
+    const topologyReads = () =>
+      harness.invoke.mock.calls.filter(
+        ([command]) => command === "desktop_bridge_get_local_environment_bootstraps",
+      ).length;
+    const now = vi.spyOn(Date, "now").mockReturnValue(3_000_000);
+    bridge.getLocalEnvironmentBootstraps();
+    now.mockReturnValue(3_025_000);
+    harness.listeners.get("desktop:backend-ready")?.({
+      payload: { reason: "restarted", bootstraps: [restarted] },
+    });
+
+    finishStaleRead([defaultLocalEnvironmentBootstrap]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(bridge.getLocalEnvironmentBootstraps()).toEqual([restarted]);
+
+    // The ready event is itself a fresh answer, so the throttle starts from it.
+    const reads = topologyReads();
+    now.mockReturnValue(3_040_000);
+    bridge.getLocalEnvironmentBootstraps();
+    expect(topologyReads()).toBe(reads);
+  });
+
   it("keeps asking on every read while the primary bootstrap is unknown", async () => {
     let primaryKnown = true;
     const primaryBootstrap = {

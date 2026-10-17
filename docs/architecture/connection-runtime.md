@@ -35,6 +35,8 @@ public package has no root export; callers use focused subpaths such as
   and invalidates the promise when `desktop:backend-ready` publishes a new
   bootstrap. A rejected exchange clears only its own cached promise; a late
   rejection from before backend-ready cannot discard a replacement exchange.
+  The bridge also caches the local topology; backend-ready replaces it, and a
+  topology read already in flight cannot write the old address back.
   Primary HTTP requests read through that same owner; they do not
   retain a separate bearer promise across a backend restart. This matters
   because a new desktop-bootstrap exchange supersedes earlier sessions of the
