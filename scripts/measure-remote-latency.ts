@@ -707,9 +707,16 @@ function terminalOutputEvents(
   const events: Array<{ at: number; text: string }> = [];
   for (const { message, at } of decodeFrames(frames.filter((frame) => frame.at >= since))) {
     if (message._tag !== "Chunk" || !Array.isArray(message.values)) continue;
-    for (const value of message.values as Array<{ type?: string; data?: unknown }>) {
+    for (const value of message.values as Array<{
+      type?: string;
+      data?: unknown;
+      snapshot?: { history?: unknown };
+    }>) {
       if (value.type === "output" && typeof value.data === "string") {
         events.push({ at, text: value.data });
+      } else if (value.type === "snapshot" && typeof value.snapshot?.history === "string") {
+        // An attach (or resync) snapshot carries the transcript the terminal shows.
+        events.push({ at, text: value.snapshot.history });
       }
     }
   }
@@ -879,7 +886,8 @@ export async function runScenarios(
     const since = Date.now();
     await clickButton(page, "Toggle right panel");
     await clickButton(page, "Terminal");
-    // The first output is the shell's prompt, whatever the shell draws it with.
+    // The first text, from the attach snapshot or output, is the shell's prompt, whatever
+    // the shell draws it with.
     return waitUntil(() => terminalOutputSince(page.frames, since).trim().length > 0);
   });
   await sleep(1_000);
