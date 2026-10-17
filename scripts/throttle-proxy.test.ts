@@ -107,11 +107,15 @@ describe("startThrottleProxy", () => {
       down: 65536,
       up: 32768,
       frozen: false,
+      delay: 0,
+      jitter: 0,
     });
     expect(await get("/set?freeze=1")).toEqual({
       down: 65536,
       up: 32768,
       frozen: true,
+      delay: 0,
+      jitter: 0,
     });
     let bytes = 0;
     const reading = readAll(proxy.port, (total) => {
@@ -123,10 +127,24 @@ describe("startThrottleProxy", () => {
       down: 65536,
       up: 32768,
       frozen: false,
+      delay: 0,
+      jitter: 0,
     });
     expect(await reading).toEqual(payload);
-    expect(await get("/set?down=0")).toEqual({ down: 0, up: 32768, frozen: false });
-    expect(await get("/state")).toEqual({ down: 0, up: 32768, frozen: false });
+    expect(await get("/set?down=0&delay=125&jitter=10")).toEqual({
+      down: 0,
+      up: 32768,
+      frozen: false,
+      delay: 125,
+      jitter: 10,
+    });
+    expect(await get("/state")).toEqual({
+      down: 0,
+      up: 32768,
+      frozen: false,
+      delay: 125,
+      jitter: 10,
+    });
   });
 
   it("uses CLI listen/target/control and rate arguments", async () => {
@@ -171,8 +189,55 @@ describe("startThrottleProxy", () => {
       down: 65536,
       up: 32768,
       frozen: false,
+      delay: 0,
+      jitter: 0,
     });
     expect(await readAll(listenPort)).toEqual(payload);
+  });
+
+  it("delays each direction by the one-way latency and keeps byte order under jitter", async () => {
+    const echo = NodeNet.createServer((socket) => socket.pipe(socket));
+    await new Promise<void>((resolve) => echo.listen(0, "127.0.0.1", resolve));
+    cleanups.push(() => new Promise<void>((resolve) => echo.close(() => resolve())));
+    const proxy = await startThrottleProxy({
+      listenHost: "127.0.0.1",
+      listenPort: 0,
+      targetHost: "127.0.0.1",
+      targetPort: (echo.address() as NodeNet.AddressInfo).port,
+      initial: { delay: 60, jitter: 40 },
+    });
+    cleanups.push(proxy.close);
+    const socket = NodeNet.connect(proxy.port, "127.0.0.1");
+    cleanups.push(async () => {
+      socket.destroy();
+    });
+    await NodeEvents.once(socket, "connect");
+    const received: Array<Buffer> = [];
+    let total = 0;
+    const expected = Buffer.from(Array.from({ length: 100 }, (_, index) => `${index};`).join(""));
+    const done = new Promise<number>((resolve) => {
+      socket.on("data", (data: Buffer) => {
+        received.push(data);
+        total += data.length;
+        if (total >= expected.length) resolve(Date.now());
+      });
+    });
+    const started = Date.now();
+    for (let index = 0; index < 100; index++) {
+      socket.write(`${index};`);
+      if (index % 10 === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const finished = await done;
+    expect(Buffer.concat(received)).toEqual(expected);
+    // Two one-way delays of at least 60 ms each.
+    expect(finished - started).toBeGreaterThanOrEqual(120);
+    expect(proxy.update({ delay: 0, jitter: 0 })).toEqual({
+      down: 0,
+      up: 0,
+      frozen: false,
+      delay: 0,
+      jitter: 0,
+    });
   });
 
   it("does not start a CLI server when imported", async () => {
