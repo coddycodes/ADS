@@ -1902,6 +1902,26 @@ client decodes only the changed fields with the thread's field
 schemas, and `packages/contracts/fixtures/thread-stream/lifecycle.json` pins
 that patches rebuild the server's snapshot exactly. Older clients omit
 `patches` and keep receiving whole snapshots; older servers ignore it.
+
+A resubscribe resumes instead of resending the thread
+([design](../superpowers/specs/2026-10-17-thread-resubscribe-resume-design.md)).
+For a `patches: true` subscriber, every `snapshot` and `patch` item carries a
+`revision`: a 128-bit digest of the thread's held fingerprints, keyed by
+random keys secret to the server process. The client records the revision of
+the last item it applied in full and sends it on each resubscribe as
+`resume: { revision, snapshotSequence }`. The server loads the thread as
+before, and answers `{ kind: "unchanged", snapshotSequence, revision }` only
+when the thread still has that revision and its sequence is at least the
+client's. It then patches against that thread. Anything else gets the whole
+snapshot: a change the client missed, a revision from before a restart (new
+keys), one the server never produced, a sequence newer than the server's, or a
+client that does not apply patches. The client clears its revision whenever it
+changes the thread without one (an event item, deletion), so it never resumes
+from a thread it does not hold. Older clients send no `resume` and older
+servers ignore it and send no `revision`, so either side alone keeps today's
+full snapshot. `packages/contracts/fixtures/thread-stream/resume.json` pins the
+items; revisions in it are placeholders, because they mean nothing to another
+process.
 A thread stream ends with its first error, such as `Thread … was not found`
 for a missing or deleted thread, whose targeted load reads none of its rows.
 The client retries a failed `subscribeThread` or `subscribeActivity` with

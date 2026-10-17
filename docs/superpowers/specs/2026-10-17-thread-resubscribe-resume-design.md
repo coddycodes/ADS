@@ -1,6 +1,6 @@
 # Resume a thread subscription instead of resending its snapshot
 
-Status: **Proposed** on 2026-10-17, awaiting approval. Follows #96 and #89.
+Status: **Approved** on 2026-10-17 (alternative 1; alternative 2 deferred). Follows #96 and #89.
 
 ## Problem and evidence
 
@@ -166,3 +166,16 @@ This is a wire-protocol addition, so it needs approval before it is built.
 
 Approve alternative 1, with alternative 2 deferred until measurements show
 changed-while-disconnected resubscribes matter. Or choose another alternative.
+
+## Implementation notes (2026-10-17)
+
+Alternative 1 is built, with two differences from the text above:
+
+- The revision is a 128-bit digest of the fingerprints `HeldThread` already
+  keeps, rather than a second walk of the whole thread. Those fingerprints now
+  use a key secret to the process instead of one per subscription. Two threads
+  with one revision therefore differ only by a 64-bit fingerprint collision per
+  entry, the bound patches already accept. No walk is added per update.
+- The fast path that skips loading the thread is not built. A resubscribe still
+  loads the thread, because the `unchanged` answer must leave the server holding
+  that thread's fingerprints so later patches are exact.

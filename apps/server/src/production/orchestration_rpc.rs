@@ -928,7 +928,7 @@ fn shell_stream(
     // between is queued for the stream instead of disappearing in that gap.
     let mut events = engine.subscribe_events();
     tokio::spawn(async move {
-        if send_snapshot(&sender, shell_snapshot(&engine, false).await)
+        if send_snapshot(&sender, shell_snapshot(&engine, false).await, None)
             .await
             .is_err()
         {
@@ -942,7 +942,7 @@ fn shell_stream(
                 () = cancellation.cancelled() => return,
                 () = async { tokio::time::sleep_until(due.expect("guarded")).await }, if due.is_some() => {
                     due = None;
-                    if send_snapshot(&sender, shell_snapshot(&engine, false).await).await.is_err() {
+                    if send_snapshot(&sender, shell_snapshot(&engine, false).await, None).await.is_err() {
                         return;
                     }
                 }
@@ -967,10 +967,34 @@ const THREAD_UPDATE_COALESCE: std::time::Duration = std::time::Duration::from_mi
 /// thread itself (#101). A long session's thread is megabytes of JSON, and every open
 /// subscription held its own copy for as long as it stayed open.
 struct HeldThread {
-    /// This subscription's own random key: thread content comes from agents and tools, and a
-    /// fixed key would let crafted content collide on purpose to hide an update.
+    /// A random key, secret to this process: thread content comes from agents and tools, and a
+    /// known key would let crafted content collide on purpose to hide an update.
     keys: std::hash::RandomState,
     fields: HashMap<String, HeldField>,
+}
+
+/// The process's secret keys for thread fingerprints and revisions. A restart draws new ones, so
+/// every revision from before it mismatches and its client gets a whole snapshot.
+pub(crate) struct ThreadRevisionKeys {
+    fields: std::hash::RandomState,
+    first: std::hash::RandomState,
+    second: std::hash::RandomState,
+}
+
+impl ThreadRevisionKeys {
+    fn new() -> Self {
+        Self {
+            fields: std::hash::RandomState::new(),
+            first: std::hash::RandomState::new(),
+            second: std::hash::RandomState::new(),
+        }
+    }
+}
+
+fn default_thread_revision_keys() -> &'static ThreadRevisionKeys {
+    static KEYS: std::sync::LazyLock<ThreadRevisionKeys> =
+        std::sync::LazyLock::new(ThreadRevisionKeys::new);
+    &KEYS
 }
 
 enum HeldField {
@@ -998,6 +1022,37 @@ impl HeldThread {
             })
             .collect();
         Some(Self { keys, fields })
+    }
+
+    /// The thread's revision: a 128-bit digest, under the process's keys, of the fingerprints
+    /// this held state keeps. Two threads with the same revision differ only by a fingerprint
+    /// collision (about 1 in 2^64 per entry), the bound patches already accept.
+    fn revision(&self, keys: &ThreadRevisionKeys) -> String {
+        use std::hash::{BuildHasher, Hasher};
+
+        let mut names = self.fields.keys().collect::<Vec<_>>();
+        names.sort();
+        let digest = |state: &std::hash::RandomState| {
+            let mut hasher = state.build_hasher();
+            hasher.write_usize(names.len());
+            for name in &names {
+                hasher.write_usize(name.len());
+                hasher.write(name.as_bytes());
+                match &self.fields[*name] {
+                    HeldField::Value(value) => {
+                        hasher.write_u8(0);
+                        hasher.write_u64(*value);
+                    }
+                    HeldField::Array(entries) => {
+                        hasher.write_u8(1);
+                        hasher.write_usize(entries.len());
+                        entries.iter().for_each(|entry| hasher.write_u64(*entry));
+                    }
+                }
+            }
+            hasher.finish()
+        };
+        format!("{:016x}{:016x}", digest(&keys.first), digest(&keys.second))
     }
 }
 
@@ -1116,6 +1171,21 @@ fn thread_stream(
     request: RpcRequest,
     cancellation: CancellationToken,
 ) -> mpsc::Receiver<RpcStreamChunk> {
+    thread_stream_with_keys(
+        engine,
+        request,
+        cancellation,
+        default_thread_revision_keys(),
+    )
+}
+
+/// `thread_stream` under the given revision keys; tests pass fresh ones to stand for a restart.
+fn thread_stream_with_keys(
+    engine: OrchestrationEngine,
+    request: RpcRequest,
+    cancellation: CancellationToken,
+    keys: &'static ThreadRevisionKeys,
+) -> mpsc::Receiver<RpcStreamChunk> {
     let (sender, receiver) = mpsc::channel(STREAM_CAPACITY);
     let input = match decode::<SubscribeThreadInput>(request) {
         Ok(input) => input,
@@ -1132,18 +1202,36 @@ fn thread_stream(
     tokio::spawn(async move {
         let first = thread_snapshot(&engine, &input.thread_id).await;
         // What the subscriber holds of the last snapshot, for a client that applies patches.
-        let keys = std::hash::RandomState::new();
         let hold = |snapshot: &RpcResult| {
             snapshot
                 .as_ref()
                 .ok()
                 .filter(|_| input.patches)
-                .and_then(|snapshot| HeldThread::of(snapshot, keys.clone()))
+                .and_then(|snapshot| HeldThread::of(snapshot, keys.fields.clone()))
         };
         let mut held = hold(&first);
+        let revision = held.as_ref().map(|held| held.revision(keys));
         // An error ends the stream; a deleted thread has no events to end the loop by (#113).
         let failed = first.is_err();
-        if send_snapshot(&sender, first).await.is_err() || failed {
+        let opened = match (&first, &revision, &input.resume) {
+            // The client holds exactly this thread: everything else would resend it (#96).
+            (Ok(snapshot), Some(revision), Some(resume))
+                if resume.revision == *revision
+                    && snapshot.get("snapshotSequence").and_then(Value::as_i64)
+                        >= Some(resume.snapshot_sequence) =>
+            {
+                sender
+                    .send(Ok(vec![json!({
+                        "kind": "unchanged",
+                        "snapshotSequence": snapshot.get("snapshotSequence"),
+                        "revision": revision,
+                    })]))
+                    .await
+                    .map_err(|_| ())
+            }
+            _ => send_snapshot(&sender, first, revision).await,
+        };
+        if opened.is_err() || failed {
             return;
         }
         let mut due: Option<tokio::time::Instant> = None;
@@ -1153,6 +1241,8 @@ fn thread_stream(
                 () = async { tokio::time::sleep_until(due.expect("guarded")).await }, if due.is_some() => {
                     due = None;
                     let next = thread_snapshot(&engine, &input.thread_id).await;
+                    let next_held = hold(&next);
+                    let revision = next_held.as_ref().map(|held| held.revision(keys));
                     // A whole thread per update re-sent megabytes for long threads and
                     // saturated slow remote links (#89): a client that applies patches
                     // gets only what changed since the snapshot it holds.
@@ -1162,13 +1252,18 @@ fn thread_stream(
                     };
                     let sent = match patch {
                         Some(None) => Ok(()),
-                        Some(Some(item)) => sender.send(Ok(vec![item])).await.map_err(|_| ()),
-                        None => send_snapshot(&sender, next.clone()).await,
+                        Some(Some(mut item)) => {
+                            if let (Some(revision), Some(fields)) = (&revision, item.as_object_mut()) {
+                                fields.insert("revision".to_owned(), json!(revision));
+                            }
+                            sender.send(Ok(vec![item])).await.map_err(|_| ())
+                        }
+                        None => send_snapshot(&sender, next.clone(), revision).await,
                     };
                     if sent.is_err() || next.is_err() {
                         return;
                     }
-                    held = hold(&next);
+                    held = next_held;
                 }
                 event = events.recv() => match event {
                     // Lost events need no special handling: every update re-reads the
@@ -1188,12 +1283,20 @@ fn thread_stream(
     receiver
 }
 
+/// Sends a whole-thread snapshot item, with the thread's revision for a client that resumes.
 async fn send_snapshot(
     sender: &mpsc::Sender<RpcStreamChunk>,
     snapshot: RpcResult,
+    revision: Option<String>,
 ) -> Result<(), ()> {
     sender
-        .send(snapshot.map(|snapshot| vec![json!({ "kind": "snapshot", "snapshot": snapshot })]))
+        .send(snapshot.map(|snapshot| {
+            let mut item = json!({ "kind": "snapshot", "snapshot": snapshot });
+            if let Some(revision) = revision {
+                item["revision"] = json!(revision);
+            }
+            vec![item]
+        }))
         .await
         .map_err(|_| ())
 }
@@ -1883,6 +1986,16 @@ struct SubscribeThreadInput {
     /// The client applies `patch` items; without it every update is a snapshot.
     #[serde(default)]
     patches: bool,
+    /// The last revision the client applied; older clients omit it.
+    #[serde(default)]
+    resume: Option<ResumeThreadInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResumeThreadInput {
+    revision: String,
+    snapshot_sequence: i64,
 }
 
 #[derive(Deserialize)]
@@ -6429,7 +6542,7 @@ mod tests {
 
         let (sender, receiver) = mpsc::channel(1);
         drop(receiver);
-        assert!(send_snapshot(&sender, Ok(json!({}))).await.is_err());
+        assert!(send_snapshot(&sender, Ok(json!({})), None).await.is_err());
         engine.shutdown().await;
     }
 
@@ -6505,6 +6618,304 @@ mod tests {
         assert!(items[0]["patch"]["set"].get("messages").is_none());
         assert_eq!(next_items(&mut legacy).await[0]["kind"], "snapshot");
         cancellation.cancel();
+        engine.shutdown().await;
+    }
+
+    fn subscribe_thread(
+        engine: &OrchestrationEngine,
+        payload: Value,
+        keys: &'static ThreadRevisionKeys,
+        cancellation: &CancellationToken,
+    ) -> mpsc::Receiver<RpcStreamChunk> {
+        thread_stream_with_keys(
+            engine.clone(),
+            request("orchestration.subscribeThread", payload),
+            cancellation.clone(),
+            keys,
+        )
+    }
+
+    fn resume(thread_id: &str, item: &Value) -> Value {
+        let sequence = item
+            .get("snapshotSequence")
+            .or_else(|| item["snapshot"].get("snapshotSequence"))
+            .cloned()
+            .expect("a sequence");
+        json!({
+            "threadId": thread_id,
+            "patches": true,
+            "resume": { "revision": item["revision"], "snapshotSequence": sequence },
+        })
+    }
+
+    /// A resubscribe that names the revision the client holds gets `unchanged` instead of the
+    /// whole thread, and later updates patch that same thread.
+    #[tokio::test]
+    async fn resubscribing_at_the_current_revision_sends_unchanged() {
+        let engine = migrated_engine().await;
+        let thread_id = created_project_thread(&engine).await;
+        let cancellation = CancellationToken::new();
+        let keys = default_thread_revision_keys();
+        let mut first = subscribe_thread(
+            &engine,
+            json!({ "threadId": thread_id, "patches": true }),
+            keys,
+            &cancellation,
+        );
+        let opened = next_items(&mut first).await.remove(0);
+        assert_eq!(opened["kind"], "snapshot");
+        assert!(opened["revision"].is_string(), "{opened}");
+        drop(first);
+
+        let mut resumed =
+            subscribe_thread(&engine, resume(&thread_id, &opened), keys, &cancellation);
+        let unchanged = next_items(&mut resumed).await.remove(0);
+        assert_eq!(unchanged["kind"], "unchanged", "{unchanged}");
+        assert_eq!(unchanged["revision"], opened["revision"]);
+        assert!(unchanged.get("snapshot").is_none());
+
+        rename(&engine, &thread_id, 1).await;
+        let patch = next_items(&mut resumed).await.remove(0);
+        assert_eq!(patch["kind"], "patch", "{patch}");
+        assert_eq!(patch["patch"]["set"]["title"], "Title 1");
+        assert!(patch["revision"].is_string());
+        assert_ne!(patch["revision"], opened["revision"]);
+        cancellation.cancel();
+        engine.shutdown().await;
+    }
+
+    /// Mixed versions: a client without `resume` (or without patches) keeps today's full
+    /// snapshot, and only clients that apply patches see revisions.
+    #[tokio::test]
+    async fn clients_without_resume_keep_full_snapshots() {
+        let engine = migrated_engine().await;
+        let thread_id = created_project_thread(&engine).await;
+        let cancellation = CancellationToken::new();
+        let keys = default_thread_revision_keys();
+        let mut patched = subscribe_thread(
+            &engine,
+            json!({ "threadId": thread_id, "patches": true }),
+            keys,
+            &cancellation,
+        );
+        let opened = next_items(&mut patched).await.remove(0);
+        let mut legacy = subscribe_thread(
+            &engine,
+            json!({ "threadId": thread_id }),
+            keys,
+            &cancellation,
+        );
+        let legacy_first = next_items(&mut legacy).await.remove(0);
+        assert_eq!(legacy_first["kind"], "snapshot");
+        assert!(legacy_first.get("revision").is_none(), "{legacy_first}");
+
+        // A resume from a client that does not apply patches still gets the whole thread.
+        let mut payload = resume(&thread_id, &opened);
+        payload["patches"] = json!(false);
+        let mut unpatched = subscribe_thread(&engine, payload, keys, &cancellation);
+        assert_eq!(next_items(&mut unpatched).await[0]["kind"], "snapshot");
+        cancellation.cancel();
+        engine.shutdown().await;
+    }
+
+    /// Fault injection: anything but the server's current revision at or before its current
+    /// sequence falls back to a full snapshot, never to `unchanged`.
+    #[tokio::test]
+    async fn a_stale_unknown_or_newer_revision_gets_a_full_snapshot() {
+        let engine = migrated_engine().await;
+        let thread_id = created_project_thread(&engine).await;
+        let cancellation = CancellationToken::new();
+        let keys = default_thread_revision_keys();
+        let mut first = subscribe_thread(
+            &engine,
+            json!({ "threadId": thread_id, "patches": true }),
+            keys,
+            &cancellation,
+        );
+        let opened = next_items(&mut first).await.remove(0);
+        drop(first);
+
+        // A gap: the thread changed after the client's last applied item.
+        rename(&engine, &thread_id, 1).await;
+        let mut stale = subscribe_thread(&engine, resume(&thread_id, &opened), keys, &cancellation);
+        let snapshot = next_items(&mut stale).await.remove(0);
+        assert_eq!(snapshot["kind"], "snapshot", "{snapshot}");
+        assert_eq!(snapshot["snapshot"]["thread"]["title"], "Title 1");
+
+        // A revision this server never produced.
+        let mut unknown_payload = resume(&thread_id, &snapshot);
+        unknown_payload["resume"]["revision"] = json!("00000000000000000000000000000000");
+        let mut unknown = subscribe_thread(&engine, unknown_payload, keys, &cancellation);
+        assert_eq!(next_items(&mut unknown).await[0]["kind"], "snapshot");
+
+        // The current revision with a sequence newer than the server's: the server went back.
+        let mut newer_payload = resume(&thread_id, &snapshot);
+        newer_payload["resume"]["snapshotSequence"] =
+            json!(snapshot["snapshot"]["snapshotSequence"].as_i64().unwrap() + 1);
+        let mut newer = subscribe_thread(&engine, newer_payload, keys, &cancellation);
+        assert_eq!(next_items(&mut newer).await[0]["kind"], "snapshot");
+        cancellation.cancel();
+        engine.shutdown().await;
+    }
+
+    /// Fault injection: a server restart draws new revision keys, so a revision from before it
+    /// gets a full snapshot even for an unchanged thread.
+    #[tokio::test]
+    async fn a_revision_from_before_a_restart_gets_a_full_snapshot() {
+        let engine = migrated_engine().await;
+        let thread_id = created_project_thread(&engine).await;
+        let cancellation = CancellationToken::new();
+        let before: &'static ThreadRevisionKeys = Box::leak(Box::new(ThreadRevisionKeys::new()));
+        let after: &'static ThreadRevisionKeys = Box::leak(Box::new(ThreadRevisionKeys::new()));
+        let mut first = subscribe_thread(
+            &engine,
+            json!({ "threadId": thread_id, "patches": true }),
+            before,
+            &cancellation,
+        );
+        let opened = next_items(&mut first).await.remove(0);
+        drop(first);
+
+        let mut restarted =
+            subscribe_thread(&engine, resume(&thread_id, &opened), after, &cancellation);
+        let snapshot = next_items(&mut restarted).await.remove(0);
+        assert_eq!(snapshot["kind"], "snapshot", "{snapshot}");
+        assert_ne!(snapshot["revision"], opened["revision"]);
+        cancellation.cancel();
+        engine.shutdown().await;
+    }
+
+    /// Fault injection: a reconnect storm. Many concurrent resumes all get `unchanged`, each then
+    /// patches the same change, and a resume racing changes never gets `unchanged` for a thread
+    /// it does not hold.
+    #[tokio::test]
+    async fn a_reconnect_storm_of_resumes_stays_exact() {
+        let engine = migrated_engine().await;
+        let thread_id = created_project_thread(&engine).await;
+        let cancellation = CancellationToken::new();
+        let keys = default_thread_revision_keys();
+        let mut first = subscribe_thread(
+            &engine,
+            json!({ "threadId": thread_id, "patches": true }),
+            keys,
+            &cancellation,
+        );
+        let opened = next_items(&mut first).await.remove(0);
+        drop(first);
+
+        let mut storm = (0..32)
+            .map(|_| subscribe_thread(&engine, resume(&thread_id, &opened), keys, &cancellation))
+            .collect::<Vec<_>>();
+        for stream in &mut storm {
+            assert_eq!(next_items(stream).await[0]["kind"], "unchanged");
+        }
+        rename(&engine, &thread_id, 1).await;
+        let mut revisions = std::collections::HashSet::new();
+        for stream in &mut storm {
+            let patch = next_items(stream).await.remove(0);
+            assert_eq!(patch["patch"]["set"]["title"], "Title 1");
+            revisions.insert(patch["revision"].to_string());
+        }
+        assert_eq!(
+            revisions.len(),
+            1,
+            "every subscriber reached the same thread"
+        );
+        drop(storm);
+
+        let mut held = opened;
+        for index in 2..8 {
+            rename(&engine, &thread_id, index).await;
+            let mut stream =
+                subscribe_thread(&engine, resume(&thread_id, &held), keys, &cancellation);
+            let item = next_items(&mut stream).await.remove(0);
+            assert_eq!(
+                item["kind"], "snapshot",
+                "a stale resume must not be unchanged: {item}"
+            );
+            assert_eq!(
+                item["snapshot"]["thread"]["title"],
+                format!("Title {index}")
+            );
+            held = item;
+        }
+        cancellation.cancel();
+        engine.shutdown().await;
+    }
+
+    /// The resume wire contract: a `resume` input, the snapshot and `unchanged` items with their
+    /// revisions, and a later patch. Revisions are per process, so they become placeholders.
+    /// `threadStreamParity.test.ts` decodes and applies it. Regenerate with
+    /// `BIBCODE_UPDATE_THREAD_STREAM_FIXTURE=1`.
+    #[tokio::test]
+    async fn thread_stream_resume_fixture_matches_the_wire() {
+        const AT: &str = "2026-07-10T10:00:00.000Z";
+        let engine = migrated_engine().await;
+        for command in [
+            json!({"type":"project.create","commandId":"c01","projectId":"p1","title":"Project","workspaceRoot":"C:/repo","defaultModelSelection":null,"createdAt":AT}),
+            json!({"type":"thread.create","commandId":"c02","threadId":"t1","projectId":"p1","title":"Thread","modelSelection":{"instanceId":"codex","model":"gpt-5"},"runtimeMode":"full-access","branch":null,"worktreePath":null,"createdAt":AT}),
+        ] {
+            engine
+                .dispatch(decode_command(command))
+                .await
+                .expect("setup");
+        }
+        let cancellation = CancellationToken::new();
+        let keys = default_thread_revision_keys();
+        let mut first = subscribe_thread(
+            &engine,
+            json!({ "threadId": "t1", "patches": true }),
+            keys,
+            &cancellation,
+        );
+        let snapshot = next_items(&mut first).await.remove(0);
+        drop(first);
+        let input = resume("t1", &snapshot);
+        let mut resumed = subscribe_thread(&engine, input.clone(), keys, &cancellation);
+        let unchanged = next_items(&mut resumed).await.remove(0);
+        engine
+            .dispatch(decode_command(json!({"type":"thread.meta.update","commandId":"c03","threadId":"t1","title":"Renamed"})))
+            .await
+            .expect("rename");
+        let patch = next_items(&mut resumed).await.remove(0);
+        cancellation.cancel();
+
+        let mut fixture = stable_ids_and_clock_times(
+            json!({ "input": input, "items": [snapshot, unchanged, patch] }),
+            AT,
+        );
+        let mut revisions = Vec::<Value>::new();
+        let mut placeholder = |revision: &mut Value| {
+            let index = revisions
+                .iter()
+                .position(|seen| seen == revision)
+                .unwrap_or_else(|| {
+                    revisions.push(revision.clone());
+                    revisions.len() - 1
+                });
+            *revision = json!(format!("revision-{}", index + 1));
+        };
+        placeholder(&mut fixture["input"]["resume"]["revision"]);
+        for item in fixture["items"].as_array_mut().expect("items") {
+            placeholder(&mut item["revision"]);
+        }
+        assert_eq!(revisions.len(), 2, "the patch moves the revision once");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/contracts/fixtures/thread-stream/resume.json");
+        if std::env::var_os("BIBCODE_UPDATE_THREAD_STREAM_FIXTURE").is_some() {
+            std::fs::write(
+                &path,
+                serde_json::to_string_pretty(&fixture).unwrap() + "\n",
+            )
+            .unwrap();
+        }
+        let committed: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("committed fixture"))
+                .expect("fixture JSON");
+        assert_eq!(
+            fixture, committed,
+            "regenerate the thread stream resume fixture"
+        );
         engine.shutdown().await;
     }
 
