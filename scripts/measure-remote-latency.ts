@@ -164,6 +164,9 @@ export function criticalPath(
 }
 
 /** Timer-driven polls that run whatever the user does; they are not part of any action. */
+/** The name the page uses for its server; Chromium maps it to 127.0.0.1. */
+const REMOTE_HOST = "bibcode-remote.test";
+
 /** Requests an action sends this long after its result shows still belong to it. */
 const SETTLE_MS = 500;
 
@@ -385,7 +388,15 @@ async function startHarness(options: {
     options.serverBin,
     ["serve", "--mode", "web", "--host", "127.0.0.1", "--port", String(serverPort), "--no-browser"],
     {
-      env: { ...environment, RUST_LOG: "warn", BIBCODE_LOG: "warn" },
+      env: {
+        ...environment,
+        RUST_LOG: "warn",
+        BIBCODE_LOG: "warn",
+        // The compression kill switch passes through, to measure with it off.
+        ...(process.env.BIBCODE_REMOTE_COMPRESSION === undefined
+          ? {}
+          : { BIBCODE_REMOTE_COMPRESSION: process.env.BIBCODE_REMOTE_COMPRESSION }),
+      },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -479,11 +490,15 @@ async function startHarness(options: {
           front.close(() => resolve());
         }),
     );
-    const origin = `http://127.0.0.1:${(front.address() as NodeNet.AddressInfo).port}`;
+    // The page reaches the front server by a name that is not loopback, as a remote
+    // server would be, so the client treats it as remote (for example, it offers
+    // compression); Chromium resolves the name to the local front server.
+    const origin = `http://${REMOTE_HOST}:${(front.address() as NodeNet.AddressInfo).port}`;
     const browser = await launchChromium(
       options.chromium,
       NodePath.join(options.runRoot, "chromium"),
       (release) => releases.push(release),
+      [`--host-resolver-rules=MAP ${REMOTE_HOST} 127.0.0.1`],
     );
     releases.push(browser.close);
     const page = browser.page;

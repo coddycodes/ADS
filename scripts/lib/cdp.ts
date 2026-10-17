@@ -201,6 +201,7 @@ export async function launchChromium(
   executable: string,
   profileDirectory: string,
   onSpawn: (release: () => Promise<void>) => void = () => undefined,
+  extraArgs: ReadonlyArray<string> = [],
 ): Promise<Browser> {
   NodeFS.mkdirSync(profileDirectory, { recursive: true });
   const child = NodeChildProcess.spawn(
@@ -214,6 +215,7 @@ export async function launchChromium(
       "--disable-background-timer-throttling",
       "--disable-renderer-backgrounding",
       "--window-size=1600,1000",
+      ...extraArgs,
       "about:blank",
     ],
     { stdio: ["ignore", "ignore", "pipe"] },
