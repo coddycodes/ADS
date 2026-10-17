@@ -3143,7 +3143,9 @@ manager tests and the iOS planning, parsing, and orientation tests run on every
 platform. On a Mac with Xcode and a `Shutdown` iPhone simulator, also run the
 opt-in real-simulator tests. They boot it through CoreSimulator and check live
 frames and the H.264 stream (a config unit whose SPS has the screen's size and
-a level of at least 5.1, then a key unit). They tap Settings open, type into
+a level of at least 5.1, then a key unit), and that a settled home screen
+keeps sending units, at least 3 in 4 s with no gap of 2 s or more. They tap
+Settings open, type into
 Safari's address bar, and rotate Safari to each orientation, checking the
 reported orientation and size, and that `landscape` matches `simctl`'s own
 upright screenshot. They shut the simulator down from outside and expect the

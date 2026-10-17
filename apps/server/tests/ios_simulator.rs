@@ -908,6 +908,7 @@ async fn an_idle_home_screen_keeps_streaming() {
         count += 1;
         keys += u32::from(unit.kind == UnitKind::Key);
         bytes += unit.data.len();
+        println!("  {:?} {} bytes", unit.kind, unit.data.len());
     }
     // VideoToolbox may code a heartbeat as a key frame on its own; the server asks for
     // none, so `keys` is reported, not asserted.

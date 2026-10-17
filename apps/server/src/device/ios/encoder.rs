@@ -1751,7 +1751,8 @@ mod tests {
 
     #[tokio::test]
     async fn an_idle_screen_still_sends_a_frame_every_second_until_stopped() {
-        let source = scripted(|_| Ok(())).await;
+        let mut source = scripted(|_| Ok(())).await;
+        assert!(next(&mut source.video).await.is_some(), "the first frame");
         let calls = &source.calls;
         assert_eq!(calls.recv_timeout(Duration::from_secs(5)), Ok(false));
         // No damage, no pending key, no failure: the heartbeat still encodes the screen,
@@ -1765,6 +1766,10 @@ mod tests {
             elapsed >= IDLE_INTERVAL * 2 - RETRY_INTERVAL,
             "two heartbeats took {elapsed:?}, faster than one a second"
         );
+        // Each heartbeat reached the stream as a unit.
+        for _ in 0..2 {
+            assert!(next(&mut source.video).await.is_some(), "a heartbeat unit");
+        }
         // Stopping the stream ends the heartbeat: the thread drops its encoder.
         VideoSource::stop(source.video, false).await;
         assert_eq!(

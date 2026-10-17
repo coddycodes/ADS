@@ -538,7 +538,9 @@ Amended after the spikes (§0 Results); §0 names every call.
   heartbeats end with the stream. Without it a still screen sent nothing and
   the client, which treats 5 s without a frame as a stall, covered a live
   picture with "The screen stopped updating." (Correction, native
-  validation.) Backpressure, slow-viewer handling and the JPEG fallback rules are unchanged
+  validation.) In that validation VideoToolbox coded each heartbeat as a key
+  frame (about 485 KB for 1206x2622, so about 3.9 Mbit/s for an idle screen)
+  even though the server asked for none. Backpressure, slow-viewer handling and the JPEG fallback rules are unchanged
   from Android.
 - **JPEG.** `snapshot_jpeg` locks the current surface, honors its row stride,
   rotates, and encodes with `jpeg-encoder` (already a dependency) at the

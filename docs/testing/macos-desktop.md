@@ -576,7 +576,9 @@ pgrep -fl <udid>                          # no process BiBCode started
    view-only checks in step 7 instead of steps 3–5.
 2. **Open.** Pick the simulator and **Start**. The pill reaches **Ready**;
    record the boot time. The screen shows video with no **Still images**
-   badge within 5 s, and it moves (the clock, an animation).
+   badge within 5 s, and it moves (the clock, an animation). Leave the home
+   screen still for at least 10 s: "The screen stopped updating." does not
+   appear.
 3. **Touch and Home.** Tap **Settings** on the home screen: it opens. Drag a
    list and release outside the panel: nothing stays pressed. Press **Home**:
    the home screen returns. Press **Lock**, then **Home** to wake it.
