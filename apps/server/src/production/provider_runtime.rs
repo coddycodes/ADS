@@ -11737,6 +11737,12 @@ impl ProviderDriver for OpenCodeDriver {
                         detail: delivery_detail(&provider_error("opencode")(error), None),
                     }
                 }
+                // OpenCode refused the message, so it was not delivered and is not sent again.
+                Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::RequestRefused(_)) => {
+                    ProviderDeliveryOutcome::Rejected {
+                        detail: delivery_detail(&provider_error("opencode")(error), None),
+                    }
+                }
                 Err(error) => ProviderDeliveryOutcome::Ambiguous {
                     detail: delivery_detail(&provider_error("opencode")(error), None),
                 },

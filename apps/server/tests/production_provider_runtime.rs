@@ -4198,6 +4198,67 @@ async fn opencode_option_the_model_does_not_advertise_fails_the_turn_once() {
     server.abort();
 }
 
+/// A message OpenCode refuses (HTTP 4xx) was never accepted, so its delivery fails once instead of
+/// waiting as uncertain, which would hold every later message on the thread.
+#[cfg(unix)]
+#[tokio::test]
+async fn opencode_refused_message_fails_the_delivery_once() {
+    let app = Router::new()
+        .route(
+            "/session",
+            post(|| async { Json(json!({"id":"opencode-refused-session"})) }),
+        )
+        .route(
+            "/session/{session_id}",
+            get(|| async { Json(json!({"id":"opencode-refused-session"})) }),
+        )
+        .route(
+            "/event",
+            get(|| async { Sse::new(stream::pending::<Result<Event, Infallible>>()) }),
+        )
+        .route(
+            "/session/{session_id}/message",
+            get(|| async { Json(json!({"data":[]})) }),
+        )
+        .route(
+            "/session/{session_id}/prompt_async",
+            post(|| async { axum::http::StatusCode::BAD_REQUEST }),
+        )
+        .route(
+            "/provider",
+            get(|| async {
+                Json(json!({
+                    "connected": ["openai"],
+                    "all": [{"id":"openai", "models":{"gpt-5":{"variants":{"high":{}}}}}]
+                }))
+            }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("OpenCode fixture bind");
+    let endpoint = format!("http://{}", listener.local_addr().expect("fixture address"));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("OpenCode fixture serve");
+    });
+    assert_option_case_settles_once(OptionCase {
+        provider: "opencode",
+        instance_config: json!({
+            "driver":"opencode", "enabled":true,
+            "config":{"binaryPath":"refusing-opencode-route", "serverUrl":endpoint}
+        }),
+        binary_path: None,
+        endpoint: Some(endpoint.clone()),
+        environment: Vec::new(),
+        model: "openai/gpt-5",
+        option: json!({"id":"variant","value":"high"}),
+        refusal: Some("OpenCode refused this message: prompt_async returned HTTP 400 Bad Request"),
+    })
+    .await;
+    server.abort();
+}
+
 #[tokio::test]
 async fn admitted_turn_freezes_native_session_before_provider_delivery_begins() {
     let (engine, _) = engine_and_database().await;

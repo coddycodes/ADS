@@ -1607,14 +1607,20 @@ async fn a_failed_opencode_2_request_settles_the_turn_it_announced() {
     drain(&runtime).await;
     replay.fail_sends.store(true, Ordering::SeqCst);
 
-    runtime
+    let prompt = runtime
         .send_turn(Some("SAY_HELLO please"), Vec::new(), Some("prompt-key"))
         .await
         .expect_err("the prompt is refused");
-    runtime
+    let command = runtime
         .send_command("review", "", Some("command-key"))
         .await
         .expect_err("the command is refused");
+    for error in [&prompt, &command] {
+        assert!(
+            matches!(error, OpenCodeRuntimeError::RequestRefused(_)),
+            "{error}"
+        );
+    }
 
     let events = drain(&runtime).await;
     let started = of_type(&events, "turn.started");

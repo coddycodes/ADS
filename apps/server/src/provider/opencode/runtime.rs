@@ -150,6 +150,9 @@ pub enum OpenCodeRuntimeError {
     /// A request failed before the turn itself was submitted, so it was not sent.
     #[error("OpenCode request failed before the turn was sent: {0}")]
     NotSent(String),
+    /// OpenCode answered the turn's own request with a 4xx, so it did not accept the turn.
+    #[error("OpenCode refused this message: {0}")]
+    RequestRefused(String),
 }
 
 async fn within_rewind_deadline<T>(
@@ -170,6 +173,35 @@ fn not_sent(error: OpenCodeRuntimeError) -> OpenCodeRuntimeError {
         OpenCodeRuntimeError::Http(detail) => OpenCodeRuntimeError::NotSent(detail),
         error => error,
     }
+}
+
+/// The turn's own request failed in transport: one whose connection never opened was not sent,
+/// and any later failure may have followed acceptance.
+fn turn_transport_error(error: reqwest::Error) -> OpenCodeRuntimeError {
+    if error.is_connect() {
+        OpenCodeRuntimeError::NotSent(error.to_string())
+    } else {
+        OpenCodeRuntimeError::Http(error.to_string())
+    }
+}
+
+/// The turn's own request was answered with an error: a refusal (4xx) was not accepted, and a
+/// server or gateway error may have followed acceptance.
+fn turn_status_error(status: reqwest::StatusCode, request: &str) -> OpenCodeRuntimeError {
+    let detail = format!("{request} returned HTTP {status}");
+    if status.is_client_error() {
+        OpenCodeRuntimeError::RequestRefused(detail)
+    } else {
+        OpenCodeRuntimeError::Http(detail)
+    }
+}
+
+/// Whether OpenCode never accepted the turn's own request.
+fn turn_was_not_accepted(error: &OpenCodeRuntimeError) -> bool {
+    matches!(
+        error,
+        OpenCodeRuntimeError::NotSent(_) | OpenCodeRuntimeError::RequestRefused(_)
+    )
 }
 
 impl OptionRefusal for OpenCodeRuntimeError {
@@ -999,8 +1031,6 @@ impl OpenCodeSessionRuntime {
                 body["skills"] = json!([{ "id": name }]);
             }
             let turn_id = self.begin_turn().await;
-            // A request that failed after it may have reached OpenCode stays ambiguous.
-            let mut maybe_delivered = false;
             let result = async {
                 let response = self
                     .inner
@@ -1009,18 +1039,9 @@ impl OpenCodeSessionRuntime {
                     .json(&body)
                     .send()
                     .await
-                    .map_err(|error| {
-                        maybe_delivered = !error.is_connect();
-                        OpenCodeRuntimeError::Http(error.to_string())
-                    })?;
+                    .map_err(turn_transport_error)?;
                 if !response.status().is_success() {
-                    // A refusal (4xx) was not accepted; a server or gateway error may have
-                    // followed acceptance.
-                    maybe_delivered = !response.status().is_client_error();
-                    return Err(OpenCodeRuntimeError::Http(format!(
-                        "prompt returned HTTP {}",
-                        response.status()
-                    )));
+                    return Err(turn_status_error(response.status(), "prompt"));
                 }
                 Ok(())
             }
@@ -1028,7 +1049,7 @@ impl OpenCodeSessionRuntime {
             if let Err(error) = result {
                 // Only a request OpenCode never accepted settles the turn now; one it may have
                 // accepted keeps its turn, which OpenCode's own events end.
-                if !maybe_delivered {
+                if turn_was_not_accepted(&error) {
                     self.settle_unsent_turn(turn_id).await;
                 }
                 return Err(error);
@@ -1055,8 +1076,6 @@ impl OpenCodeSessionRuntime {
         if let Some(agent) = self.inner.agent.as_ref() {
             body["agent"] = json!(agent);
         }
-        // A request that failed after it may have reached OpenCode stays ambiguous.
-        let mut maybe_delivered = false;
         let result = async {
             let response = self
                 .inner
@@ -1065,18 +1084,9 @@ impl OpenCodeSessionRuntime {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|error| {
-                    maybe_delivered = !error.is_connect();
-                    OpenCodeRuntimeError::Http(error.to_string())
-                })?;
+                .map_err(turn_transport_error)?;
             if !response.status().is_success() {
-                // A refusal (4xx) was not accepted; a server or gateway error may have
-                // followed acceptance.
-                maybe_delivered = !response.status().is_client_error();
-                return Err(OpenCodeRuntimeError::Http(format!(
-                    "prompt_async returned HTTP {}",
-                    response.status()
-                )));
+                return Err(turn_status_error(response.status(), "prompt_async"));
             }
             Ok(())
         }
@@ -1084,7 +1094,7 @@ impl OpenCodeSessionRuntime {
         if let Err(error) = result {
             // Only a request OpenCode never accepted settles the turn now; one it may have
             // accepted keeps its turn, which OpenCode's own events end.
-            if !maybe_delivered {
+            if turn_was_not_accepted(&error) {
                 self.settle_unsent_turn(turn_id).await;
             }
             return Err(error);
@@ -1198,8 +1208,6 @@ impl OpenCodeSessionRuntime {
                 ("command", v2::command_body(command, arguments.trim()))
             };
             let turn_id = self.begin_turn().await;
-            // A request that failed after it may have reached OpenCode stays ambiguous.
-            let mut maybe_delivered = false;
             let result = async {
                 let response = self
                     .inner
@@ -1208,18 +1216,9 @@ impl OpenCodeSessionRuntime {
                     .json(&body)
                     .send()
                     .await
-                    .map_err(|error| {
-                        maybe_delivered = !error.is_connect();
-                        OpenCodeRuntimeError::Http(error.to_string())
-                    })?;
+                    .map_err(turn_transport_error)?;
                 if !response.status().is_success() {
-                    // A refusal (4xx) was not accepted; a server or gateway error may have
-                    // followed acceptance.
-                    maybe_delivered = !response.status().is_client_error();
-                    return Err(OpenCodeRuntimeError::Http(format!(
-                        "command returned HTTP {}",
-                        response.status()
-                    )));
+                    return Err(turn_status_error(response.status(), "command"));
                 }
                 Ok(())
             }
@@ -1227,7 +1226,7 @@ impl OpenCodeSessionRuntime {
             if let Err(error) = result {
                 // Only a request OpenCode never accepted settles the turn now; one it may have
                 // accepted keeps its turn, which OpenCode's own events end.
-                if !maybe_delivered {
+                if turn_was_not_accepted(&error) {
                     self.settle_unsent_turn(turn_id).await;
                 }
                 return Err(error);
@@ -1251,8 +1250,6 @@ impl OpenCodeSessionRuntime {
         if let Some(variant) = self.inner.selected_variant.lock().await.clone() {
             body["variant"] = Value::String(variant);
         }
-        // A request that failed after it may have reached OpenCode stays ambiguous.
-        let mut maybe_delivered = false;
         let result = async {
             let response = self
                 .inner
@@ -1261,18 +1258,9 @@ impl OpenCodeSessionRuntime {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|error| {
-                    maybe_delivered = !error.is_connect();
-                    OpenCodeRuntimeError::Http(error.to_string())
-                })?;
+                .map_err(turn_transport_error)?;
             if !response.status().is_success() {
-                // A refusal (4xx) was not accepted; a server or gateway error may have
-                // followed acceptance.
-                maybe_delivered = !response.status().is_client_error();
-                return Err(OpenCodeRuntimeError::Http(format!(
-                    "command returned HTTP {}",
-                    response.status()
-                )));
+                return Err(turn_status_error(response.status(), "command"));
             }
             Ok(())
         }
@@ -1280,7 +1268,7 @@ impl OpenCodeSessionRuntime {
         if let Err(error) = result {
             // Only a request OpenCode never accepted settles the turn now; one it may have
             // accepted keeps its turn, which OpenCode's own events end.
-            if !maybe_delivered {
+            if turn_was_not_accepted(&error) {
                 self.settle_unsent_turn(turn_id).await;
             }
             return Err(error);
@@ -4868,14 +4856,20 @@ mod tests {
         );
         *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
 
-        runtime
+        let prompt = runtime
             .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
             .await
             .expect_err("the prompt is refused");
-        runtime
+        let command = runtime
             .send_command("review", "", Some("delivery-2"))
             .await
             .expect_err("the command is refused");
+        for error in [&prompt, &command] {
+            assert!(
+                matches!(error, super::OpenCodeRuntimeError::RequestRefused(_)),
+                "{error}"
+            );
+        }
 
         for _ in 0..2 {
             let started = runtime.next_event().await.expect("turn.started");
@@ -4909,10 +4903,14 @@ mod tests {
         );
         *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
 
-        runtime
+        let error = runtime
             .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
             .await
             .expect_err("the gateway timed out");
+        assert!(
+            matches!(error, super::OpenCodeRuntimeError::Http(_)),
+            "{error}"
+        );
         let started = runtime.next_event().await.expect("turn.started");
         assert_eq!(started.event_type, "turn.started");
         assert_no_queued_event(&runtime).await;
@@ -4948,6 +4946,10 @@ mod tests {
             .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
             .await
             .expect_err("the answer is lost");
+        assert!(
+            matches!(turn, super::OpenCodeRuntimeError::Http(_)),
+            "{turn:?}"
+        );
         let started = runtime.next_event().await.expect("turn.started");
         assert_eq!(started.event_type, "turn.started", "{turn:?}");
         assert_no_queued_event(&runtime).await;
@@ -4956,6 +4958,36 @@ mod tests {
             started.turn_id.as_deref()
         );
         server.abort();
+    }
+
+    /// A request whose connection never opens was not sent: it settles its turn and reports
+    /// `NotSent`, which the delivery retries.
+    #[tokio::test]
+    async fn a_connection_that_never_opens_settles_the_turn_as_not_sent() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        drop(listener);
+        let runtime = super::OpenCodeSessionRuntime::new(
+            &format!("http://{address}"),
+            "unit-thread",
+            "/tmp/unit",
+            None,
+        );
+        *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
+
+        let error = runtime
+            .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
+            .await
+            .expect_err("the connection never opens");
+        assert!(
+            matches!(error, super::OpenCodeRuntimeError::NotSent(_)),
+            "{error}"
+        );
+        let started = runtime.next_event().await.expect("turn.started");
+        let completed = runtime.next_event().await.expect("turn.completed");
+        assert_eq!(completed.turn_id, started.turn_id);
+        assert_eq!(completed.payload["stopReason"], "not_sent");
+        assert!(runtime.inner.active_turn_id.lock().await.is_none());
     }
 
     #[tokio::test]

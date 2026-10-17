@@ -409,9 +409,11 @@ Idle suspension must never stop work the provider still runs:
   sends it, so their announcement does not change the projection: a send that
   fails reports no completion (OpenCode settles a turn whose request it never
   accepted, a 4xx refusal or a connection that never opened, with a `cancelled`
-  completion, `stopReason: "not_sent"`, which re-arms the idle deadline; a
-  request whose answer was lost, or a server or gateway error, keeps its turn
-  for OpenCode's own events to end). A turn such a driver did not send, one the
+  completion, `stopReason: "not_sent"`, which re-arms the idle deadline. The
+  refusal fails the delivery and the unopened connection retries it, so neither
+  waits as uncertain. A request whose answer was lost, or a server or gateway
+  error, keeps its turn for OpenCode's own events to end and leaves the delivery
+  uncertain). A turn such a driver did not send, one the
   provider started itself (an OpenCode 2 execution that delivers a background
   subagent's result, or one still running when a session is resumed), carries
   `providerStarted: true` and is projected `running` too.
