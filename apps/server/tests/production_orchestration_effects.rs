@@ -1216,3 +1216,88 @@ async fn created_projects_receive_their_repository_identity_once() {
     effects.shutdown().await;
     engine.shutdown().await;
 }
+
+/// The revert's busy check is the idle deadline's: a session that is starting, or that still
+/// names an active turn, is busy even when it does not read `running`.
+#[tokio::test]
+async fn revert_while_a_session_starts_or_holds_a_turn_changes_nothing() {
+    for (status, active_turn_id) in [("starting", None), ("ready", Some("turn-3"))] {
+        let repository = initialize_repository().await;
+        let engine = engine(repository.path()).await;
+        let callbacks = Arc::new(CallbackState::default());
+        *callbacks.cwd.lock().unwrap() = Some(repository.path().to_path_buf());
+        let effects = OrchestrationEffects::start(
+            engine.clone(),
+            Arc::new(GitRepository::default()),
+            callbacks.clone(),
+            EffectsOptions::default(),
+        )
+        .await
+        .unwrap();
+        for (turn_count, content) in [(0, None), (1, Some("one\n")), (2, Some("two\n"))] {
+            if let Some(content) = content {
+                std::fs::write(repository.path().join("tracked.txt"), content).unwrap();
+            }
+            orchestration_effects::capture_checkpoint(repository.path(), "t1", turn_count)
+                .await
+                .unwrap();
+        }
+        for turn_count in 1..=2 {
+            dispatch(
+                &engine,
+                json!({
+                    "type":"thread.turn.diff.complete", "commandId":format!("diff-{turn_count}"),
+                    "threadId":"t1", "turnId":format!("turn-{turn_count}"),
+                    "checkpointTurnCount":turn_count,
+                    "checkpointRef":orchestration_effects::checkpoint_ref("t1", turn_count),
+                    "status":"ready", "files":[], "assistantMessageId":format!("a-{turn_count}"),
+                    "completedAt":NOW, "createdAt":NOW
+                }),
+            )
+            .await;
+        }
+        dispatch(
+            &engine,
+            json!({
+                "type":"thread.session.set", "commandId":"busy", "threadId":"t1",
+                "session":{"threadId":"t1","status":status,"providerName":"codex",
+                    "activeTurnId":active_turn_id,"lastError":null,"updatedAt":NOW},
+                "createdAt":NOW
+            }),
+        )
+        .await;
+
+        let mut events = engine.subscribe_events();
+        dispatch(
+            &engine,
+            json!({
+                "type":"thread.checkpoint.revert", "commandId":"revert", "threadId":"t1",
+                "turnCount":1, "createdAt":NOW
+            }),
+        )
+        .await;
+        let failure = wait_for_event(&mut events, "thread.activity-appended", |event| {
+            event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+        })
+        .await;
+        assert!(
+            failure.event.payload["activity"]["payload"]["detail"]
+                .as_str()
+                .is_some_and(|detail| detail.contains("Interrupt the current turn")),
+            "{status} {active_turn_id:?}: {failure:?}"
+        );
+        assert!(
+            callbacks.rollbacks.lock().unwrap().is_empty(),
+            "{status} {active_turn_id:?}: the provider was asked to rewind"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repository.path().join("tracked.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "two\n"
+        );
+
+        effects.shutdown().await;
+        engine.shutdown().await;
+    }
+}

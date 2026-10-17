@@ -2267,9 +2267,11 @@ the provider keeps its conversation. It adds an informational
 `checkpoint.revert.files-only` activity that says the conversation was not
 rewound.
 
-The effect also refuses a revert while the thread's session is `running`,
-whichever client asked for it. A running turn would write over the restored
-files, or the rewind would cut it off.
+The effect also refuses a revert while the thread's session holds a turn,
+whichever client asked for it: it is `running` or `starting`, or it still names
+an active turn. This is the same test idle suspension uses for a busy session.
+A running turn would write over the restored files, or the rewind would cut it
+off.
 
 Once the provider has rewound, the revert must be recorded, or a retry would
 rewind the provider again. Shutdown therefore waits for step 3 instead of

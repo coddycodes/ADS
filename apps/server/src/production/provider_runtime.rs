@@ -40,7 +40,9 @@ use crate::{
             SessionInput, ThreadMessageInput,
         },
     },
-    persistence::{ProjectionThreadMessage, ProviderSessionRuntime, Repositories},
+    persistence::{
+        ProjectionThreadMessage, ProjectionThreadSession, ProviderSessionRuntime, Repositories,
+    },
     process::{
         Platform, PreparedLaunch, configure_supervised_background_command_wrap,
         launch_executable_extensions,
@@ -9419,10 +9421,13 @@ async fn session_is_confirmed_idle(
         .get_thread_session(thread_id.to_owned())
         .await
         .map_err(|error| ProviderRuntimeError::Persistence(error.to_string()))?
-        .is_some_and(|session| {
-            !matches!(session.status.as_str(), "running" | "starting")
-                && session.active_turn_id.is_none()
-        }))
+        .is_some_and(|session| !session_holds_a_turn(&session)))
+}
+
+/// Whether the projected session is starting or running a turn. Idle suspension and checkpoint
+/// revert both treat such a session as busy.
+pub(crate) fn session_holds_a_turn(session: &ProjectionThreadSession) -> bool {
+    matches!(session.status.as_str(), "running" | "starting") || session.active_turn_id.is_some()
 }
 
 /// Whether every `turn.started` the driver emits is a turn the provider reported running. Codex

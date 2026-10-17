@@ -883,12 +883,12 @@ async fn revert_checkpoint(
         .and_then(Value::as_i64)
         .ok_or_else(|| OrchestrationEffectsError::Effect("missing turnCount".to_owned()))?;
     // A running turn would write over the restored files or be cut off by the rewind, and the
-    // client's own guard does not cover another client.
+    // client's own guard does not cover another client. Busy is what idle suspension calls busy.
     if engine
         .repositories()
         .get_thread_session(thread_id.to_owned())
         .await?
-        .is_some_and(|session| session.status == "running")
+        .is_some_and(|session| super::provider_runtime::session_holds_a_turn(&session))
     {
         return Err(OrchestrationEffectsError::Effect(
             "Interrupt the current turn before reverting checkpoints.".to_owned(),
