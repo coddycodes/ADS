@@ -2405,9 +2405,12 @@ something invalidates it:
   stays the single source of truth for entry data, so subscribers re-list rather
   than apply a diff, which also keeps the payload independent of how many files
   changed. Subscribing resyncs the index and then signals, so a list read
-  before that first signal could predate the resync. The Files panel therefore
-  reads its list only once its subscription has signalled (or failed), and
-  re-reads on each later signal: opening it reads the whole list once;
+  before that first signal could predate the resync. The web client therefore
+  subscribes and reads the list once, after that signal (or a failed
+  subscription), while a thread is open, so opening Files paints at once with
+  no read of its own. A later signal while Files is closed only marks the list
+  stale; the open panel re-reads on each signal, including one it missed while
+  closed, after painting the stale list;
 - `projects.listEntries` accepts an optional boolean `refresh`. Omitting it, or
   sending `false`, serves the retained index and preserves compatibility for
   older clients. `refresh: true` drops the cached index before listing, so the

@@ -86,7 +86,11 @@ vi.mock("@bibcode/client-runtime/state/runtime", async (importOriginal) => ({
   },
 }));
 
-import { useProjectEntriesQuery, useProjectFileQuery } from "./projectFilesQueryState";
+import {
+  fileTreeSignalAction,
+  useProjectEntriesQuery,
+  useProjectFileQuery,
+} from "./projectFilesQueryState";
 
 const environmentId = EnvironmentId.make("environment-project-query-hooks");
 const entriesKey = `entries:${environmentId}:/repo`;
@@ -212,5 +216,27 @@ describe("project file query hooks", () => {
     harness.atomValues.set(fileKey, AsyncResult.success(data));
     harness.atomValues.set(optimisticKey, null);
     expect(useProjectFileQuery(environmentId, "/repo", "README.md").data).toBe(data);
+  });
+});
+
+describe("Files tree change signals", () => {
+  const resync = { cwd: "/repo" };
+  const later = { cwd: "/repo" };
+
+  it("covers the resync signal with the read that mounting the list makes", () => {
+    expect(fileTreeSignalAction(resync, null, false)).toBe("cover");
+    expect(fileTreeSignalAction(resync, null, true)).toBe("cover");
+  });
+
+  it("acts once per signal", () => {
+    expect(fileTreeSignalAction(null, null, true)).toBe("none");
+    expect(fileTreeSignalAction(resync, resync, true)).toBe("none");
+  });
+
+  // The preloader holds the list while the panel is closed; a change then must not cost a whole
+  // list read, but the panel must not show the stale list without reading it again.
+  it("leaves a later signal for the open panel to read", () => {
+    expect(fileTreeSignalAction(later, resync, false)).toBe("none");
+    expect(fileTreeSignalAction(later, resync, true)).toBe("read");
   });
 });
