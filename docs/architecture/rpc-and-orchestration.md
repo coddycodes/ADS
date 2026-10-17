@@ -2379,9 +2379,16 @@ something invalidates it:
   changing one requires explicit `refresh: true`;
 - `subscribeProjectEntries` streams a signal whenever a periodic sweep observes
   that the path set under `cwd` changed outside the application. The sweep stats
-  the directories the snapshot already lists rather than walking the tree,
-  because adding, renaming, or removing an entry moves its parent directory's
-  mtime while an in-place content edit does not. The first subscriber for a root
+  the directories the last scan saw rather than walking the tree, because
+  adding, renaming, or removing an entry moves its parent directory's mtime
+  while an in-place content edit does not. The index keeps that directory set
+  apart from its entry list, because past the entry limit the list keeps files
+  and drops directories, and a sweep that took its directories from the list
+  went blind to every nested change. Every listed directory is swept. A
+  directory the list dropped is swept within the entry count limit and the
+  memory the list leaves, so the index stays within its one memory bound. A truncated
+  index therefore pays a rebuild for each burst of changes it sees, even when
+  the change falls outside the listed entries. The first subscriber for a root
   starts the sweep and the last one to leave stops it. The sweep runs every two
   seconds and reports a burst of changes once, at the first sweep that sees
   nothing new; while changes keep arriving it reports about every ten seconds.

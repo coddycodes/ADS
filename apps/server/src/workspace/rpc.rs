@@ -168,6 +168,7 @@ pub struct WorkspaceRpc {
     watch_tasks: TaskTracker,
     watch_shutdown: CancellationToken,
     watch_timing: (Duration, Duration),
+    search_limits: SearchLimits,
 }
 
 /// Supplies the swept directories from the cached index for a root.
@@ -234,6 +235,7 @@ impl WorkspaceRpc {
             watch_tasks: TaskTracker::new(),
             watch_shutdown: CancellationToken::new(),
             watch_timing: (WATCH_POLL_INTERVAL, WATCH_COALESCE_WINDOW),
+            search_limits: SearchLimits::default(),
         }
     }
 
@@ -288,6 +290,16 @@ impl WorkspaceRpc {
         self.index_test_hooks.watch_event_entered = Some(event_entered);
         self.index_test_hooks.watch_send_failure_gate = Some(send_failure_gate);
         self.index_test_hooks.watch_send_failure_entered = Some(send_failure_entered);
+        self
+    }
+
+    /// Overrides the entry index bounds.
+    ///
+    /// Exists so tests can reach the bounds with a handful of files; production callers keep the
+    /// defaults.
+    #[must_use]
+    pub fn with_search_limits(mut self, limits: SearchLimits) -> Self {
+        self.search_limits = limits;
         self
     }
 
@@ -1040,7 +1052,7 @@ impl WorkspaceRpc {
                 () = cancellation.cancelled() => return Err(WorkspaceError::Cancelled),
             };
         }
-        let index = WorkspaceSearchIndex::new(canonical.clone(), SearchLimits::default());
+        let index = WorkspaceSearchIndex::new(canonical.clone(), self.search_limits);
         #[cfg(test)]
         let index = index.with_phase_sink(self.index_phase_sink.clone());
         self.index_scans.fetch_add(1, Ordering::Relaxed);

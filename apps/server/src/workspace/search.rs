@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -107,6 +107,8 @@ struct SearchSnapshot {
     entries: Vec<WorkspaceEntry>,
     memory_bytes: usize,
     truncated: bool,
+    /// The directories change detection stats (see `BoundedEntries::swept_directories`).
+    directories: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -315,14 +317,7 @@ impl WorkspaceSearchIndex {
     /// Deriving the set from the snapshot also keeps the sweep inside the same bounds the scan
     /// already spent, including which ignored directories it walked into.
     pub async fn directory_paths(&self) -> Vec<String> {
-        self.snapshot
-            .read()
-            .await
-            .entries
-            .iter()
-            .filter(|entry| entry.kind == EntryKind::Directory)
-            .map(|entry| entry.path.clone())
-            .collect()
+        self.snapshot.read().await.directories.clone()
     }
 
     pub async fn search(&self, query: &str, limit: usize) -> SearchResult {
@@ -606,25 +601,16 @@ async fn scan_git_with_runner<R: WorkspaceGitCommandRunner + ?Sized>(
             .entry(path)
             .or_insert((EntryKind::Directory, false));
     }
-    let mut entries = BTreeMap::new();
-    let mut memory_bytes = 0;
-    let mut truncated = false;
-    for (path, (kind, ignored)) in candidates {
-        insert_bounded_entry(
-            &mut entries,
-            &mut memory_bytes,
-            &mut truncated,
-            path,
-            kind,
-            ignored,
-            limits,
-        );
+    let mut entries = BoundedEntries::default();
+    for (path, (kind, _)) in &candidates {
+        if *kind == EntryKind::Directory {
+            entries.sweep_directory(path, limits);
+        }
     }
-    Ok(Some(SearchSnapshot {
-        entries: entries.into_values().collect(),
-        memory_bytes,
-        truncated,
-    }))
+    for (path, (kind, ignored)) in candidates {
+        entries.insert(path, kind, ignored, limits);
+    }
+    Ok(Some(entries.into_snapshot(limits)))
 }
 
 /// Relative paths of every directory under `root`, pruning `.git` and ignored roots.
@@ -812,48 +798,96 @@ async fn run_git_ls_files<const N: usize, R: WorkspaceGitCommandRunner + ?Sized>
     }
 }
 
-fn insert_bounded_entry(
-    entries: &mut BTreeMap<String, WorkspaceEntry>,
-    memory_bytes: &mut usize,
-    truncated: &mut bool,
-    path: String,
-    kind: EntryKind,
-    ignored: bool,
-    limits: SearchLimits,
-) -> bool {
-    let entry_bytes = path.len().saturating_add(ENTRY_OVERHEAD_BYTES);
-    if path.len() > limits.max_path_bytes
-        || memory_bytes.saturating_add(entry_bytes) > limits.max_memory_bytes
-    {
-        *truncated = true;
-        return false;
-    }
-    if entries.len() >= limits.max_entries {
-        *truncated = true;
-        if kind != EntryKind::File {
+/// The entry list a scan builds, bounded by `SearchLimits`.
+#[derive(Default)]
+struct BoundedEntries {
+    entries: BTreeMap<String, WorkspaceEntry>,
+    /// The directories `entries` lists. Past the entry limit each file takes the place of the first
+    /// one, and looking it up here keeps that from scanning the whole list once per file.
+    listed_directories: BTreeSet<String>,
+    memory_bytes: usize,
+    truncated: bool,
+    /// Every directory the scan saw, for change detection. Past the entry limit the list keeps
+    /// files and evicts directories, so the sweep cannot take its directories from `entries`.
+    swept_directories: Vec<String>,
+}
+
+impl BoundedEntries {
+    fn insert(
+        &mut self,
+        path: String,
+        kind: EntryKind,
+        ignored: bool,
+        limits: SearchLimits,
+    ) -> bool {
+        let entry_bytes = path.len().saturating_add(ENTRY_OVERHEAD_BYTES);
+        if path.len() > limits.max_path_bytes
+            || self.memory_bytes.saturating_add(entry_bytes) > limits.max_memory_bytes
+        {
+            self.truncated = true;
             return false;
         }
-        let Some(directory_path) = entries
-            .iter()
-            .find_map(|(path, entry)| (entry.kind == EntryKind::Directory).then_some(path.clone()))
-        else {
-            return false;
-        };
-        if let Some(removed) = entries.remove(&directory_path) {
-            *memory_bytes = memory_bytes
-                .saturating_sub(removed.path.len().saturating_add(ENTRY_OVERHEAD_BYTES));
+        if self.entries.len() >= limits.max_entries {
+            self.truncated = true;
+            if kind != EntryKind::File {
+                return false;
+            }
+            let Some(directory_path) = self.listed_directories.pop_first() else {
+                return false;
+            };
+            if let Some(removed) = self.entries.remove(&directory_path) {
+                self.memory_bytes = self
+                    .memory_bytes
+                    .saturating_sub(removed.path.len().saturating_add(ENTRY_OVERHEAD_BYTES));
+            }
+        }
+        self.memory_bytes += entry_bytes;
+        if kind == EntryKind::Directory {
+            self.listed_directories.insert(path.clone());
+        }
+        self.entries.insert(
+            path.clone(),
+            WorkspaceEntry {
+                path,
+                kind,
+                ignored,
+            },
+        );
+        true
+    }
+
+    /// Offers `path` for change detection, within the entry list's count and path bounds.
+    fn sweep_directory(&mut self, path: &str, limits: SearchLimits) {
+        if self.swept_directories.len() < limits.max_entries && path.len() <= limits.max_path_bytes
+        {
+            self.swept_directories.push(path.to_owned());
         }
     }
-    *memory_bytes += entry_bytes;
-    entries.insert(
-        path.clone(),
-        WorkspaceEntry {
-            path,
-            kind,
-            ignored,
-        },
-    );
-    true
+
+    /// Every listed directory is swept. The others are swept while they fit the memory the entry
+    /// list left, so the index stays within one memory bound.
+    fn into_snapshot(self, limits: SearchLimits) -> SearchSnapshot {
+        let mut memory_bytes = self.memory_bytes;
+        let mut directories = self.swept_directories;
+        directories.retain(|path| {
+            if self.listed_directories.contains(path) {
+                return false;
+            }
+            let entry_bytes = path.len().saturating_add(ENTRY_OVERHEAD_BYTES);
+            let fits = memory_bytes.saturating_add(entry_bytes) <= limits.max_memory_bytes;
+            if fits {
+                memory_bytes += entry_bytes;
+            }
+            fits
+        });
+        directories.extend(self.listed_directories);
+        SearchSnapshot {
+            entries: self.entries.into_values().collect(),
+            memory_bytes,
+            truncated: self.truncated,
+            directories,
+        }
+    }
 }
 
 fn entry_kind_rank(kind: EntryKind) -> u8 {
@@ -874,9 +908,7 @@ fn scan(
         });
     }
     let ignore_rules = read_ignore_rules(root);
-    let mut entries: BTreeMap<String, WorkspaceEntry> = BTreeMap::new();
-    let mut memory_bytes: usize = 0;
-    let mut truncated = false;
+    let mut entries = BoundedEntries::default();
     let mut stack = vec![root.to_path_buf()];
     while let Some(directory) = stack.pop() {
         if cancellation.is_cancelled() {
@@ -910,25 +942,15 @@ fn scan(
             } else {
                 continue;
             };
-            let inserted = insert_bounded_entry(
-                &mut entries,
-                &mut memory_bytes,
-                &mut truncated,
-                relative,
-                kind,
-                false,
-                limits,
-            );
-            if inserted && file_type.is_dir() {
+            let directory = (kind == EntryKind::Directory).then(|| relative.clone());
+            let inserted = entries.insert(relative, kind, false, limits);
+            if let Some(directory) = directory.filter(|_| inserted) {
+                entries.sweep_directory(&directory, limits);
                 stack.push(path);
             }
         }
     }
-    Ok(SearchSnapshot {
-        entries: entries.into_values().collect(),
-        memory_bytes,
-        truncated,
-    })
+    Ok(entries.into_snapshot(limits))
 }
 
 fn read_ignore_rules(root: &Path) -> HashSet<String> {
@@ -1697,6 +1719,121 @@ mod tests {
         assert!(!paths.iter().any(|path| path.starts_with("prps")));
         assert!(paths.contains(&"docs/prps".to_owned()));
         assert!(paths.contains(&"docs/prps/plan.md".to_owned()));
+    }
+
+    /// Past the entry limit a file takes the place of the first directory still listed, while
+    /// change detection keeps every directory the scan saw.
+    #[tokio::test]
+    async fn a_full_index_trades_its_first_directories_for_files() {
+        for git in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            if git {
+                let status = std::process::Command::new("git")
+                    .args(["init", "-q"])
+                    .current_dir(root.path())
+                    .status()
+                    .unwrap();
+                assert!(status.success());
+            }
+            for path in ["a/x.txt", "b/y.txt", "c/z.txt"] {
+                let path = root.path().join(path);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, "").unwrap();
+            }
+            let index = WorkspaceSearchIndex::new(
+                root.path().to_path_buf(),
+                SearchLimits {
+                    max_entries: 4,
+                    ..SearchLimits::default()
+                },
+            );
+            index.refresh(CancellationToken::new()).await.unwrap();
+            let listed = index.list(None).await;
+            let paths = listed
+                .entries
+                .into_iter()
+                .map(|entry| entry.path)
+                .collect::<Vec<_>>();
+            assert!(listed.truncated, "git: {git}");
+            // The two scans meet the limit in different orders: Git's listing is sorted, the walk
+            // is depth-first.
+            let expected = if git {
+                ["a/x.txt", "b", "b/y.txt", "c/z.txt"]
+            } else {
+                ["a/x.txt", "b/y.txt", "c", "c/z.txt"]
+            };
+            assert_eq!(paths, expected, "git: {git}");
+            assert_eq!(index.directory_paths().await.len(), 3, "git: {git}");
+            // The directories the list dropped still cost memory while they are swept.
+            let listed_bytes = paths
+                .iter()
+                .map(|path| path.len() + ENTRY_OVERHEAD_BYTES)
+                .sum::<usize>();
+            let dropped = if git { ["a", "c"] } else { ["a", "b"] };
+            assert_eq!(
+                index.memory_bytes().await,
+                listed_bytes + dropped.len() * (1 + ENTRY_OVERHEAD_BYTES),
+                "git: {git}"
+            );
+        }
+    }
+
+    /// Every listed directory is swept, and the others only within the memory the list left.
+    #[tokio::test]
+    async fn listed_directories_are_swept_when_the_memory_bound_is_spent() {
+        let root = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(root.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        std::fs::write(root.path().join("a.txt"), "").unwrap();
+        std::fs::create_dir_all(root.path().join("c")).unwrap();
+        std::fs::write(root.path().join("c/x"), "").unwrap();
+        std::fs::create_dir_all(root.path().join("b".repeat(60))).unwrap();
+        let index = WorkspaceSearchIndex::new(
+            root.path().to_path_buf(),
+            SearchLimits {
+                max_memory_bytes: 100,
+                ..SearchLimits::default()
+            },
+        );
+        index.refresh(CancellationToken::new()).await.unwrap();
+        let listed = index.list(None).await.entries;
+        assert!(listed.iter().any(|entry| entry.path == "c"));
+        assert_eq!(index.directory_paths().await, ["c"]);
+        assert!(index.memory_bytes().await <= 100);
+    }
+
+    /// The swept directories stay inside the index's path bound, and a directory the list also
+    /// holds is counted once.
+    #[tokio::test]
+    async fn swept_directories_respect_the_path_and_memory_bounds() {
+        let root = tempfile::tempdir().unwrap();
+        for path in ["a/x.txt", "long-directory-name/y.txt"] {
+            let path = root.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "").unwrap();
+        }
+        let index = WorkspaceSearchIndex::new(
+            root.path().to_path_buf(),
+            SearchLimits {
+                max_path_bytes: 12,
+                ..SearchLimits::default()
+            },
+        );
+        index.refresh(CancellationToken::new()).await.unwrap();
+        assert_eq!(index.directory_paths().await, ["a"]);
+        let entry_bytes = index
+            .list(None)
+            .await
+            .entries
+            .iter()
+            .map(|entry| entry.path.len() + ENTRY_OVERHEAD_BYTES)
+            .sum::<usize>();
+        // A swept directory that is also listed is not counted twice.
+        assert_eq!(index.memory_bytes().await, entry_bytes);
     }
 
     #[tokio::test]
