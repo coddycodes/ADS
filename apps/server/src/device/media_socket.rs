@@ -33,7 +33,8 @@
 //! nothing. Otherwise, before the upgrade, connections to either route are admitted against
 //! the same global, per-peer, and per-network pre-auth budgets as `/ws-e2ee`, from one pool
 //! of their own so media sockets cannot starve RPC handshakes; a refused one gets `503` and
-//! is never upgraded. A socket leaves the pool once its ticket is redeemed.
+//! is never upgraded. A socket leaves the pool once its ticket is redeemed, or refused (before
+//! its close).
 
 use std::{net::IpAddr, time::Duration};
 
@@ -368,7 +369,8 @@ async fn serve_e2ee(socket: WebSocket, state: MediaSocketState, lease: E2eePreau
 
 /// Redeems the socket's ticket for `channel`, then streams the device until either side
 /// ends. `lease` holds the socket's pre-auth slot until the ticket is redeemed, which must
-/// arrive before `ticket_deadline`.
+/// arrive before `ticket_deadline`, or refused: a refused socket leaves the pool before its
+/// close handshake, so a client that never answers the close holds no slot meanwhile.
 async fn serve<T: MediaTransport>(
     mut socket: T,
     state: MediaSocketState,
@@ -379,6 +381,7 @@ async fn serve<T: MediaTransport>(
     let ticket = match tokio::time::timeout_at(ticket_deadline, socket.recv()).await {
         Err(_) => {
             tracing::warn!("device media socket sent no ticket in time");
+            drop(lease);
             return socket.close("expired").await;
         }
         Ok(Received::Message(message)) => match serde_json::from_slice(&message) {
@@ -386,11 +389,13 @@ async fn serve<T: MediaTransport>(
             // The parse error could quote the ticket, so it is not logged.
             _ => {
                 tracing::warn!("device media socket's first message was not a ticket");
+                drop(lease);
                 return socket.close("expired").await;
             }
         },
         Ok(Received::Ignored) => {
             tracing::warn!("device media socket's first message was not a ticket");
+            drop(lease);
             return socket.close("expired").await;
         }
         // The client left before it sent a ticket.
@@ -401,6 +406,7 @@ async fn serve<T: MediaTransport>(
         Err(error) => {
             let reason = error.close_reason();
             tracing::warn!(reason, "device media ticket refused");
+            drop(lease);
             return socket.close(reason).await;
         }
     };
@@ -1333,7 +1339,7 @@ mod tests {
             );
             // Its answering close is not sent yet, so the server still holds the connection.
             assert!(
-                !tcp_ended_within(&mut client, Duration::from_millis(250)).await,
+                !tcp_ended_within(&mut client, Duration::from_millis(100)).await,
                 "the server dropped the connection before the client answered its close"
             );
             // The answer goes out with the next read, and the server then ends cleanly.
@@ -1345,22 +1351,32 @@ mod tests {
         harness.fixture.manager.shutdown().await;
     }
 
-    /// A client that never answers the close is dropped once [`CLOSE_TIMEOUT`] passes.
+    /// A client that never answers the close is dropped once [`CLOSE_TIMEOUT`] passes. A
+    /// refused socket leaves the pre-auth pool before its close, so such a client holds no
+    /// admission slot while the server waits for it.
     #[tokio::test]
     async fn a_client_that_never_answers_the_close_is_dropped_in_time() {
         let harness = Harness::start().await;
+        let free = harness.admission.available_permits();
         let mut client = harness.connect("not-a-ticket").await;
         assert_eq!(
             close_reason(&mut client).await,
             (CLOSE_CODE, "expired".to_owned())
         );
         let closed = std::time::Instant::now();
+        tokio::time::timeout(Duration::from_millis(300), async {
+            while harness.admission.available_permits() != free {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the refused socket's pre-auth slot is free while its close waits");
         assert!(
             tcp_ended_within(&mut client, CLOSE_TIMEOUT * 2).await,
             "the server kept a client that never answered its close"
         );
         assert!(
-            closed.elapsed() >= Duration::from_millis(250),
+            closed.elapsed() >= Duration::from_millis(100),
             "the server dropped the connection without waiting for an answer"
         );
         harness.fixture.manager.shutdown().await;

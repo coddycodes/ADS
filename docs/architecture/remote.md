@@ -1495,7 +1495,8 @@ URL by replacing its path (`deviceMediaTarget`).
   starve RPC handshakes. An over-limit connection gets HTTP `503` and is never
   upgraded. While device previews are off, both routes answer `503` before
   admission and hold no slot. A socket leaves the pool once its ticket is
-  redeemed.
+  redeemed, or once it is refused and before its close handshake, so a refused
+  client that never answers the close holds no slot while the server waits.
 - **Plain route.** `GET /api/device-media` waits 5 s for the ticket as a text
   message, then sends frames as binary messages.
 - **E2EE route.** `GET /api/device-media-e2ee` serves profiles that pin the
