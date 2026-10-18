@@ -87,6 +87,42 @@ impl HidAction {
     pub(crate) fn needs_keyboard(&self) -> bool {
         matches!(self, Self::Key { .. } | Self::Paste { .. })
     }
+
+    /// The key or button this presses (`true`) or releases (`false`); `None` for a touch
+    /// or a paste.
+    pub(crate) fn press(&self) -> Option<(Press, bool)> {
+        match *self {
+            Self::Key { usage, down } => Some((Press::Key(usage), down)),
+            Self::Button { button, down } => Some((Press::Button(button), down)),
+            Self::Touch { .. } | Self::Paste { .. } => None,
+        }
+    }
+}
+
+/// A key or button the guest may hold down.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub(crate) enum Press {
+    /// A HID keyboard usage (page 0x07).
+    Key(u32),
+    Button(SimButton),
+}
+
+impl Press {
+    /// What lifts it.
+    pub(crate) fn release(self) -> HidAction {
+        match self {
+            Self::Key(usage) => HidAction::Key { usage, down: false },
+            Self::Button(button) => HidAction::Button {
+                button,
+                down: false,
+            },
+        }
+    }
+
+    /// Shift, Control, Option, and Command, either side (usages 0xE0–0xE7).
+    pub(crate) fn is_modifier(self) -> bool {
+        matches!(self, Self::Key(0xE0..=0xE7))
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]

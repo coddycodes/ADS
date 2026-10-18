@@ -252,8 +252,8 @@ type FailWhen = Box<dyn Fn(&HidAction) -> bool + Send>;
 /// An input sink that records what it is sent and never calls a framework.
 pub(crate) struct RecordingHid {
     sent: Mutex<Vec<HidAction>>,
-    /// Fails the next send this accepts, once.
-    fail_next: Mutex<Option<FailWhen>>,
+    /// Fails the sends this accepts, as many times as it counts.
+    fail_next: Mutex<Option<(FailWhen, usize)>>,
     rotations: Mutex<Vec<u32>>,
     keyboard: AtomicBool,
     released: AtomicBool,
@@ -279,7 +279,16 @@ impl RecordingHid {
 
     /// The next send that `when` accepts fails, and is not recorded.
     pub(crate) fn fail_next(&self, when: impl Fn(&HidAction) -> bool + Send + 'static) {
-        *lock(&self.fail_next) = Some(Box::new(when));
+        self.fail_times(1, when);
+    }
+
+    /// The next `times` sends that `when` accepts fail, and are not recorded.
+    pub(crate) fn fail_times(
+        &self,
+        times: usize,
+        when: impl Fn(&HidAction) -> bool + Send + 'static,
+    ) {
+        *lock(&self.fail_next) = (times > 0).then(|| (Box::new(when) as FailWhen, times));
     }
 
     /// What was sent since the last call.
@@ -321,8 +330,13 @@ impl HidSink for RecordingHid {
             }
             {
                 let mut fail = lock(&self.fail_next);
-                if fail.as_ref().is_some_and(|when| when(&action)) {
-                    fail.take();
+                if let Some((when, left)) = fail.as_mut()
+                    && when(&action)
+                {
+                    *left -= 1;
+                    if *left == 0 {
+                        fail.take();
+                    }
                     return Err(HidError::Failed("a recorded failure".to_owned()));
                 }
             }

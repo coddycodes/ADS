@@ -38,7 +38,7 @@ use self::{
     coresim::{CoreSim, HidClient, Screen},
     guard::{GuardCache, GuardResult, XcodeCache, availability_for},
     hid::{
-        HidAction, HidError, HidSink, INPUT_FAILED, KEYBOARD_NOT_READY, PointerState,
+        HidAction, HidError, HidSink, INPUT_FAILED, KEYBOARD_NOT_READY, PointerState, Press,
         ROTATE_FAILED, TouchPhase, paste_keys, plan_events,
     },
     pixels::IosOrientation,
@@ -482,6 +482,35 @@ struct Ownership {
     launch: u64,
 }
 
+/// The keys and buttons the guest may hold down. It covers the keys a batch synthesizes
+/// (Shift around a capital, Cmd+V for a paste) as well as device keys, which may stay down
+/// between batches.
+#[derive(Default)]
+struct Presses {
+    /// In the order they went down: each is added before its down goes out and removed once
+    /// its up was sent.
+    down: Vec<Press>,
+    /// Those whose release failed after a failed send, sent first in the next call.
+    owed: Vec<Press>,
+}
+
+impl Presses {
+    /// `press` went up.
+    fn forget(&mut self, press: Press) {
+        self.down.retain(|down| *down != press);
+        self.owed.retain(|owed| *owed != press);
+    }
+}
+
+/// Which presses [`Shared::release_presses`] releases.
+#[derive(Clone, Copy, PartialEq)]
+enum Releasing {
+    /// Every one still down, after a failed send; what fails is owed.
+    All,
+    /// Only those owed.
+    Owed,
+}
+
 /// A simulator BiBCode booted.
 struct RunningSimulator {
     shared: Arc<Shared>,
@@ -497,6 +526,8 @@ struct Shared {
     /// Where a touch the guest may still hold was last sent, in portrait ratios: set
     /// before a down or move goes out, cleared once its up was sent.
     held: Mutex<Option<(f64, f64)>>,
+    /// The keys and buttons the guest may still hold, and the releases still owed.
+    presses: Mutex<Presses>,
     /// One input batch at a time, so batches arrive in order.
     input_lock: tokio::sync::Mutex<()>,
     runner: Arc<SimctlRunner>,
@@ -529,6 +560,7 @@ impl RunningSimulator {
             control,
             pointer: Mutex::new(PointerState::default()),
             held: Mutex::new(None),
+            presses: Mutex::new(Presses::default()),
             input_lock: tokio::sync::Mutex::new(()),
             runner,
             ownership,
@@ -592,6 +624,7 @@ impl Shared {
         }
         *lock(&self.pointer) = PointerState::default();
         lock(&self.held).take();
+        *lock(&self.presses) = Presses::default();
         // The poll ends first, so this shutdown is never taken for an external one.
         self.poll.cancel();
         let task = lock(&self.poll_task).take();
@@ -621,6 +654,10 @@ impl Shared {
     }
 
     /// Plans and sends one validated batch in order; a paste is `simctl pbcopy` then Cmd+V.
+    ///
+    /// Releases owed since a failed send go out first, once the keyboard is ready for the
+    /// keys among them. A call with a send that fails, theirs included, then lifts the
+    /// touch the guest may hold and releases every key and button it may hold, best effort.
     async fn input(
         &self,
         events: Vec<DeviceInputEvent>,
@@ -646,15 +683,20 @@ impl Shared {
             return Err(DeviceOpError::InvalidInput(KEYBOARD_NOT_READY.to_owned()));
         }
         *lock(&self.pointer) = pointer;
-        let result = self.send_plan(sink.as_ref(), plan).await;
+        let result = match self.release_presses(sink.as_ref(), Releasing::Owed).await {
+            Ok(()) => self.send_plan(sink.as_ref(), plan).await,
+            Err(error) => Err(sink_error(error, INPUT_FAILED)),
+        };
         if result.is_err() {
             self.lift_held_touch(sink.as_ref()).await;
+            if let Err(error) = self.release_presses(sink.as_ref(), Releasing::All).await {
+                tracing::debug!(?error, "could not release a held key after a failed send");
+            }
         }
         result
     }
 
-    /// Sends a planned batch in order, keeping `held` in step with the touch the guest may
-    /// hold: set before a down or move goes out, cleared once an up was sent.
+    /// Sends a planned batch in order (see [`Shared::send_one`]).
     async fn send_plan(
         &self,
         sink: &dyn HidSink,
@@ -671,29 +713,99 @@ impl Shared {
                         return Err(DeviceOpError::Emulator(INPUT_FAILED.to_owned()));
                     }
                     for key in paste_keys() {
-                        sink.send(key)
-                            .await
-                            .map_err(|error| sink_error(error, INPUT_FAILED))?;
+                        self.send_one(sink, key).await?;
                     }
                 }
-                action => {
-                    let touch = match action {
-                        HidAction::Touch { phase, x, y } => Some((phase, x, y)),
-                        _ => None,
-                    };
-                    if let Some((TouchPhase::Down | TouchPhase::Move, x, y)) = touch {
-                        *lock(&self.held) = Some((x, y));
-                    }
-                    sink.send(action)
-                        .await
-                        .map_err(|error| sink_error(error, INPUT_FAILED))?;
-                    if let Some((TouchPhase::Up, ..)) = touch {
-                        *lock(&self.held) = None;
+                action => self.send_one(sink, action).await?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Sends one action, keeping `held` and `presses` in step with what the guest may
+    /// hold. A touch or a press is recorded before its down (or move) goes out, since a
+    /// send that fails may still have reached the guest, and forgotten once its up was
+    /// sent.
+    async fn send_one(&self, sink: &dyn HidSink, action: HidAction) -> Result<(), DeviceOpError> {
+        let touch = match action {
+            HidAction::Touch { phase, x, y } => Some((phase, x, y)),
+            _ => None,
+        };
+        let press = action.press();
+        if let Some((TouchPhase::Down | TouchPhase::Move, x, y)) = touch {
+            *lock(&self.held) = Some((x, y));
+        }
+        if let Some((press, true)) = press {
+            let mut presses = lock(&self.presses);
+            if !presses.down.contains(&press) {
+                presses.down.push(press);
+            }
+            // Down again: no longer a release owed, but a key held.
+            presses.owed.retain(|owed| *owed != press);
+        }
+        sink.send(action)
+            .await
+            .map_err(|error| sink_error(error, INPUT_FAILED))?;
+        if let Some((TouchPhase::Up, ..)) = touch {
+            *lock(&self.held) = None;
+        }
+        if let Some((press, false)) = press {
+            lock(&self.presses).forget(press);
+        }
+        Ok(())
+    }
+
+    /// Sends the releases of the presses `releasing` covers, the latest press first and
+    /// modifiers last, and forgets each one that went out. Keys go only through DTUHID, so
+    /// while the keyboard is not ready they are left for a later call; buttons go out
+    /// either way. Every release is tried and the first failure is returned. After a
+    /// failed send ([`Releasing::All`]), whatever is still down is owed, and the next call
+    /// sends it before its batch. A key up for a key that is not down is harmless, so a
+    /// release the client sends as well never does damage.
+    ///
+    /// The legacy Indigo client has no send path of its own: `HidSink::send` picks it for
+    /// touches and buttons while DTUHID is not live, so a button is released through it
+    /// like any other send. It cannot carry keys at all.
+    async fn release_presses(
+        &self,
+        sink: &dyn HidSink,
+        releasing: Releasing,
+    ) -> Result<(), HidError> {
+        let mut presses = {
+            let presses = lock(&self.presses);
+            match releasing {
+                Releasing::All => presses.down.clone(),
+                Releasing::Owed => presses.owed.clone(),
+            }
+        };
+        if presses.is_empty() {
+            return Ok(());
+        }
+        presses.reverse();
+        // Stable: within each group, the latest press stays first.
+        presses.sort_by_key(|press| press.is_modifier());
+        let keyboard =
+            presses.iter().any(|press| press.release().needs_keyboard()) && sink.keyboard_ready();
+        let mut result = Ok(());
+        for press in presses {
+            let release = press.release();
+            if release.needs_keyboard() && !keyboard {
+                continue;
+            }
+            match sink.send(release).await {
+                Ok(()) => lock(&self.presses).forget(press),
+                Err(error) => {
+                    if result.is_ok() {
+                        result = Err(error);
                     }
                 }
             }
         }
-        Ok(())
+        if releasing == Releasing::All {
+            let mut presses = lock(&self.presses);
+            presses.owed = presses.down.clone();
+        }
+        result
     }
 
     /// After a failed send: lifts a touch the guest may still hold, best effort, at its
@@ -1335,15 +1447,248 @@ mod tests {
             matches!(failed, Err(DeviceOpError::Emulator(_))),
             "{failed:?}"
         );
+        // The Enter down may have reached the guest before it failed, so it is released
+        // too, after the touch.
         assert_eq!(
             hid.sent(),
             [
                 sent_touch(TouchPhase::Down, 0.1, 0.2),
                 sent_touch(TouchPhase::Up, 0.1, 0.2),
+                key(0x28, false),
             ]
         );
         manager.input(&id, vec![tap_down(0.5, 0.6)]).await.unwrap();
         assert_eq!(hid.sent(), [sent_touch(TouchPhase::Down, 0.5, 0.6)]);
+        manager.shutdown().await;
+    }
+
+    fn key(usage: u32, down: bool) -> HidAction {
+        HidAction::Key { usage, down }
+    }
+
+    fn text(text: &str) -> DeviceInputEvent {
+        DeviceInputEvent::Text { text: text.into() }
+    }
+
+    fn device_key(key: DeviceKey, action: KeyAction) -> DeviceInputEvent {
+        DeviceInputEvent::Key { key, action }
+    }
+
+    const SHIFT: u32 = 0xE1;
+    const COMMAND: u32 = 0xE3;
+    const KEY_A: u32 = 0x04;
+    const KEY_V: u32 = 0x19;
+
+    /// Codex review P2: typing "A" is Shift down, a down, a up, Shift up. A send that fails
+    /// partway used to leave Shift down, and every later key typed shifted.
+    #[tokio::test]
+    async fn a_failure_after_shift_down_releases_shift_and_the_key() {
+        let sim = one_device();
+        let hid = RecordingHid::new();
+        let (manager, _enabled, id) = ready_live_fake(&sim, &hid).await;
+        hid.fail_next(|action| *action == key(KEY_A, false));
+        let failed = manager.input(&id, vec![text("A")]).await;
+        assert!(
+            matches!(failed, Err(DeviceOpError::Emulator(_))),
+            "{failed:?}"
+        );
+        // The a up failed; the recovery sends it again, then Shift's, modifiers last.
+        assert_eq!(
+            hid.sent(),
+            [
+                key(SHIFT, true),
+                key(KEY_A, true),
+                key(KEY_A, false),
+                key(SHIFT, false),
+            ]
+        );
+        // Nothing is held any more: the next batch sends only itself.
+        manager.input(&id, vec![tap_down(0.5, 0.6)]).await.unwrap();
+        assert_eq!(hid.sent(), [sent_touch(TouchPhase::Down, 0.5, 0.6)]);
+        manager.shutdown().await;
+    }
+
+    /// The same for a paste's Cmd+V: Cmd is released whatever failed after it went down.
+    #[tokio::test]
+    async fn a_failed_paste_releases_command() {
+        let sim = one_device();
+        let hid = RecordingHid::new();
+        let (manager, _enabled, id) = ready_live_fake(&sim, &hid).await;
+        hid.fail_next(|action| *action == key(KEY_V, true));
+        let failed = manager.input(&id, vec![text("é")]).await;
+        assert!(
+            matches!(failed, Err(DeviceOpError::Emulator(_))),
+            "{failed:?}"
+        );
+        assert_eq!(
+            hid.sent(),
+            [key(COMMAND, true), key(KEY_V, false), key(COMMAND, false)]
+        );
+        manager.shutdown().await;
+    }
+
+    /// A release that fails after a failed send stays held. It goes out first in the next
+    /// call once the keyboard is ready, and a call whose release fails fails too.
+    #[tokio::test]
+    async fn a_failed_release_is_sent_again_before_the_next_batch() {
+        let sim = one_device();
+        let hid = RecordingHid::new();
+        let (manager, _enabled, id) = ready_live_fake(&sim, &hid).await;
+        // The a up fails, and so does its release after the failure.
+        hid.fail_times(2, |action| *action == key(KEY_A, false));
+        let failed = manager.input(&id, vec![text("a")]).await;
+        assert!(
+            matches!(failed, Err(DeviceOpError::Emulator(_))),
+            "{failed:?}"
+        );
+        assert_eq!(hid.sent(), [key(KEY_A, true)]);
+        // Keys need the keyboard: while it is not ready, the release waits, and input that
+        // needs no keyboard still goes out.
+        hid.set_keyboard(false);
+        manager.input(&id, vec![tap_down(0.1, 0.2)]).await.unwrap();
+        assert_eq!(hid.sent(), [sent_touch(TouchPhase::Down, 0.1, 0.2)]);
+        // Once it is ready the release goes first. Here it fails again, so the call fails
+        // as any failed send does: the touch is lifted, and the release is tried once more.
+        hid.set_keyboard(true);
+        hid.fail_next(|action| *action == key(KEY_A, false));
+        let failed = manager
+            .input(&id, vec![touch(TouchAction::Move, 0.2, 0.2)])
+            .await;
+        assert!(
+            matches!(failed, Err(DeviceOpError::Emulator(_))),
+            "{failed:?}"
+        );
+        assert_eq!(
+            hid.sent(),
+            [sent_touch(TouchPhase::Up, 0.1, 0.2), key(KEY_A, false)]
+        );
+        manager.input(&id, vec![tap_down(0.5, 0.6)]).await.unwrap();
+        assert_eq!(hid.sent(), [sent_touch(TouchPhase::Down, 0.5, 0.6)]);
+        manager.shutdown().await;
+    }
+
+    /// A release still held when its key is typed again goes out before the new press.
+    #[tokio::test]
+    async fn a_held_release_goes_out_before_the_next_batch() {
+        let sim = one_device();
+        let hid = RecordingHid::new();
+        let (manager, _enabled, id) = ready_live_fake(&sim, &hid).await;
+        hid.fail_times(2, |action| *action == key(SHIFT, false));
+        let failed = manager.input(&id, vec![text("A")]).await;
+        assert!(
+            matches!(failed, Err(DeviceOpError::Emulator(_))),
+            "{failed:?}"
+        );
+        hid.sent();
+        manager.input(&id, vec![text("b")]).await.unwrap();
+        assert_eq!(
+            hid.sent(),
+            [key(SHIFT, false), key(0x05, true), key(0x05, false)]
+        );
+        manager.shutdown().await;
+    }
+
+    /// Device keys share the rule: a key or button held down between batches, as from the
+    /// toolbar, is released when a later send fails. The client's own release later is a
+    /// second key up, which is harmless.
+    #[tokio::test]
+    async fn a_failed_send_releases_device_keys_still_held() {
+        let sim = one_device();
+        let hid = RecordingHid::new();
+        let (manager, _enabled, id) = ready_live_fake(&sim, &hid).await;
+        manager
+            .input(
+                &id,
+                vec![
+                    device_key(DeviceKey::Backspace, KeyAction::Down),
+                    device_key(DeviceKey::Home, KeyAction::Down),
+                ],
+            )
+            .await
+            .unwrap();
+        hid.sent();
+        // They stay down while batches go through.
+        manager.input(&id, vec![tap_down(0.1, 0.2)]).await.unwrap();
+        assert_eq!(hid.sent(), [sent_touch(TouchPhase::Down, 0.1, 0.2)]);
+        hid.fail_next(|action| matches!(action, HidAction::Touch { .. }));
+        let failed = manager
+            .input(&id, vec![touch(TouchAction::Move, 0.3, 0.4)])
+            .await;
+        assert!(
+            matches!(failed, Err(DeviceOpError::Emulator(_))),
+            "{failed:?}"
+        );
+        // The touch is lifted, then the latest press is released first.
+        assert_eq!(
+            hid.sent(),
+            [
+                sent_touch(TouchPhase::Up, 0.3, 0.4),
+                HidAction::Button {
+                    button: SimButton::Home,
+                    down: false
+                },
+                key(0x2A, false),
+            ]
+        );
+        manager
+            .input(&id, vec![device_key(DeviceKey::Backspace, KeyAction::Up)])
+            .await
+            .unwrap();
+        assert_eq!(hid.sent(), [key(0x2A, false)]);
+        manager.shutdown().await;
+    }
+
+    /// Keys and buttons that went down and up leave nothing to release after a later
+    /// failure.
+    #[tokio::test]
+    async fn a_batch_that_goes_through_leaves_no_key_held() {
+        let sim = one_device();
+        let hid = RecordingHid::new();
+        let (manager, _enabled, id) = ready_live_fake(&sim, &hid).await;
+        manager
+            .input(
+                &id,
+                vec![
+                    text("A"),
+                    text("é"),
+                    device_key(DeviceKey::Enter, KeyAction::Down),
+                    device_key(DeviceKey::Enter, KeyAction::Up),
+                    device_key(DeviceKey::Home, KeyAction::Down),
+                    device_key(DeviceKey::Home, KeyAction::Up),
+                ],
+            )
+            .await
+            .unwrap();
+        hid.sent();
+        hid.fail_next(|action| {
+            matches!(
+                action,
+                HidAction::Touch {
+                    phase: TouchPhase::Move,
+                    ..
+                }
+            )
+        });
+        let failed = manager
+            .input(
+                &id,
+                vec![
+                    touch(TouchAction::Down, 0.1, 0.2),
+                    touch(TouchAction::Move, 0.3, 0.4),
+                ],
+            )
+            .await;
+        assert!(
+            matches!(failed, Err(DeviceOpError::Emulator(_))),
+            "{failed:?}"
+        );
+        assert_eq!(
+            hid.sent(),
+            [
+                sent_touch(TouchPhase::Down, 0.1, 0.2),
+                sent_touch(TouchPhase::Up, 0.3, 0.4),
+            ]
+        );
         manager.shutdown().await;
     }
 

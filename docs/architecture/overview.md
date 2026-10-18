@@ -2233,7 +2233,12 @@ event that is all US-keyboard characters is typed as keys; any other text
 event is pasted whole: `simctl pbcopy` of the full text, then Cmd+V. One
 pasteboard write per event means a later paste never replaces text iOS has
 not read yet, but while iOS shows its **Allow Paste** prompt, keys typed
-afterwards can arrive before the pasted text.
+afterwards can arrive before the pasted text. The server tracks every key and
+button the simulator may hold down, the Shift and Cmd it adds for typing and
+pasting included. When a send fails, it lifts the touch and then releases them
+all, modifiers last. A release that fails then goes out first in the next
+`device.input` call, once the keyboard is ready again, and the call fails if it
+fails again. A second key up, from the client's own release, is harmless.
 
 **Rotation and orientation.** `device.rotate` sends the target orientation to
 the simulator's `PurpleWorkspacePort` and then reads back the reported
