@@ -4565,6 +4565,12 @@ struct CodexFixtureRemoteState {
     request_buffered_deliveries: AtomicUsize,
     active_connections: AtomicUsize,
     maximum_active_connections: AtomicUsize,
+    /// The real client's WebSocket message limit. A larger reply fails that request and leaves
+    /// the connection broken, as the WebSocket stream does.
+    frame_limit_bytes: Mutex<Option<usize>>,
+    /// Full-history `thread/read` results by thread, served as Codex serves them: metadata for a
+    /// read without turns, then `thread/turns/list` pages.
+    histories: Mutex<BTreeMap<String, Value>>,
 }
 
 struct CodexFixtureResumeRequestGuard {
@@ -4602,6 +4608,139 @@ impl Drop for CodexFixtureRemoteClient {
     }
 }
 
+impl CodexFixtureRemoteClient {
+    async fn scripted_request(&mut self, method: String, params: Value) -> Result<Value, String> {
+        let _resume_request_guard = (method == "thread/resume")
+            .then(|| CodexFixtureResumeRequestGuard::new(self.state.clone()));
+        self.state
+            .timeline
+            .lock()
+            .expect("Codex topology timeline lock")
+            .push(if method == "thread/resume" {
+                "resume"
+            } else {
+                "initialize"
+            });
+        self.state
+            .writes
+            .lock()
+            .expect("remote writes lock")
+            .push(serde_json::json!({ "method": method, "params": params.clone() }));
+        if let Some(delay) = self
+            .state
+            .late_request_delays
+            .lock()
+            .expect("late request delays lock")
+            .get_mut(&method)
+            .and_then(VecDeque::pop_front)
+        {
+            let completed = self.state.completed_late_request_responses.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(delay).await;
+                completed.fetch_add(1, Ordering::AcqRel);
+            });
+        }
+        let delay = self
+            .state
+            .request_delays
+            .lock()
+            .expect("request delays lock")
+            .get_mut(&method)
+            .and_then(VecDeque::pop_front)
+            .unwrap_or_default();
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
+        if let Some(events) = self
+            .state
+            .request_events
+            .lock()
+            .expect("request events lock")
+            .get_mut(&method)
+            .and_then(VecDeque::pop_front)
+        {
+            self.request_buffered_events.extend(events);
+        }
+        if let Some(error) = self
+            .state
+            .request_errors
+            .lock()
+            .expect("request errors lock")
+            .pop_front()
+        {
+            if method == "thread/resume" {
+                self.state
+                    .completed_resume_responses
+                    .fetch_add(1, Ordering::AcqRel);
+            }
+            return Err(error);
+        }
+        if method == "thread/resume" {
+            if params.get("excludeTurns").is_some() {
+                self.state
+                    .completed_resume_responses
+                    .fetch_add(1, Ordering::AcqRel);
+                return Err("thread/resume excludeTurns requires the experimental API".to_owned());
+            }
+            if let Some(events) = self
+                .state
+                .resume_events
+                .lock()
+                .expect("resume events lock")
+                .pop_front()
+            {
+                self.events
+                    .lock()
+                    .expect("remote events lock")
+                    .extend(events);
+            }
+            if let Some(response) = self
+                .state
+                .resume_responses
+                .lock()
+                .expect("resume responses lock")
+                .pop_front()
+            {
+                self.state
+                    .completed_resume_responses
+                    .fetch_add(1, Ordering::AcqRel);
+                return response;
+            }
+            let thread_id = params
+                .get("threadId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "resume missing threadId".to_owned())?;
+            self.state
+                .completed_resume_responses
+                .fetch_add(1, Ordering::AcqRel);
+            return Ok(serde_json::json!({
+                "thread": {
+                    "id": thread_id,
+                    "parentThreadId": null,
+                    "turns": [],
+                },
+            }));
+        }
+        if let Some(response) = self
+            .state
+            .request_responses
+            .lock()
+            .expect("request responses lock")
+            .get_mut(&method)
+            .and_then(VecDeque::pop_front)
+        {
+            return response;
+        }
+        Ok(match method.as_str() {
+            "thread/list" => serde_json::json!({"data": [], "nextCursor": null}),
+            "thread/backgroundTerminals/list" => {
+                serde_json::json!({"data": [], "nextCursor": null})
+            }
+            _ => serde_json::json!({}),
+        })
+    }
+}
+
 impl CodexRemoteClient for CodexFixtureRemoteClient {
     fn request(
         &mut self,
@@ -4610,136 +4749,59 @@ impl CodexRemoteClient for CodexFixtureRemoteClient {
     ) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + '_>> {
         let method = method.to_owned();
         Box::pin(async move {
-            let _resume_request_guard = (method == "thread/resume")
-                .then(|| CodexFixtureResumeRequestGuard::new(self.state.clone()));
-            self.state
-                .timeline
-                .lock()
-                .expect("Codex topology timeline lock")
-                .push(if method == "thread/resume" {
-                    "resume"
-                } else {
-                    "initialize"
-                });
-            self.state
-                .writes
-                .lock()
-                .expect("remote writes lock")
-                .push(serde_json::json!({ "method": method, "params": params.clone() }));
-            if let Some(delay) = self
-                .state
-                .late_request_delays
-                .lock()
-                .expect("late request delays lock")
-                .get_mut(&method)
-                .and_then(VecDeque::pop_front)
-            {
-                let completed = self.state.completed_late_request_responses.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(delay).await;
-                    completed.fetch_add(1, Ordering::AcqRel);
-                });
-            }
-            let delay = self
-                .state
-                .request_delays
-                .lock()
-                .expect("request delays lock")
-                .get_mut(&method)
-                .and_then(VecDeque::pop_front)
-                .unwrap_or_default();
-            if !delay.is_zero() {
-                tokio::time::sleep(delay).await;
-            }
-            if let Some(events) = self
-                .state
-                .request_events
-                .lock()
-                .expect("request events lock")
-                .get_mut(&method)
-                .and_then(VecDeque::pop_front)
-            {
-                self.request_buffered_events.extend(events);
-            }
-            if let Some(error) = self
-                .state
-                .request_errors
-                .lock()
-                .expect("request errors lock")
-                .pop_front()
-            {
-                if method == "thread/resume" {
+            let thread_id = params
+                .get("threadId")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let without_turns =
+                method == "thread/read" && params.get("includeTurns") == Some(&Value::Bool(false));
+            let response = self.scripted_request(method.clone(), params).await;
+            let response = match (response, thread_id) {
+                (Ok(mut result), Some(thread_id)) if without_turns => {
                     self.state
-                        .completed_resume_responses
-                        .fetch_add(1, Ordering::AcqRel);
-                }
-                return Err(error);
-            }
-            if method == "thread/resume" {
-                if params.get("excludeTurns").is_some() {
-                    self.state
-                        .completed_resume_responses
-                        .fetch_add(1, Ordering::AcqRel);
-                    return Err(
-                        "thread/resume excludeTurns requires the experimental API".to_owned()
-                    );
-                }
-                if let Some(events) = self
-                    .state
-                    .resume_events
-                    .lock()
-                    .expect("resume events lock")
-                    .pop_front()
-                {
-                    self.events
+                        .histories
                         .lock()
-                        .expect("remote events lock")
-                        .extend(events);
+                        .expect("histories lock")
+                        .insert(thread_id, result.clone());
+                    if let Some(thread) = result.get_mut("thread").and_then(Value::as_object_mut) {
+                        thread.insert("turns".to_owned(), serde_json::json!([]));
+                    }
+                    Ok(result)
                 }
-                if let Some(response) = self
-                    .state
-                    .resume_responses
-                    .lock()
-                    .expect("resume responses lock")
-                    .pop_front()
+                (Ok(result), Some(thread_id))
+                    if method == "thread/turns/list" && result == serde_json::json!({}) =>
                 {
-                    self.state
-                        .completed_resume_responses
-                        .fetch_add(1, Ordering::AcqRel);
-                    return response;
+                    let mut turns = self
+                        .state
+                        .histories
+                        .lock()
+                        .expect("histories lock")
+                        .get(&thread_id)
+                        .and_then(|history| history.pointer("/thread/turns"))
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    turns.reverse();
+                    Ok(serde_json::json!({"data": turns, "nextCursor": null}))
                 }
-                let thread_id = params
-                    .get("threadId")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "resume missing threadId".to_owned())?;
-                self.state
-                    .completed_resume_responses
-                    .fetch_add(1, Ordering::AcqRel);
-                return Ok(serde_json::json!({
-                    "thread": {
-                        "id": thread_id,
-                        "parentThreadId": null,
-                        "turns": [],
-                    },
-                }));
-            }
-            if let Some(response) = self
+                (response, _) => response,
+            };
+            let frame_limit = *self
                 .state
-                .request_responses
+                .frame_limit_bytes
                 .lock()
-                .expect("request responses lock")
-                .get_mut(&method)
-                .and_then(VecDeque::pop_front)
+                .expect("frame limit lock");
+            if let (Ok(result), Some(frame_limit)) = (&response, frame_limit)
+                && serde_json::to_vec(result).expect("fixture reply").len() > frame_limit
             {
-                return response;
+                self.state
+                    .next_errors
+                    .lock()
+                    .expect("next errors lock")
+                    .push_back("Codex remote read failed: Space limit exceeded".to_owned());
+                return Err("Codex remote read failed: Space limit exceeded".to_owned());
             }
-            Ok(match method.as_str() {
-                "thread/list" => serde_json::json!({"data": [], "nextCursor": null}),
-                "thread/backgroundTerminals/list" => {
-                    serde_json::json!({"data": [], "nextCursor": null})
-                }
-                _ => serde_json::json!({}),
-            })
+            response
         })
     }
 
@@ -5107,6 +5169,7 @@ fn count_codex_history_calls(state: &CodexFixtureRemoteState) -> usize {
     [
         "thread/list",
         "thread/read",
+        "thread/turns/list",
         "thread/backgroundTerminals/list",
     ]
     .into_iter()
@@ -7051,11 +7114,304 @@ async fn codex_resume_immediately_reconciles_pre_subscription_descendants_and_ba
             "thread/backgroundTerminals/list",
             "thread/list",
             "thread/read",
+            "thread/turns/list",
         ]
     );
 
     manager
         .close("thread-codex", Some("terminal-reconcile"))
+        .await
+        .expect("close terminal");
+    manager.shutdown().await;
+}
+
+/// The real Codex terminal client's WebSocket message limit, which the fixture enforces.
+#[cfg(unix)]
+const REAL_CLIENT_FRAME_LIMIT_BYTES: usize =
+    bibcode_server::provider::codex::protocol::CODEX_TRANSPORT_MESSAGE_MAX_BYTES;
+
+/// A descendant whose history is larger than the 512 KiB decoder bound is skipped; it must not
+/// break the observer's connection and force a reconnect, and its siblings are still read.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn codex_reconciliation_skips_a_large_descendant_without_reconnecting() {
+    let fixture = codex_remote_fixture();
+    let root = tempfile::tempdir().expect("fixture root");
+    let configured = root.path().join("configured-codex");
+    std::fs::write(&configured, b"configured").expect("configured executable");
+    let remote_state = Arc::new(CodexFixtureRemoteState::default());
+    *remote_state
+        .frame_limit_bytes
+        .lock()
+        .expect("frame limit lock") = Some(REAL_CLIENT_FRAME_LIMIT_BYTES);
+    remote_state
+        .scripted_events
+        .lock()
+        .expect("scripted events lock")
+        .push_back(Arc::new(Mutex::new(VecDeque::from([
+            codex_root_notification(&fixture, "large-history-root", root.path()),
+        ]))));
+    let child = |id: &str, name: &str| {
+        serde_json::json!({
+            "id": id,
+            "parentThreadId": "large-history-root",
+            "agentNickname": name,
+            "agentRole": "worker",
+            "createdAt": 2000000000_u64,
+            "updatedAt": 2000000001_u64,
+            "status": {"type": "idle"}
+        })
+    };
+    let history = |id: &str, name: &str, text: String| {
+        let mut thread = child(id, name);
+        thread["turns"] = serde_json::json!([{
+            "id": format!("{id}-turn"),
+            "status": "completed",
+            "startedAt": 2000000000_u64,
+            "completedAt": 2000000001_u64,
+            "items": [{"type": "agentMessage", "id": format!("{id}-message"), "text": text}]
+        }]);
+        serde_json::json!({"thread": thread})
+    };
+    remote_state
+        .request_responses
+        .lock()
+        .expect("request responses lock")
+        .extend([
+            (
+                "thread/list".to_owned(),
+                VecDeque::from([Ok(serde_json::json!({
+                    "data": [
+                        child("large-child", "Large child"),
+                        child("small-child", "Small child")
+                    ],
+                    "nextCursor": null
+                }))]),
+            ),
+            (
+                "thread/read".to_owned(),
+                VecDeque::from([
+                    Ok(history(
+                        "large-child",
+                        "Large child",
+                        "x".repeat(600 * 1024),
+                    )),
+                    Ok(history(
+                        "small-child",
+                        "Small child",
+                        "small child history".to_owned(),
+                    )),
+                ]),
+            ),
+        ]);
+    let (supervisor, projection) = codex_fixture_supervisor(
+        &root,
+        &configured,
+        Arc::new(CodexFixtureHelperLauncher::default()),
+        Arc::new(CodexFixtureRemoteFactory {
+            state: remote_state.clone(),
+        }),
+    )
+    .await;
+    let manager = TerminalManager::new(
+        Arc::new(RecordingBackend::new(Arc::new(Mutex::new(Vec::new())))),
+        TerminalManagerOptions {
+            launch_preparer: Some(Arc::new(supervisor)),
+            ..TerminalManagerOptions::default()
+        },
+    );
+
+    manager
+        .open(codex_fixture_open_input(
+            &fixture,
+            &configured,
+            &root,
+            "terminal-large-history",
+        ))
+        .await
+        .expect("Codex terminal");
+    let scope = ActivityScopeRef::Terminal {
+        thread_id: "thread-codex".to_owned(),
+        terminal_id: "terminal-large-history".to_owned(),
+    };
+    let small_child = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Ok(snapshot) = projection.snapshot(&scope).await
+                && let Some(child) = snapshot
+                    .actors
+                    .iter()
+                    .find(|actor| actor.name == "Small child")
+            {
+                let detail = projection
+                    .list_detail(
+                        &scope,
+                        &snapshot.scope_id,
+                        ActivityRecordKind::Actor,
+                        &child.id,
+                        None,
+                        10,
+                    )
+                    .await
+                    .expect("small child detail");
+                if detail
+                    .entries
+                    .iter()
+                    .any(|entry| entry.detail.as_deref() == Some("small child history"))
+                {
+                    break child.id.clone();
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the sibling of a large descendant is still reconciled");
+    assert!(!small_child.is_empty());
+    tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+    assert_eq!(
+        remote_state
+            .endpoints
+            .lock()
+            .expect("remote endpoints lock")
+            .len(),
+        1,
+        "a large descendant must not break the connection and force a reconnect"
+    );
+
+    manager
+        .close("thread-codex", Some("terminal-large-history"))
+        .await
+        .expect("close terminal");
+    manager.shutdown().await;
+}
+
+/// The observer reads one turns page per descendant within its pass budget: a short page with
+/// more to come still yields the newest turns, and no second page is requested.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn codex_reconciliation_keeps_the_newest_turns_of_a_short_page() {
+    let fixture = codex_remote_fixture();
+    let root = tempfile::tempdir().expect("fixture root");
+    let configured = root.path().join("configured-codex");
+    std::fs::write(&configured, b"configured").expect("configured executable");
+    let remote_state = Arc::new(CodexFixtureRemoteState::default());
+    remote_state
+        .scripted_events
+        .lock()
+        .expect("scripted events lock")
+        .push_back(Arc::new(Mutex::new(VecDeque::from([
+            codex_root_notification(&fixture, "short-page-root", root.path()),
+        ]))));
+    let child = serde_json::json!({
+        "id": "short-page-child",
+        "parentThreadId": "short-page-root",
+        "agentNickname": "Short page child",
+        "agentRole": "worker",
+        "createdAt": 2000000000_u64,
+        "updatedAt": 2000000001_u64,
+        "status": {"type": "idle"}
+    });
+    remote_state
+        .request_responses
+        .lock()
+        .expect("request responses lock")
+        .extend([
+            (
+                "thread/list".to_owned(),
+                VecDeque::from([Ok(serde_json::json!({
+                    "data": [child.clone()],
+                    "nextCursor": null
+                }))]),
+            ),
+            (
+                "thread/read".to_owned(),
+                VecDeque::from([Ok(serde_json::json!({"thread": child}))]),
+            ),
+            (
+                "thread/turns/list".to_owned(),
+                VecDeque::from([Ok(serde_json::json!({
+                    "data": [{
+                        "id": "newest-turn",
+                        "status": "completed",
+                        "startedAt": 2000000000_u64,
+                        "completedAt": 2000000001_u64,
+                        "items": [{
+                            "type": "agentMessage",
+                            "id": "newest-message",
+                            "text": "newest turn of a short page"
+                        }]
+                    }],
+                    "nextCursor": "older-turns"
+                }))]),
+            ),
+        ]);
+    let (supervisor, projection) = codex_fixture_supervisor(
+        &root,
+        &configured,
+        Arc::new(CodexFixtureHelperLauncher::default()),
+        Arc::new(CodexFixtureRemoteFactory {
+            state: remote_state.clone(),
+        }),
+    )
+    .await;
+    let manager = TerminalManager::new(
+        Arc::new(RecordingBackend::new(Arc::new(Mutex::new(Vec::new())))),
+        TerminalManagerOptions {
+            launch_preparer: Some(Arc::new(supervisor)),
+            ..TerminalManagerOptions::default()
+        },
+    );
+
+    manager
+        .open(codex_fixture_open_input(
+            &fixture,
+            &configured,
+            &root,
+            "terminal-short-page",
+        ))
+        .await
+        .expect("Codex terminal");
+    let scope = ActivityScopeRef::Terminal {
+        thread_id: "thread-codex".to_owned(),
+        terminal_id: "terminal-short-page".to_owned(),
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Ok(snapshot) = projection.snapshot(&scope).await
+                && let Some(child) = snapshot
+                    .actors
+                    .iter()
+                    .find(|actor| actor.name == "Short page child")
+                && projection
+                    .list_detail(
+                        &scope,
+                        &snapshot.scope_id,
+                        ActivityRecordKind::Actor,
+                        &child.id,
+                        None,
+                        10,
+                    )
+                    .await
+                    .expect("child detail")
+                    .entries
+                    .iter()
+                    .any(|entry| entry.detail.as_deref() == Some("newest turn of a short page"))
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the newest turns of a short page are recovered");
+    assert_eq!(
+        count_codex_method_calls(&remote_state, "thread/turns/list"),
+        1,
+        "one page per descendant per pass"
+    );
+
+    manager
+        .close("thread-codex", Some("terminal-short-page"))
         .await
         .expect("close terminal");
     manager.shutdown().await;

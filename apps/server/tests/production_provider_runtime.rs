@@ -1707,11 +1707,12 @@ while IFS= read -r line; do
     *'"method":"thread/resume"'*|*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"/tmp","model":"gpt-5","thread":{"id":"native-codex-thread"}}}\n' "$id" ;;
     *'"method":"mcpServerStatus/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$id" ;;
     *'"method":"turn/start"'*) printf '{"id":%s,"result":{"turn":{"id":"native-codex-turn"}}}\n' "$id" ;;
-    *'"method":"thread/read"'*)
+    *'"method":"thread/read"'*) printf '{"id":%s,"result":{"thread":{"id":"native-codex-thread","turns":[]}}}\n' "$id" ;;
+    *'"method":"thread/turns/list"'*)
       if [ "$BIBCODE_READBACK_MODE" = found ]; then
-        printf '{"id":%s,"result":{"thread":{"id":"native-codex-thread","turns":[{"id":"native-codex-turn","items":[{"id":"native-user","type":"userMessage","clientId":"%s","content":[]}]}]}}}\n' "$id" "$BIBCODE_EXPECTED_DELIVERY_KEY"
+        printf '{"id":%s,"result":{"data":[{"id":"native-codex-turn","items":[{"id":"native-user","type":"userMessage","clientId":"%s","content":[]}]}],"nextCursor":null}}\n' "$id" "$BIBCODE_EXPECTED_DELIVERY_KEY"
       elif [ "$BIBCODE_READBACK_MODE" = absent ]; then
-        printf '{"id":%s,"result":{"thread":{"id":"native-codex-thread","turns":[]}}}\n' "$id"
+        printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$id"
       else
         printf '{"id":%s,"result":{}}\n' "$id"
       fi ;;
@@ -1732,11 +1733,12 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     "thread/start" { $response = '{"id":' + $id + ',"result":{"cwd":"C:\\tmp","model":"gpt-5","thread":{"id":"native-codex-thread"}}}' }
     "mcpServerStatus/list" { $response = '{"id":' + $id + ',"result":{"data":[],"nextCursor":null}}' }
     "turn/start" { $response = '{"id":' + $id + ',"result":{"turn":{"id":"native-codex-turn"}}}' }
-    "thread/read" {
+    "thread/read" { $response = '{"id":' + $id + ',"result":{"thread":{"id":"native-codex-thread","turns":[]}}}' }
+    "thread/turns/list" {
       if ($env:BIBCODE_READBACK_MODE -eq "found") {
-        $response = '{"id":' + $id + ',"result":{"thread":{"id":"native-codex-thread","turns":[{"id":"native-codex-turn","items":[{"id":"native-user","type":"userMessage","clientId":"' + $env:BIBCODE_EXPECTED_DELIVERY_KEY + '","content":[]}]}]}}}'
+        $response = '{"id":' + $id + ',"result":{"data":[{"id":"native-codex-turn","items":[{"id":"native-user","type":"userMessage","clientId":"' + $env:BIBCODE_EXPECTED_DELIVERY_KEY + '","content":[]}]}],"nextCursor":null}}'
       } elseif ($env:BIBCODE_READBACK_MODE -eq "absent") {
-        $response = '{"id":' + $id + ',"result":{"thread":{"id":"native-codex-thread","turns":[]}}}'
+        $response = '{"id":' + $id + ',"result":{"data":[],"nextCursor":null}}'
       } else {
         $response = '{"id":' + $id + ',"result":{}}'
       }
@@ -1920,7 +1922,8 @@ async fn durable_codex_restart_reconciliation_uses_real_adapter_and_exact_key() 
     assert_codex_restart_reconciliation(
         "unavailable",
         ProviderReconciliationOutcome::Unavailable {
-            detail: "Invalid Codex payload: thread/read response missing thread".to_owned(),
+            detail: "Invalid Codex payload: thread/turns/list response missing data array"
+                .to_owned(),
         },
         false,
     )
@@ -15913,6 +15916,7 @@ while IFS= read -r line; do
       printf '{{"id":%s,"result":{{"cwd":"/tmp","model":"gpt-5","thread":{{"id":"provider-root"}}}}}}\n' "$id"
       ;;
     *'"method":"thread/read"'*) printf '{{"id":%s,"result":{{"thread":{{"id":"provider-root","createdAt":1,"updatedAt":1,"status":{{"type":"idle"}},"turns":[]}}}}}}\n' "$id" ;;
+    *'"method":"thread/turns/list"'*) printf '{{"id":%s,"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}\n' "$id" ;;
     *'"method":"thread/list"'*) printf '{{"id":%s,"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}\n' "$id" ;;
     *'"method":"thread/backgroundTerminals/list"'*) printf '{{"id":%s,"result":{{"data":[],"nextCursor":null}}}}\n' "$id" ;;
     *'"method":"mcpServerStatus/list"'*) printf '{{"id":%s,"result":{{"data":[],"nextCursor":null}}}}\n' "$id" ;;
