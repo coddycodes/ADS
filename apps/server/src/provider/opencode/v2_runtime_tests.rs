@@ -114,6 +114,10 @@ struct Replay {
     stall_form_cancel: AtomicBool,
     /// Forms the root session's form list also holds, as if created while BiBCode was away.
     extra_forms: StdMutex<Vec<Value>>,
+    /// How many more permission and form list reads answer HTTP 500.
+    failing_ask_lists: std::sync::atomic::AtomicUsize,
+    /// How many more session-tree reads (`GET /api/session?parentID=`) answer HTTP 500.
+    failing_session_tree: std::sync::atomic::AtomicUsize,
 }
 
 impl Replay {
@@ -291,7 +295,35 @@ async fn message(
 }
 
 /// A captured GET response, or an empty list when the scenario did not read it.
-async fn captured_list(State(replay): State<Arc<Replay>>, uri: OriginalUri) -> Json<Value> {
+async fn captured_list(State(replay): State<Arc<Replay>>, uri: OriginalUri) -> Response {
+    let path = uri.0.path().to_owned();
+    let take_failure = |remaining: &std::sync::atomic::AtomicUsize| {
+        remaining
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+    };
+    if ((path.ends_with("/permission") || path.ends_with("/form"))
+        && take_failure(&replay.failing_ask_lists))
+        || (path == "/api/session"
+            && uri
+                .0
+                .query()
+                .is_some_and(|query| query.contains("parentID="))
+            && take_failure(&replay.failing_session_tree))
+    {
+        replay
+            .requests
+            .lock()
+            .unwrap()
+            .push(("GET".to_owned(), uri.0.to_string(), Value::Null));
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    captured_list_json(State(replay), uri).await.into_response()
+}
+
+async fn captured_list_json(State(replay): State<Arc<Replay>>, uri: OriginalUri) -> Json<Value> {
     let exchanges: Value =
         serde_json::from_str(&fixture(&format!("{}.exchanges.json", replay.scenario))).unwrap();
     let path = uri.0.path().to_owned();
@@ -474,6 +506,8 @@ async fn serve(scenario: &'static str) -> (String, Arc<Replay>) {
         stall_active: AtomicBool::new(false),
         stall_form_cancel: AtomicBool::new(false),
         extra_forms: StdMutex::new(Vec::new()),
+        failing_ask_lists: std::sync::atomic::AtomicUsize::new(0),
+        failing_session_tree: std::sync::atomic::AtomicUsize::new(0),
     });
     let app = Router::new()
         .route("/api/session", post(record).get(captured_list))
@@ -490,7 +524,7 @@ async fn serve(scenario: &'static str) -> (String, Arc<Replay>) {
                     if replay.active.load(Ordering::SeqCst) {
                         Json(json!({ "data": { replay.root.clone(): { "type": "running" } } }))
                     } else {
-                        captured_list(State(replay), uri).await
+                        captured_list_json(State(replay), uri).await
                     }
                 },
             ),
@@ -1299,6 +1333,55 @@ async fn output_of_a_resumed_execution_gets_its_turn_before_the_check_answers() 
     let delta = of_type(&events, "content.delta");
     assert_eq!(delta.len(), 1, "{events:#?}");
     assert_eq!(delta[0].turn_id, started[0].turn_id);
+    runtime.stop().await.expect("stop");
+}
+
+/// The pending-ask lists, or the session tree, failing to read during a resume are read again
+/// with a backoff off the event pump, so the asks OpenCode was waiting on still appear.
+#[tokio::test]
+async fn unreadable_ask_lists_on_resume_are_read_again() {
+    let (endpoint, replay) = serve("shell").await;
+    // The resume's read and the first read once subscribed fail.
+    replay.failing_ask_lists.store(4, Ordering::SeqCst);
+    replay.failing_session_tree.store(2, Ordering::SeqCst);
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+    let pending = exchange("shell", "GET", "/permission").1;
+    let ask = pending["data"][0]["id"]
+        .as_str()
+        .expect("pending ask")
+        .to_owned();
+    let mut shown = Vec::new();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let event = runtime.next_event().await.expect("event stream open");
+            if event.event_type == "request.opened" {
+                shown.push(event.request_id.clone());
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the ask appears once its list reads");
+    assert_eq!(shown, vec![Some(ask.clone())]);
+    // The session tree was walked again too.
+    let tree_reads = replay
+        .requests_to("/api/session")
+        .into_iter()
+        .filter(|(method, uri, _)| method == "GET" && uri.contains("parentID="))
+        .count();
+    assert!(tree_reads > 2, "{tree_reads}");
+    runtime
+        .respond_to_permission(&ask, "accept")
+        .await
+        .expect("the ask can be answered");
+    assert!(
+        drain(&runtime)
+            .await
+            .iter()
+            .all(|event| event.event_type != "request.opened"),
+        "shown once"
+    );
     runtime.stop().await.expect("stop");
 }
 

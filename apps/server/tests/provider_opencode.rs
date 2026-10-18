@@ -1882,6 +1882,134 @@ async fn opencode_runtime_registers_the_bibcode_mcp_server() {
     server.abort();
 }
 
+/// OpenCode 1 does not replay asks made while BiBCode was away: a resumed session reads its
+/// pending permissions and questions, shows each of this session once (marked `recovered`, so one
+/// BiBCode already recorded is not added again), and they can be answered. An ask created between
+/// the resume's read and the subscription is found by reading again once subscribed.
+#[tokio::test]
+async fn a_resumed_opencode_1_session_shows_the_asks_it_was_waiting_on() {
+    let replies = Arc::new(Mutex::new(Vec::<String>::new()));
+    let question_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let record = |replies: Arc<Mutex<Vec<String>>>| {
+        move |uri: axum::http::Uri| {
+            let replies = replies.clone();
+            async move {
+                replies.lock().await.push(uri.path().to_owned());
+                Json(json!(true))
+            }
+        }
+    };
+    let app = Router::new()
+        .route("/session/{session_id}", get(resume_session))
+        .route(
+            "/event",
+            get(|| async {
+                let connected = json!({ "type": "server.connected", "properties": {} });
+                Sse::new(
+                    stream::once(async move {
+                        Ok::<_, std::convert::Infallible>(
+                            Event::default().data(connected.to_string()),
+                        )
+                    })
+                    .chain(stream::pending()),
+                )
+            }),
+        )
+        .route(
+            "/permission",
+            get(|| async {
+                Json(json!([
+                    { "id": "per_offline", "sessionID": "session-1", "permission": "bash",
+                      "patterns": ["git push"] },
+                    { "id": "per_other", "sessionID": "session-other", "permission": "bash",
+                      "patterns": ["ls"] }
+                ]))
+            }),
+        )
+        .route(
+            "/question",
+            get(move || {
+                // Created between the resume's read and the subscription: only later reads
+                // list it, and the first read once subscribed fails, so it is read again.
+                let read = question_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    if read == 0 {
+                        return Json(json!([])).into_response();
+                    }
+                    if read == 1 {
+                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
+                    Json(json!([
+                        { "id": "que_offline", "sessionID": "session-1", "questions": [
+                            { "header": "Color", "question": "Pick a color",
+                              "options": [{ "label": "Red", "description": "Warm" }] }
+                        ]}
+                    ]))
+                    .into_response()
+                }
+            }),
+        )
+        .route(
+            "/permission/{request_id}/reply",
+            post(record(replies.clone())),
+        )
+        .route(
+            "/question/{request_id}/reply",
+            post(record(replies.clone())),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let address: SocketAddr = listener.local_addr().expect("addr");
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    let runtime = OpenCodeSessionRuntime::new(
+        &format!("http://{address}"),
+        "opencode-resume-asks",
+        "/tmp/project",
+        None,
+    );
+    runtime.resume("session-1").await.expect("resumes");
+    let mut events = Vec::new();
+    while let Ok(Some(event)) = timeout(Duration::from_millis(1500), runtime.next_event()).await {
+        events.push(event);
+    }
+    let shown = |event_type: &str, request_id: &str| {
+        events
+            .iter()
+            .filter(|event| {
+                event.event_type == event_type && event.request_id.as_deref() == Some(request_id)
+            })
+            .collect::<Vec<_>>()
+    };
+    let permission = shown("request.opened", "per_offline");
+    assert_eq!(permission.len(), 1, "{events:#?}");
+    assert_eq!(permission[0].payload["detail"], "bash: git push");
+    assert_eq!(permission[0].payload["recovered"], true);
+    assert!(shown("request.opened", "per_other").is_empty());
+    let question = shown("user-input.requested", "que_offline");
+    assert_eq!(question.len(), 1, "{events:#?}");
+    assert_eq!(
+        question[0].payload["questions"][0]["question"],
+        "Pick a color"
+    );
+    runtime
+        .respond_to_permission("per_offline", "accept")
+        .await
+        .expect("the recovered permission can be answered");
+    runtime
+        .respond_to_user_input("que_offline", json!({ "Color": ["Red"] }))
+        .await
+        .expect("the recovered question can be answered");
+    assert_eq!(
+        replies.lock().await.as_slice(),
+        [
+            "/permission/per_offline/reply",
+            "/question/que_offline/reply"
+        ]
+    );
+    server.abort();
+}
+
 #[tokio::test]
 async fn opencode_runtime_failure_boundaries_reject_invalid_sessions_and_http_statuses() {
     let state = Arc::new(TestServerState::default());
