@@ -38,6 +38,7 @@ export {
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
   __resetServerAuthBootstrapForTests,
+  abandonServerAuthBootstrap,
 } from "./auth";
 
 export { refreshPrimarySessionState, usePrimarySessionState } from "./sessionState";

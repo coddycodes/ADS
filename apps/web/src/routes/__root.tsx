@@ -39,7 +39,10 @@ import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { startClientCollector } from "../profiler/startClientCollector";
 import { startPreviewTunnelBroker } from "../browser/previewTunnelBroker";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { resolveInitialServerAuthGateState } from "../environments/primary";
+import {
+  abandonServerAuthBootstrap,
+  resolveInitialServerAuthGateState,
+} from "../environments/primary";
 import { hasSavedEnvironments } from "../connection/savedEnvironments";
 import {
   hasHostedPairingRequest,
@@ -150,7 +153,11 @@ export const Route = createRootRoute({
         : await resolveInitialServerAuthGateState();
     } catch (error) {
       if (await servedRemoteClient()) {
-        if (error instanceof ServedSessionCheckStalled) setServedSessionStalled(true);
+        if (error instanceof ServedSessionCheckStalled) {
+          setServedSessionStalled(true);
+          // The next check, such as pairing this server, asks the server again.
+          abandonServerAuthBootstrap();
+        }
         return remoteClientState;
       }
       throw error;

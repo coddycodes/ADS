@@ -167,6 +167,61 @@ describe("resolveInitialServerAuthGateState", () => {
     expect(testApi.calls.browserSession).toEqual([{ credential: "desktop-bootstrap-token" }]);
   });
 
+  // A served page abandons a session check that stalls past its deadline; the next check must
+  // ask the server again instead of reusing the stalled attempt.
+  it("starts a fresh check after the in-flight one is abandoned", async () => {
+    let calls = 0;
+    const testApi = await installAuthApi({
+      session: () => {
+        calls += 1;
+        return unauthenticatedSession(LOOPBACK_AUTH);
+      },
+    });
+    const { abandonServerAuthBootstrap, resolveInitialServerAuthGateState } =
+      await import("./environments/primary");
+
+    const first = resolveInitialServerAuthGateState();
+    abandonServerAuthBootstrap();
+    const second = resolveInitialServerAuthGateState();
+    expect(second).not.toBe(first);
+    await Promise.all([first, second]);
+    expect(testApi.calls.session).toBe(2);
+    expect(calls).toBe(2);
+  });
+
+  // An abandoned check that settles late must not stand in for the fresh one: its authenticated
+  // answer may predate a restart or a revoked session.
+  it("does not cache an abandoned check that settles late", async () => {
+    let releaseStale: (() => void) | undefined;
+    let call = 0;
+    const testApi = await installEnvironmentHttpTest({
+      session: () => {
+        call += 1;
+        return call === 1
+          ? Effect.promise(
+              () =>
+                new Promise<AuthSessionState>((resolve) => {
+                  releaseStale = () => resolve(authenticatedSession(LOOPBACK_AUTH));
+                }),
+            )
+          : Effect.succeed(unauthenticatedSession(LOOPBACK_AUTH));
+      },
+    });
+    disposeHttpTest = testApi.dispose;
+    const { abandonServerAuthBootstrap, resolveInitialServerAuthGateState } =
+      await import("./environments/primary");
+
+    const stale = resolveInitialServerAuthGateState();
+    await vi.waitFor(() => expect(releaseStale).toBeDefined());
+    abandonServerAuthBootstrap();
+    expect((await resolveInitialServerAuthGateState()).status).not.toBe("authenticated");
+    releaseStale?.();
+    expect((await stale).status).toBe("authenticated");
+
+    expect((await resolveInitialServerAuthGateState()).status).not.toBe("authenticated");
+    expect(testApi.calls.session).toBe(3);
+  });
+
   it("uses https urls when the primary environment uses wss", async () => {
     await installAuthApi({ session: () => unauthenticatedSession(LOOPBACK_AUTH) });
     vi.stubEnv("VITE_HTTP_URL", "https://remote.example.com");

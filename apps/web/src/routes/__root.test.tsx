@@ -40,6 +40,7 @@ const s = vi.hoisted(() => ({
   authGate: { status: "authenticated" } as { status: string },
   authGateFailure: null as Error | null,
   authGateStalled: false,
+  authGateInFlight: null as Promise<unknown> | null,
   servedSessionStalled: false,
   hostedPairing: false,
   hostedStatic: false,
@@ -201,12 +202,20 @@ vi.mock("../hooks/useTheme", () => ({
 }));
 
 vi.mock("../environments/primary", () => ({
-  resolveInitialServerAuthGateState: () =>
-    s.authGateStalled
-      ? new Promise(() => {})
-      : s.authGateFailure === null
-        ? Promise.resolve(s.authGate)
-        : Promise.reject(s.authGateFailure),
+  // Like the real one, an unresolved check stays in flight and is reused until abandoned.
+  resolveInitialServerAuthGateState: () => {
+    if (s.authGateInFlight !== null) return s.authGateInFlight;
+    if (s.authGateStalled) {
+      s.authGateInFlight = new Promise(() => {});
+      return s.authGateInFlight;
+    }
+    return s.authGateFailure === null
+      ? Promise.resolve(s.authGate)
+      : Promise.reject(s.authGateFailure);
+  },
+  abandonServerAuthBootstrap: () => {
+    s.authGateInFlight = null;
+  },
 }));
 
 vi.mock("../hostedPairing", () => ({
@@ -370,6 +379,7 @@ beforeEach(() => {
   s.authGate = { status: "authenticated" };
   s.authGateFailure = null;
   s.authGateStalled = false;
+  s.authGateInFlight = null;
   s.servedSessionStalled = false;
   s.hostedPairing = false;
   s.hostedStatic = false;
@@ -535,6 +545,35 @@ describe("Route.beforeLoad", () => {
         const pairing = await beforeLoad()({ location: { pathname: "/pair" } });
         expect(pairing.authGateState.status).toBe("requires-auth");
         expect(s.servedSessionStalled).toBe(false);
+        s.authGate = { status: "authenticated" };
+        window.location.href = "https://box.lan/";
+        const paired = await beforeLoad()({ location: { pathname: "/" } });
+        expect(paired.authGateState.status).toBe("authenticated");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // The timed-out check is abandoned, so pairing once the server answers checks it afresh
+    // instead of waiting on the stalled attempt until it times out again.
+    it("pairs this server once it answers after a stalled check", async () => {
+      vi.useFakeTimers();
+      try {
+        s.servedByThisBackend = true;
+        s.savedEnvironments = true;
+        s.authGateStalled = true;
+        window.location.href = "https://box.lan/";
+        const stalled = beforeLoad()({ location: { pathname: "/" } });
+        await vi.advanceTimersByTimeAsync(20_000);
+        expect((await stalled).authGateState.status).toBe("hosted-static");
+
+        s.authGateStalled = false;
+        s.authGate = { status: "requires-auth" };
+        window.location.href = "https://box.lan/pair";
+        const pairing = beforeLoad()({ location: { pathname: "/pair" } });
+        await vi.advanceTimersByTimeAsync(0);
+        expect((await pairing).authGateState.status).toBe("requires-auth");
+
         s.authGate = { status: "authenticated" };
         window.location.href = "https://box.lan/";
         const paired = await beforeLoad()({ location: { pathname: "/" } });
