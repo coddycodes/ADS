@@ -21,8 +21,9 @@ pub enum TurnDeliveryFailureReason {
     ModelSelectionRefused,
     /// Paired only with a delivered retry that recovered into a fresh native conversation.
     StartedNewConversation,
-    /// Internal, never shown or stored: paired only with a delivery recorded delivered because
-    /// the provider already had the message, so no turn started for it here.
+    /// Internal, never shown or stored: paired with a delivery recorded delivered because the
+    /// provider already had the message, or with a dismissed one whose provider shows the
+    /// session idle, so no turn of it still runs here.
     FoundWithoutTurn,
 }
 

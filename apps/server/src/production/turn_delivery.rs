@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use futures_util::StreamExt as _;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::{
     sync::{Mutex, Notify, Semaphore},
@@ -45,6 +46,9 @@ const DELIVERY_RETRY_BACKOFF_MAX: Duration = Duration::from_secs(30);
 const SHUTDOWN_TASK_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const FORCE_CANCEL_TASK_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
 const RECONCILIATION_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(10);
+/// The longest wait between checks of a session OpenCode reports busy, for restart recovery and
+/// for a dismissed uncertain delivery alike.
+const SETTLEMENT_BACKOFF_MAX: Duration = Duration::from_secs(10);
 
 #[cfg(test)]
 type DeliveryRouteFuture =
@@ -484,7 +488,9 @@ async fn run(
     if !recovery_cohort.is_empty() {
         reconciliation_ready_at = Some(Instant::now());
     }
+    let settlement = DismissedSettlement::default();
     loop {
+        settlement.trigger(&engine, &reconciler, &wake, &stop_claiming);
         if recovery_task.is_none()
             && !recovery_cohort.is_empty()
             && reconciliation_ready_at.is_some_and(|ready_at| ready_at <= Instant::now())
@@ -584,7 +590,8 @@ async fn run(
                             Ok(has_unavailable) if has_unavailable => {
                                 reconciliation_ready_at =
                                     Some(Instant::now() + reconciliation_backoff);
-                                reconciliation_backoff = next_backoff(reconciliation_backoff);
+                                reconciliation_backoff =
+                                    next_reconciliation_backoff(reconciliation_backoff);
                             }
                             Ok(_) => {
                                 reconciliation_ready_at = None;
@@ -594,14 +601,16 @@ async fn run(
                                 tracing::warn!(%error, "provider delivery recovery failed; retrying");
                                 reconciliation_ready_at =
                                     Some(Instant::now() + reconciliation_backoff);
-                                reconciliation_backoff = next_backoff(reconciliation_backoff);
+                                reconciliation_backoff =
+                                    next_reconciliation_backoff(reconciliation_backoff);
                             }
                         }
                     }
                     Err(error) => {
                         tracing::warn!(%error, "provider delivery recovery task failed; retrying");
                         reconciliation_ready_at = Some(Instant::now() + reconciliation_backoff);
-                        reconciliation_backoff = next_backoff(reconciliation_backoff);
+                        reconciliation_backoff =
+                            next_reconciliation_backoff(reconciliation_backoff);
                     }
                 }
             }
@@ -610,6 +619,7 @@ async fn run(
                     task.abort();
                     let _ = task.await;
                 }
+                settlement.stop().await;
                 stop_tasks(
                     &mut tasks,
                     &force_cancel,
@@ -621,6 +631,161 @@ async fn run(
             }
         }
     }
+}
+
+/// Releases the pending turn marker of an OpenCode delivery dismissed while uncertain once
+/// OpenCode shows the session idle; until then it holds the queue, since OpenCode may still be
+/// processing the message. Every pass of the dispatch loop (a ready session, a resolution, any
+/// other wake) checks again; a session OpenCode reports busy is also asked again after a backoff
+/// of up to `SETTLEMENT_BACKOFF_MAX`. A session whose status cannot be read keeps the marker.
+#[derive(Clone, Default)]
+struct DismissedSettlement {
+    state: Arc<DismissedSettlementState>,
+    task: Arc<std::sync::Mutex<Option<JoinHandle<()>>>>,
+}
+
+#[derive(Default)]
+struct DismissedSettlementState {
+    running: std::sync::atomic::AtomicBool,
+    poke: Notify,
+}
+
+impl DismissedSettlement {
+    fn trigger(
+        &self,
+        engine: &OrchestrationEngine,
+        reconciler: &DeliveryReconciler,
+        wake: &Arc<Notify>,
+        stop: &CancellationToken,
+    ) {
+        use std::sync::atomic::Ordering;
+        if self.state.running.swap(true, Ordering::SeqCst) {
+            self.state.poke.notify_one();
+            return;
+        }
+        let state = self.state.clone();
+        let engine = engine.clone();
+        let reconciler = reconciler.clone();
+        let wake = wake.clone();
+        let stop = stop.clone();
+        let task = tokio::spawn(async move {
+            let mut backoff = RETRY_BACKOFF_MIN;
+            loop {
+                let waiting = tokio::select! {
+                    () = stop.cancelled() => break,
+                    checked = settle_dismissed_once(&engine, &reconciler, &wake) => {
+                        checked.unwrap_or_else(|error| {
+                            tracing::warn!(
+                                %error,
+                                "dismissed delivery settlement could not be checked"
+                            );
+                            true
+                        })
+                    }
+                };
+                if waiting {
+                    tokio::select! {
+                        () = stop.cancelled() => break,
+                        () = sleep(backoff) => {}
+                        () = state.poke.notified() => {}
+                    }
+                    backoff = backoff.saturating_mul(2).min(SETTLEMENT_BACKOFF_MAX);
+                    continue;
+                }
+                state.running.store(false, Ordering::SeqCst);
+                // A pass that asked while this one finished still gets its check.
+                let poked = tokio::select! {
+                    biased;
+                    () = state.poke.notified() => true,
+                    () = std::future::ready(()) => false,
+                };
+                if !poked || stop.is_cancelled() || state.running.swap(true, Ordering::SeqCst) {
+                    return;
+                }
+            }
+            state.running.store(false, Ordering::SeqCst);
+        });
+        // The previous pass has ended (it cleared `running` before this one could start).
+        *self
+            .task
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(task);
+    }
+
+    /// Stops a pass in flight and waits for it, so nothing outlives the delivery worker.
+    async fn stop(&self) {
+        let task = self
+            .task
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(task) = task {
+            task.abort();
+            let _ = task.await;
+        }
+    }
+}
+
+/// One check of every dismissed uncertain OpenCode marker. Returns whether a session is still
+/// busy (or its check failed for now), so it is asked again.
+async fn settle_dismissed_once(
+    engine: &OrchestrationEngine,
+    reconciler: &DeliveryReconciler,
+    wake: &Notify,
+) -> Result<bool, String> {
+    let rows = engine
+        .repositories()
+        .list_dismissed_uncertain_opencode_markers()
+        .await
+        .map_err(|error| error.to_string())?;
+    // Threads are checked concurrently, so a stalled session does not hold another thread's
+    // release, and each release wakes the dispatcher at once.
+    let checks = futures_util::stream::iter(rows)
+        .map(|row| async move {
+            let outcome = timeout(RECONCILIATION_ATTEMPT_TIMEOUT, reconciler(row.clone()))
+                .await
+                .unwrap_or(ProviderReconciliationOutcome::Unavailable {
+                    detail: "provider delivery reconciliation timed out".to_owned(),
+                });
+            match outcome {
+                // The session is idle, or OpenCode never had the message: nothing of it runs.
+                ProviderReconciliationOutcome::FoundSettled
+                | ProviderReconciliationOutcome::Absent => {
+                    let released = engine
+                        .transition_turn_delivery_with_reason(
+                            TurnDeliveryTransition {
+                                turn_id: None,
+                                command_id: row.command_id,
+                                expected_states: vec![TurnDeliveryState::Dismissed],
+                                expected_attempt: row.attempts,
+                                next_state: TurnDeliveryState::Dismissed,
+                                detail: row.last_error,
+                                updated_at: now(),
+                            },
+                            Some(TurnDeliveryFailureReason::FoundWithoutTurn),
+                        )
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    if released {
+                        wake.notify_one();
+                    }
+                    Ok(false)
+                }
+                ProviderReconciliationOutcome::Unavailable { .. } => Ok(true),
+                // A turn this runtime still holds, or a server that cannot report its status:
+                // the marker stays until a later pass finds the session idle.
+                ProviderReconciliationOutcome::Found
+                | ProviderReconciliationOutcome::ConversationLost { .. } => Ok(false),
+            }
+        })
+        .buffer_unordered(MAX_CONCURRENT_THREADS)
+        .collect::<Vec<Result<bool, String>>>()
+        .await;
+    let mut waiting = false;
+    for check in checks {
+        waiting |= check?;
+    }
+    Ok(waiting)
 }
 
 fn min_delay(left: Option<Duration>, right: Option<Duration>) -> Option<Duration> {
@@ -762,8 +927,15 @@ async fn recover_sending(
                 }
             }
         };
+        // A found message whose session is idle started no turn still running, so its pending
+        // marker goes; one that may still run keeps it until its turn settles.
+        let mut reason = None;
         let (next_state, detail) = match outcome {
             ProviderReconciliationOutcome::Found => (TurnDeliveryState::Delivered, None),
+            ProviderReconciliationOutcome::FoundSettled => {
+                reason = Some(TurnDeliveryFailureReason::FoundWithoutTurn);
+                (TurnDeliveryState::Delivered, None)
+            }
             ProviderReconciliationOutcome::Absent => (TurnDeliveryState::Pending, None),
             ProviderReconciliationOutcome::ConversationLost { detail } => {
                 (TurnDeliveryState::Uncertain, Some(detail))
@@ -785,15 +957,18 @@ async fn recover_sending(
         };
         let command_id = row.command_id.clone();
         let transitioned = engine
-            .transition_turn_delivery(TurnDeliveryTransition {
-                turn_id: None,
-                command_id: row.command_id,
-                expected_states: vec![TurnDeliveryState::Sending],
-                expected_attempt: row.attempts,
-                next_state,
-                detail,
-                updated_at: now(),
-            })
+            .transition_turn_delivery_with_reason(
+                TurnDeliveryTransition {
+                    turn_id: None,
+                    command_id: row.command_id,
+                    expected_states: vec![TurnDeliveryState::Sending],
+                    expected_attempt: row.attempts,
+                    next_state,
+                    detail,
+                    updated_at: now(),
+                },
+                reason,
+            )
             .await
             .map_err(|error| error.to_string())?;
         if transitioned {
@@ -1082,6 +1257,13 @@ async fn stop_tasks(
 
 fn next_backoff(current: Duration) -> Duration {
     current.saturating_mul(2).min(RETRY_BACKOFF_MAX)
+}
+
+/// The wait before recovery asks a provider again that could not answer, such as an OpenCode
+/// session still busy with a found message: doubling up to `SETTLEMENT_BACKOFF_MAX`, so a long
+/// turn does not cost a status request every second.
+fn next_reconciliation_backoff(current: Duration) -> Duration {
+    current.saturating_mul(2).min(SETTLEMENT_BACKOFF_MAX)
 }
 
 fn next_delivery_backoff(current: Duration) -> Duration {
@@ -1492,6 +1674,22 @@ mod tests {
         future::ready,
         sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     };
+
+    /// Recovery asks a provider that cannot answer yet (an OpenCode session still busy) again
+    /// after a doubling backoff of up to ten seconds, so a long turn does not cost a status
+    /// request every second.
+    #[test]
+    fn recovery_rechecks_back_off_to_ten_seconds() {
+        let mut delay = RETRY_BACKOFF_MIN;
+        let mut delays = Vec::new();
+        for _ in 0..12 {
+            delays.push(delay);
+            delay = next_reconciliation_backoff(delay);
+        }
+        assert_eq!(delays[1], RETRY_BACKOFF_MIN * 2);
+        assert!(delays.contains(&Duration::from_millis(6400)));
+        assert_eq!(delays.last(), Some(&Duration::from_secs(10)));
+    }
 
     struct NeverFactory;
 

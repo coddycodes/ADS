@@ -3525,6 +3525,8 @@ async fn assert_opencode_restart_reconciliation(
             "/session/{session_id}",
             get(|| async { Json(json!({"id":"native-opencode-session"})) }),
         )
+        // The found turn has finished: no session is busy.
+        .route("/session/status", get(|| async { Json(json!({})) }))
         .route(
             "/event",
             get(|| async { Sse::new(stream::pending::<Result<Event, Infallible>>()) }),
@@ -3670,6 +3672,24 @@ async fn assert_opencode_restart_reconciliation(
         usize::from(should_resend),
         "Found prevents resend; Absent permits one resend"
     );
+    if mode == "found" {
+        // OpenCode reports the session idle, so the found turn has ended and its pending marker
+        // no longer holds queued follow-ups.
+        let message_id = row.message_id.clone();
+        let pending = engine
+            .repositories()
+            .database()
+            .call(move |connection| {
+                Ok(connection.query_row(
+                    "SELECT COUNT(*) FROM projection_turns WHERE pending_message_id = ? AND turn_id IS NULL AND state = 'running'",
+                    [message_id],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .expect("pending turns");
+        assert_eq!(pending, 0, "the finished turn's marker is cleared");
+    }
 
     if should_resend {
         // OpenCode rejects an id that does not start with `msg` (1.18 and later), so the key is
@@ -4376,6 +4396,9 @@ async fn retrying_an_uncertain_opencode_message_it_already_has_does_not_send_it_
     let stored = Arc::new(StdMutex::new(Vec::<String>::new()));
     let posts = stored.clone();
     let lookups = stored.clone();
+    // OpenCode's event stream, so the test can end the turn whose answer was lost.
+    let (sse, _) = tokio::sync::broadcast::channel::<String>(8);
+    let subscribe = sse.clone();
     let app = Router::new()
         .route(
             "/session",
@@ -4385,9 +4408,31 @@ async fn retrying_an_uncertain_opencode_message_it_already_has_does_not_send_it_
             "/session/{session_id}",
             get(|| async { Json(json!({"id":"opencode-retry-session"})) }),
         )
+        // No session is busy.
+        .route("/session/status", get(|| async { Json(json!({})) }))
         .route(
             "/event",
-            get(|| async { Sse::new(stream::pending::<Result<Event, Infallible>>()) }),
+            get(move || {
+                let events = subscribe.subscribe();
+                async move {
+                    Sse::new(stream::unfold(events, |mut events| async move {
+                        loop {
+                            match events.recv().await {
+                                Ok(data) => {
+                                    return Some((
+                                        Ok::<_, Infallible>(Event::default().data(data)),
+                                        events,
+                                    ));
+                                }
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                    return None;
+                                }
+                            }
+                        }
+                    }))
+                }
+            }),
         )
         .route(
             "/session/{session_id}/message",
@@ -4474,7 +4519,34 @@ async fn retrying_an_uncertain_opencode_message_it_already_has_does_not_send_it_
     });
     freeze_row_route(&engine, &settings, &mut row).await;
     let message_id = row.message_id.clone();
+    let payload = row.payload.clone();
     seed_pending_delivery(&database, row).await;
+    // A follow-up queued behind it, which runs once nothing holds the thread.
+    let follow_up = format!("{command_id}-follow-up");
+    let mut queued = delivery_row("opencode", &format!("{follow_up}-key"));
+    queued.command_id = follow_up.clone();
+    queued.message_id = format!("message-{follow_up}");
+    queued.provider_instance_id = "retry-opencode".to_owned();
+    queued.payload = payload;
+    queued.payload["commandId"] = json!(follow_up);
+    queued.payload["message"]["messageId"] = json!(queued.message_id);
+    queued.payload["message"]["text"] = json!("follow up");
+    queued.created_at = "2026-01-01T00:00:01Z".to_owned();
+    queued.updated_at = queued.created_at.clone();
+    seed_pending_delivery(&database, queued).await;
+    database
+        .call({
+            let follow_up = follow_up.clone();
+            move |connection| {
+                connection.execute(
+                    "UPDATE provider_turn_outbox SET state = 'queued' WHERE command_id = ?",
+                    [follow_up],
+                )?;
+                Ok(())
+            }
+        })
+        .await
+        .expect("queue the follow-up");
     // The turn admission's pending marker, which an accepted turn's session update would bind.
     let marker = message_id.clone();
     database
@@ -4527,7 +4599,50 @@ async fn retrying_an_uncertain_opencode_message_it_already_has_does_not_send_it_
             .unwrap_or_else(|_| panic!("the delivery never became {state:?}"));
         }
     };
+    let delivery_now = || {
+        let engine = engine.clone();
+        let command_id = command_id.clone();
+        async move {
+            let delivery = engine
+                .repositories()
+                .get_provider_turn_delivery(command_id)
+                .await
+                .expect("delivery row")
+                .expect("durable delivery");
+            format!("{:?} {:?}", delivery.state, delivery.last_error)
+        }
+    };
     settled(TurnDeliveryState::Uncertain).await;
+    // OpenCode finishes the turn whose answer was lost, so the runtime no longer holds it.
+    let before = engine.read_events(0).await.expect("events").len();
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let _ = sse.send(
+                json!({
+                    "type":"session.status",
+                    "properties":{"sessionID":"opencode-retry-session","status":{"type":"idle"}}
+                })
+                .to_string(),
+            );
+            let ended = engine
+                .read_events(0)
+                .await
+                .expect("events")
+                .iter()
+                .skip(before)
+                .any(|event| {
+                    event.event.event_type == "thread.activity-appended"
+                        && event.event.payload["activity"]["payload"]["eventType"]
+                            == "turn.completed"
+                });
+            if ended {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the lost turn ends");
 
     engine
         .dispatch(
@@ -4540,22 +4655,65 @@ async fn retrying_an_uncertain_opencode_message_it_already_has_does_not_send_it_
         .await
         .expect("retry");
     settled(TurnDeliveryState::Delivered).await;
+    let first_id = stored.lock().unwrap()[0].clone();
     assert_eq!(
-        stored.lock().unwrap().len(),
+        stored
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|id| **id == first_id)
+            .count(),
         1,
-        "OpenCode already had the message, so it is not sent again"
+        "OpenCode already had the message, so it is not sent again: {}",
+        delivery_now().await
     );
+    let marker = message_id.clone();
     let pending = database
-        .call(|connection| {
+        .call(move |connection| {
             Ok(connection.query_row(
-                "SELECT COUNT(*) FROM projection_turns WHERE thread_id = 't1' AND turn_id IS NULL AND state = 'running'",
-                [],
+                "SELECT COUNT(*) FROM projection_turns WHERE thread_id = 't1' AND pending_message_id = ? AND turn_id IS NULL AND state = 'running'",
+                [marker],
                 |row| row.get::<_, i64>(0),
             )?)
         })
         .await
         .expect("pending turns");
     assert_eq!(pending, 0, "the found message holds no queued follow-up");
+    // The retry found the message with no turn left running, and the follow-up then runs.
+    let found_without_turn = engine
+        .read_events(0)
+        .await
+        .expect("events")
+        .into_iter()
+        .any(|event| {
+            event.event.event_type == "thread.turn-delivery-updated"
+                && event.event.metadata["foundWithoutTurn"] == json!(true)
+        });
+    assert!(
+        found_without_turn,
+        "the retry is recorded as already delivered"
+    );
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let delivery = engine
+                .repositories()
+                .get_provider_turn_delivery(follow_up.clone())
+                .await
+                .expect("delivery row")
+                .expect("durable delivery");
+            if delivery.state == TurnDeliveryState::Delivered {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the queued follow-up runs");
+    assert_eq!(
+        stored.lock().unwrap().len(),
+        2,
+        "the original once and the follow-up once"
+    );
 
     service.shutdown().await;
     supervisor.shutdown().await.expect("supervisor shutdown");

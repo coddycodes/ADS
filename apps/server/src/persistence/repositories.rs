@@ -924,6 +924,34 @@ impl Repositories {
             .await
     }
 
+    /// OpenCode deliveries dismissed while uncertain whose pending turn marker still holds the
+    /// queue: they are released once OpenCode shows the session idle.
+    pub(crate) async fn list_dismissed_uncertain_opencode_markers(
+        &self,
+    ) -> Result<Vec<ProviderTurnDelivery>> {
+        self.database
+            .call(|connection| {
+                let query = PROVIDER_TURN_DELIVERY_SELECT.to_owned()
+                    + " AS dismissed WHERE dismissed.state = 'dismissed' AND dismissed.provider_kind = 'opencode'
+                       AND EXISTS(SELECT 1 FROM projection_threads AS thread
+                         WHERE thread.thread_id = dismissed.thread_id AND thread.deleted_at IS NULL
+                           -- A closed chat panel starts no provider until it is reopened.
+                           AND NOT (thread.kind = 'panel' AND thread.archived_at IS NOT NULL))
+                       AND EXISTS(SELECT 1 FROM projection_turns AS marker
+                         WHERE marker.thread_id = dismissed.thread_id AND marker.pending_message_id = dismissed.message_id
+                           AND marker.turn_id IS NULL AND marker.state = 'running')
+                       AND EXISTS(SELECT 1 FROM orchestration_events AS resolution
+                         WHERE resolution.aggregate_kind = 'thread' AND resolution.stream_id = dismissed.thread_id
+                           AND resolution.event_type = 'thread.turn-delivery-updated'
+                           AND json_extract(resolution.metadata_json, '$.deliveryCommandId') = dismissed.command_id
+                           AND json_extract(resolution.payload_json, '$.state') = 'dismissed'
+                           AND json_extract(resolution.metadata_json, '$.deliveryPreviousState') = 'uncertain')
+                       ORDER BY dismissed.created_at, dismissed.command_id";
+                collect(connection, &query, [], decode_provider_turn_delivery)
+            })
+            .await
+    }
+
     pub async fn list_queued_provider_turn_heads(&self) -> Result<Vec<ProviderTurnDelivery>> {
         self.database.call(|connection| {
             // Rank identifiers once, then load only each thread's head payload.

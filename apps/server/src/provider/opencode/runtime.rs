@@ -846,14 +846,15 @@ impl OpenCodeSessionRuntime {
             v2.answering.clear();
             v2.settled_while_answering.clear();
         }
-        let resumed_v2 = self.is_v2() && payload.get("resumed").is_some();
-        if resumed_v2 {
+        let resumed = payload.get("resumed").is_some();
+        if resumed && self.is_v2() {
             self.v2_restore_pending_asks(session_id).await;
         }
         self.reset_activity_root(session_id).await;
         self.emit("session.started", None, None, payload).await;
         self.emit("thread.started", None, None, json!({})).await;
-        if resumed_v2 {
+        // A resumed session may still be executing (OpenCode kept working while BiBCode was away).
+        if resumed {
             self.inner.v2.lock().await.adopt_on_connect = true;
         }
         self.start_event_pump().await?;
@@ -1200,8 +1201,9 @@ impl OpenCodeSessionRuntime {
         .await
         .unwrap_or(Err(()));
         match working {
-            Ok(false) => Err(OpenCodeRuntimeError::AlreadyDelivered),
-            Ok(true) => Err(OpenCodeRuntimeError::NotSent(
+            // A server without a status endpoint cannot tell, so it counts as idle here.
+            Ok(Some(false) | None) => Err(OpenCodeRuntimeError::AlreadyDelivered),
+            Ok(Some(true)) => Err(OpenCodeRuntimeError::NotSent(
                 "OpenCode is still working on this message".to_owned(),
             )),
             Err(()) => Err(OpenCodeRuntimeError::NotSent(
@@ -1210,9 +1212,28 @@ impl OpenCodeSessionRuntime {
         }
     }
 
-    /// Whether OpenCode reports the session busy or retrying. A server without a status endpoint
-    /// cannot tell, so it counts as idle.
-    async fn session_still_working(&self, session_id: &str) -> Result<bool, ()> {
+    /// Whether the session is idle: no turn held here and OpenCode reports it not working.
+    /// `None` when the server has no status endpoint to ask.
+    pub async fn session_idle(&self) -> Result<Option<bool>, OpenCodeRuntimeError> {
+        if self.has_active_turn().await {
+            return Ok(Some(false));
+        }
+        let session_id = self.session_id().await?;
+        tokio::time::timeout(
+            DELIVERY_LOOKUP_TIMEOUT,
+            self.session_still_working(&session_id),
+        )
+        .await
+        .unwrap_or(Err(()))
+        .map(|working| working.map(|working| !working))
+        .map_err(|()| {
+            OpenCodeRuntimeError::Http("OpenCode's session status could not be read".to_owned())
+        })
+    }
+
+    /// Whether OpenCode reports the session busy or retrying; `None` when the server has no
+    /// status endpoint.
+    async fn session_still_working(&self, session_id: &str) -> Result<Option<bool>, ()> {
         let statuses = if self.is_v2() {
             self.fetch_reconciliation_v2::<OpenCodeStatusMapDto>(
                 self.v2_url(&["session", "active"], false).map_err(|_| ())?,
@@ -1226,14 +1247,34 @@ impl OpenCodeSessionRuntime {
             .await?
         };
         Ok(match statuses {
-            ReconciliationApiResult::Supported(statuses) => statuses
-                .get(session_id)
-                .is_some_and(|status| !matches!(status, OpenCodeSessionStatusDto::Idle)),
-            ReconciliationApiResult::NotFound => false,
+            ReconciliationApiResult::Supported(statuses) => Some(
+                statuses
+                    .get(session_id)
+                    .is_some_and(|status| !matches!(status, OpenCodeSessionStatusDto::Idle)),
+            ),
+            ReconciliationApiResult::NotFound => None,
         })
     }
 
+    /// Whether OpenCode has the delivery's message, bounded so a lookup that is never answered
+    /// cannot outlive its caller's retries.
     pub async fn message_exists(&self, message_id: &str) -> Result<bool, OpenCodeRuntimeError> {
+        tokio::time::timeout(
+            DELIVERY_LOOKUP_TIMEOUT,
+            self.message_exists_unbounded(message_id),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(OpenCodeRuntimeError::Http(
+                "the message lookup took too long".to_owned(),
+            ))
+        })
+    }
+
+    async fn message_exists_unbounded(
+        &self,
+        message_id: &str,
+    ) -> Result<bool, OpenCodeRuntimeError> {
         let session_id = self.session_id().await?;
         if self.is_v2() {
             return self
@@ -2310,6 +2351,12 @@ impl OpenCodeSessionRuntime {
         event: Value,
         received_at_ms: u64,
     ) {
+        if event.get("type").and_then(Value::as_str) == Some("server.connected") {
+            let adopt = std::mem::take(&mut self.inner.v2.lock().await.adopt_on_connect);
+            if adopt {
+                self.v1_adopt_running_execution(session_id).await;
+            }
+        }
         if !self
             .observe_activity_event(session_id, &event, received_at_ms)
             .await
@@ -2904,6 +2951,22 @@ impl OpenCodeSessionRuntime {
                     );
                 }
             }
+        }
+    }
+
+    /// An OpenCode 1 session resumed while still executing: its start is not replayed, so report
+    /// it as a turn now, which binds the turn marker of a message found after a restart, and let
+    /// its `session.status` idle complete it.
+    async fn v1_adopt_running_execution(&self, session_id: &str) {
+        // The event pump awaits this, so a stalled read must not hold its events.
+        let working = tokio::time::timeout(
+            DELIVERY_LOOKUP_TIMEOUT,
+            self.session_still_working(session_id),
+        )
+        .await;
+        if matches!(working, Ok(Ok(Some(true)))) && self.inner.active_turn_id.lock().await.is_none()
+        {
+            self.begin_provider_started_turn().await;
         }
     }
 
@@ -5177,6 +5240,54 @@ mod tests {
             assert_eq!(completed.turn_id, started.turn_id);
             assert_eq!(completed.payload["stopReason"], "not_sent");
         }
+        server.abort();
+    }
+
+    /// A resumed OpenCode 1 session that is still busy reports its execution as a turn once its
+    /// events connect, and its idle status completes it, so a found message's marker settles.
+    #[tokio::test]
+    async fn a_resumed_busy_opencode_1_session_is_adopted_until_idle() {
+        let app = Router::new().route(
+            "/session/status",
+            get(|| async { Json(json!({ "session-1": { "type": "busy" } })) }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+        let runtime = super::OpenCodeSessionRuntime::new(
+            &format!("http://{address}"),
+            "unit-thread",
+            "/tmp/unit",
+            None,
+        );
+        *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
+        runtime.inner.v2.lock().await.adopt_on_connect = true;
+
+        runtime
+            .handle_sse_event(
+                "session-1",
+                json!({ "type": "server.connected", "properties": {} }),
+            )
+            .await;
+        let started = runtime.next_event().await.expect("turn.started");
+        assert_eq!(started.event_type, "turn.started");
+        assert_eq!(started.payload["providerStarted"], true);
+        assert_eq!(runtime.session_idle().await.expect("status"), Some(false));
+
+        runtime
+            .handle_sse_event(
+                "session-1",
+                json!({
+                    "type": "session.status",
+                    "properties": { "sessionID": "session-1", "status": { "type": "idle" } }
+                }),
+            )
+            .await;
+        let completed = runtime.next_event().await.expect("turn.completed");
+        assert_eq!(completed.event_type, "turn.completed");
+        assert_eq!(completed.turn_id, started.turn_id);
         server.abort();
     }
 

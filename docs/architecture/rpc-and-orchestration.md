@@ -2115,7 +2115,12 @@ failed does not block promotion; resolution metadata records that prior state
 so a rejected head can be dismissed without stranding its tail. Dismissal of
 sending or uncertain work does not prove the provider received nothing, so
 those placeholders and bound running turns continue to block automatic
-promotion. An archived `panel` thread (a closed chat panel) never promotes
+promotion. OpenCode, whose session status can be read, releases a placeholder
+dismissed while uncertain once it shows the session idle: the delivery worker
+asks on every pass (a ready session update wakes it) and, while OpenCode
+reports the session busy, again after a backoff of up to 10 seconds. A session
+whose status cannot be read keeps the placeholder, and a manual send still
+clears it. Other providers keep the rule unchanged. An archived `panel` thread (a closed chat panel) never promotes
 automatically, and delivery neither selects nor claims its pending rows, so
 neither its queue nor a prompt sent just before closing starts work after its
 tab closed; unarchiving it resumes both. A delivery claimed before the panel

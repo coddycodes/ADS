@@ -5154,8 +5154,10 @@ async fn persist_turn_delivery_transition(
                 && transition.detail.is_some()
                 && transition.detail == last_error
                 && failure_reason.is_none();
-            let found_without_turn = transition.next_state == TurnDeliveryState::Delivered
-                && reason == Some(TurnDeliveryFailureReason::FoundWithoutTurn);
+            let found_without_turn = matches!(
+                transition.next_state,
+                TurnDeliveryState::Delivered | TurnDeliveryState::Dismissed
+            ) && reason == Some(TurnDeliveryFailureReason::FoundWithoutTurn);
             let reason = reason.filter(|reason| matches!((transition.next_state, reason),
                 (TurnDeliveryState::Failed, TurnDeliveryFailureReason::ModelSelectionRefused)
                 | (TurnDeliveryState::Delivered, TurnDeliveryFailureReason::StartedNewConversation)))
@@ -6171,11 +6173,11 @@ fn apply_turns_projector_tx(
             )?;
             transaction.execute("INSERT INTO projection_turns (thread_id, turn_id, pending_message_id, source_proposed_plan_thread_id, source_proposed_plan_id, assistant_message_id, state, requested_at, started_at, completed_at, checkpoint_turn_count, checkpoint_ref, checkpoint_status, checkpoint_files_json) VALUES (?, NULL, ?, ?, ?, NULL, 'running', ?, NULL, NULL, NULL, NULL, NULL, '[]')", params![thread_id, required_str(payload,"messageId")?, optional_string(payload.pointer("/sourceProposedPlan/threadId")), optional_string(payload.pointer("/sourceProposedPlan/planId")), required_str(payload,"createdAt")?])?;
         }
-        // A delivery recorded delivered because the provider already had the message, with no
-        // turn of its runtime still running (an explicit retry found it), started no turn here.
-        // Its pending marker would stay running and hold queued follow-ups, so it goes. Only that
-        // explicit outcome clears it: an accepted turn keeps its marker until its session update,
-        // and restart recovery keeps it, since it cannot tell whether that turn still runs.
+        // A delivery recorded delivered because the provider already had the message and no turn
+        // of it still runs (an explicit retry, or restart recovery with the session idle, found
+        // it) started no turn here. Its pending marker would stay running and hold queued
+        // follow-ups, so it goes. Only that explicit outcome clears it: an accepted turn keeps its
+        // marker until its session update, and so does a found turn that may still run.
         "thread.turn-delivery-updated"
             if event
                 .event

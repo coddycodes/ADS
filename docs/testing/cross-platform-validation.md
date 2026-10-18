@@ -381,7 +381,9 @@ must become the promotion time and place it after that reply, including after
 projection replay. Transaction rollback must preserve the original timestamps;
 steering and still-queued messages retain enqueue times. Dismissing a rejected head
 must unblock its tail; dismissing sending or uncertain work must preserve the
-barrier against automatic delivery before settlement. For a head refused for its
+barrier against automatic delivery before settlement. For OpenCode, a head
+dismissed while uncertain releases its tail once OpenCode shows the session
+idle, and not while it reports the session busy. For a head refused for its
 model or options, verify that it offers only **Dismiss**, later pending messages
 show **Waiting for an earlier message**, and the queued head card shows
 **Waiting for an earlier message** with **Send now** and **Steer** disabled and
