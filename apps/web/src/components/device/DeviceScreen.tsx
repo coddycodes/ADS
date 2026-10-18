@@ -31,13 +31,13 @@ interface Size {
   readonly height: number;
 }
 
-/** A typical phone shape, until the device reports its own. */
 /**
  * The canvas's bezel: `ring-4` (and `focus-visible:ring-primary`) draws a 4 px box-shadow
  * outside the canvas, so the screen is letterboxed this far inside the `overflow-hidden`
  * container or the bezel is clipped on the edges the screen touches.
  */
 const BEZEL_WIDTH_PX = 4;
+/** A typical phone shape, until the device reports its own. */
 const PLACEHOLDER_SIZE: Size = { width: 1080, height: 2340 };
 
 const sameSize = (left: Size | null, right: Size | null) =>

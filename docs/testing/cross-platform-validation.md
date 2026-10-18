@@ -3035,12 +3035,12 @@ check. The AVD needs `hw.keyboard=yes` in its `config.ini`: without it, Back,
 Home, Recents, and volume silently do nothing, and avdmanager-created AVDs
 default to `no`. On macOS, `-no-window` falls back to a software GPU
 (lavapipe), which wedged or crashed the guest in the first native run; record
-it if the guest stops answering. Start the server with `ANDROID_HOME` set in its own environment (a
-service manager does not read a login shell), on an address a second machine
-reaches. Use a fresh `BIBCODE_HOME` and enable the
-[Profiler](../architecture/overview.md#profiler) so `device.lifecycle` and
-any `subprocess.crash` are recorded. Clients: the desktop app on another
-machine with a pinned (E2EE) profile, and a browser on that machine opening
+it if the guest stops answering. Start the server with `ANDROID_HOME` set in
+its own environment (a service manager does not read a login shell), on an
+address a second machine reaches. Use a fresh `BIBCODE_HOME` and enable the
+[Profiler](../architecture/overview.md#profiler) so `device.lifecycle` and any
+`subprocess.crash` are recorded. Clients: the desktop app on another machine
+with a pinned (E2EE) profile, and a browser on that machine opening
 `http://<server lan ip>:<port>` (not `localhost`, which is a secure context).
 Record each client's OS, app or browser version, and profile type.
 
