@@ -46,6 +46,9 @@ const FRAME_HEADER_BYTES: usize = 9;
 pub(crate) const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 /// Kind 3 with pts 0 and no payload: the stream is alive, and there is nothing to decode.
 pub(crate) const KEEPALIVE_FRAME: [u8; FRAME_HEADER_BYTES] = [3, 0, 0, 0, 0, 0, 0, 0, 0];
+/// How long a socket that reads what it is sent may wait for a key unit before the hub asks
+/// again. A legitimate wait lasts at most one deferred window plus the encode.
+const WAIT_WATCHDOG: Duration = RESET_MIN_INTERVAL.saturating_mul(2);
 
 /// The connection a ticket was minted on, and the only one that may redeem it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -260,6 +263,10 @@ struct SubscriberSlot {
     /// sets it, and every overflow starts the key wait, so a socket that needs a config is
     /// always waiting for a key unit.
     needs_config: bool,
+    /// When the socket last started waiting for a key unit; `None` while it is not waiting.
+    /// The hub's keepalive tick asks again for a socket that has waited too long with its
+    /// queue empty (see [`MediaHub::keepalive`]).
+    waiting_since: Option<Instant>,
     closed: CancellationToken,
 }
 
@@ -310,6 +317,7 @@ impl SubscriberSlot {
     /// Drops what is queued and waits for the next key unit.
     fn skip_to_key(&mut self) {
         self.waiting_for_key = true;
+        self.waiting_since = Some(Instant::now());
         self.generation.fetch_add(1, Ordering::AcqRel);
     }
 
@@ -456,6 +464,7 @@ impl MediaHub {
                 waiting_for_key: true,
                 missed_key: missed_key.clone(),
                 needs_config: false,
+                waiting_since: Some(Instant::now()),
                 closed: closed.clone(),
             };
             if let Some(config) = &state.cached_config {
@@ -580,13 +589,34 @@ impl MediaHub {
     /// Tells every socket with nothing queued that the stream is still open. A socket with
     /// frames queued already has its proof of life, so a keepalive never waits behind them
     /// and never grows a stalled socket's queue.
+    ///
+    /// It also asks for a key unit, under the reset rate limit, when a socket with nothing
+    /// queued has waited for one longer than [`WAIT_WATCHDOG`] since its wait started or
+    /// the last reset was written, whichever is later. Such a socket reads what it is sent,
+    /// yet its key unit was lost on the way, and a still screen sends no other: without
+    /// this it would get only keepalives, which its client takes for a live stream. A
+    /// socket that stays blocked always has frames queued, so it never asks here.
     fn keepalive(&self) {
         static FRAME: Bytes = Bytes::from_static(&KEEPALIVE_FRAME);
+        let now = Instant::now();
         let mut state = self.lock();
+        let last_reset = state.last_reset;
+        let mut stuck = false;
         state.subscribers.retain(|slot| {
-            slot.queued_bytes.load(Ordering::Acquire) > 0
-                || !matches!(slot.offer(&FRAME, false), Offer::Closed)
+            if slot.queued_bytes.load(Ordering::Acquire) > 0 {
+                return true;
+            }
+            stuck |= slot.waiting_for_key
+                && slot
+                    .waiting_since
+                    .max(last_reset)
+                    .is_some_and(|since| now.duration_since(since) > WAIT_WATCHDOG);
+            !matches!(slot.offer(&FRAME, false), Offer::Closed)
         });
+        if stuck {
+            tracing::debug!("a device media socket still waits for a key unit; asking again");
+            self.maybe_reset(&mut state);
+        }
     }
 
     /// Sends one unit to every socket: deltas skip sockets waiting for a key unit, and a
@@ -630,6 +660,7 @@ impl MediaHub {
                         UnitKind::Config => slot.needs_config = false,
                         UnitKind::Key => {
                             slot.waiting_for_key = false;
+                            slot.waiting_since = None;
                             // A key unit makes good any it missed, so a drain asks for none.
                             slot.missed_key.store(false, Ordering::Release);
                         }
@@ -1530,6 +1561,61 @@ mod tests {
             hub.written.load(Ordering::Acquire),
             usize::try_from(after_overflow).unwrap()
         );
+        // However long it stays blocked: its queue never empties, so the hub's watchdog for
+        // a drained socket that still waits never counts it.
+        tokio::time::sleep(RESET_MIN_INTERVAL * 10).await;
+        assert_eq!(hub.resets(), after_overflow);
+        assert_eq!(
+            hub.written.load(Ordering::Acquire),
+            usize::try_from(after_overflow).unwrap()
+        );
+    }
+
+    /// The audit's cross-cutting finding: a socket whose key unit was lost keeps reading
+    /// keepalives, so the client sees a live stream, and a still screen sends nothing more.
+    /// Once it has waited two reset windows with nothing queued, the hub asks again, then
+    /// no more often than that, and not at all once a key unit reached it.
+    #[tokio::test(start_paused = true)]
+    async fn a_drained_socket_still_waiting_after_two_windows_asks_again() {
+        let hub = HubFixture::new();
+        let mut watcher = hub.subscribe();
+        hub.wait_written(1).await;
+        let first = Instant::now();
+        // The source answers the reset with nothing; the reader takes every keepalive.
+        let reader = tokio::spawn(async move {
+            let mut kinds = Vec::new();
+            while let Some(frame) = watcher.subscriber.next_frame().await {
+                kinds.push(frame[0]);
+            }
+            kinds
+        });
+        tokio::time::sleep(RESET_MIN_INTERVAL * 2).await;
+        assert_eq!(hub.written.load(Ordering::Acquire), 1, "a short wait asks nothing");
+        hub.wait_written(2).await;
+        let second = Instant::now();
+        assert!(
+            second - first > RESET_MIN_INTERVAL * 2
+                && second - first <= RESET_MIN_INTERVAL * 2 + KEEPALIVE_INTERVAL,
+            "asked again after {:?}",
+            second - first
+        );
+        // The next ask waits two windows from this one.
+        tokio::time::sleep(RESET_MIN_INTERVAL * 2 - Duration::from_millis(100)).await;
+        assert_eq!(hub.written.load(Ordering::Acquire), 2);
+        hub.wait_written(3).await;
+        // A key unit ends the wait, and the asking with it.
+        hub.feed([config(), key(1)]).await;
+        let written = hub.written.load(Ordering::Acquire);
+        tokio::time::sleep(RESET_MIN_INTERVAL * 6).await;
+        assert_eq!(hub.written.load(Ordering::Acquire), written);
+        hub.hub.stop();
+        let kinds = reader.await.expect("reader");
+        let key_at = kinds.iter().position(|kind| *kind == 1).expect("the key unit");
+        assert!(
+            kinds[..key_at - 1].iter().all(|kind| *kind == 3) && kinds[key_at - 1] == 0,
+            "keepalives while it waited, then the config and key: {kinds:?}"
+        );
+        assert!(kinds[..key_at].len() > 3, "{kinds:?}");
     }
 
     /// A dropped config is made good by the key unit that follows it, with the config sent

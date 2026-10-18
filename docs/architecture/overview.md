@@ -2105,7 +2105,12 @@ behind asks at overflow. One already waiting that also loses the config or key
 unit (often the answer to its own reset, arriving while its queue is still
 full) asks once more when its reader drains the queue, under the same limit,
 unless a key unit has reached it since; a socket that never drains asks
-nothing more. The client decodes each key frame with the last config it
+nothing more. A socket that reads what it is sent but still waits for a key
+unit with nothing queued, more than 2 s after its wait started or the last
+reset was written, asks again from the keepalive tick, under the same limit:
+its key unit was lost on the way, and the keepalives it gets would otherwise
+hide that from its client. A blocked socket always has frames queued, so it
+never asks this way. The client decodes each key frame with the last config it
 received, so a socket that drops a config (a rotation's, say) gets the hub's
 newest config again immediately before its next key unit. A config that does
 not fit holds the key unit back with it; one that fits is queued and not sent
