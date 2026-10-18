@@ -996,9 +996,7 @@ describe("DevicePanel with iOS simulators", () => {
     await click(button(container, "Home"));
     await flushInput();
     // The lane's send rejected, so the queue sent Home's release once more.
-    expect(
-      h.calls.filter((call) => call.command === "input").map((call) => call.input),
-    ).toEqual([
+    expect(h.calls.filter((call) => call.command === "input").map((call) => call.input)).toEqual([
       {
         environmentId: ENVIRONMENT_ID,
         input: {
