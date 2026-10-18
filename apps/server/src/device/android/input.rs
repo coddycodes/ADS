@@ -295,10 +295,11 @@ pub(super) async fn send_batch(
 }
 
 /// Asks the emulator to turn toward `to`, then follows what the guest shows in `tracker`,
-/// and returns the orientation the device ended in. The catalog follows the tracker through
-/// `orientation_changes`, its one writer, so this reports nothing itself. `sensor` holds the
-/// orientation whose vector the sensor was last sent; it stays locked for the whole call, so
-/// one device's rotates run one at a time and an older one never undoes a newer one.
+/// and returns the orientation the device ended in. It writes nothing to the catalog: the
+/// tracker's orientation reaches it through `orientation_changes` and, while still images
+/// run, through each published frame. `sensor` holds the orientation whose vector the
+/// sensor was last sent; it stays locked for the whole call, so one device's rotates run
+/// one at a time and an older one never undoes a newer one.
 ///
 /// The skin follows the sensor even when the screen refuses the turn (the launcher refuses
 /// landscape, phones refuse 180 degrees). A turn the derived orientation has not taken
@@ -307,7 +308,8 @@ pub(super) async fn send_batch(
 /// than `to`. The sensor then goes back to the vector it held before the press, so it
 /// matches the screen and a later app does not turn unexpectedly. A failed read is no such
 /// evidence: the poll falls back to the tracker's orientation, which follows the scrcpy
-/// display, and with no evidence at all the sensor stays where it was sent. A guest slower
+/// display. With no evidence at all the turn is taken as asked: the sensor stays where it
+/// was sent, the tracker records the skin at `to`, and `to` is returned. A guest slower
 /// than the window has its turn undone, and the user presses again.
 pub(super) async fn rotate(
     client: &EmulatorClient,
@@ -355,9 +357,12 @@ pub(super) async fn rotate(
     if !refused {
         tracing::debug!(
             requested = ?to,
-            "the device's orientation could not be read; the sensor stays"
+            "the device's orientation could not be read; the turn is taken as asked"
         );
-        return Ok(tracker.current());
+        // No read succeeded, and no display contradicts `to`. The sensor stays at `to` and
+        // the skin follows the sensor, as a successful read would have shown, so the
+        // tracker is told and the result, the catalog, and the touch mapping agree.
+        return Ok(tracker.report_skin(to));
     }
     tracing::debug!(
         requested = ?to,
@@ -627,9 +632,10 @@ mod tests {
     }
 
     /// With every read failing and no video, nothing shows whether the guest turned, so the
-    /// sensor is left where it was sent.
+    /// sensor is left where it was sent and the turn is taken as asked: the result and the
+    /// tracker (and with it the catalog and the touch mapping) agree on it.
     #[tokio::test]
-    async fn without_any_evidence_the_sensor_stays() {
+    async fn without_any_evidence_the_turn_is_taken_as_asked() {
         let (fake, client, tracker, sensor) = emulator().await;
         fake.fail_screenshots();
         let ended = rotate(
@@ -641,9 +647,35 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(ended, Orientation::Portrait, "the tracker's orientation");
+        assert_eq!(ended, Orientation::Landscape);
+        assert_eq!(tracker.current(), Orientation::Landscape);
         assert_eq!(*fake.rotations.lock().unwrap(), [[0.0, 0.0, 90.0]]);
         assert_eq!(*sensor.lock().await, Orientation::Landscape);
+    }
+
+    /// Review round 2, Important 1, with video: every read fails and the guest turns wide
+    /// for Rotate right. The tracker still holds the skin from before the press, which
+    /// would fall back to `Landscape` by the display's shape; the turn is taken as asked,
+    /// so the tracker ends at `ReverseLandscape` and the touches are not mirrored.
+    #[tokio::test]
+    async fn a_turn_whose_reads_fail_ends_at_the_orientation_asked_for() {
+        let (fake, client, tracker, sensor) = emulator().await;
+        fake.fail_screenshots();
+        let display = display(&tracker, 576, 1280);
+        let (ended, ()) = tokio::join!(
+            rotate(
+                &client,
+                &tracker,
+                &sensor,
+                FAST_ROTATION,
+                Orientation::ReverseLandscape
+            ),
+            turn_wide_after(&display, Duration::from_millis(50)),
+        );
+        assert_eq!(ended.unwrap(), Orientation::ReverseLandscape);
+        assert_eq!(tracker.current(), Orientation::ReverseLandscape);
+        assert_eq!(*fake.rotations.lock().unwrap(), [[0.0, 0.0, -90.0]]);
+        assert_eq!(*sensor.lock().await, Orientation::ReverseLandscape);
     }
 
     /// With every read failing, a video display that stays tall is the evidence of refusal.

@@ -114,10 +114,12 @@ pub(crate) trait RunningDevice: Send + Sync + 'static {
         orientation: Orientation,
     ) -> BoxFuture<'_, Result<(), DeviceOpError>>;
     /// Turns toward `to`, calling `report` with each orientation and size the device
-    /// reports, never with what was asked; a device with
-    /// [`orientation_changes`](Self::orientation_changes) reports through that stream
-    /// instead, so the catalog has one writer. Returns the orientation the device ended in,
-    /// which differs from `to` when the screen kept its orientation.
+    /// reports, never with what was asked. A backend whose derived orientation reaches the
+    /// catalog another way may leave `report` uncalled: Android's `rotate` does, because
+    /// [`orientation_changes`](Self::orientation_changes) and its still-image frames carry
+    /// the orientation, while iOS's reports each readback and also has
+    /// `orientation_changes` on a live display. Returns the orientation the device ended
+    /// in, which differs from `to` when the screen kept its orientation.
     fn rotate<'a>(
         &'a self,
         to: Orientation,

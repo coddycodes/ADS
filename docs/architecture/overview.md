@@ -2032,15 +2032,20 @@ later. A turn no read has shown by then counts as refused only on positive
 evidence, a read that succeeded or a scrcpy display still in the other class,
 and the sensor is put back to the vector it held before the press, so it
 matches the screen. A failed read is no such evidence: it falls back to the
-derived orientation (which follows the scrcpy display), and with no evidence at
-all the sensor stays where it was sent. One device's rotates run one at a time,
-so an older one never undoes a newer one. `device.rotate` returns
-`{ orientation }`, the orientation the device ended in, and the client says
-when it differs from the request ("Pixel 8 didn't rotate. The app on screen
-keeps its orientation."). The catalog, touch mapping, JPEG frames, PNG
-screenshots, and `orientation_changes` (which follows turns the guest makes on
-its own) all read that derived orientation; `orientation_changes` is the
-catalog's only writer for an Android device.
+derived orientation (which follows the scrcpy display). With no evidence at all
+the turn is taken as asked: the sensor stays where it was sent, the skin is
+recorded at the requested orientation (it follows the sensor), and
+`device.rotate` returns the request, so its result, the catalog, and the touch
+mapping agree. One device's rotates run one at a time, so an older one never
+undoes a newer one. `device.rotate` returns `{ orientation }`, the orientation
+the device ended in, and the client says when it differs from the request
+("Pixel 8 didn't rotate. The app on screen may lock its orientation, or
+auto-rotate may be off on the device."). The catalog, touch mapping, JPEG
+frames, PNG screenshots, and `orientation_changes` (which follows turns the
+guest makes on its own) all read that derived orientation. Android's `rotate`
+writes nothing to the catalog: the derived orientation reaches it through
+`orientation_changes` and, while still images run, through each published
+frame, which carries the value derived just before it is published.
 
 **H.264 video.** Device video is the only application traffic outside typed
 RPC. On the first media subscriber, `device/android/scrcpy.rs` pushes the embedded

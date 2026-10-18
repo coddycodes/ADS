@@ -279,9 +279,10 @@ impl RunningDevice for RunningAndroid {
     }
 
     /// The derived orientation as it changes, so a turn the guest makes on its own (an app
-    /// that forces landscape, seen as a new scrcpy display size) reaches the catalog. It is
-    /// the catalog's only writer for this device: `rotate` reports nothing itself, so a
-    /// stale report can never land after a newer one.
+    /// that forces landscape, seen as a new scrcpy display size) reaches the catalog through
+    /// the manager's follow task. While still images run, each published frame also writes
+    /// the orientation it carries, which was derived from the same tracker just before. The
+    /// `rotate` command writes nothing, so its result can never land after a newer one.
     fn orientation_changes(&self) -> Option<BoxStream<'static, Orientation>> {
         let mut changes = self.orientation.subscribe();
         changes.mark_changed();
@@ -310,8 +311,8 @@ impl RunningDevice for RunningAndroid {
         ))
     }
 
-    /// Reports through [`orientation_changes`](Self::orientation_changes) only, never
-    /// through `report`.
+    /// Never calls `report`: the derived orientation reaches the catalog through
+    /// [`orientation_changes`](Self::orientation_changes) and the still-image frames.
     fn rotate<'a>(
         &'a self,
         to: Orientation,

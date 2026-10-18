@@ -417,6 +417,40 @@ mod device_tests {
         assert_eq!(touch_xy(&inputs[0]), (1079 - 270, 1200));
     }
 
+    /// Review round 2, Important 1: every read of the skin fails and no video runs, so
+    /// nothing shows whether the guest turned. The sensor stays where it was sent and the
+    /// turn is taken as asked, so the returned orientation, the catalog, and the touch
+    /// mapping agree and the client shows no "didn't rotate" note.
+    #[tokio::test]
+    async fn a_rotate_without_any_evidence_is_taken_as_asked() {
+        let fixture = ManagerFixture::ready_device().await;
+        fixture.controller.fail_screenshots();
+        let ended = fixture
+            .manager
+            .rotate(&fixture.id, Orientation::ReverseLandscape)
+            .await
+            .unwrap();
+        assert_eq!(ended, Orientation::ReverseLandscape);
+        assert_eq!(
+            *fixture.controller.rotations.lock().unwrap(),
+            [[0.0, 0.0, -90.0]]
+        );
+        fixture
+            .wait_orientation(Orientation::ReverseLandscape)
+            .await;
+        let snapshot = fixture.snapshot();
+        assert_eq!((snapshot.width, snapshot.height), (Some(2400), Some(1080)));
+        // Turned clockwise: the picture's top is the panel's left edge, and its left edge
+        // is the panel's bottom.
+        fixture
+            .manager
+            .input(&fixture.id, vec![touch(TouchAction::Down, 0.5, 0.25)])
+            .await
+            .unwrap();
+        let inputs = fixture.controller.wait_inputs(1).await;
+        assert_eq!(touch_xy(&inputs[0]), (270, 2399 - 1200));
+    }
+
     #[tokio::test]
     async fn a_failed_emulator_call_is_an_emulator_error() {
         let fixture = ManagerFixture::ready_device().await;
