@@ -657,7 +657,10 @@ provider says the old one is gone:
   shows the asks OpenCode was waiting on, since its event stream does not replay
   them: once the stream connects, each is checked against a fresh read of its
   pending list (one answered meanwhile is resolved, not shown), and one the
-  thread already recorded is not added again. The check for an execution
+  thread already recorded is not added again. A recovered form BiBCode cannot
+  show (free text, a conditional field, a sign-in link) is cancelled and the
+  chat told, as a live one is; each form is cancelled and reported once. The
+  check for an execution
   OpenCode kept running runs off the event pump with a 10-second bound, so a
   stalled read never holds events or Stop. Until it answers, or if it cannot,
   the execution's own output starts its provider-started turn, so the reply and

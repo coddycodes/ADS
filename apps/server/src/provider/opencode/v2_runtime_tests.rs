@@ -112,6 +112,8 @@ struct Replay {
     stall_active: AtomicBool,
     /// Cancelling a form (`DELETE /api/session/{id}/form/{form}`) never answers.
     stall_form_cancel: AtomicBool,
+    /// Forms the root session's form list also holds, as if created while BiBCode was away.
+    extra_forms: StdMutex<Vec<Value>>,
 }
 
 impl Replay {
@@ -356,6 +358,11 @@ async fn captured_list(State(replay): State<Arc<Replay>>, uri: OriginalUri) -> J
                 .find_map(|pair| pair.strip_prefix(&format!("{name}=")).map(str::to_owned))
         })
     };
+    if path == format!("/api/session/{}/form", replay.root)
+        && let Some(forms) = response["data"].as_array_mut()
+    {
+        forms.extend(replay.extra_forms.lock().unwrap().iter().cloned());
+    }
     if let Some(messages) = response["data"].as_array_mut() {
         if let Some(kind) = query("type") {
             messages.retain(|message| message["type"] == kind.as_str());
@@ -466,6 +473,7 @@ async fn serve(scenario: &'static str) -> (String, Arc<Replay>) {
         answer_asks_after_first_list: AtomicBool::new(false),
         stall_active: AtomicBool::new(false),
         stall_form_cancel: AtomicBool::new(false),
+        extra_forms: StdMutex::new(Vec::new()),
     });
     let app = Router::new()
         .route("/api/session", post(record).get(captured_list))
@@ -1291,6 +1299,56 @@ async fn output_of_a_resumed_execution_gets_its_turn_before_the_check_answers() 
     let delta = of_type(&events, "content.delta");
     assert_eq!(delta.len(), 1, "{events:#?}");
     assert_eq!(delta[0].turn_id, started[0].turn_id);
+    runtime.stop().await.expect("stop");
+}
+
+/// A form BiBCode cannot show that OpenCode raised while BiBCode was away is handled as a live one
+/// is: after the resume it is cancelled (once, though the live event for it also arrives), the
+/// chat is told once, and the session goes on.
+#[tokio::test]
+async fn a_form_raised_while_away_that_cannot_be_shown_is_cancelled_after_resume() {
+    let (endpoint, replay) = serve("hello").await;
+    let form = json!({
+        "id": "frm_offline", "sessionID": replay.root, "title": "Name",
+        "fields": [{ "key": "name", "type": "string" }]
+    });
+    replay.extra_forms.lock().unwrap().push(form.clone());
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while replay.requests_to("/form/frm_offline").is_empty() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the form is cancelled");
+    // The live event for the same form changes nothing.
+    runtime
+        .handle_v2_event(json!({ "type": "form.created", "data": { "form": form } }))
+        .await;
+    let events = drain(&runtime).await;
+    assert_eq!(replay.requests_to("/form/frm_offline").len(), 1);
+    let notices = events
+        .iter()
+        .filter(|event| {
+            event.event_type == "runtime.warning"
+                && event.payload["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("can't show"))
+        })
+        .count();
+    assert_eq!(notices, 1, "{events:#?}");
+    assert!(
+        of_type(&events, "user-input.requested").is_empty(),
+        "{events:#?}"
+    );
+    // The session goes on.
+    runtime
+        .send_turn(Some("SAY_HELLO please"), Vec::new(), None)
+        .await
+        .expect("prompt is accepted");
+    let events = until_turns_complete(&runtime, 1).await;
+    assert_eq!(of_type(&events, "turn.completed").len(), 1);
     runtime.stop().await.expect("stop");
 }
 
