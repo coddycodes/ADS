@@ -462,6 +462,21 @@ impl MediaHub {
         }
     }
 
+    /// A drained socket that missed its key unit while its queue was full asks for one,
+    /// unless a key unit reached it after its reader looked. A key unit clears the wait, so a
+    /// socket that still waits has not had one. Its wait is left as it is: starting it again
+    /// would drop the deltas that follow a key unit the client already has.
+    fn request_missed_key(&self, id: u64) {
+        let mut state = self.lock();
+        if state
+            .subscribers
+            .iter()
+            .any(|slot| slot.id == id && slot.waiting_for_key)
+        {
+            self.maybe_reset(&mut state);
+        }
+    }
+
     /// Asks the encoder for a fresh config and key unit, at most once per
     /// [`RESET_MIN_INTERVAL`] per device. The window runs from the write: the stamp taken
     /// here gates later requests until the task writes the reset and stamps it again (a
@@ -724,16 +739,20 @@ impl MediaSubscriber {
     /// closed this socket and its queue is empty.
     ///
     /// Taking the last queued frame of a socket that missed its key unit while its queue was
-    /// full asks for a key unit once, under the hub's reset rate limit: the queue has room
-    /// for the answer now, and a still screen would send no other.
+    /// full asks for a key unit once, under the hub's reset rate limit, if none has reached
+    /// the socket since: the queue has room for the answer now, and a still screen would
+    /// send no other.
     pub(crate) async fn next_frame(&mut self) -> Option<Bytes> {
         loop {
             let frame = self.frames.recv().await?;
             let queued = self
                 .queued_bytes
                 .fetch_sub(frame.bytes.len(), Ordering::AcqRel);
-            if queued == frame.bytes.len() && self.missed_key.swap(false, Ordering::AcqRel) {
-                self.request_keyframe();
+            if queued == frame.bytes.len()
+                && self.missed_key.swap(false, Ordering::AcqRel)
+                && let Some(hub) = &self.guard.hub
+            {
+                hub.request_missed_key(self.guard.id);
             }
             if frame.delta && frame.generation < self.generation.load(Ordering::Acquire) {
                 continue;
@@ -742,7 +761,9 @@ impl MediaSubscriber {
         }
     }
 
-    /// After a decoder error: wait for the next key unit and ask the encoder for one.
+    /// After a decoder error: drop the queued deltas, wait for the next key unit, and ask the
+    /// encoder for one under the hub's reset rate limit. The drain in [`Self::next_frame`]
+    /// does not call this: it leaves the wait alone.
     pub(crate) fn request_keyframe(&self) {
         if let Some(hub) = &self.guard.hub {
             hub.request_keyframe(self.guard.id);
@@ -1482,6 +1503,30 @@ mod tests {
         hub.feed([delta(4)]).await;
         assert_eq!(received_media(&mut slow).await, [("delta", 4)]);
         assert_eq!(hub.resets(), 2, "the drain asked for nothing");
+    }
+
+    /// A key unit can reach the socket between its reader taking the last frame (which
+    /// found the miss) and the reader's request. The request then leaves the wait alone:
+    /// it neither drops the deltas that follow the key unit nor asks the encoder again.
+    #[tokio::test(start_paused = true)]
+    async fn a_key_that_lands_before_the_drains_request_keeps_the_socket_out_of_the_wait() {
+        let hub = HubFixture::new();
+        let mut watcher = hub.subscribe();
+        hub.wait_written(1).await;
+        // The socket has its config and key unit, so it is out of the key wait.
+        hub.feed([config(), key(1)]).await;
+        tokio::time::advance(RESET_MIN_INTERVAL).await;
+        // The request of a reader that found a miss before that key unit landed.
+        hub.hub.request_missed_key(watcher.subscriber.guard.id);
+        hub.feed([delta(2)]).await;
+        assert_eq!(
+            received_media(&mut watcher).await,
+            [("config", 0), ("key", 1), ("delta", 2)],
+            "the request put the socket back into its key wait"
+        );
+        tokio::time::sleep(RESET_MIN_INTERVAL * 2).await;
+        assert_eq!(hub.resets(), 1, "the request asked the encoder again");
+        assert_eq!(hub.written.load(Ordering::Acquire), 1);
     }
 
     #[tokio::test]

@@ -2093,19 +2093,20 @@ socket's queued deltas, forwards nothing until the next key unit, and sends
 `RESET_VIDEO` at most once per second per device. The second runs from the
 write, which for a reset asked for while the source still starts is when the
 source is up. A reset asked for inside that second (a socket joining,
-overflowing, or reporting a decoder error) is deferred, not dropped: when the
-second ends the hub's task sends one reset for every request made in it, if a
-socket still waits for a key unit, because a still screen encodes nothing
-unasked. Only a socket that newly falls behind asks at overflow. One already
-waiting that also loses the config or key unit (often the answer to its own
-reset, arriving while its queue is still full) asks once more when its reader
-drains the queue, under the same limit; a socket that never drains asks
-nothing more. A socket that accepts no
-frame for 10 s closes as `slow`. Rejections close with code 4400 and one of
-`expired`, `reused`, `wrongChannel`, `wrongDevice`, `limit`, `disabled`,
-`stopped`, `failed`, `unauthorized`, or `slow`; a wrong pinned key or prologue
-closes with 4403 `host-identity`. Pre-auth admission, deadlines, and the 503
-refusal are in [Remote architecture](./remote.md#device-media-sockets).
+overflowing, reporting a decoder error, or draining after it missed its key
+unit) is deferred, not dropped: when the second ends the hub's task sends one
+reset for every request made in it, if a socket still waits for a key unit,
+because a still screen encodes nothing unasked. Only a socket that newly falls
+behind asks at overflow. One already waiting that also loses the config or key
+unit (often the answer to its own reset, arriving while its queue is still
+full) asks once more when its reader drains the queue, under the same limit,
+unless a key unit has reached it since; a socket that never drains asks
+nothing more. A socket that accepts no frame for 10 s closes as `slow`.
+Rejections close with code 4400 and one of `expired`, `reused`, `wrongChannel`,
+`wrongDevice`, `limit`, `disabled`, `stopped`, `failed`, `unauthorized`, or
+`slow`; a wrong pinned key or prologue closes with 4403 `host-identity`.
+Pre-auth admission, deadlines, and the 503 refusal are in
+[Remote architecture](./remote.md#device-media-sockets).
 
 ### iOS simulators
 
