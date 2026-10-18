@@ -56,7 +56,11 @@ import {
 } from "../environments/primary/target";
 import { forgetPreviewStorage } from "../browser/previewStorageCleanup";
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
-import { isHostedStaticApp } from "../hostedPairing";
+import {
+  isHostedStaticApp,
+  isServedPrimarySuppressed,
+  onServedPrimarySuppressionChange,
+} from "../hostedPairing";
 import { clientCollector, PROFILER_CORRELATION_HEADER } from "../profiler/clientCollector";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { makeEnvironmentSelection } from "./environmentSelection";
@@ -626,11 +630,16 @@ const platformConnectionSourceLayer = Layer.effect(
       const next = new Map<string, CachedPlatformRegistration>();
       const registrations: Array<PlatformConnectionRegistration> = [];
 
-      const primaryTopologyRead = readPrimaryEnvironmentTargetResult();
-      const retainedPrimary = primaryRegistrationToRetainAfterTopologyRead(
-        previous,
-        primaryTopologyRead,
-      );
+      // A served page opened as a remote client withholds a new registration of its unpaired
+      // server, but keeps one already made: removing it would discard that environment's local
+      // data, unsent drafts included.
+      const suppressedPrimary = isServedPrimarySuppressed();
+      const primaryTopologyRead: PrimaryEnvironmentTargetRead = suppressedPrimary
+        ? { _tag: "Success", target: null }
+        : readPrimaryEnvironmentTargetResult();
+      const retainedPrimary = suppressedPrimary
+        ? previous.get(PRIMARY_LOCAL_ENVIRONMENT_ID)
+        : primaryRegistrationToRetainAfterTopologyRead(previous, primaryTopologyRead);
       if (retainedPrimary !== undefined) {
         next.set(PRIMARY_LOCAL_ENVIRONMENT_ID, retainedPrimary);
         registrations.push(retainedPrimary.registration);
@@ -725,8 +734,18 @@ const platformConnectionSourceLayer = Layer.effect(
       return registrations as ReadonlyArray<PlatformConnectionRegistration>;
     }).pipe(Effect.provide(FetchHttpClient.layer));
 
+    // A change to whether this page withholds its own server rebuilds at once, so a server just
+    // confirmed paired is not left out until the next poll.
+    const suppressionChanges = Stream.callback<void>((queue) =>
+      Effect.acquireRelease(
+        Effect.sync(() =>
+          onServedPrimarySuppressionChange(() => Queue.offerUnsafe(queue, undefined)),
+        ),
+        (stop) => Effect.sync(stop),
+      ).pipe(Effect.asVoid),
+    );
     return PlatformConnectionSource.of({
-      registrations: Stream.tick(PLATFORM_POLL_INTERVAL).pipe(
+      registrations: Stream.merge(Stream.tick(PLATFORM_POLL_INTERVAL), suppressionChanges).pipe(
         Stream.mapEffect(() => buildPlatformRegistrations),
       ),
     });

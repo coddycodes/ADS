@@ -44,6 +44,13 @@ creates an HTTP-only, SameSite browser session cookie. The response exposes the
 granted scopes and expiry, not the session secret. Browser HTTP and WebSocket
 ticket requests authenticate with this cookie.
 
+The web app uses this cookie session for its own origin only on a page the
+server itself served for that host, which the server marks with
+`<meta name="bibcode-served-host">`. Every other page is a remote client that
+uses bearer credentials, and so is a served page whose own server is not paired
+while other servers are. See
+[A page a server served, or a remote client](../architecture/remote.md#a-page-a-server-served-or-a-remote-client).
+
 ### Bearer or DPoP token exchange
 
 Non-cookie clients exchange a bootstrap at `POST /oauth/token` using an
