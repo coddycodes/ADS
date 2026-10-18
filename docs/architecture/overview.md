@@ -2007,38 +2007,40 @@ events (text at most 1,000 characters) and the client keeps one batch in
 flight. Touch points are normalized `0..1` of the upright picture. The
 emulator's `Touch.x`/`y` is the physical location on the unrotated panel, so
 `android::input::to_panel_pixels` turns each point into panel pixels in the
-natural orientation, for the orientation the guest reported (measured on a
-real AVD: before this mapping, a landscape tap at (109, 66) of the 2400×1080
-picture arrived as panel (109, 66)). A pointer still down when the device's input stream is
-reopened or the device stops is released where it was, in panel pixels.
-`device.rotate` tilts the virtual sensor with `setPhysicalModel` and then
-follows what the guest shows; the screen turns only when auto-rotate is on and
-the foreground app allows it. The emulator's `SkinRotation` follows the sensor,
-not the guest, so it cannot tell a refused turn (the Pixel launcher refuses
-landscape, phones refuse 180°) from a real one. `android::orientation` derives
-the orientation instead: while a scrcpy session runs, its display size (codec
-header, then each session packet) decides the class against the native panel,
-not by "tall" or "wide": a display with the native panel's shape is in the
-portrait class (`portrait` is the device's natural orientation, so a tablet
+natural orientation, for the orientation the guest reported (measured on a real
+AVD: before this mapping, a landscape tap at (109, 66) of the 2400×1080 picture
+arrived as panel (109, 66)). A pointer still down when the device's input
+stream is reopened or the device stops is released where it was, in panel
+pixels. `device.rotate` tilts the virtual sensor with `setPhysicalModel` and
+then follows what the guest shows; the screen turns only when auto-rotate is on
+and the foreground app allows it. The emulator's `SkinRotation` follows the
+sensor, not the guest, so it cannot tell a refused turn (the Pixel launcher
+refuses landscape, phones refuse 180°) from a real one. `android::orientation`
+derives the orientation instead: while a scrcpy session runs, its display size
+(codec header, then each session packet) decides the class against the native
+panel, not by "tall" or "wide": a display with the native panel's shape is in
+the portrait class (`portrait` is the device's natural orientation, so a tablet
 whose panel is naturally landscape is `portrait` at rest), and one with the
-other shape is turned. The skin picks the exact orientation only when its
-class agrees; otherwise the previous orientation stays, or, when that disagrees
-too, `portrait` for the native shape and `landscape` for the other. With no
-scrcpy session (still images) the skin decides, because the gRPC screenshots
-are rotated by it. `rotate` reads the orientation back
-every 250 ms in a 2.5 s window (measured: the display changed 0.67–0.90 s
-after `setPhysicalModel`); the last read starts by about 2.25 s, and one slow
-read can push the decision later. A turn no read has shown by then counts as
-refused only on positive evidence, a read that succeeded or a scrcpy display
-still in the other class, and the sensor is put back to the vector it held
-before the press, so it matches the screen. A failed read is no such evidence:
-it falls back to the derived orientation (which follows the scrcpy display),
-and with no evidence at all the sensor stays where it was sent. One device's
-rotates run one at a time, so an older one never undoes a newer one. The
-catalog, touch mapping, JPEG frames, PNG screenshots, and
-`orientation_changes` (which follows turns the guest makes on its own) all
-read that derived orientation; `orientation_changes` is the catalog's only
-writer for an Android device.
+other shape is turned. The skin picks the exact orientation only when its class
+agrees; otherwise the previous orientation stays, or, when that disagrees too,
+`portrait` for the native shape and `landscape` for the other. With no scrcpy
+session (still images) the skin decides, because the gRPC screenshots are
+rotated by it. `rotate` reads the orientation back every 250 ms in a 2.5 s
+window (measured: the display changed 0.67–0.90 s after `setPhysicalModel`);
+the last read starts by about 2.25 s, and one slow read can push the decision
+later. A turn no read has shown by then counts as refused only on positive
+evidence, a read that succeeded or a scrcpy display still in the other class,
+and the sensor is put back to the vector it held before the press, so it
+matches the screen. A failed read is no such evidence: it falls back to the
+derived orientation (which follows the scrcpy display), and with no evidence at
+all the sensor stays where it was sent. One device's rotates run one at a time,
+so an older one never undoes a newer one. `device.rotate` returns
+`{ orientation }`, the orientation the device ended in, and the client says
+when it differs from the request ("Pixel 8 didn't rotate. The app on screen
+keeps its orientation."). The catalog, touch mapping, JPEG frames, PNG
+screenshots, and `orientation_changes` (which follows turns the guest makes on
+its own) all read that derived orientation; `orientation_changes` is the
+catalog's only writer for an Android device.
 
 **H.264 video.** Device video is the only application traffic outside typed
 RPC. On the first media subscriber, `device/android/scrcpy.rs` pushes the embedded
@@ -2186,8 +2188,9 @@ afterwards can arrive before the pasted text.
 
 **Rotation and orientation.** `device.rotate` sends the target orientation to
 the simulator's `PurpleWorkspacePort` and then reads back the reported
-orientation for about 1.2 s; `canRotate` is true for live simulators with
-input. One convention covers both platforms, with iOS as the reference:
+orientation for about 1.2 s; it returns the requested orientation, because that
+readback is no evidence of a refusal. `canRotate` is true for live simulators
+with input. One convention covers both platforms, with iOS as the reference:
 `landscape` is the phone turned left (counter-clockwise), the client's
 **Rotate left** from portrait, with the UI's top along the device's right
 edge, so a cutout or Dynamic Island shows on the picture's left. That is

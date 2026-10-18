@@ -39,6 +39,7 @@ import {
   deviceStateLabel,
   IOS_PASTE_NOTE,
   isViewOnlyAvailability,
+  rotateKeptNote,
   type StillImages,
 } from "./deviceMessages";
 import { DeviceScreen } from "./DeviceScreen";
@@ -60,6 +61,9 @@ export function rotatedOrientation(
   const step = direction === "left" ? 1 : ORIENTATIONS_LEFT.length - 1;
   return ORIENTATIONS_LEFT[(index + step) % ORIENTATIONS_LEFT.length]!;
 }
+
+/** How long the note that a rotate did nothing stays up. */
+const ROTATE_NOTE_MS = 5_000;
 
 const isRunning = (device: DeviceSnapshot) =>
   device.state !== "stopped" && device.state !== "failed";
@@ -235,6 +239,11 @@ interface PasteNote {
   readonly open: boolean;
 }
 
+/** A rotate that left this device as it was; each refusal is a new note with its own timer. */
+interface RotateNote {
+  readonly deviceId: string;
+}
+
 /** Each platform's reason it cannot run devices, under its own heading. */
 function UnavailablePlatforms({
   platforms,
@@ -286,6 +295,7 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
   const [inputError, setInputError] = useState<string | null>(null);
   const [stillImages, setStillImages] = useState<StillImages | null>(null);
   const [pasteNote, setPasteNote] = useState<PasteNote | null>(null);
+  const [rotateNote, setRotateNote] = useState<RotateNote | null>(null);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -293,6 +303,15 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
       mountedRef.current = false;
     };
   }, []);
+
+  // The rotate note goes by itself; a newer note restarts the clock.
+  useEffect(() => {
+    if (rotateNote === null) return;
+    const timer = setTimeout(() => {
+      setRotateNote((current) => (current === rotateNote ? null : current));
+    }, ROTATE_NOTE_MS);
+    return () => clearTimeout(timer);
+  }, [rotateNote]);
 
   // Memoized so the compiler treats them as settled values for the callbacks that use them.
   const selectedImage = useMemo(
@@ -430,14 +449,18 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
   };
   const rotate = async (direction: RotateDirection) => {
     if (device === null || !device.canRotate) return;
-    const result = await runRotate({
-      environmentId,
-      input: {
-        deviceId: device.deviceId,
-        orientation: rotatedOrientation(device.orientation, direction),
-      },
-    });
-    if (result._tag === "Failure") reportFailure(result, "Could not rotate the device. Try again.");
+    const { deviceId } = device;
+    const orientation = rotatedOrientation(device.orientation, direction);
+    setRotateNote(null);
+    const result = await runRotate({ environmentId, input: { deviceId, orientation } });
+    if (result._tag === "Failure") {
+      reportFailure(result, "Could not rotate the device. Try again.");
+      return;
+    }
+    // The device ended as it was: say so, rather than leave the press looking ignored.
+    if (mountedRef.current && result.value.orientation !== orientation) {
+      setRotateNote({ deviceId });
+    }
   };
   const pressKey = (key: DeviceKey) => {
     pushInput({ type: "key", key, action: "down" });
@@ -581,6 +604,17 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
           className="border-b border-border/60 px-3 py-1.5 text-xs text-foreground"
         >
           {inputError}
+        </div>
+      )}
+      {rotateNote === null ||
+      rotateNote.deviceId !== device?.deviceId ||
+      device.state !== "ready" ? null : (
+        <div
+          role="status"
+          data-rotate-note
+          className="border-b border-border/60 px-3 py-1.5 text-xs text-foreground"
+        >
+          {rotateKeptNote(shownName ?? device.imageId)}
         </div>
       )}
       {pasteNote?.open !== true ||

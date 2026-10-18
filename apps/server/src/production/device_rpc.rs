@@ -177,11 +177,12 @@ pub fn register_device_rpc(registry: &mut RpcRegistry, devices: DeviceManager) {
         &devices,
         |devices, payload| async move {
             let input: DeviceRotateInput = decode(payload)?;
-            devices
+            let orientation = devices
                 .rotate(&input.device_id, input.orientation)
                 .await
                 .map_err(rpc_error)?;
-            Ok(Value::Null)
+            // What the device ended in, so the client can say when it kept its orientation.
+            Ok(json!({ "orientation": orientation }))
         },
     );
 }
@@ -497,13 +498,14 @@ mod tests {
         assert_eq!(malformed["_tag"], "Defect");
         assert!(!malformed.to_string().contains("secret"), "{malformed}");
 
-        harness
+        let rotated = harness
             .call(
                 "device.rotate",
                 json!({ "deviceId": fixture.id, "orientation": "landscape" }),
             )
             .await
             .expect("rotation is requested");
+        assert_eq!(rotated, json!({ "orientation": "portrait" }));
         // Landscape is turned counter-clockwise (`ROTATION_90`). The fake's screen never
         // turns, so the sensor is put back to portrait once the window passes.
         assert_eq!(

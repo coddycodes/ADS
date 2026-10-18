@@ -716,12 +716,13 @@ impl Shared {
 
     /// Sends the Purple orientation for `to`, then reads back what the simulator reports
     /// and passes that to `report`, never what was asked: the UI turns only when the
-    /// foreground app allows it.
+    /// foreground app allows it. Returns `to`: the readback is not evidence of a refusal,
+    /// so the client never says an iOS turn was refused.
     async fn rotate(
         &self,
         to: Orientation,
         report: &(dyn Fn(Orientation, u32, u32) + Send + Sync),
-    ) -> Result<(), DeviceOpError> {
+    ) -> Result<Orientation, DeviceOpError> {
         let sink = match &self.control {
             Control::Live(sink) => sink.clone(),
             Control::Off { reason } => {
@@ -735,7 +736,7 @@ impl Shared {
             .await
             .map_err(|error| sink_error(error, ROTATE_FAILED))?;
         let Display::Live(screen) = &self.display else {
-            return Ok(());
+            return Ok(to);
         };
         let mut reported = screen.orientation();
         let (width, height) = self.native;
@@ -750,7 +751,7 @@ impl Shared {
                 break;
             }
         }
-        Ok(())
+        Ok(to)
     }
 
     async fn screenshot(&self) -> Result<RawJpeg, DeviceError> {
@@ -964,7 +965,7 @@ impl RunningDevice for RunningSimulator {
         &'a self,
         to: Orientation,
         report: &'a (dyn Fn(Orientation, u32, u32) + Send + Sync),
-    ) -> BoxFuture<'a, Result<(), DeviceOpError>> {
+    ) -> BoxFuture<'a, Result<Orientation, DeviceOpError>> {
         Box::pin(self.shared.rotate(to, report))
     }
 
@@ -1361,7 +1362,8 @@ mod tests {
             Orientation::ReversePortrait,
             Orientation::Portrait,
         ] {
-            manager.rotate(&id, orientation).await.unwrap();
+            // iOS returns what was asked, so the client never notes a refusal.
+            assert_eq!(manager.rotate(&id, orientation).await.unwrap(), orientation);
         }
         // Landscape is Purple 3 (`uiOrientation` 4, the UI's top on the right edge).
         assert_eq!(hid.rotations(), [3, 4, 2, 1]);

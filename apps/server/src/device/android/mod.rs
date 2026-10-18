@@ -316,18 +316,14 @@ impl RunningDevice for RunningAndroid {
         &'a self,
         to: Orientation,
         _report: &'a (dyn Fn(Orientation, u32, u32) + Send + Sync),
-    ) -> BoxFuture<'a, Result<(), DeviceOpError>> {
-        Box::pin(async move {
-            input::rotate(
-                &self.client,
-                &self.orientation,
-                &self.sensor,
-                self.rotation,
-                to,
-            )
-            .await
-            .map(|_| ())
-        })
+    ) -> BoxFuture<'a, Result<Orientation, DeviceOpError>> {
+        Box::pin(input::rotate(
+            &self.client,
+            &self.orientation,
+            &self.sensor,
+            self.rotation,
+            to,
+        ))
     }
 
     fn exited(&self) -> Option<String> {

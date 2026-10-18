@@ -35,6 +35,10 @@ export function isViewOnlyAvailability(kind: DeviceAvailabilityKind): boolean {
 export const IOS_PASTE_NOTE =
   "If iOS asks to Allow Paste, answer it before typing more: keys typed meanwhile can arrive before the pasted text.";
 
+/** Shown for a few seconds when a rotate leaves the device as it was. */
+export const rotateKeptNote = (name: string) =>
+  `${name} didn't rotate. The app on screen keeps its orientation.`;
+
 /** The Paste button's tooltip, per platform. */
 export const PASTE_HINTS: Readonly<Record<DevicePlatform, string>> = {
   android: "Paste",

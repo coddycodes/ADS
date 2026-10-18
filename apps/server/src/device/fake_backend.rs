@@ -293,11 +293,11 @@ impl RunningDevice for FakeRunning {
         &'a self,
         to: Orientation,
         report: &'a (dyn Fn(Orientation, u32, u32) + Send + Sync),
-    ) -> BoxFuture<'a, Result<(), DeviceOpError>> {
+    ) -> BoxFuture<'a, Result<Orientation, DeviceOpError>> {
         Box::pin(async move {
             let (width, height) = super::input::oriented_size(FAKE_SIZE.0, FAKE_SIZE.1, to);
             report(to, width, height);
-            Ok(())
+            Ok(to)
         })
     }
 

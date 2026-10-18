@@ -150,12 +150,13 @@ impl DeviceManager {
     }
 
     /// Asks the device to turn toward `orientation`, then follows what it reports: the
-    /// catalog only changes when the screen did.
+    /// catalog only changes when the screen did. Returns the orientation the device ended
+    /// in, which differs from `orientation` when the screen kept its own.
     pub async fn rotate(
         &self,
         device_id: &str,
         orientation: Orientation,
-    ) -> Result<(), DeviceOpError> {
+    ) -> Result<Orientation, DeviceOpError> {
         let (device, _) = self.inner.running(device_id)?;
         let inner = &self.inner;
         device
@@ -378,11 +379,16 @@ mod device_tests {
     async fn rotate_sends_vector_but_catalog_follows_reported_rotation() {
         let fixture = ManagerFixture::ready_device().await;
         fixture.controller.report_rotation(SkinRotation::Portrait); // app refuses to rotate
-        fixture
+        let ended = fixture
             .manager
             .rotate(&fixture.id, Orientation::Landscape)
             .await
             .unwrap();
+        assert_eq!(
+            ended,
+            Orientation::Portrait,
+            "the screen kept its orientation"
+        );
         // The turn never showed within the window: the sensor goes back to portrait, so it
         // matches the screen again.
         assert_eq!(
@@ -391,11 +397,12 @@ mod device_tests {
         );
         assert_eq!(fixture.snapshot().orientation, Orientation::Portrait);
         fixture.controller.report_rotation(SkinRotation::Landscape);
-        fixture
+        let ended = fixture
             .manager
             .rotate(&fixture.id, Orientation::Landscape)
             .await
             .unwrap();
+        assert_eq!(ended, Orientation::Landscape);
         fixture.wait_orientation(Orientation::Landscape).await;
         let snapshot = fixture.snapshot();
         assert_eq!((snapshot.width, snapshot.height), (Some(2400), Some(1080)));

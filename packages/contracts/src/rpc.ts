@@ -21,6 +21,7 @@ import {
   DeviceOpenInput,
   DeviceOpenResult,
   DeviceRotateInput,
+  DeviceRotateResult,
   DeviceRpcError,
 } from "./device.ts";
 import * as Rpc from "effect/unstable/rpc/Rpc";
@@ -1626,6 +1627,7 @@ export const WsDeviceInputRpc = Rpc.make(WS_METHODS.deviceInput, {
 
 export const WsDeviceRotateRpc = Rpc.make(WS_METHODS.deviceRotate, {
   payload: DeviceRotateInput,
+  success: DeviceRotateResult,
   error: DeviceRpcFailure,
 });
 

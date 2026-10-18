@@ -3097,10 +3097,12 @@ Record each client's OS, app or browser version, and profile type.
    command leaves the screen and the catalog in portrait. Refusals: on the home
    screen (the Pixel launcher refuses landscape), **Rotate left** leaves the
    catalog in portrait, the sensor goes back within about 2.5 s (a later app
-   does not turn on its own), and a tap on an app icon opens it. From landscape
-   in Chrome, **Rotate left** again asks for 180°, which phones refuse: the
-   catalog stays on what the guest shows (`mCurrentRotation`) and a tap lands
-   where the picture shows it.
+   does not turn on its own), the panel shows "<device> didn't rotate. The app
+   on screen keeps its orientation." for a few seconds, and a tap on an app
+   icon opens it. From landscape in Chrome, **Rotate left** again asks for
+   180°, which phones refuse: the catalog stays on what the guest shows
+   (`mCurrentRotation`), the same note shows, and a tap lands where the picture
+   shows it. A turn that lands shows no note.
 7. **scrcpy session (native item 4).** After the first video session, record
    `adb -s <serial> shell sha256sum /data/local/tmp/bibcode-scrcpy-server-v4.1.jar`
    (it equals `SCRCPY_SERVER_SHA256` in `device/android/scrcpy.rs`) and

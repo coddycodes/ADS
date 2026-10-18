@@ -16,6 +16,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 type AnyProps = Record<string, unknown>;
 type CommandResult = { _tag: "Success"; value: unknown } | { _tag: "Failure"; error: unknown };
+/** A fixed result, or one made from the command's input. */
+type CommandReply = CommandResult | ((input: unknown) => CommandResult);
 
 const h = vi.hoisted(() => ({
   availability: { known: true, supported: true, enabled: true },
@@ -28,7 +30,7 @@ const h = vi.hoisted(() => ({
     revalidate: () => void;
   },
   calls: [] as Array<{ command: string; input: unknown }>,
-  results: {} as Record<string, CommandResult>,
+  results: {} as Record<string, CommandReply>,
   navigations: [] as unknown[],
   screens: [] as unknown[],
   stillImages: null as { reason: string; message: string } | null,
@@ -67,7 +69,10 @@ vi.mock("../../state/query", async () => {
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: { __cmd: string }) => (input: unknown) => {
     h.calls.push({ command: command.__cmd, input });
-    return Promise.resolve(h.results[command.__cmd] ?? { _tag: "Success", value: undefined });
+    const reply = h.results[command.__cmd];
+    return Promise.resolve(
+      typeof reply === "function" ? reply(input) : (reply ?? { _tag: "Success", value: undefined }),
+    );
   },
 }));
 
@@ -269,7 +274,14 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   h.availability = { known: true, supported: true, enabled: true };
   h.calls.length = 0;
-  h.results = { open: { _tag: "Success", value: { deviceId: "d-new" } } };
+  h.results = {
+    open: { _tag: "Success", value: { deviceId: "d-new" } },
+    // A device that turns as asked.
+    rotate: (input) => ({
+      _tag: "Success",
+      value: { orientation: (input as { input: { orientation: string } }).input.orientation },
+    }),
+  };
   h.navigations.length = 0;
   h.screens.length = 0;
   h.screenProps = null;
@@ -452,6 +464,44 @@ describe("DevicePanel", () => {
         input: { deviceId: "d-1", orientation: "landscape" },
       },
     });
+  });
+
+  it("says when a device kept its orientation, until the next rotate", async () => {
+    withCatalog(catalog({ devices: [snapshot()] }));
+    // The launcher refuses landscape: the device ends where it was.
+    h.results.rotate = { _tag: "Success", value: { orientation: "portrait" } };
+    const container = await render();
+    expect(container.querySelector("[data-rotate-note]")).toBeNull();
+    await click(button(container, "Rotate left"));
+    expect(container.querySelector("[role='status'][data-rotate-note]")?.textContent).toBe(
+      "Pixel 8 didn't rotate. The app on screen keeps its orientation.",
+    );
+    // The next press clears it, and a turn that lands says nothing.
+    h.results.rotate = { _tag: "Success", value: { orientation: "landscape" } };
+    await click(button(container, "Rotate left"));
+    expect(container.querySelector("[data-rotate-note]")).toBeNull();
+    expect(container.querySelector("[role='alert']")).toBeNull();
+  });
+
+  it("lets the kept-orientation note go after a few seconds", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      withCatalog(catalog({ devices: [snapshot()] }));
+      h.results.rotate = { _tag: "Success", value: { orientation: "portrait" } };
+      const container = await render();
+      await click(button(container, "Rotate right"));
+      expect(container.querySelector("[data-rotate-note]")).not.toBeNull();
+      await act(async () => {
+        vi.advanceTimersByTime(4_000);
+      });
+      expect(container.querySelector("[data-rotate-note]")).not.toBeNull();
+      await act(async () => {
+        vi.advanceTimersByTime(1_000);
+      });
+      expect(container.querySelector("[data-rotate-note]")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("says previews are off, with a way to Settings, while the setting is off", async () => {

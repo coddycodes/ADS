@@ -137,6 +137,9 @@ export const DeviceRotateInput = Schema.Struct({
   orientation: DeviceOrientation,
 });
 export type DeviceRotateInput = typeof DeviceRotateInput.Type;
+/** The orientation the device ended in; it differs from the request when the screen kept its own. */
+export const DeviceRotateResult = Schema.Struct({ orientation: DeviceOrientation });
+export type DeviceRotateResult = typeof DeviceRotateResult.Type;
 
 export const DeviceJpegFrame = Schema.Struct({
   seq: Schema.Number,

@@ -114,12 +114,15 @@ pub(crate) trait RunningDevice: Send + Sync + 'static {
         orientation: Orientation,
     ) -> BoxFuture<'_, Result<(), DeviceOpError>>;
     /// Turns toward `to`, calling `report` with each orientation and size the device
-    /// reports, never with what was asked.
+    /// reports, never with what was asked; a device with
+    /// [`orientation_changes`](Self::orientation_changes) reports through that stream
+    /// instead, so the catalog has one writer. Returns the orientation the device ended in,
+    /// which differs from `to` when the screen kept its orientation.
     fn rotate<'a>(
         &'a self,
         to: Orientation,
         report: &'a (dyn Fn(Orientation, u32, u32) + Send + Sync),
-    ) -> BoxFuture<'a, Result<(), DeviceOpError>>;
+    ) -> BoxFuture<'a, Result<Orientation, DeviceOpError>>;
     /// `Some(reason)` once the device ended without being asked; polled every second.
     fn exited(&self) -> Option<String>;
     /// Reports the unrequested exit to the profiler (`report_exit`, `Watch::Failures`).

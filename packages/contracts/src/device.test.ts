@@ -7,6 +7,7 @@ import {
   DeviceJpegFrame,
   DeviceOpenInput,
   DeviceRotateInput,
+  DeviceRotateResult,
   DeviceRpcError,
   DeviceSnapshot,
 } from "./device.ts";
@@ -22,6 +23,8 @@ const decodeInput = Schema.decodeUnknownSync(DeviceInputInput);
 const isInput = Schema.is(DeviceInputInput);
 const decodeRotate = Schema.decodeUnknownSync(DeviceRotateInput);
 const isRotate = Schema.is(DeviceRotateInput);
+const decodeRotated = Schema.decodeUnknownSync(DeviceRotateResult);
+const isRotated = Schema.is(DeviceRotateResult);
 const decodeFrame = Schema.decodeUnknownSync(DeviceJpegFrame);
 const decodeError = Schema.decodeUnknownSync(DeviceRpcError);
 
@@ -171,6 +174,11 @@ describe("device preview contracts", () => {
       orientation: "landscape",
     });
     expect(isRotate({ deviceId: "d-1", orientation: "upsideDown" })).toBe(false);
+    // The orientation the device ended in, as the server serializes it.
+    expect(decodeRotated({ orientation: "portrait" })).toEqual({ orientation: "portrait" });
+    expect(isRotated({})).toBe(false);
+    expect(isRotated(null)).toBe(false);
+    expect(isRotated({ orientation: "upsideDown" })).toBe(false);
     const frame = { seq: 3, width: 720, height: 1600, orientation: "portrait", jpegBase64: "/9j/" };
     expect(decodeFrame(frame)).toEqual(frame);
   });

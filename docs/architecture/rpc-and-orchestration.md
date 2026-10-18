@@ -2884,13 +2884,14 @@ the typed `DeviceRpcError` union in `packages/contracts/src/device.ts`.
 | `device.open`              | unary  | `orchestration:operate` | `{ platform, imageId }` → `{ deviceId }` at `starting`; boot progress arrives in the catalog.            |
 | `device.close`             | unary  | `orchestration:operate` | `{ deviceId }`; returns once the device has ended (up to the 10 s stop timeout).                         |
 | `device.input`             | unary  | `orchestration:operate` | `{ deviceId, events }`: 1 to 64 touch, key, or text events. The client keeps one batch in flight.        |
-| `device.rotate`            | unary  | `orchestration:operate` | `{ deviceId, orientation }`; the catalog shows the orientation the emulator then reports.                |
+| `device.rotate`            | unary  | `orchestration:operate` | `{ deviceId, orientation }` → `{ orientation }` the device ended in; the catalog shows what it reports. |
 | `device.subscribeFrames`   | stream | `orchestration:read`    | `{ deviceId }` → JPEG frames `{ seq, width, height, orientation, jpegBase64 }`, conflated to the latest. |
 | `device.createMediaTicket` | unary  | `orchestration:read`    | `{ deviceId }` → `{ ticket, expiresAtMs }` for one H.264 media socket on this connection's channel.      |
 
 `device.close`, `device.input`, and `device.rotate` are in the profiler's
 `is_long_running` list, because they wait on the emulator: a stop (up to 10 s),
-a stalled input stream (up to 5 s), and reading back a rotation (about 1.5 s).
+a stalled input stream (up to 5 s), and reading back a rotation (about 2.5 s
+on Android, 1.2 s on iOS).
 
 H.264 video does not travel over RPC. The ticket from
 `device.createMediaTicket` opens `/api/device-media` or
