@@ -3083,8 +3083,10 @@ Record each client's OS, app or browser version, and profile type.
    ASCII, Return, and Tab, and the emulator promises only printable ASCII: in a
    multi-line field (a notes app or a message being written), paste text with
    a line break and a tab between words, and record whether the line break and
-   the tab each arrive. If either does not, the server's `is_us_typeable` and
-   the web's `isUsTypeable` must drop it together. Type `é` on the focused
+   the tab each arrive. If either does not, narrow only Android's own check in
+   `android::input::send_batch` (or send Return and Tab as `Enter` and `Tab`
+   key events); leave the shared `is_us_typeable` and the web's `isUsTypeable`
+   as they are, because iOS types that set as keys. Type `é` on the focused
    screen, and paste `café 😀` with ⌘V or Ctrl+V and with **Paste**: each is
    refused, the panel shows "This device can type only plain ASCII text.
    Accented letters, emoji, and other characters can't be sent from here
@@ -3115,7 +3117,15 @@ Record each client's OS, app or browser version, and profile type.
    landscape in Chrome, **Rotate left** again asks for 180°, which phones
    refuse: the catalog stays on what the guest shows
    (`mCurrentRotation`), the same note shows, and a tap lands where the picture
-   shows it. A turn that lands shows no note.
+   shows it. A turn that lands shows no note. Then a restart from landscape:
+   leave the device in landscape in an app that rotates, **Stop** it, and
+   start it again. The emulator may restore the turned display from its Quick
+   Boot snapshot. Either way, the first catalog entry that shows **Ready** must
+   agree with the guest (`mCurrentRotation`) in orientation and size. Record
+   that label and size, the native size (`adb -s <serial> shell wm size`,
+   the portrait panel in both cases), the video's and the still images' width
+   and height, and the pointer location of one centre tap, which must land at
+   the panel's centre.
 7. **scrcpy session (native item 4).** After the first video session, record
    `adb -s <serial> shell sha256sum /data/local/tmp/bibcode-scrcpy-server-v4.1.jar`
    (it equals `SCRCPY_SERVER_SHA256` in `device/android/scrcpy.rs`) and

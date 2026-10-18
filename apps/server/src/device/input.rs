@@ -109,10 +109,13 @@ pub(crate) fn oriented_size(width: u32, height: u32, orientation: Orientation) -
 }
 
 /// Whether every character of `text` is US-typeable: printable ASCII, Return (`\n`, `\r`),
-/// and Tab. Android's emulator types only this set from `KeyboardEvent.text`, so Android
-/// refuses the rest; iOS types it as US keys and pastes anything else. The client's
-/// `isUsTypeable` (`apps/web/src/components/device/deviceKeyMap.ts`) is the same set, and
-/// its test uses the same vectors as this one's.
+/// and Tab. iOS types this set as US keys and pastes anything else. Android refuses text
+/// outside it, because the emulator's proto promises only printable ASCII in
+/// `KeyboardEvent.text`; Return and Tab are sent as text anyway, and are not yet confirmed
+/// on a real AVD. If Android turns out to drop either, narrow Android's own check in
+/// `android::input::send_batch`, not this set, which iOS's type-or-paste choice shares. The
+/// client's `isUsTypeable` (`apps/web/src/components/device/deviceKeyMap.ts`) is the same
+/// set, and its test uses the same vectors as this one's.
 pub(crate) fn is_us_typeable(text: &str) -> bool {
     text.chars()
         .all(|c| matches!(c, ' '..='~' | '\n' | '\r' | '\t'))

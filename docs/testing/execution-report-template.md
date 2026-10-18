@@ -375,6 +375,7 @@ and [iOS simulator previews](./cross-platform-validation.md#ios-simulator-previe
 | Touch, keys, paste, toolbar keys          |        |                                      |                          |
 | Pasted line break and tab arrive          |        |                                      |                          |
 | Rotation through four orientations        |        |                                      |                          |
+| Restart from landscape (label, size, tap) |        |                                      |                          |
 | scrcpy stop and push skip                 |        |                                      |                          |
 | Two clients                               |        |                                      |                          |
 | Agent `device_*` tools                    |        |                                      |                          |

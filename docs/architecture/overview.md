@@ -2022,12 +2022,14 @@ succeeds, so Android refuses what it cannot type instead of sending it:
 with a `DeviceInputError` that says "This device can type only plain ASCII text.
 Accented letters, emoji, and other characters can't be sent from here yet.",
 before it sends anything. Return and Tab are sent as text although the proto
-does not promise them, and they are not yet confirmed on a real AVD; the [device
-preview
+does not promise them, and they are not yet confirmed on a real AVD; the
+[device preview
 runbook](../testing/cross-platform-validation.md#android-device-previews)
-records whether each arrives. The refusal is all or nothing, so a touch, key, or
-other text in the same batch is not sent either, and the client sends the
-releases of any press in it once more, as above. iOS still pastes such text.
+records whether each arrives. If either does not, only Android's check narrows:
+the shared set stays, because iOS types it as keys. The refusal is all or
+nothing, so a touch, key, or other text in the same batch is not sent either,
+and the client sends the releases of any press in it once more, as above. iOS
+still pastes such text.
 Pasting Unicode through the emulator's clipboard (`setClipboard` plus a paste
 key) is not implemented. Touch points are normalized `0..1` of the upright
 picture. The emulator's `Touch.x`/`y` is the physical location on the unrotated
