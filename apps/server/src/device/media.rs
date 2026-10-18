@@ -789,14 +789,26 @@ pub(super) async fn run<S: VideoSource>(
 }
 
 /// Writes each reset the hub asks for now; returns when a deferred one falls due, if any.
+/// A write that fails or times out is deferred to the end of its window, so it is tried
+/// again then if a socket still waits for a key unit.
 async fn serve_resets<S: VideoSource>(hub: &MediaHub, source: &mut S) -> Option<Instant> {
     loop {
         match hub.next_reset(Instant::now()) {
             ResetStep::Write => {
-                match tokio::time::timeout(RESET_WRITE_TIMEOUT, source.reset_video()).await {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => tracing::warn!(%error, "device media reset failed"),
-                    Err(_) => tracing::warn!("device media reset timed out"),
+                let written =
+                    match tokio::time::timeout(RESET_WRITE_TIMEOUT, source.reset_video()).await {
+                        Ok(Ok(())) => true,
+                        Ok(Err(error)) => {
+                            tracing::warn!(%error, "device media reset failed");
+                            false
+                        }
+                        Err(_) => {
+                            tracing::warn!("device media reset timed out");
+                            false
+                        }
+                    };
+                if !written {
+                    hub.lock().reset_deferred = true;
                 }
             }
             ResetStep::At(deadline) => return Some(deadline),
@@ -1071,12 +1083,23 @@ mod tests {
         unit(UnitKind::Delta, pts_us)
     }
 
+    /// How a [`ChannelSource`] takes its first `RESET_VIDEO` write; later ones succeed.
+    #[derive(Clone, Copy, Default)]
+    enum FirstReset {
+        #[default]
+        Succeeds,
+        Fails,
+        /// Takes longer than [`RESET_WRITE_TIMEOUT`].
+        Stalls,
+    }
+
     /// A video source fed through a channel, counting the resets it is asked for and
     /// recording how it was stopped.
     struct ChannelSource {
         units: mpsc::Receiver<VideoUnit>,
         resets: Arc<AtomicUsize>,
         stopped: Arc<std::sync::OnceLock<bool>>,
+        first_reset: FirstReset,
     }
 
     impl VideoSource for ChannelSource {
@@ -1085,8 +1108,15 @@ mod tests {
         }
 
         async fn reset_video(&mut self) -> Result<(), DeviceError> {
-            self.resets.fetch_add(1, Ordering::AcqRel);
-            Ok(())
+            let earlier = self.resets.fetch_add(1, Ordering::AcqRel);
+            match (earlier, self.first_reset) {
+                (0, FirstReset::Fails) => Err(DeviceError::Io("control socket closed".to_owned())),
+                (0, FirstReset::Stalls) => {
+                    tokio::time::sleep(RESET_WRITE_TIMEOUT * 5).await;
+                    Ok(())
+                }
+                _ => Ok(()),
+            }
         }
 
         fn failed(&self) -> bool {
@@ -1120,6 +1150,15 @@ mod tests {
 
         /// A hub whose source takes `delay` to start, as scrcpy does.
         fn starting_after(delay: Duration) -> Self {
+            Self::with_source(delay, FirstReset::Succeeds)
+        }
+
+        /// A hub whose source's first `RESET_VIDEO` write goes as `first_reset` says.
+        fn with_first_reset(first_reset: FirstReset) -> Self {
+            Self::with_source(Duration::ZERO, first_reset)
+        }
+
+        fn with_source(delay: Duration, first_reset: FirstReset) -> Self {
             let hub = MediaHub::new(CancellationToken::new());
             let (units, receiver) = mpsc::channel(64);
             let written = Arc::<AtomicUsize>::default();
@@ -1128,6 +1167,7 @@ mod tests {
                 units: receiver,
                 resets: written.clone(),
                 stopped: stopped.clone(),
+                first_reset,
             };
             tokio::spawn(run(hub.clone(), async move {
                 if !delay.is_zero() {
@@ -1233,6 +1273,7 @@ mod tests {
             units: receiver,
             resets: Arc::default(),
             stopped: stopped.clone(),
+            first_reset: FirstReset::Succeeds,
         };
         let erased: Box<dyn crate::device::backend::ErasedVideoSource> = Box::new(source);
         let hub = MediaHub::new(CancellationToken::new());
@@ -1890,6 +1931,42 @@ mod tests {
         hub.wait_written(2).await;
         assert!(Instant::now() - written >= RESET_MIN_INTERVAL - Duration::from_millis(20));
         assert_eq!(hub.resets(), 2);
+    }
+
+    /// Audit Minor 3: a `RESET_VIDEO` write that fails, or stalls past its timeout, is tried
+    /// again once the window ends while a socket still waits, instead of being lost. The
+    /// socket reads nothing here, so the drained-socket watchdog plays no part.
+    #[tokio::test(start_paused = true)]
+    async fn a_reset_that_fails_to_write_is_tried_again_while_a_socket_waits() {
+        for first_reset in [FirstReset::Fails, FirstReset::Stalls] {
+            let hub = HubFixture::with_first_reset(first_reset);
+            let _watcher = hub.subscribe();
+            hub.wait_written(1).await;
+            let first = Instant::now();
+            hub.wait_written(2).await;
+            let waited = Instant::now() - first;
+            assert!(
+                waited >= RESET_MIN_INTERVAL - Duration::from_millis(20)
+                    && waited <= RESET_MIN_INTERVAL + Duration::from_millis(50),
+                "tried again after {waited:?}"
+            );
+            // The second write went through: nothing more is asked for while no one asks.
+            hub.feed([config(), key(1)]).await;
+            tokio::time::sleep(RESET_MIN_INTERVAL * 3).await;
+            assert_eq!(hub.written.load(Ordering::Acquire), 2);
+        }
+    }
+
+    /// A failed write is retried only while a socket still waits for a key unit.
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_reset_is_not_tried_again_once_every_socket_has_its_key() {
+        let hub = HubFixture::with_first_reset(FirstReset::Fails);
+        let mut watcher = hub.subscribe();
+        hub.wait_written(1).await;
+        hub.feed([config(), key(1)]).await;
+        assert_eq!(received_media(&mut watcher).await, [("config", 0), ("key", 1)]);
+        tokio::time::sleep(RESET_MIN_INTERVAL * 3).await;
+        assert_eq!(hub.written.load(Ordering::Acquire), 1);
     }
 
     #[tokio::test(start_paused = true)]
