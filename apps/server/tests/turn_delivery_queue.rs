@@ -401,8 +401,11 @@ async fn queue_heads_follow_admission_order_with_tied_or_skewed_client_timestamp
 }
 
 #[tokio::test]
-async fn dismissing_an_ambiguous_head_does_not_auto_start_the_tail() {
-    for state in ["sending", "uncertain"] {
+async fn dismissing_an_in_flight_head_does_not_auto_start_the_tail() {
+    // An uncertain head's dismissal releases the tail (the user chose to move on); a delivery
+    // still sending may yet reach the provider.
+    {
+        let state = "sending";
         let engine = queue_engine(TestHooks::default()).await;
         seed_queued_message(&engine, "head").await;
         engine

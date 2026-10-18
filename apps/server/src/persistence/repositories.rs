@@ -2906,7 +2906,7 @@ pub(crate) fn can_promote_queued_provider_turn_on(
                          AND resolution.event_type = 'thread.turn-delivery-updated'
                          AND json_extract(resolution.metadata_json, '$.deliveryCommandId') = dismissed.command_id
                          AND json_extract(resolution.payload_json, '$.state') = 'dismissed'
-                         AND json_extract(resolution.metadata_json, '$.deliveryPreviousState') IN ('pending', 'failed')))))
+                         AND json_extract(resolution.metadata_json, '$.deliveryPreviousState') IN ('pending', 'failed', 'uncertain')))))
                AND NOT EXISTS(SELECT 1 FROM projection_pending_approvals WHERE thread_id = queued.thread_id AND status = 'pending')
                AND NOT EXISTS(
                  SELECT 1 FROM (

@@ -328,6 +328,49 @@ async fn dismissing_a_failed_head_allows_the_next_queued_turn() {
     engine.shutdown().await;
 }
 
+/// Dismissing an uncertain head is the user's choice to move on, so its pending turn marker no
+/// longer holds the queue: the next queued turn runs.
+#[tokio::test]
+async fn dismissing_an_uncertain_head_allows_the_next_queued_turn() {
+    let engine = engine().await;
+    session(&engine, "running", "running").await;
+    enqueue(&engine, "queued-1", true).await;
+    enqueue(&engine, "queued-2", true).await;
+    let (sender, mut routes) = mpsc::unbounded_channel();
+    let router: ProviderDeliveryRouter = Arc::new(move |command, _| {
+        let id = command.command_id().to_owned();
+        sender.send(id.clone()).unwrap();
+        Box::pin(async move {
+            if id == "queued-1" {
+                ProviderDeliveryOutcome::Ambiguous {
+                    detail: "the answer was lost".into(),
+                }
+            } else {
+                ProviderDeliveryOutcome::Accepted { turn_id: None }
+            }
+        })
+    });
+    let service = TurnDeliveryService::start_with_delivery_router(
+        engine.clone(),
+        1,
+        router,
+        unavailable_reconciler(),
+    );
+    session(&engine, "ready", "ready").await;
+    received(&mut routes, "queued-1").await;
+    timeout(Duration::from_secs(3), async {
+        while row(&engine, "queued-1").await.state != TurnDeliveryState::Uncertain {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    engine.dispatch(command(json!({"type":"thread.turn-delivery.resolve", "commandId":"dismiss", "threadId":"t", "messageId":"queued-1", "action":"dismiss", "createdAt":TIME}))).await.unwrap();
+    received(&mut routes, "queued-2").await;
+    service.shutdown().await;
+    engine.shutdown().await;
+}
+
 #[tokio::test]
 async fn steer_target_lookup_failure_returns_to_pending_without_provider_io() {
     let hooks = crate::orchestration::engine::TestHooks::default();
