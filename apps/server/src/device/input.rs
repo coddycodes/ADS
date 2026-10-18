@@ -353,7 +353,7 @@ mod device_tests {
 
     /// The copy a refused batch shows (`android::input::UNTYPEABLE_TEXT`); the client shows the
     /// server's message as it is.
-    const ASCII_ONLY: &str = "This device can type only plain ASCII text. Type other characters with the on-screen keyboard.";
+    const ASCII_ONLY: &str = "This device can type only plain ASCII text. Accented letters, emoji, and other characters can't be sent from here yet.";
 
     /// Review finding P2: the emulator's `KeyboardEvent.text` drops most characters outside
     /// printable ASCII (`emulator_controller.proto`) while the call succeeds. A batch that

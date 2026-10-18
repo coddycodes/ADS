@@ -45,7 +45,7 @@ impl Default for RotationTiming {
 /// Why a batch with text the emulator would drop is refused. It names no character, and the
 /// device is not named: the running device's display name belongs to the manager, not to
 /// the backend.
-const UNTYPEABLE_TEXT: &str = "This device can type only plain ASCII text. Type other characters with the on-screen keyboard.";
+const UNTYPEABLE_TEXT: &str = "This device can type only plain ASCII text. Accented letters, emoji, and other characters can't be sent from here yet.";
 
 /// Whether the emulator types every character of `text` from `KeyboardEvent.text`. Its proto
 /// translates only printable ASCII and warns that "most" other symbols are ignored, yet the

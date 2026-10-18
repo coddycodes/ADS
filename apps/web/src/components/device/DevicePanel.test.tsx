@@ -1036,7 +1036,7 @@ describe("DevicePanel with iOS simulators", () => {
 
   it("shows the server's reason when an Android device refuses text it cannot type", async () => {
     const message =
-      "This device can type only plain ASCII text. Type other characters with the on-screen keyboard.";
+      "This device can type only plain ASCII text. Accented letters, emoji, and other characters can't be sent from here yet.";
     h.results.input = { _tag: "Failure", error: { _tag: "DeviceInputError", message } };
     const readText = vi.fn(() => Promise.resolve("héllo"));
     vi.stubGlobal("navigator", { ...navigator, clipboard: { readText } });

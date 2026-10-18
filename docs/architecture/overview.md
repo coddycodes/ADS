@@ -2014,8 +2014,8 @@ drops most other characters while the call succeeds, so Android refuses what it
 cannot type instead of sending it: `android::input::send_batch` fails a batch
 with any text event outside printable ASCII, Return, and Tab (the set
 `isUsTypeable` in `deviceKeyMap.ts` calls US-typeable) with a `DeviceInputError`
-that says "This device can type only plain ASCII text. Type other characters
-with the on-screen keyboard.", before it sends anything. The refusal is all or
+that says "This device can type only plain ASCII text. Accented letters, emoji, and
+other characters can't be sent from here yet.", before it sends anything. The refusal is all or
 nothing, so a touch or key in the same batch is not sent either, and the client
 sends the releases of any press in it once more, as above. iOS still pastes such
 text. Pasting Unicode through the emulator's clipboard (`setClipboard` plus a

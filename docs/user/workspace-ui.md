@@ -1262,8 +1262,7 @@ may ask to **Allow Paste**. Answer it before typing more: keys typed while the
 prompt is up can arrive before the pasted text. The panel reminds you once.
 
 On Android, text is typed as plain ASCII. Typing or pasting other characters,
-such as accented letters or emoji, sends nothing and the panel says so; type
-them with the device's on-screen keyboard instead.
+such as accented letters or emoji, sends nothing and the panel says so.
 
 A disabled control says why when you point at it. **Stop** shuts the device
 down. One device runs per platform: an Android emulator and an iOS simulator
