@@ -497,6 +497,41 @@ describe("tauriDesktopBridge", () => {
     expect(topologyReads()).toBe(reads);
   });
 
+  it("gives a caller waiting on a read the restarted topology when that read fails after backend-ready", async () => {
+    const restarted = {
+      ...defaultLocalEnvironmentBootstrap,
+      httpBaseUrl: "http://127.0.0.1:4888",
+      wsBaseUrl: "ws://127.0.0.1:4888",
+      bootstrapToken: "new-token",
+    };
+    const harness = installTauriHarness({ localEnvironmentBootstraps: [] });
+    const answer = harness.invoke.getMockImplementation()!;
+    let failStaleRead: (error: unknown) => void = () => {};
+    const staleRead = new Promise<readonly unknown[]>((_, reject) => {
+      failStaleRead = reject;
+    });
+    harness.invoke.mockImplementation((command, args) =>
+      command === "desktop_bridge_get_local_environment_bootstraps"
+        ? staleRead
+        : answer(command, args),
+    );
+    // Startup waits for the primary bootstrap; the read it waits on is held open.
+    const { tauriDesktopBridgeReady } = await import("./tauriDesktopBridge");
+    await vi.waitFor(() =>
+      expect(harness.invoke.mock.calls.map(([command]) => command)).toContain(
+        "desktop_bridge_get_local_environment_bootstraps",
+      ),
+    );
+
+    harness.listeners.get("desktop:backend-ready")?.({
+      payload: { reason: "restarted", bootstraps: [restarted] },
+    });
+    failStaleRead(new Error("old backend gone"));
+
+    await expect(tauriDesktopBridgeReady).resolves.toBeUndefined();
+    expect(window.desktopBridge?.getLocalEnvironmentBootstraps()).toEqual([restarted]);
+  });
+
   it("keeps asking on every read while the primary bootstrap is unknown", async () => {
     let primaryKnown = true;
     const primaryBootstrap = {

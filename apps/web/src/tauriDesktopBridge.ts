@@ -171,11 +171,17 @@ function refreshLocalEnvironmentBootstraps(): Promise<readonly DesktopEnvironmen
   const refresh: Promise<readonly DesktopEnvironmentBootstrap[]> = tauriInvoke<
     DesktopEnvironmentBootstrap[]
   >("desktop_bridge_get_local_environment_bootstraps")
-    .then((bootstraps) => {
-      if (localEnvironmentBootstrapsRefresh !== refresh) return cachedLocalEnvironmentBootstraps;
-      cachedLocalEnvironmentBootstraps = bootstraps;
-      return bootstraps;
-    })
+    .then(
+      (bootstraps) => {
+        if (localEnvironmentBootstrapsRefresh !== refresh) return cachedLocalEnvironmentBootstraps;
+        cachedLocalEnvironmentBootstraps = bootstraps;
+        return bootstraps;
+      },
+      (error: unknown) => {
+        if (localEnvironmentBootstrapsRefresh !== refresh) return cachedLocalEnvironmentBootstraps;
+        throw error;
+      },
+    )
     .finally(() => {
       if (localEnvironmentBootstrapsRefresh === refresh) localEnvironmentBootstrapsRefresh = null;
     });
