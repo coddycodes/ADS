@@ -167,7 +167,9 @@ A check that fires more than 10 seconds late, because the process was suspended
 or starved, restarts the silence clock and Ping schedule with one immediate Ping
 instead of reaping or sending catch-up Pings.
 How a session ended, and the info log line an abnormal end writes, are described
-in [Connection ends](#connection-ends).
+in [Connection ends](#connection-ends). Device media sockets apply the same rule
+once their ticket is redeemed and close as `slow` when it reaps them; see
+[Device media sockets](./remote.md#device-media-sockets).
 Inbound activity counts per complete frame, so a single plain request that
 takes longer than 45 s to arrive on an otherwise idle connection is reaped (and
 the client's own 30 s monitor ends it first); E2EE requests travel in records.

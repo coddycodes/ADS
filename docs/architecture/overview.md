@@ -2127,7 +2127,10 @@ newest config again immediately before its next key unit. A config that does
 not fit holds the key unit back with it; one that fits is queued and not sent
 again. The wait ends only when the key unit is queued, and a socket that misses
 either asks again when it drains, as above. A socket that lost no config gets
-no extra one. A socket that accepts no frame for 10 s closes as `slow`.
+no extra one. A socket that accepts no frame for 10 s closes as `slow`, and so
+does one that answers nothing, not even the Ping the
+[shared heartbeat](./rpc-and-orchestration.md#wire-protocol) sends every 15 s,
+for 45 s.
 Rejections close with code 4400 and one of `expired`, `reused`, `wrongChannel`,
 `wrongDevice`, `limit`, `disabled`, `stopped`, `failed`, `unauthorized`, or
 `slow`; a wrong pinned key or prologue closes with 4403 `host-identity`.

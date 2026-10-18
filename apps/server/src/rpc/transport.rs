@@ -75,6 +75,24 @@ const HEARTBEAT_LATE_TOLERANCE: Duration = Duration::from_secs(10);
 /// Close code the client sends after its own liveness timeout.
 pub(crate) const LIVENESS_CLOSE_CODE: u16 = 4408;
 
+/// When the heartbeat pings, how long a silence ends a connection, and how often it checks.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct HeartbeatTiming {
+    pub(crate) ping_interval: Duration,
+    pub(crate) silence_limit: Duration,
+    pub(crate) check_interval: Duration,
+}
+
+impl HeartbeatTiming {
+    /// The one rule RPC sessions and device media sockets share: a Ping every 15 s, and an
+    /// end after 45 s without activity, checked every 5 s.
+    pub(crate) const SHARED: Self = Self {
+        ping_interval: HEARTBEAT_PING_INTERVAL,
+        silence_limit: HEARTBEAT_SILENCE_LIMIT,
+        check_interval: HEARTBEAT_CHECK_INTERVAL,
+    };
+}
+
 /// Activity shared by one connection's reader, writer and heartbeat. Times are
 /// milliseconds since the connection started.
 pub(crate) struct ConnectionLiveness {
@@ -106,9 +124,9 @@ impl ConnectionLiveness {
         })
     }
 
-    /// Any inbound frame, including WebSocket Ping, Pong and Close. Readers
-    /// count frames through [`observe_inbound`].
-    fn record_inbound(&self) {
+    /// Any inbound frame, including WebSocket Ping, Pong and Close. RPC readers
+    /// count frames through [`observe_inbound`]; a device media socket counts its own.
+    pub(crate) fn record_inbound(&self) {
         self.touch();
         self.last_inbound_ms
             .fetch_max(self.elapsed_ms(), Ordering::Relaxed);
@@ -124,6 +142,14 @@ impl ConnectionLiveness {
     fn record_outbound(&self) {
         self.last_outbound_ms
             .fetch_max(self.elapsed_ms(), Ordering::Relaxed);
+    }
+
+    /// A data write that took `waited` to complete. Only one that waited at least
+    /// [`BACKPRESSURE_PROGRESS_MIN_WAIT`] shows that the peer drained the socket.
+    pub(crate) fn record_data_write(&self, waited: Duration) {
+        if waited >= BACKPRESSURE_PROGRESS_MIN_WAIT {
+            self.record_progress();
+        }
     }
 
     /// How long a data message waited in the queue before its write began.
@@ -174,8 +200,14 @@ impl ConnectionLiveness {
         self.wake_writer.notify_one();
     }
 
-    fn take_ping(&self) -> bool {
+    /// Whether the heartbeat asked for a Ping since the last call.
+    pub(crate) fn take_ping(&self) -> bool {
         self.ping_due.swap(false, Ordering::AcqRel)
+    }
+
+    /// Waits until the heartbeat asks for a Ping; [`Self::take_ping`] then says so.
+    pub(crate) async fn ping_requested(&self) {
+        self.wake_writer.notified().await;
     }
 
     /// Logs how the session ended, at info level when the end was abnormal, and records it
@@ -345,38 +377,53 @@ where
 /// fires more than 10 s late (the process was suspended or starved) restarts the
 /// silence clock and pings at once instead of charging time the process did not run.
 pub(crate) async fn run_heartbeat(liveness: Arc<ConnectionLiveness>, shutdown: CancellationToken) {
-    let mut checks = tokio::time::interval(HEARTBEAT_CHECK_INTERVAL);
+    let Some(silent_for) = watch_heartbeat(&liveness, &shutdown, HeartbeatTiming::SHARED).await
+    else {
+        return;
+    };
+    tracing::debug!(
+        ?silent_for,
+        limit = ?HEARTBEAT_SILENCE_LIMIT,
+        "RPC peer silent past the heartbeat limit; ending the session"
+    );
+    liveness.set_end(ConnectionEnd::HeartbeatTimeout);
+    shutdown.cancel();
+}
+
+/// The heartbeat of [`run_heartbeat`] at `timing`: asks for a Ping every
+/// `ping_interval` and returns how long the peer was silent once that reaches
+/// `silence_limit`, checked every `check_interval`, or `None` once `shutdown` is
+/// cancelled. It ends nothing itself.
+pub(crate) async fn watch_heartbeat(
+    liveness: &ConnectionLiveness,
+    shutdown: &CancellationToken,
+    timing: HeartbeatTiming,
+) -> Option<Duration> {
+    let mut checks = tokio::time::interval(timing.check_interval);
     checks.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut previous_check = checks.tick().await;
-    let mut next_ping = previous_check + HEARTBEAT_PING_INTERVAL;
+    let mut next_ping = previous_check + timing.ping_interval;
     loop {
         tokio::select! {
-            () = shutdown.cancelled() => return,
+            () = shutdown.cancelled() => return None,
             _ = checks.tick() => {}
         }
         let now = Instant::now();
         if now.saturating_duration_since(previous_check)
-            > HEARTBEAT_CHECK_INTERVAL + HEARTBEAT_LATE_TOLERANCE
+            > timing.check_interval + HEARTBEAT_LATE_TOLERANCE
         {
             liveness.touch();
             next_ping = now;
         }
         previous_check = now;
         let silent_for = liveness.silent_for(now);
-        if silent_for >= HEARTBEAT_SILENCE_LIMIT {
-            tracing::debug!(
-                ?silent_for,
-                limit = ?HEARTBEAT_SILENCE_LIMIT,
-                "RPC peer silent past the heartbeat limit; ending the session"
-            );
-            liveness.set_end(ConnectionEnd::HeartbeatTimeout);
-            shutdown.cancel();
-            return;
+        if silent_for >= timing.silence_limit {
+            return Some(silent_for);
         }
         if now >= next_ping {
             liveness.request_ping();
             // Small check delays must not shift every subsequent Ping.
-            next_ping += HEARTBEAT_PING_INTERVAL;
+            next_ping += timing.ping_interval;
         }
     }
 }

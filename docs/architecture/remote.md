@@ -1505,6 +1505,14 @@ URL by replacing its path (`deviceMediaTarget`).
   deadline. After the handshake every message, the ticket included, is a
   logical message in `/ws-e2ee` records. A client that pinned another key or
   used another prologue is closed with 4403 `host-identity`.
+- **Liveness.** Once its ticket is redeemed, a socket follows the shared
+  heartbeat rule in
+  [RPC and orchestration](./rpc-and-orchestration.md#wire-protocol): a
+  WebSocket Ping every 15 seconds, which on the E2EE route travels outside the
+  records, as on `/ws-e2ee`, and a close as `slow` after 45 seconds without an
+  inbound frame (the browser's automatic Pong included) or a frame write that
+  waited on the client. A socket that accepts no frame or Ping for 10 seconds
+  closes as `slow` too.
 - **Channel binding.** A ticket is bound to the session, the device, and the
   channel it was minted on: a ticket minted over E2EE is redeemable only on
   the E2EE route and a plain one only on the plain route (`wrongChannel`). A

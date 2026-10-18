@@ -14,8 +14,7 @@ pub use session::{RpcRegistry, RpcResult, RpcStreamChunk};
 
 pub(crate) use e2ee::{
     E2EE_HANDSHAKE_TIMEOUT, E2eeChannel, E2eePreauthAdmission, E2eePreauthLease, E2eeSessionError,
-    MAX_E2EE_CIPHERTEXT_BYTES, accept_noise_nk, effective_preauth_peer, next_binary_frame,
-    run_e2ee_session,
+    MAX_E2EE_CIPHERTEXT_BYTES, accept_noise_nk, effective_preauth_peer, run_e2ee_session,
 };
 // Only the unix media-socket tests read these.
 #[cfg(all(test, unix))]
@@ -30,4 +29,7 @@ pub(crate) use session::{
     PreparedRpcResponse, RpcResponseEnqueueGuard, RpcResponseEnqueuePermit, RpcSessionContext,
     RpcUnaryResult, encoded_server_message_len, response_too_large_failure, run_session,
 };
-pub(crate) use transport::{CHUNKED_RPC_SUBPROTOCOL, MAX_RECORDED_MESSAGE_BYTES};
+pub(crate) use transport::{
+    CHUNKED_RPC_SUBPROTOCOL, ConnectionLiveness, HeartbeatTiming, MAX_RECORDED_MESSAGE_BYTES,
+    watch_heartbeat,
+};

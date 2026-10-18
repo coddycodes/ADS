@@ -10,7 +10,9 @@
 //! another key or prologue is closed with code 4403 `host-identity`.
 //!
 //! A plain socket has 5 s for its ticket; an E2EE socket has 10 s for the handshake and the
-//! ticket together.
+//! ticket together. Once streaming, a socket follows the RPC sessions' heartbeat rule: a
+//! WebSocket Ping every 15 s (outside the records on the E2EE route), and a close as `slow`
+//! after 45 s with nothing read from the client and no frame that waited on it.
 //!
 //! Rejections close with code 4400 and a reason the client acts on:
 //!
@@ -25,7 +27,7 @@
 //! | `stopped` | the device stopped, failed, or is not ready |
 //! | `failed` | the device's video stream failed |
 //! | `unauthorized` | the ticket's session was revoked, or had ended before the socket joined |
-//! | `slow` | the client accepted no frame for 10 s |
+//! | `slow` | the client accepted no frame or Ping for 10 s, or sent nothing, not even a Pong, past the heartbeat limit (45 s) |
 //!
 //! While device previews are off, both routes refuse with `503` before admission, holding
 //! nothing. Otherwise, before the upgrade, connections to either route are admitted against
@@ -53,8 +55,8 @@ use super::{DeviceManager, media::MediaChannel};
 use crate::{
     auth::AuthService,
     rpc::{
-        E2EE_HANDSHAKE_TIMEOUT, E2eeChannel, E2eePreauthAdmission, E2eePreauthLease,
-        E2eeSessionError, accept_noise_nk, next_binary_frame,
+        ConnectionLiveness, E2EE_HANDSHAKE_TIMEOUT, E2eeChannel, E2eePreauthAdmission,
+        E2eePreauthLease, E2eeSessionError, HeartbeatTiming, accept_noise_nk, watch_heartbeat,
     },
 };
 
@@ -90,6 +92,8 @@ pub(crate) struct MediaSocketState {
     /// How long an E2EE socket has for the handshake and its ticket together;
     /// [`E2EE_HANDSHAKE_TIMEOUT`] outside tests.
     pub e2ee_preauth: Duration,
+    /// The liveness check of a streaming socket; [`HeartbeatTiming::SHARED`] outside tests.
+    pub heartbeat: HeartbeatTiming,
 }
 
 impl MediaSocketState {
@@ -100,6 +104,7 @@ impl MediaSocketState {
             admission: E2eePreauthAdmission::new(),
             send_stall: SEND_STALL_TIMEOUT,
             e2ee_preauth: E2EE_HANDSHAKE_TIMEOUT,
+            heartbeat: HeartbeatTiming::SHARED,
         }
     }
 }
@@ -121,12 +126,24 @@ enum Received {
     Gone,
 }
 
+/// The liveness check of a streaming socket, and the send deadline its Pings share with
+/// frames.
+#[derive(Clone, Copy)]
+struct Liveness {
+    heartbeat: HeartbeatTiming,
+    send_stall: Duration,
+}
+
 /// The framing of one media socket; everything after it is shared by both routes.
 trait MediaTransport {
-    /// The next client message. Cancel-safe: a partly received message is kept.
+    /// The next client message, or `Ignored` for any other frame read, a WebSocket Pong
+    /// included. Cancel-safe: a partly received message is kept.
     async fn recv(&mut self) -> Received;
     /// Sends one encoded unit; `Err` once the client is gone.
     async fn send(&mut self, frame: Bytes) -> Result<(), ()>;
+    /// Sends a WebSocket Ping, which the browser answers on its own; `Err` once the client
+    /// is gone.
+    async fn ping(&mut self) -> Result<(), ()>;
     /// Sends a close frame with code 4400 and `reason`.
     async fn close(self, reason: &'static str);
 }
@@ -150,6 +167,10 @@ where
         self.0.send(Message::Binary(frame)).await.map_err(drop)
     }
 
+    async fn ping(&mut self) -> Result<(), ()> {
+        self.0.send(Message::Ping(Bytes::new())).await.map_err(drop)
+    }
+
     async fn close(self, reason: &'static str) {
         close(self.0, reason).await;
     }
@@ -165,8 +186,14 @@ struct E2eeTransport {
 impl MediaTransport for E2eeTransport {
     async fn recv(&mut self) -> Received {
         loop {
-            let Some(record) = next_binary_frame(&mut self.reader).await else {
-                return Received::Gone;
+            let record = match self.reader.next().await {
+                Some(Ok(Message::Binary(record))) => record,
+                // WebSocket control frames, below the record layer: the browser's automatic
+                // Pong proves the client alive like any frame.
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => return Received::Ignored,
+                Some(Ok(Message::Text(_) | Message::Close(_)) | Err(_)) | None => {
+                    return Received::Gone;
+                }
             };
             // Continuations accumulate in the channel, so a cancelled read loses nothing.
             match self.channel.decrypt_frame(&record, MAX_INBOUND_BYTES) {
@@ -191,6 +218,14 @@ impl MediaTransport for E2eeTransport {
                 .map_err(drop)?;
         }
         self.writer.flush().await.map_err(drop)
+    }
+
+    /// The Ping is a WebSocket control frame outside the Noise records, as on `/ws-e2ee`.
+    async fn ping(&mut self) -> Result<(), ()> {
+        self.writer
+            .send(Message::Ping(Bytes::new()))
+            .await
+            .map_err(drop)
     }
 
     async fn close(self, reason: &'static str) {
@@ -383,14 +418,11 @@ async fn serve<T: MediaTransport>(
                 revoked: &session_shutdown,
                 expired: &session_expired,
             };
-            let reason = stream(
-                &mut socket,
-                subscriber,
-                &state.devices,
-                session,
-                state.send_stall,
-            )
-            .await;
+            let liveness = Liveness {
+                heartbeat: state.heartbeat,
+                send_stall: state.send_stall,
+            };
+            let reason = stream(&mut socket, subscriber, &state.devices, session, liveness).await;
             if let Some(reason) = reason {
                 socket.close(reason).await;
             }
@@ -427,44 +459,90 @@ impl SessionEnd<'_> {
     }
 }
 
-/// Sends frames until the stream or the session ends, or a frame waits longer than
-/// `send_stall` (`Some` close reason), or the client leaves (`None`).
+/// Sends frames until the stream or the session ends, or a frame or Ping waits longer than
+/// `send_stall` or the client goes silent past the heartbeat's limit (`Some` close reason),
+/// or the client leaves (`None`).
+///
+/// The socket follows the RPC sessions' heartbeat rule: a WebSocket Ping every
+/// `ping_interval`, which a browser answers on its own, and a close as `slow` once nothing
+/// has been read from the client, Pong included, and no frame has waited on it to drain the
+/// socket, for `silence_limit`. A still screen sends only keepalives, which the kernel
+/// buffers even for a client whose network vanished, so without it such a client keeps its
+/// slot until the OS gives up on the connection.
 async fn stream<T: MediaTransport>(
     socket: &mut T,
     mut subscriber: super::media::MediaSubscriber,
     devices: &DeviceManager,
     session: SessionEnd<'_>,
-    send_stall: Duration,
+    liveness: Liveness,
 ) -> Option<&'static str> {
+    let Liveness {
+        heartbeat,
+        send_stall,
+    } = liveness;
     let closed = subscriber.closed.clone();
     let end_reason =
         |subscriber: &super::media::MediaSubscriber| subscriber.end_reason(devices.enabled());
+    let activity = ConnectionLiveness::new();
+    // Never cancelled: the watch ends only when the client goes silent.
+    let watching = CancellationToken::new();
+    let silent = watch_heartbeat(&activity, &watching, heartbeat);
+    tokio::pin!(silent);
+    let gone_silent = |silent_for: Option<Duration>| {
+        tracing::warn!(
+            ?silent_for,
+            limit = ?heartbeat.silence_limit,
+            "device media client answered nothing past the heartbeat limit"
+        );
+        Some("slow")
+    };
     loop {
         tokio::select! {
             biased;
             () = closed.cancelled() => return Some(end_reason(&subscriber)),
             reason = session.ended() => return Some(reason),
-            inbound = socket.recv() => match inbound {
-                Received::Message(message) => {
-                    if matches!(serde_json::from_slice(&message), Ok(Inbound::Keyframe)) {
-                        subscriber.request_keyframe();
+            silent_for = &mut silent => return gone_silent(silent_for),
+            () = activity.ping_requested() => {
+                if !activity.take_ping() {
+                    continue;
+                }
+                match tokio::time::timeout(send_stall, socket.ping()).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(())) => return None,
+                    Err(_) => {
+                        tracing::warn!("device media client accepted no Ping in time");
+                        return Some("slow");
                     }
                 }
-                Received::Gone => return None,
-                Received::Ignored => {}
-            },
+            }
+            inbound = socket.recv() => {
+                if !matches!(inbound, Received::Gone) {
+                    activity.record_inbound();
+                }
+                match inbound {
+                    Received::Message(message) => {
+                        if matches!(serde_json::from_slice(&message), Ok(Inbound::Keyframe)) {
+                            subscriber.request_keyframe();
+                        }
+                    }
+                    Received::Gone => return None,
+                    Received::Ignored => {}
+                }
+            }
             frame = subscriber.next_frame() => {
                 let Some(frame) = frame else {
                     return Some(end_reason(&subscriber));
                 };
                 // A stalled client must not keep the socket, or its slot, past the end of
                 // its stream or session. An E2EE frame's records are sent under one timeout.
+                let started = Instant::now();
                 tokio::select! {
                     () = closed.cancelled() => return Some(end_reason(&subscriber)),
                     reason = session.ended() => return Some(reason),
+                    silent_for = &mut silent => return gone_silent(silent_for),
                     sent = tokio::time::timeout(send_stall, socket.send(frame)) => {
                         match sent {
-                            Ok(Ok(())) => {}
+                            Ok(Ok(())) => activity.record_data_write(started.elapsed()),
                             Ok(Err(())) => return None,
                             Err(_) => {
                                 tracing::warn!("device media client accepted no frame in time");
@@ -540,6 +618,24 @@ mod tests {
 
         /// `e2ee_preauth` bounds the E2EE handshake and ticket together.
         async fn start_custom(packets: Vec<Vec<u8>>, e2ee_preauth: Duration) -> Self {
+            Self::start_full(packets, e2ee_preauth, HeartbeatTiming::SHARED).await
+        }
+
+        /// Streaming sockets check liveness at `heartbeat`.
+        async fn start_with_heartbeat(heartbeat: HeartbeatTiming) -> Self {
+            Self::start_full(
+                vec![config_unit(), key_unit(1), delta_unit(2)],
+                E2EE_HANDSHAKE_TIMEOUT,
+                heartbeat,
+            )
+            .await
+        }
+
+        async fn start_full(
+            packets: Vec<Vec<u8>>,
+            e2ee_preauth: Duration,
+            heartbeat: HeartbeatTiming,
+        ) -> Self {
             let source = FakeScrcpySource::spawn(packets).await;
             let fixture =
                 ManagerFixture::with_sdk(|sdk| sdk.avds(&["Pixel"]).adb_forwards_to(source.port))
@@ -567,6 +663,7 @@ mod tests {
                 .expect("authorized session");
             let mut state = MediaSocketState::new(fixture.manager.clone(), auth.clone());
             state.e2ee_preauth = e2ee_preauth;
+            state.heartbeat = heartbeat;
             let admission = state.admission.clone();
             let app = Router::new()
                 .route(
@@ -1087,6 +1184,93 @@ mod tests {
         harness.fixture.manager.shutdown().await;
     }
 
+    /// Heartbeat timings short enough for a test; the shared rule's are 15 s, 45 s, and 5 s.
+    const TEST_HEARTBEAT: HeartbeatTiming = HeartbeatTiming {
+        ping_interval: Duration::from_millis(200),
+        silence_limit: Duration::from_millis(600),
+        check_interval: Duration::from_millis(100),
+    };
+
+    /// Reads `client` for `period`, as a browser that answers Pings would: the WebSocket
+    /// layer queues a Pong for each Ping read and sends it with the next read. Returns the
+    /// Pings and binary messages seen; a close fails the test.
+    async fn read_for(client: &mut Client, period: Duration) -> (usize, usize) {
+        let (mut pings, mut binaries) = (0, 0);
+        let deadline = tokio::time::Instant::now() + period;
+        while let Ok(message) = tokio::time::timeout_at(deadline, client.next()).await {
+            match message.expect("socket open").expect("message") {
+                ClientMessage::Ping(_) => pings += 1,
+                ClientMessage::Binary(_) => binaries += 1,
+                ClientMessage::Close(frame) => panic!("closed: {frame:?}"),
+                _ => {}
+            }
+        }
+        (pings, binaries)
+    }
+
+    /// Audit Minor 6: a viewer whose network vanished without a FIN kept its slot until
+    /// the OS gave up on the connection, minutes later, because a still screen sends only
+    /// keepalives the kernel buffers. A client that answers nothing, not even a Ping, is
+    /// closed as `slow` once the heartbeat's silence limit passes.
+    #[tokio::test]
+    async fn a_client_that_stops_answering_is_closed_as_slow() {
+        let harness = Harness::start_with_heartbeat(TEST_HEARTBEAT).await;
+        let mut client = harness.connect(&harness.ticket(MediaChannel::Plain)).await;
+        assert_eq!(next_frame(&mut client).await[0], 0);
+        // The client stops reading, so it answers no Ping.
+        let stopped = std::time::Instant::now();
+        wait_until(|| harness.fixture.sdk.adb_log().contains("forward --remove")).await;
+        let elapsed = stopped.elapsed();
+        assert!(
+            elapsed < TEST_HEARTBEAT.silence_limit * 4,
+            "the slot was freed after {elapsed:?}"
+        );
+        assert_eq!(
+            close_reason(&mut client).await,
+            (CLOSE_CODE, "slow".to_owned())
+        );
+        harness.fixture.manager.shutdown().await;
+    }
+
+    /// A client that keeps reading answers each Ping, so a still screen's socket stays open
+    /// well past the silence limit.
+    #[tokio::test]
+    async fn a_client_that_answers_pings_stays_connected() {
+        let harness = Harness::start_with_heartbeat(TEST_HEARTBEAT).await;
+        let mut client = harness.connect(&harness.ticket(MediaChannel::Plain)).await;
+        let (pings, binaries) = read_for(&mut client, TEST_HEARTBEAT.silence_limit * 5).await;
+        assert!(pings >= 5, "{pings} Pings");
+        assert!(
+            binaries >= 3,
+            "the config, key, and delta, then keepalives: {binaries}"
+        );
+        assert!(!harness.fixture.sdk.adb_log().contains("forward --remove"));
+        client.close(None).await.expect("close");
+        harness.fixture.manager.shutdown().await;
+    }
+
+    /// The same check on the E2EE route: Pings and Pongs are WebSocket control frames
+    /// below the Noise records.
+    #[tokio::test]
+    async fn an_e2ee_client_is_checked_for_liveness_too() {
+        let harness = Harness::start_with_heartbeat(TEST_HEARTBEAT).await;
+        let mut client = harness
+            .connect_e2ee(&harness.ticket(MediaChannel::E2ee))
+            .await;
+        let (pings, records) = read_for(&mut client.socket, TEST_HEARTBEAT.silence_limit * 5).await;
+        assert!(pings >= 5, "{pings} Pings");
+        assert!(records >= 3, "{records} records");
+        // Then it stops reading.
+        let stopped = std::time::Instant::now();
+        wait_until(|| harness.fixture.sdk.adb_log().contains("forward --remove")).await;
+        assert!(stopped.elapsed() < TEST_HEARTBEAT.silence_limit * 4);
+        assert_eq!(
+            close_reason(&mut client.socket).await,
+            (CLOSE_CODE, "slow".to_owned())
+        );
+        harness.fixture.manager.shutdown().await;
+    }
+
     /// A client that never accepts a frame and never sends anything.
     struct StalledSocket;
 
@@ -1149,7 +1333,10 @@ mod tests {
                     revoked: &CancellationToken::new(),
                     expired: &CancellationToken::new(),
                 },
-                Duration::from_millis(200),
+                Liveness {
+                    heartbeat: HeartbeatTiming::SHARED,
+                    send_stall: Duration::from_millis(200),
+                },
             ),
         )
         .await
@@ -1186,7 +1373,10 @@ mod tests {
                     revoked: &session_shutdown,
                     expired: &expired,
                 },
-                SEND_STALL_TIMEOUT,
+                Liveness {
+                    heartbeat: HeartbeatTiming::SHARED,
+                    send_stall: SEND_STALL_TIMEOUT,
+                },
             )
             .await
         });
