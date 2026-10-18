@@ -315,6 +315,42 @@ describe("workspace provider capabilities", () => {
       Option.getOrThrow(initial).capabilitiesRevision,
     );
   });
+
+  // Every reconnect re-sends the snapshot. A new revision is a new capabilities key, and the
+  // reconnect already re-reads the mounted one, so an unchanged snapshot must keep the revision.
+  // It must also keep the projected config, so nothing that reads it re-renders with a copy.
+  it("keeps the projection when a reconnect re-sends an unchanged snapshot", () => {
+    const initial = applyServerConfigProjection(Option.none(), {
+      version: 1,
+      type: "snapshot",
+      config: CONFIG,
+    });
+    const resent = applyServerConfigProjection(initial, {
+      version: 1,
+      type: "snapshot",
+      config: structuredClone(CONFIG),
+    });
+    expect(Option.getOrThrow(resent)).toBe(Option.getOrThrow(initial));
+    const keybindingsOnly = applyServerConfigProjection(resent, {
+      version: 1,
+      type: "snapshot",
+      config: { ...CONFIG, keybindingsConfigPath: "/elsewhere/keybindings.json" },
+    } as never);
+    expect(Option.getOrThrow(keybindingsOnly).config.keybindingsConfigPath).toBe(
+      "/elsewhere/keybindings.json",
+    );
+    expect(Option.getOrThrow(keybindingsOnly).capabilitiesRevision).toBe(
+      Option.getOrThrow(initial).capabilitiesRevision,
+    );
+    const changed = applyServerConfigProjection(resent, {
+      version: 1,
+      type: "snapshot",
+      config: { ...CONFIG, settings: { ...CONFIG.settings, enableAssistantStreaming: true } },
+    } as never);
+    expect(Option.getOrThrow(changed).capabilitiesRevision).toBeGreaterThan(
+      Option.getOrThrow(resent).capabilitiesRevision,
+    );
+  });
 });
 
 describe("server profiler status query", () => {

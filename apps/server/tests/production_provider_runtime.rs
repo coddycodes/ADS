@@ -10,6 +10,9 @@ mod hermetic_providers;
 #[path = "support/executable_fixture.rs"]
 mod executable_fixture;
 
+#[path = "support/reexec.rs"]
+mod reexec;
+
 use bibcode_server::production::provider_runtime;
 
 use std::{
@@ -81,8 +84,9 @@ use provider_runtime::{
     ProviderRuntimeSupervisor, StartedSession, SupervisorOptions,
     build_claude_launch_arguments_for_test, build_claude_launch_arguments_with_settings_for_test,
     claude_output_shutdown_with_open_stream_for_test, deliver_durable_orchestration_turn,
-    deliver_orchestration_turn, freeze_delivery_route, reconcile_abandoned_provider_sessions,
-    reconcile_orchestration_turn, rewind_thread_conversation, route_orchestration_command,
+    deliver_orchestration_turn, freeze_delivery_route, prepare_thread_rewind,
+    reconcile_abandoned_provider_sessions, reconcile_orchestration_turn,
+    rewind_thread_conversation, route_orchestration_command,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -525,7 +529,11 @@ impl ProviderDriver for FakeDriver {
         })
     }
 
-    fn rollback(&self, turn_count: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        turn_count: i64,
+        _rewind_key: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async move {
             let (workspace, error) = {
                 let mut state = self.state.lock().unwrap();
@@ -1324,6 +1332,7 @@ impl OrchestrationEffectCallbacks for SupervisorEffectsCallbacks {
         &'a self,
         thread_id: &'a str,
         turns: i64,
+        rewind_key: &'a str,
     ) -> BoxEffectFuture<'a, ProviderRewind> {
         Box::pin(async move {
             rewind_thread_conversation(
@@ -1332,6 +1341,19 @@ impl OrchestrationEffectCallbacks for SupervisorEffectsCallbacks {
                 &self.settings.path().to_path_buf(),
                 thread_id,
                 turns,
+                rewind_key,
+            )
+            .await
+        })
+    }
+
+    fn prepare_provider_rewind<'a>(&'a self, thread_id: &'a str) -> BoxEffectFuture<'a, ()> {
+        Box::pin(async move {
+            prepare_thread_rewind(
+                &self.supervisor,
+                &self.engine,
+                &self.settings.path().to_path_buf(),
+                thread_id,
             )
             .await
         })
@@ -1688,11 +1710,12 @@ while IFS= read -r line; do
     *'"method":"thread/resume"'*|*'"method":"thread/start"'*) printf '{"id":%s,"result":{"cwd":"/tmp","model":"gpt-5","thread":{"id":"native-codex-thread"}}}\n' "$id" ;;
     *'"method":"mcpServerStatus/list"'*) printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$id" ;;
     *'"method":"turn/start"'*) printf '{"id":%s,"result":{"turn":{"id":"native-codex-turn"}}}\n' "$id" ;;
-    *'"method":"thread/read"'*)
+    *'"method":"thread/read"'*) printf '{"id":%s,"result":{"thread":{"id":"native-codex-thread","turns":[]}}}\n' "$id" ;;
+    *'"method":"thread/turns/list"'*)
       if [ "$BIBCODE_READBACK_MODE" = found ]; then
-        printf '{"id":%s,"result":{"thread":{"id":"native-codex-thread","turns":[{"id":"native-codex-turn","items":[{"id":"native-user","type":"userMessage","clientId":"%s","content":[]}]}]}}}\n' "$id" "$BIBCODE_EXPECTED_DELIVERY_KEY"
+        printf '{"id":%s,"result":{"data":[{"id":"native-codex-turn","items":[{"id":"native-user","type":"userMessage","clientId":"%s","content":[]}]}],"nextCursor":null}}\n' "$id" "$BIBCODE_EXPECTED_DELIVERY_KEY"
       elif [ "$BIBCODE_READBACK_MODE" = absent ]; then
-        printf '{"id":%s,"result":{"thread":{"id":"native-codex-thread","turns":[]}}}\n' "$id"
+        printf '{"id":%s,"result":{"data":[],"nextCursor":null}}\n' "$id"
       else
         printf '{"id":%s,"result":{}}\n' "$id"
       fi ;;
@@ -1713,11 +1736,12 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     "thread/start" { $response = '{"id":' + $id + ',"result":{"cwd":"C:\\tmp","model":"gpt-5","thread":{"id":"native-codex-thread"}}}' }
     "mcpServerStatus/list" { $response = '{"id":' + $id + ',"result":{"data":[],"nextCursor":null}}' }
     "turn/start" { $response = '{"id":' + $id + ',"result":{"turn":{"id":"native-codex-turn"}}}' }
-    "thread/read" {
+    "thread/read" { $response = '{"id":' + $id + ',"result":{"thread":{"id":"native-codex-thread","turns":[]}}}' }
+    "thread/turns/list" {
       if ($env:BIBCODE_READBACK_MODE -eq "found") {
-        $response = '{"id":' + $id + ',"result":{"thread":{"id":"native-codex-thread","turns":[{"id":"native-codex-turn","items":[{"id":"native-user","type":"userMessage","clientId":"' + $env:BIBCODE_EXPECTED_DELIVERY_KEY + '","content":[]}]}]}}}'
+        $response = '{"id":' + $id + ',"result":{"data":[{"id":"native-codex-turn","items":[{"id":"native-user","type":"userMessage","clientId":"' + $env:BIBCODE_EXPECTED_DELIVERY_KEY + '","content":[]}]}],"nextCursor":null}}'
       } elseif ($env:BIBCODE_READBACK_MODE -eq "absent") {
-        $response = '{"id":' + $id + ',"result":{"thread":{"id":"native-codex-thread","turns":[]}}}'
+        $response = '{"id":' + $id + ',"result":{"data":[],"nextCursor":null}}'
       } else {
         $response = '{"id":' + $id + ',"result":{}}'
       }
@@ -1901,7 +1925,8 @@ async fn durable_codex_restart_reconciliation_uses_real_adapter_and_exact_key() 
     assert_codex_restart_reconciliation(
         "unavailable",
         ProviderReconciliationOutcome::Unavailable {
-            detail: "Invalid Codex payload: thread/read response missing thread".to_owned(),
+            detail: "Invalid Codex payload: thread/turns/list response missing data array"
+                .to_owned(),
         },
         false,
     )
@@ -3500,6 +3525,8 @@ async fn assert_opencode_restart_reconciliation(
             "/session/{session_id}",
             get(|| async { Json(json!({"id":"native-opencode-session"})) }),
         )
+        // The found turn has finished: no session is busy.
+        .route("/session/status", get(|| async { Json(json!({})) }))
         .route(
             "/event",
             get(|| async { Sse::new(stream::pending::<Result<Event, Infallible>>()) }),
@@ -3526,6 +3553,10 @@ async fn assert_opencode_restart_reconciliation(
             get(
                 move |AxumPath((session_id, message_id)): AxumPath<(String, String)>| async move {
                     match mode {
+                        // Only the delivery key's `msg_` id reads back.
+                        "found" if !message_id.starts_with("msg_") => {
+                            StatusCode::NOT_FOUND.into_response()
+                        }
                         "found" => (
                             StatusCode::OK,
                             Json(json!({
@@ -3641,11 +3672,31 @@ async fn assert_opencode_restart_reconciliation(
         usize::from(should_resend),
         "Found prevents resend; Absent permits one resend"
     );
+    if mode == "found" {
+        // OpenCode reports the session idle, so the found turn has ended and its pending marker
+        // no longer holds queued follow-ups.
+        let message_id = row.message_id.clone();
+        let pending = engine
+            .repositories()
+            .database()
+            .call(move |connection| {
+                Ok(connection.query_row(
+                    "SELECT COUNT(*) FROM projection_turns WHERE pending_message_id = ? AND turn_id IS NULL AND state = 'running'",
+                    [message_id],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .expect("pending turns");
+        assert_eq!(pending, 0, "the finished turn's marker is cleared");
+    }
 
     if should_resend {
+        // OpenCode rejects an id that does not start with `msg` (1.18 and later), so the key is
+        // sent as a deterministic `msg_` id.
         assert_eq!(
             prompt_bodies.lock().unwrap()[0]["messageID"],
-            row.delivery_key
+            format!("msg_{}", row.delivery_key.replace('-', ""))
         );
     }
 
@@ -3839,6 +3890,11 @@ struct OptionCase {
 /// Runs `case` until its delivery settles, and asserts it settles once: failed with the refusal,
 /// or delivered, after a single launch.
 async fn assert_option_case_settles_once(case: OptionCase) {
+    assert_option_case_settles_after(case, 1).await;
+}
+
+/// Runs `case` until its delivery settles after `attempts` sends of one launch.
+async fn assert_option_case_settles_after(case: OptionCase, attempts: i64) {
     let temp = TempDir::new().expect("provider fixture directory");
     let (engine, database) = engine_and_database().await;
     let settings = TempDir::new().expect("settings");
@@ -3899,7 +3955,7 @@ async fn assert_option_case_settles_once(case: OptionCase) {
             if matches!(
                 delivery.state,
                 TurnDeliveryState::Failed | TurnDeliveryState::Delivered
-            ) || delivery.attempts >= 3
+            ) || delivery.attempts >= attempts.max(3)
             {
                 break delivery;
             }
@@ -3921,8 +3977,8 @@ async fn assert_option_case_settles_once(case: OptionCase) {
     };
     assert_eq!(
         (settled.state, settled.attempts),
-        (expected, 1),
-        "{}: the turn must settle once instead of retrying: {:?}",
+        (expected, attempts),
+        "{}: the turn must settle after {attempts} attempt(s): {:?}",
         case.provider,
         settled.last_error
     );
@@ -3939,7 +3995,7 @@ async fn assert_option_case_settles_once(case: OptionCase) {
     let later = read_delivery().await;
     assert_eq!(
         (later.state, later.attempts),
-        (expected, 1),
+        (expected, attempts),
         "{}",
         case.provider
     );
@@ -4183,6 +4239,485 @@ async fn opencode_option_the_model_does_not_advertise_fails_the_turn_once() {
         refusal: Some("Fast is not supported by the selected model."),
     })
     .await;
+    server.abort();
+}
+
+/// A message OpenCode refuses (HTTP 4xx) was never accepted, so its delivery fails once instead of
+/// waiting as uncertain, which would hold every later message on the thread.
+#[cfg(unix)]
+#[tokio::test]
+async fn opencode_refused_message_fails_the_delivery_once() {
+    let app = Router::new()
+        .route(
+            "/session",
+            post(|| async { Json(json!({"id":"opencode-refused-session"})) }),
+        )
+        .route(
+            "/session/{session_id}",
+            get(|| async { Json(json!({"id":"opencode-refused-session"})) }),
+        )
+        .route(
+            "/event",
+            get(|| async { Sse::new(stream::pending::<Result<Event, Infallible>>()) }),
+        )
+        .route(
+            "/session/{session_id}/message",
+            get(|| async { Json(json!({"data":[]})) }),
+        )
+        .route(
+            "/session/{session_id}/prompt_async",
+            post(|| async { axum::http::StatusCode::BAD_REQUEST }),
+        )
+        .route(
+            "/provider",
+            get(|| async {
+                Json(json!({
+                    "connected": ["openai"],
+                    "all": [{"id":"openai", "models":{"gpt-5":{"variants":{"high":{}}}}}]
+                }))
+            }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("OpenCode fixture bind");
+    let endpoint = format!("http://{}", listener.local_addr().expect("fixture address"));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("OpenCode fixture serve");
+    });
+    assert_option_case_settles_once(OptionCase {
+        provider: "opencode",
+        instance_config: json!({
+            "driver":"opencode", "enabled":true,
+            "config":{"binaryPath":"refusing-opencode-route", "serverUrl":endpoint}
+        }),
+        binary_path: None,
+        endpoint: Some(endpoint.clone()),
+        environment: Vec::new(),
+        model: "openai/gpt-5",
+        option: json!({"id":"variant","value":"high"}),
+        refusal: Some("OpenCode refused this message: prompt_async returned HTTP 400 Bad Request"),
+    })
+    .await;
+    server.abort();
+}
+
+/// OpenCode answers HTTP 429 (or 408) when it cannot take a message yet. That is no refusal: the
+/// delivery is sent again, no sooner than its `Retry-After`.
+#[cfg(unix)]
+#[tokio::test]
+async fn opencode_message_asked_to_wait_is_sent_again_after_retry_after() {
+    let sends = Arc::new(StdMutex::new(Vec::<Instant>::new()));
+    let prompt_sends = sends.clone();
+    let app = Router::new()
+        .route(
+            "/session",
+            post(|| async { Json(json!({"id":"opencode-throttled-session"})) }),
+        )
+        .route(
+            "/session/{session_id}",
+            get(|| async { Json(json!({"id":"opencode-throttled-session"})) }),
+        )
+        .route(
+            "/event",
+            get(|| async { Sse::new(stream::pending::<Result<Event, Infallible>>()) }),
+        )
+        .route(
+            "/session/{session_id}/message",
+            get(|| async { Json(json!({"data":[]})) }),
+        )
+        .route(
+            "/session/{session_id}/prompt_async",
+            post(move || {
+                let sends = prompt_sends.clone();
+                async move {
+                    let mut sends = sends.lock().unwrap();
+                    sends.push(Instant::now());
+                    if sends.len() == 1 {
+                        (StatusCode::TOO_MANY_REQUESTS, [("retry-after", "1")]).into_response()
+                    } else {
+                        StatusCode::NO_CONTENT.into_response()
+                    }
+                }
+            }),
+        )
+        .route(
+            "/provider",
+            get(|| async {
+                Json(json!({
+                    "connected": ["openai"],
+                    "all": [{"id":"openai", "models":{"gpt-5":{"variants":{"high":{}}}}}]
+                }))
+            }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("OpenCode fixture bind");
+    let endpoint = format!("http://{}", listener.local_addr().expect("fixture address"));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("OpenCode fixture serve");
+    });
+    assert_option_case_settles_after(
+        OptionCase {
+            provider: "opencode",
+            instance_config: json!({
+                "driver":"opencode", "enabled":true,
+                "config":{"binaryPath":"throttled-opencode-route", "serverUrl":endpoint}
+            }),
+            binary_path: None,
+            endpoint: Some(endpoint.clone()),
+            environment: Vec::new(),
+            model: "openai/gpt-5",
+            option: json!({"id":"variant","value":"high"}),
+            refusal: None,
+        },
+        2,
+    )
+    .await;
+    let sends = sends.lock().unwrap().clone();
+    assert_eq!(sends.len(), 2);
+    assert!(
+        sends[1] - sends[0] >= Duration::from_millis(950),
+        "sent again after {:?}, before its Retry-After",
+        sends[1] - sends[0]
+    );
+    server.abort();
+}
+
+/// OpenCode 1 runs the model again for a message id it already has once a later message
+/// followed, so an explicit retry of an uncertain delivery looks the message up first and never
+/// sends it again when OpenCode has it.
+#[cfg(unix)]
+#[tokio::test]
+async fn retrying_an_uncertain_opencode_message_it_already_has_does_not_send_it_again() {
+    let stored = Arc::new(StdMutex::new(Vec::<String>::new()));
+    let posts = stored.clone();
+    let lookups = stored.clone();
+    // OpenCode's event stream, so the test can end the turn whose answer was lost.
+    let (sse, _) = tokio::sync::broadcast::channel::<String>(8);
+    let subscribe = sse.clone();
+    let app = Router::new()
+        .route(
+            "/session",
+            post(|| async { Json(json!({"id":"opencode-retry-session"})) }),
+        )
+        .route(
+            "/session/{session_id}",
+            get(|| async { Json(json!({"id":"opencode-retry-session"})) }),
+        )
+        // No session is busy.
+        .route("/session/status", get(|| async { Json(json!({})) }))
+        .route(
+            "/event",
+            get(move || {
+                let events = subscribe.subscribe();
+                async move {
+                    Sse::new(stream::unfold(events, |mut events| async move {
+                        loop {
+                            match events.recv().await {
+                                Ok(data) => {
+                                    return Some((
+                                        Ok::<_, Infallible>(Event::default().data(data)),
+                                        events,
+                                    ));
+                                }
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                    return None;
+                                }
+                            }
+                        }
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/session/{session_id}/message",
+            get(|| async { Json(json!({"data":[]})) }),
+        )
+        .route(
+            "/session/{session_id}/message/{message_id}",
+            get(
+                move |AxumPath((session_id, message_id)): AxumPath<(String, String)>| {
+                    let stored = lookups.clone();
+                    async move {
+                        if stored.lock().unwrap().contains(&message_id) {
+                            Json(json!({
+                                "info":{"id":message_id, "sessionID":session_id, "role":"user"},
+                                "parts":[]
+                            }))
+                            .into_response()
+                        } else {
+                            StatusCode::NOT_FOUND.into_response()
+                        }
+                    }
+                },
+            ),
+        )
+        .route(
+            "/session/{session_id}/prompt_async",
+            post(move |Json(body): Json<Value>| {
+                let posts = posts.clone();
+                async move {
+                    let mut posts = posts.lock().unwrap();
+                    posts.push(body["messageID"].as_str().unwrap_or_default().to_owned());
+                    // OpenCode stored the first send, but a gateway lost its answer.
+                    if posts.len() == 1 {
+                        StatusCode::BAD_GATEWAY
+                    } else {
+                        StatusCode::NO_CONTENT
+                    }
+                }
+            }),
+        )
+        .route(
+            "/provider",
+            get(|| async {
+                Json(json!({
+                    "connected": ["openai"],
+                    "all": [{"id":"openai", "models":{"gpt-5":{"variants":{"high":{}}}}}]
+                }))
+            }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("OpenCode fixture bind");
+    let endpoint = format!("http://{}", listener.local_addr().expect("fixture address"));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("OpenCode fixture serve");
+    });
+
+    let temp = TempDir::new().expect("provider fixture directory");
+    let (engine, database) = engine_and_database().await;
+    let settings = TempDir::new().expect("settings");
+    std::fs::write(
+        settings.path().join("settings.json"),
+        serde_json::to_vec(&json!({ "providerInstances": {
+            "retry-opencode": {
+                "driver":"opencode", "enabled":true,
+                "config":{"binaryPath":"retry-opencode-route", "serverUrl":endpoint}
+            }
+        }}))
+        .expect("settings json"),
+    )
+    .expect("write settings");
+    let command_id = "retried-uncertain-opencode".to_owned();
+    let mut row = delivery_row("opencode", &format!("{command_id}-key"));
+    row.command_id = command_id.clone();
+    row.message_id = format!("message-{command_id}");
+    row.provider_instance_id = "retry-opencode".to_owned();
+    row.payload = json!({
+        "type":"thread.turn.start", "commandId":command_id, "threadId":"t1",
+        "message":{"messageId":row.message_id, "role":"user", "text":"hello", "attachments":[]},
+        "modelSelection":{"instanceId":"retry-opencode", "model":"openai/gpt-5", "options":[]},
+        "runtimeMode":"full-access", "interactionMode":"default", "createdAt":NOW
+    });
+    freeze_row_route(&engine, &settings, &mut row).await;
+    let message_id = row.message_id.clone();
+    let payload = row.payload.clone();
+    seed_pending_delivery(&database, row).await;
+    // A follow-up queued behind it, which runs once nothing holds the thread.
+    let follow_up = format!("{command_id}-follow-up");
+    let mut queued = delivery_row("opencode", &format!("{follow_up}-key"));
+    queued.command_id = follow_up.clone();
+    queued.message_id = format!("message-{follow_up}");
+    queued.provider_instance_id = "retry-opencode".to_owned();
+    queued.payload = payload;
+    queued.payload["commandId"] = json!(follow_up);
+    queued.payload["message"]["messageId"] = json!(queued.message_id);
+    queued.payload["message"]["text"] = json!("follow up");
+    queued.created_at = "2026-01-01T00:00:01Z".to_owned();
+    queued.updated_at = queued.created_at.clone();
+    seed_pending_delivery(&database, queued).await;
+    database
+        .call({
+            let follow_up = follow_up.clone();
+            move |connection| {
+                connection.execute(
+                    "UPDATE provider_turn_outbox SET state = 'queued' WHERE command_id = ?",
+                    [follow_up],
+                )?;
+                Ok(())
+            }
+        })
+        .await
+        .expect("queue the follow-up");
+    // The turn admission's pending marker, which an accepted turn's session update would bind.
+    let marker = message_id.clone();
+    database
+        .call(move |connection| {
+            connection.execute(
+                "INSERT INTO projection_turns (thread_id, turn_id, pending_message_id, state, requested_at, checkpoint_files_json) VALUES ('t1', NULL, ?, 'running', ?, '[]')",
+                rusqlite::params![marker, NOW],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("pending turn marker");
+    let supervisor = Arc::new(ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        Arc::new(NativeFixtureFactory {
+            inner: NativeProviderDriverFactory::new(temp.path().join("attachments")),
+            binary_path: None,
+            endpoint: Some(endpoint.clone()),
+            cwd: Some(temp.path().to_path_buf()),
+            environment: Vec::new(),
+            launches: Arc::new(StdMutex::new(Vec::new())),
+        }),
+        activity_projection(&engine),
+        SupervisorOptions::default(),
+    ));
+    let service = TurnDeliveryService::start(
+        engine.clone(),
+        supervisor.clone(),
+        settings.path().to_path_buf(),
+    );
+    let settled = |state: TurnDeliveryState| {
+        let engine = engine.clone();
+        let command_id = command_id.clone();
+        async move {
+            timeout(Duration::from_secs(10), async {
+                loop {
+                    let delivery = engine
+                        .repositories()
+                        .get_provider_turn_delivery(command_id.clone())
+                        .await
+                        .expect("delivery row")
+                        .expect("durable delivery");
+                    if delivery.state == state {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("the delivery never became {state:?}"));
+        }
+    };
+    let delivery_now = || {
+        let engine = engine.clone();
+        let command_id = command_id.clone();
+        async move {
+            let delivery = engine
+                .repositories()
+                .get_provider_turn_delivery(command_id)
+                .await
+                .expect("delivery row")
+                .expect("durable delivery");
+            format!("{:?} {:?}", delivery.state, delivery.last_error)
+        }
+    };
+    settled(TurnDeliveryState::Uncertain).await;
+    // OpenCode finishes the turn whose answer was lost, so the runtime no longer holds it.
+    let before = engine.read_events(0).await.expect("events").len();
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let _ = sse.send(
+                json!({
+                    "type":"session.status",
+                    "properties":{"sessionID":"opencode-retry-session","status":{"type":"idle"}}
+                })
+                .to_string(),
+            );
+            let ended = engine
+                .read_events(0)
+                .await
+                .expect("events")
+                .iter()
+                .skip(before)
+                .any(|event| {
+                    event.event.event_type == "thread.activity-appended"
+                        && event.event.payload["activity"]["payload"]["eventType"]
+                            == "turn.completed"
+                });
+            if ended {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the lost turn ends");
+
+    engine
+        .dispatch(
+            serde_json::from_value(json!({
+                "type":"thread.turn-delivery.resolve", "commandId":"retry-uncertain",
+                "threadId":"t1", "messageId":message_id, "action":"retry", "createdAt":NOW
+            }))
+            .expect("delivery resolution command"),
+        )
+        .await
+        .expect("retry");
+    settled(TurnDeliveryState::Delivered).await;
+    let first_id = stored.lock().unwrap()[0].clone();
+    assert_eq!(
+        stored
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|id| **id == first_id)
+            .count(),
+        1,
+        "OpenCode already had the message, so it is not sent again: {}",
+        delivery_now().await
+    );
+    let marker = message_id.clone();
+    let pending = database
+        .call(move |connection| {
+            Ok(connection.query_row(
+                "SELECT COUNT(*) FROM projection_turns WHERE thread_id = 't1' AND pending_message_id = ? AND turn_id IS NULL AND state = 'running'",
+                [marker],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
+        .await
+        .expect("pending turns");
+    assert_eq!(pending, 0, "the found message holds no queued follow-up");
+    // The retry found the message with no turn left running, and the follow-up then runs.
+    let found_without_turn = engine
+        .read_events(0)
+        .await
+        .expect("events")
+        .into_iter()
+        .any(|event| {
+            event.event.event_type == "thread.turn-delivery-updated"
+                && event.event.metadata["foundWithoutTurn"] == json!(true)
+        });
+    assert!(
+        found_without_turn,
+        "the retry is recorded as already delivered"
+    );
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let delivery = engine
+                .repositories()
+                .get_provider_turn_delivery(follow_up.clone())
+                .await
+                .expect("delivery row")
+                .expect("durable delivery");
+            if delivery.state == TurnDeliveryState::Delivered {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the queued follow-up runs");
+    assert_eq!(
+        stored.lock().unwrap().len(),
+        2,
+        "the original once and the follow-up once"
+    );
+
+    service.shutdown().await;
+    supervisor.shutdown().await.expect("supervisor shutdown");
+    engine.shutdown().await;
     server.abort();
 }
 
@@ -8212,8 +8747,15 @@ async fn shutdown_compensates_a_stale_write_already_queued_on_sqlite() {
     assert_eq!(snapshot.observation_state, ActivityObservationState::Live);
 }
 
+/// In a process of its own, where no sibling test can turn the warning's callsite off for this
+/// capture and so pass the absence checks without checking anything (#112).
 #[tokio::test(flavor = "current_thread")]
 async fn invalid_native_ids_drop_only_activity_without_leaking_sensitive_text() {
+    let Some(isolated) = reexec::in_own_process(
+        "invalid_native_ids_drop_only_activity_without_leaking_sensitive_text",
+    ) else {
+        return;
+    };
     let capture = TraceCapture::default();
     let subscriber = tracing_subscriber::fmt()
         .without_time()
@@ -8305,8 +8847,17 @@ async fn invalid_native_ids_drop_only_activity_without_leaking_sensitive_text() 
     let traces = capture.text();
     assert!(!traces.contains("SENSITIVE_CONTROL_ID"));
     assert!(!traces.contains("SENSITIVE_OVERSIZED_ID"));
+    // The warning for each dropped batch reached this capture, so the checks above saw it.
+    assert_eq!(
+        traces
+            .matches("dropped activity batch without a stable native event key")
+            .count(),
+        3,
+        "{traces}"
+    );
 
     supervisor.shutdown().await.unwrap();
+    isolated.complete();
 }
 
 #[tokio::test]
@@ -8801,8 +9352,15 @@ async fn recovered_provider_replacement_survives_a_paused_old_workspace_loss_sto
     assert_eq!(state.lock().unwrap().shutdowns, 2);
 }
 
+/// In a process of its own, where no sibling test can turn the warning's callsite off for this
+/// capture and so pass the absence check without checking anything (#112).
 #[tokio::test(flavor = "current_thread")]
 async fn late_provider_events_after_thread_deletion_do_not_warn() {
+    let Some(isolated) =
+        reexec::in_own_process("late_provider_events_after_thread_deletion_do_not_warn")
+    else {
+        return;
+    };
     let capture = TraceCapture::default();
     let subscriber = tracing_subscriber::fmt()
         .without_time()
@@ -8860,6 +9418,54 @@ async fn late_provider_events_after_thread_deletion_do_not_warn() {
             .contains("failed to project provider runtime event"),
         "late shutdown events should not be reported as unexpected projection failures"
     );
+
+    // The same warning, for an event whose projection did fail, reaches this capture.
+    let supervisor = fail_one_event_projection().await;
+    timeout(Duration::from_secs(5), async {
+        while !capture
+            .text()
+            .contains("failed to project provider runtime event")
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("projection warning reaches the capture: {}", capture.text()));
+    supervisor.shutdown().await.unwrap();
+    isolated.complete();
+}
+
+/// Starts a session and sends it one event for a thread that does not exist, whose
+/// projection fails and logs "failed to project provider runtime event".
+async fn fail_one_event_projection() -> ProviderRuntimeSupervisor {
+    let engine = engine().await;
+    let (events_tx, events_rx) = mpsc::channel(1);
+    let factory = Arc::new(FakeFactory {
+        state: Arc::new(StdMutex::new(DriverState::default())),
+        events: StdMutex::new(VecDeque::from([events_rx])),
+    });
+    let supervisor = ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        factory,
+        activity_projection(&engine),
+        SupervisorOptions::default(),
+    );
+    supervisor.launch(launch()).await.unwrap();
+    events_tx
+        .send(ProviderEvent {
+            native_event_id: None,
+            event_type: "content.delta".to_owned(),
+            thread_id: "missing-thread".to_owned(),
+            turn_id: None,
+            item_id: None,
+            request_id: None,
+            payload: json!({"delta":"unprojected"}),
+            activity: Vec::new(),
+            activity_controls: Default::default(),
+        })
+        .await
+        .unwrap();
+    supervisor
 }
 
 #[tokio::test]
@@ -10690,6 +11296,98 @@ async fn interaction_mode_provider_failure_preserves_the_live_launch_state() {
     );
 
     supervisor.shutdown().await.unwrap();
+}
+
+/// OpenCode lists its pending asks on resume (`recovered`): one BiBCode already recorded, asked or
+/// answered, is not added again, so the thread and its approval gate agree. An ask reported again
+/// without the mark (another provider reusing an id after its own restart) is a new request.
+#[tokio::test]
+async fn an_ask_reported_again_while_open_is_recorded_once() {
+    let engine = engine().await;
+    let state = Arc::new(StdMutex::new(DriverState::default()));
+    let (events_tx, events_rx) = mpsc::channel(8);
+    let factory = Arc::new(FakeFactory {
+        state,
+        events: StdMutex::new(VecDeque::from([events_rx])),
+    });
+    let supervisor = ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        factory,
+        activity_projection(&engine),
+        SupervisorOptions::default(),
+    );
+    supervisor.launch(launch()).await.unwrap();
+    let event = |event_type: &str, request_id: &str, payload: Value| ProviderEvent {
+        native_event_id: None,
+        event_type: event_type.to_owned(),
+        thread_id: "t1".to_owned(),
+        turn_id: None,
+        item_id: None,
+        request_id: Some(request_id.to_owned()),
+        payload,
+        activity: Vec::new(),
+        activity_controls: Default::default(),
+    };
+    let approval = json!({"requestType":"exec_command_approval","detail":"shell: ls"});
+    let questions = json!({"questions":[{"id":"q0","question":"Which?","options":[]}]});
+    let recovered = |mut payload: Value| {
+        payload["recovered"] = json!(true);
+        payload
+    };
+    for sent in [
+        event("request.opened", "approval-1", approval.clone()),
+        event("request.opened", "approval-1", recovered(approval.clone())),
+        event("user-input.requested", "input-1", questions.clone()),
+        event(
+            "user-input.requested",
+            "input-1",
+            recovered(questions.clone()),
+        ),
+        event("request.opened", "approval-2", approval.clone()),
+        event(
+            "request.resolved",
+            "approval-2",
+            json!({"requestType":"exec_command_approval"}),
+        ),
+        event("request.opened", "approval-2", recovered(approval.clone())),
+        event("request.opened", "approval-3", approval.clone()),
+        event("request.opened", "approval-3", approval.clone()),
+        // Marks the end of the batch.
+        event("request.opened", "approval-last", approval.clone()),
+    ] {
+        events_tx.send(sent).await.unwrap();
+    }
+    let count = |activities: &[(String, Value)], kind: &str, request_id: &str| {
+        activities
+            .iter()
+            .filter(|(activity_kind, payload)| {
+                activity_kind == kind && payload["requestId"] == request_id
+            })
+            .count()
+    };
+    let activities = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let snapshot = load_snapshot(&engine.repositories()).await.unwrap();
+            let activities = snapshot
+                .activities
+                .into_iter()
+                .filter(|activity| activity.thread_id == "t1")
+                .map(|activity| (activity.kind, activity.payload))
+                .collect::<Vec<_>>();
+            if count(&activities, "approval.requested", "approval-last") == 1 {
+                break activities;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the asks are projected");
+    assert_eq!(count(&activities, "approval.requested", "approval-1"), 1);
+    assert_eq!(count(&activities, "user-input.requested", "input-1"), 1);
+    assert_eq!(count(&activities, "approval.requested", "approval-2"), 1);
+    assert_eq!(count(&activities, "approval.requested", "approval-3"), 2);
+    supervisor.shutdown().await.unwrap();
+    engine.shutdown().await;
 }
 
 #[tokio::test]
@@ -13462,7 +14160,7 @@ async fn native_factory_routes_resume_to_the_native_adapter_without_a_fallback()
     };
     assert!(matches!(
         error,
-        ProviderRuntimeError::Spawn { provider, .. } if provider == "opencode"
+        ProviderRuntimeError::MissingExecutable { provider, .. } if provider == "opencode"
     ));
 }
 
@@ -13491,7 +14189,7 @@ async fn native_factory_routes_every_supported_provider_to_its_native_adapter() 
         };
 
         assert!(
-            matches!(error, ProviderRuntimeError::Spawn { provider: ref actual, .. } if actual == provider),
+            matches!(error, ProviderRuntimeError::MissingExecutable { provider: ref actual, .. } if actual == provider),
             "unexpected native adapter error for {provider}: {error:?}"
         );
     }
@@ -13640,7 +14338,7 @@ async fn native_claude_driver_supports_the_complete_live_command_surface() {
         Err(ProviderRuntimeError::UnsupportedCapability { provider, .. }) if provider == "claude"
     ));
     assert!(matches!(
-        driver.rollback(1).await,
+        driver.rollback(1, "rewind-key".to_owned()).await,
         Err(ProviderRuntimeError::UnsupportedCapability { provider, .. }) if provider == "claude"
     ));
 
@@ -15447,9 +16145,9 @@ async fn native_opencode_driver_supports_session_turn_and_control_commands() {
     );
     driver.interrupt(None).await.unwrap();
     driver.set_model("openai/gpt-5.4".to_owned()).await.unwrap();
-    driver.rollback(0).await.unwrap();
+    driver.rollback(0, "rewind-key".to_owned()).await.unwrap();
     assert!(matches!(
-        driver.rollback(-1).await,
+        driver.rollback(-1, "rewind-key".to_owned()).await,
         Err(ProviderRuntimeError::Provider { provider, .. }) if provider == "opencode"
     ));
     assert!(matches!(
@@ -15674,12 +16372,15 @@ done
     driver.interrupt(None).await.unwrap();
     // Like Codex 0.162.1, the fixture starts a paginated thread and answers `thread/revert`
     // only before the listed turn.
-    timeout(Duration::from_secs(10), driver.rollback(1))
-        .await
-        .expect("Codex should answer the revert")
-        .expect("Codex should revert the paginated thread");
+    timeout(
+        Duration::from_secs(10),
+        driver.rollback(1, "rewind-key".to_owned()),
+    )
+    .await
+    .expect("Codex should answer the revert")
+    .expect("Codex should revert the paginated thread");
     assert!(matches!(
-        driver.rollback(-1).await,
+        driver.rollback(-1, "rewind-key".to_owned()).await,
         Err(ProviderRuntimeError::Provider { provider, .. }) if provider == "codex"
     ));
     assert!(matches!(
@@ -15735,6 +16436,7 @@ while IFS= read -r line; do
       printf '{{"id":%s,"result":{{"cwd":"/tmp","model":"gpt-5","thread":{{"id":"provider-root"}}}}}}\n' "$id"
       ;;
     *'"method":"thread/read"'*) printf '{{"id":%s,"result":{{"thread":{{"id":"provider-root","createdAt":1,"updatedAt":1,"status":{{"type":"idle"}},"turns":[]}}}}}}\n' "$id" ;;
+    *'"method":"thread/turns/list"'*) printf '{{"id":%s,"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}\n' "$id" ;;
     *'"method":"thread/list"'*) printf '{{"id":%s,"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}\n' "$id" ;;
     *'"method":"thread/backgroundTerminals/list"'*) printf '{{"id":%s,"result":{{"data":[],"nextCursor":null}}}}\n' "$id" ;;
     *'"method":"mcpServerStatus/list"'*) printf '{{"id":%s,"result":{{"data":[],"nextCursor":null}}}}\n' "$id" ;;
@@ -17280,7 +17982,7 @@ done
         .await
         .unwrap();
     assert!(matches!(
-        cursor.rollback(1).await,
+        cursor.rollback(1, "rewind-key".to_owned()).await,
         Err(ProviderRuntimeError::UnsupportedCapability { provider, .. }) if provider == "cursor"
     ));
     assert!(matches!(
@@ -17322,7 +18024,7 @@ done
         .await
         .unwrap();
     assert!(matches!(
-        grok.rollback(1).await,
+        grok.rollback(1, "rewind-key".to_owned()).await,
         Err(ProviderRuntimeError::UnsupportedCapability { provider, .. }) if provider == "grok"
     ));
     assert!(matches!(
@@ -17570,4 +18272,150 @@ fn attachment_upload_registry() -> bibcode_server::transfer::staging::UploadRegi
         bibcode_server::transfer::staging::UploadLimits::default(),
         std::sync::Arc::new(tokio::time::Instant::now),
     )
+}
+
+/// A provider event for thread `t1`, without activity.
+fn thread_event(event_type: &str, turn_id: Option<&str>, payload: Value) -> ProviderEvent {
+    ProviderEvent {
+        native_event_id: None,
+        event_type: event_type.to_owned(),
+        thread_id: "t1".to_owned(),
+        turn_id: turn_id.map(str::to_owned),
+        item_id: None,
+        request_id: None,
+        payload,
+        activity: Vec::new(),
+        activity_controls: Default::default(),
+    }
+}
+
+/// Waits until thread `t1`'s session reads `status`, with no active turn once `ready`.
+async fn wait_for_session(engine: &OrchestrationEngine, status: &str) {
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let session = engine
+                .repositories()
+                .get_thread_session("t1".to_owned())
+                .await
+                .unwrap();
+            if session.is_some_and(|session| {
+                session.status == status && (status != "ready" || session.active_turn_id.is_none())
+            }) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the session never read {status}"));
+}
+
+/// After its turn ends, a session can still run background work in the same process (a Claude
+/// background task, a Codex subagent). Restoring files under it would not stick, and a rewind
+/// would cut it off, so revert refuses for providers that rewind and for files-only ones alike.
+#[tokio::test]
+async fn checkpoint_revert_refuses_while_the_session_runs_background_work() {
+    for (provider, label) in [("codex", "Codex"), ("claude", "Claude")] {
+        let repository = initialize_repository();
+        let engine = engine().await;
+        for (turn_count, content) in [(0, "baseline\n"), (1, "one\n"), (2, "two\n")] {
+            project_checkpoint(&engine, repository.path(), turn_count, content).await;
+        }
+        let state = Arc::new(StdMutex::new(DriverState {
+            rollback_workspace: Some(repository.path().to_path_buf()),
+            ..DriverState::default()
+        }));
+        let (events_tx, events_rx) = mpsc::channel(8);
+        let supervisor = Arc::new(ProviderRuntimeSupervisor::start(
+            engine.clone(),
+            Arc::new(FakeFactory {
+                state: state.clone(),
+                events: StdMutex::new(VecDeque::from([events_rx])),
+            }),
+            activity_projection(&engine),
+            SupervisorOptions::default(),
+        ));
+        let mut provider_launch = launch();
+        provider_launch.provider = provider.to_owned();
+        provider_launch.provider_label = label.to_owned();
+        provider_launch.provider_instance_id = Some(provider.to_owned());
+        provider_launch.cwd = repository.path().to_path_buf();
+        supervisor.launch(provider_launch).await.unwrap();
+        let effects = OrchestrationEffects::start(
+            engine.clone(),
+            Arc::new(GitRepository::default()),
+            supervisor_effects(&supervisor, &engine, repository.path()),
+            EffectsOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        // The work is reported, then a turn the provider runs ends: the pump has handled the
+        // report once the session reads ready again.
+        for event in [
+            thread_event("session.background-work", None, json!({"liveTasks": 1})),
+            thread_event("turn.started", Some("barrier"), json!({})),
+        ] {
+            events_tx.send(event).await.unwrap();
+        }
+        wait_for_session(&engine, "running").await;
+        events_tx
+            .send(thread_event(
+                "turn.completed",
+                Some("barrier"),
+                json!({"state": "completed"}),
+            ))
+            .await
+            .unwrap();
+        wait_for_session(&engine, "ready").await;
+
+        let mut events = engine.subscribe_events();
+        engine
+            .dispatch(
+                serde_json::from_value(json!({
+                    "type":"thread.checkpoint.revert", "commandId":"revert", "threadId":"t1",
+                    "turnCount":1, "createdAt":NOW
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        wait_for_event(&mut events, |event| {
+            event.event.event_type == "thread.reverted"
+                || event.event.payload["activity"]["kind"] == "checkpoint.revert.failed"
+                || event.event.payload["activity"]["kind"] == "checkpoint.revert.files-only"
+        })
+        .await;
+        effects.shutdown().await;
+
+        let failures = engine
+            .read_events(0)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.event.payload["activity"]["kind"] == "checkpoint.revert.failed")
+            .map(|event| event.event.payload["activity"]["payload"]["detail"].clone())
+            .collect::<Vec<_>>();
+        assert!(
+            failures
+                .iter()
+                .any(|detail| detail.as_str().is_some_and(|detail| {
+                    detail.contains(label) && detail.contains("background work")
+                })),
+            "{provider}: the revert names the running work: {failures:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repository.path().join("tracked.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "two\n",
+            "{provider}: no file was restored"
+        );
+        assert!(
+            state.lock().unwrap().rollbacks.is_empty(),
+            "{provider}: the provider was asked to rewind"
+        );
+        supervisor.shutdown().await.unwrap();
+        engine.shutdown().await;
+    }
 }

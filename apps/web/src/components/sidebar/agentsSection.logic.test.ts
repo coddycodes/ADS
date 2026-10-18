@@ -1,5 +1,8 @@
 import type { EnvironmentAvailabilityStatus } from "@bibcode/client-runtime/state/shell";
-import type { EnvironmentThreadShell } from "@bibcode/client-runtime/state/models";
+import type {
+  EnvironmentProject,
+  EnvironmentThreadShell,
+} from "@bibcode/client-runtime/state/models";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@bibcode/contracts";
 import { createModelSelection } from "@bibcode/shared/model";
 import { describe, expect, it } from "vite-plus/test";
@@ -9,6 +12,7 @@ import {
   buildAgentRows,
   buildAgentViewGroups,
   countUnreadAgentRows,
+  resolveAgentCheckouts,
   resolveAgentGroup,
   resolveAgentPreviewLine,
   resolveAgentProvider,
@@ -67,6 +71,7 @@ function buildRows(
     readonly projectTitleById?: ReadonlyMap<string, string>;
     readonly environmentLabelById?: ReadonlyMap<string, string>;
     readonly availabilityByEnvironmentId?: ReadonlyMap<string, EnvironmentAvailabilityStatus>;
+    readonly liveBranchByThreadKey?: ReadonlyMap<string, string>;
   } = {},
 ) {
   return buildAgentRows({
@@ -85,6 +90,9 @@ function buildRows(
         [ENVIRONMENT_A, "live"],
         [ENVIRONMENT_B, "live"],
       ]),
+    ...(overrides.liveBranchByThreadKey === undefined
+      ? {}
+      : { liveBranchByThreadKey: overrides.liveBranchByThreadKey }),
   });
 }
 
@@ -259,6 +267,67 @@ describe("buildAgentRows", () => {
     ]) {
       expect(searchText).toContain(part);
     }
+  });
+});
+
+describe("agent row branch", () => {
+  it("shows and searches the live branch over the recorded one", () => {
+    const moved = makeShell({ id: ThreadId.make("thread-moved"), branch: "main" });
+    const unread = makeShell({ id: ThreadId.make("thread-unread"), branch: "main" });
+    const rows = buildRows([moved, unread], {
+      liveBranchByThreadKey: new Map([["environment-a:thread-moved", "feature/live"]]),
+    });
+    expect(rows.map((row) => row.branch)).toEqual(["feature/live", "main"]);
+    expect(rows[0]?.searchText).toContain("feature/live");
+    expect(rows[0]?.searchText).not.toContain("main");
+  });
+
+  it("reads each live thread's worktree, else its project's root, once per checkout", () => {
+    const project = (id: ProjectId, environmentId: EnvironmentId, workspaceRoot: string) =>
+      ({ id, environmentId, workspaceRoot }) as EnvironmentProject;
+    const PROJECT_B = ProjectId.make("project-b");
+    const { checkoutKeyByThreadKey, checkouts } = resolveAgentCheckouts({
+      shells: [
+        makeShell({ id: ThreadId.make("thread-root-1") }),
+        makeShell({ id: ThreadId.make("thread-root-2") }),
+        makeShell({ id: ThreadId.make("thread-worktree"), worktreePath: "/wt/feature" }),
+        // Same project id in another environment: its own root, not project-a's.
+        makeShell({ id: ThreadId.make("thread-remote"), environmentId: ENVIRONMENT_B }),
+        makeShell({ id: ThreadId.make("thread-unknown-project"), projectId: PROJECT_B }),
+        makeShell({ id: ThreadId.make("thread-archived"), archivedAt: UPDATED_AT }),
+      ],
+      projects: [
+        project(PROJECT_A, ENVIRONMENT_A, "/repo/a"),
+        project(PROJECT_A, ENVIRONMENT_B, "/remote/a"),
+      ],
+      availabilityByEnvironmentId: new Map<string, EnvironmentAvailabilityStatus>([
+        [ENVIRONMENT_A, "live"],
+        [ENVIRONMENT_B, "live"],
+      ]),
+    });
+    const keyA = JSON.stringify([ENVIRONMENT_A, "/repo/a"]);
+    expect([...checkoutKeyByThreadKey]).toEqual([
+      ["environment-a:thread-root-1", keyA],
+      ["environment-a:thread-root-2", keyA],
+      ["environment-a:thread-worktree", JSON.stringify([ENVIRONMENT_A, "/wt/feature"])],
+      ["environment-b:thread-remote", JSON.stringify([ENVIRONMENT_B, "/remote/a"])],
+    ]);
+    expect(checkouts.map((checkout) => checkout.cwd)).toEqual([
+      "/repo/a",
+      "/wt/feature",
+      "/remote/a",
+    ]);
+  });
+
+  it("reads no checkout in an environment that is not live", () => {
+    const { checkouts } = resolveAgentCheckouts({
+      shells: [makeShell({ worktreePath: "/wt/feature" })],
+      projects: [],
+      availabilityByEnvironmentId: new Map<string, EnvironmentAvailabilityStatus>([
+        [ENVIRONMENT_A, "synchronizing"],
+      ]),
+    });
+    expect(checkouts).toEqual([]);
   });
 });
 

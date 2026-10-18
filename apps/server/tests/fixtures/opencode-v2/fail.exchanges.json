@@ -1,0 +1,243 @@
+{
+  "session": "ses_ebf1bfc43ffe7bQgFplJ1axWsC",
+  "exchanges": [
+    {
+      "method": "POST",
+      "path": "/api/session",
+      "body": {
+        "title": "BiBCode capture",
+        "location": {
+          "directory": "/work/project"
+        },
+        "model": {
+          "providerID": "mock",
+          "id": "mock-model"
+        },
+        "agent": "build",
+        "permissions": [
+          {
+            "action": "*",
+            "resource": "*",
+            "effect": "allow"
+          }
+        ]
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "ses_ebf1bfc43ffe7bQgFplJ1axWsC",
+          "projectID": "bca2a4c13ad5ce3ef167f49a0f2c24bd5afe14dc",
+          "agent": "build",
+          "model": {
+            "id": "mock-model",
+            "providerID": "mock",
+            "variant": "default"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1792090047425,
+            "updated": 1792090047425
+          },
+          "title": "BiBCode capture",
+          "permissions": [
+            {
+              "action": "*",
+              "resource": "*",
+              "effect": "allow"
+            }
+          ],
+          "location": {
+            "directory": "/work/project"
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1bfc43ffe7bQgFplJ1axWsC",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "ses_ebf1bfc43ffe7bQgFplJ1axWsC",
+          "projectID": "bca2a4c13ad5ce3ef167f49a0f2c24bd5afe14dc",
+          "agent": "build",
+          "model": {
+            "id": "mock-model",
+            "providerID": "mock",
+            "variant": "default"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1792090047425,
+            "updated": 1792090047425
+          },
+          "title": "BiBCode capture",
+          "permissions": [
+            {
+              "action": "*",
+              "resource": "*",
+              "effect": "allow"
+            }
+          ],
+          "location": {
+            "directory": "/work/project"
+          }
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/session/ses_ebf1bfc43ffe7bQgFplJ1axWsC/prompt",
+      "body": {
+        "id": "msg_bibcodecapture1792090047429",
+        "text": "FAIL_PROVIDER please"
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "msg_bibcodecapture1792090047429",
+          "sessionID": "ses_ebf1bfc43ffe7bQgFplJ1axWsC",
+          "time": {
+            "created": 1792090047431
+          },
+          "type": "user",
+          "payload": {
+            "text": "FAIL_PROVIDER please"
+          },
+          "delivery": "steer"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1bfc43ffe7bQgFplJ1axWsC/message",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "msg_140e403df001Ri1ZK2i31x70Lf",
+            "time": {
+              "created": 1792090047455
+            },
+            "type": "idle",
+            "outcome": "failed",
+            "error": {
+              "type": "provider.invalid-request",
+              "message": "mock provider rejected the request",
+              "status": 400,
+              "response": {
+                "body": "{\"error\": {\"message\": \"mock provider rejected the request\", \"type\": \"invalid_request_error\"}}"
+              }
+            }
+          },
+          {
+            "id": "msg_140e403d1001HYPwv31vXu3QBU",
+            "time": {
+              "created": 1792090047447,
+              "completed": 1792090047454
+            },
+            "type": "assistant",
+            "agent": "build",
+            "model": {
+              "id": "mock-model",
+              "providerID": "mock",
+              "variant": "default"
+            },
+            "content": [],
+            "finish": "error",
+            "error": {
+              "type": "provider.invalid-request",
+              "message": "mock provider rejected the request",
+              "status": 400,
+              "response": {
+                "body": "{\"error\": {\"message\": \"mock provider rejected the request\", \"type\": \"invalid_request_error\"}}"
+              }
+            }
+          },
+          {
+            "id": "msg_bibcodecapture1792090047429",
+            "time": {
+              "created": 1792090047438
+            },
+            "text": "FAIL_PROVIDER please",
+            "type": "user"
+          }
+        ],
+        "cursor": {
+          "previous": "eyJpZCI6Im1zZ18xNDBlNDAzZGYwMDFSaTFaSzJpMzF4NzBMZiIsIm9yZGVyIjoiZGVzYyIsImRpcmVjdGlvbiI6InByZXZpb3VzIn0",
+          "next": "eyJpZCI6Im1zZ19iaWJjb2RlY2FwdHVyZTE3OTIwOTAwNDc0MjkiLCJvcmRlciI6ImRlc2MiLCJkaXJlY3Rpb24iOiJuZXh0In0"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1bfc43ffe7bQgFplJ1axWsC/message/msg_bibcodecapture1792090047429",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "msg_bibcodecapture1792090047429",
+          "time": {
+            "created": 1792090047438
+          },
+          "text": "FAIL_PROVIDER please",
+          "type": "user"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1bfc43ffe7bQgFplJ1axWsC/message/msg_doesnotexist000000000000",
+      "body": null,
+      "status": 404,
+      "response": {
+        "_tag": "MessageNotFoundError",
+        "sessionID": "ses_ebf1bfc43ffe7bQgFplJ1axWsC",
+        "messageID": "msg_doesnotexist000000000000",
+        "message": "Message not found: msg_doesnotexist000000000000"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/active",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": {}
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session?parentID=ses_ebf1bfc43ffe7bQgFplJ1axWsC",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": [],
+        "cursor": {
+          "previous": null,
+          "next": null
+        }
+      }
+    }
+  ]
+}

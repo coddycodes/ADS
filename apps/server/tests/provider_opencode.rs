@@ -1882,6 +1882,134 @@ async fn opencode_runtime_registers_the_bibcode_mcp_server() {
     server.abort();
 }
 
+/// OpenCode 1 does not replay asks made while BiBCode was away: a resumed session reads its
+/// pending permissions and questions, shows each of this session once (marked `recovered`, so one
+/// BiBCode already recorded is not added again), and they can be answered. An ask created between
+/// the resume's read and the subscription is found by reading again once subscribed.
+#[tokio::test]
+async fn a_resumed_opencode_1_session_shows_the_asks_it_was_waiting_on() {
+    let replies = Arc::new(Mutex::new(Vec::<String>::new()));
+    let question_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let record = |replies: Arc<Mutex<Vec<String>>>| {
+        move |uri: axum::http::Uri| {
+            let replies = replies.clone();
+            async move {
+                replies.lock().await.push(uri.path().to_owned());
+                Json(json!(true))
+            }
+        }
+    };
+    let app = Router::new()
+        .route("/session/{session_id}", get(resume_session))
+        .route(
+            "/event",
+            get(|| async {
+                let connected = json!({ "type": "server.connected", "properties": {} });
+                Sse::new(
+                    stream::once(async move {
+                        Ok::<_, std::convert::Infallible>(
+                            Event::default().data(connected.to_string()),
+                        )
+                    })
+                    .chain(stream::pending()),
+                )
+            }),
+        )
+        .route(
+            "/permission",
+            get(|| async {
+                Json(json!([
+                    { "id": "per_offline", "sessionID": "session-1", "permission": "bash",
+                      "patterns": ["git push"] },
+                    { "id": "per_other", "sessionID": "session-other", "permission": "bash",
+                      "patterns": ["ls"] }
+                ]))
+            }),
+        )
+        .route(
+            "/question",
+            get(move || {
+                // Created between the resume's read and the subscription: only later reads
+                // list it, and the first read once subscribed fails, so it is read again.
+                let read = question_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    if read == 0 {
+                        return Json(json!([])).into_response();
+                    }
+                    if read == 1 {
+                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
+                    Json(json!([
+                        { "id": "que_offline", "sessionID": "session-1", "questions": [
+                            { "header": "Color", "question": "Pick a color",
+                              "options": [{ "label": "Red", "description": "Warm" }] }
+                        ]}
+                    ]))
+                    .into_response()
+                }
+            }),
+        )
+        .route(
+            "/permission/{request_id}/reply",
+            post(record(replies.clone())),
+        )
+        .route(
+            "/question/{request_id}/reply",
+            post(record(replies.clone())),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let address: SocketAddr = listener.local_addr().expect("addr");
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    let runtime = OpenCodeSessionRuntime::new(
+        &format!("http://{address}"),
+        "opencode-resume-asks",
+        "/tmp/project",
+        None,
+    );
+    runtime.resume("session-1").await.expect("resumes");
+    let mut events = Vec::new();
+    while let Ok(Some(event)) = timeout(Duration::from_millis(1500), runtime.next_event()).await {
+        events.push(event);
+    }
+    let shown = |event_type: &str, request_id: &str| {
+        events
+            .iter()
+            .filter(|event| {
+                event.event_type == event_type && event.request_id.as_deref() == Some(request_id)
+            })
+            .collect::<Vec<_>>()
+    };
+    let permission = shown("request.opened", "per_offline");
+    assert_eq!(permission.len(), 1, "{events:#?}");
+    assert_eq!(permission[0].payload["detail"], "bash: git push");
+    assert_eq!(permission[0].payload["recovered"], true);
+    assert!(shown("request.opened", "per_other").is_empty());
+    let question = shown("user-input.requested", "que_offline");
+    assert_eq!(question.len(), 1, "{events:#?}");
+    assert_eq!(
+        question[0].payload["questions"][0]["question"],
+        "Pick a color"
+    );
+    runtime
+        .respond_to_permission("per_offline", "accept")
+        .await
+        .expect("the recovered permission can be answered");
+    runtime
+        .respond_to_user_input("que_offline", json!({ "Color": ["Red"] }))
+        .await
+        .expect("the recovered question can be answered");
+    assert_eq!(
+        replies.lock().await.as_slice(),
+        [
+            "/permission/per_offline/reply",
+            "/question/que_offline/reply"
+        ]
+    );
+    server.abort();
+}
+
 #[tokio::test]
 async fn opencode_runtime_failure_boundaries_reject_invalid_sessions_and_http_statuses() {
     let state = Arc::new(TestServerState::default());
@@ -1926,7 +2054,7 @@ async fn opencode_runtime_failure_boundaries_reject_invalid_sessions_and_http_st
             .is_err()
     );
     assert!(runtime.send_command("test", "args", None).await.is_err());
-    assert!(runtime.rollback_thread(1).await.is_err());
+    assert!(runtime.rollback_thread(1, "rewind-key").await.is_err());
     assert!(
         runtime
             .respond_to_user_input("missing", json!({}))
@@ -2059,7 +2187,7 @@ async fn opencode_runtime_maps_transport_loss_across_every_live_operation() {
     );
     assert!(runtime.send_command("review", "src", None).await.is_err());
     assert!(runtime.interrupt_turn().await.is_err());
-    assert!(runtime.rollback_thread(1).await.is_err());
+    assert!(runtime.rollback_thread(1, "rewind-key").await.is_err());
     assert!(
         runtime
             .respond_to_permission("transport-permission", "decline")
@@ -2217,7 +2345,10 @@ async fn opencode_runtime_matches_session_and_rollback_traces() {
             json!({ "info": { "id": "assistant-2", "role": "assistant" }, "parts": [] }),
         ];
     }
-    let rollback = runtime.rollback_thread(2).await.expect("rollback");
+    let rollback = runtime
+        .rollback_thread(2, "rewind-key")
+        .await
+        .expect("rollback");
     assert_eq!(
         serde_json::to_value(rollback).expect("rollback json"),
         fixture("rollback.json")
@@ -2232,7 +2363,7 @@ async fn opencode_runtime_matches_session_and_rollback_traces() {
     }
     assert_eq!(
         runtime
-            .rollback_thread(1)
+            .rollback_thread(1, "rewind-key")
             .await
             .expect("targeted rollback")
             .turns
@@ -2562,6 +2693,14 @@ async fn opencode_runtime_surfaces_session_errors_and_removes_the_unanswered_pro
             "errorClass": "provider_error",
         })
     );
+    // The removal runs off the event stream, so it may land just after the completion.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while state.deleted_messages.lock().await.is_empty() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the unanswered prompt is removed");
     assert_eq!(
         state.deleted_messages.lock().await.as_slice(),
         ["user-error-1"]
@@ -5340,12 +5479,14 @@ async fn reconciliation_batches_apply_through_production_projection_from_none_sc
         .await
         .expect("child reconciliation applies atomically");
 
+    // The child is busy and its latest message has no completion time, so it is active. (The
+    // history DTO carries that missing time as `null`, which was once misread as completed.)
     let roster = projection
         .list_roster(
             &scope.scope,
             &scope.scope_id,
             ActivitySection::Subagents,
-            ActivityRosterBucket::Done,
+            ActivityRosterBucket::Active,
             None,
             10,
         )

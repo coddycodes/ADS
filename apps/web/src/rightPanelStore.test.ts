@@ -1360,6 +1360,20 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("shows a closed panel when a request opens, keeping the open tab and its section", () => {
+    const store = useRightPanelStore.getState();
+    store.openPullRequest(refA, { number: 89, provider: "gitlab" });
+    store.setPullRequestTab(refA, 89, "files");
+    store.close(refA);
+    store.openPullRequest(refA, { number: 89, provider: "gitlab" });
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.isOpen).toBe(true);
+    expect(state.activeSurfaceId).toBe("pullRequest:89");
+    expect(state.surfaces).toEqual([
+      { id: "pullRequest:89", kind: "pullRequest", number: 89, provider: "gitlab", tab: "files" },
+    ]);
+  });
+
   it("opens a second request as another tab and honours an explicit tab", () => {
     const store = useRightPanelStore.getState();
     store.openPullRequest(refA, { number: 89, provider: "gitlab" });

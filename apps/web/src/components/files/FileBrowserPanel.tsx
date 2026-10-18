@@ -57,7 +57,7 @@ import {
   parentRelativePath,
   stripTrailingSlash,
 } from "./FileTreeContextMenu.logic";
-import { useProjectEntriesQuery } from "./projectFilesQueryState";
+import { useFileTreeEntries } from "./projectFilesQueryState";
 import { useFileTransfers } from "./useFileTransfers";
 
 interface FileBrowserPanelProps {
@@ -206,16 +206,13 @@ export default function FileBrowserPanel({
   workspaceUnavailable = null,
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
-  const entriesQuery = useProjectEntriesQuery(environmentId, cwd);
+  // The server sweeps a subscribed workspace for changes made outside the app and drops its cached
+  // index before signalling. `ProjectFilesPreloader` holds the list and the subscription while the
+  // thread is open, so the panel paints at once; the open panel re-reads on each change signal.
+  const entriesQuery = useFileTreeEntries(environmentId, cwd, true);
   const entries = entriesQuery.data?.entries ?? NO_ENTRIES;
   const vcsStatusQuery = useEnvironmentQuery(
     cwd.length > 0 ? vcsEnvironment.status({ environmentId, input: { cwd } }) : null,
-  );
-  // The server sweeps a subscribed workspace for changes made outside the app and drops its cached
-  // index before signalling, so re-reading the query here is enough — the signal carries no entries
-  // of its own.
-  const entryChanges = useEnvironmentQuery(
-    cwd.length > 0 ? projectEnvironment.subscribeEntries({ environmentId, input: { cwd } }) : null,
   );
   const gitStatus = useMemo(
     () => buildFileTreeGitStatus(entries, vcsStatusQuery.data),
@@ -733,25 +730,6 @@ export default function FileBrowserPanel({
   }, [entryKinds, expandedTreePaths, model, treePaths]);
 
   useEffect(() => model.setGitStatus(gitStatus), [gitStatus, model]);
-
-  const entryChangeSignal = entryChanges.data;
-  // Tracks the signal already acted on. The server starts each subscription with a resync signal
-  // after establishing the watcher, so the first value must refresh a list that may have raced it.
-  //
-  // Recording it is what makes the effect idempotent. `entriesQuery` is a fresh object on every
-  // render, so an effect depending on it re-runs constantly; without this the refresh it triggers
-  // re-renders, re-runs the effect, and refreshes again in a hot loop. Depend on the stable
-  // `revalidate` callback rather than the wrapper object for the same reason; a signal is an
-  // automatic read, so it keeps a transport cut-off latched until the user rescans.
-  const handledEntryChangeRef = useRef<typeof entryChangeSignal>(null);
-  const revalidateEntries = entriesQuery.revalidate;
-  useEffect(() => {
-    if (entryChangeSignal === null || entryChangeSignal === handledEntryChangeRef.current) {
-      return;
-    }
-    handledEntryChangeRef.current = entryChangeSignal;
-    revalidateEntries();
-  }, [entryChangeSignal, revalidateEntries]);
 
   const fileCount = useMemo(
     () => entries.reduce((count, entry) => count + (entry.kind === "file" ? 1 : 0), 0),

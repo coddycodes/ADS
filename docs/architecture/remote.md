@@ -127,6 +127,48 @@ Pairing links may carry a bootstrap in the URL fragment. Fragments are not sent
 to the hosting web server. Compatibility parsing accepts older query-form links,
 but newly generated links use the fragment form.
 
+### A page a server served, or a remote client
+
+The web app runs either as the UI a BiBCode server serves for itself
+(`bibcode serve --mode web`), which pairs with its own origin through the
+browser-session cookie, or as a remote client (the hosted static app) that has
+no backend of its own and reaches saved servers with bearer credentials. The
+server marks the entry document it serves with
+`<meta name="bibcode-served-host" content="<host>">`, where `<host>` is the
+request's `Host` authority. It writes the marker only when that authority is
+plain (name, IPv4 or bracketed IPv6 characters and a port), and the response
+carries `Vary: Host` so no cache serves one host's marker to another. The app
+pairs with its own origin only when the marker names the host it runs on,
+compared as the browser normalizes it (a forwarded `host:443` matches `host`
+over HTTPS).
+Without a matching marker it keeps the remote-client behaviour, as before.
+
+- Only the served document can carry the marker; nothing read from the URL or
+  storage can supply it. A copy of the document deployed on another origin
+  names the wrong host and stays a remote client, so the marker cannot turn a
+  remote client's page into one that pairs with its own origin.
+- A reverse proxy that rewrites `Host` (and is not a loopback peer whose
+  `X-Forwarded-Host` the server applies) gets a non-matching marker. Its page
+  falls back to the remote-client behaviour.
+- A host-based pairing link (`/pair?host=<other server>#token=…`) keeps the
+  remote-client confirmation surface on a served page too, including after the
+  token is removed from the URL.
+- A served page whose own server is not paired, but that saved other
+  environments (for example through such a link), opens as their remote client
+  instead of redirecting to `/pair`. So does one whose saved environments did
+  not load within ten seconds, since they may hold a server just paired, and so
+  does one whose own server cannot be reached or does not answer its session
+  check within ten seconds (later navigations then keep that mode until the
+  page reloads or visits `/pair`). Until its server is paired, it
+  does not add that server to its environments rather than offer one that
+  cannot connect. It never removes one already added, since removal discards
+  that environment's local data, unsent drafts included. Its own `/pair` route
+  keeps the browser-session check.
+- The marker selects a mode; it is not authenticated provenance. It does not
+  compare the scheme, so the same host over HTTP and HTTPS reads the same
+  marker. Choosing the server-session mode grants nothing by itself: the
+  browser session still requires that server's own pairing.
+
 ### Desktop webview connect policy
 
 The desktop webview's Content Security Policy keeps `default-src` and
@@ -245,6 +287,10 @@ content, so only large server messages are compressed, each on its own;
 `BIBCODE_REMOTE_COMPRESSION=0` in the server environment stops the server from
 confirming `deflate-v1`
 ([design](../superpowers/specs/2026-10-13-e2ee-message-compression-design.md)).
+SSH environments and plain remote servers get the same compression on plain
+`/ws` through the `bibcode.rpc.chunked-deflate.v1` subprotocol, which the same
+switch stops the server from selecting
+([RPC and orchestration](./rpc-and-orchestration.md#wire-protocol)).
 Invalid credentials receive
 `e2ee_error/unauthorized`; malformed protocol receives `e2ee_error/protocol`;
 both paths close the socket.

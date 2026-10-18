@@ -126,6 +126,7 @@ the environment row's state, and any exact error text.
 | 6   | Dead link (optional)         | Cut the network path to the host for over 45 s, then restore it.                                                             | The tunnel ends after keepalive; the row reconnects after the link returns.                                            |
 | 7   | Revocation (optional)        | Revoke the desktop's device on the host's Share tab, then wait for the desktop to reconnect.                                 | The desktop pairs again over SSH and connects; the old device is gone and one new device appears.                      |
 | 8   | Hung pairing (optional)      | With the wrapper from [Hung pairing command](#hung-pairing-command) on the host, add the environment; let it retry 3 times.  | Each attempt fails with the pairing-timeout copy; about 37 s after each, its `sleep 6143` is gone. Nothing builds up.  |
+| 9   | Compression (optional)       | In a build with the WebView inspector, open a thread with long history and inspect the environment's RPC WebSocket.          | It selected `bibcode.rpc.chunked-deflate.v1`; large replies arrive as binary frames whose first byte has `0x10` set.   |
 
 ### Stopping the remote server
 

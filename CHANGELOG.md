@@ -7,6 +7,59 @@
 - A **Device** panel shows an Android emulator running on the environment's server beside the chat, and you can touch it, type into it, paste into it, rotate it, and use its buttons. Turn it on per environment at **Settings → Diagnostics → Device previews**; the server needs the Android SDK with at least one virtual device. The screen is H.264 video, end-to-end encrypted on connections that pin the server's key, and falls back to still images, with the reason, where video can't play, such as a browser on plain HTTP. Coding agents can list, open, screenshot and close the same device. (#70)
 - On a macOS server with Xcode, the same panel runs iOS simulators, next to an Android emulator if you like. The simulator's screen is live video, takes a single touch, keys and text (text a US keyboard can't type is pasted, so iOS may ask to **Allow Paste**), and rotates. When BiBCode can't use the installed Xcode's simulator interfaces, simulators open view only, as still screenshots without touch, and the panel says why. BiBCode shuts down only the simulators it started. (#70)
 
+## [v0.9.5] - 2026-10-18
+
+BiBCode v0.9.5 adds OpenCode 2 support, makes remote environments over slow links feel faster (terminal echo, compression on plain connections, fewer connect round trips, and resuming a thread instead of resending it), hardens **Revert to this message** against running and queued work, keeps Source Control responsive with thousands of changes, recovers long Codex threads in pages, and never sends an OpenCode message twice. This release includes the changes since v0.9.4.
+
+### OpenCode 2 support (#115)
+
+- OpenCode 2 works as a provider: chats (messages, slash commands, permissions, questions and **Stop**), streamed replies, and the follow-up turns OpenCode starts itself to deliver a background subagent's result, which now show as running.
+- Subagent activity is tracked for OpenCode 2, and the provider row lists its models (with variants), agents, commands and skills. A slash skill attaches the skill, and a command wins over a skill of the same name.
+- **Revert to this message** rewinds OpenCode 2 conversations turn by turn, then restores the files. An interrupted rewind is finished by reverting again, and the session stays open until it is.
+- OpenCode 2 terminals open with arguments it accepts (it has no `--model`): observed through `--server`/`--session`, or, when they cannot be observed, as `--standalone` with the selected model.
+- OpenCode 2 update notices and update actions use `@opencode/cli`, Windows npm installs of OpenCode 2 are recognized, and an OpenCode version BiBCode cannot drive (3.x or later) shows an actionable error instead of reading Ready.
+- Fixed: OpenCode 1.18.32 and 1.19 rejected every message BiBCode sent, because its delivery id was not a `msg_` id. Deliveries now use an id OpenCode accepts.
+- Fixed: an inherited `OPENCODE_PASSWORD` no longer breaks the OpenCode servers BiBCode starts.
+- OpenCode messages are never sent twice: before resending, BiBCode checks whether OpenCode already has the message (OpenCode 1 ran the model again on a resent message). A message OpenCode refuses now fails once instead of staying uncertain, and a 408 or 429 answer is retried after its `Retry-After`.
+
+### Remote environments and slow links
+
+- Terminals over slow links echo as you type: on a 250 ms link, typing 40 characters went from about 10.5 s to 4.3 s, because the server no longer waits a round trip per echoed key.
+- Large server messages on plain connections (SSH and plain remotes) are compressed, as encrypted connections already were; a long thread's first load is about 70% smaller.
+- Connecting shows the first thread sooner: on a 250 ms link, from about 1.6 s to 1.1 s. The server descriptor is fetched once per connect and read-only subscriptions go out with the settings request.
+- Reconnecting to a thread that has not changed costs one small message instead of resending the whole thread (6.5 MB for a 200-message thread in testing).
+- Reconnects no longer add a provider capability fetch each time, keep a copy of the server config, or keep a copy of the Git status.
+- A standalone `bibcode serve --mode web` page pairs with its own server again, and a pairing link for another server no longer bounces back to `/pair`. A session check that stalls is asked again instead of timing out on every retry.
+
+### Revert and running work
+
+- A message sent, or a queued message released, while **Revert to this message** runs waits and is sent once the revert finishes. A revert is refused while a session is starting, still settling a turn, or still running background work such as a Claude background task or Codex subagents.
+- A revert on one thread no longer holds up checkpoint work on other threads while it waits for a delivery or reopens a suspended provider.
+- Turning Chat Activity off and back on no longer lets an idle Codex or OpenCode session be stopped before its running subagents are found again.
+- A provider whose executable is missing fails the message once, with what to do, instead of retrying every second; other launch failures back off up to 30 s, and identical retries no longer update the thread.
+- Dismissing an uncertain OpenCode message keeps the queue blocked until OpenCode reports the session idle, then releases it; after a restart, a message OpenCode already has releases the queue once the session is idle.
+
+### Codex
+
+- Codex activity recovers long threads from their newest 20 turns through `thread/turns/list` instead of reading the whole history, and only a missing method marks a Codex activity method unsupported. Large or unexpected replies are retried instead of reported unsupported, and a large subagent thread no longer makes the Codex terminal observer reconnect. (#120)
+
+### Source Control, Files and the left panel
+
+- Source Control stays responsive with thousands of changes: the change sections and the Merge Changes list render only the rows in view. (#119)
+- The Files tree opens as quickly as before while reading the file list once instead of twice. Workspaces past 25,000 entries notice outside changes in subfolders again, and build their index about 30 times faster.
+- After a checkout, the chat header writes the thread's new branch once instead of several times. The left panel keeps a card's PR badge and uncommitted-changes dot when a pull request lookup fails, and the Agents view shows each checkout's current branch.
+- On Linux, Git status keeps following a directory after it is renamed (`git mv`, or a rename in an editor or file manager). (#97)
+- After the local server restarts, the desktop keeps the new server address even when an older topology read finishes or fails afterwards. (#109)
+
+### Terminals and the profiler
+
+- A provider terminal past the observer limit keeps working unobserved instead of breaking, and the refusal is logged; closing such an OpenCode terminal no longer deletes the session you worked in. The limit is now 64 observers across the app.
+- The profiler no longer reports a provider process BiBCode stopped itself as a crash when the report runs late.
+
+### Release reliability
+
+- Server tests that capture logs, start terminal observers, or depend on the profiler setting run in a process of their own, and the worktree lifecycle test reads every event of a combined update; several tests that failed under load no longer do.
+
 ## [v0.9.4] - 2026-10-15
 
 BiBCode v0.9.4 opens pull and merge requests in a thread's right panel, keeps Claude background agents and other provider work running after a turn ends, stops the server from burning CPU on failed thread subscriptions, makes **Revert to this message** work again, keeps the Claude MCP token off the command line, and reports OpenCode 2 as not supported yet instead of failing late. This release includes the changes since v0.9.3.

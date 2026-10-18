@@ -37,6 +37,9 @@ use crate::diagnostics::profiler::connections;
 /// WebSocket subprotocol a client offers to receive large plain `/ws`
 /// messages as records.
 pub(crate) const CHUNKED_RPC_SUBPROTOCOL: &str = "bibcode.rpc.chunked.v1";
+/// [`CHUNKED_RPC_SUBPROTOCOL`] whose large server messages may also arrive raw-deflate
+/// compressed, as [`E2EE_DEFLATE_FEATURE`] defines them.
+pub(crate) const DEFLATE_RPC_SUBPROTOCOL: &str = "bibcode.rpc.chunked-deflate.v1";
 /// A stand-alone control message sent between the records of another message.
 pub(crate) const RECORD_FLAG_CONTROL: u8 = 0x02;
 /// E2EE feature that lets control records interleave with a split message.
@@ -428,6 +431,16 @@ pub(crate) async fn watch_heartbeat(
     }
 }
 
+/// The plain `/ws` subprotocols this server accepts, most preferred first.
+/// `compression_enabled` is false under `BIBCODE_REMOTE_COMPRESSION=0`.
+pub(crate) fn plain_subprotocols(compression_enabled: bool) -> &'static [&'static str] {
+    if compression_enabled {
+        &[DEFLATE_RPC_SUBPROTOCOL, CHUNKED_RPC_SUBPROTOCOL]
+    } else {
+        &[CHUNKED_RPC_SUBPROTOCOL]
+    }
+}
+
 /// How queued messages leave the socket.
 #[derive(Clone)]
 pub(crate) enum OutboundFraming {
@@ -435,7 +448,11 @@ pub(crate) enum OutboundFraming {
     Whole,
     /// Plain `/ws` with [`CHUNKED_RPC_SUBPROTOCOL`]: messages over 64 KiB leave
     /// as binary records, and control messages interleave as `0x02` records.
-    PlainRecords,
+    PlainRecords {
+        /// The client selected [`DEFLATE_RPC_SUBPROTOCOL`] and accepts compressed
+        /// data messages as `0x10` records.
+        deflate: bool,
+    },
     /// `/ws-e2ee`: every message leaves as encrypted records; `interleave` is
     /// true when the client and server negotiated control interleaving.
     Encrypted {
@@ -450,7 +467,7 @@ impl OutboundFraming {
     /// `plain` or `e2ee`, as `rpc.disconnect` names the transport.
     pub(crate) fn transport(&self) -> &'static str {
         match self {
-            Self::Whole | Self::PlainRecords => "plain",
+            Self::Whole | Self::PlainRecords { .. } => "plain",
             Self::Encrypted { .. } => "e2ee",
         }
     }
@@ -459,14 +476,14 @@ impl OutboundFraming {
     pub(crate) fn max_message_bytes(&self) -> Option<usize> {
         match self {
             Self::Whole => None,
-            Self::PlainRecords | Self::Encrypted { .. } => Some(MAX_RECORDED_MESSAGE_BYTES),
+            Self::PlainRecords { .. } | Self::Encrypted { .. } => Some(MAX_RECORDED_MESSAGE_BYTES),
         }
     }
 
     fn splits(&self, bytes: usize) -> bool {
         match self {
             Self::Whole => false,
-            Self::PlainRecords => bytes > PLAIN_WHOLE_MESSAGE_MAX_BYTES,
+            Self::PlainRecords { .. } => bytes > PLAIN_WHOLE_MESSAGE_MAX_BYTES,
             Self::Encrypted { .. } => true,
         }
     }
@@ -474,18 +491,21 @@ impl OutboundFraming {
     fn interleaves(&self) -> bool {
         match self {
             Self::Whole => false,
-            Self::PlainRecords => true,
+            Self::PlainRecords { .. } => true,
             Self::Encrypted { interleave, .. } => *interleave,
         }
     }
 
     fn deflates(&self) -> bool {
-        matches!(self, Self::Encrypted { deflate: true, .. })
+        matches!(
+            self,
+            Self::Encrypted { deflate: true, .. } | Self::PlainRecords { deflate: true }
+        )
     }
 
     fn record(&self, flag: u8, chunk: &[u8]) -> Result<Message, TransportError> {
         match self {
-            Self::Whole | Self::PlainRecords => {
+            Self::Whole | Self::PlainRecords { .. } => {
                 let mut record = Vec::with_capacity(1 + chunk.len());
                 record.push(flag);
                 record.extend_from_slice(chunk);
@@ -656,7 +676,10 @@ where
     };
     let deadline = message_deadline(Instant::now(), length);
     let mut data_deadline = Instant::now() + WRITE_PROGRESS_TIMEOUT;
-    if !framing.splits(length) {
+    // A message that may leave compressed needs records for its `0x10` flag, even below
+    // a plain socket's record size.
+    let compressible = is_data && framing.deflates() && length >= DEFLATE_MIN_BYTES;
+    if !framing.splits(length) && !compressible {
         let sent = send_before(
             sink,
             message,
@@ -681,7 +704,7 @@ where
     // thread so a multi-megabyte snapshot does not stall the runtime. The job shares the
     // message's bytes and stops once this write is dropped, so a closed connection
     // leaves no compression running outside its byte budget.
-    let compressed = if is_data && framing.deflates() && payload.len() >= DEFLATE_MIN_BYTES {
+    let compressed = if compressible {
         let shared: axum::body::Bytes = match &message {
             Message::Text(text) => text.clone().into(),
             Message::Binary(bytes) => bytes.clone(),
@@ -985,9 +1008,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn plain_records_compress_large_data_messages_once_deflate_is_negotiated() {
+        use std::io::Read as _;
+        let (recorded, _) = write_all(
+            OutboundFraming::PlainRecords { deflate: true },
+            Duration::ZERO,
+            // Below the 16 KiB threshold, then above it but below the 64 KiB record size.
+            vec![response("1", 15 * 1024), response("2", 40 * 1024)],
+        )
+        .await;
+        let recorded = recorded.lock().expect("recorded frames");
+        assert!(
+            matches!(&recorded[0], Message::Text(_)),
+            "a message under 16 KiB stays an uncompressed text frame"
+        );
+        // A compressed message always travels as records, here a single final one.
+        assert_eq!(flags(&recorded[1..]), vec![RECORD_FLAG_DEFLATE]);
+        let Message::Binary(record) = &recorded[1] else {
+            panic!("compressed records are binary");
+        };
+        let mut inflated = Vec::new();
+        flate2::read::DeflateDecoder::new(&record[5..])
+            .read_to_end(&mut inflated)
+            .expect("raw deflate");
+        assert_eq!(
+            record[1..5],
+            u32::try_from(inflated.len()).unwrap().to_be_bytes()
+        );
+        let decoded: Value = serde_json::from_slice(&inflated).expect("inflates to JSON");
+        assert_eq!(decoded["requestId"], "2");
+    }
+
+    #[tokio::test]
+    async fn plain_records_without_deflate_never_compress() {
+        let (recorded, _) = write_all(
+            OutboundFraming::PlainRecords { deflate: false },
+            Duration::ZERO,
+            vec![response("1", 40 * 1024)],
+        )
+        .await;
+        let recorded = recorded.lock().expect("recorded frames");
+        assert!(matches!(&recorded[..], [Message::Text(_)]));
+    }
+
+    #[test]
+    fn plain_subprotocols_prefer_deflate_unless_compression_is_off() {
+        assert_eq!(
+            plain_subprotocols(true),
+            [DEFLATE_RPC_SUBPROTOCOL, CHUNKED_RPC_SUBPROTOCOL]
+        );
+        assert_eq!(plain_subprotocols(false), [CHUNKED_RPC_SUBPROTOCOL]);
+    }
+
+    #[tokio::test]
     async fn plain_records_split_large_messages_and_keep_small_ones_whole() {
         let (recorded, _) = write_all(
-            OutboundFraming::PlainRecords,
+            OutboundFraming::PlainRecords { deflate: false },
             Duration::ZERO,
             vec![response("1", 1024), response("2", 200 * 1024)],
         )
@@ -1023,7 +1099,7 @@ mod tests {
             .expect("queue frame");
         let writer = tokio::spawn(run_writer(
             sink,
-            OutboundFraming::PlainRecords,
+            OutboundFraming::PlainRecords { deflate: false },
             ConnectionLiveness::new(),
             data,
             control,
@@ -1108,7 +1184,7 @@ mod tests {
         let started = Instant::now();
         let writer = tokio::spawn(run_writer(
             sink,
-            OutboundFraming::PlainRecords,
+            OutboundFraming::PlainRecords { deflate: false },
             ConnectionLiveness::new(),
             data,
             control,
@@ -1133,7 +1209,7 @@ mod tests {
         let started = Instant::now();
         let writer = tokio::spawn(run_writer(
             sink,
-            OutboundFraming::PlainRecords,
+            OutboundFraming::PlainRecords { deflate: false },
             ConnectionLiveness::new(),
             data,
             control,
@@ -1151,7 +1227,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_slow_sink_that_keeps_the_floor_finishes_a_large_message() {
         let (recorded, shutdown) = write_all(
-            OutboundFraming::PlainRecords,
+            OutboundFraming::PlainRecords { deflate: false },
             Duration::from_secs(1),
             vec![response("1", 8 * 1024 * 1024)],
         )
@@ -1192,7 +1268,7 @@ mod tests {
         let started = Instant::now();
         let writer = tokio::spawn(run_writer(
             sink,
-            OutboundFraming::PlainRecords,
+            OutboundFraming::PlainRecords { deflate: false },
             ConnectionLiveness::new(),
             data,
             control,
@@ -1243,7 +1319,7 @@ mod tests {
         let started = Instant::now();
         let writer = tokio::spawn(run_writer(
             sink,
-            OutboundFraming::PlainRecords,
+            OutboundFraming::PlainRecords { deflate: false },
             ConnectionLiveness::new(),
             data,
             control,
@@ -1416,7 +1492,7 @@ mod tests {
             .expect("queue frame");
         let writer = tokio::spawn(run_writer(
             sink,
-            OutboundFraming::PlainRecords,
+            OutboundFraming::PlainRecords { deflate: false },
             Arc::clone(&liveness),
             data,
             control,
@@ -1597,7 +1673,7 @@ mod tests {
         });
         let writer = tokio::spawn(run_writer(
             sink,
-            OutboundFraming::PlainRecords,
+            OutboundFraming::PlainRecords { deflate: false },
             liveness,
             data,
             control,
@@ -1657,7 +1733,7 @@ mod tests {
         let shutdown = CancellationToken::new();
         let writer = tokio::spawn(run_writer(
             sink,
-            OutboundFraming::PlainRecords,
+            OutboundFraming::PlainRecords { deflate: false },
             Arc::clone(&liveness),
             data,
             control,

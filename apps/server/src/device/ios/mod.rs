@@ -24,7 +24,7 @@ use std::{
         Arc, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use futures_util::{
@@ -1140,13 +1140,13 @@ impl RunningDevice for RunningSimulator {
     }
 
     fn report_unrequested_exit(&self, reason: &str) {
-        let (pid, uptime) = lock(&self.shared.process)
+        let (pid, started) = lock(&self.shared.process)
             .as_ref()
-            .map_or((0, Duration::ZERO), |process| {
-                (process.pid, process.started.elapsed())
+            .map_or((0, Instant::now()), |process| {
+                (process.pid, process.started)
             });
         tracing::warn!(reason, pid, "ios simulator ended outside BiBCode");
-        report_simulator_exit(pid, uptime);
+        report_simulator_exit(pid, started);
     }
 
     fn stop(self: Box<Self>) -> BoxFuture<'static, ()> {
@@ -1160,7 +1160,7 @@ impl RunningDevice for RunningSimulator {
 
 /// A `subprocess.crash` for a simulator that ended without BiBCode asking. It has no exit
 /// status of its own, so it is reported as exit code 1.
-fn report_simulator_exit(pid: u32, uptime: Duration) {
+fn report_simulator_exit(pid: u32, started: Instant) {
     use crate::diagnostics::profiler::exits::{self, Exited, Watch};
     use std::os::unix::process::ExitStatusExt as _;
     if !exits::watching() {
@@ -1173,7 +1173,7 @@ fn report_simulator_exit(pid: u32, uptime: Duration) {
             label: SIMULATOR_LABEL,
             exe: "launchd_sim",
             pid,
-            uptime,
+            started,
         },
         &std::process::ExitStatus::from_raw(1 << 8),
         false,

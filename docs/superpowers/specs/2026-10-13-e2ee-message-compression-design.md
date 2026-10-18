@@ -99,3 +99,80 @@ acceptable for remote use; otherwise choose alternative 2 or 3.
 
 Bounding the first thread snapshot (alternative 2), client-to-server
 compression, and shared dictionaries.
+
+## Addendum (2026-10-17): compression on plain `/ws`
+
+Status: **Approved** on 2026-10-17 by the user's request to compress large
+messages on plain `/ws`.
+
+### Problem
+
+SSH environments and plain remote servers use plain `/ws`, not `/ws-e2ee`, so
+the design above does not reach them. Relayed VPN links measure 236–252 ms round
+trips; the same multi-megabyte first thread snapshot and reconnect snapshots
+cross them uncompressed. Plain `/ws` already has record framing:
+`bibcode.rpc.chunked.v1` sends messages over 64 KiB as binary records in the
+E2EE record format.
+
+### Alternatives
+
+1. **WebSocket `permessage-deflate` (RFC 7692).** The pinned stack cannot do it:
+   `axum` 0.8.9's `WebSocketUpgrade` uses `tokio-tungstenite` 0.29, and neither
+   `tungstenite` 0.29 nor 0.30 implements the extension (0.30 only parses the
+   header in a test), so it would mean replacing the WebSocket library. It
+   would also compress every message, keystrokes and acknowledgements included,
+   which the size threshold above exists to avoid, and with context takeover
+   it keeps a compression window per connection in both peers.
+2. **Reuse `deflate-v1` records, negotiated by a second subprotocol
+   (chosen).** The client offers `bibcode.rpc.chunked-deflate.v1` before
+   `bibcode.rpc.chunked.v1`. The selected subprotocol means chunked records plus
+   compressed server messages, exactly as `deflate-v1` defines them on E2EE.
+   Negotiation completes in the upgrade itself, with no extra round trip.
+3. **An in-band feature message** after the socket opens, like `e2ee_auth`.
+   Plain `/ws` has no such exchange; adding one costs a round trip on every
+   connect or a protocol message that old servers reject.
+
+### Design (alternative 2)
+
+- **Negotiation.** The server lists its subprotocols in preference order:
+  `bibcode.rpc.chunked-deflate.v1`, then `bibcode.rpc.chunked.v1`, and picks the
+  first one the client offered. `BIBCODE_REMOTE_COMPRESSION=0` removes the
+  deflate one, so the server falls back to chunked records. An old server does
+  not know the new name and selects `bibcode.rpc.chunked.v1`; an old client
+  never offers it. Both keep today's framing.
+- **Client opt-in.** The client offers the deflate subprotocol only when
+  `DecompressionStream("deflate-raw")` exists and the socket is not a
+  same-machine backend: a loopback socket URL counts as local unless the
+  connection is an SSH tunnel, whose local end is loopback by construction.
+  Compressing on loopback spends CPU for no saving.
+- **Framing.** Unchanged from `deflate-v1`: a data message of at least 16 KiB
+  that compresses smaller leaves as a 4-byte big-endian uncompressed length and
+  raw deflate data (level 3, on a blocking thread, abandoned when its write is
+  dropped), split into records that all carry `0x10`. On plain `/ws` a
+  compressed message always travels as binary records, even below the 64 KiB
+  record threshold. Text frames stay whole uncompressed messages. Client
+  messages and control records are never compressed. Limits are the plain
+  record limits: 64 MiB uncompressed and 2,048 records per message.
+- **Client.** The plain record socket shares the E2EE socket's inflation and
+  its ordered delivery: a declared length above 64 MiB or output that differs
+  from it fails the socket, and messages reach the RPC client in arrival order
+  while one inflates.
+
+### Security
+
+Plain `/ws` has no end-to-end encryption, so its content is already visible to
+anyone on an unencrypted path; on SSH, WireGuard or TLS paths only lengths are,
+as on E2EE. The length side channel and its mitigations are the ones above:
+server to client only, per message, at least 16 KiB, and the kill switch.
+
+### Tests
+
+- Negotiation: the server selects the deflate subprotocol only when offered and
+  enabled; the kill switch and an old client get chunked records.
+- Framing: a large server message on a negotiated socket arrives as `0x10`
+  records and reassembles to the same text; a 15 KiB one stays a text frame.
+- Client: a deflate-negotiated plain socket inflates, preserves order, and
+  rejects an oversized declared length; a loopback primary does not offer it,
+  an SSH connection does.
+- Measurement: bytes received for a large thread snapshot with
+  `scripts/measure-remote-latency.ts`, before and after.

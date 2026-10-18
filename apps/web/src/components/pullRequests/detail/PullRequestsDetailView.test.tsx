@@ -538,6 +538,9 @@ describe("PullRequestsDetailView", () => {
     const aside = container.querySelector('[data-pull-request-side-column="wide"]')!;
     expect(aside.className).toContain("@3xl/pull-request:block");
     expect(aside.className).not.toContain("lg:block");
+    // The narrow layout's copy under the conversation hides at the same breakpoint.
+    const inline = container.querySelector('[data-pull-request-side-column="inline"]')!;
+    expect(inline.className.split(" ")).toContain("@3xl/pull-request:hidden");
   });
   it("refreshes a reopened cached tab and never dispatches reads on focus", async () => {
     await render("checks");

@@ -489,16 +489,20 @@ async fn authenticated_rpc_and_lifecycle_descriptors_match_the_well_known_storag
     acknowledge_rpc_chunk(&mut socket, "11").await;
 
     send_rpc_request(&mut socket, "12", "subscribeServerLifecycle").await;
-    for expected_type in ["welcome", "ready"] {
-        let lifecycle = next_rpc_wire_for_request(&mut socket, "12", expected_type).await;
+    // Events queued behind an unacknowledged chunk may share the next one.
+    let mut events = Vec::new();
+    while events.len() < 2 {
+        let lifecycle = next_rpc_wire_for_request(&mut socket, "12", "lifecycle").await;
         assert_eq!(lifecycle["_tag"], "Chunk");
-        assert_eq!(lifecycle["requestId"], "12");
-        assert_eq!(lifecycle["values"][0]["type"], expected_type);
+        events.extend(lifecycle["values"].as_array().cloned().unwrap_or_default());
+        acknowledge_rpc_chunk(&mut socket, "12").await;
+    }
+    for (event, expected_type) in events.iter().zip(["welcome", "ready"]) {
+        assert_eq!(event["type"], expected_type);
         assert_eq!(
-            lifecycle["values"][0]["payload"]["environment"]["storageInstanceId"],
+            event["payload"]["environment"]["storageInstanceId"],
             storage_instance_id
         );
-        acknowledge_rpc_chunk(&mut socket, "12").await;
     }
 
     socket.close(None).await.expect("close RPC WebSocket");

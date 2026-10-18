@@ -18,8 +18,9 @@ use tokio::sync::Mutex as AsyncMutex;
 use std::os::{fd::AsRawFd, unix::ffi::OsStrExt};
 
 use super::{
-    PreparedTerminalLaunch, TerminalGenerationActivityPublisher, TerminalLaunchPreparation,
-    TerminalLaunchPreparationInput, TerminalLaunchPreparer, TerminalObserverCancellationReason,
+    NativeTerminalCommand, PreparedTerminalLaunch, TerminalGenerationActivityPublisher,
+    TerminalLaunchPreparation, TerminalLaunchPreparationInput, TerminalLaunchPreparer,
+    TerminalObserverCancellationReason,
 };
 use crate::{
     activity::{ActivityProjection, AgentActivityController},
@@ -242,6 +243,17 @@ pub trait ProviderTerminalObserverFactory: Send + Sync {
         &self,
         input: ProviderTerminalObserverFactoryInput,
     ) -> Pin<Box<dyn Future<Output = Option<PreparedTerminalLaunch>> + Send + '_>>;
+
+    /// See `TerminalLaunchPreparer::native_command`; `executable` is the validated provider
+    /// executable.
+    fn native_command(
+        &self,
+        _executable: &Path,
+        _args: &[String],
+        _launch_env: &BTreeMap<String, String>,
+    ) -> Pin<Box<dyn Future<Output = Option<NativeTerminalCommand>> + Send + '_>> {
+        Box::pin(std::future::ready(None))
+    }
 
     #[doc(hidden)]
     fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
@@ -1136,6 +1148,29 @@ impl TerminalLaunchPreparer for ProviderTerminalActivitySupervisor {
         input: TerminalLaunchPreparationInput,
     ) -> Pin<Box<dyn Future<Output = TerminalLaunchPreparation> + Send + '_>> {
         Box::pin(self.prepare_inner(input))
+    }
+
+    fn native_command(
+        &self,
+        input: &TerminalLaunchPreparationInput,
+    ) -> Pin<Box<dyn Future<Output = Option<NativeTerminalCommand>> + Send + '_>> {
+        let input = input.clone();
+        Box::pin(async move {
+            // Only OpenCode's command differs by installed version.
+            if input.activity.driver_kind != "opencode" {
+                return None;
+            }
+            // Only the configured provider executable is probed, as `prepare` would.
+            let inventory = self.authority.current().await.ok()?;
+            let instance = inventory.get(&input.activity.provider_instance_id)?;
+            if !instance.enabled || instance.driver_kind != input.activity.driver_kind {
+                return None;
+            }
+            let executable = validated_executable(&input, instance)?;
+            self.factory_for(&instance.driver_kind)?
+                .native_command(&executable, &input.args, &input.launch_env)
+                .await
+        })
     }
 
     fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {

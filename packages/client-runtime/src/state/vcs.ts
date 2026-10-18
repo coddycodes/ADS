@@ -8,6 +8,7 @@ import {
 import { applyGitStatusStreamEvent } from "@bibcode/shared/git";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -57,18 +58,24 @@ type VcsSummaryStreamFailure = EnvironmentRpcStreamFailure<
   typeof WS_METHODS.subscribeVcsStatusSummary
 >;
 
+/**
+ * The status after one stream event, and what to emit. An event that leaves the status unchanged
+ * (the snapshot every reconnect resends, an unchanged poll) emits nothing and keeps the object:
+ * a new copy re-rendered every reader, and on a large workspace each render's closures pinned
+ * another copy of the file list.
+ */
+export function projectVcsStatusEvent(
+  current: VcsStatusResult | null,
+  event: VcsStatusStreamEvent,
+): readonly [VcsStatusResult | null, ReadonlyArray<VcsStatusResult>] {
+  const next = applyGitStatusStreamEvent(current, event);
+  return current !== null && Equal.equals(current, next) ? [current, []] : [next, [next]];
+}
+
 function reduceStatusEvents<E, R>(
   stream: Stream.Stream<VcsStatusStreamEvent, E, R>,
 ): Stream.Stream<VcsStatusResult, E, R> {
-  return stream.pipe(
-    Stream.mapAccum(
-      () => null as VcsStatusResult | null,
-      (current, event) => {
-        const next = applyGitStatusStreamEvent(current, event);
-        return [next, [next]] as const;
-      },
-    ),
-  );
+  return stream.pipe(Stream.mapAccum(() => null as VcsStatusResult | null, projectVcsStatusEvent));
 }
 
 function subscribeToVcsSummary<E, R>(

@@ -37,6 +37,7 @@ import {
 // ── Controllable mock state ──────────────────────────────────────────
 const pf = vi.hoisted(() => ({
   isHostedStatic: false,
+  servedPrimarySuppressed: false,
   session: null as null | { readClerkToken: () => unknown },
   desktopPrimaryBearer: null as null | (() => Promise<string | null>),
   primaryTarget: null as unknown,
@@ -53,6 +54,8 @@ const pf = vi.hoisted(() => ({
 
 vi.mock("../hostedPairing", () => ({
   isHostedStaticApp: () => pf.isHostedStatic,
+  isServedPrimarySuppressed: () => pf.servedPrimarySuppressed,
+  onServedPrimarySuppressionChange: () => () => {},
 }));
 
 vi.mock("../rpc/atomRegistry", () => ({
@@ -326,6 +329,7 @@ function waitFor(check: () => boolean) {
 
 function resetPf(): void {
   pf.isHostedStatic = false;
+  pf.servedPrimarySuppressed = false;
   pf.session = null;
   pf.desktopPrimaryBearer = null;
   pf.primaryTarget = null;
@@ -1214,6 +1218,59 @@ describe("connectionPlatformLayer connection source", () => {
       );
       expect(pf.descriptorCalls).toEqual(["http://127.0.0.1:3773/"]);
       expect(pf.bearerBootstrapCalls).toEqual([]);
+    }).pipe(Effect.provide(Layer.mergeAll(connectionPlatformLayer, TestClock.layer())));
+  });
+
+  // A served page opened as a remote client (its server not paired) does not offer that server,
+  // which it cannot connect to, until it is paired.
+  it.effect("leaves out the served primary while it is suppressed", () => {
+    stubBrowser();
+    pf.isHostedStatic = false;
+    pf.servedPrimarySuppressed = true;
+    pf.primaryTarget = {
+      source: "window-origin",
+      target: {
+        httpBaseUrl: "http://box.lan:3773/",
+        wsBaseUrl: "ws://box.lan:3773/",
+      },
+    };
+    pf.secondaryRead = { _tag: "Success", bootstraps: [] };
+    return Effect.gen(function* () {
+      const source = yield* PlatformConnectionSource;
+      const fiber = yield* Effect.forkChild(
+        Stream.runHead(source.registrations.pipe(Stream.take(1))),
+      );
+      yield* TestClock.adjust("3 seconds");
+      expect(Option.getOrThrow(yield* Fiber.join(fiber))).toEqual([]);
+      expect(pf.descriptorCalls).toEqual([]);
+    }).pipe(Effect.provide(Layer.mergeAll(connectionPlatformLayer, TestClock.layer())));
+  });
+
+  // Suppression withholds a new registration but never removes one already made: removing it
+  // would discard that environment's local data, unsent drafts included.
+  it.effect("keeps an already registered primary while it is suppressed", () => {
+    stubBrowser();
+    pf.isHostedStatic = false;
+    pf.primaryTarget = {
+      source: "window-origin",
+      target: {
+        httpBaseUrl: "http://box.lan:3773/",
+        wsBaseUrl: "ws://box.lan:3773/",
+      },
+    };
+    pf.secondaryRead = { _tag: "Success", bootstraps: [] };
+    return Effect.gen(function* () {
+      const source = yield* PlatformConnectionSource;
+      const fiber = yield* Effect.forkChild(
+        Stream.runCollect(source.registrations.pipe(Stream.take(2))),
+      );
+      yield* TestClock.adjust("1 second");
+      pf.servedPrimarySuppressed = true;
+      yield* TestClock.adjust("3 seconds");
+      const batches = [...(yield* Fiber.join(fiber))];
+      expect(batches).toHaveLength(2);
+      expect(batches[0]).toHaveLength(1);
+      expect(batches[1]).toEqual(batches[0]);
     }).pipe(Effect.provide(Layer.mergeAll(connectionPlatformLayer, TestClock.layer())));
   });
 

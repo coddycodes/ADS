@@ -34,6 +34,7 @@ Supplemental platform-specific evidence, not part of the matched Windows
 performance comparison above:
 
 - [Linux WebKitGTK resource attribution, 2026-08-11](measurements/linux-webkitgtk-resource-attribution-20260811.md)
+- [Remote latency at a 250 ms round trip, 2026-10-17](measurements/remote-latency-250ms-20261017.md)
 
 ## Results
 

@@ -40,6 +40,27 @@ pub fn enter(test_name: &str, phase: &str) -> Option<ChildPhase> {
     })
 }
 
+/// Runs test `name` (its full path, as `cargo test` prints it) again in a process of its
+/// own, where no other test runs, and returns `None` once it proved entry and completion
+/// there. In that child, returns the phase to complete after the test's assertions.
+///
+/// For tests that share process-wide state a sibling test can change. A test that captures
+/// `tracing` events with a scoped subscriber (`set_default`) is one: each callsite caches its
+/// interest process-wide when it is first hit, and while one dispatcher exists, `tracing-core`
+/// asks only the default of the thread that hit it. A sibling test that hits the same
+/// `tracing::warn!` first on another thread, with no subscriber, so turns it off for the
+/// capture, which then reads an empty log (#112). A test that starts provider-terminal
+/// observer workers is another: their admission is capped process-wide.
+#[allow(dead_code)] // Not every binary that includes this module calls it.
+pub fn in_own_process(name: &str) -> Option<ChildPhase> {
+    const PHASE: &str = "own-process";
+    if let Some(child) = enter(name, PHASE) {
+        return Some(child);
+    }
+    run(name, PHASE, None, |_| {});
+    None
+}
+
 /// Re-execute one test, requiring both its entry and successful completion.
 /// An alternate executable supports tests that copy their harness into an AppDir.
 pub fn run(

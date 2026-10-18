@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use futures_util::StreamExt as _;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::{
     sync::{Mutex, Notify, Semaphore},
@@ -36,9 +37,18 @@ const DELETED_THREAD_DETAIL: &str =
 const MAX_CONCURRENT_THREADS: usize = 4;
 const RETRY_BACKOFF_MIN: Duration = Duration::from_millis(50);
 const RETRY_BACKOFF_MAX: Duration = Duration::from_secs(1);
+/// The longest a provider's `Retry-After` holds a delivery back, so a far-off value cannot park it.
+const RETRY_AFTER_MAX: Duration = Duration::from_secs(30);
+/// The longest wait between attempts at one delivery that keeps failing. A provider that cannot
+/// start fails every attempt the same way, and each attempt costs a launch; capped at a second, it
+/// retried every second for as long as the turn stayed pending.
+const DELIVERY_RETRY_BACKOFF_MAX: Duration = Duration::from_secs(30);
 const SHUTDOWN_TASK_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const FORCE_CANCEL_TASK_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
 const RECONCILIATION_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(10);
+/// The longest wait between checks of a session OpenCode reports busy, for restart recovery and
+/// for a dismissed uncertain delivery alike.
+const SETTLEMENT_BACKOFF_MAX: Duration = Duration::from_secs(10);
 
 #[cfg(test)]
 type DeliveryRouteFuture =
@@ -478,7 +488,9 @@ async fn run(
     if !recovery_cohort.is_empty() {
         reconciliation_ready_at = Some(Instant::now());
     }
+    let settlement = DismissedSettlement::default();
     loop {
+        settlement.trigger(&engine, &reconciler, &wake, &stop_claiming);
         if recovery_task.is_none()
             && !recovery_cohort.is_empty()
             && reconciliation_ready_at.is_some_and(|ready_at| ready_at <= Instant::now())
@@ -551,13 +563,18 @@ async fn run(
                             retry_backoffs.remove(&command_id);
                         }
                         Ok(DeliveryTaskOutcome::DefinitelyNotSent) => {
-                            schedule_retry(&mut retry_backoffs, command_id);
+                            schedule_retry(&mut retry_backoffs, command_id, Duration::ZERO);
+                            #[cfg(test)]
+                            retry_probe.record();
+                        }
+                        Ok(DeliveryTaskOutcome::RetryAfter(retry_after)) => {
+                            schedule_retry(&mut retry_backoffs, command_id, retry_after);
                             #[cfg(test)]
                             retry_probe.record();
                         }
                         Err(error) => {
                             tracing::warn!(%error, "provider delivery transition failed");
-                            schedule_retry(&mut retry_backoffs, command_id);
+                            schedule_retry(&mut retry_backoffs, command_id, Duration::ZERO);
                             #[cfg(test)]
                             retry_probe.record();
                         }
@@ -573,7 +590,8 @@ async fn run(
                             Ok(has_unavailable) if has_unavailable => {
                                 reconciliation_ready_at =
                                     Some(Instant::now() + reconciliation_backoff);
-                                reconciliation_backoff = next_backoff(reconciliation_backoff);
+                                reconciliation_backoff =
+                                    next_reconciliation_backoff(reconciliation_backoff);
                             }
                             Ok(_) => {
                                 reconciliation_ready_at = None;
@@ -583,14 +601,16 @@ async fn run(
                                 tracing::warn!(%error, "provider delivery recovery failed; retrying");
                                 reconciliation_ready_at =
                                     Some(Instant::now() + reconciliation_backoff);
-                                reconciliation_backoff = next_backoff(reconciliation_backoff);
+                                reconciliation_backoff =
+                                    next_reconciliation_backoff(reconciliation_backoff);
                             }
                         }
                     }
                     Err(error) => {
                         tracing::warn!(%error, "provider delivery recovery task failed; retrying");
                         reconciliation_ready_at = Some(Instant::now() + reconciliation_backoff);
-                        reconciliation_backoff = next_backoff(reconciliation_backoff);
+                        reconciliation_backoff =
+                            next_reconciliation_backoff(reconciliation_backoff);
                     }
                 }
             }
@@ -599,6 +619,7 @@ async fn run(
                     task.abort();
                     let _ = task.await;
                 }
+                settlement.stop().await;
                 stop_tasks(
                     &mut tasks,
                     &force_cancel,
@@ -612,6 +633,161 @@ async fn run(
     }
 }
 
+/// Releases the pending turn marker of an OpenCode delivery dismissed while uncertain once
+/// OpenCode shows the session idle; until then it holds the queue, since OpenCode may still be
+/// processing the message. Every pass of the dispatch loop (a ready session, a resolution, any
+/// other wake) checks again; a session OpenCode reports busy is also asked again after a backoff
+/// of up to `SETTLEMENT_BACKOFF_MAX`. A session whose status cannot be read keeps the marker.
+#[derive(Clone, Default)]
+struct DismissedSettlement {
+    state: Arc<DismissedSettlementState>,
+    task: Arc<std::sync::Mutex<Option<JoinHandle<()>>>>,
+}
+
+#[derive(Default)]
+struct DismissedSettlementState {
+    running: std::sync::atomic::AtomicBool,
+    poke: Notify,
+}
+
+impl DismissedSettlement {
+    fn trigger(
+        &self,
+        engine: &OrchestrationEngine,
+        reconciler: &DeliveryReconciler,
+        wake: &Arc<Notify>,
+        stop: &CancellationToken,
+    ) {
+        use std::sync::atomic::Ordering;
+        if self.state.running.swap(true, Ordering::SeqCst) {
+            self.state.poke.notify_one();
+            return;
+        }
+        let state = self.state.clone();
+        let engine = engine.clone();
+        let reconciler = reconciler.clone();
+        let wake = wake.clone();
+        let stop = stop.clone();
+        let task = tokio::spawn(async move {
+            let mut backoff = RETRY_BACKOFF_MIN;
+            loop {
+                let waiting = tokio::select! {
+                    () = stop.cancelled() => break,
+                    checked = settle_dismissed_once(&engine, &reconciler, &wake) => {
+                        checked.unwrap_or_else(|error| {
+                            tracing::warn!(
+                                %error,
+                                "dismissed delivery settlement could not be checked"
+                            );
+                            true
+                        })
+                    }
+                };
+                if waiting {
+                    tokio::select! {
+                        () = stop.cancelled() => break,
+                        () = sleep(backoff) => {}
+                        () = state.poke.notified() => {}
+                    }
+                    backoff = backoff.saturating_mul(2).min(SETTLEMENT_BACKOFF_MAX);
+                    continue;
+                }
+                state.running.store(false, Ordering::SeqCst);
+                // A pass that asked while this one finished still gets its check.
+                let poked = tokio::select! {
+                    biased;
+                    () = state.poke.notified() => true,
+                    () = std::future::ready(()) => false,
+                };
+                if !poked || stop.is_cancelled() || state.running.swap(true, Ordering::SeqCst) {
+                    return;
+                }
+            }
+            state.running.store(false, Ordering::SeqCst);
+        });
+        // The previous pass has ended (it cleared `running` before this one could start).
+        *self
+            .task
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(task);
+    }
+
+    /// Stops a pass in flight and waits for it, so nothing outlives the delivery worker.
+    async fn stop(&self) {
+        let task = self
+            .task
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(task) = task {
+            task.abort();
+            let _ = task.await;
+        }
+    }
+}
+
+/// One check of every dismissed uncertain OpenCode marker. Returns whether a session is still
+/// busy (or its check failed for now), so it is asked again.
+async fn settle_dismissed_once(
+    engine: &OrchestrationEngine,
+    reconciler: &DeliveryReconciler,
+    wake: &Notify,
+) -> Result<bool, String> {
+    let rows = engine
+        .repositories()
+        .list_dismissed_uncertain_opencode_markers()
+        .await
+        .map_err(|error| error.to_string())?;
+    // Threads are checked concurrently, so a stalled session does not hold another thread's
+    // release, and each release wakes the dispatcher at once.
+    let checks = futures_util::stream::iter(rows)
+        .map(|row| async move {
+            let outcome = timeout(RECONCILIATION_ATTEMPT_TIMEOUT, reconciler(row.clone()))
+                .await
+                .unwrap_or(ProviderReconciliationOutcome::Unavailable {
+                    detail: "provider delivery reconciliation timed out".to_owned(),
+                });
+            match outcome {
+                // The session is idle, or OpenCode never had the message: nothing of it runs.
+                ProviderReconciliationOutcome::FoundSettled
+                | ProviderReconciliationOutcome::Absent => {
+                    let released = engine
+                        .transition_turn_delivery_with_reason(
+                            TurnDeliveryTransition {
+                                turn_id: None,
+                                command_id: row.command_id,
+                                expected_states: vec![TurnDeliveryState::Dismissed],
+                                expected_attempt: row.attempts,
+                                next_state: TurnDeliveryState::Dismissed,
+                                detail: row.last_error,
+                                updated_at: now(),
+                            },
+                            Some(TurnDeliveryFailureReason::FoundWithoutTurn),
+                        )
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    if released {
+                        wake.notify_one();
+                    }
+                    Ok(false)
+                }
+                ProviderReconciliationOutcome::Unavailable { .. } => Ok(true),
+                // A turn this runtime still holds, or a server that cannot report its status:
+                // the marker stays until a later pass finds the session idle.
+                ProviderReconciliationOutcome::Found
+                | ProviderReconciliationOutcome::ConversationLost { .. } => Ok(false),
+            }
+        })
+        .buffer_unordered(MAX_CONCURRENT_THREADS)
+        .collect::<Vec<Result<bool, String>>>()
+        .await;
+    let mut waiting = false;
+    for check in checks {
+        waiting |= check?;
+    }
+    Ok(waiting)
+}
+
 fn min_delay(left: Option<Duration>, right: Option<Duration>) -> Option<Duration> {
     match (left, right) {
         (Some(left), Some(right)) => Some(left.min(right)),
@@ -620,7 +796,13 @@ fn min_delay(left: Option<Duration>, right: Option<Duration>) -> Option<Duration
     }
 }
 
-fn schedule_retry(retry_backoffs: &mut HashMap<String, DeliveryRetry>, command_id: String) {
+/// Schedules the next attempt after the backoff, and no sooner than `at_least` (a provider's
+/// `Retry-After`, capped at `RETRY_AFTER_MAX`).
+fn schedule_retry(
+    retry_backoffs: &mut HashMap<String, DeliveryRetry>,
+    command_id: String,
+    at_least: Duration,
+) {
     let delay = retry_backoffs
         .get(&command_id)
         .map(|retry| retry.next_delay)
@@ -628,8 +810,8 @@ fn schedule_retry(retry_backoffs: &mut HashMap<String, DeliveryRetry>, command_i
     retry_backoffs.insert(
         command_id,
         DeliveryRetry {
-            ready_at: Instant::now() + delay,
-            next_delay: next_backoff(delay),
+            ready_at: Instant::now() + delay.max(at_least.min(RETRY_AFTER_MAX)),
+            next_delay: next_delivery_backoff(delay),
         },
     );
 }
@@ -745,8 +927,15 @@ async fn recover_sending(
                 }
             }
         };
+        // A found message whose session is idle started no turn still running, so its pending
+        // marker goes; one that may still run keeps it until its turn settles.
+        let mut reason = None;
         let (next_state, detail) = match outcome {
             ProviderReconciliationOutcome::Found => (TurnDeliveryState::Delivered, None),
+            ProviderReconciliationOutcome::FoundSettled => {
+                reason = Some(TurnDeliveryFailureReason::FoundWithoutTurn);
+                (TurnDeliveryState::Delivered, None)
+            }
             ProviderReconciliationOutcome::Absent => (TurnDeliveryState::Pending, None),
             ProviderReconciliationOutcome::ConversationLost { detail } => {
                 (TurnDeliveryState::Uncertain, Some(detail))
@@ -768,15 +957,18 @@ async fn recover_sending(
         };
         let command_id = row.command_id.clone();
         let transitioned = engine
-            .transition_turn_delivery(TurnDeliveryTransition {
-                turn_id: None,
-                command_id: row.command_id,
-                expected_states: vec![TurnDeliveryState::Sending],
-                expected_attempt: row.attempts,
-                next_state,
-                detail,
-                updated_at: now(),
-            })
+            .transition_turn_delivery_with_reason(
+                TurnDeliveryTransition {
+                    turn_id: None,
+                    command_id: row.command_id,
+                    expected_states: vec![TurnDeliveryState::Sending],
+                    expected_attempt: row.attempts,
+                    next_state,
+                    detail,
+                    updated_at: now(),
+                },
+                reason,
+            )
             .await
             .map_err(|error| error.to_string())?;
         if transitioned {
@@ -835,6 +1027,11 @@ async fn fill_available_slots(
     // There is only one candidate per thread, so each session is read once per fill.
     let mut candidates = Vec::new();
     for row in claimable_oldest_per_thread(rows) {
+        // A revert of this thread runs; its end wakes delivery. The task's own reservation is
+        // the exclusion; this only keeps a waiting task from holding a slot.
+        if engine.thread_turns_reserved(&row.thread_id) {
+            continue;
+        }
         if row.mode == TurnDeliveryMode::Start
             && engine
                 .repositories()
@@ -971,7 +1168,10 @@ async fn promote_settled_threads(
         if shutdown.is_cancelled() {
             break;
         }
+        // A revert of this thread runs; promotion waits for it rather than showing a turn
+        // that cannot start yet.
         if head.held
+            || engine.thread_turns_reserved(&head.thread_id)
             || !repositories
                 .can_promote_queued_provider_turn(
                     head.thread_id.clone(),
@@ -1009,6 +1209,8 @@ struct DeliveryCompletion {
 enum DeliveryTaskOutcome {
     Finished,
     DefinitelyNotSent,
+    /// Not sent; the next attempt waits at least this long.
+    RetryAfter(Duration),
 }
 
 fn remove_completion(
@@ -1057,6 +1259,17 @@ fn next_backoff(current: Duration) -> Duration {
     current.saturating_mul(2).min(RETRY_BACKOFF_MAX)
 }
 
+/// The wait before recovery asks a provider again that could not answer, such as an OpenCode
+/// session still busy with a found message: doubling up to `SETTLEMENT_BACKOFF_MAX`, so a long
+/// turn does not cost a status request every second.
+fn next_reconciliation_backoff(current: Duration) -> Duration {
+    current.saturating_mul(2).min(SETTLEMENT_BACKOFF_MAX)
+}
+
+fn next_delivery_backoff(current: Duration) -> Duration {
+    current.saturating_mul(2).min(DELIVERY_RETRY_BACKOFF_MAX)
+}
+
 fn persisted_delivery_retry(row: &ProviderTurnDelivery, now: Instant) -> DeliveryRetry {
     let delay = retry_delay_for_attempts(row.attempts);
     let elapsed = OffsetDateTime::parse(&row.updated_at, &Rfc3339)
@@ -1071,14 +1284,14 @@ fn persisted_delivery_retry(row: &ProviderTurnDelivery, now: Instant) -> Deliver
     let remaining = delay.saturating_sub(elapsed);
     DeliveryRetry {
         ready_at: now + remaining,
-        next_delay: next_backoff(delay),
+        next_delay: next_delivery_backoff(delay),
     }
 }
 
 fn retry_delay_for_attempts(attempts: i64) -> Duration {
     let mut delay = RETRY_BACKOFF_MIN;
     for _ in 1..attempts.max(1) {
-        delay = next_backoff(delay);
+        delay = next_delivery_backoff(delay);
     }
     delay
 }
@@ -1113,6 +1326,14 @@ async fn prepare_claim_and_deliver(
         if stop_claiming.is_cancelled() {
             return Err("provider delivery claim cancelled".to_owned());
         }
+        // Held until the provider has the turn, so a revert of this thread waits for it, and a
+        // revert already running finishes before this turn can start.
+        let _reservation = tokio::select! {
+            reservation = engine.reserve_thread_turns(&row.thread_id) => reservation,
+            () = stop_claiming.cancelled() => {
+                return Err("provider delivery claim cancelled".to_owned());
+            }
+        };
         let claimed = engine
             .repositories()
             .claim_provider_turn(row.command_id, now())
@@ -1387,6 +1608,22 @@ fn provider_delivery_outcome(
             None,
             DeliveryTaskOutcome::DefinitelyNotSent,
         ),
+        // An earlier attempt reached the provider: the message is delivered, with no new turn.
+        ProviderDeliveryOutcome::AlreadyDelivered => (
+            TurnDeliveryState::Delivered,
+            None,
+            Some(TurnDeliveryFailureReason::FoundWithoutTurn),
+            DeliveryTaskOutcome::Finished,
+        ),
+        ProviderDeliveryOutcome::NotSentRetryAfter {
+            detail,
+            retry_after,
+        } => (
+            TurnDeliveryState::Pending,
+            Some(detail),
+            None,
+            DeliveryTaskOutcome::RetryAfter(retry_after),
+        ),
         ProviderDeliveryOutcome::Ambiguous { detail } => (
             TurnDeliveryState::Uncertain,
             Some(detail),
@@ -1437,6 +1674,22 @@ mod tests {
         future::ready,
         sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     };
+
+    /// Recovery asks a provider that cannot answer yet (an OpenCode session still busy) again
+    /// after a doubling backoff of up to ten seconds, so a long turn does not cost a status
+    /// request every second.
+    #[test]
+    fn recovery_rechecks_back_off_to_ten_seconds() {
+        let mut delay = RETRY_BACKOFF_MIN;
+        let mut delays = Vec::new();
+        for _ in 0..12 {
+            delays.push(delay);
+            delay = next_reconciliation_backoff(delay);
+        }
+        assert_eq!(delays[1], RETRY_BACKOFF_MIN * 2);
+        assert!(delays.contains(&Duration::from_millis(6400)));
+        assert_eq!(delays.last(), Some(&Duration::from_secs(10)));
+    }
 
     struct NeverFactory;
 
@@ -3097,6 +3350,77 @@ mod tests {
         tokio::time::advance(RETRY_BACKOFF_MIN).await;
         wait_for_count(&effects.attempts, &effects.attempted, 3).await;
 
+        service.shutdown().await;
+        engine.shutdown().await;
+    }
+
+    /// A delivery that keeps failing backs off to half a minute between attempts; capped at a
+    /// second, a provider that could not start was retried every second indefinitely.
+    #[test]
+    fn a_failing_delivery_backs_off_to_thirty_seconds() {
+        let mut retries = HashMap::new();
+        let mut delays = Vec::new();
+        for _ in 0..12 {
+            schedule_retry(&mut retries, "command".to_owned(), Duration::ZERO);
+            delays.push(retries["command"].next_delay);
+        }
+        assert_eq!(delays[0], RETRY_BACKOFF_MIN * 2);
+        assert!(delays.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert_eq!(delays.last(), Some(&Duration::from_secs(30)));
+        // A restarted server resumes the same schedule from the persisted attempt count.
+        assert_eq!(retry_delay_for_attempts(20), Duration::from_secs(30));
+    }
+
+    /// Retries that fail the same way change nothing the thread shows, so they emit no thread
+    /// update: a provider that could not start updated its thread every second indefinitely.
+    #[tokio::test(start_paused = true)]
+    async fn repeated_identical_failures_emit_one_update() {
+        let database = Database::open_in_memory().await.expect("database");
+        database
+            .call(|connection| Ok(run_migrations(connection, None)?))
+            .await
+            .expect("migrations");
+        seed_pending(&database, "transient", "thread", 1).await;
+        let engine = OrchestrationEngine::start(database, EngineOptions::default())
+            .await
+            .expect("engine");
+        let mut events = engine.subscribe_events();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let router: ProviderDeliveryRouter = Arc::new({
+            let calls = calls.clone();
+            move |_, _| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Box::pin(ready(ProviderDeliveryOutcome::DefinitelyNotSent {
+                    detail: "Codex could not start: the session is restarting".to_owned(),
+                }))
+            }
+        });
+        let service = TurnDeliveryService::start_with_delivery_router(
+            engine.clone(),
+            1,
+            router,
+            Arc::new(|_| Box::pin(ready(ProviderReconciliationOutcome::Absent))),
+        );
+        // Each failed attempt is persisted off the runtime, so wait for its retry to be scheduled
+        // before moving the clock on to the next attempt.
+        for attempt in 1..=3 {
+            service.wait_for_retries_scheduled(attempt).await;
+            while calls.load(Ordering::SeqCst) <= attempt {
+                tokio::time::advance(RETRY_BACKOFF_MIN).await;
+                tokio::task::yield_now().await;
+            }
+        }
+        service.wait_for_retries_scheduled(4).await;
+        let mut updates = 0;
+        while let Ok(event) = events.try_recv() {
+            if event.event.event_type == "thread.turn-delivery-updated" {
+                updates += 1;
+            }
+        }
+        assert_eq!(
+            updates, 1,
+            "retries that change nothing must not update the thread"
+        );
         service.shutdown().await;
         engine.shutdown().await;
     }

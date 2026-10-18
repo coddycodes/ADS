@@ -301,7 +301,7 @@ flowchart TB
   `git check-ignore`) and nested repositories or linked worktrees (a `.git`
   directory, or a `.git` file whose Git directory is not in this worktree's
   `modules/`), which have their own watches; a submodule keeps notify's
-  recursive watch, as before, because the parent's status shows its changes. A worker thread watches directories created later (one
+  recursive watch, as before, because the parent's status shows its changes. A worker thread watches directories created or renamed into place later (one
   `git check-ignore` per new level, so an anchored rule such as `/build/` does
   not skip `src/build/`), watches a removed and recreated directory again, and
   re-reads the rules when a `.gitignore` or `.git/info/exclude` is written (a
@@ -612,7 +612,9 @@ listener exists; public candidates are labeled, never defaulted, and require an
 explicit warning acknowledgement. Plain `/ws` caps individual frames at 16 MiB
 while retaining the 64 MiB reassembled-message cap; a client that offers the
 `bibcode.rpc.chunked.v1` subprotocol receives messages over 64 KiB as binary
-records instead.
+records instead, and one that offers `bibcode.rpc.chunked-deflate.v1` (a remote
+or SSH server) also receives server messages of 16 KiB or more raw-deflate
+compressed.
 Hosted pairing rejects URL userinfo and renders and submits one normalized host;
 legacy query credentials are scrubbed after capture. Saved blank host keys
 normalize to the legacy plain-transport representation. The environment registry
@@ -1221,7 +1223,10 @@ gap, when the manager stalls for longer than 1024 reads.
 Every terminal's events go through one shared channel of 512 events. A
 `terminal.attach` stream sends the events already waiting together in one chunk
 (at most 64 items or 32 KiB, which bounds its 64-chunk queue at about 2 MiB), so a burst of output does not wait for one
-acknowledgement per event. A stream that still falls further behind than the
+acknowledgement per event. The RPC session then sends the chunks already queued
+behind an unacknowledged one as a single chunk (see
+[RPC and orchestration](rpc-and-orchestration.md#wire-protocol)), so echo
+arriving faster than one chunk per round trip catches up instead of queueing. A stream that still falls further behind than the
 channel holds no longer skips the lost events, which left lines missing from
 the terminal. It sends the session's state instead, with history and sequence
 read together under the session lock, and then only newer events. A chunk with
@@ -1406,8 +1411,9 @@ surfaces therefore mark the content wrapper inside their scroller with
 `data-text-surface="background|card|sidebar|popover"`, which the Linux CSS paints with
 the matching opaque token, and the Linux CSS removes the `ScrollArea`
 scroll-fade mask, so Linux has no scroll fade. Coverage today is the sidebar
-content, the chat timeline rows, the settings column, the Agents list, and the
-Create pull/merge request dialog with its branch and option lists. Other
+content, the chat timeline rows, the settings column, the Agents list, the
+Source Control change and conflict lists, and the Create pull/merge request
+dialog with its branch and option lists. Other
 scrollers, including remaining menus, dialogs, popovers, the git manager lists,
 and file preview, render grayscale text on Linux until they adopt a wrapper.
 Any new scrollable reading surface must add one.
@@ -1765,7 +1771,9 @@ it.
   people do not type (not `Ctrl-\` or `kill -9`). SIGTERM, SIGHUP, and SIGINT (on
   Windows the Ctrl-C status), and a provider's exit codes 129, 130, and 143,
   are deliberate and never count. A stop that BiBCode or the user requested in
-  the last minute is not reported, and once BiBCode has received a termination
+  the last minute, after the process started, is not reported; the comparison
+  uses the start instant the exit path recorded, so a late report cannot move
+  it. Once BiBCode has received a termination
   signal, nothing that dies with it is. A SIGKILL BiBCode did not send is
   labelled likely OOM.
 - **Webview.** On desktop, the end of the main window's web content process (on

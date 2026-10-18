@@ -31,13 +31,15 @@ use super::{
         mcp_server_status_from_notification, refresh_mcp_status_snapshot, run_actor,
     },
     model::{
-        BuildTurnStartInput, CodexProviderSnapshot, CodexRuntimeMode, ReconciliationThread,
+        BuildTurnStartInput, CODEX_HISTORY_TURNS_PAGE_LIMIT, CODEX_REMOTE_JSON_TOO_LARGE,
+        CodexProviderSnapshot, CodexRuntimeMode, ReconciliationThread,
         ThreadBackgroundTerminalsListParams, ThreadListParams, ThreadReadParams,
-        build_initialize_params, build_turn_start_params, build_turn_steer_params,
-        decode_background_terminals_list_response, decode_thread_list_response,
-        decode_thread_read_response, delivery_key_exists, is_recoverable_thread_resume_error,
-        parse_model_list_response, parse_skills_list_response, parse_thread_snapshot,
-        reasoning_effort_label, turn_option_label,
+        ThreadReadResponse, TurnsPager, build_initialize_params, build_turn_start_params,
+        build_turn_steer_params, decode_background_terminals_list_response,
+        decode_thread_list_response, decode_thread_read_response, decode_turns_page,
+        delivery_key_in_turns, is_recoverable_thread_resume_error, parse_model_list_response,
+        parse_skills_list_response, parse_thread_snapshot, reasoning_effort_label,
+        turn_option_label,
     },
     protocol::{IncomingEvent, JsonRpcConnection, ProtocolError},
 };
@@ -242,6 +244,7 @@ struct RuntimeActivityState {
     thread_read_support: ReconciliationMethodSupport,
     background_list_support: ReconciliationMethodSupport,
     warned_incompatible_methods: HashSet<&'static str>,
+    warned_undecodable_replies: HashSet<(&'static str, &'static str)>,
     capabilities: ActivityCapabilities,
     reconciliation_epoch: u64,
     reconciliation_pass_cancellation: CancellationToken,
@@ -798,6 +801,7 @@ impl CodexSessionRuntime {
                 thread_read_support: ReconciliationMethodSupport::Unknown,
                 background_list_support: ReconciliationMethodSupport::Unknown,
                 warned_incompatible_methods: HashSet::new(),
+                warned_undecodable_replies: HashSet::new(),
                 capabilities: ActivityCapabilities {
                     actors: true,
                     attributed_activity: true,
@@ -1319,24 +1323,43 @@ impl CodexSessionRuntime {
             })
     }
 
+    /// Pages the thread newest first for the user message delivered with `delivery_key`. Absent
+    /// is proven only by the last page; a thread that cannot be paged to its end is an error, so
+    /// a delivered message is never sent twice.
     pub async fn delivery_exists(&self, delivery_key: &str) -> Result<bool, RuntimeError> {
         let provider_thread_id = self.provider_thread_id().await?;
-        let response = self
-            .inner
-            .connection
-            .lock()
-            .await
-            .clone()
-            .request(
-                "thread/read",
-                json!({
-                    "threadId": provider_thread_id,
-                    "includeTurns": true,
-                }),
-            )
-            .await?;
-        delivery_key_exists(&response, &provider_thread_id, delivery_key)
-            .map_err(|message| RuntimeError::InvalidPayload { message })
+        let connection = self.inner.connection.lock().await.clone();
+        let invalid = |message| RuntimeError::InvalidPayload { message };
+        let mut cursor: Option<String> = None;
+        let mut seen_cursors = HashSet::new();
+        for _ in 0..DELIVERY_READBACK_PAGE_LIMIT {
+            let mut params = json!({
+                "threadId": provider_thread_id,
+                "limit": CODEX_HISTORY_TURNS_PAGE_LIMIT,
+                "sortDirection": "desc",
+                "itemsView": "full",
+            });
+            if let Some(cursor) = &cursor {
+                params["cursor"] = json!(cursor);
+            }
+            let page = connection.request("thread/turns/list", params).await?;
+            let (turns, next_cursor) = decode_turns_page(page).map_err(invalid)?;
+            if delivery_key_in_turns(&turns, delivery_key).map_err(invalid)? {
+                return Ok(true);
+            }
+            let Some(next_cursor) = next_cursor else {
+                return Ok(false);
+            };
+            if !seen_cursors.insert(next_cursor.clone()) {
+                return Err(invalid(
+                    "thread/turns/list repeated a cursor before the last page".to_owned(),
+                ));
+            }
+            cursor = Some(next_cursor);
+        }
+        Err(invalid(format!(
+            "thread/turns/list had more than {DELIVERY_READBACK_PAGE_LIMIT} pages"
+        )))
     }
 
     pub async fn set_goal(&self, objective: &str) -> Result<(), RuntimeError> {
@@ -1761,6 +1784,33 @@ impl CodexSessionRuntime {
             .take()
     }
 
+    /// A reconciliation reply that does not decode is a failed read, never a missing method: the
+    /// thread or page is skipped and the next pass asks again. Logs once per method and cause,
+    /// with no reply content.
+    async fn warn_undecodable_reply(&self, method: &'static str, thread_id: &str, error: &str) {
+        let cause = if error == CODEX_REMOTE_JSON_TOO_LARGE {
+            "too_large"
+        } else {
+            "unexpected_shape"
+        };
+        if self
+            .inner
+            .activity
+            .lock()
+            .await
+            .warned_undecodable_replies
+            .insert((method, cause))
+        {
+            tracing::warn!(
+                provider = PROVIDER,
+                method,
+                thread_id,
+                cause,
+                "skipped a Codex reconciliation reply activity cannot decode; later passes ask again"
+            );
+        }
+    }
+
     async fn reconcile_once(&self) {
         let root_thread_id = match self.provider_thread_id().await {
             Ok(root_thread_id) => root_thread_id,
@@ -1804,111 +1854,100 @@ impl CodexSessionRuntime {
         let root_read_enabled = self.inner.activity.lock().await.thread_read_support
             != ReconciliationMethodSupport::Unsupported;
         let mut read_succeeded = false;
-        let mut read_incompatible = false;
+        let mut read_incompatible: Option<&'static str> = None;
         if root_read_enabled {
-            let params = serde_json::to_value(ThreadReadParams {
-                thread_id: &root_thread_id,
-                include_turns: true,
-            })
-            .expect("Codex root thread/read params serialize");
-            let response = match connection
-                .request_cancellable("thread/read", params, &pass.cancellation)
-                .await
+            let response =
+                match read_thread_history(&connection, &root_thread_id, &pass.cancellation).await {
+                    Ok(response) => Some(response),
+                    Err(HistoryReadFailure::MissingMethod(method)) => {
+                        read_incompatible = Some(method);
+                        None
+                    }
+                    Err(HistoryReadFailure::Undecodable { method, error }) => {
+                        self.warn_undecodable_reply(method, &root_thread_id, &error)
+                            .await;
+                        None
+                    }
+                    Err(HistoryReadFailure::Cancelled) => return,
+                    Err(HistoryReadFailure::Request) => {
+                        self.emit_reconciliation(&pass, ReconciliationEmission::Stale)
+                            .await;
+                        return;
+                    }
+                };
+            if let Some(response) = response
+                .filter(|response| response.thread.id.as_deref() == Some(root_thread_id.as_str()))
             {
-                Ok(response) => Some(response),
-                Err(error) if error.is_missing_method() => {
-                    read_incompatible = true;
-                    None
-                }
-                Err(ProtocolError::Cancelled { .. }) => return,
-                Err(_) => {
-                    self.emit_reconciliation(&pass, ReconciliationEmission::Stale)
-                        .await;
+                read_succeeded = true;
+                let mut activity = self.inner.activity.lock().await;
+                if !self.reconciliation_is_current_locked(&pass, &activity) {
                     return;
                 }
-            };
-            if let Some(response) = response {
-                match decode_thread_read_response(response) {
-                    Ok(response)
-                        if response.thread.id.as_deref() == Some(root_thread_id.as_str()) =>
+                let source_version = response.thread.updated_at;
+                let mut excluded_hints =
+                    activity.resolved_hints_for_source(&root_thread_id, source_version);
+                if activity.exclude_superseded_reconciliation_hint_receivers(
+                    pass.observed_control_revision,
+                    &response.thread,
+                    &mut excluded_hints,
+                ) {
+                    deferred_read_candidates = true;
+                }
+                let hints = activity
+                    .tracker
+                    .reconcile_sub_agent_hints_with_projection_limit_excluding(
+                        &response.thread,
+                        usize::from(RECONCILIATION_DESCENDANT_LIMIT)
+                            .saturating_sub(queued_read_candidate_ids.len()),
+                        &excluded_hints,
+                    );
+                let hinted_descendant_ids = hints.hinted_descendant_ids.clone();
+                activity.record_hint_source_version(
+                    &root_thread_id,
+                    source_version,
+                    &hinted_descendant_ids,
+                );
+                activity.enqueue_hinted_descendants(&hinted_descendant_ids);
+                activity.stage_reconciliation_mutations(hints.mutations);
+                activity
+                    .stage_reconciliation_controls(pass.observed_control_revision, hints.controls);
+                drop(activity);
+                for thread_id in hinted_descendant_ids {
+                    if !thread_id.is_empty()
+                        && !queued_read_candidate_ids.contains(&thread_id)
+                        && queued_read_candidate_ids.len()
+                            == usize::from(RECONCILIATION_DESCENDANT_LIMIT)
                     {
-                        read_succeeded = true;
-                        let mut activity = self.inner.activity.lock().await;
-                        if !self.reconciliation_is_current_locked(&pass, &activity) {
-                            return;
-                        }
-                        let source_version = response.thread.updated_at;
-                        let mut excluded_hints =
-                            activity.resolved_hints_for_source(&root_thread_id, source_version);
-                        if activity.exclude_superseded_reconciliation_hint_receivers(
-                            pass.observed_control_revision,
-                            &response.thread,
-                            &mut excluded_hints,
-                        ) {
-                            deferred_read_candidates = true;
-                        }
-                        let hints = activity
-                            .tracker
-                            .reconcile_sub_agent_hints_with_projection_limit_excluding(
-                                &response.thread,
-                                usize::from(RECONCILIATION_DESCENDANT_LIMIT)
-                                    .saturating_sub(queued_read_candidate_ids.len()),
-                                &excluded_hints,
-                            );
-                        let hinted_descendant_ids = hints.hinted_descendant_ids.clone();
-                        activity.record_hint_source_version(
-                            &root_thread_id,
-                            source_version,
-                            &hinted_descendant_ids,
-                        );
-                        activity.enqueue_hinted_descendants(&hinted_descendant_ids);
-                        activity.stage_reconciliation_mutations(hints.mutations);
-                        activity.stage_reconciliation_controls(
-                            pass.observed_control_revision,
-                            hints.controls,
-                        );
-                        drop(activity);
-                        for thread_id in hinted_descendant_ids {
-                            if !thread_id.is_empty()
-                                && !queued_read_candidate_ids.contains(&thread_id)
-                                && queued_read_candidate_ids.len()
-                                    == usize::from(RECONCILIATION_DESCENDANT_LIMIT)
-                            {
-                                deferred_read_candidates = true;
-                            }
-                            enqueue_reconciliation_candidate(
-                                &mut read_candidates,
-                                &mut queued_read_candidate_ids,
-                                thread_id,
-                            );
-                        }
+                        deferred_read_candidates = true;
                     }
-                    Ok(_) => {}
-                    Err(_) => read_incompatible = true,
+                    enqueue_reconciliation_candidate(
+                        &mut read_candidates,
+                        &mut queued_read_candidate_ids,
+                        thread_id,
+                    );
                 }
             }
         }
-        if read_incompatible || read_succeeded {
+        if read_incompatible.is_some() || read_succeeded {
             let emit_read_warning = {
                 let mut activity = self.inner.activity.lock().await;
                 if !self.reconciliation_is_current_locked(&pass, &activity) {
                     return;
                 }
-                if read_incompatible {
+                if read_incompatible.is_some() {
                     activity.thread_read_support = ReconciliationMethodSupport::Unsupported;
                     activity.clear_pending_hinted_descendants();
                 } else {
                     activity.thread_read_support = ReconciliationMethodSupport::Supported;
                 }
                 activity.refresh_history_recovery_capability();
-                read_incompatible && activity.warned_incompatible_methods.insert("thread/read")
+                read_incompatible
+                    .filter(|method| activity.warned_incompatible_methods.insert(method))
             };
-            if emit_read_warning {
+            if let Some(method) = emit_read_warning {
                 self.emit_reconciliation(
                     &pass,
-                    ReconciliationEmission::Warning(
-                        "Codex activity method thread/read is unsupported",
-                    ),
+                    ReconciliationEmission::Warning(unsupported_history_method_warning(method)),
                 )
                 .await;
             }
@@ -1949,8 +1988,9 @@ impl CodexSessionRuntime {
                 };
                 let response = match decode_thread_list_response(response) {
                     Ok(response) => response,
-                    Err(_) => {
-                        list_incompatible = true;
+                    Err(error) => {
+                        self.warn_undecodable_reply("thread/list", &root_thread_id, &error)
+                            .await;
                         break;
                     }
                 };
@@ -2029,7 +2069,7 @@ impl CodexSessionRuntime {
             );
             descendants
         };
-        let read_enabled = !read_incompatible
+        let read_enabled = read_incompatible.is_none()
             && self.inner.activity.lock().await.thread_read_support
                 != ReconciliationMethodSupport::Unsupported;
         for thread_id in descendants.threads_to_read {
@@ -2041,34 +2081,25 @@ impl CodexSessionRuntime {
         }
         if read_enabled {
             while let Some(thread_id) = read_candidates.pop_front() {
-                let params = serde_json::to_value(ThreadReadParams {
-                    thread_id: &thread_id,
-                    include_turns: true,
-                })
-                .expect("Codex thread/read params serialize");
-                let response = match connection
-                    .request_cancellable("thread/read", params, &pass.cancellation)
-                    .await
-                {
-                    Ok(response) => response,
-                    Err(error) if error.is_missing_method() => {
-                        read_incompatible = true;
-                        break;
-                    }
-                    Err(ProtocolError::Cancelled { .. }) => return,
-                    Err(_) => {
-                        self.emit_reconciliation(&pass, ReconciliationEmission::Stale)
-                            .await;
-                        return;
-                    }
-                };
-                let response = match decode_thread_read_response(response) {
-                    Ok(response) => response,
-                    Err(_) => {
-                        read_incompatible = true;
-                        break;
-                    }
-                };
+                let response =
+                    match read_thread_history(&connection, &thread_id, &pass.cancellation).await {
+                        Ok(response) => response,
+                        Err(HistoryReadFailure::MissingMethod(method)) => {
+                            read_incompatible = Some(method);
+                            break;
+                        }
+                        Err(HistoryReadFailure::Undecodable { method, error }) => {
+                            self.warn_undecodable_reply(method, &thread_id, &error)
+                                .await;
+                            continue;
+                        }
+                        Err(HistoryReadFailure::Cancelled) => return,
+                        Err(HistoryReadFailure::Request) => {
+                            self.emit_reconciliation(&pass, ReconciliationEmission::Stale)
+                                .await;
+                            return;
+                        }
+                    };
                 if response.thread.id.as_deref() != Some(thread_id.as_str()) {
                     let mut activity = self.inner.activity.lock().await;
                     if !self.reconciliation_is_current_locked(&pass, &activity) {
@@ -2186,21 +2217,21 @@ impl CodexSessionRuntime {
             if !self.reconciliation_is_current_locked(&pass, &activity) {
                 return;
             }
-            if read_incompatible {
+            if read_incompatible.is_some() {
                 activity.thread_read_support = ReconciliationMethodSupport::Unsupported;
                 activity.clear_pending_hinted_descendants();
             } else if read_succeeded {
                 activity.thread_read_support = ReconciliationMethodSupport::Supported;
             }
             activity.refresh_history_recovery_capability();
-            let emit_warning =
-                read_incompatible && activity.warned_incompatible_methods.insert("thread/read");
+            let emit_warning = read_incompatible
+                .filter(|method| activity.warned_incompatible_methods.insert(method));
             (activity.thread_read_support, emit_warning)
         };
-        if emit_read_warning {
+        if let Some(method) = emit_read_warning {
             self.emit_reconciliation(
                 &pass,
-                ReconciliationEmission::Warning("Codex activity method thread/read is unsupported"),
+                ReconciliationEmission::Warning(unsupported_history_method_warning(method)),
             )
             .await;
         }
@@ -2248,8 +2279,13 @@ impl CodexSessionRuntime {
                 };
                 let response = match decode_background_terminals_list_response(response) {
                     Ok(response) => response,
-                    Err(_) => {
-                        background_incompatible = true;
+                    Err(error) => {
+                        self.warn_undecodable_reply(
+                            "thread/backgroundTerminals/list",
+                            &root_thread_id,
+                            &error,
+                        )
+                        .await;
                         break;
                     }
                 };
@@ -3525,6 +3561,80 @@ async fn oldest_rolled_back_turn_id(
     })
 }
 
+/// Pages delivery readback scans (2,000 turns) before the delivery is reported unknown.
+const DELIVERY_READBACK_PAGE_LIMIT: usize = 100;
+
+/// Why a reconciliation history read produced no thread.
+enum HistoryReadFailure {
+    /// Codex answered that this method does not exist.
+    MissingMethod(&'static str),
+    /// Codex answered, but the reply does not decode or exceeds the bound after trimming.
+    Undecodable {
+        method: &'static str,
+        error: String,
+    },
+    Cancelled,
+    /// Any other request failure, which makes the pass stale.
+    Request,
+}
+
+fn history_request_failure(method: &'static str, error: ProtocolError) -> HistoryReadFailure {
+    if error.is_missing_method() {
+        HistoryReadFailure::MissingMethod(method)
+    } else if matches!(error, ProtocolError::Cancelled { .. }) {
+        HistoryReadFailure::Cancelled
+    } else {
+        HistoryReadFailure::Request
+    }
+}
+
+fn unsupported_history_method_warning(method: &str) -> &'static str {
+    if method == "thread/turns/list" {
+        "Codex activity method thread/turns/list is unsupported"
+    } else {
+        "Codex activity method thread/read is unsupported"
+    }
+}
+
+/// Reads a thread's metadata, then its newest turns from `thread/turns/list`, newest first,
+/// until activity has the turns it keeps. A reply for another thread is returned without turns.
+async fn read_thread_history(
+    connection: &JsonRpcConnection,
+    thread_id: &str,
+    cancellation: &CancellationToken,
+) -> Result<ThreadReadResponse, HistoryReadFailure> {
+    let params = serde_json::to_value(ThreadReadParams {
+        thread_id,
+        include_turns: false,
+    })
+    .expect("Codex thread/read params serialize");
+    let metadata = connection
+        .request_cancellable("thread/read", params, cancellation)
+        .await
+        .map_err(|error| history_request_failure("thread/read", error))?;
+    if metadata.pointer("/thread/id").and_then(Value::as_str) != Some(thread_id) {
+        return decode_thread_read_response(metadata).map_err(|error| {
+            HistoryReadFailure::Undecodable {
+                method: "thread/read",
+                error,
+            }
+        });
+    }
+    let undecodable = |error| HistoryReadFailure::Undecodable {
+        method: "thread/turns/list",
+        error,
+    };
+    let mut pager = TurnsPager::new(thread_id);
+    while let Some(params) = pager.next_params() {
+        let page = connection
+            .request_cancellable("thread/turns/list", params, cancellation)
+            .await
+            .map_err(|error| history_request_failure("thread/turns/list", error))?;
+        pager.accept_page(page).map_err(undecodable)?;
+    }
+    pager.into_thread(metadata).map_err(undecodable)
+}
+
 fn current_timestamp() -> String {
     format_observation_timestamp(OffsetDateTime::now_utc())
 }
@@ -3827,6 +3937,53 @@ mod tests {
         let mut line = String::new();
         reader.read_line(&mut line).await.expect("JSON-RPC line");
         serde_json::from_str(&line).expect("JSON-RPC message")
+    }
+
+    /// Serves the `thread/turns/list` page the runtime asks for after a metadata `thread/read`
+    /// whose reply names the requested thread. A pass cancelled meanwhile asks for none.
+    async fn answer_runtime_test_turn_pages(
+        reader: &mut (impl AsyncBufRead + Unpin),
+        writer: &mut (impl AsyncWrite + Unpin),
+        read: &Value,
+        read_result: &Value,
+    ) {
+        assert_eq!(read["params"]["includeTurns"], false);
+        if read_result.pointer("/thread/id") != read["params"].get("threadId") {
+            return;
+        }
+        let Ok(page) =
+            tokio::time::timeout(Duration::from_millis(500), read_runtime_test_json(reader)).await
+        else {
+            return;
+        };
+        assert_eq!(page["method"], "thread/turns/list");
+        assert_eq!(page["params"]["threadId"], read["params"]["threadId"]);
+        let mut turns = read_result
+            .pointer("/thread/turns")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        turns.reverse();
+        write_runtime_test_json(
+            writer,
+            json!({
+                "id": page["id"].clone(),
+                "result": {"data": turns, "nextCursor": null, "backwardsCursor": null}
+            }),
+        )
+        .await;
+    }
+
+    /// Writes a `thread/read` reply, then serves the turns page the runtime asks for next.
+    async fn write_runtime_test_history(
+        reader: &mut (impl AsyncBufRead + Unpin),
+        writer: &mut (impl AsyncWrite + Unpin),
+        read: &Value,
+        reply: Value,
+    ) {
+        let result = reply["result"].clone();
+        write_runtime_test_json(writer, reply).await;
+        answer_runtime_test_turn_pages(reader, writer, read, &result).await;
     }
 
     async fn write_runtime_test_json(writer: &mut (impl AsyncWrite + Unpin), message: Value) {
@@ -6488,6 +6645,21 @@ mod tests {
                 }),
             )
             .await;
+            answer_runtime_test_turn_pages(
+                &mut reader,
+                &mut writer,
+                &root_read,
+                &json!({
+                    "thread": {
+                        "id": "old-root",
+                        "createdAt": 1,
+                        "updatedAt": 2,
+                        "status": {"type": "idle"},
+                        "turns": []
+                    }
+                }),
+            )
+            .await;
             let list = read_runtime_test_json(&mut reader).await;
             assert_eq!(list["method"], "thread/list");
             write_runtime_test_json(
@@ -6523,6 +6695,22 @@ mod tests {
                             "status": {"type": "idle"},
                             "turns": []
                         }
+                    }
+                }),
+            )
+            .await;
+            answer_runtime_test_turn_pages(
+                &mut reader,
+                &mut writer,
+                &read,
+                &json!({
+                    "thread": {
+                        "id": "old-child",
+                        "parentThreadId": "old-root",
+                        "createdAt": 1,
+                        "updatedAt": 2,
+                        "status": {"type": "idle"},
+                        "turns": []
                     }
                 }),
             )
@@ -6623,6 +6811,21 @@ mod tests {
                             "status": {"type": "idle"},
                             "turns": []
                         }
+                    }
+                }),
+            )
+            .await;
+            answer_runtime_test_turn_pages(
+                &mut reader,
+                &mut writer,
+                &root_read,
+                &json!({
+                    "thread": {
+                        "id": "new-root",
+                        "createdAt": 1,
+                        "updatedAt": 2,
+                        "status": {"type": "idle"},
+                        "turns": []
                     }
                 }),
             )
@@ -6803,6 +7006,16 @@ mod tests {
                         )
                         .await;
                     }
+                    "thread/turns/list" => {
+                        write_runtime_test_json(
+                            &mut writer,
+                            json!({
+                                "id": request["id"].clone(),
+                                "result": {"data": [], "nextCursor": null}
+                            }),
+                        )
+                        .await;
+                    }
                     "thread/list" => {
                         if let Some(list_seen_tx) = list_seen_tx.take() {
                             let _ = list_seen_tx.send(());
@@ -6885,7 +7098,13 @@ mod tests {
 
             let root_read = read_runtime_test_json(&mut reader).await;
             assert_eq!(root_read["method"], "thread/read");
-            write_runtime_test_json(&mut writer, root_reconciliation_response(&root_read)).await;
+            write_runtime_test_history(
+                &mut reader,
+                &mut writer,
+                &root_read,
+                root_reconciliation_response(&root_read),
+            )
+            .await;
 
             let thread_list = read_runtime_test_json(&mut reader).await;
             assert_eq!(thread_list["method"], "thread/list");
@@ -7122,7 +7341,13 @@ mod tests {
 
         let root_read = read_runtime_test_json(&mut reader).await;
         assert_eq!(root_read["method"], "thread/read");
-        write_runtime_test_json(&mut writer, root_reconciliation_response(&root_read)).await;
+        write_runtime_test_history(
+            &mut reader,
+            &mut writer,
+            &root_read,
+            root_reconciliation_response(&root_read),
+        )
+        .await;
 
         let list = read_runtime_test_json(&mut reader).await;
         assert_eq!(list["method"], "thread/list");
@@ -7162,7 +7387,7 @@ mod tests {
             .await
             .expect("release stale child read");
         stale["id"] = child_read["id"].clone();
-        write_runtime_test_json(&mut writer, stale).await;
+        write_runtime_test_history(&mut reader, &mut writer, &child_read, stale).await;
 
         let unrelated_read = read_runtime_test_json(&mut reader).await;
         assert_eq!(unrelated_read["method"], "thread/read");
@@ -7185,6 +7410,27 @@ mod tests {
                             "items": []
                         }]
                     }
+                }
+            }),
+        )
+        .await;
+        answer_runtime_test_turn_pages(
+            &mut reader,
+            &mut writer,
+            &unrelated_read,
+            &json!({
+                "thread": {
+                    "id": "unrelated-child",
+                    "parentThreadId": "provider-root",
+                    "createdAt": 1,
+                    "updatedAt": 6,
+                    "status": {"type": "active", "activeFlags": []},
+                    "turns": [{
+                        "id": "unrelated-turn",
+                        "status": "inProgress",
+                        "startedAt": 6,
+                        "items": []
+                    }]
                 }
             }),
         )
@@ -7276,7 +7522,13 @@ mod tests {
         let root_read = read_runtime_test_json(&mut reader).await;
         assert_eq!(root_read["method"], "thread/read");
         if nested_owner {
-            write_runtime_test_json(&mut writer, root_reconciliation_response(&root_read)).await;
+            write_runtime_test_history(
+                &mut reader,
+                &mut writer,
+                &root_read,
+                root_reconciliation_response(&root_read),
+            )
+            .await;
         } else {
             hint_read_seen
                 .take()
@@ -7288,8 +7540,10 @@ mod tests {
                 .expect("root hint release")
                 .await
                 .expect("release root history");
-            write_runtime_test_json(
+            write_runtime_test_history(
+                &mut reader,
                 &mut writer,
+                &root_read,
                 hint_race_history_response(&root_read, "provider-root", durable_hint_kind),
             )
             .await;
@@ -7320,8 +7574,10 @@ mod tests {
                 .expect("nested hint release")
                 .await
                 .expect("release nested history");
-            write_runtime_test_json(
+            write_runtime_test_history(
+                &mut reader,
                 &mut writer,
+                &parent_read,
                 hint_race_history_response(&parent_read, "nested-parent", durable_hint_kind),
             )
             .await;
@@ -7373,6 +7629,22 @@ mod tests {
                             "status": {"type": "active", "activeFlags": []},
                             "turns": turns
                         }
+                    }
+                }),
+            )
+            .await;
+            answer_runtime_test_turn_pages(
+                &mut reader,
+                &mut writer,
+                &request,
+                &json!({
+                    "thread": {
+                        "id": child_thread_id,
+                        "parentThreadId": parent_thread_id,
+                        "createdAt": 1,
+                        "updatedAt": 6,
+                        "status": {"type": "active", "activeFlags": []},
+                        "turns": turns
                     }
                 }),
             )
@@ -8006,8 +8278,13 @@ mod tests {
             for pass in 0..2 {
                 let root_read = read_runtime_test_json(&mut reader).await;
                 assert_eq!(root_read["method"], "thread/read");
-                write_runtime_test_json(&mut writer, root_reconciliation_response(&root_read))
-                    .await;
+                write_runtime_test_history(
+                    &mut reader,
+                    &mut writer,
+                    &root_read,
+                    root_reconciliation_response(&root_read),
+                )
+                .await;
 
                 let list = read_runtime_test_json(&mut reader).await;
                 assert_eq!(list["method"], "thread/list");
@@ -8018,8 +8295,10 @@ mod tests {
                     let child_read = read_runtime_test_json(&mut reader).await;
                     assert_eq!(child_read["method"], "thread/read");
                     assert_eq!(child_read["params"]["threadId"], "durable-child");
-                    write_runtime_test_json(
+                    write_runtime_test_history(
+                        &mut reader,
                         &mut writer,
+                        &child_read,
                         child_read_reconciliation_response(&child_read),
                     )
                     .await;
@@ -8077,12 +8356,23 @@ mod tests {
             let mut writer = peer_stdout;
 
             let root_read = read_runtime_test_json(&mut reader).await;
-            write_runtime_test_json(&mut writer, root_reconciliation_response(&root_read)).await;
+            write_runtime_test_history(
+                &mut reader,
+                &mut writer,
+                &root_read,
+                root_reconciliation_response(&root_read),
+            )
+            .await;
             let list = read_runtime_test_json(&mut reader).await;
             write_runtime_test_json(&mut writer, child_list_reconciliation_response(&list)).await;
             let child_read = read_runtime_test_json(&mut reader).await;
-            write_runtime_test_json(&mut writer, child_read_reconciliation_response(&child_read))
-                .await;
+            write_runtime_test_history(
+                &mut reader,
+                &mut writer,
+                &child_read,
+                child_read_reconciliation_response(&child_read),
+            )
+            .await;
             let cancelled_background = read_runtime_test_json(&mut reader).await;
             assert_eq!(
                 cancelled_background["method"],
@@ -8093,7 +8383,13 @@ mod tests {
                 .expect("report cancellable background request");
 
             let root_read = read_runtime_test_json(&mut reader).await;
-            write_runtime_test_json(&mut writer, root_reconciliation_response(&root_read)).await;
+            write_runtime_test_history(
+                &mut reader,
+                &mut writer,
+                &root_read,
+                root_reconciliation_response(&root_read),
+            )
+            .await;
             let list = read_runtime_test_json(&mut reader).await;
             write_runtime_test_json(&mut writer, child_list_reconciliation_response(&list)).await;
             let background = read_runtime_test_json(&mut reader).await;

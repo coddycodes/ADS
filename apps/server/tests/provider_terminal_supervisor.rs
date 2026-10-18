@@ -4,6 +4,30 @@
 #[path = "support/hermetic_providers.rs"]
 mod hermetic_providers;
 
+#[path = "support/reexec.rs"]
+mod reexec;
+
+/// Runs the calling test again in a process of its own and returns from it; in that child,
+/// binds `$isolated` to the phase the test completes after its last assertion.
+///
+/// For tests that start provider observer workers: admission is capped at sixteen workers
+/// process-wide, and sibling tests together exceed it, so a test's observer silently fails
+/// open. Also for tests that capture `tracing` output, whose callsites a sibling can turn off
+/// (#112). See `docs/testing/flaky-tests.md`.
+macro_rules! own_process {
+    ($isolated:ident) => {
+        fn here() {}
+        // `<binary>::<test>::{{closure}}::here`: the test's name in this binary.
+        let name = std::any::type_name_of_val(&here)
+            .split("::")
+            .nth(1)
+            .expect("test name");
+        let Some($isolated) = reexec::in_own_process(name) else {
+            return;
+        };
+    };
+}
+
 use std::{
     collections::{BTreeMap, VecDeque},
     future::Future,
@@ -3455,6 +3479,7 @@ enum DurableWorkerCleanup {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn hardening_observer_workers_survive_callback_and_teardown_with_generation() {
+    own_process!(isolated);
     for (cleanup, expected_reason) in [
         (
             DurableWorkerCleanup::Close,
@@ -3557,10 +3582,12 @@ async fn hardening_observer_workers_survive_callback_and_teardown_with_generatio
             "{cleanup:?} delivered cancellation more than once"
         );
     }
+    isolated.complete();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hardening_on_spawned_setup_has_no_ambient_disposable_tokio_runtime() {
+    own_process!(isolated);
     let root = tempfile::tempdir().expect("temp dir");
     let state = Arc::new(ObserverSetupBoundaryState::default());
     let manager = TerminalManager::new(
@@ -3597,6 +3624,7 @@ async fn hardening_on_spawned_setup_has_no_ambient_disposable_tokio_runtime() {
         !state.ambient_runtime_present.load(Ordering::Acquire),
         "on_spawned setup exposed a disposable ambient Tokio runtime"
     );
+    isolated.complete();
 }
 
 #[test]
@@ -3630,9 +3658,9 @@ fn hardening_durable_observer_workers_have_a_reusable_process_global_bound() {
 }
 
 async fn assert_durable_observer_worker_global_bound() {
-    const MANAGER_COUNT: usize = 3;
-    const WORKERS_PER_GENERATION: usize = 8;
-    const MAX_GLOBAL_DURABLE_WORKERS: usize = 16;
+    const MANAGER_COUNT: usize = 5;
+    const WORKERS_PER_GENERATION: usize = 16;
+    const MAX_GLOBAL_DURABLE_WORKERS: usize = 64;
 
     let root = tempfile::tempdir().expect("temp dir");
     let state = Arc::new(WorkerContextCaptureState::default());
@@ -3759,6 +3787,7 @@ async fn assert_durable_observer_worker_global_bound() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hardening_pass_through_preparation_reaps_registered_workers() {
+    own_process!(isolated);
     let root = tempfile::tempdir().expect("temp dir");
     let state = Arc::new(PassThroughWorkerState::default());
     let manager = TerminalManager::new(
@@ -3789,6 +3818,7 @@ async fn hardening_pass_through_preparation_reaps_registered_workers() {
         "pass-through preparation left a registered worker alive"
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -4122,6 +4152,7 @@ async fn hardening_diagnostics_attempted_args_and_backend_errors_redact_private_
 
 #[tokio::test(flavor = "current_thread")]
 async fn hardening_rejected_hint_diagnostics_are_bounded_to_provider_strategy_and_status() {
+    own_process!(isolated);
     let fixture = tempfile::tempdir().expect("fixture root");
     let configured = fixture.path().join("configured-codex");
     std::fs::write(&configured, b"configured").expect("configured binary");
@@ -4194,6 +4225,7 @@ async fn hardening_rejected_hint_diagnostics_are_bounded_to_provider_strategy_an
     ] {
         assert!(!diagnostic.contains(secret), "{diagnostic}");
     }
+    isolated.complete();
 }
 
 #[tokio::test]
@@ -4565,6 +4597,12 @@ struct CodexFixtureRemoteState {
     request_buffered_deliveries: AtomicUsize,
     active_connections: AtomicUsize,
     maximum_active_connections: AtomicUsize,
+    /// The real client's WebSocket message limit. A larger reply fails that request and leaves
+    /// the connection broken, as the WebSocket stream does.
+    frame_limit_bytes: Mutex<Option<usize>>,
+    /// Full-history `thread/read` results by thread, served as Codex serves them: metadata for a
+    /// read without turns, then `thread/turns/list` pages.
+    histories: Mutex<BTreeMap<String, Value>>,
 }
 
 struct CodexFixtureResumeRequestGuard {
@@ -4602,6 +4640,139 @@ impl Drop for CodexFixtureRemoteClient {
     }
 }
 
+impl CodexFixtureRemoteClient {
+    async fn scripted_request(&mut self, method: String, params: Value) -> Result<Value, String> {
+        let _resume_request_guard = (method == "thread/resume")
+            .then(|| CodexFixtureResumeRequestGuard::new(self.state.clone()));
+        self.state
+            .timeline
+            .lock()
+            .expect("Codex topology timeline lock")
+            .push(if method == "thread/resume" {
+                "resume"
+            } else {
+                "initialize"
+            });
+        self.state
+            .writes
+            .lock()
+            .expect("remote writes lock")
+            .push(serde_json::json!({ "method": method, "params": params.clone() }));
+        if let Some(delay) = self
+            .state
+            .late_request_delays
+            .lock()
+            .expect("late request delays lock")
+            .get_mut(&method)
+            .and_then(VecDeque::pop_front)
+        {
+            let completed = self.state.completed_late_request_responses.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(delay).await;
+                completed.fetch_add(1, Ordering::AcqRel);
+            });
+        }
+        let delay = self
+            .state
+            .request_delays
+            .lock()
+            .expect("request delays lock")
+            .get_mut(&method)
+            .and_then(VecDeque::pop_front)
+            .unwrap_or_default();
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
+        if let Some(events) = self
+            .state
+            .request_events
+            .lock()
+            .expect("request events lock")
+            .get_mut(&method)
+            .and_then(VecDeque::pop_front)
+        {
+            self.request_buffered_events.extend(events);
+        }
+        if let Some(error) = self
+            .state
+            .request_errors
+            .lock()
+            .expect("request errors lock")
+            .pop_front()
+        {
+            if method == "thread/resume" {
+                self.state
+                    .completed_resume_responses
+                    .fetch_add(1, Ordering::AcqRel);
+            }
+            return Err(error);
+        }
+        if method == "thread/resume" {
+            if params.get("excludeTurns").is_some() {
+                self.state
+                    .completed_resume_responses
+                    .fetch_add(1, Ordering::AcqRel);
+                return Err("thread/resume excludeTurns requires the experimental API".to_owned());
+            }
+            if let Some(events) = self
+                .state
+                .resume_events
+                .lock()
+                .expect("resume events lock")
+                .pop_front()
+            {
+                self.events
+                    .lock()
+                    .expect("remote events lock")
+                    .extend(events);
+            }
+            if let Some(response) = self
+                .state
+                .resume_responses
+                .lock()
+                .expect("resume responses lock")
+                .pop_front()
+            {
+                self.state
+                    .completed_resume_responses
+                    .fetch_add(1, Ordering::AcqRel);
+                return response;
+            }
+            let thread_id = params
+                .get("threadId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "resume missing threadId".to_owned())?;
+            self.state
+                .completed_resume_responses
+                .fetch_add(1, Ordering::AcqRel);
+            return Ok(serde_json::json!({
+                "thread": {
+                    "id": thread_id,
+                    "parentThreadId": null,
+                    "turns": [],
+                },
+            }));
+        }
+        if let Some(response) = self
+            .state
+            .request_responses
+            .lock()
+            .expect("request responses lock")
+            .get_mut(&method)
+            .and_then(VecDeque::pop_front)
+        {
+            return response;
+        }
+        Ok(match method.as_str() {
+            "thread/list" => serde_json::json!({"data": [], "nextCursor": null}),
+            "thread/backgroundTerminals/list" => {
+                serde_json::json!({"data": [], "nextCursor": null})
+            }
+            _ => serde_json::json!({}),
+        })
+    }
+}
+
 impl CodexRemoteClient for CodexFixtureRemoteClient {
     fn request(
         &mut self,
@@ -4610,136 +4781,59 @@ impl CodexRemoteClient for CodexFixtureRemoteClient {
     ) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + '_>> {
         let method = method.to_owned();
         Box::pin(async move {
-            let _resume_request_guard = (method == "thread/resume")
-                .then(|| CodexFixtureResumeRequestGuard::new(self.state.clone()));
-            self.state
-                .timeline
-                .lock()
-                .expect("Codex topology timeline lock")
-                .push(if method == "thread/resume" {
-                    "resume"
-                } else {
-                    "initialize"
-                });
-            self.state
-                .writes
-                .lock()
-                .expect("remote writes lock")
-                .push(serde_json::json!({ "method": method, "params": params.clone() }));
-            if let Some(delay) = self
-                .state
-                .late_request_delays
-                .lock()
-                .expect("late request delays lock")
-                .get_mut(&method)
-                .and_then(VecDeque::pop_front)
-            {
-                let completed = self.state.completed_late_request_responses.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(delay).await;
-                    completed.fetch_add(1, Ordering::AcqRel);
-                });
-            }
-            let delay = self
-                .state
-                .request_delays
-                .lock()
-                .expect("request delays lock")
-                .get_mut(&method)
-                .and_then(VecDeque::pop_front)
-                .unwrap_or_default();
-            if !delay.is_zero() {
-                tokio::time::sleep(delay).await;
-            }
-            if let Some(events) = self
-                .state
-                .request_events
-                .lock()
-                .expect("request events lock")
-                .get_mut(&method)
-                .and_then(VecDeque::pop_front)
-            {
-                self.request_buffered_events.extend(events);
-            }
-            if let Some(error) = self
-                .state
-                .request_errors
-                .lock()
-                .expect("request errors lock")
-                .pop_front()
-            {
-                if method == "thread/resume" {
+            let thread_id = params
+                .get("threadId")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let without_turns =
+                method == "thread/read" && params.get("includeTurns") == Some(&Value::Bool(false));
+            let response = self.scripted_request(method.clone(), params).await;
+            let response = match (response, thread_id) {
+                (Ok(mut result), Some(thread_id)) if without_turns => {
                     self.state
-                        .completed_resume_responses
-                        .fetch_add(1, Ordering::AcqRel);
-                }
-                return Err(error);
-            }
-            if method == "thread/resume" {
-                if params.get("excludeTurns").is_some() {
-                    self.state
-                        .completed_resume_responses
-                        .fetch_add(1, Ordering::AcqRel);
-                    return Err(
-                        "thread/resume excludeTurns requires the experimental API".to_owned()
-                    );
-                }
-                if let Some(events) = self
-                    .state
-                    .resume_events
-                    .lock()
-                    .expect("resume events lock")
-                    .pop_front()
-                {
-                    self.events
+                        .histories
                         .lock()
-                        .expect("remote events lock")
-                        .extend(events);
+                        .expect("histories lock")
+                        .insert(thread_id, result.clone());
+                    if let Some(thread) = result.get_mut("thread").and_then(Value::as_object_mut) {
+                        thread.insert("turns".to_owned(), serde_json::json!([]));
+                    }
+                    Ok(result)
                 }
-                if let Some(response) = self
-                    .state
-                    .resume_responses
-                    .lock()
-                    .expect("resume responses lock")
-                    .pop_front()
+                (Ok(result), Some(thread_id))
+                    if method == "thread/turns/list" && result == serde_json::json!({}) =>
                 {
-                    self.state
-                        .completed_resume_responses
-                        .fetch_add(1, Ordering::AcqRel);
-                    return response;
+                    let mut turns = self
+                        .state
+                        .histories
+                        .lock()
+                        .expect("histories lock")
+                        .get(&thread_id)
+                        .and_then(|history| history.pointer("/thread/turns"))
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    turns.reverse();
+                    Ok(serde_json::json!({"data": turns, "nextCursor": null}))
                 }
-                let thread_id = params
-                    .get("threadId")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "resume missing threadId".to_owned())?;
-                self.state
-                    .completed_resume_responses
-                    .fetch_add(1, Ordering::AcqRel);
-                return Ok(serde_json::json!({
-                    "thread": {
-                        "id": thread_id,
-                        "parentThreadId": null,
-                        "turns": [],
-                    },
-                }));
-            }
-            if let Some(response) = self
+                (response, _) => response,
+            };
+            let frame_limit = *self
                 .state
-                .request_responses
+                .frame_limit_bytes
                 .lock()
-                .expect("request responses lock")
-                .get_mut(&method)
-                .and_then(VecDeque::pop_front)
+                .expect("frame limit lock");
+            if let (Ok(result), Some(frame_limit)) = (&response, frame_limit)
+                && serde_json::to_vec(result).expect("fixture reply").len() > frame_limit
             {
-                return response;
+                self.state
+                    .next_errors
+                    .lock()
+                    .expect("next errors lock")
+                    .push_back("Codex remote read failed: Space limit exceeded".to_owned());
+                return Err("Codex remote read failed: Space limit exceeded".to_owned());
             }
-            Ok(match method.as_str() {
-                "thread/list" => serde_json::json!({"data": [], "nextCursor": null}),
-                "thread/backgroundTerminals/list" => {
-                    serde_json::json!({"data": [], "nextCursor": null})
-                }
-                _ => serde_json::json!({}),
-            })
+            response
         })
     }
 
@@ -5107,6 +5201,7 @@ fn count_codex_history_calls(state: &CodexFixtureRemoteState) -> usize {
     [
         "thread/list",
         "thread/read",
+        "thread/turns/list",
         "thread/backgroundTerminals/list",
     ]
     .into_iter()
@@ -5184,6 +5279,7 @@ async fn wait_for_codex_root_detail(
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_codex_retains_connection_and_crosses_ordered_barrier() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -5303,11 +5399,13 @@ async fn agent_activity_toggle_codex_retains_connection_and_crosses_ordered_barr
         .await
         .expect("close retained Codex terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_codex_barrier_failure_stays_dormant_then_recovers() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -5414,11 +5512,13 @@ async fn agent_activity_toggle_codex_barrier_failure_stays_dormant_then_recovers
         .await
         .expect("close barrier Codex terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_codex_stale_epoch_barrier_cannot_mark_replacement_live() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -5526,11 +5626,13 @@ async fn agent_activity_toggle_codex_stale_epoch_barrier_cannot_mark_replacement
         .await
         .expect("close stale Codex terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_clean_close_before_root_discovery_reconnects_on_a_fresh_epoch() {
+    own_process!(isolated);
     // Mutations caught:
     // - polling the first client's permanent EOF instead of reconnecting;
     // - continuing root discovery on the stale transport boundary;
@@ -5596,11 +5698,13 @@ async fn codex_clean_close_before_root_discovery_reconnects_on_a_fresh_epoch() {
         .await
         .expect("close pre-root clean-close Codex terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_pre_root_reconnect_failure_publishes_unavailable_and_parks() {
+    own_process!(isolated);
     // Mutations caught:
     // - retrying past the reattach deadline;
     // - retaining or polling the closed discovery client;
@@ -5681,11 +5785,13 @@ async fn codex_pre_root_reconnect_failure_publishes_unavailable_and_parks() {
         .await
         .expect("close unavailable pre-root Codex terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_codex_clean_close_advances_epoch_and_recovers() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -5767,6 +5873,7 @@ async fn agent_activity_toggle_codex_clean_close_advances_epoch_and_recovers() {
         .await
         .expect("close clean-close Codex terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
@@ -6031,6 +6138,7 @@ async fn codex_probe_success_cache_evicts_the_oldest_unique_executable() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_helper_precedes_pty_and_generation_worker_owns_remote_transport() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -6359,11 +6467,13 @@ async fn codex_helper_precedes_pty_and_generation_worker_owns_remote_transport()
     );
     assert!(!socket.exists(), "owned socket must be removed on close");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_resume_atomically_recovers_history_then_receives_scoped_live_events() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -6515,11 +6625,13 @@ async fn codex_resume_atomically_recovers_history_then_receives_scoped_live_even
         .await
         .expect("close terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_resume_retries_transient_materialization_without_losing_pending_events() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -6617,11 +6729,13 @@ async fn codex_resume_retries_transient_materialization_without_losing_pending_e
         .await
         .expect("close materialization-retry terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_resume_reconnects_after_the_remote_tui_replaces_the_materializing_connection() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -6788,11 +6902,13 @@ async fn codex_resume_reconnects_after_the_remote_tui_replaces_the_materializing
         .await
         .expect("close reconnected terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_resume_non_materialization_error_fails_closed_without_retry() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -6846,11 +6962,13 @@ async fn codex_resume_non_materialization_error_fails_closed_without_retry() {
         .await
         .expect("close invalid-resume terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_resume_materialization_retry_is_cancelled_without_a_late_request() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -6891,11 +7009,13 @@ async fn codex_resume_materialization_retry_is_cancelled_without_a_late_request(
         "generation cancellation must prevent a delayed materialization retry"
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_resume_immediately_reconciles_pre_subscription_descendants_and_background_work() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -7051,6 +7171,7 @@ async fn codex_resume_immediately_reconciles_pre_subscription_descendants_and_ba
             "thread/backgroundTerminals/list",
             "thread/list",
             "thread/read",
+            "thread/turns/list",
         ]
     );
 
@@ -7059,11 +7180,305 @@ async fn codex_resume_immediately_reconciles_pre_subscription_descendants_and_ba
         .await
         .expect("close terminal");
     manager.shutdown().await;
+    isolated.complete();
+}
+
+/// The real Codex terminal client's WebSocket message limit, which the fixture enforces.
+#[cfg(unix)]
+const REAL_CLIENT_FRAME_LIMIT_BYTES: usize =
+    bibcode_server::provider::codex::protocol::CODEX_TRANSPORT_MESSAGE_MAX_BYTES;
+
+/// A descendant whose history is larger than the 512 KiB decoder bound is skipped; it must not
+/// break the observer's connection and force a reconnect, and its siblings are still read.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn codex_reconciliation_skips_a_large_descendant_without_reconnecting() {
+    let fixture = codex_remote_fixture();
+    let root = tempfile::tempdir().expect("fixture root");
+    let configured = root.path().join("configured-codex");
+    std::fs::write(&configured, b"configured").expect("configured executable");
+    let remote_state = Arc::new(CodexFixtureRemoteState::default());
+    *remote_state
+        .frame_limit_bytes
+        .lock()
+        .expect("frame limit lock") = Some(REAL_CLIENT_FRAME_LIMIT_BYTES);
+    remote_state
+        .scripted_events
+        .lock()
+        .expect("scripted events lock")
+        .push_back(Arc::new(Mutex::new(VecDeque::from([
+            codex_root_notification(&fixture, "large-history-root", root.path()),
+        ]))));
+    let child = |id: &str, name: &str| {
+        serde_json::json!({
+            "id": id,
+            "parentThreadId": "large-history-root",
+            "agentNickname": name,
+            "agentRole": "worker",
+            "createdAt": 2000000000_u64,
+            "updatedAt": 2000000001_u64,
+            "status": {"type": "idle"}
+        })
+    };
+    let history = |id: &str, name: &str, text: String| {
+        let mut thread = child(id, name);
+        thread["turns"] = serde_json::json!([{
+            "id": format!("{id}-turn"),
+            "status": "completed",
+            "startedAt": 2000000000_u64,
+            "completedAt": 2000000001_u64,
+            "items": [{"type": "agentMessage", "id": format!("{id}-message"), "text": text}]
+        }]);
+        serde_json::json!({"thread": thread})
+    };
+    remote_state
+        .request_responses
+        .lock()
+        .expect("request responses lock")
+        .extend([
+            (
+                "thread/list".to_owned(),
+                VecDeque::from([Ok(serde_json::json!({
+                    "data": [
+                        child("large-child", "Large child"),
+                        child("small-child", "Small child")
+                    ],
+                    "nextCursor": null
+                }))]),
+            ),
+            (
+                "thread/read".to_owned(),
+                VecDeque::from([
+                    Ok(history(
+                        "large-child",
+                        "Large child",
+                        "x".repeat(600 * 1024),
+                    )),
+                    Ok(history(
+                        "small-child",
+                        "Small child",
+                        "small child history".to_owned(),
+                    )),
+                ]),
+            ),
+        ]);
+    let (supervisor, projection) = codex_fixture_supervisor(
+        &root,
+        &configured,
+        Arc::new(CodexFixtureHelperLauncher::default()),
+        Arc::new(CodexFixtureRemoteFactory {
+            state: remote_state.clone(),
+        }),
+    )
+    .await;
+    let manager = TerminalManager::new(
+        Arc::new(RecordingBackend::new(Arc::new(Mutex::new(Vec::new())))),
+        TerminalManagerOptions {
+            launch_preparer: Some(Arc::new(supervisor)),
+            ..TerminalManagerOptions::default()
+        },
+    );
+
+    manager
+        .open(codex_fixture_open_input(
+            &fixture,
+            &configured,
+            &root,
+            "terminal-large-history",
+        ))
+        .await
+        .expect("Codex terminal");
+    let scope = ActivityScopeRef::Terminal {
+        thread_id: "thread-codex".to_owned(),
+        terminal_id: "terminal-large-history".to_owned(),
+    };
+    let small_child = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Ok(snapshot) = projection.snapshot(&scope).await
+                && let Some(child) = snapshot
+                    .actors
+                    .iter()
+                    .find(|actor| actor.name == "Small child")
+            {
+                let detail = projection
+                    .list_detail(
+                        &scope,
+                        &snapshot.scope_id,
+                        ActivityRecordKind::Actor,
+                        &child.id,
+                        None,
+                        10,
+                    )
+                    .await
+                    .expect("small child detail");
+                if detail
+                    .entries
+                    .iter()
+                    .any(|entry| entry.detail.as_deref() == Some("small child history"))
+                {
+                    break child.id.clone();
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the sibling of a large descendant is still reconciled");
+    assert!(!small_child.is_empty());
+    tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+    assert_eq!(
+        remote_state
+            .endpoints
+            .lock()
+            .expect("remote endpoints lock")
+            .len(),
+        1,
+        "a large descendant must not break the connection and force a reconnect"
+    );
+
+    manager
+        .close("thread-codex", Some("terminal-large-history"))
+        .await
+        .expect("close terminal");
+    manager.shutdown().await;
+}
+
+/// The observer reads one turns page per descendant within its pass budget: a short page with
+/// more to come still yields the newest turns, and no second page is requested.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn codex_reconciliation_keeps_the_newest_turns_of_a_short_page() {
+    let fixture = codex_remote_fixture();
+    let root = tempfile::tempdir().expect("fixture root");
+    let configured = root.path().join("configured-codex");
+    std::fs::write(&configured, b"configured").expect("configured executable");
+    let remote_state = Arc::new(CodexFixtureRemoteState::default());
+    remote_state
+        .scripted_events
+        .lock()
+        .expect("scripted events lock")
+        .push_back(Arc::new(Mutex::new(VecDeque::from([
+            codex_root_notification(&fixture, "short-page-root", root.path()),
+        ]))));
+    let child = serde_json::json!({
+        "id": "short-page-child",
+        "parentThreadId": "short-page-root",
+        "agentNickname": "Short page child",
+        "agentRole": "worker",
+        "createdAt": 2000000000_u64,
+        "updatedAt": 2000000001_u64,
+        "status": {"type": "idle"}
+    });
+    remote_state
+        .request_responses
+        .lock()
+        .expect("request responses lock")
+        .extend([
+            (
+                "thread/list".to_owned(),
+                VecDeque::from([Ok(serde_json::json!({
+                    "data": [child.clone()],
+                    "nextCursor": null
+                }))]),
+            ),
+            (
+                "thread/read".to_owned(),
+                VecDeque::from([Ok(serde_json::json!({"thread": child}))]),
+            ),
+            (
+                "thread/turns/list".to_owned(),
+                VecDeque::from([Ok(serde_json::json!({
+                    "data": [{
+                        "id": "newest-turn",
+                        "status": "completed",
+                        "startedAt": 2000000000_u64,
+                        "completedAt": 2000000001_u64,
+                        "items": [{
+                            "type": "agentMessage",
+                            "id": "newest-message",
+                            "text": "newest turn of a short page"
+                        }]
+                    }],
+                    "nextCursor": "older-turns"
+                }))]),
+            ),
+        ]);
+    let (supervisor, projection) = codex_fixture_supervisor(
+        &root,
+        &configured,
+        Arc::new(CodexFixtureHelperLauncher::default()),
+        Arc::new(CodexFixtureRemoteFactory {
+            state: remote_state.clone(),
+        }),
+    )
+    .await;
+    let manager = TerminalManager::new(
+        Arc::new(RecordingBackend::new(Arc::new(Mutex::new(Vec::new())))),
+        TerminalManagerOptions {
+            launch_preparer: Some(Arc::new(supervisor)),
+            ..TerminalManagerOptions::default()
+        },
+    );
+
+    manager
+        .open(codex_fixture_open_input(
+            &fixture,
+            &configured,
+            &root,
+            "terminal-short-page",
+        ))
+        .await
+        .expect("Codex terminal");
+    let scope = ActivityScopeRef::Terminal {
+        thread_id: "thread-codex".to_owned(),
+        terminal_id: "terminal-short-page".to_owned(),
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Ok(snapshot) = projection.snapshot(&scope).await
+                && let Some(child) = snapshot
+                    .actors
+                    .iter()
+                    .find(|actor| actor.name == "Short page child")
+                && projection
+                    .list_detail(
+                        &scope,
+                        &snapshot.scope_id,
+                        ActivityRecordKind::Actor,
+                        &child.id,
+                        None,
+                        10,
+                    )
+                    .await
+                    .expect("child detail")
+                    .entries
+                    .iter()
+                    .any(|entry| entry.detail.as_deref() == Some("newest turn of a short page"))
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the newest turns of a short page are recovered");
+    assert_eq!(
+        count_codex_method_calls(&remote_state, "thread/turns/list"),
+        1,
+        "one page per descendant per pass"
+    );
+
+    manager
+        .close("thread-codex", Some("terminal-short-page"))
+        .await
+        .expect("close terminal");
+    manager.shutdown().await;
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_reconciliation_stalled_thread_list_does_not_starve_background_snapshot() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -7124,11 +7539,13 @@ async fn codex_reconciliation_stalled_thread_list_does_not_starve_background_sna
         .await
         .expect("close terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_reconciliation_stalled_thread_read_does_not_starve_background_snapshot() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -7206,11 +7623,13 @@ async fn codex_reconciliation_stalled_thread_read_does_not_starve_background_sna
         .await
         .expect("close terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_live_reconciliation_timeout_resumes_queued_event_processing() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -7301,11 +7720,13 @@ async fn codex_live_reconciliation_timeout_resumes_queued_event_processing() {
         .await
         .expect("close terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_startup_failures_fail_open_without_interrupting_remote_tui() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     for phase in ["helper", "connect", "initialize"] {
         let root = tempfile::tempdir().expect("fixture root");
@@ -7459,6 +7880,7 @@ async fn codex_startup_failures_fail_open_without_interrupting_remote_tui() {
         );
         manager.shutdown().await;
     }
+    isolated.complete();
 }
 
 #[cfg(unix)]
@@ -7552,6 +7974,7 @@ async fn codex_generation_slot_exhaustion_fails_open_without_growing_the_namespa
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_list_discovery_correlates_root_when_broadcast_is_absent() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -7694,11 +8117,13 @@ async fn codex_list_discovery_correlates_root_when_broadcast_is_absent() {
             .load(Ordering::Acquire)
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_stalled_list_discovery_returns_to_live_root_notifications_without_overlap() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -7783,11 +8208,13 @@ async fn codex_stalled_list_discovery_returns_to_live_root_notifications_without
         .await
         .expect("close stalled-discovery terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_list_discovery_retries_only_after_the_timed_out_response_is_drained() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -7894,11 +8321,13 @@ async fn codex_list_discovery_retries_only_after_the_timed_out_response_is_drain
         .await
         .expect("close late-response terminal");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_slow_worker_connect_does_not_consume_preparation_budget_or_interrupt_remote_tui() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -7992,11 +8421,13 @@ async fn codex_slow_worker_connect_does_not_consume_preparation_budget_or_interr
         "slow-connect terminal close cleanup",
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn codex_terminals_isolate_endpoints_scopes_and_owned_helper_cleanup() {
+    own_process!(isolated);
     let fixture = codex_remote_fixture();
     let root = tempfile::tempdir().expect("fixture root");
     let configured = root.path().join("configured-codex");
@@ -8131,6 +8562,7 @@ async fn codex_terminals_isolate_endpoints_scopes_and_owned_helper_cleanup() {
     );
     assert_empty_retired_generation(&directory_b, "terminal B cleanup");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[derive(Debug, Default)]
@@ -8377,6 +8809,7 @@ async fn agent_activity_toggle_disabled_launch_is_pure_pass_through() {
 #[tokio::test]
 async fn agent_activity_toggle_disable_racing_preparation_drops_owned_resources_and_passes_through()
 {
+    own_process!(isolated);
     let fixture = tempfile::tempdir().expect("fixture root");
     let configured = fixture.path().join("configured-codex");
     std::fs::write(&configured, b"configured").expect("configured binary");
@@ -8469,6 +8902,7 @@ async fn agent_activity_toggle_disable_racing_preparation_drops_owned_resources_
         0,
         "the raced prepared observer and its owned resources are dropped"
     );
+    isolated.complete();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -8995,16 +9429,20 @@ async fn assert_claude_source_mutation_cannot_change_pinned_spawn(mutation: Clau
 #[cfg(unix)]
 #[tokio::test]
 async fn claude_atomic_replacement_after_preparation_cannot_change_pinned_spawn() {
+    own_process!(isolated);
     assert_claude_source_mutation_cannot_change_pinned_spawn(
         ClaudeSourceMutation::AtomicReplacement,
     )
     .await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn claude_in_place_mutation_after_preparation_cannot_change_pinned_spawn() {
+    own_process!(isolated);
     assert_claude_source_mutation_cannot_change_pinned_spawn(ClaudeSourceMutation::InPlace).await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
@@ -9706,6 +10144,7 @@ async fn complete_claude_hook_body(
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_claude_hook_is_dormant_without_stopping_terminal() {
+    own_process!(isolated);
     let fixture = claude_hook_fixture();
     let (root, manager, backend, projection, scope, _database, _factory) =
         claude_fixture_terminal("terminal-claude-dormant").await;
@@ -9832,11 +10271,13 @@ async fn agent_activity_toggle_claude_hook_is_dormant_without_stopping_terminal(
     .await
     .expect("terminal exit removes dormant-capable Claude resources");
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn claude_overlay_is_private_additive_and_first_authenticated_root_hook_gates_capability() {
+    own_process!(isolated);
     let fixture = claude_hook_fixture();
     let (root, manager, backend, projection, scope, _database, _factory) =
         claude_fixture_terminal("terminal-claude").await;
@@ -9883,12 +10324,14 @@ async fn claude_overlay_is_private_additive_and_first_authenticated_root_hook_ga
         "closing the terminal must stop the hook sink"
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn claude_hook_sink_rejects_wrong_credentials_session_content_type_and_size_without_mutation()
 {
+    own_process!(isolated);
     let fixture = claude_hook_fixture();
     let (root, manager, backend, projection, scope, _database, _factory) =
         claude_fixture_terminal("terminal-rejections").await;
@@ -10106,11 +10549,13 @@ async fn claude_hook_sink_rejects_wrong_credentials_session_content_type_and_siz
     );
 
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn claude_authenticated_stop_recovers_a_bounded_correlated_child_transcript() {
+    own_process!(isolated);
     let fixture = claude_hook_fixture();
     let (root, manager, backend, projection, scope, _database, _factory) =
         claude_fixture_terminal("terminal-recovery").await;
@@ -10179,11 +10624,13 @@ async fn claude_authenticated_stop_recovers_a_bounded_correlated_child_transcrip
             .contains("Recovered terminal commentary")
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn claude_terminal_restart_interrupts_old_activity_before_a_new_root_handshake() {
+    own_process!(isolated);
     let fixture = claude_hook_fixture();
     let (root, manager, backend, projection, scope, _database, _factory) =
         claude_fixture_terminal("terminal-restart").await;
@@ -10289,11 +10736,13 @@ async fn claude_terminal_restart_interrupts_old_activity_before_a_new_root_hands
     .expect("new Claude root correlation");
     assert_ne!(replacement.scope_id, old_scope_id);
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn claude_failed_stop_projection_is_staged_until_cancellation_can_interrupt_history() {
+    own_process!(isolated);
     let fixture = claude_hook_fixture();
     let (root, manager, backend, projection, scope, database, _factory) =
         claude_fixture_terminal("terminal-failed-stop").await;
@@ -10370,6 +10819,7 @@ async fn claude_failed_stop_projection_is_staged_until_cancellation_can_interrup
         "failed terminal mutations must not remove actors from observer state before persistence"
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[derive(Debug, Default)]
@@ -11324,6 +11774,7 @@ fn opencode_fixture_probe(
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_feature_probe_requires_serve_and_attach_support() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     let (runner, factory) = opencode_fixture_probe(&fixture);
     let root = tempfile::tempdir().expect("OpenCode probe root");
@@ -11409,11 +11860,13 @@ async fn opencode_feature_probe_requires_serve_and_attach_support() {
         Some(false),
         "attach builds without exact-session selection must fail closed"
     );
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_cancelled_preparation_terminates_ready_helper_before_pass_through() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     let root = tempfile::tempdir().expect("OpenCode cancellation root");
     let configured = root.path().join("configured-opencode");
@@ -11537,11 +11990,13 @@ async fn opencode_cancelled_preparation_terminates_ready_helper_before_pass_thro
         "preparation fallback must allow the generation worker to reap the helper asynchronously"
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_spawn_failure_deletes_owned_root_before_terminating_helper() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     let root = tempfile::tempdir().expect("OpenCode spawn-failure root");
     let configured = root.path().join("configured-opencode");
@@ -11658,11 +12113,13 @@ async fn opencode_spawn_failure_deletes_owned_root_before_terminating_helper() {
             .any(|call| call == "delete:root-tui-session")
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_root_correlation_timeout_keeps_attach_usable_until_terminal_closes() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     let root = tempfile::tempdir().expect("OpenCode correlation-timeout root");
     let configured = root.path().join("configured-opencode");
@@ -11814,11 +12271,13 @@ async fn opencode_root_correlation_timeout_keeps_attach_usable_until_terminal_cl
             .any(|call| call == "abort:root-tui-session")
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_publication_failure_keeps_attach_usable_until_terminal_closes() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     let root = tempfile::tempdir().expect("OpenCode publication-failure root");
     let configured = root.path().join("configured-opencode");
@@ -11954,6 +12413,7 @@ async fn opencode_publication_failure_keeps_attach_usable_until_terminal_closes(
             .any(|call| call == "abort:root-tui-session")
     );
     manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
@@ -12245,6 +12705,7 @@ async fn wait_for_opencode_discard_count(state: &OpenCodeFixtureRemoteState, exp
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_opencode_drains_raw_dormant_stream() {
+    own_process!(isolated);
     let fixture = OpenCodeToggleFixture::open(vec![OpenCodeFixtureStreamScript::new([Ok(
         opencode_fixture_connected_frame(),
     )])])
@@ -12269,11 +12730,13 @@ async fn agent_activity_toggle_opencode_drains_raw_dormant_stream() {
     );
     assert!(!fixture.backend.latest().killed.load(Ordering::Acquire));
     fixture.finish().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_opencode_handoff_requires_server_connected() {
+    own_process!(isolated);
     let fixture = OpenCodeToggleFixture::open(vec![
         OpenCodeFixtureStreamScript::new([Ok(opencode_fixture_connected_frame())]),
         OpenCodeFixtureStreamScript::new([]),
@@ -12310,12 +12773,14 @@ async fn agent_activity_toggle_opencode_handoff_requires_server_connected() {
     );
     assert!(!fixture.backend.latest().killed.load(Ordering::Acquire));
     fixture.finish().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_opencode_busy_dormant_stream_does_not_starve_connected_replacement()
 {
+    own_process!(isolated);
     let fixture = OpenCodeToggleFixture::open(vec![
         OpenCodeFixtureStreamScript::busy_dormant([Ok(opencode_fixture_connected_frame())]),
         OpenCodeFixtureStreamScript::new([Ok(opencode_fixture_connected_frame())]),
@@ -12340,11 +12805,13 @@ async fn agent_activity_toggle_opencode_busy_dormant_stream_does_not_starve_conn
             <= 2
     );
     fixture.finish().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_opencode_busy_dormant_stream_does_not_starve_handoff_deadline() {
+    own_process!(isolated);
     let fixture = OpenCodeToggleFixture::open_with_reattach_timeout(
         vec![
             OpenCodeFixtureStreamScript::busy_dormant([Ok(opencode_fixture_connected_frame())]),
@@ -12377,11 +12844,13 @@ async fn agent_activity_toggle_opencode_busy_dormant_stream_does_not_starve_hand
         "the timed-out replacement is dropped while the dormant stream remains"
     );
     fixture.finish().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_opencode_retries_latest_enabled_generation_after_supersession() {
+    own_process!(isolated);
     let (fixture, activity_transition) =
         OpenCodeToggleFixture::open_with_activity_transition_probe(vec![
             OpenCodeFixtureStreamScript::new([Ok(opencode_fixture_connected_frame())]),
@@ -12472,11 +12941,13 @@ async fn agent_activity_toggle_opencode_retries_latest_enabled_generation_after_
             <= 2
     );
     fixture.finish().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_opencode_failed_handoff_stays_dormant() {
+    own_process!(isolated);
     let fixture = OpenCodeToggleFixture::open(vec![
         OpenCodeFixtureStreamScript::new([Ok(opencode_fixture_connected_frame())]),
         OpenCodeFixtureStreamScript::new([Err("injected replacement stream failure".to_owned())]),
@@ -12510,11 +12981,13 @@ async fn agent_activity_toggle_opencode_failed_handoff_stays_dormant() {
     );
     assert!(!fixture.backend.latest().killed.load(Ordering::Acquire));
     fixture.finish().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agent_activity_toggle_opencode_repeated_handoffs_return_to_one_stream() {
+    own_process!(isolated);
     let fixture = OpenCodeToggleFixture::open(vec![
         OpenCodeFixtureStreamScript::new([Ok(opencode_fixture_connected_frame())]),
         OpenCodeFixtureStreamScript::new([Ok(opencode_fixture_connected_frame())]),
@@ -12546,6 +13019,7 @@ async fn agent_activity_toggle_opencode_repeated_handoffs_return_to_one_stream()
     );
     assert!(!fixture.backend.latest().killed.load(Ordering::Acquire));
     fixture.finish().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
@@ -12578,6 +13052,7 @@ async fn begin_activity_controller_disables(
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn repeated_activity_toggle_across_providers_keeps_resources_bounded_and_releases_them() {
+    own_process!(isolated);
     let (
         _claude_root,
         claude_manager,
@@ -12987,11 +13462,13 @@ async fn repeated_activity_toggle_across_providers_keeps_resources_bounded_and_r
     claude_manager.shutdown().await;
     codex_manager.shutdown().await;
     opencode.manager.shutdown().await;
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_parallel_terminals_have_unique_endpoints_credentials_roots_and_scopes() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     let root = tempfile::tempdir().expect("OpenCode parallel root");
     let configured = root.path().join("configured-opencode");
@@ -13131,11 +13608,144 @@ async fn opencode_parallel_terminals_have_unique_endpoints_credentials_roots_and
         .await
         .expect("close terminal");
     manager.shutdown().await;
+    isolated.complete();
+}
+
+/// OpenCode 2 has no `attach`: its `attach --help` prints the root help, and the observed
+/// terminal opens the owned root with `--server`/`--session`, the password in `OPENCODE_PASSWORD`.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn opencode_2_terminals_open_the_owned_root_with_server_flags() {
+    let root = tempfile::tempdir().expect("OpenCode 2 root");
+    let configured = root.path().join("configured-opencode");
+    std::fs::write(&configured, b"configured").expect("configured OpenCode executable");
+    let helper = Arc::new(OpenCodeFixtureHelperLauncher {
+        endpoints: Mutex::new(VecDeque::from(["http://127.0.0.1:41003".to_owned()])),
+        ..OpenCodeFixtureHelperLauncher::default()
+    });
+    let helper_launches = helper.clone();
+    let remote_state = Arc::new(OpenCodeFixtureRemoteState {
+        root_session_ids: Mutex::new(VecDeque::from(["ses_root".to_owned()])),
+        ..OpenCodeFixtureRemoteState::default()
+    });
+    let probe_runner = Arc::new(OpenCodeProbeFixtureRunner {
+        calls: Mutex::new(Vec::new()),
+        outputs: Mutex::new(VecDeque::from([OpenCodeProbeOutput {
+            success: true,
+            stdout: "USAGE\n  opencode <subcommand> [flags] [<directory>]\n\nFLAGS\n  \
+                     --server string         Connect to a server URL\n  \
+                     --session, -s string    Session ID to continue\n"
+                .to_owned(),
+            stderr: String::new(),
+        }])),
+        delay: std::time::Duration::ZERO,
+    });
+    let database = Database::open_in_memory().await.expect("database");
+    database
+        .call(|connection| {
+            run_migrations(connection, None)?;
+            Ok(())
+        })
+        .await
+        .expect("migrations");
+    let projection = ActivityProjection::new(ActivityRepository::new(database));
+    let mut settings = ProviderSettingsState::default();
+    settings.providers.opencode.binary_path = configured.to_string_lossy().into_owned();
+    let supervisor = ProviderTerminalActivitySupervisor::new(
+        settings.clone(),
+        ProviderTerminalInventory::from_settings(&settings),
+        projection,
+        ProcessAttributionRegistry::new(),
+        root.path().join("runtime"),
+        ProviderTerminalObserverFactories {
+            opencode: Some(Arc::new(OpenCodeTerminalObserverFactory::new(
+                Arc::new(CachedOpenCodeCapabilityProbe::new(probe_runner)),
+                helper,
+                Arc::new(OpenCodeFixtureRemoteFactory {
+                    state: remote_state,
+                }),
+                std::time::Duration::from_secs(1),
+            ))),
+            ..ProviderTerminalObserverFactories::default()
+        },
+    )
+    .expect("OpenCode 2 supervisor");
+    let backend = Arc::new(RecordingBackend::new(Arc::new(Mutex::new(Vec::new()))));
+    let manager = TerminalManager::new(
+        backend.clone(),
+        TerminalManagerOptions {
+            launch_preparer: Some(Arc::new(supervisor)),
+            ..TerminalManagerOptions::default()
+        },
+    );
+    let mut input = TerminalOpenInput::new(
+        "thread-opencode-2",
+        "terminal-opencode-2",
+        root.path().to_path_buf(),
+        80,
+        24,
+    );
+    input.command = Some(TerminalLaunchCommand {
+        executable: configured.to_string_lossy().into_owned(),
+        args: vec!["--model".to_owned(), "mock/mock-model".to_owned()],
+        label: Some("OpenCode".to_owned()),
+        activity: Some(ProviderTerminalActivityLaunch {
+            driver_kind: "opencode".to_owned(),
+            provider_instance_id: "opencode".to_owned(),
+        }),
+        env: None,
+    });
+    manager
+        .open(input)
+        .await
+        .expect("observed OpenCode 2 terminal");
+
+    let spawns = backend.spawns();
+    assert_eq!(spawns.len(), 1);
+    assert_eq!(
+        spawns[0].args,
+        [
+            "--server".to_owned(),
+            "http://127.0.0.1:41003".to_owned(),
+            "--session".to_owned(),
+            "ses_root".to_owned(),
+            root.path().to_string_lossy().into_owned(),
+        ]
+    );
+    let password = spawns[0]
+        .env
+        .get("OPENCODE_PASSWORD")
+        .expect("OpenCode 2 client credential");
+    assert!(
+        !spawns[0]
+            .args
+            .iter()
+            .any(|argument| argument.contains(password))
+    );
+    // OpenCode 2 prefers `OPENCODE_PASSWORD` to `OPENCODE_SERVER_PASSWORD`, so the helper gets
+    // both: one inherited from BiBCode's environment cannot override its own.
+    {
+        let launches = helper_launches
+            .launches
+            .lock()
+            .expect("helper launches lock");
+        assert_eq!(launches[0].env.get("OPENCODE_PASSWORD"), Some(password));
+        assert_eq!(
+            launches[0].env.get("OPENCODE_SERVER_PASSWORD"),
+            Some(password)
+        );
+    }
+    manager
+        .close("thread-opencode-2", Some("terminal-opencode-2"))
+        .await
+        .expect("close terminal");
+    manager.shutdown().await;
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_helper_already_exited_before_prepared_observer_is_rejected() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     let root = tempfile::tempdir().expect("OpenCode early-helper-exit root");
     let configured = root.path().join("configured-opencode");
@@ -13239,11 +13849,13 @@ async fn opencode_helper_already_exited_before_prepared_observer_is_rejected() {
             .any(|call| call == "delete:root-tui-session"),
         "factory rejection deletes the pre-spawn root"
     );
+    isolated.complete();
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_helper_exit_in_manager_gap_falls_back_to_original_pty() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     let root = tempfile::tempdir().expect("OpenCode helper-exit root");
     let configured = root.path().join("configured-opencode");
@@ -13388,11 +14000,162 @@ async fn opencode_helper_exit_in_manager_gap_falls_back_to_original_pty() {
         "pre-spawn root cleanup runs before pass-through"
     );
     manager.shutdown().await;
+    isolated.complete();
+}
+
+/// OpenCode 2 has no `--model`, so the requested `opencode --model <model>` would not start. The
+/// server runs it as OpenCode 2 accepts: a private server (`--standalone`) whose configuration
+/// selects the model, also when observation is not prepared. OpenCode 1 keeps `--model`.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn opencode_terminal_arguments_follow_the_installed_major_version() {
+    let fixture = opencode_attach_fixture();
+    let opencode_2_help = "USAGE\n  opencode <subcommand> [flags] [<directory>]\n\nFLAGS\n  \
+                           --standalone            Run with a private server\n  \
+                           --server string         Connect to a server URL\n  \
+                           --session, -s string    Session ID to continue\n";
+    for (help, probe_delay, expected_args, expected_config) in [
+        (
+            opencode_2_help.to_owned(),
+            std::time::Duration::ZERO,
+            vec!["--standalone".to_owned()],
+            serde_json::json!({ "theme": "system", "model": "mock/mock-model" }),
+        ),
+        // A cold capability probe may take most of its 900 ms budget; the native form still
+        // applies.
+        (
+            opencode_2_help.to_owned(),
+            std::time::Duration::from_millis(700),
+            vec!["--standalone".to_owned()],
+            serde_json::json!({ "theme": "system", "model": "mock/mock-model" }),
+        ),
+        (
+            fixture["attachHelp"]
+                .as_str()
+                .expect("OpenCode 1 attach help")
+                .to_owned(),
+            std::time::Duration::ZERO,
+            vec!["--model".to_owned(), "mock/mock-model".to_owned()],
+            serde_json::json!({ "theme": "system" }),
+        ),
+    ] {
+        let root = tempfile::tempdir().expect("OpenCode arguments root");
+        let configured = root.path().join("configured-opencode");
+        std::fs::write(&configured, b"configured").expect("configured OpenCode executable");
+        // The helper fails, so the terminal starts unobserved.
+        let helper = Arc::new(OpenCodeFixtureHelperLauncher {
+            fail: AtomicBool::new(true),
+            ..OpenCodeFixtureHelperLauncher::default()
+        });
+        let runner = Arc::new(OpenCodeProbeFixtureRunner {
+            calls: Mutex::new(Vec::new()),
+            outputs: Mutex::new(VecDeque::from([OpenCodeProbeOutput {
+                success: true,
+                stdout: help,
+                stderr: String::new(),
+            }])),
+            delay: probe_delay,
+        });
+        let factory = Arc::new(OpenCodeTerminalObserverFactory::new(
+            Arc::new(CachedOpenCodeCapabilityProbe::new(runner)),
+            helper,
+            Arc::new(OpenCodeFixtureRemoteFactory {
+                state: Arc::new(OpenCodeFixtureRemoteState::default()),
+            }),
+            std::time::Duration::from_millis(50),
+        ));
+        let database = Database::open_in_memory().await.expect("database");
+        database
+            .call(|connection| {
+                run_migrations(connection, None)?;
+                Ok(())
+            })
+            .await
+            .expect("migrations");
+        let mut settings = ProviderSettingsState::default();
+        settings.providers.opencode.binary_path = configured.to_string_lossy().into_owned();
+        let supervisor = ProviderTerminalActivitySupervisor::new(
+            settings.clone(),
+            ProviderTerminalInventory::from_settings(&settings),
+            ActivityProjection::new(ActivityRepository::new(database)),
+            ProcessAttributionRegistry::new(),
+            root.path().join("runtime"),
+            ProviderTerminalObserverFactories {
+                opencode: Some(factory),
+                ..ProviderTerminalObserverFactories::default()
+            },
+        )
+        .expect("OpenCode arguments supervisor");
+        let backend = Arc::new(RecordingBackend::new(Arc::new(Mutex::new(Vec::new()))));
+        let manager = TerminalManager::new(
+            backend.clone(),
+            TerminalManagerOptions {
+                launch_preparer: Some(Arc::new(supervisor)),
+                ..TerminalManagerOptions::default()
+            },
+        );
+        let mut input = TerminalOpenInput::new(
+            "thread-opencode-arguments",
+            "terminal-opencode-arguments",
+            root.path().to_path_buf(),
+            80,
+            24,
+        );
+        input.env = BTreeMap::from([(
+            "OPENCODE_CONFIG_CONTENT".to_owned(),
+            "{\"theme\":\"system\"}".to_owned(),
+        )]);
+        input.command = Some(TerminalLaunchCommand {
+            executable: configured.to_string_lossy().into_owned(),
+            args: vec!["--model".to_owned(), "mock/mock-model".to_owned()],
+            label: Some("OpenCode".to_owned()),
+            activity: Some(ProviderTerminalActivityLaunch {
+                driver_kind: "opencode".to_owned(),
+                provider_instance_id: "opencode".to_owned(),
+            }),
+            env: Some(BTreeMap::from([(
+                "OPENCODE_CONFIG_CONTENT".to_owned(),
+                "{\"theme\":\"system\"}".to_owned(),
+            )])),
+        });
+        manager
+            .open(input)
+            .await
+            .expect("unobserved OpenCode terminal");
+        let spawn = backend.spawns().pop().expect("OpenCode spawn");
+        assert_eq!(spawn.args, expected_args);
+        // The session keeps the requested command, so a relaunch derives the native form again,
+        // and the published descriptor stays the client's.
+        let summaries = manager.subscribe_metadata().await.initial;
+        let command = summaries[0].command.clone().expect("saved command");
+        assert_eq!(command.args, ["--model", "mock/mock-model"]);
+        assert_eq!(
+            command.env.expect("saved env")["OPENCODE_CONFIG_CONTENT"],
+            "{\"theme\":\"system\"}"
+        );
+        let config: serde_json::Value = serde_json::from_str(
+            spawn
+                .env
+                .get("OPENCODE_CONFIG_CONTENT")
+                .expect("OpenCode config"),
+        )
+        .expect("OpenCode config JSON");
+        assert_eq!(config, expected_config);
+        manager
+            .close(
+                "thread-opencode-arguments",
+                Some("terminal-opencode-arguments"),
+            )
+            .await
+            .expect("close terminal");
+        manager.shutdown().await;
+    }
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_helper_failure_and_unsafe_args_are_exact_pass_through() {
+    own_process!(isolated);
     let fixture = opencode_attach_fixture();
     for (args, config, helper_fail, connect_fail) in [
         (
@@ -13563,6 +14326,134 @@ async fn opencode_helper_failure_and_unsafe_args_are_exact_pass_through() {
         }
         manager.shutdown().await;
     }
+    isolated.complete();
+}
+
+/// Observes a terminal of a real OpenCode 2 binary through the production factory: the
+/// capability probe, the authenticated helper, the `/api` client and root correlation. The PTY
+/// itself is recorded, not run. Set `BIBCODE_OPENCODE_V2_BINARY` (a copy under the temporary
+/// directory, which the hermetic test guard allows), `BIBCODE_OPENCODE_V2_HOME` (a scratch home
+/// whose configuration points the default model at a scripted local endpoint) and
+/// `BIBCODE_OPENCODE_V2_MODEL`.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a live OpenCode 2 binary"]
+async fn live_opencode_2_terminal_observation() {
+    let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
+    let binary = var("BIBCODE_OPENCODE_V2_BINARY");
+    let home = std::path::PathBuf::from(var("BIBCODE_OPENCODE_V2_HOME"));
+    let root = tempfile::tempdir().expect("OpenCode 2 terminal root");
+    let database = Database::open_in_memory().await.expect("database");
+    database
+        .call(|connection| {
+            run_migrations(connection, None)?;
+            Ok(())
+        })
+        .await
+        .expect("migrations");
+    let projection = ActivityProjection::new(ActivityRepository::new(database));
+    let mut settings = ProviderSettingsState::default();
+    settings.providers.opencode.binary_path = binary.clone();
+    let supervisor = ProviderTerminalActivitySupervisor::new(
+        settings.clone(),
+        ProviderTerminalInventory::from_settings(&settings),
+        projection.clone(),
+        ProcessAttributionRegistry::new(),
+        root.path().join("runtime"),
+        ProviderTerminalObserverFactories {
+            opencode: Some(Arc::new(OpenCodeTerminalObserverFactory::system())),
+            ..ProviderTerminalObserverFactories::default()
+        },
+    )
+    .expect("OpenCode 2 supervisor");
+    let backend = Arc::new(RecordingBackend::new(Arc::new(Mutex::new(Vec::new()))));
+    let manager = TerminalManager::new(
+        backend.clone(),
+        TerminalManagerOptions {
+            launch_preparer: Some(Arc::new(supervisor)),
+            ..TerminalManagerOptions::default()
+        },
+    );
+    let mut input = TerminalOpenInput::new(
+        "thread-live-opencode-2",
+        "terminal-live-opencode-2",
+        root.path().to_path_buf(),
+        80,
+        24,
+    );
+    input.env = [
+        ("HOME", home.clone()),
+        ("XDG_CONFIG_HOME", home.join(".config")),
+        ("XDG_DATA_HOME", home.join(".local/share")),
+        ("XDG_STATE_HOME", home.join(".local/state")),
+        ("XDG_CACHE_HOME", home.join(".cache")),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_owned(), value.to_string_lossy().into_owned()))
+    .collect();
+    input.command = Some(TerminalLaunchCommand {
+        executable: binary,
+        args: vec!["--model".to_owned(), var("BIBCODE_OPENCODE_V2_MODEL")],
+        label: Some("OpenCode".to_owned()),
+        activity: Some(ProviderTerminalActivityLaunch {
+            driver_kind: "opencode".to_owned(),
+            provider_instance_id: "opencode".to_owned(),
+        }),
+        env: None,
+    });
+    let started = std::time::Instant::now();
+    manager.open(input).await.expect("OpenCode 2 terminal");
+    let elapsed = started.elapsed();
+
+    let spawn = backend.spawns().pop().expect("OpenCode 2 PTY spawn");
+    assert_eq!(
+        spawn.args.first().map(String::as_str),
+        Some("--server"),
+        "observed launch (preparation took {elapsed:?})"
+    );
+    assert_eq!(spawn.args.get(2).map(String::as_str), Some("--session"));
+    assert!(spawn.env.contains_key("OPENCODE_PASSWORD"));
+    let endpoint = spawn.args[1].clone();
+    let scope = ActivityScopeRef::Terminal {
+        thread_id: "thread-live-opencode-2".to_owned(),
+        terminal_id: "terminal-live-opencode-2".to_owned(),
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if projection
+                .snapshot(&scope)
+                .await
+                .is_ok_and(|snapshot| snapshot.capabilities.terminal_observation)
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("OpenCode 2 root correlation");
+    manager
+        .close("thread-live-opencode-2", Some("terminal-live-opencode-2"))
+        .await
+        .expect("close terminal");
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if tokio::net::TcpStream::connect(
+                endpoint
+                    .strip_prefix("http://")
+                    .expect("loopback OpenCode endpoint"),
+            )
+            .await
+            .is_err()
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("owned OpenCode 2 helper reaped on terminal close");
+    manager.shutdown().await;
 }
 
 #[cfg(all(unix, target_os = "macos"))]
@@ -13701,4 +14592,375 @@ async fn installed_opencode_1184_cold_topology_reaps_owned_listener() {
     .await
     .expect("owned OpenCode listener reaped on terminal close");
     manager.shutdown().await;
+}
+
+/// Holds process-wide observer worker slots with workers that never finish, one per
+/// generation, as other observed terminals do. Run only in a process of its own.
+struct HeldObserverWorkerSlots(Vec<TerminalObserverGeneration>);
+
+impl HeldObserverWorkerSlots {
+    /// Every slot: workers are admitted until the process-wide cap refuses one.
+    fn all() -> Self {
+        let mut held = Vec::new();
+        loop {
+            let generation = TerminalObserverGeneration::new(
+                "thread-slot-holder".to_owned(),
+                format!("terminal-slot-holder-{}", held.len()),
+            );
+            if generation
+                .worker_context()
+                .spawn(std::future::pending::<()>())
+                .is_err()
+            {
+                return Self(held);
+            }
+            held.push(generation);
+        }
+    }
+
+    /// Every slot but one, so a launch can start one worker before its terminal spawns.
+    async fn all_but_one() -> Self {
+        let capacity = Self::all().0.len();
+        // Released slots return once their worker threads are joined.
+        let mut held = Vec::new();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while held.len() < capacity - 1 {
+                let generation = TerminalObserverGeneration::new(
+                    "thread-slot-holder".to_owned(),
+                    format!("terminal-slot-holder-{}", held.len()),
+                );
+                if generation
+                    .worker_context()
+                    .spawn(std::future::pending::<()>())
+                    .is_ok()
+                {
+                    held.push(generation);
+                } else {
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            }
+        })
+        .await
+        .expect("released observer worker slots return");
+        Self(held)
+    }
+}
+
+/// Installs a process-wide subscriber: a refused worker is logged on the manager's
+/// callback thread, which a scoped subscriber does not see. Installed after the slots are
+/// held, so it sees only the launch's refusals. Run only in a process of its own.
+fn capture_process_logs() -> TraceCapture {
+    let capture = TraceCapture::default();
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(capture.clone())
+            .finish(),
+    )
+    .expect("process-wide subscriber");
+    capture
+}
+
+fn assert_refused_worker_is_logged(capture: &TraceCapture, root: &std::path::Path) {
+    let logs = capture.text();
+    assert_eq!(
+        logs.matches("provider terminal observer worker was refused")
+            .count(),
+        1,
+        "{logs}"
+    );
+    assert!(logs.contains("capacity is exhausted"), "{logs}");
+    assert!(
+        !logs.contains(&*root.to_string_lossy()),
+        "the warning carries no paths: {logs}"
+    );
+}
+
+/// A Claude terminal whose observer worker is refused at the process-wide cap keeps running
+/// its pinned executable with its settings overlay until the terminal closes.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn claude_refused_observer_worker_keeps_the_running_generation_until_close() {
+    own_process!(isolated);
+    let _held = HeldObserverWorkerSlots::all();
+    let capture = capture_process_logs();
+    let root = tempfile::tempdir().expect("fixture root");
+    let configured = root.path().join("configured-claude");
+    std::fs::write(&configured, b"approved").expect("approved Claude");
+    std::fs::set_permissions(&configured, std::fs::Permissions::from_mode(0o700))
+        .expect("Claude permissions");
+    let supervisor =
+        claude_pinning_fixture_supervisor(&root, &configured, Arc::new(CopyClaudeExecutablePinner))
+            .await;
+    let backend = Arc::new(RecordingBackend::new(Arc::new(Mutex::new(Vec::new()))));
+    let manager = TerminalManager::new(
+        backend.clone(),
+        TerminalManagerOptions {
+            launch_preparer: Some(Arc::new(supervisor)),
+            ..TerminalManagerOptions::default()
+        },
+    );
+
+    manager
+        .open(claude_pinning_open_input(
+            &root,
+            &configured,
+            "terminal-claude-refused",
+        ))
+        .await
+        .expect("Claude terminal");
+    let pinned =
+        std::path::PathBuf::from(&backend.spawns().pop().expect("Claude PTY spawn").executable);
+    assert_ne!(pinned, configured, "the prepared launch runs");
+    let generation_dir = pinned.parent().expect("generation directory").to_path_buf();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(
+        std::fs::read(&pinned).expect("the running pinned executable"),
+        b"approved"
+    );
+    assert!(
+        generation_dir.join("settings.json").is_file(),
+        "the running process's settings overlay stays"
+    );
+    assert_refused_worker_is_logged(&capture, root.path());
+
+    manager
+        .close("thread-claude-pin", Some("terminal-claude-refused"))
+        .await
+        .expect("close terminal");
+    assert!(
+        !pinned.exists(),
+        "closing the terminal removes its generation"
+    );
+    manager.shutdown().await;
+    isolated.complete();
+}
+
+/// A Codex terminal whose observer worker is refused at the process-wide cap keeps the App
+/// Server its remote TUI uses until the terminal closes, and publishes no dock.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn codex_refused_observer_worker_keeps_the_app_server_until_close() {
+    own_process!(isolated);
+    let _held = HeldObserverWorkerSlots::all();
+    let capture = capture_process_logs();
+    let fixture = codex_remote_fixture();
+    let root = tempfile::tempdir().expect("fixture root");
+    let configured = root.path().join("configured-codex");
+    std::fs::write(&configured, b"configured").expect("configured executable");
+    let helper = Arc::new(CodexFixtureHelperLauncher::default());
+    let remote_state = Arc::new(CodexFixtureRemoteState::default());
+    let (supervisor, projection) = codex_fixture_supervisor(
+        &root,
+        &configured,
+        helper.clone(),
+        Arc::new(CodexFixtureRemoteFactory {
+            state: remote_state.clone(),
+        }),
+    )
+    .await;
+    let backend = Arc::new(RecordingBackend::new(Arc::new(Mutex::new(Vec::new()))));
+    let manager = TerminalManager::new(
+        backend.clone(),
+        TerminalManagerOptions {
+            launch_preparer: Some(Arc::new(supervisor)),
+            ..TerminalManagerOptions::default()
+        },
+    );
+
+    manager
+        .open(codex_fixture_open_input(
+            &fixture,
+            &configured,
+            &root,
+            "terminal-codex-refused",
+        ))
+        .await
+        .expect("Codex terminal");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(backend.spawns().len(), 1);
+    assert!(
+        backend.spawns()[0]
+            .args
+            .iter()
+            .any(|arg| arg.as_str() == "--remote"),
+        "the remote TUI runs: {:?}",
+        backend.spawns()[0].args
+    );
+    assert!(
+        !helper.processes.lock().expect("helper processes lock")[0]
+            .terminated
+            .load(Ordering::Acquire),
+        "a refused observer must not stop the App Server backing the remote TUI"
+    );
+    assert!(
+        projection
+            .snapshot(&ActivityScopeRef::Terminal {
+                thread_id: "thread-codex".to_owned(),
+                terminal_id: "terminal-codex-refused".to_owned(),
+            })
+            .await
+            .is_err(),
+        "an unobserved terminal publishes no dock"
+    );
+    assert_refused_worker_is_logged(&capture, root.path());
+
+    manager
+        .close("thread-codex", Some("terminal-codex-refused"))
+        .await
+        .expect("close terminal");
+    assert!(
+        helper.processes.lock().expect("helper processes lock")[0]
+            .terminated
+            .load(Ordering::Acquire),
+        "terminal close terminates its owned helper"
+    );
+    manager.shutdown().await;
+    isolated.complete();
+}
+
+/// An OpenCode terminal whose observer worker is refused at the process-wide cap, after its
+/// pre-launch worker took the last slot, keeps its attach session and owned root: closing the
+/// terminal stops the helper but never deletes the session the user worked in.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn opencode_refused_observer_worker_keeps_the_attach_session_and_its_root() {
+    own_process!(isolated);
+    let _held = HeldObserverWorkerSlots::all_but_one().await;
+    let capture = capture_process_logs();
+    let fixture = opencode_attach_fixture();
+    let root = tempfile::tempdir().expect("OpenCode refused-worker root");
+    let configured = root.path().join("configured-opencode");
+    std::fs::write(&configured, b"configured").expect("configured OpenCode executable");
+    let timeline = Arc::new(Mutex::new(Vec::new()));
+    let helper = Arc::new(OpenCodeFixtureHelperLauncher {
+        endpoint: Mutex::new(Some(
+            fixture["endpoint"]
+                .as_str()
+                .expect("OpenCode endpoint fixture")
+                .to_owned(),
+        )),
+        timeline: timeline.clone(),
+        ..OpenCodeFixtureHelperLauncher::default()
+    });
+    let remote_state = Arc::new(OpenCodeFixtureRemoteState {
+        timeline: timeline.clone(),
+        ..OpenCodeFixtureRemoteState::default()
+    });
+    let probe_runner = Arc::new(OpenCodeProbeFixtureRunner {
+        calls: Mutex::new(Vec::new()),
+        outputs: Mutex::new(VecDeque::from([OpenCodeProbeOutput {
+            success: true,
+            stdout: fixture["attachHelp"]
+                .as_str()
+                .expect("OpenCode attach help")
+                .to_owned(),
+            stderr: String::new(),
+        }])),
+        delay: std::time::Duration::ZERO,
+    });
+    let database = Database::open_in_memory().await.expect("database");
+    let mut settings = ProviderSettingsState::default();
+    settings.providers.opencode.binary_path = configured.to_string_lossy().into_owned();
+    let supervisor = ProviderTerminalActivitySupervisor::new(
+        settings.clone(),
+        ProviderTerminalInventory::from_settings(&settings),
+        ActivityProjection::new(ActivityRepository::new(database)),
+        ProcessAttributionRegistry::new(),
+        root.path().join("runtime"),
+        ProviderTerminalObserverFactories {
+            opencode: Some(Arc::new(OpenCodeTerminalObserverFactory::new(
+                Arc::new(CachedOpenCodeCapabilityProbe::new(probe_runner)),
+                helper.clone(),
+                Arc::new(OpenCodeFixtureRemoteFactory {
+                    state: remote_state.clone(),
+                }),
+                std::time::Duration::from_secs(1),
+            ))),
+            ..ProviderTerminalObserverFactories::default()
+        },
+    )
+    .expect("OpenCode refused-worker supervisor");
+    let backend = Arc::new(RecordingBackend::new(timeline));
+    let manager = TerminalManager::new(
+        backend.clone(),
+        TerminalManagerOptions {
+            launch_preparer: Some(Arc::new(supervisor)),
+            ..TerminalManagerOptions::default()
+        },
+    );
+    let mut input = TerminalOpenInput::new(
+        "thread-opencode-refused",
+        "terminal-opencode-refused",
+        root.path().to_path_buf(),
+        80,
+        24,
+    );
+    input.command = Some(TerminalLaunchCommand {
+        executable: configured.to_string_lossy().into_owned(),
+        args: vec!["--model".to_owned(), "openai/gpt-5.2".to_owned()],
+        label: Some("OpenCode".to_owned()),
+        activity: Some(ProviderTerminalActivityLaunch {
+            driver_kind: "opencode".to_owned(),
+            provider_instance_id: "opencode".to_owned(),
+        }),
+        env: None,
+    });
+
+    manager.open(input).await.expect("OpenCode attach terminal");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(
+        backend
+            .spawns()
+            .first()
+            .and_then(|spawn| spawn.args.first())
+            .map(String::as_str),
+        Some("attach"),
+        "the prepared attach launch runs"
+    );
+    assert!(
+        !helper
+            .processes
+            .lock()
+            .expect("OpenCode helper processes")
+            .first()
+            .expect("OpenCode helper process")
+            .terminated
+            .load(Ordering::Acquire),
+        "a refused observer must not stop the server the attach session uses"
+    );
+    assert_refused_worker_is_logged(&capture, root.path());
+
+    manager
+        .close("thread-opencode-refused", Some("terminal-opencode-refused"))
+        .await
+        .expect("close terminal");
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if helper
+                .processes
+                .lock()
+                .expect("OpenCode helper processes")
+                .first()
+                .is_some_and(|process| process.terminated.load(Ordering::Acquire))
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("OpenCode helper stops with the terminal");
+    let calls = remote_state
+        .calls
+        .lock()
+        .expect("OpenCode remote calls")
+        .clone();
+    assert!(
+        !calls.iter().any(|call| call.starts_with("delete:")),
+        "the launched root holds the user's session: {calls:?}"
+    );
+    manager.shutdown().await;
+    isolated.complete();
 }

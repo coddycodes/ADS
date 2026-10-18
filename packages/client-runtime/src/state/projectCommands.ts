@@ -77,6 +77,17 @@ export function createProjectEnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       idleTtlMs: 5 * 60_000,
     }),
+    /**
+     * The Files panel's full list. The panel mounts it only once `subscribeEntries` has resynced
+     * the server's index, and that mount is its read: a list read earlier could predate the resync
+     * and would have to be read again. Nothing keeps it once the panel lets go, so every mount is a
+     * fresh read rather than a list cached while no panel handled the change signals.
+     */
+    fileTreeEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:file-tree-entries",
+      tag: WS_METHODS.projectsListEntries,
+      idleTtlMs: 0,
+    }),
     readFile: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:read-file",
       tag: WS_METHODS.projectsReadFile,

@@ -408,6 +408,37 @@ describe("RightPanelTabs mounted interactions", () => {
     expect(document.querySelector('[aria-label="Close Diff"] span')).not.toBeNull();
   });
 
+  it("titles pull request tabs by the host's number format with the request icon", async () => {
+    await mount(
+      <RightPanelTabs
+        {...tabsProps({
+          surfaces: [
+            {
+              id: "pullRequest:12",
+              kind: "pullRequest",
+              number: 12,
+              provider: "github",
+              tab: "conversation",
+            },
+            {
+              id: "pullRequest:89",
+              kind: "pullRequest",
+              number: 89,
+              provider: "gitlab",
+              tab: "files",
+            },
+          ] as RightPanelSurface[],
+          activeSurfaceId: "pullRequest:12",
+        })}
+      />,
+    );
+    for (const title of ["#12", "!89"]) {
+      const tab = buttonWithText(title);
+      expect(tab.querySelector("svg.lucide-git-pull-request")).not.toBeNull();
+      expect(document.querySelector(`[aria-label="Close ${title}"]`)).not.toBeNull();
+    }
+  });
+
   it("renders a local globe icon for preview tabs without a remote image", async () => {
     await mount(<RightPanelTabs {...tabsProps()} />);
     expect(buttonWithText("Project docs").querySelector("svg.lucide-earth")).not.toBeNull();

@@ -23,6 +23,7 @@ import {
   type AgentRow,
   type AgentsGroupByMode,
   buildAgentRows,
+  resolveAgentCheckouts,
   buildAgentViewGroups,
   countUnreadAgentRows,
 } from "../sidebar/agentsSection.logic";
@@ -37,6 +38,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { SidebarMenu } from "../ui/sidebar";
 import { Toggle } from "../ui/toggle";
 import { AgentsRow } from "./AgentsRow";
+import { useAgentLiveBranches } from "./useAgentLiveBranches";
 
 const GROUP_BY_LABELS: Record<AgentsGroupByMode, string> = {
   status: "Status",
@@ -64,22 +66,43 @@ export function AgentsPage() {
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
-  const rows = useMemo(
+  const availabilityByEnvironmentId = useMemo(
     () =>
-      buildAgentRows({
-        shells,
-        projectTitleById: new Map<string, string>(
-          projects.map((project) => [project.id, project.title]),
-        ),
-        environmentLabelById: new Map<string, string>(
-          environments.map((environment) => [environment.environmentId, environment.label]),
-        ),
-        availabilityByEnvironmentId: new Map<string, EnvironmentAvailabilityStatus>(
-          availability.map(({ environmentId, status }) => [environmentId, status]),
-        ),
-      }),
-    [availability, environments, projects, shells],
+      new Map<string, EnvironmentAvailabilityStatus>(
+        availability.map(({ environmentId, status }) => [environmentId, status]),
+      ),
+    [availability],
   );
+  const { checkoutKeyByThreadKey, checkouts } = useMemo(
+    () => resolveAgentCheckouts({ shells, projects, availabilityByEnvironmentId }),
+    [availabilityByEnvironmentId, projects, shells],
+  );
+  const liveBranchByCheckoutKey = useAgentLiveBranches(checkouts);
+  const rows = useMemo(() => {
+    const liveBranchByThreadKey = new Map<string, string>();
+    for (const [threadKey, checkoutKey] of checkoutKeyByThreadKey) {
+      const branch = liveBranchByCheckoutKey.get(checkoutKey);
+      if (branch !== undefined) liveBranchByThreadKey.set(threadKey, branch);
+    }
+    return buildAgentRows({
+      shells,
+      projectTitleById: new Map<string, string>(
+        projects.map((project) => [project.id, project.title]),
+      ),
+      environmentLabelById: new Map<string, string>(
+        environments.map((environment) => [environment.environmentId, environment.label]),
+      ),
+      availabilityByEnvironmentId,
+      liveBranchByThreadKey,
+    });
+  }, [
+    availabilityByEnvironmentId,
+    checkoutKeyByThreadKey,
+    environments,
+    liveBranchByCheckoutKey,
+    projects,
+    shells,
+  ]);
   const unreadCount = useMemo(
     () => countUnreadAgentRows(rows, unreadThreadKeys),
     [rows, unreadThreadKeys],

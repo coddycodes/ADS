@@ -131,7 +131,7 @@ impl RegisteredHelper {
                     label,
                     exe: &self.exe,
                     pid: self.pid,
-                    uptime: self.started.elapsed(),
+                    started: self.started,
                 },
                 status,
                 false,

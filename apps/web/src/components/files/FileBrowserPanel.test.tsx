@@ -94,7 +94,8 @@ const testState = vi.hoisted(() => ({
   remapFileSurfaces: (() => {}) as (...args: unknown[]) => void,
   closeFileSurfacesUnder: (() => {}) as (...args: unknown[]) => void,
   vcsStatus: null as VcsStatusResult | null,
-  entryChangeSignal: null as { cwd: string } | null,
+  /** The `live` flag each render passed to `useFileTreeEntries`. */
+  fileTreeEntriesLive: [] as boolean[],
   openFileInPreview: (async () => ({ _tag: "Success" })) as (input: unknown) => Promise<{
     _tag: string;
     error?: unknown;
@@ -229,13 +230,10 @@ vi.mock("~/state/preview", () => ({
   previewEnvironment: { open: { label: "openPreview" } },
 }));
 
-// Two subscriptions run in the panel: vcs status and the out-of-band entry-change signal. They are
-// told apart by the atom each returns so a test can move one without disturbing the other.
+// The panel's own environment query is vcs status; the entry-change subscription lives in the
+// mocked `useFileTreeEntries`.
 vi.mock("~/state/query", () => ({
-  useEnvironmentQuery: (atom: { kind?: string } | null) =>
-    atom?.kind === "entry-changes"
-      ? { data: testState.entryChangeSignal }
-      : { data: testState.vcsStatus },
+  useEnvironmentQuery: () => ({ data: testState.vcsStatus }),
 }));
 
 vi.mock("~/state/projects", () => ({
@@ -311,7 +309,10 @@ vi.mock("./projectFilesQueryState", () => {
   // function keeps the entry-signal effect's dependency unchanged across renders.
   const revalidate = () => testState.entriesQuery.refresh();
   return {
-    useProjectEntriesQuery: () => ({ ...testState.entriesQuery, revalidate }),
+    useFileTreeEntries: (_environmentId: unknown, _cwd: unknown, live: boolean) => {
+      testState.fileTreeEntriesLive.push(live);
+      return { ...testState.entriesQuery, revalidate };
+    },
   };
 });
 
@@ -487,7 +488,7 @@ beforeEach(() => {
   testState.vcsStatus = null;
   testState.openFileInPreview = vi.fn(async () => ({ _tag: "Success" }));
   testState.commandCalls = [];
-  testState.entryChangeSignal = null;
+  testState.fileTreeEntriesLive = [];
   testState.commandResults = {};
   testState.toastAdd = vi.fn();
   testState.fileTree.resetPaths = vi.fn();
@@ -1125,52 +1126,11 @@ describe("refresh", () => {
     expect(refresh).toHaveBeenCalledOnce();
   });
 
-  it("re-lists when the subscription starts with a server resync signal", () => {
-    harness.persistRefs = true;
-    setEntries([entry("src", "directory")]);
-    const refresh = vi.fn();
-    testState.entriesQuery.refresh = refresh;
-    testState.entryChangeSignal = { cwd: "/workspace/demo" };
-
+  // `useFileTreeEntries` owns the change subscription and its signals (see its tests); the open
+  // panel is its live caller, re-reading on every signal, including one from while it was closed.
+  it("holds the Files list as its live caller", () => {
     renderPanel();
-    harness.runEffects();
-
-    expect(refresh).toHaveBeenCalledOnce();
-    // The signal carries no entries, so the panel re-reads rather than asking for another rescan:
-    // the server already dropped its cached index before signalling.
-    expect(testState.commandCalls.some((call) => call.label === "refreshEntries")).toBe(false);
-  });
-
-  // A refresh re-renders, and `useProjectEntriesQuery` hands back a fresh object each render. An
-  // effect keyed on that object re-runs every render, so acting on a signal more than once turns
-  // into a hot loop that hammers the server for as long as the panel is open.
-  it("re-lists once per signal, not once per render", () => {
-    harness.persistRefs = true;
-    setEntries([entry("src", "directory")]);
-    const refresh = vi.fn();
-    testState.entriesQuery.refresh = refresh;
-
-    renderPanel();
-    harness.runEffects();
-    expect(refresh).not.toHaveBeenCalled();
-
-    testState.entryChangeSignal = { cwd: "/workspace/demo" };
-    renderPanel();
-    harness.runEffects();
-    expect(refresh).toHaveBeenCalledTimes(1);
-
-    // Re-renders carrying the same signal must not refresh again, however many arrive.
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      renderPanel();
-      harness.runEffects();
-    }
-    expect(refresh).toHaveBeenCalledTimes(1);
-
-    // A genuinely new signal still refreshes.
-    testState.entryChangeSignal = { cwd: "/workspace/demo" };
-    renderPanel();
-    harness.runEffects();
-    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(testState.fileTreeEntriesLive).toEqual([true]);
   });
 
   // projects.createEntry and friends already drop the server's cached index, so asking for a second

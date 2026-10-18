@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 
@@ -21,11 +22,21 @@ export type ConnectionDriverProgress =
   | {
       readonly stage: Exclude<ConnectionAttemptStage, "preparing">;
       readonly prepared: PreparedConnection;
+      /**
+       * From `configuring` on: the session consumers may use before it is verified
+       * (see `makeVerifiedSessionGate`); the lease returns the same object.
+       */
+      readonly session?: RpcSession.RpcSession;
     };
 
 export interface EnvironmentConnectionLease {
   readonly prepared: PreparedConnection;
   readonly session: RpcSession.RpcSession;
+  /**
+   * Releases what the session held back while unverified. The supervisor runs it once
+   * it reports the connection connected, so held data meets a connected environment.
+   */
+  readonly open?: Effect.Effect<void>;
 }
 
 export class ConnectionDriver extends Context.Service<
@@ -58,16 +69,28 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Persistence.AcceptedStorageIdentityStore, identities),
     );
     yield* reportProgress({ stage: "opening", prepared });
-    const session = yield* sessions.connect(prepared);
-    yield* session.connected;
-    yield* reportProgress({ stage: "configuring", prepared });
-    yield* session.ready;
-    const initialConfig = yield* session.initialConfig;
-    yield* verifyPreparedStorageIdentity(prepared, initialConfig.environment).pipe(
-      Effect.provideService(Persistence.AcceptedStorageIdentityStore, identities),
-    );
-    yield* reportProgress({ stage: "synchronizing", prepared });
-    return { prepared, session } satisfies EnvironmentConnectionLease;
+    const established = yield* sessions.connect(prepared);
+    yield* established.connected;
+    // Consumers get the session now and send their read subscriptions alongside the
+    // config request instead of a round trip after it; the gate holds their data, and
+    // every other call, until the config's identity check below passes.
+    const gate = yield* RpcSession.makeVerifiedSessionGate(established);
+    // An attempt that ends unverified, or a lease that closes, fails whatever is held.
+    yield* Effect.addFinalizer(() => gate.close);
+    yield* reportProgress({ stage: "configuring", prepared, session: gate.session });
+    yield* Effect.gen(function* () {
+      yield* established.ready;
+      const initialConfig = yield* established.initialConfig;
+      yield* verifyPreparedStorageIdentity(prepared, initialConfig.environment).pipe(
+        Effect.provideService(Persistence.AcceptedStorageIdentityStore, identities),
+      );
+    }).pipe(Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : gate.close)));
+    yield* reportProgress({ stage: "synchronizing", prepared, session: gate.session });
+    return {
+      prepared,
+      session: gate.session,
+      open: gate.open,
+    } satisfies EnvironmentConnectionLease;
   });
 
   return ConnectionDriver.of({ connect });

@@ -139,6 +139,8 @@ pub fn is_long_running(method: &str) -> bool {
             | "server.refreshProviderUsage"
             // Served from a cache, but a cold one waits on the provider's probe (#107).
             | "server.getProviderCapabilities"
+            // Saving settings re-probes the providers, which runs OpenCode's `--version` (#115).
+            | "server.updateSettings"
             | "worktree.createManaged"
             // `git worktree remove --force` deletes the whole tree, `node_modules` and `target`
             // included.

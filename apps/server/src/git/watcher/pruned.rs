@@ -349,7 +349,14 @@ impl PrunedWatcher {
                             if changes_contents(event.kind) {
                                 let _ = changes.send(Change::Rules(path.clone()));
                             }
-                        } else if matches!(event.kind, notify::EventKind::Create(_)) {
+                        } else if matches!(
+                            event.kind,
+                            // A directory renamed into place arrives as a rename, and notify
+                            // only re-watches it under a recursive parent. The worker keeps
+                            // only paths that are directories now.
+                            notify::EventKind::Create(_)
+                                | notify::EventKind::Modify(notify::event::ModifyKind::Name(_))
+                        ) {
                             let _ = changes.send(Change::Created(path.clone()));
                         }
                     }
@@ -799,6 +806,27 @@ mod tests {
         fs::remove_dir_all(root.join("src/lib")).unwrap();
         fs::create_dir(root.join("src/lib")).unwrap();
         assert!(observed(&events, &root.join("src/lib/again.rs")));
+
+        // Renamed into place, as `git mv` does: inotify reports MOVED_TO, not a create, and
+        // drops the watch on the old name.
+        fs::rename(root.join("src/lib"), root.join("src/renamed")).unwrap();
+        assert!(
+            observed(&events, &root.join("src/renamed/moved.rs")),
+            "a renamed directory stays watched"
+        );
+
+        // Renamed onto an ignored name, it stays unwatched. The worker handles changes in
+        // order, so once the later directory is watched the rename has been handled.
+        fs::rename(root.join("src/renamed"), root.join("src/node_modules")).unwrap();
+        fs::create_dir(root.join("src/after")).unwrap();
+        assert!(observed(&events, &root.join("src/after/file.rs")));
+        fs::write(root.join("src/node_modules/hidden.rs"), "x").unwrap();
+        fs::write(root.join("src/after/file.rs"), "y").unwrap();
+        let before = until(&events, &root.join("src/after/file.rs")).expect("a kept directory");
+        assert!(
+            !before.contains(&root.join("src/node_modules/hidden.rs")),
+            "a rename onto an ignored name is not watched: {before:?}"
+        );
 
         // Un-ignoring `build/` brings it into the watch.
         fs::write(root.join(".gitignore"), "node_modules/\n").unwrap();

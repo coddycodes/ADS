@@ -650,10 +650,12 @@ impl PreparedTerminalObserver for ClaudePreparedTerminalObserver {
             .take();
         let Some((listener, listener_lease)) = listener else {
             publish_claude_listener_unavailable(&self.inner);
-            self.inner.resources.cleanup();
             return;
         };
         let inner = self.inner.clone();
+        // A refused worker drops the listener and leaves the terminal unobserved. The running
+        // process still executes its pinned copy with its settings overlay, so the
+        // generation directory stays until the observer's drop when the generation ends.
         if workers
             .spawn(async move {
                 run_claude_observer(inner, generation, listener, listener_lease).await;
@@ -661,7 +663,6 @@ impl PreparedTerminalObserver for ClaudePreparedTerminalObserver {
             .is_err()
         {
             publish_claude_listener_unavailable(&self.inner);
-            self.inner.resources.cleanup();
         }
     }
 
@@ -900,8 +901,8 @@ async fn run_claude_observer(
     _listener_lease: ClaudeListenerLease,
 ) {
     let Ok(listener) = tokio::net::TcpListener::from_std(listener) else {
+        // The process still runs its pinned copy: the observer's drop removes the generation.
         publish_claude_listener_unavailable(&inner);
-        inner.resources.cleanup();
         return;
     };
     let lifecycle = inner.mark_listener_ready();
@@ -974,7 +975,12 @@ async fn drive_claude_observer(
     }
     publish_claude_listener_unavailable(&inner);
     interrupt_claude_activity(&inner, &active_actors, &active_work_items, event_sequence).await;
-    inner.resources.cleanup();
+    // A hook server that ended on its own leaves the process running its pinned copy with its
+    // settings overlay: only an ended generation removes them now, otherwise the observer's
+    // drop does when the generation ends.
+    if generation.cancellation_reason().is_some() {
+        inner.resources.cleanup();
+    }
 }
 
 fn publish_claude_listener_unavailable(inner: &ClaudeObserverInner) {

@@ -30,7 +30,6 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
 }));
 vi.mock("../../state/entities", () => ({
-  useProject: () => ({ id: "project", workspaceRoot: "/repo" }),
   useServerConfigs: () =>
     new Map([
       [

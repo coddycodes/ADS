@@ -122,6 +122,14 @@ from the schema-only `WsRpcGroup`. The Rust mirror is
 | Server to client | `Pong`                | Answer a protocol probe.                                                          |
 | Server to client | `ClientProtocolError` | Report malformed or unsupported client protocol input.                            |
 
+A stream has one `Chunk` in flight: the server sends the next only after the
+client's `Ack` for the previous one. Items the handler queued meanwhile leave
+together in that next `Chunk`, in order, up to 64 KiB of encoded values (or the
+connection's message limit when smaller); a failure or an item that does not
+fit goes out after it. A slow link therefore costs a stream one round trip per
+`Chunk` rather than one per item: before this, typing over a 250 ms link echoed
+one key per round trip.
+
 Schemas validate payloads at the client boundary. The Rust session validates
 request IDs, registered method names, authorization scopes, cancellation, and
 stream flow before invoking handlers. The read loop never waits on the
@@ -190,6 +198,15 @@ records are used there only when the client lists `interleave-v1` in
 raw-deflate compressed server message only after the client lists `deflate-v1`
 and the server confirms it ([Remote environments](./remote.md#direct-connection-e2ee)).
 
+A plain client that can inflate raw deflate offers
+`bibcode.rpc.chunked-deflate.v1` before `bibcode.rpc.chunked.v1`, except on a
+loopback socket that is not an SSH tunnel (a backend on the same machine). The
+server prefers it unless `BIBCODE_REMOTE_COMPRESSION=0` is set. Selecting it means
+chunked records as above, and a data message of at least 16 KiB that compresses
+smaller leaves in the `deflate-v1` form: binary records that all carry `0x10`,
+even below 64 KiB. A server that predates it selects `bibcode.rpc.chunked.v1`
+([design](../superpowers/specs/2026-10-13-e2ee-message-compression-design.md#addendum-2026-10-17-compression-on-plain-ws)).
+
 A response that does not fit the connection's message limit (64 MiB on E2EE and
 record-framed plain sockets) fails only its own request with a typed
 `RpcResponseTooLargeError { method, bytes, limitBytes }`; the session stays
@@ -256,10 +273,13 @@ labels such as the sidebar branch follow a checkout without waiting for the
 deadline; status reads, including watcher-driven reads, also nudge it when
 repository availability (`isRepo` or `repositoryUnavailableReason`) changes, so
 the sidebar follows a break or repair at once.
-The left panel names a card's branch from the latest summary even when it is
-stale, since a failed PR lookup marks a just-read base stale; only the PR and
-dirty indicators wait for a fresh value. A thread's recorded `branch` is the
-fallback when no summary names one.
+The left panel reads a card's branch, PR badge and dirty dot from the latest
+summary even when it is stale: a failed PR lookup marks a just-read base stale,
+and a stale PR is the last one the server read for the summary's own ref and
+provider. Hiding them would show an older branch, a missing PR, or a clean
+checkout. A thread's recorded `branch` is the fallback when no summary names
+one, and a workspace card's PR badge matches the branch the card names. An
+Agents view row names its branch by the same rule while its environment is live.
 Each successful base cycle publishes current local and provider state. A same-ref/provider PR from the immediately prior cycle may be carried
 only into cycle N+1 while enrichment runs or fails, preserving its original
 `observedAt` with `stale: true`; cycle N+2 expires it unless enrichment refreshes
@@ -1904,6 +1924,26 @@ client decodes only the changed fields with the thread's field
 schemas, and `packages/contracts/fixtures/thread-stream/lifecycle.json` pins
 that patches rebuild the server's snapshot exactly. Older clients omit
 `patches` and keep receiving whole snapshots; older servers ignore it.
+
+A resubscribe resumes instead of resending the thread
+([design](../superpowers/specs/2026-10-17-thread-resubscribe-resume-design.md)).
+For a `patches: true` subscriber, every `snapshot` and `patch` item carries a
+`revision`: a 128-bit digest of the thread's held fingerprints, keyed by
+random keys secret to the server process. The client records the revision of
+the last item it applied in full and sends it on each resubscribe as
+`resume: { revision, snapshotSequence }`. The server loads the thread as
+before, and answers `{ kind: "unchanged", snapshotSequence, revision }` only
+when the thread still has that revision and its sequence is at least the
+client's. It then patches against that thread. Anything else gets the whole
+snapshot: a change the client missed, a revision from before a restart (new
+keys), one the server never produced, a sequence newer than the server's, or a
+client that does not apply patches. The client clears its revision whenever it
+changes the thread without one (an event item, deletion), so it never resumes
+from a thread it does not hold. Older clients send no `resume` and older
+servers ignore it and send no `revision`, so either side alone keeps today's
+full snapshot. `packages/contracts/fixtures/thread-stream/resume.json` pins the
+items; revisions in it are placeholders, because they mean nothing to another
+process.
 A thread stream ends with its first error, such as `Thread … was not found`
 for a missing or deleted thread, whose targeted load reads none of its rows.
 The client retries a failed `subscribeThread` or `subscribeActivity` with
@@ -1958,11 +1998,19 @@ turn's own options fails the delivery once, because the unchanged durable
 payload would be refused on every attempt. Its failed delivery carries the
 optional reason `modelSelectionRefused`, also used when a frozen turn's model
 or options are refused before delivery. A launch refused because the provider
-itself cannot be driven, such as an unsupported version, fails the delivery
-once without a reason; a retry after the setting is fixed launches normally.
-Other launch failures, such as a spawn error, stay definitely not sent and
-retry with backoff. The delivery
-detail is what the turn shows, so every one is plain text from a single
+itself cannot be driven, such as an unsupported version, or because its
+executable is missing (`ProviderRuntimeError::MissingExecutable`), fails the
+delivery once without a reason; a retry after the setting is fixed, or once the
+executable exists at the same path, launches normally (a retry keeps the
+turn's original route). Other launch failures, such as another spawn error,
+stay definitely not sent and retry with backoff: 50 ms, doubling to a 30-second
+cap per delivery (a one-second cap retried a provider that could not start
+every second). A retry that fails again with the same detail returns the
+delivery to exactly what the thread already shows, so it records the attempt
+but appends no `thread.turn-delivery-updated` event. A provider that asks to
+send the message later (OpenCode answering 408 or 429) leaves it definitely not
+sent too; its next attempt waits for the backoff and for any `Retry-After` it
+named, capped at 30 seconds. The delivery detail is what the turn shows, so every one is plain text from a single
 formatter that names the provider by its instance label, never by a driver id:
 the refusal itself, such as "Fast Mode is not supported by the selected model.";
 for a spawn failure, that the provider could not start and why; for an uncertain
@@ -2058,8 +2106,9 @@ admitted messages. Thread snapshots retain that same order for queued messages;
 clients rendering queue cards preserve it instead of sorting their timestamps.
 
 Automatic promotion requires an unheld head, a ready session, no pending/sending
-delivery, no running projected turn, and no pending approval or user-input
-request. The gate reads approvals and the latest durable user-input activity
+delivery, no running projected turn, no pending approval or user-input
+request, and no [checkpoint revert](#checkpoint-revert) of the thread in
+flight; the delivery worker also claims nothing for such a thread. The gate reads approvals and the latest durable user-input activity
 for each request, rather than the thread summary's input counter. A running
 turn placeholder continues to block the next promotion after provider acceptance
 releases the worker slot, until the provider's running and ready cycle settles
@@ -2068,7 +2117,12 @@ failed does not block promotion; resolution metadata records that prior state
 so a rejected head can be dismissed without stranding its tail. Dismissal of
 sending or uncertain work does not prove the provider received nothing, so
 those placeholders and bound running turns continue to block automatic
-promotion. An archived `panel` thread (a closed chat panel) never promotes
+promotion. OpenCode, whose session status can be read, releases a placeholder
+dismissed while uncertain once it shows the session idle: the delivery worker
+asks on every pass (a ready session update wakes it) and, while OpenCode
+reports the session busy, again after a backoff of up to 10 seconds. A session
+whose status cannot be read keeps the placeholder, and a manual send still
+clears it. Other providers keep the rule unchanged. An archived `panel` thread (a closed chat panel) never promotes
 automatically, and delivery neither selects nor claims its pending rows, so
 neither its queue nor a prompt sent just before closing starts work after its
 tab closed; unarchiving it resumes both. A delivery claimed before the panel
@@ -2269,9 +2323,45 @@ the provider keeps its conversation. It adds an informational
 `checkpoint.revert.files-only` activity that says the conversation was not
 rewound.
 
-The effect also refuses a revert while the thread's session is `running`,
-whichever client asked for it. A running turn would write over the restored
-files, or the rewind would cut it off.
+The effect also refuses a revert while the thread's session holds a turn,
+whichever client asked for it: it is `running` or `starting`, or it still names
+an active turn. This is the same test idle suspension uses for a busy session.
+A running turn would write over the restored files, or the rewind would cut it
+off. The supervisor likewise refuses, before it rewinds or reports files only,
+while the live session still runs background work that keeps idle suspension
+away: a Claude background task, or a subagent or work item Activity shows
+running, reported within the last 30 minutes. The session reads idle then, but
+its process would write over the restored files. Work BiBCode cannot see does
+not block a revert.
+
+A revert and the thread's turn deliveries exclude each other. The revert
+reserves the thread on `OrchestrationEngine` before its busy check and releases
+it once the revert is recorded or has failed; a delivery holds the same
+reservation from just before its claim until the provider has the turn. A
+revert therefore waits for a delivery already in flight, and then usually
+refuses its running turn. No turn starts from its busy check until it ends,
+whichever client sent the message, and also when a session the revert reopened
+reads `ready`. Delivery skips the reserved thread instead of claiming its
+messages or promoting its queue automatically, so a message sent or queued
+meanwhile keeps its place and is delivered after the revert, in queue order;
+the release wakes delivery. A client's **Send now** still moves the queue head
+to pending, where it waits the same way.
+The slow part of a revert does not hold the effects worker, which serves every
+thread. The worker parks the reverting thread, and a waiter does the
+preparation off the worker: it takes the reservation, which can wait for a
+delivery in flight, then runs step 1 and the busy check, which only read the
+checkout. If the provider can rewind, it then reopens a session that was
+suspended while idle, which can be a cold start. Meanwhile the thread's later
+effects, such as a turn baseline, queue behind the revert in event order, and
+other threads' checkpoint work goes on. Once the preparation is done, the
+worker runs the rewind and the restore, then the queued effects. Every effect
+that writes still runs on the worker one at a time, so checkpoint work on a
+checkout that sibling threads share never overlaps. A parked thread holds at
+most 64 events, and at most four threads are parked at once; past either bound
+the worker waits for the revert itself, as it did before parking.
+The reservation is in memory only. That is enough because a revert never
+outlives its process: the effects worker does not replay a revert requested
+before a restart.
 
 Once the provider has rewound, the revert must be recorded, or a retry would
 rewind the provider again. Shutdown therefore waits for step 3 instead of
@@ -2381,9 +2471,16 @@ something invalidates it:
   changing one requires explicit `refresh: true`;
 - `subscribeProjectEntries` streams a signal whenever a periodic sweep observes
   that the path set under `cwd` changed outside the application. The sweep stats
-  the directories the snapshot already lists rather than walking the tree,
-  because adding, renaming, or removing an entry moves its parent directory's
-  mtime while an in-place content edit does not. The first subscriber for a root
+  the directories the last scan saw rather than walking the tree, because
+  adding, renaming, or removing an entry moves its parent directory's mtime
+  while an in-place content edit does not. The index keeps that directory set
+  apart from its entry list, because past the entry limit the list keeps files
+  and drops directories, and a sweep that took its directories from the list
+  went blind to every nested change. Every listed directory is swept. A
+  directory the list dropped is swept within the entry count limit and the
+  memory the list leaves, so the index stays within its one memory bound. A truncated
+  index therefore pays a rebuild for each burst of changes it sees, even when
+  the change falls outside the listed entries. The first subscriber for a root
   starts the sweep and the last one to leave stops it. The sweep runs every two
   seconds and reports a burst of changes once, at the first sweep that sees
   nothing new; while changes keep arriving it reports about every ten seconds.
@@ -2399,7 +2496,13 @@ something invalidates it:
   down, so it holds up none of them. The event carries only `cwd` — the index
   stays the single source of truth for entry data, so subscribers re-list rather
   than apply a diff, which also keeps the payload independent of how many files
-  changed;
+  changed. Subscribing resyncs the index and then signals, so a list read
+  before that first signal could predate the resync. The web client therefore
+  subscribes and reads the list once, after that signal (or a failed
+  subscription), while a thread is open, so opening Files paints at once with
+  no read of its own. A later signal while Files is closed only marks the list
+  stale; the open panel re-reads on each signal, including one it missed while
+  closed, after painting the stale list;
 - `projects.listEntries` accepts an optional boolean `refresh`. Omitting it, or
   sending `false`, serves the retained index and preserves compatibility for
   older clients. `refresh: true` drops the cached index before listing, so the

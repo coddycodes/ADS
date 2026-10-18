@@ -1668,6 +1668,7 @@ mod tests {
         fn rollback(
             &self,
             _turn_count: i64,
+            _rewind_key: String,
         ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
             Box::pin(ready(Ok(())))
         }
@@ -4066,7 +4067,11 @@ pub(super) mod removal_test_support {
         ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
             Box::pin(async { Ok(()) })
         }
-        fn rollback(&self, _: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+        fn rollback(
+            &self,
+            _: i64,
+            _: String,
+        ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
             Box::pin(async { Ok(()) })
         }
         fn next_event(&self) -> BoxRuntimeFuture<'_, Option<ProviderEvent>> {
