@@ -2004,33 +2004,38 @@ subscriber sees only the latest frame. Width, height, and orientation come
 from what the emulator reports, never from a rotate command.
 
 **Input.** `device.input` takes batches of at most 64 touch, key, and text
-events (text at most 1,000 characters) and the client keeps one batch in
-flight. The client tracks the keys and touches it holds down: it lifts the
-keys when the screen or the window loses focus, and everything when the page
-is hidden or the screen closes. When a batch is refused, its key releases and
-its touch releases (as cancels where the touch was lifted) go out once more at
-once, ahead of later input and in a batch of their own, so text queued since
-that the server refuses cannot refuse them again; one refused again stays held
-for the next of those. The panel shows a refusal's reason for 5 s after the
-latest refusal: input accepted meanwhile does not clear it, and a newer
-refusal replaces it. The emulator's `KeyboardEvent.text` translates only printable ASCII and
-drops most other characters while the call succeeds, so Android refuses what it
-cannot type instead of sending it: `android::input::send_batch` fails a batch
-with any text event outside printable ASCII, Return, and Tab (the set
-`isUsTypeable` in `deviceKeyMap.ts` calls US-typeable) with a `DeviceInputError`
-that says "This device can type only plain ASCII text. Accented letters, emoji, and
-other characters can't be sent from here yet.", before it sends anything. The refusal is all or
-nothing, so a touch or key in the same batch is not sent either, and the client
-sends the releases of any press in it once more, as above. iOS still pastes such
-text. Pasting Unicode through the emulator's clipboard (`setClipboard` plus a
-paste key) is not implemented. Touch points are normalized `0..1` of the upright
-picture. The
-emulator's `Touch.x`/`y` is the physical location on the unrotated panel, so
-`android::input::to_panel_pixels` turns each point into panel pixels in the
-natural orientation, for the orientation the guest reported (measured on a real
-AVD: before this mapping, a landscape tap at (109, 66) of the 2400×1080 picture
-arrived as panel (109, 66)). A pointer still down when the device's input
-stream is reopened or the device stops is released where it was, in panel
+events (text at most 1,000 characters) and the client keeps one batch in flight.
+The client tracks the keys and touches it holds down: it lifts the keys when the
+screen or the window loses focus, and everything when the page is hidden or the
+screen closes. When a batch is refused, its key releases and its touch releases
+(as cancels where the touch was lifted) go out once more at once, ahead of later
+input and in a batch of their own, so text queued since that the server refuses
+cannot refuse them again; one refused again stays held for the next of those.
+The panel shows a refusal's reason for 5 s after the latest refusal: input
+accepted meanwhile does not clear it, and a newer refusal replaces it. The
+emulator's proto promises only printable ASCII (`[32, 127)`) in
+`KeyboardEvent.text` and ignores most other characters while the call still
+succeeds, so Android refuses what it cannot type instead of sending it:
+`android::input::send_batch` fails a batch with any text event outside
+`device::input::is_us_typeable` (printable ASCII, Return, and Tab: the set
+`isUsTypeable` in `deviceKeyMap.ts` calls US-typeable, which iOS types as keys)
+with a `DeviceInputError` that says "This device can type only plain ASCII text.
+Accented letters, emoji, and other characters can't be sent from here yet.",
+before it sends anything. Return and Tab are sent as text although the proto
+does not promise them, and they are not yet confirmed on a real AVD; the [device
+preview
+runbook](../testing/cross-platform-validation.md#android-device-previews)
+records whether each arrives. The refusal is all or nothing, so a touch, key, or
+other text in the same batch is not sent either, and the client sends the
+releases of any press in it once more, as above. iOS still pastes such text.
+Pasting Unicode through the emulator's clipboard (`setClipboard` plus a paste
+key) is not implemented. Touch points are normalized `0..1` of the upright
+picture. The emulator's `Touch.x`/`y` is the physical location on the unrotated
+panel, so `android::input::to_panel_pixels` turns each point into panel pixels
+in the natural orientation, for the orientation the guest reported (measured on
+a real AVD: before this mapping, a landscape tap at (109, 66) of the 2400×1080
+picture arrived as panel (109, 66)). A pointer still down when the device's
+input stream is reopened or the device stops is released where it was, in panel
 pixels. `device.rotate` tilts the virtual sensor with `setPhysicalModel` and
 then follows what the guest shows; the screen turns only when auto-rotate is on
 and the foreground app allows it. The emulator's `SkinRotation` follows the
@@ -2050,17 +2055,17 @@ first screenshot. BiBCode does not pass `-no-snapshot-load`, so an AVD stopped
 while turned comes back turned from its Quick Boot snapshot, with that
 screenshot already rotated (`ImageFormat.rotation`): a landscape rotation has
 its width and height swapped back to the natural panel. The tracker, the
-orientation whose vector the sensor was last sent, and the first `ready`
-catalog entry (with the turned size) start in the orientation it reported, and
-the device is not turned back. `rotate` reads the orientation back every
-250 ms in a 2.5 s window (measured: the display changed 0.67–0.90 s after
-`setPhysicalModel`); the last read starts by about 2.25 s, and one slow read
-can push the decision later. A turn no read has shown by then counts as refused only on positive
-evidence, a read that succeeded or a scrcpy display still in the other class,
-and the sensor is put back to the vector it held before the press, so it
-matches the screen. A failed read is no such evidence: it falls back to the
-derived orientation (which follows the scrcpy display). With no evidence at all
-the turn is taken as asked: the sensor stays where it was sent, the skin is
+orientation whose vector the sensor was last sent, and the first `ready` catalog
+entry (with the turned size) start in the orientation it reported, and the
+device is not turned back. `rotate` reads the orientation back every 250 ms in a
+2.5 s window (measured: the display changed 0.67–0.90 s after
+`setPhysicalModel`); the last read starts by about 2.25 s, and one slow read can
+push the decision later. A turn no read has shown by then counts as refused only
+on positive evidence, a read that succeeded or a scrcpy display still in the
+other class, and the sensor is put back to the vector it held before the press,
+so it matches the screen. A failed read is no such evidence: it falls back to
+the derived orientation (which follows the scrcpy display). With no evidence at
+all the turn is taken as asked: the sensor stays where it was sent, the skin is
 recorded at the requested orientation (it follows the sensor), and
 `device.rotate` returns the request, so its result, the catalog, and the touch
 mapping agree. One device's rotates run one at a time, so an older one never
@@ -2071,8 +2076,8 @@ auto-rotate may be off on the device."). The catalog, touch mapping, JPEG
 frames, PNG screenshots, and `orientation_changes` (which follows turns the
 guest makes on its own) all read that derived orientation. Android's `rotate`
 writes nothing to the catalog: the derived orientation reaches it through
-`orientation_changes` and, while still images run, through each published
-frame, which carries the value derived just before it is published.
+`orientation_changes` and, while still images run, through each published frame,
+which carries the value derived just before it is published.
 
 **H.264 video.** Device video is the only application traffic outside typed
 RPC. On the first media subscriber, `device/android/scrcpy.rs` pushes the embedded

@@ -373,6 +373,7 @@ and [iOS simulator previews](./cross-platform-validation.md#ios-simulator-previe
 | Desktop video                             |        |                                      |                          |
 | Browser still images on `http://<lan ip>` |        |                                      |                          |
 | Touch, keys, paste, toolbar keys          |        |                                      |                          |
+| Pasted line break and tab arrive          |        |                                      |                          |
 | Rotation through four orientations        |        |                                      |                          |
 | scrcpy stop and push skip                 |        |                                      |                          |
 | Two clients                               |        |                                      |                          |

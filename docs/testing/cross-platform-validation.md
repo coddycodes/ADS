@@ -3079,12 +3079,18 @@ Record each client's OS, app or browser version, and profile type.
    on the screen that ends outside the panel: the touch ends and nothing stays
    pressed. In a text field, type, use Backspace, Enter, and the arrow keys,
    and paste ASCII text into the focused screen, then copy other ASCII text and
-   choose the toolbar's **Paste**: both arrive. Android types only printable
-   ASCII, Return, and Tab. Type `é` on the focused screen, and paste `café 😀`
-   with ⌘V or Ctrl+V and with **Paste**: each is refused, the panel shows "This
-   device can type only plain ASCII text. Accented letters, emoji, and other
-   characters can't be sent from here yet.", and nothing reaches the field. Use
-   **Back**, **Home**, **Recents**, **Power**, and both volume buttons.
+   choose the toolbar's **Paste**: both arrive. Android sends only printable
+   ASCII, Return, and Tab, and the emulator promises only printable ASCII: in a
+   multi-line field (a notes app or a message being written), paste text with
+   a line break and a tab between words, and record whether the line break and
+   the tab each arrive. If either does not, the server's `is_us_typeable` and
+   the web's `isUsTypeable` must drop it together. Type `é` on the focused
+   screen, and paste `café 😀` with ⌘V or Ctrl+V and with **Paste**: each is
+   refused, the panel shows "This device can type only plain ASCII text.
+   Accented letters, emoji, and other characters can't be sent from here
+   yet.", and nothing reaches the field. Type `a` right after the refused `é`:
+   it arrives, and the message stays up for about 5 s. Use **Back**, **Home**,
+   **Recents**, **Power**, and both volume buttons.
 6. **Rotation (native items 2, 3, and 4).** Turn on auto-rotate
    (`adb -s <serial> shell settings put system accelerometer_rotation 1`) and
    open an app that rotates. Use **Rotate right** and **Rotate left** through
