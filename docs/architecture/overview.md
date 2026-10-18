@@ -2111,7 +2111,10 @@ overflowing, reporting a decoder error, or draining after it missed its key
 unit) is deferred, not dropped: when the second ends the hub's task sends one
 reset for every request made in it, if a socket still waits for a key unit,
 because a still screen encodes nothing unasked. A `RESET_VIDEO` write that
-fails or takes longer than 200 ms is deferred the same way. Only a socket that
+fails or takes longer than 200 ms is deferred the same way, until three writes
+in a row have failed: each retry that stalls holds up every viewer's units, so
+the hub then logs a warning and stops deferring failures until a write
+succeeds. Later requests are still written, once each. Only a socket that
 newly falls behind asks at overflow. One already waiting that also loses the config or key
 unit (often the answer to its own reset, arriving while its queue is still
 full) asks once more when its reader drains the queue, under the same limit,

@@ -40,6 +40,10 @@ const MAX_TICKETS_PER_PRINCIPAL: usize = 8;
 /// byte, so this only bites on a stalled control socket, and keeps it from holding up the
 /// unit stream for long.
 const RESET_WRITE_TIMEOUT: Duration = Duration::from_millis(200);
+/// Failed `RESET_VIDEO` writes in a row after which a failure is no longer tried again at
+/// the end of its window. Each retried write that stalls holds up the unit stream for
+/// every viewer, so a control socket that stays broken must not cost that once a window.
+const RESET_RETRIES: u32 = 3;
 const FRAME_HEADER_BYTES: usize = 9;
 /// A socket hears from its hub at least this often while the source is open: a quiet
 /// source (an unchanged iOS screen sends nothing) gets a [`KEEPALIVE_FRAME`] instead.
@@ -388,6 +392,8 @@ struct HubState {
     /// `RESET_VIDEO` writes started, sent or not yet; a deferred request counts once it
     /// falls due.
     resets: u64,
+    /// `RESET_VIDEO` writes that failed or timed out since the last one that succeeded.
+    failed_resets: u32,
     /// Units fanned out so far.
     dispatched: u64,
     next_id: u64,
@@ -817,7 +823,9 @@ pub(super) async fn run<S: VideoSource>(
 
 /// Writes each reset the hub asks for now; returns when a deferred one falls due, if any.
 /// A write that fails or times out is deferred to the end of its window, so it is tried
-/// again then if a socket still waits for a key unit.
+/// again then if a socket still waits for a key unit, until [`RESET_RETRIES`] writes in a
+/// row have failed. A later request is still written, once each, and a write that succeeds
+/// starts the count again; on a still screen the drained-socket watchdog keeps asking.
 async fn serve_resets<S: VideoSource>(hub: &MediaHub, source: &mut S) -> Option<Instant> {
     loop {
         match hub.next_reset(Instant::now()) {
@@ -834,8 +842,19 @@ async fn serve_resets<S: VideoSource>(hub: &MediaHub, source: &mut S) -> Option<
                             false
                         }
                     };
-                if !written {
-                    hub.lock().reset_deferred = true;
+                let mut state = hub.lock();
+                if written {
+                    state.failed_resets = 0;
+                } else {
+                    state.failed_resets = state.failed_resets.saturating_add(1);
+                    if state.failed_resets < RESET_RETRIES {
+                        state.reset_deferred = true;
+                    } else if state.failed_resets == RESET_RETRIES {
+                        tracing::warn!(
+                            failed = RESET_RETRIES,
+                            "device media resets keep failing; no longer trying them again"
+                        );
+                    }
                 }
             }
             ResetStep::At(deadline) => return Some(deadline),
@@ -1161,6 +1180,8 @@ mod tests {
         resets: Arc<AtomicUsize>,
         stopped: Arc<std::sync::OnceLock<bool>>,
         first_reset: FirstReset,
+        /// While set, every `RESET_VIDEO` write fails.
+        resets_fail: Arc<AtomicBool>,
     }
 
     impl VideoSource for ChannelSource {
@@ -1170,6 +1191,9 @@ mod tests {
 
         async fn reset_video(&mut self) -> Result<(), DeviceError> {
             let earlier = self.resets.fetch_add(1, Ordering::AcqRel);
+            if self.resets_fail.load(Ordering::Acquire) {
+                return Err(DeviceError::Io("control socket closed".to_owned()));
+            }
             match (earlier, self.first_reset) {
                 (0, FirstReset::Fails) => Err(DeviceError::Io("control socket closed".to_owned())),
                 (0, FirstReset::Stalls) => {
@@ -1198,6 +1222,8 @@ mod tests {
         written: Arc<AtomicUsize>,
         /// Whether the source was stopped for an ended device, once it was stopped.
         stopped: Arc<std::sync::OnceLock<bool>>,
+        /// See [`HubFixture::fail_resets`].
+        resets_fail: Arc<AtomicBool>,
     }
 
     struct Watcher {
@@ -1224,11 +1250,13 @@ mod tests {
             let (units, receiver) = mpsc::channel(64);
             let written = Arc::<AtomicUsize>::default();
             let stopped = Arc::<std::sync::OnceLock<bool>>::default();
+            let resets_fail = Arc::<AtomicBool>::default();
             let source = ChannelSource {
                 units: receiver,
                 resets: written.clone(),
                 stopped: stopped.clone(),
                 first_reset,
+                resets_fail: resets_fail.clone(),
             };
             tokio::spawn(run(hub.clone(), async move {
                 if !delay.is_zero() {
@@ -1242,7 +1270,18 @@ mod tests {
                 fed: std::cell::Cell::new(0),
                 written,
                 stopped,
+                resets_fail,
             }
+        }
+
+        /// Makes every later `RESET_VIDEO` write fail, or succeed again.
+        fn fail_resets(&self, fail: bool) {
+            self.resets_fail.store(fail, Ordering::Release);
+        }
+
+        /// `RESET_VIDEO` writes the source received.
+        fn written(&self) -> usize {
+            self.written.load(Ordering::Acquire)
         }
 
         fn try_subscribe(&self) -> Result<Watcher, MediaAttachError> {
@@ -1335,6 +1374,7 @@ mod tests {
             resets: Arc::default(),
             stopped: stopped.clone(),
             first_reset: FirstReset::Succeeds,
+            resets_fail: Arc::default(),
         };
         let erased: Box<dyn crate::device::backend::ErasedVideoSource> = Box::new(source);
         let hub = MediaHub::new(CancellationToken::new());
@@ -2077,6 +2117,39 @@ mod tests {
             tokio::time::sleep(RESET_MIN_INTERVAL * 3).await;
             assert_eq!(hub.written.load(Ordering::Acquire), 2);
         }
+    }
+
+    /// Review M2: each retried write that stalls holds up the unit stream for every viewer
+    /// for up to [`RESET_WRITE_TIMEOUT`], once per window, so a control socket that stays
+    /// broken is not tried again without end. After three failed writes in a row the hub
+    /// stops deferring them. A later request still writes, once, and a write that succeeds
+    /// starts the count again.
+    #[tokio::test(start_paused = true)]
+    async fn resets_that_keep_failing_are_not_tried_again_without_end() {
+        let hub = HubFixture::new();
+        hub.fail_resets(true);
+        // The socket reads nothing, and the cached config sits in its queue, so the
+        // drained-socket watchdog plays no part.
+        hub.feed([config()]).await;
+        let watcher = hub.subscribe();
+        hub.wait_written(3).await;
+        tokio::time::sleep(RESET_MIN_INTERVAL * 10).await;
+        assert_eq!(hub.written(), 3, "deferral stops after three failures");
+        // A later request is written once, and its failure is not tried again.
+        watcher.subscriber.request_keyframe();
+        hub.wait_written(4).await;
+        tokio::time::sleep(RESET_MIN_INTERVAL * 5).await;
+        assert_eq!(hub.written(), 4);
+        // A write that succeeds starts the count again.
+        hub.fail_resets(false);
+        watcher.subscriber.request_keyframe();
+        hub.wait_written(5).await;
+        hub.fail_resets(true);
+        tokio::time::sleep(RESET_MIN_INTERVAL * 2).await;
+        watcher.subscriber.request_keyframe();
+        hub.wait_written(8).await;
+        tokio::time::sleep(RESET_MIN_INTERVAL * 10).await;
+        assert_eq!(hub.written(), 8);
     }
 
     /// A failed write is retried only while a socket still waits for a key unit.
