@@ -69,7 +69,7 @@ function session(options: { supported?: boolean } = {}) {
   const drawn: unknown[] = [];
   let tickets = 0;
   let now = 0;
-  const mintTicket = vi.fn(async () => `T${++tickets}`);
+  const mintTicket = vi.fn(async () => `ticket-${++tickets}`);
   const video = new DeviceVideoSession({
     isSupported: async () => options.supported ?? true,
     mintTicket,
@@ -122,7 +122,7 @@ describe("DeviceVideoSession", () => {
     const { drawn, modes, video, worker } = session();
     video.start();
     await flush();
-    expect(worker().received).toEqual([{ type: "start", target, ticket: "T1" }]);
+    expect(worker().received).toEqual([{ type: "start", target, ticket: "ticket-1" }]);
     const frame = { close: vi.fn() };
     worker().emit({ type: "firstFrame" });
     worker().emit({ type: "frame", frame: frame as unknown as VideoFrame });
@@ -182,7 +182,7 @@ describe("DeviceVideoSession", () => {
     worker().emit({ type: "closed", reason: "network" });
     await advance(500);
     expect(mintTicket).toHaveBeenCalledTimes(2);
-    expect(worker().tickets).toEqual(["T1", "T2"]);
+    expect(worker().tickets).toEqual(["ticket-1", "ticket-2"]);
     // The same worker keeps decoding; only the socket is new.
     expect(workers).toHaveLength(1);
     expect(modes).toEqual([{ kind: "probing" }, { kind: "h264", stalled: false }]);
@@ -348,14 +348,14 @@ describe("DeviceVideoSession", () => {
     }
     worker().emit({ type: "closed", reason: "expired" });
     await advance(15_000);
-    expect(worker().tickets).toEqual(["T1", "T2"]);
+    expect(worker().tickets).toEqual(["ticket-1", "ticket-2"]);
     expect(modes.some((mode) => mode.kind === "jpeg")).toBe(false);
     // That close spent one reconnect: two more closes are retried, the next falls back.
     for (const reason of ["slow", "failed"]) {
       worker().emit({ type: "closed", reason });
       await advance(5_000);
     }
-    expect(worker().tickets).toEqual(["T1", "T2", "T3", "T4"]);
+    expect(worker().tickets).toEqual(["ticket-1", "ticket-2", "ticket-3", "ticket-4"]);
     expect(modes.some((mode) => mode.kind === "jpeg")).toBe(false);
     worker().emit({ type: "closed", reason: "slow" });
     expect(modes.at(-1)).toEqual({ kind: "jpeg", reason: "rejected" });
@@ -380,7 +380,7 @@ describe("DeviceVideoSession", () => {
     await flush();
     expect(workers).toHaveLength(0);
     await advance(500);
-    expect(workers[0]!.tickets).toEqual(["T1"]);
+    expect(workers[0]!.tickets).toEqual(["ticket-1"]);
   });
 
   it("shows still images at once when the server never issues tickets", async () => {
