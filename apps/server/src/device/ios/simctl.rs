@@ -26,7 +26,7 @@ const LIST_TIMEOUT: Duration = Duration::from_secs(15);
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(15);
 const PBCOPY_TIMEOUT: Duration = Duration::from_secs(15);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
-const CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
+pub(super) const CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
 /// A listing of every simulator of every runtime; a Mac with many is still far below this.
 const LIST_MAX_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 /// One full-resolution JPEG screenshot.
@@ -242,6 +242,7 @@ impl SimctlRunner {
                 None,
                 LIST_TIMEOUT,
                 LIST_MAX_OUTPUT_BYTES,
+                &CancellationToken::new(),
             )
             .await?;
         parse_list(&output)
@@ -250,8 +251,14 @@ impl SimctlRunner {
     /// Boots `udid` and waits until it has finished booting, both within `timeout`.
     pub(crate) async fn boot(&self, udid: &str, timeout: Duration) -> Result<(), SimctlError> {
         let deadline = Instant::now() + timeout;
-        self.simctl(&["boot", udid], None, timeout, SMALL_OUTPUT_BYTES)
-            .await?;
+        self.simctl(
+            &["boot", udid],
+            None,
+            timeout,
+            SMALL_OUTPUT_BYTES,
+            &CancellationToken::new(),
+        )
+        .await?;
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             return Err(SimctlError::Timeout {
@@ -263,6 +270,7 @@ impl SimctlRunner {
             None,
             remaining,
             SMALL_OUTPUT_BYTES,
+            &CancellationToken::new(),
         )
         .await?;
         Ok(())
@@ -274,6 +282,7 @@ impl SimctlRunner {
             None,
             SHUTDOWN_TIMEOUT,
             SMALL_OUTPUT_BYTES,
+            &CancellationToken::new(),
         )
         .await?;
         Ok(())
@@ -293,6 +302,7 @@ impl SimctlRunner {
                 None,
                 SCREENSHOT_TIMEOUT,
                 SMALL_OUTPUT_BYTES,
+                &CancellationToken::new(),
             )
             .await;
         match taken {
@@ -301,13 +311,20 @@ impl SimctlRunner {
         }
     }
 
-    /// Puts `text` on the simulator's pasteboard.
-    pub(crate) async fn pbcopy(&self, udid: &str, text: &str) -> Result<(), SimctlError> {
+    /// Puts `text` on the simulator's pasteboard. Cancelling `cancel` kills the child and ends
+    /// the call with [`SimctlError::Cancelled`] within [`CLEANUP_TIMEOUT`].
+    pub(crate) async fn pbcopy(
+        &self,
+        udid: &str,
+        text: &str,
+        cancel: &CancellationToken,
+    ) -> Result<(), SimctlError> {
         self.simctl(
             &["pbcopy", udid],
             Some(text.as_bytes().to_vec()),
             PBCOPY_TIMEOUT,
             SMALL_OUTPUT_BYTES,
+            cancel,
         )
         .await?;
         Ok(())
@@ -320,11 +337,12 @@ impl SimctlRunner {
         stdin: Option<Vec<u8>>,
         timeout: Duration,
         max_output_bytes: usize,
+        cancel: &CancellationToken,
     ) -> Result<Vec<u8>, SimctlError> {
         let command = format!("simctl {}", args.first().copied().unwrap_or_default());
         let mut full = vec!["simctl"];
         full.extend_from_slice(args);
-        let output = run(&self.xcrun, &full, stdin, timeout, max_output_bytes)
+        let output = run(&self.xcrun, &full, stdin, timeout, max_output_bytes, cancel)
             .await
             .map_err(|error| run_error(&command, error))?;
         succeeded(&command, output)
@@ -337,9 +355,16 @@ impl SimctlRunner {
         timeout: Duration,
     ) -> Result<SupervisedRunOutput, SimctlError> {
         let command = format!("xcrun {}", args.join(" "));
-        run(&self.xcrun, args, None, timeout, SMALL_OUTPUT_BYTES)
-            .await
-            .map_err(|error| run_error(&command, error))
+        run(
+            &self.xcrun,
+            args,
+            None,
+            timeout,
+            SMALL_OUTPUT_BYTES,
+            &CancellationToken::new(),
+        )
+        .await
+        .map_err(|error| run_error(&command, error))
     }
 
     /// The active developer directory `xcode-select -p` prints.
@@ -351,6 +376,7 @@ impl SimctlRunner {
             None,
             LIST_TIMEOUT,
             SMALL_OUTPUT_BYTES,
+            &CancellationToken::new(),
         )
         .await
         .map_err(|error| run_error(command, error))?;
@@ -452,6 +478,7 @@ async fn run(
     stdin: Option<Vec<u8>>,
     timeout: Duration,
     max_output_bytes: usize,
+    cancel: &CancellationToken,
 ) -> Result<SupervisedRunOutput, SupervisedRunError> {
     let mut command = tokio::process::Command::new(program);
     command
@@ -472,7 +499,7 @@ async fn run(
             max_output_bytes,
             overflow: SupervisedOverflow::Error,
         },
-        &CancellationToken::new(),
+        cancel,
     )
     .await
 }
@@ -598,6 +625,44 @@ mod tests {
         assert!(!is_launchd_sim_of("launchd".as_ref(), &cmd, "UDID-1"));
     }
 
+    /// Cancelling kills a `pbcopy` that does not end and reports it as cancelled, long
+    /// before the copy's own timeout.
+    #[tokio::test]
+    async fn a_cancelled_pbcopy_ends_at_once() {
+        use crate::device::ios::testing::FakeXcrun;
+        let sim = FakeXcrun::new()
+            .device("UDID-1", "iPhone 17 Pro", "iOS 27.0")
+            .pbcopy_hangs()
+            .write();
+        let runner = sim.runner();
+        let cancel = CancellationToken::new();
+        let copy = runner.pbcopy("UDID-1", "hello", &cancel);
+        tokio::pin!(copy);
+        // Still running after a moment: it is the hang that ends it.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), &mut copy)
+                .await
+                .is_err()
+        );
+        cancel.cancel();
+        let ended = tokio::time::timeout(CLEANUP_TIMEOUT + Duration::from_secs(3), copy)
+            .await
+            .expect("the cancelled copy ends");
+        assert_eq!(
+            ended,
+            Err(SimctlError::Cancelled {
+                command: "simctl pbcopy".to_owned()
+            })
+        );
+        // Cancelled before it starts, it never spawns.
+        let calls = sim.calls().len();
+        assert!(matches!(
+            runner.pbcopy("UDID-1", "again", &cancel).await,
+            Err(SimctlError::Cancelled { .. })
+        ));
+        assert_eq!(sim.calls().len(), calls);
+    }
+
     #[tokio::test]
     async fn runs_simctl_through_the_fake_xcrun() {
         use crate::device::ios::testing::{FakeXcrun, SCREEN};
@@ -607,7 +672,10 @@ mod tests {
         let runner = sim.runner();
         runner.boot("UDID-1", Duration::from_secs(5)).await.unwrap();
         assert_eq!(runner.list().await.unwrap()[0].state, SimState::Booted);
-        runner.pbcopy("UDID-1", "hello").await.unwrap();
+        runner
+            .pbcopy("UDID-1", "hello", &CancellationToken::new())
+            .await
+            .unwrap();
         assert_eq!(sim.pasteboard().as_deref(), Some("hello"));
         let jpeg = runner.screenshot_jpeg("UDID-1").await.unwrap();
         assert_eq!(jpeg_size(&jpeg), Some(SCREEN));

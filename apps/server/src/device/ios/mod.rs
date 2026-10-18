@@ -541,6 +541,9 @@ struct Shared {
     exit: Mutex<Option<String>>,
     /// Cancels the state poll.
     poll: CancellationToken,
+    /// Cancelled by a stop, right after the input connections are released, to cut short a
+    /// `pbcopy` still running: its child is killed instead of waited for.
+    input_stop: CancellationToken,
     poll_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     process: Mutex<Option<SimulatorProcess>>,
     /// Set by whichever stop runs first.
@@ -571,6 +574,7 @@ impl RunningSimulator {
             ownership,
             exit: Mutex::new(None),
             poll: CancellationToken::new(),
+            input_stop: CancellationToken::new(),
             poll_task: Mutex::new(None),
             process: Mutex::new(process),
             stopping: AtomicBool::new(false),
@@ -627,9 +631,12 @@ impl Shared {
         if let Control::Live(sink) = &self.control {
             sink.release().await;
         }
+        // A `pbcopy` still running is cancelled, not waited for: its child is killed and
+        // reaped within the runner's 2 s cleanup.
+        self.input_stop.cancel();
         // A batch still sending finishes first. The released sink refuses its remaining
         // sends without FFI, so this waits at most for the step in flight: a HID send's 2 s
-        // barrier or completion, or a `pbcopy`'s 15 s timeout and 2 s cleanup.
+        // barrier or completion, or the 2 s cleanup of a cancelled `pbcopy`.
         self.input_tasks.close();
         self.input_tasks.wait().await;
         *lock(&self.pointer) = PointerState::default();
@@ -741,9 +748,20 @@ impl Shared {
                     if self.stopping.load(Ordering::SeqCst) {
                         return Err(DeviceOpError::NotReady(DeviceState::Stopped));
                     }
-                    if let Err(error) = self.runner.pbcopy(&self.udid, &text).await {
-                        tracing::warn!(%error, chars = text.chars().count(), "could not copy text to the simulator");
-                        return Err(DeviceOpError::Emulator(INPUT_FAILED.to_owned()));
+                    match self
+                        .runner
+                        .pbcopy(&self.udid, &text, &self.input_stop)
+                        .await
+                    {
+                        Ok(()) => {}
+                        // The stop cancelled the copy: not a failure to report.
+                        Err(SimctlError::Cancelled { .. }) => {
+                            return Err(DeviceOpError::NotReady(DeviceState::Stopped));
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, chars = text.chars().count(), "could not copy text to the simulator");
+                            return Err(DeviceOpError::Emulator(INPUT_FAILED.to_owned()));
+                        }
                     }
                     for key in paste_keys() {
                         self.send_one(sink, key).await?;
@@ -1827,6 +1845,47 @@ mod tests {
         // The rest of the batch was refused without reaching the guest.
         assert_eq!(hid.sent(), [key(SHIFT, true)]);
         assert!(hid.sent_after_release() > 0);
+        manager.shutdown().await;
+    }
+
+    /// Review M2: a stop used to wait out a hanging `pbcopy`, 15 s and 2 s of cleanup, before
+    /// it issued `simctl shutdown`; the desktop gives a quitting backend 5 s. The stop now
+    /// cancels the copy, so its child is killed and reaped within the runner's cleanup time.
+    #[tokio::test]
+    async fn a_stop_cuts_a_hanging_pbcopy_short_and_still_shuts_the_simulator_down() {
+        let sim = FakeXcrun::new()
+            .device("UDID-1", "iPhone 17 Pro", "iOS 27.0")
+            .pbcopy_hangs()
+            .write();
+        let hid = RecordingHid::new();
+        let (manager, _enabled, id) = ready_live_fake(&sim, &hid).await;
+        let copying = || sim.calls().iter().any(|call| call.starts_with("pbcopy"));
+        // The paste's copy is running and does not end; its caller goes away, as when the
+        // connection closes.
+        let wait_for_copy = async {
+            while !copying() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        };
+        tokio::select! {
+            result = manager.input(&id, vec![text("é")]) => panic!("the batch finished: {result:?}"),
+            () = wait_for_copy => {}
+        }
+        let started = std::time::Instant::now();
+        // Well below the copy's own 15 s timeout, which a stop that waited it out would meet.
+        let bound = super::simctl::CLEANUP_TIMEOUT + std::time::Duration::from_secs(3);
+        tokio::time::timeout(bound, manager.close(&id))
+            .await
+            .expect("the stop does not wait out the hanging pbcopy")
+            .unwrap();
+        assert!(started.elapsed() < bound, "{:?}", started.elapsed());
+        assert!(
+            sim.calls().iter().any(|call| call == "shutdown UDID-1"),
+            "the simulator was shut down: {:?}",
+            sim.calls()
+        );
+        // The cancelled copy was not followed by a Cmd+V.
+        assert!(hid.sent().is_empty(), "{:?}", hid.sent());
         manager.shutdown().await;
     }
 

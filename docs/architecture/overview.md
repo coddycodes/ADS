@@ -2261,8 +2261,11 @@ runs on a task of its own, which keeps the lock until the batch and that
 recovery are done. A request cancelled or a connection lost meanwhile therefore
 never cuts it off between a press and its release, and the next batch goes out
 after it. A stop first releases the input connections, which refuse the rest of
-the batch, then waits for that task: at most the step in flight, a HID send's
-2 s or a `pbcopy`'s 15 s timeout.
+the batch, and cancels a `pbcopy` still running, whose child is killed and
+reaped within 2 s; the batch then ends with `NotReady`, not a copy failure. The
+stop waits for that task: at most the step in flight, a HID send's 2 s or the
+2 s it takes to reap the cancelled `pbcopy`, so a hanging copy no longer holds
+`simctl shutdown` back for its 15 s timeout.
 
 **Rotation and orientation.** `device.rotate` sends the target orientation to
 the simulator's `PurpleWorkspacePort` and then reads back the reported

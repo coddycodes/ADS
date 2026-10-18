@@ -38,6 +38,7 @@ pub(crate) struct FakeXcrun {
     /// Exit status of `xcodebuild -checkFirstLaunchStatus`.
     first_launch_status: i32,
     bootstatus_blocks: bool,
+    pbcopy_hangs: bool,
 }
 
 impl FakeXcrun {
@@ -51,6 +52,7 @@ impl FakeXcrun {
             help_hangs: false,
             first_launch_status: 0,
             bootstatus_blocks: false,
+            pbcopy_hangs: false,
         }
     }
 
@@ -76,6 +78,12 @@ impl FakeXcrun {
     /// `simctl bootstatus` never finishes, so a launch stays `Booting`.
     pub(crate) fn bootstatus_blocks(mut self) -> Self {
         self.bootstatus_blocks = true;
+        self
+    }
+
+    /// `simctl pbcopy` never finishes, like a stuck CoreSimulator.
+    pub(crate) fn pbcopy_hangs(mut self) -> Self {
+        self.pbcopy_hangs = true;
         self
     }
 
@@ -148,12 +156,17 @@ impl FakeXcrun {
             },
         );
         format!(
-            "#!/bin/sh\ndir=\"{dir}\"\nif [ \"$1\" = xcodebuild ] && [ \"$2\" = -checkFirstLaunchStatus ]; then echo checkFirstLaunchStatus >> \"$dir/first-launch-checks\"; exit {first_launch}; fi\nif [ \"$1\" = xcodebuild ]; then echo 'Xcode 27.0'; echo 'Build version 27A266a'; exit 0; fi\n[ \"$1\" = simctl ] && shift\necho \"$*\" >> \"$dir/calls\"\ncase \"$1\" in\n  help) {help} ;;\n  list) {list} ;;\n  boot) {boot} ;;\n  bootstatus) {bootstatus} ;;\n  shutdown) echo Shutdown > \"$dir/state/$2\" ;;\n  io) cp \"$dir/screenshot.jpg\" \"$5\" ;;\n  pbcopy) cat > \"$dir/pasteboard\" ;;\n  *) echo \"unknown simctl command $1\" >&2; exit 1 ;;\nesac\n",
+            "#!/bin/sh\ndir=\"{dir}\"\nif [ \"$1\" = xcodebuild ] && [ \"$2\" = -checkFirstLaunchStatus ]; then echo checkFirstLaunchStatus >> \"$dir/first-launch-checks\"; exit {first_launch}; fi\nif [ \"$1\" = xcodebuild ]; then echo 'Xcode 27.0'; echo 'Build version 27A266a'; exit 0; fi\n[ \"$1\" = simctl ] && shift\necho \"$*\" >> \"$dir/calls\"\ncase \"$1\" in\n  help) {help} ;;\n  list) {list} ;;\n  boot) {boot} ;;\n  bootstatus) {bootstatus} ;;\n  shutdown) echo Shutdown > \"$dir/state/$2\" ;;\n  io) cp \"$dir/screenshot.jpg\" \"$5\" ;;\n  pbcopy) {pbcopy} ;;\n  *) echo \"unknown simctl command $1\" >&2; exit 1 ;;\nesac\n",
             list = self.list_script(),
             bootstatus = if self.bootstatus_blocks {
                 "sleep 60"
             } else {
                 "exit 0"
+            },
+            pbcopy = if self.pbcopy_hangs {
+                "exec sleep 60"
+            } else {
+                "cat > \"$dir/pasteboard\""
             },
         )
     }
