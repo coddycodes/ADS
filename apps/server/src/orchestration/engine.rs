@@ -5154,8 +5154,10 @@ async fn persist_turn_delivery_transition(
                 && transition.detail.is_some()
                 && transition.detail == last_error
                 && failure_reason.is_none();
-            let found_without_turn = transition.next_state == TurnDeliveryState::Delivered
-                && reason == Some(TurnDeliveryFailureReason::FoundWithoutTurn);
+            let found_without_turn = matches!(
+                transition.next_state,
+                TurnDeliveryState::Delivered | TurnDeliveryState::Dismissed
+            ) && reason == Some(TurnDeliveryFailureReason::FoundWithoutTurn);
             let reason = reason.filter(|reason| matches!((transition.next_state, reason),
                 (TurnDeliveryState::Failed, TurnDeliveryFailureReason::ModelSelectionRefused)
                 | (TurnDeliveryState::Delivered, TurnDeliveryFailureReason::StartedNewConversation)))

@@ -1256,7 +1256,25 @@ impl OpenCodeSessionRuntime {
         })
     }
 
+    /// Whether OpenCode has the delivery's message, bounded so a lookup that is never answered
+    /// cannot outlive its caller's retries.
     pub async fn message_exists(&self, message_id: &str) -> Result<bool, OpenCodeRuntimeError> {
+        tokio::time::timeout(
+            DELIVERY_LOOKUP_TIMEOUT,
+            self.message_exists_unbounded(message_id),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(OpenCodeRuntimeError::Http(
+                "the message lookup took too long".to_owned(),
+            ))
+        })
+    }
+
+    async fn message_exists_unbounded(
+        &self,
+        message_id: &str,
+    ) -> Result<bool, OpenCodeRuntimeError> {
         let session_id = self.session_id().await?;
         if self.is_v2() {
             return self

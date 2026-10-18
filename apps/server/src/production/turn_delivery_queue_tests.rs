@@ -50,7 +50,16 @@ async fn enqueue(engine: &OrchestrationEngine, id: &str, queued: bool) {
     enqueue_for(engine, "t", id, queued).await;
 }
 async fn enqueue_for(engine: &OrchestrationEngine, thread: &str, id: &str, queued: bool) {
-    let mut value = json!({"type":"thread.turn.start", "commandId":id, "threadId":thread, "message":{"messageId":id, "role":"user", "text":id, "attachments":[]}, "modelSelection":{"instanceId":"codex", "model":"gpt-5"}, "createdAt":TIME});
+    enqueue_as(engine, thread, id, queued, "codex").await;
+}
+async fn enqueue_as(
+    engine: &OrchestrationEngine,
+    thread: &str,
+    id: &str,
+    queued: bool,
+    provider: &str,
+) {
+    let mut value = json!({"type":"thread.turn.start", "commandId":id, "threadId":thread, "message":{"messageId":id, "role":"user", "text":id, "attachments":[]}, "modelSelection":{"instanceId":provider, "model":"gpt-5"}, "createdAt":TIME});
     if queued {
         value["queued"] = json!(true);
     }
@@ -65,8 +74,8 @@ async fn enqueue_for(engine: &OrchestrationEngine, thread: &str, id: &str, queue
                     command_id: id.into(),
                     thread_id: thread.into(),
                     message_id: id.into(),
-                    provider_instance_id: "codex".into(),
-                    provider_kind: "codex".into(),
+                    provider_instance_id: provider.into(),
+                    provider_kind: provider.into(),
                     provider_session_id: None,
                     delivery_key: id.into(),
                     payload: serde_json::to_value(&command).unwrap(),
@@ -328,14 +337,15 @@ async fn dismissing_a_failed_head_allows_the_next_queued_turn() {
     engine.shutdown().await;
 }
 
-/// Dismissing an uncertain head is the user's choice to move on, so its pending turn marker no
-/// longer holds the queue: the next queued turn runs.
-#[tokio::test]
-async fn dismissing_an_uncertain_head_allows_the_next_queued_turn() {
-    let engine = engine().await;
-    session(&engine, "running", "running").await;
-    enqueue(&engine, "queued-1", true).await;
-    enqueue(&engine, "queued-2", true).await;
+/// Starts a queue whose head's delivery is uncertain (OpenCode, whose session status can be read)
+/// and dismisses it. `status` answers whether the session is idle; returns the routed ids.
+async fn dismissed_uncertain_opencode_head(
+    engine: &OrchestrationEngine,
+    status: Arc<std::sync::Mutex<ProviderReconciliationOutcome>>,
+) -> (TurnDeliveryService, mpsc::UnboundedReceiver<String>) {
+    session(engine, "running", "running").await;
+    enqueue_as(engine, "t", "queued-1", true, "opencode").await;
+    enqueue_as(engine, "t", "queued-2", true, "opencode").await;
     let (sender, mut routes) = mpsc::unbounded_channel();
     let router: ProviderDeliveryRouter = Arc::new(move |command, _| {
         let id = command.command_id().to_owned();
@@ -350,23 +360,66 @@ async fn dismissing_an_uncertain_head_allows_the_next_queued_turn() {
             }
         })
     });
-    let service = TurnDeliveryService::start_with_delivery_router(
-        engine.clone(),
-        1,
-        router,
-        unavailable_reconciler(),
-    );
-    session(&engine, "ready", "ready").await;
+    let reconciler: DeliveryReconciler = Arc::new(move |_| {
+        let outcome = status.lock().unwrap().clone();
+        Box::pin(async move { outcome })
+    });
+    let service =
+        TurnDeliveryService::start_with_delivery_router(engine.clone(), 1, router, reconciler);
+    session(engine, "ready", "ready").await;
     received(&mut routes, "queued-1").await;
     timeout(Duration::from_secs(3), async {
-        while row(&engine, "queued-1").await.state != TurnDeliveryState::Uncertain {
+        while row(engine, "queued-1").await.state != TurnDeliveryState::Uncertain {
             tokio::task::yield_now().await;
         }
     })
     .await
     .unwrap();
     engine.dispatch(command(json!({"type":"thread.turn-delivery.resolve", "commandId":"dismiss", "threadId":"t", "messageId":"queued-1", "action":"dismiss", "createdAt":TIME}))).await.unwrap();
+    (service, routes)
+}
+
+/// A dismissed uncertain OpenCode head blocks the queue only while OpenCode may still process
+/// it: once its session status reads idle, the next queued turn runs.
+#[tokio::test]
+async fn a_dismissed_uncertain_head_releases_the_queue_once_the_session_is_idle() {
+    let engine = engine().await;
+    let status = Arc::new(std::sync::Mutex::new(
+        ProviderReconciliationOutcome::FoundSettled,
+    ));
+    let (service, mut routes) = dismissed_uncertain_opencode_head(&engine, status).await;
     received(&mut routes, "queued-2").await;
+    service.shutdown().await;
+    engine.shutdown().await;
+}
+
+/// While OpenCode is busy the queue waits; when the session goes idle (signalled by its ready
+/// session update) the next queued turn runs.
+#[tokio::test]
+async fn a_dismissed_uncertain_head_waits_while_busy_then_releases_on_idle() {
+    let engine = engine().await;
+    let status = Arc::new(std::sync::Mutex::new(
+        ProviderReconciliationOutcome::Unavailable {
+            detail: "OpenCode is still working on this message".into(),
+        },
+    ));
+    let (service, mut routes) = dismissed_uncertain_opencode_head(&engine, status.clone()).await;
+    quiet(&mut routes).await;
+    *status.lock().unwrap() = ProviderReconciliationOutcome::FoundSettled;
+    session(&engine, "ready", "idle-again").await;
+    received(&mut routes, "queued-2").await;
+    service.shutdown().await;
+    engine.shutdown().await;
+}
+
+/// A provider that cannot report its session status keeps the old rule: the queue stays held.
+#[tokio::test]
+async fn a_dismissed_uncertain_head_stays_blocking_without_a_session_status() {
+    let engine = engine().await;
+    let status = Arc::new(std::sync::Mutex::new(ProviderReconciliationOutcome::Found));
+    let (service, mut routes) = dismissed_uncertain_opencode_head(&engine, status).await;
+    session(&engine, "ready", "idle-again").await;
+    quiet(&mut routes).await;
     service.shutdown().await;
     engine.shutdown().await;
 }
