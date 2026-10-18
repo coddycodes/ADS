@@ -295,8 +295,13 @@ when a browser client and a development or standalone server are available on
 this platform; otherwise record it as unavailable evidence.
 
 Use Codex Computer Use to operate the packaged executable. Confirm the
-executable path and PID before using any frame as evidence. At normal and
-minimum sizes verify:
+executable path and PID before using any frame as evidence. Keep the session
+unlocked and the window visible for every timing or rendering measurement:
+with the screen locked or the window hidden, WebKit reports the page as
+`hidden`, fires no animation frames and composites nothing, so paint and frame
+timings and compositor stacks in `sample` cannot be taken. Record such steps
+as not verified, with the lock evidence (`ioreg -n Root -d1` shows
+`CGSSessionScreenIsLocked`). At normal and minimum sizes verify:
 
 - when only the local Mac environment is configured, the rail shows Local and
   Add Project has no remote target; saved remote environments appear as separate
