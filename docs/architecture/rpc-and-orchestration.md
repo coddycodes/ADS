@@ -2884,7 +2884,7 @@ the typed `DeviceRpcError` union in `packages/contracts/src/device.ts`.
 | `device.open`              | unary  | `orchestration:operate` | `{ platform, imageId }` → `{ deviceId }` at `starting`; boot progress arrives in the catalog.            |
 | `device.close`             | unary  | `orchestration:operate` | `{ deviceId }`; returns once the device has ended (up to the 10 s stop timeout).                         |
 | `device.input`             | unary  | `orchestration:operate` | `{ deviceId, events }`: 1 to 64 touch, key, or text events. The client keeps one batch in flight.        |
-| `device.rotate`            | unary  | `orchestration:operate` | `{ deviceId, orientation }` → `{ orientation }` the device ended in; the catalog shows what it reports. |
+| `device.rotate`            | unary  | `orchestration:operate` | `{ deviceId, orientation }` → `{ orientation }` the device ended in; the catalog shows what it reports.  |
 | `device.subscribeFrames`   | stream | `orchestration:read`    | `{ deviceId }` → JPEG frames `{ seq, width, height, orientation, jpegBase64 }`, conflated to the latest. |
 | `device.createMediaTicket` | unary  | `orchestration:read`    | `{ deviceId }` → `{ ticket, expiresAtMs }` for one H.264 media socket on this connection's channel.      |
 
