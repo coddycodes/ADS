@@ -318,6 +318,8 @@ pub(crate) const STEER_TARGET_GONE_DETAIL: &str =
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderReconciliationOutcome {
     Found,
+    /// Found, and the provider reports the session idle, so no turn of the message still runs.
+    FoundSettled,
     Absent,
     Unavailable {
         detail: String,
@@ -11929,7 +11931,23 @@ impl ProviderDriver for OpenCodeDriver {
     ) -> BoxRuntimeFuture<'_, ProviderReconciliationOutcome> {
         Box::pin(async move {
             match self.runtime.message_exists(&delivery_key).await {
-                Ok(true) => ProviderReconciliationOutcome::Found,
+                // Whether its turn still runs decides if its pending marker may go. A turn this
+                // runtime holds settles the marker itself. A session OpenCode reports busy with
+                // no turn held here, or a status that cannot be read, is asked again until it is
+                // idle; a server without a status endpoint keeps the marker.
+                Ok(true) if self.runtime.has_active_turn().await => {
+                    ProviderReconciliationOutcome::Found
+                }
+                Ok(true) => match self.runtime.session_idle().await {
+                    Ok(Some(true)) => ProviderReconciliationOutcome::FoundSettled,
+                    Ok(None) => ProviderReconciliationOutcome::Found,
+                    Ok(Some(false)) => ProviderReconciliationOutcome::Unavailable {
+                        detail: "OpenCode is still working on this message".to_owned(),
+                    },
+                    Err(error) => ProviderReconciliationOutcome::Unavailable {
+                        detail: error.to_string(),
+                    },
+                },
                 Ok(false) => ProviderReconciliationOutcome::Absent,
                 Err(error) => ProviderReconciliationOutcome::Unavailable {
                     detail: error.to_string(),

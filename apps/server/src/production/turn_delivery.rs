@@ -762,8 +762,15 @@ async fn recover_sending(
                 }
             }
         };
+        // A found message whose session is idle started no turn still running, so its pending
+        // marker goes; one that may still run keeps it until its turn settles.
+        let mut reason = None;
         let (next_state, detail) = match outcome {
             ProviderReconciliationOutcome::Found => (TurnDeliveryState::Delivered, None),
+            ProviderReconciliationOutcome::FoundSettled => {
+                reason = Some(TurnDeliveryFailureReason::FoundWithoutTurn);
+                (TurnDeliveryState::Delivered, None)
+            }
             ProviderReconciliationOutcome::Absent => (TurnDeliveryState::Pending, None),
             ProviderReconciliationOutcome::ConversationLost { detail } => {
                 (TurnDeliveryState::Uncertain, Some(detail))
@@ -785,15 +792,18 @@ async fn recover_sending(
         };
         let command_id = row.command_id.clone();
         let transitioned = engine
-            .transition_turn_delivery(TurnDeliveryTransition {
-                turn_id: None,
-                command_id: row.command_id,
-                expected_states: vec![TurnDeliveryState::Sending],
-                expected_attempt: row.attempts,
-                next_state,
-                detail,
-                updated_at: now(),
-            })
+            .transition_turn_delivery_with_reason(
+                TurnDeliveryTransition {
+                    turn_id: None,
+                    command_id: row.command_id,
+                    expected_states: vec![TurnDeliveryState::Sending],
+                    expected_attempt: row.attempts,
+                    next_state,
+                    detail,
+                    updated_at: now(),
+                },
+                reason,
+            )
             .await
             .map_err(|error| error.to_string())?;
         if transitioned {

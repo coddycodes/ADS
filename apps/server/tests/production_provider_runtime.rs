@@ -3525,6 +3525,8 @@ async fn assert_opencode_restart_reconciliation(
             "/session/{session_id}",
             get(|| async { Json(json!({"id":"native-opencode-session"})) }),
         )
+        // The found turn has finished: no session is busy.
+        .route("/session/status", get(|| async { Json(json!({})) }))
         .route(
             "/event",
             get(|| async { Sse::new(stream::pending::<Result<Event, Infallible>>()) }),
@@ -3670,6 +3672,24 @@ async fn assert_opencode_restart_reconciliation(
         usize::from(should_resend),
         "Found prevents resend; Absent permits one resend"
     );
+    if mode == "found" {
+        // OpenCode reports the session idle, so the found turn has ended and its pending marker
+        // no longer holds queued follow-ups.
+        let message_id = row.message_id.clone();
+        let pending = engine
+            .repositories()
+            .database()
+            .call(move |connection| {
+                Ok(connection.query_row(
+                    "SELECT COUNT(*) FROM projection_turns WHERE pending_message_id = ? AND turn_id IS NULL AND state = 'running'",
+                    [message_id],
+                    |row| row.get::<_, i64>(0),
+                )?)
+            })
+            .await
+            .expect("pending turns");
+        assert_eq!(pending, 0, "the finished turn's marker is cleared");
+    }
 
     if should_resend {
         // OpenCode rejects an id that does not start with `msg` (1.18 and later), so the key is
