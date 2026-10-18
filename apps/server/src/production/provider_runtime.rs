@@ -8752,7 +8752,7 @@ fn spawn_event_pump(
                     label: &launch.provider,
                     exe: &launch.binary_path,
                     pid,
-                    uptime: started.elapsed(),
+                    started,
                 },
                 &status,
                 false,
@@ -19657,7 +19657,7 @@ done
 
     /// How BiBCode stopped a session whose provider process died.
     #[cfg(unix)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     enum SessionStop {
         None,
         /// Its event pump was cancelled before the stream ended.
@@ -19785,7 +19785,8 @@ done
             (4_100_000_003, SessionStop::Closed),
             (4_100_000_004, SessionStop::Noted),
         ] {
-            assert!(exits_reported_after_stream_end(pid, stop).await.is_empty());
+            let reported = exits_reported_after_stream_end(pid, stop).await;
+            assert!(reported.is_empty(), "{stop:?}: {reported:?}");
         }
     }
 

@@ -340,7 +340,8 @@ async fn adopted_external_worktree_uses_normal_rpc_paths_and_survives_the_full_l
     success(&mut socket, "30").await;
     let terminal_cwd = timeout(Duration::from_secs(15), async {
         loop {
-            let outputs = chunk_values(&mut terminal_output_socket, "27").await;
+            let outputs =
+                chunk_values_within_caller_deadline(&mut terminal_output_socket, "27").await;
             ack(&mut terminal_output_socket, "27").await;
             if let Some(output) = outputs.into_iter().find(|output| {
                 output["type"] == "output"
@@ -538,7 +539,8 @@ async fn adopted_external_worktree_uses_normal_rpc_paths_and_survives_the_full_l
     );
     let terminal_quiesced = timeout(Duration::from_secs(15), async {
         loop {
-            let updates = chunk_values(&mut terminal_metadata_socket, "28").await;
+            let updates =
+                chunk_values_within_caller_deadline(&mut terminal_metadata_socket, "28").await;
             ack(&mut terminal_metadata_socket, "28").await;
             if let Some(metadata) = updates.into_iter().find(|metadata| {
                 metadata["type"] == "upsert"
@@ -1046,9 +1048,16 @@ async fn ack(socket: &mut TestSocket, request_id: &str) {
 }
 
 async fn next(socket: &mut TestSocket) -> ServerMessage {
-    let message = timeout(Duration::from_secs(10), next_frame_past_heartbeat(socket))
+    timeout(Duration::from_secs(10), next_within_caller_deadline(socket))
         .await
         .expect("bounded RPC response")
+}
+
+/// The next message, with no deadline of its own: for a step whose caller bounds every frame,
+/// such as waiting for a real shell to print, which the 10 s per-frame bound would cut short.
+async fn next_within_caller_deadline(socket: &mut TestSocket) -> ServerMessage {
+    let message = next_frame_past_heartbeat(socket)
+        .await
         .expect("WebSocket remains open")
         .expect("valid WebSocket frame");
     let Message::Text(text) = message else {
@@ -1059,7 +1068,7 @@ async fn next(socket: &mut TestSocket) -> ServerMessage {
 
 #[cfg(unix)]
 async fn chunk(socket: &mut TestSocket, request_id: &str) -> Value {
-    chunk_values(socket, request_id)
+    chunk_frames(socket, request_id, true)
         .await
         .into_iter()
         .next()
@@ -1069,8 +1078,32 @@ async fn chunk(socket: &mut TestSocket, request_id: &str) -> Value {
 /// Every value of the next chunk: items queued behind an unacknowledged chunk share one.
 #[cfg(unix)]
 async fn chunk_values(socket: &mut TestSocket, request_id: &str) -> Vec<Value> {
+    chunk_frames(socket, request_id, true).await
+}
+
+/// Every value of the next chunk (items queued behind an unacknowledged chunk share one), with
+/// no per-frame deadline: the caller bounds the whole step.
+#[cfg(unix)]
+async fn chunk_values_within_caller_deadline(
+    socket: &mut TestSocket,
+    request_id: &str,
+) -> Vec<Value> {
+    chunk_frames(socket, request_id, false).await
+}
+
+#[cfg(unix)]
+async fn chunk_frames(
+    socket: &mut TestSocket,
+    request_id: &str,
+    frame_deadline: bool,
+) -> Vec<Value> {
     loop {
-        match next(socket).await {
+        let message = if frame_deadline {
+            next(socket).await
+        } else {
+            next_within_caller_deadline(socket).await
+        };
+        match message {
             ServerMessage::Chunk {
                 request_id: actual,
                 values,

@@ -3781,7 +3781,7 @@ fn report_process_exit(session: &Session) {
             label,
             exe: &session.executable,
             pid,
-            uptime: session.started.elapsed(),
+            started: session.started,
         },
         &status,
         false,

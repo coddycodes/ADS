@@ -35,6 +35,9 @@ use bibcode_server::{
 
 #[path = "support/websocket_frames.rs"]
 mod websocket_frames;
+
+#[path = "support/reexec.rs"]
+mod reexec;
 use websocket_frames::next_frame_past_heartbeat;
 
 const TERMINAL_RPC_INTEGRATION_DEADLINE: Duration = Duration::from_secs(5);
@@ -812,8 +815,15 @@ async fn independent_agent_activity_settings_control_routed_rpc_gates_and_trace(
     }
 }
 
+/// In a process of its own: the profiler is process-wide, so turning it on here would make a
+/// sibling server's client batches accepted, and a sibling server's start would reset it.
 #[tokio::test]
 async fn production_profiler_status_follows_the_setting_live() {
+    let Some(isolated) =
+        reexec::in_own_process("production_profiler_status_follows_the_setting_live")
+    else {
+        return;
+    };
     let temp = TempDir::new().expect("temporary directory");
     let config = test_config(&temp);
     hermetic_providers::write_hermetic_settings(&config.state_dir(), json!({}));
@@ -870,6 +880,7 @@ async fn production_profiler_status_follows_the_setting_live() {
     if let Err(panic) = result {
         std::panic::resume_unwind(panic);
     }
+    isolated.complete();
 }
 
 #[tokio::test]
@@ -1788,8 +1799,16 @@ async fn terminal_rpc_clear_resize_restart_exit_and_restart_if_not_running_round
     }
 }
 
+/// In a process of its own: it checks that client batches are refused while the profiler is
+/// off, and the profiler is process-wide, so a sibling test that turns it on would make them
+/// accepted.
 #[tokio::test]
 async fn server_terminal_auxiliary_rpcs_surface_runtime_state_validation_and_interrupts() {
+    let Some(isolated) = reexec::in_own_process(
+        "server_terminal_auxiliary_rpcs_surface_runtime_state_validation_and_interrupts",
+    ) else {
+        return;
+    };
     let temp = TempDir::new().expect("temporary directory");
     let services = fixture_services();
     let mut registry = RpcRegistry::empty();
@@ -2029,6 +2048,7 @@ async fn server_terminal_auxiliary_rpcs_surface_runtime_state_validation_and_int
     if let Err(panic) = result {
         std::panic::resume_unwind(panic);
     }
+    isolated.complete();
 }
 
 fn assert_terminal_open_and_metadata_upsert(messages: [ServerMessage; 2]) {

@@ -193,14 +193,14 @@ where
     }
     // A run that timed out, was cancelled or failed was stopped on request.
     if let (Some((program, spawned)), Some(pid), Ok(output)) = (&watched, pid, &outcome) {
-        report_command_exit(program, pid, &output.status, spawned.elapsed());
+        report_command_exit(program, pid, &output.status, *spawned);
     }
     outcome
 }
 
 /// A completed command that died of a signal. Its exit code is not watched: non-zero is
 /// normal for git.
-fn report_command_exit(program: &OsStr, pid: u32, status: &ExitStatus, uptime: Duration) {
+fn report_command_exit(program: &OsStr, pid: u32, status: &ExitStatus, started: Instant) {
     let exe = program.to_string_lossy();
     let name = Path::new(program)
         .file_name()
@@ -213,7 +213,7 @@ fn report_command_exit(program: &OsStr, pid: u32, status: &ExitStatus, uptime: D
             label: &name,
             exe: &exe,
             pid,
-            uptime,
+            started,
         },
         status,
         false,
