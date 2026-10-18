@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [v0.9.5] - 2026-10-18
+
+BiBCode v0.9.5 adds OpenCode 2 support, makes remote environments over slow links feel faster (terminal echo, compression on plain connections, fewer connect round trips, and resuming a thread instead of resending it), hardens **Revert to this message** against running and queued work, keeps Source Control responsive with thousands of changes, recovers long Codex threads in pages, and never sends an OpenCode message twice. This release includes the changes since v0.9.4.
 
 ### OpenCode 2 support (#115)
 
