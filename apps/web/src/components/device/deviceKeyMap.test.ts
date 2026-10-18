@@ -123,12 +123,12 @@ describe("isUsTypeable", () => {
       "é",
       "日本",
       "\u{1f600}",
-      "a b",
+      "a\u00a0b",
       "\u007f",
       "\u0000",
       "\u001b",
       "\u0008",
-      " ",
+      "\u2028",
     ]) {
       expect(isUsTypeable(refused), JSON.stringify(refused)).toBe(false);
     }

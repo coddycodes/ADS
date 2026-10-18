@@ -1259,6 +1259,41 @@ describe("DevicePanel with iOS simulators", () => {
     }
   });
 
+  it("does not show one device's input refusal over another device", async () => {
+    const refusal =
+      "This device can type only plain ASCII text. Accented letters, emoji, and other characters can't be sent from here yet.";
+    h.results.input = { _tag: "Failure", error: { _tag: "DeviceInputError", message: refusal } };
+    // The note's 5 s timer cannot run out, so only the device it belongs to can hide it.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      withCatalog(
+        catalog({
+          platforms: [
+            platform("android", "ready", "Ready.", [PIXEL]),
+            platform("ios", "ready", "Ready.", [IPHONE]),
+          ],
+          devices: [
+            snapshot({ deviceId: "a-1" }),
+            snapshot({ deviceId: "i-1", platform: "ios", imageId: "UDID-1" }),
+          ],
+        }),
+      );
+      const container = await render();
+      const shown = () =>
+        container.querySelector("[role='status'][data-input-error]")?.textContent ?? null;
+      expect(h.screens.at(-1)).toMatchObject({ deviceId: "a-1" });
+      const onInput = h.screenProps?.onInput as (event: unknown) => void;
+      await act(async () => onInput({ type: "text", text: "é" }));
+      await flushInput();
+      expect(shown()).toBe(refusal);
+      await click(option(container, "iPhone 17 Pro · iOS 27.0"));
+      expect(h.screens.at(-1)).toMatchObject({ deviceId: "i-1" });
+      expect(shown()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shows the server's reason when an Android device refuses text it cannot type", async () => {
     const message =
       "This device can type only plain ASCII text. Accented letters, emoji, and other characters can't be sent from here yet.";

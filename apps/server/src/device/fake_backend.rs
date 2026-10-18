@@ -49,6 +49,8 @@ pub(crate) struct FakeBackend {
     check_calls: AtomicUsize,
     /// Set by `reports_orientation`: launched devices report turns through it.
     orientation: Mutex<Option<watch::Sender<Orientation>>>,
+    /// Set by `boot_orientation`: the orientation launched devices show once they run.
+    boot_orientation: Mutex<Orientation>,
     /// Set by `without_video`: why launched devices have no video.
     no_video: Mutex<Option<String>>,
 }
@@ -71,6 +73,7 @@ impl FakeBackend {
             discover_calls: AtomicUsize::new(0),
             check_calls: AtomicUsize::new(0),
             orientation: Mutex::new(None),
+            boot_orientation: Mutex::new(Orientation::Portrait),
             no_video: Mutex::new(None),
         })
     }
@@ -81,6 +84,13 @@ impl FakeBackend {
         let sender = watch::Sender::new(Orientation::Portrait);
         *lock(&self.orientation) = Some(sender.clone());
         sender
+    }
+
+    /// Launched devices boot already turned to `orientation`, as an Android Quick Boot
+    /// snapshot saved turned does. Without `reports_orientation` nothing follows the device
+    /// afterwards, so only the launch can put that turn into the catalog's first `Ready` entry.
+    pub(crate) fn boot_orientation(self: &Arc<Self>, orientation: Orientation) {
+        *lock(&self.boot_orientation) = orientation;
     }
 
     /// Launched devices have no video, for `reason`.
@@ -213,6 +223,7 @@ impl DeviceBackend for FakeBackend {
                 orientation: lock(&self.orientation)
                     .as_ref()
                     .map(watch::Sender::subscribe),
+                boot_orientation: *lock(&self.boot_orientation),
                 no_video: lock(&self.no_video).clone(),
                 can_rotate: self.can_rotate.load(Ordering::SeqCst),
                 stops: self.stops.clone(),
@@ -225,6 +236,7 @@ impl DeviceBackend for FakeBackend {
 struct FakeRunning {
     state: Arc<FakeDeviceState>,
     orientation: Option<watch::Receiver<Orientation>>,
+    boot_orientation: Orientation,
     no_video: Option<String>,
     can_rotate: bool,
     stops: Arc<AtomicUsize>,
@@ -250,6 +262,10 @@ impl RunningDevice for FakeRunning {
 
     fn can_rotate(&self) -> bool {
         self.can_rotate
+    }
+
+    fn orientation(&self) -> Orientation {
+        self.boot_orientation
     }
 
     fn jpeg_stream(&self, _max_width: u32) -> BoxFuture<'_, Result<JpegStream, DeviceError>> {

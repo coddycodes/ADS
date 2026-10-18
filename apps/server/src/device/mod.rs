@@ -1782,6 +1782,24 @@ mod platform_tests {
         manager.shutdown().await;
     }
 
+    /// An Android Quick Boot snapshot saved turned boots in landscape, and nothing follows
+    /// the device after launch here. So the first `Ready` entry, which only the launch
+    /// publishes, must already say landscape at the turned size.
+    #[tokio::test]
+    async fn a_device_that_boots_turned_is_first_ready_turned() {
+        let android = FakeBackend::new(Platform::Android, &["Pixel"]);
+        android.boot_orientation(Orientation::Landscape);
+        let (manager, _enabled) = fake_manager(vec![android]);
+        let id = manager.open(Platform::Android, "Pixel").await.unwrap();
+        let ready = wait_state(&manager, &id, DeviceState::Ready).await;
+        let (width, height) = crate::device::fake_backend::FAKE_SIZE;
+        assert_eq!(
+            (ready.orientation, ready.width, ready.height),
+            (Orientation::Landscape, Some(height), Some(width))
+        );
+        manager.shutdown().await;
+    }
+
     #[tokio::test]
     async fn a_device_without_video_refuses_media_tickets_at_once() {
         let ios = FakeBackend::new(Platform::Ios, &["UDID-1"]);
