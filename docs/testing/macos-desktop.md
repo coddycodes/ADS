@@ -592,7 +592,9 @@ pgrep -fl <udid>                          # no process BiBCode started
    confirm the text arrives and the panel shows its one-time note. Repeat
    with ⌘V on the focused screen.
 5. **Rotate.** Use **Rotate left**, then **Rotate right** twice, then
-   **Rotate left**, in an app that rotates (Safari). Record the catalog's
+   **Rotate left**, in an app that rotates (Safari), pressing each once both
+   Rotate buttons are enabled again (their tooltip reads "Rotating…" while a
+   turn is in flight). Record the catalog's
    orientation and the video's size after each: **Rotate left** from portrait
    gives `landscape`, with the status bar at the screen's top and the
    simulator's home indicator at the bottom, and the video keeps playing at

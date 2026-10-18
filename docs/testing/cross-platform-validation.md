@@ -3094,7 +3094,9 @@ Record each client's OS, app or browser version, and profile type.
 6. **Rotation (native items 2, 3, and 4).** Turn on auto-rotate
    (`adb -s <serial> shell settings put system accelerometer_rotation 1`) and
    open an app that rotates. Use **Rotate right** and **Rotate left** through
-   all four orientations. For each, record the orientation the catalog shows,
+   all four orientations, pressing each once both Rotate buttons are enabled
+   again (their tooltip reads "Rotating…" while a turn is in flight). For
+   each, record the orientation the catalog shows,
    `adb -s <serial> shell dumpsys input | grep -i SurfaceOrientation`, the
    video's and the still images' width and height (landscape is wider than
    tall), and the pointer location of a corner tap. **Rotate left** from

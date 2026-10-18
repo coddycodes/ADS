@@ -246,6 +246,16 @@ interface RotateNote {
   readonly deviceId: string;
 }
 
+/**
+ * What a settled rotate left a device in, while the catalog may not say so yet; it holds only
+ * as long as the catalog still shows `catalogOrientation`, what it showed when Rotate was pressed.
+ */
+interface LastTurn {
+  readonly deviceId: string;
+  readonly orientation: DeviceOrientation;
+  readonly catalogOrientation: DeviceOrientation;
+}
+
 /** Why the shown device refused input, or why it could not be sent. */
 interface InputErrorNote {
   readonly deviceId: string;
@@ -304,10 +314,12 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
   const [stillImages, setStillImages] = useState<StillImages | null>(null);
   const [pasteNote, setPasteNote] = useState<PasteNote | null>(null);
   const [rotateNote, setRotateNote] = useState<RotateNote | null>(null);
-  // The newest Rotate press. Rotates settle in press order, but only the newest press may
-  // leave a note: an older refusal arriving after a newer press would say "didn't rotate"
-  // over a screen that is turning or has turned.
-  const latestRotatePressRef = useRef(0);
+  // The devices with a rotate in flight. A second press would aim from the orientation the
+  // catalog showed before that turn, so Rotate waits for the call to settle. The ref gates a
+  // press at once, even before the buttons render held; the state is what they render from.
+  const rotatingRef = useRef(new Set<string>());
+  const [rotatingDeviceIds, setRotatingDeviceIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [lastTurn, setLastTurn] = useState<LastTurn | null>(null);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -377,6 +389,14 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
     }, INPUT_ERROR_MS);
   }, []);
   const shownDeviceId = device?.deviceId ?? null;
+  // The catalog is the fresher report once it moves off what it showed when the last turn was
+  // pressed (it caught up, or the device turned by itself), and a result belongs to one device.
+  if (
+    lastTurn !== null &&
+    (lastTurn.deviceId !== shownDeviceId || lastTurn.catalogOrientation !== device?.orientation)
+  ) {
+    setLastTurn(null);
+  }
   useEffect(() => {
     const deviceId = shownDeviceId;
     return () => {
@@ -479,22 +499,31 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
   const rotate = async (direction: RotateDirection) => {
     if (device === null || !device.canRotate) return;
     const { deviceId } = device;
-    const orientation = rotatedOrientation(device.orientation, direction);
-    const press = ++latestRotatePressRef.current;
+    if (rotatingRef.current.has(deviceId)) return;
+    // The last turn's result is fresher than a catalog that has not reported that turn yet.
+    const current = lastTurn?.deviceId === deviceId ? lastTurn.orientation : device.orientation;
+    const orientation = rotatedOrientation(current, direction);
     setRotateNote(null);
-    const result = await runRotate({ environmentId, input: { deviceId, orientation } });
-    if (result._tag === "Failure") {
-      reportFailure(result, "Could not rotate the device. Try again.");
-      return;
-    }
-    // The device ended as it was: say so, rather than leave the press looking ignored. A
-    // newer press has cleared the note and owns the next one.
-    if (
-      mountedRef.current &&
-      press === latestRotatePressRef.current &&
-      result.value.orientation !== orientation
-    ) {
-      setRotateNote({ deviceId });
+    rotatingRef.current.add(deviceId);
+    setRotatingDeviceIds(new Set(rotatingRef.current));
+    try {
+      const result = await runRotate({ environmentId, input: { deviceId, orientation } });
+      if (result._tag === "Failure") {
+        reportFailure(result, "Could not rotate the device. Try again.");
+        return;
+      }
+      setLastTurn({
+        deviceId,
+        orientation: result.value.orientation,
+        catalogOrientation: device.orientation,
+      });
+      // The device ended as it was: say so, rather than leave the press looking ignored.
+      if (mountedRef.current && result.value.orientation !== orientation) {
+        setRotateNote({ deviceId });
+      }
+    } finally {
+      rotatingRef.current.delete(deviceId);
+      setRotatingDeviceIds(new Set(rotatingRef.current));
     }
   };
   const pressKey = (key: DeviceKey) => {
@@ -606,6 +635,7 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
         startDisabledReason={startDisabledReason}
         pickerLocked={startPending}
         viewOnly={inputDisabledReason !== null}
+        rotating={device !== null && rotatingDeviceIds.has(device.deviceId)}
         onSelectImage={selectImage}
         onStart={() => void start()}
         onStop={() => {

@@ -148,6 +148,7 @@ export function DeviceToolbar({
   startDisabledReason,
   pickerLocked,
   viewOnly,
+  rotating,
   onSelectImage,
   onStart,
   onStop,
@@ -168,6 +169,8 @@ export function DeviceToolbar({
   readonly pickerLocked: boolean;
   /** The shown device's platform runs view only: no keys, paste or rotation. */
   readonly viewOnly: boolean;
+  /** A rotate of the shown device is in flight: another press would start from a stale turn. */
+  readonly rotating: boolean;
   readonly onSelectImage: (platform: DevicePlatform, imageId: string) => void;
   readonly onStart: () => void;
   readonly onStop: () => void;
@@ -194,7 +197,12 @@ export function DeviceToolbar({
           : DEVICE_DISABLED_REASONS.startFirst;
   const inputReason = readyReason ?? (viewOnly ? DEVICE_DISABLED_REASONS.viewOnly : null);
   const rotateReason =
-    inputReason ?? (device?.canRotate === false ? DEVICE_DISABLED_REASONS.cannotRotate : null);
+    inputReason ??
+    (device?.canRotate === false
+      ? DEVICE_DISABLED_REASONS.cannotRotate
+      : rotating
+        ? DEVICE_DISABLED_REASONS.rotating
+        : null);
   const platform = device?.platform ?? selectedImage?.platform ?? "android";
   const ios = platform === "ios";
   const selectedValue =

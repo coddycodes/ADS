@@ -483,42 +483,218 @@ describe("DevicePanel", () => {
     expect(container.querySelector("[role='alert']")).toBeNull();
   });
 
-  /** A rotate command whose results the test settles, in the order it chooses. */
+  /** A rotate command whose calls the test settles one by one, in the order it chooses. */
   function pendingRotates() {
-    const settle: Array<(orientation: string) => void> = [];
+    const settle: Array<(result: CommandResult) => void> = [];
     h.results.rotate = () =>
       new Promise<CommandResult>((resolve) => {
-        settle.push((orientation) => resolve({ _tag: "Success", value: { orientation } }));
+        settle.push(resolve);
       });
-    return async (press: number, orientation: string) => {
-      await act(async () => settle[press]!(orientation));
+    return {
+      turn: async (press: number, orientation: string) => {
+        await act(async () => settle[press]!({ _tag: "Success", value: { orientation } }));
+      },
+      fail: async (press: number) => {
+        await act(async () =>
+          settle[press]!({
+            _tag: "Failure",
+            error: { _tag: "DeviceEmulatorError", message: "The emulator did not respond." },
+          }),
+        );
+      },
     };
   }
+  const rotateCalls = () => h.calls.filter((call) => call.command === "rotate");
+  const rotateTargets = () =>
+    rotateCalls().map(
+      (call) => (call.input as { input: { orientation: string } }).input.orientation,
+    );
 
-  it("never shows the note of an older press that settles after a newer one", async () => {
+  it("sends one rotate for two quick presses", async () => {
     withCatalog(catalog({ devices: [snapshot()] }));
-    const settle = pendingRotates();
+    const rotates = pendingRotates();
     const container = await render();
     await click(button(container, "Rotate left"));
+    await click(button(container, "Rotate left"));
     await click(button(container, "Rotate right"));
-    // The older press is refused, but the newer one has cleared the note since.
-    await settle(0, "portrait");
-    expect(container.querySelector("[data-rotate-note]")).toBeNull();
-    // The newer press turns, so nothing says otherwise.
-    await settle(1, "reverseLandscape");
-    expect(container.querySelector("[data-rotate-note]")).toBeNull();
+    expect(rotateTargets()).toEqual(["landscape"]);
+    await rotates.turn(0, "landscape");
+    expect(rotateTargets()).toEqual(["landscape"]);
   });
 
-  it("shows the note of the newest press when an older one turned", async () => {
+  it("sends one rotate for presses that land before the buttons render held", async () => {
     withCatalog(catalog({ devices: [snapshot()] }));
-    const settle = pendingRotates();
+    pendingRotates();
+    const container = await render();
+    const left = button(container, "Rotate left");
+    const right = button(container, "Rotate right");
+    // One act renders once, after both presses.
+    await act(async () => {
+      left.click();
+      left.click();
+      right.click();
+    });
+    expect(rotateTargets()).toEqual(["landscape"]);
+  });
+
+  it("holds both Rotate buttons with the reason while a turn is in flight", async () => {
+    withCatalog(catalog({ devices: [snapshot()] }));
+    const rotates = pendingRotates();
+    const container = await render();
+    for (const label of ["Rotate left", "Rotate right"]) {
+      expect(button(container, label).disabled).toBe(false);
+    }
+    await click(button(container, "Rotate left"));
+    for (const label of ["Rotate left", "Rotate right"]) {
+      const rotate = button(container, label);
+      expect(rotate.disabled).toBe(true);
+      expect(reasonOf(rotate)).toBe("Rotating…");
+    }
+    // Only Rotate waits; the other controls stay usable.
+    expect(button(container, "Home").disabled).toBe(false);
+    await rotates.turn(0, "landscape");
+    for (const label of ["Rotate left", "Rotate right"]) {
+      const rotate = button(container, label);
+      expect(rotate.disabled).toBe(false);
+      expect(reasonOf(rotate)).toBe(label);
+    }
+  });
+
+  it("lets Rotate be pressed again after a turn fails, and says why it failed", async () => {
+    withCatalog(catalog({ devices: [snapshot()] }));
+    const rotates = pendingRotates();
     const container = await render();
     await click(button(container, "Rotate left"));
+    expect(button(container, "Rotate left").disabled).toBe(true);
+    await rotates.fail(0);
+    expect(container.querySelector("[role='alert']")?.textContent).toContain(
+      "The emulator did not respond.",
+    );
+    expect(button(container, "Rotate left").disabled).toBe(false);
+    expect(button(container, "Rotate right").disabled).toBe(false);
+    await click(button(container, "Rotate left"));
+    expect(rotateTargets()).toEqual(["landscape", "landscape"]);
+  });
+
+  it("holds Rotate only for the device that is turning", async () => {
+    withCatalog(
+      catalog({
+        platforms: [
+          platform("android", "ready", "Ready.", [PIXEL]),
+          platform("ios", "ready", "Ready.", [IPHONE]),
+        ],
+        devices: [
+          snapshot({ deviceId: "a-1" }),
+          snapshot({ deviceId: "i-1", platform: "ios", imageId: "UDID-1" }),
+        ],
+      }),
+    );
+    const rotates = pendingRotates();
+    const container = await render();
+    await click(button(container, "Rotate left"));
+    expect(rotateCalls()).toHaveLength(1);
+    // The other device is not turning, so its buttons are free.
+    await click(option(container, "iPhone 17 Pro · iOS 27.0"));
+    expect(button(container, "Rotate left").disabled).toBe(false);
+    // Back on the one that is still turning, the hold is still there.
+    await click(option(container, "Pixel 8"));
+    expect(button(container, "Rotate left").disabled).toBe(true);
+    expect(reasonOf(button(container, "Rotate left"))).toBe("Rotating…");
     await click(button(container, "Rotate right"));
-    await settle(0, "landscape");
-    expect(container.querySelector("[data-rotate-note]")).toBeNull();
-    await settle(1, "portrait");
-    expect(container.querySelector("[data-rotate-note]")).not.toBeNull();
+    expect(rotateCalls()).toHaveLength(1);
+    await rotates.turn(0, "landscape");
+    expect(button(container, "Rotate left").disabled).toBe(false);
+  });
+
+  it("turns from the orientation the last turn produced while the catalog still shows the old one", async () => {
+    // The catalog is not refreshed in this test: it keeps saying portrait.
+    withCatalog(catalog({ devices: [snapshot()] }));
+    const container = await render();
+    await click(button(container, "Rotate left"));
+    await click(button(container, "Rotate left"));
+    await click(button(container, "Rotate right"));
+    await click(button(container, "Rotate right"));
+    // portrait -> landscape -> reverse portrait -> landscape -> portrait
+    expect(rotateTargets()).toEqual(["landscape", "reversePortrait", "landscape", "portrait"]);
+  });
+
+  it("starts from the orientation the device kept when a turn is refused", async () => {
+    withCatalog(catalog({ devices: [snapshot()] }));
+    const container = await render();
+    h.results.rotate = { _tag: "Success", value: { orientation: "portrait" } };
+    await click(button(container, "Rotate left"));
+    h.results.rotate = (input) => ({
+      _tag: "Success",
+      value: { orientation: (input as { input: { orientation: string } }).input.orientation },
+    });
+    await click(button(container, "Rotate left"));
+    expect(rotateTargets()).toEqual(["landscape", "landscape"]);
+  });
+
+  it("turns from what the catalog reports once it has caught up or moved on", async () => {
+    withCatalog(catalog({ devices: [snapshot()] }));
+    const container = await render();
+    await click(button(container, "Rotate left"));
+    // The catalog follows the turn.
+    await act(async () => {
+      withCatalog(catalog({ devices: [snapshot({ orientation: "landscape" })] }));
+    });
+    await click(button(container, "Rotate left"));
+    // The catalog follows that turn, then the app turns the screen back by itself: the result
+    // held for the turn must not come back.
+    await act(async () => {
+      withCatalog(catalog({ devices: [snapshot({ orientation: "reversePortrait" })] }));
+    });
+    await act(async () => {
+      withCatalog(catalog({ devices: [snapshot({ orientation: "landscape" })] }));
+    });
+    await click(button(container, "Rotate left"));
+    expect(rotateTargets()).toEqual(["landscape", "reversePortrait", "reversePortrait"]);
+  });
+
+  it("does not bring back a turn the catalog reported before the result arrived", async () => {
+    withCatalog(catalog({ devices: [snapshot()] }));
+    const rotates = pendingRotates();
+    const container = await render();
+    await click(button(container, "Rotate left"));
+    // The catalog reports the turn first, then the app turns the screen back by itself.
+    await act(async () => {
+      withCatalog(catalog({ devices: [snapshot({ orientation: "landscape" })] }));
+    });
+    await rotates.turn(0, "landscape");
+    await act(async () => {
+      withCatalog(catalog({ devices: [snapshot({ orientation: "portrait" })] }));
+    });
+    h.results.rotate = (input) => ({
+      _tag: "Success",
+      value: { orientation: (input as { input: { orientation: string } }).input.orientation },
+    });
+    await click(button(container, "Rotate left"));
+    expect(rotateTargets()).toEqual(["landscape", "landscape"]);
+  });
+
+  it("does not use one device's last turn for another", async () => {
+    withCatalog(
+      catalog({
+        platforms: [
+          platform("android", "ready", "Ready.", [PIXEL]),
+          platform("ios", "ready", "Ready.", [IPHONE]),
+        ],
+        devices: [
+          snapshot({ deviceId: "a-1" }),
+          snapshot({ deviceId: "i-1", platform: "ios", imageId: "UDID-1" }),
+        ],
+      }),
+    );
+    const container = await render();
+    await click(button(container, "Rotate left"));
+    await click(option(container, "iPhone 17 Pro · iOS 27.0"));
+    await click(button(container, "Rotate left"));
+    const devices = rotateCalls().map(
+      (call) => (call.input as { input: { deviceId: string } }).input.deviceId,
+    );
+    expect(devices).toEqual(["a-1", "i-1"]);
+    expect(rotateTargets()).toEqual(["landscape", "landscape"]);
   });
 
   it("lets the kept-orientation note go after a few seconds", async () => {

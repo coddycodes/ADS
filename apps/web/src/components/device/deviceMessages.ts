@@ -59,6 +59,7 @@ export const DEVICE_DISABLED_REASONS = {
   noImage: "No device can start on this server",
   starting: "The device is starting",
   cannotRotate: "Rotation isn't available for iOS simulators yet",
+  rotating: "Rotating…",
   viewOnly: "This simulator is view only",
 } as const;
 
