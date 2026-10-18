@@ -2,6 +2,7 @@ import {
   type E2eeAuthenticatedMessage,
   type ServerConfig,
   type ServerConfigStreamEvent,
+  ORCHESTRATION_WS_METHODS,
   WS_METHODS,
 } from "@bibcode/contracts";
 import * as Context from "effect/Context";
@@ -12,6 +13,7 @@ import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as RpcClient from "effect/unstable/rpc/RpcClient";
+import { RpcClientDefect, RpcClientError } from "effect/unstable/rpc/RpcClientError";
 import { constPing } from "effect/unstable/rpc/RpcMessage";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
 import * as Socket from "effect/unstable/socket/Socket";
@@ -312,3 +314,107 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(RpcSessionFactory, make);
+
+/**
+ * Read-only subscriptions a session sends while its connection is still configuring
+ * (the server's `read_stream` methods, except the two that open something:
+ * `preview.tunnelOpen` and `previewAutomation.connect`). Their output waits until
+ * the connection is verified; everything else waits to be sent.
+ */
+export const PRE_VERIFICATION_SUBSCRIPTIONS: ReadonlySet<string> = new Set([
+  WS_METHODS.subscribeServerConfig,
+  ORCHESTRATION_WS_METHODS.subscribeShell,
+  ORCHESTRATION_WS_METHODS.subscribeThread,
+  WS_METHODS.pullRequestsSubscribe,
+  WS_METHODS.subscribeActivity,
+  WS_METHODS.subscribeAuthAccess,
+  WS_METHODS.subscribeDiscoveredLocalServers,
+  WS_METHODS.subscribeGitManagerSignal,
+  WS_METHODS.subscribePreviewEvents,
+  WS_METHODS.projectsSubscribeEntries,
+  WS_METHODS.subscribeServerLifecycle,
+  WS_METHODS.subscribeTerminalEvents,
+  WS_METHODS.subscribeTerminalMetadata,
+  WS_METHODS.subscribeVcsStatus,
+  WS_METHODS.subscribeVcsStatusSummary,
+  WS_METHODS.subscribeWorktreeCatalog,
+]);
+
+/** Output a pre-verification subscription buffers before the connection is verified. */
+const PRE_VERIFICATION_BUFFER = 16;
+
+export interface VerifiedSessionGate {
+  /** The session consumers see from `configuring` on; the same object stays live after. */
+  readonly session: RpcSession;
+  /** The config arrived and the identity check passed: release everything held. */
+  readonly open: Effect.Effect<void>;
+  /**
+   * The attempt ended unverified: held calls fail and buffered output is dropped. After
+   * `open` it does nothing.
+   */
+  readonly close: Effect.Effect<void>;
+}
+
+/**
+ * Wraps a connected session so consumers can use it before its first config snapshot
+ * and identity check, without a round trip of their own after them. A subscription
+ * in {@link PRE_VERIFICATION_SUBSCRIPTIONS} is sent at once and buffers its output;
+ * every other call, unary or mutating, is sent only once the gate opens, as before.
+ * Nothing reaches a caller until then, so no data from an unverified server is
+ * applied. Once open, calls go straight through.
+ */
+export const makeVerifiedSessionGate = (session: RpcSession) =>
+  Effect.gen(function* () {
+    const verified = yield* Deferred.make<void, void>();
+    let opened = false;
+    const unverified = () =>
+      new RpcClientError({
+        reason: new RpcClientDefect({
+          message: "The connection ended before it was verified.",
+          cause: undefined,
+        }),
+      });
+    const awaitVerified = Deferred.await(verified).pipe(Effect.mapError(unverified));
+    // Subscriptions and config reads run inside consumers that follow the published
+    // session: an unverified attempt ends with that session unpublished, which
+    // interrupts them. Until then they wait instead of failing, so a failed attempt
+    // never surfaces as a stream error or ends a consumer that follows reconnects.
+    const awaitVerifiedOrWait = Deferred.await(verified).pipe(Effect.catch(() => Effect.never));
+    const client = Object.fromEntries(
+      Object.entries(session.client).map(([tag, method]) => [
+        tag,
+        (...args: ReadonlyArray<unknown>) => {
+          const result = (
+            method as (
+              ...values: ReadonlyArray<unknown>
+            ) => Effect.Effect<unknown, RpcClientError> | Stream.Stream<unknown, RpcClientError>
+          )(...args);
+          if (opened) return result;
+          if (!Stream.isStream(result)) return Effect.andThen(awaitVerified, result);
+          if (!PRE_VERIFICATION_SUBSCRIPTIONS.has(tag)) {
+            return Stream.unwrap(Effect.as(awaitVerifiedOrWait, result));
+          }
+          return Stream.unwrap(
+            Effect.gen(function* () {
+              const buffered = yield* Stream.toQueue(result, { capacity: PRE_VERIFICATION_BUFFER });
+              yield* awaitVerifiedOrWait;
+              return Stream.fromQueue(buffered);
+            }),
+          );
+        },
+      ]),
+    ) as unknown as RpcSessionClient;
+    return {
+      session: {
+        ...session,
+        client,
+        // The config is only the verified server's: consumers read it after the gate.
+        initialConfig: Effect.andThen(awaitVerifiedOrWait, session.initialConfig),
+        ready: Effect.andThen(awaitVerifiedOrWait, session.ready),
+      },
+      open: Effect.sync(() => {
+        opened = true;
+      }).pipe(Effect.andThen(Deferred.succeed(verified, undefined)), Effect.asVoid),
+      close: Deferred.fail(verified, undefined).pipe(Effect.asVoid),
+    } satisfies VerifiedSessionGate;
+  });

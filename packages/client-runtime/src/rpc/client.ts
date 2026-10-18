@@ -13,7 +13,7 @@ import { RpcClient, RpcClientError } from "effect/unstable/rpc";
 
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import type { RpcSession } from "../rpc/session.ts";
+import { PRE_VERIFICATION_SUBSCRIPTIONS, type RpcSession } from "../rpc/session.ts";
 
 export class EnvironmentRpcUnavailableError extends Schema.TaggedError<EnvironmentRpcUnavailableError>()(
   "EnvironmentRpcUnavailableError",
@@ -309,7 +309,13 @@ export function subscribe<TTag extends EnvironmentSubscriptionRpcTag>(
   return Stream.unwrap(
     EnvironmentSupervisor.pipe(
       Effect.map((supervisor) =>
-        SubscriptionRef.changes(supervisor.session).pipe(
+        // A read subscription follows the session from `configuring` on (see
+        // `EnvironmentSupervisor.subscriptionSession`), a round trip sooner.
+        SubscriptionRef.changes(
+          PRE_VERIFICATION_SUBSCRIPTIONS.has(tag)
+            ? (supervisor.subscriptionSession ?? supervisor.session)
+            : supervisor.session,
+        ).pipe(
           Stream.switchMap(
             Option.match({
               onNone: () => Stream.empty,

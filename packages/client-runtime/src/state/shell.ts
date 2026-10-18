@@ -246,10 +246,13 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     yield* Queue.offer(persistence, nextSnapshot);
   });
 
+  // The shell subscribes from `configuring` on (see `subscriptionSession`), a round trip
+  // sooner; its data waits until the connection is verified and connected.
+  const subscriptionSession = supervisor.subscriptionSession ?? supervisor.session;
   const connectionOrSessionChanges = SubscriptionRef.changes(supervisor.state).pipe(
     Stream.map(() => "connection" as const),
     Stream.merge(
-      SubscriptionRef.changes(supervisor.session).pipe(Stream.map(() => "session" as const)),
+      SubscriptionRef.changes(subscriptionSession).pipe(Stream.map(() => "session" as const)),
     ),
   );
   yield* connectionOrSessionChanges.pipe(
@@ -257,13 +260,16 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       stateLock.withPermits(1)(
         Effect.gen(function* () {
           const connection = yield* SubscriptionRef.get(supervisor.state);
-          const session = Option.getOrNull(yield* SubscriptionRef.get(supervisor.session));
+          const session = Option.getOrNull(yield* SubscriptionRef.get(subscriptionSession));
           const previousSession = yield* Ref.get(observedSession);
           yield* Ref.set(observedSession, session);
           yield* projectConnectionStateLocked(connection);
           return {
             connection,
             session,
+            subscribable:
+              session !== null &&
+              (connection.phase === "connected" || connection.phase === "connecting"),
             maySubscribe:
               trigger === "connection" || previousSession === null || previousSession === session,
           };
@@ -272,13 +278,13 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     ),
     Stream.changesWith(
       (previous, current) =>
-        previous.connection.phase === current.connection.phase &&
+        previous.subscribable === current.subscribable &&
         previous.connection.generation === current.connection.generation &&
         previous.session === current.session &&
         previous.maySubscribe === current.maySubscribe,
     ),
-    Stream.switchMap(({ connection, session, maySubscribe }) => {
-      if (connection.phase !== "connected" || session === null || !maySubscribe) {
+    Stream.switchMap(({ connection, session, subscribable, maySubscribe }) => {
+      if (!subscribable || session === null || !maySubscribe) {
         return Stream.empty;
       }
       return subscribeInSession(

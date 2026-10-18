@@ -29,6 +29,23 @@ public package has no root export; callers use focused subpaths such as
   does it report `synchronizing` and return a live lease. A prepared mismatch
   cannot open a socket, and a backend restart between HTTP preparation and
   WebSocket configuration cannot publish synchronization or a live lease.
+- From `configuring` on, the supervisor publishes the session, wrapped by
+  `makeVerifiedSessionGate`, as `subscriptionSession`. Read subscriptions follow
+  it (`subscribe` for the tags in `PRE_VERIFICATION_SUBSCRIPTIONS`, and the
+  shell), so they leave alongside the config request rather than one round trip
+  after it. Those tags are the server's `read_stream` methods except
+  `preview.tunnelOpen` and `previewAutomation.connect`; each buffers up to 16
+  values. Everything else, unary or mutating, still reaches the session through
+  `session`, which is published only when the attempt connects, so its
+  guarantees are unchanged. The gate opens after the identity check passes and
+  the supervisor reports `connected`: no data from an unverified server reaches
+  domain state, and held data meets a connected environment. `session` then
+  publishes the same object, so nothing subscribes twice. An attempt that ends
+  unverified clears `subscriptionSession`, which interrupts its followers; their
+  held data is dropped. What changes is that a read subscription's request (its
+  input, such as a thread ID or cwd) reaches the server before the config's
+  identity check; the descriptor's identity check before the socket opened still
+  applies.
 - `EnvironmentSupervisor` owns desired state, connectivity, retries, the
   prepared connection, and the live RPC session for one environment.
 - `EnvironmentRegistry` owns catalog entries and their scoped supervisors. It

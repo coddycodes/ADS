@@ -1631,7 +1631,10 @@ crosses the proxy.
 First record the size of the first config snapshot: the data the RPC WebSocket
 receives before the banner disappears, shown in the browser's network-panel
 frames. The checks exercise the old 15-second limit only when size ÷ rate
-exceeds 15 seconds (about 250 KB on a host with many Claude skills).
+exceeds 15 seconds (about 250 KB on a host with many Claude skills). Read
+subscriptions (the open thread's included) leave with the config request, so
+their snapshots share the link while the config arrives: add their size ÷ rate
+to the expected times below, or record the figures with the thread closed.
 
 Check establishment before the large-diff transfers:
 

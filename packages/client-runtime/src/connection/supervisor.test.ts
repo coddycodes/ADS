@@ -210,7 +210,11 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
     yield* session.ready;
     yield* reportProgress({ stage: "synchronizing", prepared });
     yield* options?.afterSynchronizing ?? Effect.void;
-    return { prepared, session } satisfies ConnectionDriver.EnvironmentConnectionLease;
+    return {
+      prepared,
+      session,
+      open: Effect.void,
+    } satisfies ConnectionDriver.EnvironmentConnectionLease;
   });
 
   const dependencies = Layer.mergeAll(
@@ -495,6 +499,41 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect("publishes each connection's session once, from configuring on", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeStorageIdentityHarness("store-a", "store-a");
+      const supervisor = yield* makeSupervisor(TARGET_ENTRY, {
+        initiallyDesired: false,
+      }).pipe(Effect.provide(harness.dependencies));
+      const published = yield* Ref.make(0);
+      const early = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      yield* SubscriptionRef.changes(supervisor.session).pipe(
+        Stream.runForEach((session) =>
+          Option.isSome(session) ? Ref.update(published, (count) => count + 1) : Effect.void,
+        ),
+        Effect.forkChild,
+      );
+      yield* SubscriptionRef.changes(supervisor.subscriptionSession!).pipe(
+        Stream.runForEach((session) =>
+          Option.isSome(session)
+            ? Ref.update(early, (current) => [...current, session.value])
+            : Effect.void,
+        ),
+        Effect.forkChild,
+      );
+      for (let iteration = 0; iteration < 20; iteration += 1) yield* Effect.yieldNow;
+      yield* supervisor.connect;
+      yield* eventuallyState(supervisor.state, (state) => state.phase === "connected");
+      for (let iteration = 0; iteration < 50; iteration += 1) yield* Effect.yieldNow;
+      // A second publication of the same session makes every consumer subscribe again.
+      expect(yield* Ref.get(published)).toBe(1);
+      expect(yield* Ref.get(early)).toHaveLength(1);
+      expect((yield* Ref.get(early))[0]).toBe(
+        Option.getOrNull(yield* SubscriptionRef.get(supervisor.session)),
+      );
+    }),
+  );
+
   it.effect("blocks a session config store change without publishing or retrying the lease", () =>
     Effect.gen(function* () {
       const initialConfigStarted = yield* Deferred.make<void>();
@@ -513,6 +552,8 @@ describe("EnvironmentSupervisor", () => {
       expect((yield* SubscriptionRef.get(supervisor.state)).stage).toBe("configuring");
       expect(Option.isNone(yield* SubscriptionRef.get(supervisor.prepared))).toBe(true);
       expect(Option.isNone(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
+      // Read subscriptions already follow the gated session; it releases nothing unverified.
+      expect(Option.isSome(yield* SubscriptionRef.get(supervisor.subscriptionSession!))).toBe(true);
       yield* Deferred.succeed(releaseInitialConfig, undefined);
 
       const state = yield* eventuallyState(
@@ -536,6 +577,7 @@ describe("EnvironmentSupervisor", () => {
       expect(yield* Ref.get(harness.identityAcceptCount)).toBe(0);
       expect(Option.isNone(yield* SubscriptionRef.get(supervisor.prepared))).toBe(true);
       expect(Option.isNone(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
+      expect(Option.isNone(yield* SubscriptionRef.get(supervisor.subscriptionSession!))).toBe(true);
       expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("blocked");
     }),
   );

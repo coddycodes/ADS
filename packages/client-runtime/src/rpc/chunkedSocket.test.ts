@@ -54,8 +54,13 @@ const collect = (socket: Socket.Socket, count: number) =>
         received.push(data);
       }),
     );
-    for (let attempt = 0; attempt < 100 && received.length < count; attempt += 1) {
+    // Inflation runs on the platform's DecompressionStream, outside the fiber scheduler:
+    // tests that inflate run live and wait in real time, bounded.
+    for (let attempt = 0; attempt < 400 && received.length < count; attempt += 1) {
       yield* Effect.yieldNow;
+      if (attempt >= 100) {
+        yield* Effect.sleep("5 millis");
+      }
     }
     yield* Fiber.interrupt(fiber);
     return received;
@@ -96,7 +101,7 @@ describe("makeChunkedSocket", () => {
     }),
   );
 
-  it.effect("inflates compressed records once deflate is negotiated, in arrival order", () =>
+  it.live("inflates compressed records once deflate is negotiated, in arrival order", () =>
     Effect.gen(function* () {
       const large = `{"data":"${"x".repeat(40_000)}"}`;
       const socket = makeChunkedSocket(
