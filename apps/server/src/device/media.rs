@@ -953,7 +953,8 @@ impl Drop for MediaGuard {
 // ---------------------------------------------------------------------------------------------
 // Manager
 
-fn now_ms() -> i64 {
+/// Milliseconds since the epoch, as tickets and sessions keep their expiries.
+pub(super) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()

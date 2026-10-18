@@ -18,7 +18,7 @@
 //!
 //! | Reason | Cause |
 //! | --- | --- |
-//! | `expired` | the ticket expired, is unknown or malformed, or did not arrive in time; or the ticket's session expired while the socket streamed |
+//! | `expired` | the ticket expired, is unknown or malformed, or did not arrive in time; or the socket's session ended, by expiry or otherwise, after its expiry had passed |
 //! | `reused` | the ticket was already used |
 //! | `wrongChannel` | the ticket was minted over the other channel |
 //! | `wrongDevice` | the ticket's device is no longer known |
@@ -26,7 +26,7 @@
 //! | `disabled` | device previews were turned off |
 //! | `stopped` | the device stopped, failed, or is not ready |
 //! | `failed` | the device's video stream failed |
-//! | `unauthorized` | the ticket's session was revoked, or had ended before the socket joined |
+//! | `unauthorized` | the ticket's session was revoked before its expiry, or had ended before the socket joined |
 //! | `slow` | the client accepted no frame or Ping for 10 s, or sent nothing, not even a Pong, past the heartbeat limit (45 s) |
 //!
 //! While device previews are off, both routes refuse with `503` before admission, holding
@@ -51,7 +51,10 @@ use serde::Deserialize;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use super::{DeviceManager, media::MediaChannel};
+use super::{
+    DeviceManager,
+    media::{MediaChannel, now_ms},
+};
 use crate::{
     auth::AuthService,
     rpc::{
@@ -406,9 +409,10 @@ async fn serve<T: MediaTransport>(
         tracing::warn!("device media ticket's session is no longer active");
         return socket.close("unauthorized").await;
     };
-    // The expiry has a token of its own, cancelled with the session's, so the socket can
-    // tell an expiry, which the client retries with a ticket from its renewed session, from
-    // a revocation.
+    // The expiry has a token of its own, cancelled with the session's, so the guard wakes
+    // the socket at the expiry. The close reason comes from the clock, not from which token
+    // fired (see `SessionEnd::ended`): an expiry, which the client retries with a ticket from
+    // its renewed session, reads as `expired`, and a revocation before it as `unauthorized`.
     let session_expired = session_shutdown.child_token();
     let expiration_guard =
         crate::http::spawn_session_expiration_guard(expires_at_ms, session_expired.clone());
@@ -417,6 +421,7 @@ async fn serve<T: MediaTransport>(
             let session = SessionEnd {
                 revoked: &session_shutdown,
                 expired: &session_expired,
+                expires_at_ms,
             };
             let liveness = Liveness {
                 heartbeat: state.heartbeat,
@@ -445,15 +450,27 @@ struct SessionEnd<'a> {
     revoked: &'a CancellationToken,
     /// Cancelled when the session's expiry passes, and with `revoked`.
     expired: &'a CancellationToken,
+    /// When the session expires, in milliseconds since the epoch.
+    expires_at_ms: i64,
 }
 
 impl SessionEnd<'_> {
-    /// The close reason once either token is cancelled: a revocation wins over the expiry
-    /// it also cancels.
+    /// The close reason once either token is cancelled, by the session's state rather than
+    /// by which token fired first: `expired` once the expiry has passed, `unauthorized`
+    /// before it. The socket's own guard cancels only `expired`, but the authority watcher
+    /// and any request's session refresh can notice the expiry first and cancel `revoked`.
+    /// A revocation that lands after the expiry also reads as `expired`, which is harmless:
+    /// the retry needs a ticket from a renewed session, which a revoked client cannot get.
     async fn ended(self) -> &'static str {
         tokio::select! {
             biased;
-            () = self.revoked.cancelled() => "unauthorized",
+            () = self.revoked.cancelled() => {
+                if now_ms() >= self.expires_at_ms {
+                    "expired"
+                } else {
+                    "unauthorized"
+                }
+            }
             () = self.expired.cancelled() => "expired",
         }
     }
@@ -1332,6 +1349,7 @@ mod tests {
                 SessionEnd {
                     revoked: &CancellationToken::new(),
                     expired: &CancellationToken::new(),
+                    expires_at_ms: i64::MAX,
                 },
                 Liveness {
                     heartbeat: HeartbeatTiming::SHARED,
@@ -1372,6 +1390,7 @@ mod tests {
                 SessionEnd {
                     revoked: &session_shutdown,
                     expired: &expired,
+                    expires_at_ms: i64::MAX,
                 },
                 Liveness {
                     heartbeat: HeartbeatTiming::SHARED,
@@ -1451,6 +1470,49 @@ mod tests {
             close_reason(&mut client).await,
             (CLOSE_CODE, "unauthorized".to_owned())
         );
+        harness.fixture.manager.shutdown().await;
+    }
+
+    /// Review I1: the authority watcher, or any request's session refresh, can notice an
+    /// expiry before the socket's own guard does, and it cancels the session's token, not
+    /// the expiry's. The socket still closes as `expired` once the expiry has passed.
+    #[tokio::test]
+    async fn a_session_cancelled_after_its_expiry_closes_as_expired() {
+        let harness = Harness::start().await;
+        let subscriber = harness
+            .fixture
+            .manager
+            .attach_media(&harness.device_id)
+            .expect("attach");
+        let devices = harness.fixture.manager.clone();
+        let session_shutdown = CancellationToken::new();
+        let cancel = session_shutdown.clone();
+        let streaming = tokio::spawn(async move {
+            // The guard has not fired: only the session's token is cancelled.
+            let expired = session_shutdown.child_token();
+            stream(
+                &mut PlainTransport(StalledSocket),
+                subscriber,
+                &devices,
+                SessionEnd {
+                    revoked: &session_shutdown,
+                    expired: &expired,
+                    expires_at_ms: epoch_ms() - 1,
+                },
+                Liveness {
+                    heartbeat: HeartbeatTiming::SHARED,
+                    send_stall: SEND_STALL_TIMEOUT,
+                },
+            )
+            .await
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        cancel.cancel();
+        let reason = tokio::time::timeout(Duration::from_secs(5), streaming)
+            .await
+            .expect("the cancelled session ends the socket")
+            .expect("stream task");
+        assert_eq!(reason, Some("expired"));
         harness.fixture.manager.shutdown().await;
     }
 

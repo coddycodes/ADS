@@ -1516,10 +1516,13 @@ URL by replacing its path (`deviceMediaTarget`).
 - **Channel binding.** A ticket is bound to the session, the device, and the
   channel it was minted on: a ticket minted over E2EE is redeemable only on
   the E2EE route and a plain one only on the plain route (`wrongChannel`). A
-  revoked session closes its sockets with `unauthorized`, and a ticket whose
-  session has already ended is refused the same way. A session whose expiry
-  passes while a socket streams closes it with `expired`, which the client
-  retries with a ticket from its renewed session.
+  session revoked before its expiry closes its sockets with `unauthorized`, and
+  a ticket whose session has already ended is refused the same way. A socket
+  whose session ends once its expiry has passed closes with `expired`, which
+  the client retries with a ticket from its renewed session. The reason comes
+  from the session's expiry, not from which part of the server noticed the
+  end first: the socket's own expiry timer, the authority watcher, or a
+  request's session refresh.
 
 ## Profiler data
 
