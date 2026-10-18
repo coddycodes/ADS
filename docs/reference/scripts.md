@@ -329,7 +329,8 @@ performing a production install.
   development-only
   [high-latency measurement](../testing/cross-platform-validation.md#high-latency-measurement).
   For each round trip it starts a disposable `bibcode serve` (`--server-bin`,
-  default `target/debug/bibcode`) with the packaged-UI provider fixtures, puts
+  default `target/debug/bibcode`, which must come from `cargo build`: a binary left by
+  `cargo test` refuses tools on the ambient `PATH`) with the packaged-UI provider fixtures, puts
   the throttle proxy between it and a headless Chromium (`--chromium`, default
   `/usr/bin/chromium`), and drives user actions. It prints one JSON line per
   action and a Markdown table of RPCs, sequential round trips, bytes, time to

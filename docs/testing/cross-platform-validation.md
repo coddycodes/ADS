@@ -1709,7 +1709,11 @@ node scripts/measure-remote-latency.ts --rtt 0,250 --out <report>.json
 ```
 
 It needs `/usr/bin/chromium` (or `--chromium <path>`) and uses only
-disposable data and fixture providers. Add `--jitter 20` for a relayed peer's
+disposable data and fixture providers. Build the server with `cargo build`
+right before the run: a `cargo test` run rebuilds `target/debug/bibcode` with
+the hermetic test guard, which refuses tools on the ambient `PATH` (for
+example `hermetic-test-guard: refused jj at <ambient PATH>` in the run's
+`server.log`), and the server stops responding during the harness setup. Add `--jitter 20` for a relayed peer's
 spread. Compare the 250 ms table with the previous measurement in
 `docs/architecture/measurements/`: an action that gains RPCs or sequential
 round trips, or terminal echo lag above about two round trips, is a regression
