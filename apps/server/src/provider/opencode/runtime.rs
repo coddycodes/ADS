@@ -168,6 +168,13 @@ pub enum OpenCodeRuntimeError {
 /// How long the lookup before a delivery's send may take; a stalled one would hold the thread's
 /// delivery, so it ends as not sent and the delivery is retried.
 const DELIVERY_LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
+/// The bound on a request made for the event stream (a form cancel, a failed message's removal,
+/// a best-effort read). The client sets no request timeout, since the event stream is a single
+/// long-lived response; each other request carries its own bound so a stalled one cannot hold
+/// what waits on it.
+const SIDE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long OpenCode may take to answer the event stream's request with its headers.
+const EVENT_STREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 async fn within_rewind_deadline<T>(
     request: impl std::future::Future<Output = Result<T, OpenCodeRuntimeError>>,
@@ -179,6 +186,20 @@ async fn within_rewind_deadline<T>(
                 "OpenCode did not answer in time".to_owned(),
             ))
         })
+}
+
+/// Sends a request made for the event stream within `SIDE_REQUEST_TIMEOUT`; a non-success status
+/// is an error.
+async fn bounded_send(request: reqwest::RequestBuilder) -> Result<(), String> {
+    let response = tokio::time::timeout(SIDE_REQUEST_TIMEOUT, request.send())
+        .await
+        .map_err(|_| "timed out".to_owned())?
+        .map_err(|error| error.to_string())?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("HTTP {}", response.status()))
+    }
 }
 
 /// A failed HTTP request made before the turn's own request did not send the turn.
@@ -2075,7 +2096,12 @@ impl OpenCodeSessionRuntime {
         let task = tokio::spawn(async move {
             let response = match tokio::select! {
                 () = cancellation.cancelled() => return,
-                response = client.get(url).send() => response,
+                response = tokio::time::timeout(EVENT_STREAM_CONNECT_TIMEOUT, client.get(url).send()) => {
+                    match response {
+                        Ok(response) => response.map_err(|error| error.to_string()),
+                        Err(_) => Err("OpenCode did not open its event stream in time".to_owned()),
+                    }
+                }
             } {
                 Ok(response) => response,
                 Err(error) => {
@@ -2102,7 +2128,11 @@ impl OpenCodeSessionRuntime {
             // all — with the status lost.
             if !response.status().is_success() {
                 let status = response.status();
-                let body = response.text().await.unwrap_or_default();
+                let body = tokio::time::timeout(SIDE_REQUEST_TIMEOUT, response.text())
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .unwrap_or_default();
                 let detail = body.trim().chars().take(300).collect::<String>();
                 let message = if detail.is_empty() {
                     format!("OpenCode rejected the event stream with HTTP {status}.")
@@ -2509,7 +2539,17 @@ impl OpenCodeSessionRuntime {
                     && let Ok(url) =
                         self.request_url(&format!("/session/{session_id}/message/{message_id}"))
                 {
-                    let _ = self.inner.client.delete(url).send().await;
+                    // Off the event stream and bounded: nothing that follows waits on it.
+                    let request = self.inner.client.delete(url);
+                    tokio::spawn(async move {
+                        if let Err(error) = bounded_send(request).await {
+                            tracing::warn!(
+                                provider = "opencode",
+                                %error,
+                                "could not remove a failed OpenCode message"
+                            );
+                        }
+                    });
                 }
                 // `state`/`stopReason` were hardcoded to a failure, so an
                 // abort — the user's own interrupt — was reported as a provider
@@ -2803,38 +2843,7 @@ impl OpenCodeSessionRuntime {
                 } => {
                     // A form BiBCode cannot show (such as a sign-in link) would block the agent;
                     // cancelling it tells the agent nobody answered.
-                    let cancelled =
-                        match self.v2_url(&["session", &session_id, "form", &form_id], false) {
-                            Ok(url) => match self.inner.client.delete(url).send().await {
-                                Ok(response) if response.status().is_success() => Ok(()),
-                                Ok(response) => Err(format!("HTTP {}", response.status())),
-                                Err(error) => Err(error.to_string()),
-                            },
-                            Err(error) => Err(error.to_string()),
-                        };
-                    match cancelled {
-                        Ok(()) => tracing::warn!(
-                            provider = "opencode",
-                            "cancelled an OpenCode form BiBCode cannot show"
-                        ),
-                        Err(error) => {
-                            tracing::warn!(
-                                provider = "opencode",
-                                %error,
-                                "could not cancel an OpenCode form BiBCode cannot show"
-                            );
-                            self.emit(
-                                "runtime.error",
-                                turn_id,
-                                None,
-                                json!({
-                                    "message": "OpenCode is waiting for an answer BiBCode can't show. Answer it in the OpenCode terminal, or stop the turn.",
-                                    "class": "provider_error",
-                                }),
-                            )
-                            .await;
-                        }
-                    }
+                    self.spawn_v2_cancel_unanswerable_form(form_id, session_id, turn_id);
                 }
                 V2Output::FormSettled { form_id } => {
                     let pending = {
@@ -3027,6 +3036,61 @@ impl OpenCodeSessionRuntime {
         recovered
     }
 
+    /// Cancels a form BiBCode cannot show, off the event pump and bounded, so a cancel that never
+    /// answers does not hold later events (or Stop). A failed cancel is logged and reported in
+    /// the chat, since the agent keeps waiting on the form.
+    fn spawn_v2_cancel_unanswerable_form(
+        &self,
+        form_id: String,
+        session_id: String,
+        turn_id: Option<String>,
+    ) {
+        let request = self
+            .v2_url(&["session", &session_id, "form", &form_id], false)
+            .map(|url| self.inner.client.delete(url));
+        let runtime = Arc::downgrade(&self.inner);
+        let cancellation = self.inner.reconciliation_cancellation.clone();
+        let owner_cancellation = self.inner.owner_state.cancellation.clone();
+        tokio::spawn(async move {
+            let cancelled = tokio::select! {
+                () = cancellation.cancelled() => return,
+                () = owner_cancellation.cancelled() => return,
+                cancelled = async {
+                    match request {
+                        Ok(request) => bounded_send(request).await,
+                        Err(error) => Err(error.to_string()),
+                    }
+                } => cancelled,
+            };
+            match cancelled {
+                Ok(()) => tracing::warn!(
+                    provider = "opencode",
+                    "cancelled an OpenCode form BiBCode cannot show"
+                ),
+                Err(error) => {
+                    tracing::warn!(
+                        provider = "opencode",
+                        %error,
+                        "could not cancel an OpenCode form BiBCode cannot show"
+                    );
+                    if let Some(inner) = runtime.upgrade() {
+                        OpenCodeSessionRuntime::internal(inner)
+                            .emit(
+                                "runtime.error",
+                                turn_id,
+                                None,
+                                json!({
+                                    "message": "OpenCode is waiting for an answer BiBCode can't show. Answer it in the OpenCode terminal, or stop the turn.",
+                                    "class": "provider_error",
+                                }),
+                            )
+                            .await;
+                    }
+                }
+            }
+        });
+    }
+
     /// Shows the asks recovered on resume, off the event pump so its events keep flowing. The
     /// event stream is connected by now, so an ask answered later arrives as its settlement; one
     /// answered between the resume's read and the subscription is caught by reading the pending
@@ -3204,9 +3268,9 @@ impl OpenCodeSessionRuntime {
         drop(v2);
     }
 
-    /// A best-effort OpenCode 2 read; failures are logged and read as absent.
+    /// A best-effort OpenCode 2 read, bounded; failures are logged and read as absent.
     async fn v2_get_json(&self, url: String) -> Option<Value> {
-        let result = async {
+        let read = async {
             let response = self
                 .inner
                 .client
@@ -3221,8 +3285,10 @@ impl OpenCodeSessionRuntime {
                 .json::<Value>()
                 .await
                 .map_err(|error| error.to_string())
-        }
-        .await;
+        };
+        let result = tokio::time::timeout(SIDE_REQUEST_TIMEOUT, read)
+            .await
+            .unwrap_or_else(|_| Err("timed out".to_owned()));
         result
             .inspect_err(|error| {
                 tracing::warn!(provider = "opencode", %error, "OpenCode 2 read failed");

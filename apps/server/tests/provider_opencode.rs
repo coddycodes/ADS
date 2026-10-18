@@ -2565,6 +2565,14 @@ async fn opencode_runtime_surfaces_session_errors_and_removes_the_unanswered_pro
             "errorClass": "provider_error",
         })
     );
+    // The removal runs off the event stream, so it may land just after the completion.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while state.deleted_messages.lock().await.is_empty() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the unanswered prompt is removed");
     assert_eq!(
         state.deleted_messages.lock().await.as_slice(),
         ["user-error-1"]
