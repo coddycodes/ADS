@@ -813,16 +813,20 @@ async fn a_message_queued_while_a_revert_reopens_the_session_delivers_after_it()
     fixture.shutdown().await;
 }
 
-/// A revert requested while a message is being delivered waits for that delivery instead of
-/// rewinding under it, then refuses because the delivered turn is running.
-#[tokio::test]
-async fn a_revert_waits_for_a_delivery_in_flight_then_refuses_its_running_turn() {
-    let mut fixture = RevertFixture::new().await;
-    enqueue(&fixture.engine, "in-flight", false).await;
+/// Delivery whose provider accepts thread `t`'s message `in-flight` only when `accept` is
+/// notified, and then reports the turn running. Returns once that delivery is in flight.
+async fn deliver_in_flight(
+    engine: &OrchestrationEngine,
+) -> (
+    TurnDeliveryService,
+    Arc<Notify>,
+    mpsc::UnboundedReceiver<String>,
+) {
+    enqueue(engine, "in-flight", false).await;
     let (sender, mut routes) = mpsc::unbounded_channel();
     let accept = Arc::new(Notify::new());
     let router: DeliveryRouter = {
-        let engine = fixture.engine.clone();
+        let engine = engine.clone();
         let accept = accept.clone();
         Arc::new(move |command| {
             let (engine, accept, sender) = (engine.clone(), accept.clone(), sender.clone());
@@ -834,8 +838,70 @@ async fn a_revert_waits_for_a_delivery_in_flight_then_refuses_its_running_turn()
             })
         })
     };
-    let service = TurnDeliveryService::start_with_router(fixture.engine.clone(), 1, router);
+    let service = TurnDeliveryService::start_with_router(engine.clone(), 1, router);
     received(&mut routes, "in-flight").await;
+    (service, accept, routes)
+}
+
+/// A revert waiting on thread `t`'s delivery does not hold the effects worker: another thread's
+/// turn still gets its checkpoint baseline meanwhile.
+#[tokio::test]
+async fn a_revert_waiting_for_a_delivery_does_not_delay_another_threads_checkpoint() {
+    let mut fixture = RevertFixture::new().await;
+    let (service, accept, _routes) = deliver_in_flight(&fixture.engine).await;
+    fixture.revert().await;
+
+    fixture.engine.dispatch(command(json!({"type":"thread.create", "commandId":"thread-b", "threadId":"b", "projectId":"p", "title":"Other", "runtimeMode":"full-access", "modelSelection":{"instanceId":"codex", "model":"gpt-5"}, "createdAt":TIME}))).await.unwrap();
+    enqueue_for(&fixture.engine, "b", "b-first", false).await;
+    let baseline = crate::production::orchestration_effects::checkpoint_ref("b", 0);
+    let config = IsolatedGitConfig::new();
+    let captured = timeout(Duration::from_secs(5), async {
+        loop {
+            let mut probe = std::process::Command::new("git");
+            config.apply_to_command(&mut probe);
+            let found = probe
+                .args(["rev-parse", "--verify", "--quiet", &baseline])
+                .current_dir(&fixture.rewind.cwd)
+                .output()
+                .unwrap()
+                .status
+                .success();
+            if found {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(
+        captured.is_ok(),
+        "thread b's checkpoint baseline waited behind thread t's revert"
+    );
+    assert_eq!(
+        fixture
+            .rewind
+            .rewinds
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the revert still waits for thread t's delivery"
+    );
+
+    accept.notify_one();
+    fixture
+        .event("thread.activity-appended", |payload| {
+            payload["activity"]["kind"] == "checkpoint.revert.failed"
+        })
+        .await;
+    service.shutdown().await;
+    fixture.shutdown().await;
+}
+
+/// A revert requested while a message is being delivered waits for that delivery instead of
+/// rewinding under it, then refuses because the delivered turn is running.
+#[tokio::test]
+async fn a_revert_waits_for_a_delivery_in_flight_then_refuses_its_running_turn() {
+    let mut fixture = RevertFixture::new().await;
+    let (service, accept, _routes) = deliver_in_flight(&fixture.engine).await;
 
     fixture.revert().await;
     assert!(

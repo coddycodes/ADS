@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap, VecDeque},
     ffi::OsString,
     future::Future,
     path::{Path, PathBuf},
@@ -28,7 +28,8 @@ use crate::{
     orchestration::engine::{
         ActivityInput, BootstrapSetupInput, BootstrapSetupResult, BootstrapWorktree,
         BoxBootstrapFuture, BoxProjectCommandFuture, OrchestrationCommand, OrchestrationEngine,
-        ProjectCommandEffects, ThreadTurnBootstrapEffects, ThreadTurnStartBootstrapPrepareWorktree,
+        ProjectCommandEffects, ThreadTurnBootstrapEffects, ThreadTurnReservation,
+        ThreadTurnStartBootstrapPrepareWorktree,
     },
     persistence::{OrchestrationEvent, PersistenceError},
 };
@@ -607,6 +608,133 @@ fn is_reactor_event(event: &OrchestrationEvent) -> bool {
     )
 }
 
+/// What the worker needs to run an event's side effect.
+struct EffectContext {
+    engine: OrchestrationEngine,
+    repository: Arc<GitRepository>,
+    identity_tasks: TaskTracker,
+    callbacks: Arc<dyn OrchestrationEffectCallbacks>,
+    cancellation: CancellationToken,
+}
+
+impl EffectContext {
+    async fn handle(&self, event: &OrchestrationEvent) {
+        let result = process_event(
+            &self.engine,
+            &self.repository,
+            &self.identity_tasks,
+            self.callbacks.as_ref(),
+            event,
+            &self.cancellation,
+        )
+        .await;
+        self.report(event, result).await;
+    }
+
+    async fn revert(&self, event: &OrchestrationEvent, reservation: ThreadTurnReservation) {
+        let result = revert_checkpoint(
+            &self.engine,
+            self.callbacks.as_ref(),
+            event,
+            &self.cancellation,
+            reservation,
+        )
+        .await;
+        self.report(event, result).await;
+    }
+
+    async fn report(
+        &self,
+        event: &OrchestrationEvent,
+        result: Result<(), OrchestrationEffectsError>,
+    ) {
+        if let Err(error) = result {
+            tracing::warn!(event_type = %event.event.event_type, sequence = event.sequence, %error, "orchestration side effect failed");
+            append_failure_activity(&self.engine, event, &error.to_string()).await;
+        }
+    }
+}
+
+fn event_thread_id(event: &OrchestrationEvent) -> Option<&str> {
+    event.event.payload.get("threadId").and_then(Value::as_str)
+}
+
+/// How many events a parked thread holds before the worker waits for its revert itself. Only a
+/// thread whose delivery is in flight parks, so delivery's concurrency bounds the parked threads.
+const PARKED_THREAD_EVENT_LIMIT: usize = 64;
+
+/// Threads whose checkpoint revert waits for the thread's delivery in flight. The wait runs off
+/// the worker, which serves every thread, and the thread's later events wait behind the revert in
+/// order. Every side effect still runs on the worker, one at a time, so checkpoint work on a
+/// checkout that sibling threads share never overlaps.
+struct ParkedThreads {
+    queues: HashMap<String, VecDeque<OrchestrationEvent>>,
+    ready: mpsc::UnboundedSender<(OrchestrationEvent, Option<ThreadTurnReservation>)>,
+    waiters: TaskTracker,
+}
+
+impl ParkedThreads {
+    /// Runs the event now, or parks its thread when it is a revert whose thread is reserved.
+    async fn run(&mut self, context: &EffectContext, event: OrchestrationEvent) {
+        let revert_thread = (event.event.event_type == "thread.checkpoint-revert-requested")
+            .then(|| event_thread_id(&event))
+            .flatten()
+            .map(str::to_owned);
+        let Some(thread_id) = revert_thread else {
+            return context.handle(&event).await;
+        };
+        if let Some(reservation) = context.engine.try_reserve_thread_turns(&thread_id) {
+            return context.revert(&event, reservation).await;
+        }
+        self.queues.insert(thread_id.clone(), VecDeque::new());
+        let (engine, cancellation, ready) = (
+            context.engine.clone(),
+            context.cancellation.clone(),
+            self.ready.clone(),
+        );
+        self.waiters.spawn(async move {
+            let reservation = tokio::select! {
+                reservation = engine.reserve_thread_turns(&thread_id) => Some(reservation),
+                () = cancellation.cancelled() => None,
+            };
+            let _ = ready.send((event, reservation));
+        });
+    }
+
+    /// The parked queue of the event's thread, if that thread is parked.
+    fn queue_of(
+        &mut self,
+        event: &OrchestrationEvent,
+    ) -> Option<&mut VecDeque<OrchestrationEvent>> {
+        event_thread_id(event).and_then(|thread_id| self.queues.get_mut(thread_id))
+    }
+
+    /// Runs a parked revert once its thread is free, then the events that waited behind it. At
+    /// shutdown the waiter brings no reservation, and the parked events are left like any other
+    /// unhandled event.
+    async fn resume(
+        &mut self,
+        context: &EffectContext,
+        (event, reservation): (OrchestrationEvent, Option<ThreadTurnReservation>),
+    ) {
+        let Some(thread_id) = event_thread_id(&event).map(str::to_owned) else {
+            return;
+        };
+        let queued = self.queues.remove(&thread_id).unwrap_or_default();
+        let Some(reservation) = reservation else {
+            return;
+        };
+        context.revert(&event, reservation).await;
+        for event in queued {
+            // A later revert of the thread may have parked it again.
+            match self.queue_of(&event) {
+                Some(queue) => queue.push_back(event),
+                None => self.run(context, event).await,
+            }
+        }
+    }
+}
+
 async fn run_worker(
     engine: OrchestrationEngine,
     repository: Arc<GitRepository>,
@@ -615,18 +743,43 @@ async fn run_worker(
     mut receiver: mpsc::Receiver<OrchestrationEvent>,
     cancellation: CancellationToken,
 ) {
+    let context = EffectContext {
+        engine,
+        repository,
+        identity_tasks,
+        callbacks,
+        cancellation,
+    };
+    let (ready, mut waited) = mpsc::unbounded_channel();
+    let mut parked = ParkedThreads {
+        queues: HashMap::new(),
+        ready,
+        waiters: TaskTracker::new(),
+    };
     loop {
         tokio::select! {
-            () = cancellation.cancelled() => return,
+            () = context.cancellation.cancelled() => break,
+            Some(resumed) = waited.recv() => parked.resume(&context, resumed).await,
             event = receiver.recv() => {
-                let Some(event) = event else { return };
-                if let Err(error) = process_event(&engine, &repository, &identity_tasks, callbacks.as_ref(), &event, &cancellation).await {
-                    tracing::warn!(event_type = %event.event.event_type, sequence = event.sequence, %error, "orchestration side effect failed");
-                    append_failure_activity(&engine, &event, &error.to_string()).await;
+                let Some(event) = event else { break };
+                let thread_id = event_thread_id(&event).map(str::to_owned);
+                let Some(queue) = parked.queue_of(&event) else {
+                    parked.run(&context, event).await;
+                    continue;
+                };
+                queue.push_back(event);
+                if queue.len() >= PARKED_THREAD_EVENT_LIMIT {
+                    // Keep the backlog bounded: wait for this thread, as before parking.
+                    while thread_id.as_ref().is_some_and(|id| parked.queues.contains_key(id)) {
+                        let Some(resumed) = waited.recv().await else { break };
+                        parked.resume(&context, resumed).await;
+                    }
                 }
             }
         }
     }
+    parked.waiters.close();
+    parked.waiters.wait().await;
 }
 
 async fn process_event(
@@ -649,8 +802,12 @@ async fn process_event(
         {
             capture_missing_checkpoint(engine, callbacks, event, cancellation).await
         }
+        // Reached only without a thread id: the worker runs a revert with its thread reserved.
         "thread.checkpoint-revert-requested" => {
-            revert_checkpoint(engine, callbacks, event, cancellation).await
+            required_str(&event.event.payload, "threadId")?;
+            Err(OrchestrationEffectsError::Effect(
+                "a checkpoint revert runs only with its thread reserved".to_owned(),
+            ))
         }
         "thread.deleted" => {
             cleanup_deleted_thread(callbacks, event).await;
@@ -875,12 +1032,12 @@ async fn revert_checkpoint(
     callbacks: &dyn OrchestrationEffectCallbacks,
     event: &OrchestrationEvent,
     cancellation: &CancellationToken,
+    reservation: ThreadTurnReservation,
 ) -> Result<(), OrchestrationEffectsError> {
-    let thread_id = required_str(&event.event.payload, "threadId")?;
-    // No turn of this thread starts from its busy check until the revert is recorded, whichever
-    // client sends one and even once a reopened session reads ready. A delivery already in
-    // flight finishes first. Delivery holds what arrives meanwhile and resumes when woken.
-    let reservation = engine.reserve_thread_turns(thread_id).await;
+    // `reservation` holds the thread from before the busy check until the revert is recorded,
+    // so no turn of it starts meanwhile, whichever client sends one and even once a reopened
+    // session reads ready; a delivery already in flight finished first. Delivery holds what
+    // arrives meanwhile and resumes when woken.
     let result = revert_reserved_checkpoint(engine, callbacks, event, cancellation).await;
     drop(reservation);
     engine.wake_turn_delivery();
