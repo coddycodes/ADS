@@ -110,6 +110,8 @@ struct Replay {
     answer_asks_after_first_list: AtomicBool,
     /// `/api/session/active` never answers.
     stall_active: AtomicBool,
+    /// Cancelling a form (`DELETE /api/session/{id}/form/{form}`) never answers.
+    stall_form_cancel: AtomicBool,
 }
 
 impl Replay {
@@ -463,6 +465,7 @@ async fn serve(scenario: &'static str) -> (String, Arc<Replay>) {
         reverted: AtomicBool::new(false),
         answer_asks_after_first_list: AtomicBool::new(false),
         stall_active: AtomicBool::new(false),
+        stall_form_cancel: AtomicBool::new(false),
     });
     let app = Router::new()
         .route("/api/session", post(record).get(captured_list))
@@ -504,6 +507,22 @@ async fn serve(scenario: &'static str) -> (String, Arc<Replay>) {
         .route(
             "/api/session/{session_id}/form/{form_id}/reply",
             post(record),
+        )
+        .route(
+            "/api/session/{session_id}/form/{form_id}",
+            delete(
+                |State(replay): State<Arc<Replay>>, uri: OriginalUri| async move {
+                    replay.requests.lock().unwrap().push((
+                        "DELETE".to_owned(),
+                        uri.0.to_string(),
+                        Value::Null,
+                    ));
+                    if replay.stall_form_cancel.load(Ordering::SeqCst) {
+                        std::future::pending::<()>().await;
+                    }
+                    StatusCode::NO_CONTENT
+                },
+            ),
         )
         .route("/api/experimental/mcp/{name}", put(record))
         .route("/api/model", get(models))
@@ -1273,6 +1292,47 @@ async fn output_of_a_resumed_execution_gets_its_turn_before_the_check_answers() 
     assert_eq!(delta.len(), 1, "{events:#?}");
     assert_eq!(delta[0].turn_id, started[0].turn_id);
     runtime.stop().await.expect("stop");
+}
+
+/// A form BiBCode cannot show is cancelled off the event stream, so a cancel that never answers
+/// does not hold later events: a prompt's turn completes, and Stop ends one.
+#[tokio::test]
+async fn a_stalled_form_cancel_does_not_hold_the_event_stream() {
+    for (scenario, prompt) in [("hello", "SAY_HELLO please"), ("interrupt", "SLOW please")] {
+        let (endpoint, replay) = serve(scenario).await;
+        replay.stall_form_cancel.store(true, Ordering::SeqCst);
+        let runtime = v2_runtime(&endpoint);
+        runtime.start().await.expect("session starts");
+        // A free-text field: BiBCode offers only choices, so it cancels the form.
+        let unanswerable = json!({ "type": "form.created", "data": { "form": {
+            "id": "frm_unanswerable", "sessionID": replay.root, "title": "Name",
+            "fields": [{ "key": "name", "type": "string" }]
+        }}});
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            runtime.handle_v2_event(unanswerable),
+        )
+        .await
+        .expect("the event is handled without waiting on the cancel");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while replay.requests_to("/form/frm_unanswerable").is_empty() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the form is cancelled");
+        runtime
+            .send_turn(Some(prompt), Vec::new(), None)
+            .await
+            .expect("prompt is accepted");
+        if scenario == "interrupt" {
+            wait_for(&runtime, "content.delta").await;
+            runtime.interrupt_turn().await.expect("interrupt is sent");
+        }
+        let events = until_turns_complete(&runtime, 1).await;
+        assert_eq!(of_type(&events, "turn.completed").len(), 1, "{scenario}");
+        runtime.stop().await.expect("stop");
+    }
 }
 
 /// A resumed session whose running-execution check never answers still handles its events: the

@@ -661,7 +661,10 @@ provider says the old one is gone:
   OpenCode kept running runs off the event pump with a 10-second bound, so a
   stalled read never holds events or Stop. Until it answers, or if it cannot,
   the execution's own output starts its provider-started turn, so the reply and
-  its completion share one turn.
+  its completion share one turn. No request on the OpenCode event pump waits
+  without a bound. Cancelling a form BiBCode cannot show and removing a failed
+  prompt run off the pump, and failures are logged. Best-effort OpenCode 2 reads
+  and the event stream's connection are bounded too.
 - Claude passes `--resume` only when the transcript
   `<config dir>/projects/<project>/<sessionId>.jsonl` exists, and otherwise
   launches with a fresh `--session-id`. The config directory resolves as for
