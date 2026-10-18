@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 
+import { EnvironmentRpcUnavailableError } from "@bibcode/client-runtime/rpc";
 import { EnvironmentId } from "@bibcode/contracts";
 import * as Cause from "effect/Cause";
 import { act, createElement } from "react";
@@ -24,6 +25,7 @@ vi.mock("../../state/use-atom-command", () => ({
 
 import type { DeviceVideoWorkerEvent, DeviceVideoWorkerRequest } from "./deviceVideoPipeline";
 import {
+  CONNECTION_DOWN,
   type DeviceVideoWorker,
   DeviceVideoSession,
   useDeviceVideo,
@@ -327,6 +329,42 @@ describe("DeviceVideoSession", () => {
     expect(mintTicket).toHaveBeenCalledTimes(1);
   });
 
+  it("spends no reconnect on a ticket the connection was down to mint", async () => {
+    const { advance, mintTicket, modes, video, worker } = session();
+    video.start();
+    await flush();
+    worker().emit({ type: "firstFrame" });
+    // The connection re-authorizes for ten seconds after the socket closed.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      mintTicket.mockResolvedValueOnce(CONNECTION_DOWN as unknown as string);
+    }
+    worker().emit({ type: "closed", reason: "expired" });
+    await advance(15_000);
+    expect(worker().tickets).toEqual(["T1", "T2"]);
+    expect(modes.some((mode) => mode.kind === "jpeg")).toBe(false);
+    // That close spent one reconnect: two more closes are retried, the next falls back.
+    for (const reason of ["slow", "failed"]) {
+      worker().emit({ type: "closed", reason });
+      await advance(5_000);
+    }
+    expect(worker().tickets).toEqual(["T1", "T2", "T3", "T4"]);
+    expect(modes.some((mode) => mode.kind === "jpeg")).toBe(false);
+    worker().emit({ type: "closed", reason: "slow" });
+    expect(modes.at(-1)).toEqual({ kind: "jpeg", reason: "rejected" });
+  });
+
+  it("still waits for a first frame while the connection is down", async () => {
+    const { advance, mintTicket, modes, video } = session();
+    mintTicket.mockResolvedValue(CONNECTION_DOWN as unknown as string);
+    video.start();
+    await flush();
+    await advance(FIRST_FRAME_TIMEOUT_MS);
+    expect(modes.at(-1)).toEqual({ kind: "jpeg", reason: "noFirstFrame" });
+    const minted = mintTicket.mock.calls.length;
+    await advance(10_000);
+    expect(mintTicket).toHaveBeenCalledTimes(minted);
+  });
+
   it("retries when the server will not issue a ticket", async () => {
     const { advance, mintTicket, video, workers } = session();
     mintTicket.mockResolvedValueOnce(null as unknown as string);
@@ -460,6 +498,78 @@ describe("useDeviceVideo", () => {
     });
     expect(hookDeps.mintTicket).toHaveBeenCalledTimes(1);
     await unmount();
+  });
+});
+
+describe("useDeviceVideo reconnects", () => {
+  const environmentId = EnvironmentId.make("environment-work");
+
+  afterEach(() => {
+    // A failed run must not leave its queued mint results to the next test.
+    hookDeps.mintTicket.mockReset();
+    hookDeps.mintTicket.mockImplementation(async () => ({
+      _tag: "Success",
+      value: { ticket: "H1" },
+    }));
+  });
+
+  it("retries video after an expired close while the ticket mint waits for the connection", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    hookDeps.mintTicket.mockClear();
+    const workers: Array<{ emit(event: DeviceVideoWorkerEvent): void; posted: unknown[] }> = [];
+    vi.stubGlobal("VideoDecoder", { isConfigSupported: async () => ({ supported: true }) });
+    vi.stubGlobal(
+      "Worker",
+      class {
+        readonly posted: unknown[] = [];
+        private listener: ((event: { data: DeviceVideoWorkerEvent }) => void) | null = null;
+        constructor() {
+          workers.push(this);
+        }
+        addEventListener(
+          type: string,
+          listener: (event: { data: DeviceVideoWorkerEvent }) => void,
+        ) {
+          if (type === "message") this.listener = listener;
+        }
+        emit(event: DeviceVideoWorkerEvent) {
+          this.listener?.({ data: event });
+        }
+        postMessage(message: unknown) {
+          this.posted.push(message);
+        }
+        terminate() {}
+      },
+    );
+    const modes: VideoMode[] = [];
+    function Probe() {
+      modes.push(useDeviceVideo({ environmentId, deviceId: "d-1", canvas }));
+      return null;
+    }
+    const canvas = document.createElement("canvas");
+    const root = createRoot(document.createElement("div"));
+    await act(async () => root.render(createElement(Probe)));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    await act(async () => workers[0]!.emit({ type: "firstFrame" }));
+    // The session expired: the RPC connection re-authorizes, and every mint meanwhile finds
+    // no connection.
+    const down = {
+      _tag: "Failure",
+      cause: Cause.fail(
+        new EnvironmentRpcUnavailableError({ environmentId, message: "Work is not connected." }),
+      ),
+    };
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      hookDeps.mintTicket.mockResolvedValueOnce(down as never);
+    }
+    await act(async () => workers[0]!.emit({ type: "closed", reason: "expired" }));
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(modes.some((mode) => mode.kind === "jpeg")).toBe(false);
+    expect(hookDeps.mintTicket).toHaveBeenCalledTimes(6);
+    expect(
+      workers[0]!.posted.filter((message) => (message as { type: string }).type === "start"),
+    ).toHaveLength(2);
+    await act(async () => root.unmount());
   });
 });
 

@@ -2263,7 +2263,11 @@ groups:
 - **Retried:** `expired`, `reused`, `failed`, `slow`, and a connection that is
   refused or drops without a close frame (`network`, such as 1006 or the
   pre-upgrade 503), with a new ticket each time, at most 3 times in 60 s with
-  backoff, before falling back to still images.
+  backoff, before falling back to still images. A ticket that cannot be minted
+  because the connection to the server is down (it is reconnecting, or signing
+  in again after its session expired) is asked for again every second without
+  spending one of those retries; a screen that has not shown a frame yet still
+  falls back after 5 s.
 
 **Agents.** Coding agents reach the same device through four MCP tools on the
 provider MCP endpoint: `device_list`, `device_open` (takes `platform`, which

@@ -1,4 +1,5 @@
 /* oxlint-disable unicorn/require-post-message-target-origin -- Worker messages have no target origin. */
+import { isSessionTransportLoss } from "@bibcode/client-runtime/connection";
 import { type DeviceMediaTarget, deviceMediaTarget } from "@bibcode/client-runtime/device";
 import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
 import type { EnvironmentId } from "@bibcode/contracts";
@@ -33,6 +34,8 @@ export const STALL_TIMEOUT_MS = 5_000;
 export const MAX_RECONNECTS_PER_WINDOW = 3;
 export const RECONNECT_WINDOW_MS = 60_000;
 const RECONNECT_BASE_DELAY_MS = 500;
+/** How often a ticket is asked for again while the connection to the server is down. */
+export const CONNECTION_RETRY_MS = 1_000;
 /** How long a stopping worker gets to close its socket and decoder before it is terminated. */
 export const WORKER_STOP_GRACE_MS = 1_000;
 
@@ -74,11 +77,18 @@ export interface TicketUnavailable {
   readonly message?: string;
 }
 
+/**
+ * No ticket because the connection to the server is down: it is reconnecting, or signing in
+ * again after its session expired. The server never saw the request, so it costs no reconnect.
+ */
+export const CONNECTION_DOWN = { connectionDown: true } as const;
+export type ConnectionDown = typeof CONNECTION_DOWN;
+
 export interface DeviceVideoSessionDeps {
   /** Whether this client can decode the stream at all. */
   readonly isSupported: () => Promise<boolean>;
   /** A fresh single-use ticket, or `null` when the server would not issue one now. */
-  readonly mintTicket: () => Promise<string | TicketUnavailable | null>;
+  readonly mintTicket: () => Promise<string | TicketUnavailable | ConnectionDown | null>;
   readonly target: () => DeviceMediaTarget | null;
   readonly createWorker: () => DeviceVideoWorker;
   /** Takes a decoded frame: draws it or closes it. */
@@ -132,7 +142,8 @@ export class DeviceVideoSession {
   private async connect(): Promise<void> {
     const ticket = await this.deps.mintTicket().catch(() => null);
     if (this.ended) return;
-    if (typeof ticket === "object" && ticket !== null) {
+    if (ticket === CONNECTION_DOWN) return this.retryOnceConnected();
+    if (typeof ticket === "object" && ticket !== null && "unavailable" in ticket) {
       return this.fallBack(ticket.unavailable, ticket.message);
     }
     const target = this.deps.target();
@@ -209,6 +220,18 @@ export class DeviceVideoSession {
       this.reconnectTimer = null;
       void this.connect();
     }, delay);
+  }
+
+  /**
+   * Asks for a ticket again shortly, without spending a reconnect: a session that expired
+   * signs in again, and every ticket asked for meanwhile finds no connection. A session that
+   * has not shown a frame yet still falls back once its first-frame wait ends.
+   */
+  private retryOnceConnected(): void {
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.connect();
+    }, CONNECTION_RETRY_MS);
   }
 
   private fallBack(reason: StillImagesReason, message?: string): void {
@@ -376,6 +399,7 @@ export function useDeviceVideo(input: {
       mintTicket: async () => {
         const result = await mintTicket({ environmentId, input: { deviceId } });
         if (result._tag === "Success") return result.value.ticket;
+        if (isSessionTransportLoss(result.cause)) return CONNECTION_DOWN;
         return mediaUnavailable(squashAtomCommandFailure(result));
       },
       target: () => ({ url: targetUrl, hostKey }),
