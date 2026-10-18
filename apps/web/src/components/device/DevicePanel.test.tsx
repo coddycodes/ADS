@@ -1034,6 +1034,55 @@ describe("DevicePanel with iOS simulators", () => {
     );
   });
 
+  it("keeps an input refusal up for a few seconds, past the input accepted after it", async () => {
+    const refusal =
+      "This device can type only plain ASCII text. Accented letters, emoji, and other characters can't be sent from here yet.";
+    const refusedAgain = "The emulator accepted no input.";
+    h.results.input = (input) => {
+      const sent = JSON.stringify(input);
+      if (sent.includes("é")) {
+        return { _tag: "Failure", error: { _tag: "DeviceInputError", message: refusal } };
+      }
+      if (sent.includes("home")) {
+        return { _tag: "Failure", error: { _tag: "DeviceInputError", message: refusedAgain } };
+      }
+      return { _tag: "Success", value: undefined };
+    };
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      withCatalog(catalog({ devices: [snapshot()] }));
+      const container = await render();
+      const onInput = h.screenProps?.onInput as (event: unknown) => void;
+      const shown = () =>
+        container.querySelector("[role='status'][data-input-error]")?.textContent ?? null;
+      await act(async () => onInput({ type: "text", text: "é" }));
+      await flushInput();
+      expect(shown()).toBe(refusal);
+      // The next keystroke is accepted: the refusal stays, so it can be read.
+      await act(async () => onInput({ type: "text", text: "a" }));
+      await flushInput();
+      expect(shown()).toBe(refusal);
+      await act(async () => {
+        vi.advanceTimersByTime(4_000);
+      });
+      expect(shown()).toBe(refusal);
+      // A newer refusal replaces it, and has its own few seconds.
+      await click(button(container, "Home"));
+      await flushInput();
+      expect(shown()).toBe(refusedAgain);
+      await act(async () => {
+        vi.advanceTimersByTime(4_000);
+      });
+      expect(shown()).toBe(refusedAgain);
+      await act(async () => {
+        vi.advanceTimersByTime(1_000);
+      });
+      expect(shown()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shows the server's reason when an Android device refuses text it cannot type", async () => {
     const message =
       "This device can type only plain ASCII text. Accented letters, emoji, and other characters can't be sent from here yet.";

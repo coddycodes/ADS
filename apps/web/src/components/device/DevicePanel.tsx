@@ -64,6 +64,8 @@ export function rotatedOrientation(
 
 /** How long the note that a rotate did nothing stays up. */
 const ROTATE_NOTE_MS = 5_000;
+/** How long a refused input's message stays up after the latest refusal. */
+const INPUT_ERROR_MS = 5_000;
 
 const isRunning = (device: DeviceSnapshot) =>
   device.state !== "stopped" && device.state !== "failed";
@@ -244,6 +246,12 @@ interface RotateNote {
   readonly deviceId: string;
 }
 
+/** Why the shown device refused input, or why it could not be sent. */
+interface InputErrorNote {
+  readonly deviceId: string;
+  readonly message: string;
+}
+
 /** Each platform's reason it cannot run devices, under its own heading. */
 function UnavailablePlatforms({
   platforms,
@@ -292,7 +300,7 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
   const [pickedImage, setPickedImage] = useState<DeviceImageSelection | null>(null);
   const [startPending, setStartPending] = useState(false);
   const [actionError, setActionError] = useState<PaneError | null>(null);
-  const [inputError, setInputError] = useState<string | null>(null);
+  const [inputError, setInputError] = useState<InputErrorNote | null>(null);
   const [stillImages, setStillImages] = useState<StillImages | null>(null);
   const [pasteNote, setPasteNote] = useState<PasteNote | null>(null);
   const [rotateNote, setRotateNote] = useState<RotateNote | null>(null);
@@ -349,12 +357,24 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
 
   // One input queue per device, made on first use and dropped with the device or the pane.
   const laneRef = useRef<InputLane | null>(null);
-  const inputErrorRef = useRef<string | null>(null);
+  const inputErrorRef = useRef<InputErrorNote | null>(null);
+  const inputErrorTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(inputErrorTimerRef.current), []);
+  // A refusal stays up for a few seconds after the latest one, so input accepted right after
+  // it (the next keystroke) does not clear it before it can be read; a newer one replaces it.
   // Only a change re-renders: input runs at frame rate while dragging.
-  const showInputError = useCallback((message: string | null) => {
-    if (message === inputErrorRef.current) return;
-    inputErrorRef.current = message;
-    setInputError(message);
+  const showInputError = useCallback((deviceId: string, message: string) => {
+    const current = inputErrorRef.current;
+    if (current?.deviceId !== deviceId || current.message !== message) {
+      const note = { deviceId, message };
+      inputErrorRef.current = note;
+      setInputError(note);
+    }
+    clearTimeout(inputErrorTimerRef.current);
+    inputErrorTimerRef.current = setTimeout(() => {
+      inputErrorRef.current = null;
+      setInputError(null);
+    }, INPUT_ERROR_MS);
   }, []);
   const shownDeviceId = device?.deviceId ?? null;
   useEffect(() => {
@@ -384,14 +404,13 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
           // releases again instead of leaving a key or a touch down on the device.
           queue: new DeviceInputQueue(async (events) => {
             const result = await runInput({ environmentId, input: { deviceId, events } });
-            if (next.alive) {
+            if (next.alive && result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
               showInputError(
-                result._tag === "Failure" && !isAtomCommandInterrupted(result)
-                  ? describeDeviceError(
-                      squashAtomCommandFailure(result),
-                      "The device did not accept that input. Try again.",
-                    ).message
-                  : null,
+                deviceId,
+                describeDeviceError(
+                  squashAtomCommandFailure(result),
+                  "The device did not accept that input. Try again.",
+                ).message,
               );
             }
             if (result._tag === "Failure") {
@@ -489,7 +508,9 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
       // Absent outside secure contexts; browsers may also ask, or refuse.
       text = await navigator.clipboard.readText();
     } catch {
-      if (mountedRef.current) showInputError(CLIPBOARD_UNREADABLE_MESSAGE);
+      if (mountedRef.current && target !== null) {
+        showInputError(target, CLIPBOARD_UNREADABLE_MESSAGE);
+      }
       return;
     }
     // Reading can wait on the browser's own Paste prompt; the text belongs to that device only.
@@ -613,13 +634,15 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
           </Button>
         </div>
       )}
-      {inputError === null || device?.state !== "ready" ? null : (
+      {inputError === null ||
+      inputError.deviceId !== device?.deviceId ||
+      device.state !== "ready" ? null : (
         <div
           role="status"
           data-input-error
           className="border-b border-border/60 px-3 py-1.5 text-xs text-foreground"
         >
-          {inputError}
+          {inputError.message}
         </div>
       )}
       {rotateNote === null ||

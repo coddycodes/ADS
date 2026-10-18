@@ -2011,7 +2011,9 @@ is hidden or the screen closes. When a batch is refused, its key releases and
 its touch releases (as cancels where the touch was lifted) go out once more at
 once, ahead of later input and in a batch of their own, so text queued since
 that the server refuses cannot refuse them again; one refused again stays held
-for the next of those. The emulator's `KeyboardEvent.text` translates only printable ASCII and
+for the next of those. The panel shows a refusal's reason for 5 s after the
+latest refusal: input accepted meanwhile does not clear it, and a newer
+refusal replaces it. The emulator's `KeyboardEvent.text` translates only printable ASCII and
 drops most other characters while the call succeeds, so Android refuses what it
 cannot type instead of sending it: `android::input::send_batch` fails a batch
 with any text event outside printable ASCII, Return, and Tab (the set
