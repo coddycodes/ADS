@@ -168,6 +168,12 @@ pub enum OpenCodeRuntimeError {
 /// How long the lookup before a delivery's send may take; a stalled one would hold the thread's
 /// delivery, so it ends as not sent and the delivery is retried.
 const DELIVERY_LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
+/// A resume's read of the pending asks (or the session tree) that failed is tried again, off
+/// the event pump, after a backoff that doubles from the first delay up to the longest, for at
+/// most `RESUME_READ_ATTEMPTS` reads once the event stream is connected.
+const RESUME_READ_RETRY_FIRST: Duration = Duration::from_millis(250);
+const RESUME_READ_RETRY_LONGEST: Duration = Duration::from_secs(10);
+const RESUME_READ_ATTEMPTS: usize = 8;
 /// How many OpenCode 1 settlements of asks not routed yet are remembered for a recovery read.
 const MAX_TRACKED_SETTLEMENTS: usize = 256;
 /// The bound on a request made for the event stream (a form cancel, a failed message's removal,
@@ -427,6 +433,11 @@ struct V2State {
     /// OpenCode 1 asks settled on the event stream since the session resumed, so a recovery read
     /// that still listed them does not show them again.
     v1_settled: HashSet<String>,
+    /// OpenCode 2 asks settled on the event stream, so a recovery read that still listed them
+    /// does not route them again.
+    settled: HashSet<String>,
+    /// A resumed session reconciles its pending asks once the event stream connects.
+    reconcile_asks_on_connect: bool,
     /// Root executions started or ended as the event stream reported them, so an off-pump check
     /// for a running execution knows whether the stream overtook it.
     executions_seen: u64,
@@ -938,6 +949,7 @@ impl OpenCodeSessionRuntime {
             v2.answering.clear();
             v2.settled_while_answering.clear();
             v2.cancelled_forms.clear();
+            v2.settled.clear();
         }
         let resumed = payload.get("resumed").is_some();
         let recovered_asks = match (resumed, self.is_v2()) {
@@ -951,9 +963,12 @@ impl OpenCodeSessionRuntime {
         // OpenCode does not replay asks made while BiBCode was away; they are shown once the
         // event stream connects (see `v1_show_recovered_asks` and `v2_show_recovered_asks`).
         self.inner.v2.lock().await.recovered_asks = recovered_asks;
-        // A resumed session may still be executing (OpenCode kept working while BiBCode was away).
+        // A resumed session may still be executing (OpenCode kept working while BiBCode was away),
+        // and reconciles its pending asks once subscribed.
         if resumed {
-            self.inner.v2.lock().await.adopt_on_connect = true;
+            let mut v2 = self.inner.v2.lock().await;
+            v2.adopt_on_connect = true;
+            v2.reconcile_asks_on_connect = true;
         }
         self.start_event_pump().await?;
         self.request_reconciliation(true, None, true).await;
@@ -2768,8 +2783,14 @@ impl OpenCodeSessionRuntime {
             }
         }
         if event.get("type").and_then(Value::as_str) == Some("server.connected") {
-            let asks = std::mem::take(&mut self.inner.v2.lock().await.recovered_asks);
-            if !asks.is_empty() {
+            let (asks, reconcile) = {
+                let mut v2 = self.inner.v2.lock().await;
+                (
+                    std::mem::take(&mut v2.recovered_asks),
+                    std::mem::take(&mut v2.reconcile_asks_on_connect),
+                )
+            };
+            if reconcile {
                 self.spawn_v2_show_recovered_asks(asks);
             }
             let unanswerable =
@@ -2876,12 +2897,15 @@ impl OpenCodeSessionRuntime {
                     session_id,
                     detail,
                 } => {
-                    self.inner
-                        .v2
-                        .lock()
-                        .await
-                        .permissions
-                        .insert(request_id.clone(), (turn_id.clone(), session_id));
+                    // One the resume already routed and showed is not shown again.
+                    {
+                        let mut v2 = self.inner.v2.lock().await;
+                        if v2.permissions.contains_key(&request_id) {
+                            continue;
+                        }
+                        v2.permissions
+                            .insert(request_id.clone(), (turn_id.clone(), session_id));
+                    }
                     self.emit(
                         "request.opened",
                         turn_id,
@@ -2894,6 +2918,9 @@ impl OpenCodeSessionRuntime {
                     // Answered elsewhere, such as in the OpenCode terminal.
                     let pending = {
                         let mut v2 = self.inner.v2.lock().await;
+                        if v2.settled.len() < MAX_TRACKED_SETTLEMENTS {
+                            v2.settled.insert(request_id.clone());
+                        }
                         if v2.answering.contains(&request_id) {
                             v2.settled_while_answering.insert(request_id.clone());
                             None
@@ -2917,14 +2944,21 @@ impl OpenCodeSessionRuntime {
                     questions,
                     fields,
                 } => {
-                    self.inner.v2.lock().await.forms.insert(
-                        form_id.clone(),
-                        V2PendingForm {
-                            turn_id: turn_id.clone(),
-                            session_id,
-                            fields,
-                        },
-                    );
+                    // One the resume already routed and showed is not shown again.
+                    {
+                        let mut v2 = self.inner.v2.lock().await;
+                        if v2.forms.contains_key(&form_id) {
+                            continue;
+                        }
+                        v2.forms.insert(
+                            form_id.clone(),
+                            V2PendingForm {
+                                turn_id: turn_id.clone(),
+                                session_id,
+                                fields,
+                            },
+                        );
+                    }
                     self.emit(
                         "user-input.requested",
                         turn_id,
@@ -2945,6 +2979,9 @@ impl OpenCodeSessionRuntime {
                 V2Output::FormSettled { form_id } => {
                     let pending = {
                         let mut v2 = self.inner.v2.lock().await;
+                        if v2.settled.len() < MAX_TRACKED_SETTLEMENTS {
+                            v2.settled.insert(form_id.clone());
+                        }
                         if v2.answering.contains(&form_id) {
                             v2.settled_while_answering.insert(form_id.clone());
                             None
@@ -3034,12 +3071,32 @@ impl OpenCodeSessionRuntime {
 
     /// Routes replies to the permission requests and forms a resumed session and its descendants
     /// are still waiting on: OpenCode's event stream does not replay asks made before BiBCode
-    /// connected. The asks are not shown again; BiBCode already recorded those it saw.
+    /// connected. Those BiBCode can show are returned to be shown once the stream connects; those
+    /// it cannot are queued for cancellation. A read that failed leaves the reconciliation after
+    /// the subscription to try again.
     async fn v2_restore_pending_asks(
         &self,
         root_session_id: &str,
     ) -> Vec<(&'static str, String, Value)> {
-        let mut recovered = Vec::new();
+        let (_, pending) = self.v2_read_pending_asks(root_session_id).await;
+        let (recovered, unanswerable) = self.v2_route_pending_asks(pending).await;
+        self.inner
+            .v2
+            .lock()
+            .await
+            .recovered_unanswerable
+            .extend(unanswerable);
+        recovered
+    }
+
+    /// Reads the session tree under the root and each session's pending permissions and forms,
+    /// each read bounded. Returns whether every read succeeded (a failure is logged) and the
+    /// asks found as (session id, kind, ask).
+    async fn v2_read_pending_asks(
+        &self,
+        root_session_id: &str,
+    ) -> (bool, Vec<(String, &'static str, Value)>) {
+        let mut complete = true;
         let mut sessions = vec![root_session_id.to_owned()];
         let mut queue = VecDeque::from([(root_session_id.to_owned(), 0_usize)]);
         while let Some((parent, depth)) = queue.pop_front() {
@@ -3054,7 +3111,12 @@ impl OpenCodeSessionRuntime {
                 Err(_) => break,
             };
             let Some(children) = self.v2_get_json(url).await else {
-                break;
+                tracing::warn!(
+                    provider = "opencode",
+                    "a resumed OpenCode 2 session's subagents could not be listed"
+                );
+                complete = false;
+                continue;
             };
             let found = children
                 .get("data")
@@ -3072,69 +3134,97 @@ impl OpenCodeSessionRuntime {
                 }
             }
         }
+        let mut asks = Vec::new();
         for session_id in &sessions {
-            let permissions = match self.v2_url(&["session", session_id, "permission"], false) {
-                Ok(url) => self.v2_get_json(url).await,
-                Err(_) => None,
-            };
-            let forms = match self.v2_url(&["session", session_id, "form"], false) {
-                Ok(url) => self.v2_get_json(url).await,
-                Err(_) => None,
-            };
-            let mut v2 = self.inner.v2.lock().await;
-            if let Some(translator) = v2.translator.as_mut() {
+            if let Some(translator) = self.inner.v2.lock().await.translator.as_mut() {
                 translator.track_descendant(session_id);
             }
-            for request in permissions
-                .iter()
-                .filter_map(|response| response.get("data").and_then(Value::as_array))
-                .flatten()
-            {
-                let Some(request_id) = request.get("id").and_then(Value::as_str) else {
+            for kind in ["permission", "form"] {
+                let list = match self.v2_url(&["session", session_id, kind], false) {
+                    Ok(url) => self.v2_get_json(url).await,
+                    Err(_) => None,
+                };
+                let Some(items) = list
+                    .as_ref()
+                    .and_then(|list| list.get("data"))
+                    .and_then(Value::as_array)
+                else {
+                    tracing::warn!(
+                        provider = "opencode",
+                        kind,
+                        "a resumed OpenCode 2 session's pending asks could not be listed"
+                    );
+                    complete = false;
                     continue;
                 };
+                asks.extend(
+                    items
+                        .iter()
+                        .map(|item| (session_id.clone(), kind, item.clone())),
+                );
+            }
+        }
+        (complete, asks)
+    }
+
+    /// Routes the listed asks not routed, settled or cancelled yet. Returns those to show, marked
+    /// `recovered`, and the forms BiBCode cannot show, to be cancelled.
+    async fn v2_route_pending_asks(
+        &self,
+        asks: Vec<(String, &'static str, Value)>,
+    ) -> (Vec<(&'static str, String, Value)>, Vec<(String, String)>) {
+        let mut recovered = Vec::new();
+        let mut unanswerable = Vec::new();
+        let mut v2 = self.inner.v2.lock().await;
+        for (session_id, kind, ask) in asks {
+            let Some(id) = ask.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if v2.settled.contains(id) {
+                continue;
+            }
+            if kind == "permission" {
+                if v2.permissions.contains_key(id) {
+                    continue;
+                }
                 v2.permissions
-                    .insert(request_id.to_owned(), (None, session_id.clone()));
+                    .insert(id.to_owned(), (None, session_id.clone()));
                 recovered.push((
                     "request.opened",
-                    request_id.to_owned(),
+                    id.to_owned(),
                     json!({
                         "requestType": "exec_command_approval",
-                        "detail": v2::permission_detail(request),
+                        "detail": v2::permission_detail(&ask),
                         "recovered": true,
                     }),
                 ));
+                continue;
             }
-            for form in forms
-                .iter()
-                .filter_map(|response| response.get("data").and_then(Value::as_array))
-                .flatten()
-            {
-                let Some(form_id) = form.get("id").and_then(Value::as_str) else {
-                    continue;
-                };
-                // One BiBCode cannot show is cancelled after the resume, as a live one is.
-                let Some((questions, fields)) = v2::form_questions(form) else {
-                    v2.recovered_unanswerable
-                        .push((form_id.to_owned(), session_id.clone()));
-                    continue;
-                };
-                v2.forms.insert(
-                    form_id.to_owned(),
-                    V2PendingForm {
-                        turn_id: None,
-                        session_id: session_id.clone(),
-                        fields,
-                    },
-                );
-                recovered.push((
-                    "user-input.requested",
-                    form_id.to_owned(),
-                    json!({ "questions": questions, "recovered": true }),
-                ));
+            if v2.forms.contains_key(id) || v2.cancelled_forms.contains(id) {
+                continue;
             }
+            // One BiBCode cannot show is cancelled, as a live one is.
+            let Some((questions, fields)) = v2::form_questions(&ask) else {
+                if !unanswerable.iter().any(|(form_id, _)| form_id == id) {
+                    unanswerable.push((id.to_owned(), session_id.clone()));
+                }
+                continue;
+            };
+            v2.forms.insert(
+                id.to_owned(),
+                V2PendingForm {
+                    turn_id: None,
+                    session_id: session_id.clone(),
+                    fields,
+                },
+            );
+            recovered.push((
+                "user-input.requested",
+                id.to_owned(),
+                json!({ "questions": questions, "recovered": true }),
+            ));
         }
-        recovered
+        (recovered, unanswerable)
     }
 
     /// Remembers an OpenCode 1 ask settled on the event stream, for a recovery read.
@@ -3246,15 +3336,7 @@ impl OpenCodeSessionRuntime {
         };
         // Each list read afresh, now that the event stream is subscribed; `None` when it could
         // not be read (or was malformed), and its recovered asks are then shown.
-        let mut fresh: HashMap<&str, Option<Vec<Value>>> = HashMap::new();
-        for path in ["/permission", "/question"] {
-            let requests = match self.request_url(path) {
-                Ok(url) => self.v2_get_json(url).await,
-                Err(_) => None,
-            }
-            .and_then(|list| list.as_array().cloned());
-            fresh.insert(path, requests);
-        }
+        let mut fresh = self.v1_read_pending_lists().await;
         let listed = |path: &str, request_id: &str| match fresh.get(path) {
             Some(Some(requests)) => requests
                 .iter()
@@ -3298,6 +3380,61 @@ impl OpenCodeSessionRuntime {
                 }
             }
         }
+        self.v1_route_listed(&session_id, &fresh).await;
+        // A list that could not be read is read again with a backoff, each failure logged, so
+        // the asks it holds still appear.
+        let mut delay = RESUME_READ_RETRY_FIRST;
+        let mut attempt = 1;
+        while fresh.values().any(Option::is_none) {
+            if attempt == RESUME_READ_ATTEMPTS {
+                tracing::warn!(
+                    provider = "opencode",
+                    "gave up reading a resumed OpenCode 1 session's pending asks"
+                );
+                break;
+            }
+            tracing::warn!(
+                provider = "opencode",
+                attempt,
+                "reading a resumed OpenCode 1 session's pending asks again"
+            );
+            tokio::time::sleep(delay).await;
+            delay = delay.saturating_mul(2).min(RESUME_READ_RETRY_LONGEST);
+            attempt += 1;
+            fresh = self.v1_read_pending_lists().await;
+            self.v1_route_listed(&session_id, &fresh).await;
+        }
+        self.inner.v2.lock().await.v1_settled.clear();
+    }
+
+    /// OpenCode 1's pending permission and question lists, each read bounded; `None` for one
+    /// that could not be read (logged) or was malformed.
+    async fn v1_read_pending_lists(&self) -> HashMap<&'static str, Option<Vec<Value>>> {
+        let mut lists = HashMap::new();
+        for path in ["/permission", "/question"] {
+            let requests = match self.request_url(path) {
+                Ok(url) => self.v2_get_json(url).await,
+                Err(_) => None,
+            }
+            .and_then(|list| list.as_array().cloned());
+            if requests.is_none() {
+                tracing::warn!(
+                    provider = "opencode",
+                    path,
+                    "a resumed OpenCode 1 session's pending asks could not be listed"
+                );
+            }
+            lists.insert(path, requests);
+        }
+        lists
+    }
+
+    /// Routes and shows this session's listed asks not routed or settled yet.
+    async fn v1_route_listed(
+        &self,
+        session_id: &str,
+        fresh: &HashMap<&'static str, Option<Vec<Value>>>,
+    ) {
         // An ask created between the resume's read and the subscription is in the fresh lists
         // only (OpenCode does not replay it); one the event stream already delivered has its
         // route and is skipped.
@@ -3309,7 +3446,7 @@ impl OpenCodeSessionRuntime {
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|request| {
-                    request.get("sessionID").and_then(Value::as_str) == Some(session_id.as_str())
+                    request.get("sessionID").and_then(Value::as_str) == Some(session_id)
                 })
                 .collect::<Vec<_>>()
         };
@@ -3362,7 +3499,6 @@ impl OpenCodeSessionRuntime {
             )
             .await;
         }
-        self.inner.v2.lock().await.v1_settled.clear();
     }
 
     /// Cancels a form BiBCode cannot show, live or recovered on resume, once per form: off the
@@ -3468,9 +3604,55 @@ impl OpenCodeSessionRuntime {
             tokio::select! {
                 () = cancellation.cancelled() => {}
                 () = owner_cancellation.cancelled() => {}
-                () = runtime.v2_show_recovered_asks(asks) => {}
+                () = async {
+                    runtime.v2_show_recovered_asks(asks).await;
+                    runtime.v2_read_asks_again().await;
+                } => {}
             }
         });
+    }
+
+    /// Once subscribed, reads the pending asks again: one created between the resume's read and
+    /// the subscription is listed only now (OpenCode does not replay it), and a read that failed
+    /// is tried again with a backoff, each failure logged, until every read succeeds or the
+    /// attempts run out. Newly found asks are shown (or, if BiBCode cannot show them, cancelled).
+    async fn v2_read_asks_again(&self) {
+        let Ok(root_session_id) = self.session_id().await else {
+            return;
+        };
+        let mut delay = RESUME_READ_RETRY_FIRST;
+        for attempt in 1..=RESUME_READ_ATTEMPTS {
+            let (complete, pending) = self.v2_read_pending_asks(&root_session_id).await;
+            let (asks, unanswerable) = self.v2_route_pending_asks(pending).await;
+            for (event_type, request_id, ask) in asks {
+                // Shown while still routed, under the lock its settlement takes.
+                let v2 = self.inner.v2.lock().await;
+                if v2.permissions.contains_key(&request_id) || v2.forms.contains_key(&request_id) {
+                    self.emit(event_type, None, Some(request_id), ask).await;
+                }
+                drop(v2);
+            }
+            for (form_id, session_id) in unanswerable {
+                self.spawn_v2_cancel_unanswerable_form(form_id, session_id, None)
+                    .await;
+            }
+            if complete {
+                return;
+            }
+            if attempt < RESUME_READ_ATTEMPTS {
+                tracing::warn!(
+                    provider = "opencode",
+                    attempt,
+                    "reading a resumed OpenCode 2 session's pending asks again"
+                );
+                tokio::time::sleep(delay).await;
+                delay = delay.saturating_mul(2).min(RESUME_READ_RETRY_LONGEST);
+            }
+        }
+        tracing::warn!(
+            provider = "opencode",
+            "gave up reading a resumed OpenCode 2 session's pending asks"
+        );
     }
 
     async fn v2_show_recovered_asks(&self, asks: Vec<(&'static str, String, Value)>) {

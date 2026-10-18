@@ -1930,11 +1930,14 @@ async fn a_resumed_opencode_1_session_shows_the_asks_it_was_waiting_on() {
             "/question",
             get(move || {
                 // Created between the resume's read and the subscription: only later reads
-                // list it.
-                let first = question_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
+                // list it, and the first read once subscribed fails, so it is read again.
+                let read = question_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 async move {
-                    if first {
-                        return Json(json!([]));
+                    if read == 0 {
+                        return Json(json!([])).into_response();
+                    }
+                    if read == 1 {
+                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
                     }
                     Json(json!([
                         { "id": "que_offline", "sessionID": "session-1", "questions": [
@@ -1942,6 +1945,7 @@ async fn a_resumed_opencode_1_session_shows_the_asks_it_was_waiting_on() {
                               "options": [{ "label": "Red", "description": "Warm" }] }
                         ]}
                     ]))
+                    .into_response()
                 }
             }),
         )
@@ -1966,7 +1970,7 @@ async fn a_resumed_opencode_1_session_shows_the_asks_it_was_waiting_on() {
     );
     runtime.resume("session-1").await.expect("resumes");
     let mut events = Vec::new();
-    while let Ok(Some(event)) = timeout(Duration::from_millis(500), runtime.next_event()).await {
+    while let Ok(Some(event)) = timeout(Duration::from_millis(1500), runtime.next_event()).await {
         events.push(event);
     }
     let shown = |event_type: &str, request_id: &str| {

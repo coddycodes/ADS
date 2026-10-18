@@ -663,7 +663,12 @@ provider says the old one is gone:
   OpenCode 1 session recovers the same way from OpenCode's pending permission
   and question lists (only its own), reading them again once subscribed so an
   ask created or answered meanwhile is caught; its asks are shown whatever
-  their fields, as live ones are, and one answered elsewhere is resolved. The
+  their fields, as live ones are, and one answered elsewhere is resolved. Once
+  subscribed, both versions read the pending asks again, so one created
+  between the resume's read and the subscription appears. A read that fails
+  (the subagent tree, or a session's permission, form or question list) is
+  tried again off the event pump. The backoff doubles from 250 ms up to
+  10 seconds, for at most eight reads, and each failure is logged. The
   check for an execution
   OpenCode kept running runs off the event pump with a 10-second bound, so a
   stalled read never holds events or Stop. Until it answers, or if it cannot,
