@@ -7697,10 +7697,8 @@ async fn rewind_session(
 }
 
 /// Drops the newest `turn_count` turns from a thread's provider conversation for a checkpoint
-/// revert. A session suspended while idle is reopened first with the launch a new message would
-/// use (the thread's provider, modes and saved resume cursor), except that a conversation the
-/// provider no longer has fails instead of starting a new one: a new conversation has nothing to
-/// rewind. A provider that cannot rewind is not reopened. Errors are the work-log text.
+/// revert, reopening a session suspended while idle first (see `reopen_for_rewind`). A provider
+/// that cannot rewind is not reopened. Errors are the work-log text.
 pub async fn rewind_thread_conversation(
     supervisor: &ProviderRuntimeSupervisor,
     engine: &OrchestrationEngine,
@@ -7712,15 +7710,57 @@ pub async fn rewind_thread_conversation(
         Err(ProviderRuntimeError::SessionNotFound { .. }) => {}
         outcome => return outcome.map_err(|error| delivery_detail(&error, None)),
     }
+    let (label, can_rewind) =
+        reopen_for_rewind(supervisor, engine, settings_root, thread_id).await?;
+    if !can_rewind {
+        return Ok(ProviderRewind::FilesOnly {
+            provider_label: label,
+        });
+    }
+    supervisor
+        .rewind(thread_id, turn_count)
+        .await
+        .map_err(|error| delivery_detail(&error, Some(&label)))
+}
+
+/// Reopens a thread's session suspended while idle ahead of its revert's rewind, so the start
+/// runs off the effects worker. A live session, or a provider that cannot rewind, needs nothing.
+pub async fn prepare_thread_rewind(
+    supervisor: &ProviderRuntimeSupervisor,
+    engine: &OrchestrationEngine,
+    settings_root: &PathBuf,
+    thread_id: &str,
+) -> Result<(), String> {
+    if supervisor
+        .capture_session_identity(thread_id)
+        .await
+        .map_err(|error| delivery_detail(&error, None))?
+        .is_some()
+    {
+        return Ok(());
+    }
+    reopen_for_rewind(supervisor, engine, settings_root, thread_id)
+        .await
+        .map(|_| ())
+}
+
+/// Reopens a thread's suspended session for a rewind with the launch a new message would use
+/// (the thread's provider, modes and saved resume cursor), except that a conversation the provider
+/// no longer has fails instead of starting a new one: a new conversation has nothing to rewind.
+/// Returns the provider's label and whether it can rewind; one that cannot is not reopened.
+async fn reopen_for_rewind(
+    supervisor: &ProviderRuntimeSupervisor,
+    engine: &OrchestrationEngine,
+    settings_root: &PathBuf,
+    thread_id: &str,
+) -> Result<(String, bool), String> {
     let request = build_launch_request(engine, settings_root, thread_id, None, None, None, false)
         .await
         .map_err(|error| delivery_detail(&error, None))?;
-    if !crate::provider::supports_conversation_rewind(&request.provider) {
-        return Ok(ProviderRewind::FilesOnly {
-            provider_label: request.provider_label,
-        });
-    }
     let label = request.provider_label.clone();
+    if !crate::provider::supports_conversation_rewind(&request.provider) {
+        return Ok((label, false));
+    }
     // Without a saved conversation for this provider instance, a launch would start an empty
     // one and replace the thread's saved runtime, though there is nothing to rewind.
     if request.resume_cursor.is_none() {
@@ -7742,10 +7782,7 @@ pub async fn rewind_thread_conversation(
             "Couldn't reopen {label} to rewind its conversation, so nothing was reverted. {reason}"
         ));
     }
-    supervisor
-        .rewind(thread_id, turn_count)
-        .await
-        .map_err(|error| delivery_detail(&error, Some(&label)))
+    Ok((label, true))
 }
 
 async fn reconcile_model_selection(

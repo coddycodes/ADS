@@ -1605,13 +1605,6 @@ impl ThreadTurnFence {
         }
     }
 
-    fn try_reserve(&self, thread_id: &str) -> Option<ThreadTurnReservation> {
-        self.gate(thread_id)
-            .try_lock_owned()
-            .ok()
-            .map(|guard| ThreadTurnReservation { _guard: guard })
-    }
-
     fn gate(&self, thread_id: &str) -> Arc<AsyncMutex<()>> {
         let mut threads = self
             .threads
@@ -2548,14 +2541,6 @@ impl OrchestrationEngine {
     /// reservation drops. See `ThreadTurnFence`.
     pub(crate) async fn reserve_thread_turns(&self, thread_id: &str) -> ThreadTurnReservation {
         self.thread_turns.reserve(thread_id).await
-    }
-
-    /// Holds the thread at once when no revert or turn delivery of it runs.
-    pub(crate) fn try_reserve_thread_turns(
-        &self,
-        thread_id: &str,
-    ) -> Option<ThreadTurnReservation> {
-        self.thread_turns.try_reserve(thread_id)
     }
 
     /// Whether a revert or turn delivery of the thread runs now.

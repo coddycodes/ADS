@@ -2291,15 +2291,19 @@ messages or promoting its queue automatically, so a message sent or queued
 meanwhile keeps its place and is delivered after the revert, in queue order;
 the release wakes delivery. A client's **Send now** still moves the queue head
 to pending, where it waits the same way.
-That wait does not hold the effects worker, which serves every thread. When the
-thread is reserved, the worker parks it: a waiter takes the reservation off the
-worker, the thread's later effects, such as a turn baseline, queue behind the
-revert in event order, and other threads' checkpoint work goes on. Once the
-waiter holds the reservation, the worker runs the revert and then the queued
-effects. Every side effect still runs on the worker one at a time, so
-checkpoint work on a checkout that sibling threads share never overlaps. A
-parked thread holds at most 64 events; past that the worker waits for its
-revert, as it did before parking.
+The slow part of a revert does not hold the effects worker, which serves every
+thread. The worker parks the reverting thread, and a waiter does the
+preparation off the worker: it takes the reservation, which can wait for a
+delivery in flight, then runs step 1 and the busy check, which only read the
+checkout. If the provider can rewind, it then reopens a session that was
+suspended while idle, which can be a cold start. Meanwhile the thread's later
+effects, such as a turn baseline, queue behind the revert in event order, and
+other threads' checkpoint work goes on. Once the preparation is done, the
+worker runs the rewind and the restore, then the queued effects. Every effect
+that writes still runs on the worker one at a time, so checkpoint work on a
+checkout that sibling threads share never overlaps. A parked thread holds at
+most 64 events, and at most four threads are parked at once; past either bound
+the worker waits for the revert itself, as it did before parking.
 The reservation is in memory only. That is enough because a revert never
 outlives its process: the effects worker does not replay a revert requested
 before a restart.

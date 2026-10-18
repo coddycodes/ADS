@@ -589,6 +589,24 @@ struct GatedRewind {
     entered: Notify,
     release: Notify,
     rewinds: std::sync::atomic::AtomicUsize,
+    /// The session was suspended while idle, so the rewind first reopens it, slowly: until
+    /// `reopen_release`. Production reopens in `prepare_provider_rewind` and, if the session is
+    /// still gone, in `rollback_provider`.
+    suspended: std::sync::atomic::AtomicBool,
+    reopen_entered: Notify,
+    reopen_release: Notify,
+}
+
+impl GatedRewind {
+    async fn reopen_if_suspended(&self) {
+        if self
+            .suspended
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.reopen_entered.notify_one();
+            self.reopen_release.notified().await;
+        }
+    }
 }
 
 impl crate::production::orchestration_effects::OrchestrationEffectCallbacks for GatedRewind {
@@ -608,11 +626,22 @@ impl crate::production::orchestration_effects::OrchestrationEffectCallbacks for 
         crate::production::orchestration_effects::ProviderRewind,
     > {
         Box::pin(async move {
+            self.reopen_if_suspended().await;
             self.rewinds
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             self.entered.notify_one();
             self.release.notified().await;
             Ok(crate::production::orchestration_effects::ProviderRewind::Rewound)
+        })
+    }
+
+    fn prepare_provider_rewind<'a>(
+        &'a self,
+        _thread_id: &'a str,
+    ) -> crate::production::orchestration_effects::BoxEffectFuture<'a, ()> {
+        Box::pin(async move {
+            self.reopen_if_suspended().await;
+            Ok(())
         })
     }
 
@@ -703,6 +732,9 @@ impl RevertFixture {
             entered: Notify::new(),
             release: Notify::new(),
             rewinds: std::sync::atomic::AtomicUsize::new(0),
+            suspended: std::sync::atomic::AtomicBool::new(false),
+            reopen_entered: Notify::new(),
+            reopen_release: Notify::new(),
         });
         let effects = OrchestrationEffects::start(
             engine.clone(),
@@ -744,10 +776,118 @@ impl RevertFixture {
         .unwrap_or_else(|_| panic!("no {event_type} event"))
     }
 
+    /// Git's answer for `args` in the fixture checkout, when Git succeeds.
+    fn git_output(&self, args: &[&str]) -> Option<String> {
+        let config = IsolatedGitConfig::new();
+        let mut probe = std::process::Command::new("git");
+        config.apply_to_command(&mut probe);
+        let output = probe
+            .args(args)
+            .current_dir(&self.rewind.cwd)
+            .output()
+            .unwrap();
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"))
+    }
+
+    /// Admits a turn on a second thread `b` and reports whether its checkpoint baseline is
+    /// captured within 5 seconds.
+    async fn other_thread_gets_its_baseline(&self) -> bool {
+        self.engine.dispatch(command(json!({"type":"thread.create", "commandId":"thread-b", "threadId":"b", "projectId":"p", "title":"Other", "runtimeMode":"full-access", "modelSelection":{"instanceId":"codex", "model":"gpt-5"}, "createdAt":TIME}))).await.unwrap();
+        enqueue_for(&self.engine, "b", "b-first", false).await;
+        let baseline = crate::production::orchestration_effects::checkpoint_ref("b", 0);
+        timeout(Duration::from_secs(5), async {
+            while self
+                .git_output(&["rev-parse", "--verify", "--quiet", &baseline])
+                .is_none()
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+
     async fn shutdown(self) {
         self.effects.shutdown().await;
         self.engine.shutdown().await;
     }
+}
+
+/// A revert that must first reopen a session suspended while idle does not hold the effects
+/// worker during that start: another thread's turn still gets its checkpoint baseline.
+#[tokio::test]
+async fn a_revert_reopening_a_suspended_session_does_not_delay_another_threads_checkpoint() {
+    let mut fixture = RevertFixture::new().await;
+    fixture
+        .rewind
+        .suspended
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    fixture.rewind.release.notify_one();
+    fixture.revert().await;
+    fixture.rewind.reopen_entered.notified().await;
+
+    assert!(
+        fixture.other_thread_gets_its_baseline().await,
+        "thread b's checkpoint baseline waited behind thread t's provider reopen"
+    );
+
+    fixture.rewind.reopen_release.notify_one();
+    fixture.event("thread.reverted", |_| true).await;
+    assert_eq!(
+        fixture
+            .rewind
+            .rewinds
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    fixture.shutdown().await;
+}
+
+/// The thread's own effects that arrive while its revert is being prepared wait for it, in
+/// order: a checkpoint captured after the revert sees the restored files.
+#[tokio::test]
+async fn a_reverting_threads_later_effects_run_after_the_revert() {
+    let mut fixture = RevertFixture::new().await;
+    fixture
+        .rewind
+        .suspended
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    fixture.rewind.release.notify_one();
+    fixture.revert().await;
+    fixture.rewind.reopen_entered.notified().await;
+
+    // A turn whose checkpoint is missing: the effect captures the checkout as it is then.
+    fixture
+        .engine
+        .dispatch(command(json!({
+            "type":"thread.turn.diff.complete", "commandId":"diff-late", "threadId":"t",
+            "turnId":"turn-late", "checkpointTurnCount":5,
+            "checkpointRef":crate::production::orchestration_effects::checkpoint_ref("t", 5),
+            "status":"missing", "files":[], "assistantMessageId":"a-late",
+            "completedAt":TIME, "createdAt":TIME
+        })))
+        .await
+        .unwrap();
+    fixture.rewind.reopen_release.notify_one();
+    fixture.event("thread.reverted", |_| true).await;
+    fixture
+        .event("thread.turn-diff-completed", |payload| {
+            payload["turnId"] == "turn-late" && payload["status"] == "ready"
+        })
+        .await;
+    let captured = format!(
+        "{}:tracked.txt",
+        crate::production::orchestration_effects::checkpoint_ref("t", 5)
+    );
+    assert_eq!(
+        fixture.git_output(&["show", &captured]).as_deref(),
+        Some("one\n"),
+        "the late checkpoint was captured before the revert restored the files"
+    );
+    fixture.shutdown().await;
 }
 
 /// A message sent while a revert runs is neither started during it nor lost: it waits, then
@@ -851,30 +991,8 @@ async fn a_revert_waiting_for_a_delivery_does_not_delay_another_threads_checkpoi
     let (service, accept, _routes) = deliver_in_flight(&fixture.engine).await;
     fixture.revert().await;
 
-    fixture.engine.dispatch(command(json!({"type":"thread.create", "commandId":"thread-b", "threadId":"b", "projectId":"p", "title":"Other", "runtimeMode":"full-access", "modelSelection":{"instanceId":"codex", "model":"gpt-5"}, "createdAt":TIME}))).await.unwrap();
-    enqueue_for(&fixture.engine, "b", "b-first", false).await;
-    let baseline = crate::production::orchestration_effects::checkpoint_ref("b", 0);
-    let config = IsolatedGitConfig::new();
-    let captured = timeout(Duration::from_secs(5), async {
-        loop {
-            let mut probe = std::process::Command::new("git");
-            config.apply_to_command(&mut probe);
-            let found = probe
-                .args(["rev-parse", "--verify", "--quiet", &baseline])
-                .current_dir(&fixture.rewind.cwd)
-                .output()
-                .unwrap()
-                .status
-                .success();
-            if found {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await;
     assert!(
-        captured.is_ok(),
+        fixture.other_thread_gets_its_baseline().await,
         "thread b's checkpoint baseline waited behind thread t's revert"
     );
     assert_eq!(

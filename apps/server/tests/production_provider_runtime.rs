@@ -81,8 +81,9 @@ use provider_runtime::{
     ProviderRuntimeSupervisor, StartedSession, SupervisorOptions,
     build_claude_launch_arguments_for_test, build_claude_launch_arguments_with_settings_for_test,
     claude_output_shutdown_with_open_stream_for_test, deliver_durable_orchestration_turn,
-    deliver_orchestration_turn, freeze_delivery_route, reconcile_abandoned_provider_sessions,
-    reconcile_orchestration_turn, rewind_thread_conversation, route_orchestration_command,
+    deliver_orchestration_turn, freeze_delivery_route, prepare_thread_rewind,
+    reconcile_abandoned_provider_sessions, reconcile_orchestration_turn,
+    rewind_thread_conversation, route_orchestration_command,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -1332,6 +1333,18 @@ impl OrchestrationEffectCallbacks for SupervisorEffectsCallbacks {
                 &self.settings.path().to_path_buf(),
                 thread_id,
                 turns,
+            )
+            .await
+        })
+    }
+
+    fn prepare_provider_rewind<'a>(&'a self, thread_id: &'a str) -> BoxEffectFuture<'a, ()> {
+        Box::pin(async move {
+            prepare_thread_rewind(
+                &self.supervisor,
+                &self.engine,
+                &self.settings.path().to_path_buf(),
+                thread_id,
             )
             .await
         })
