@@ -250,9 +250,16 @@ struct SubscriberSlot {
     generation: Arc<AtomicU64>,
     waiting_for_key: bool,
     /// Set when the socket, already waiting for a key unit, overflows on that key unit or the
-    /// config before it, and cleared when a key unit reaches it. Its reader asks for a key
-    /// unit once when it drains the queue, since a still screen sends no other.
+    /// config before it (sent by the source or resent for [`Self::needs_config`]), and cleared
+    /// when a key unit reaches it. Its reader asks for a key unit once when it drains the
+    /// queue, since a still screen sends no other.
     missed_key: Arc<AtomicBool>,
+    /// Set when the socket overflows on a config unit, and cleared when a config reaches it.
+    /// The client decodes each key unit with the last config it received, so the hub's
+    /// newest config goes first to such a socket before its next key unit. Only an overflow
+    /// sets it, and every overflow starts the key wait, so a socket that needs a config is
+    /// always waiting for a key unit.
+    needs_config: bool,
     closed: CancellationToken,
 }
 
@@ -304,6 +311,36 @@ impl SubscriberSlot {
     fn skip_to_key(&mut self) {
         self.waiting_for_key = true;
         self.generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// Queues a key unit, after `config` when the socket lost a config since the last one
+    /// that reached it. A refused config stops there: the key unit would reach the decoder
+    /// with stale parameters.
+    fn offer_key(&mut self, frame: &Bytes, config: Option<&Bytes>) -> Offer {
+        if self.needs_config
+            && let Some(config) = config
+        {
+            match self.offer(config, false) {
+                Offer::Sent => self.needs_config = false,
+                refused => return refused,
+            }
+        }
+        self.offer(frame, false)
+    }
+
+    /// What a full queue costs the socket. It drops what is queued and waits for the next
+    /// key unit, and `true` means it newly fell behind and should ask for one now. Only such
+    /// a socket asks here: one that stays stalled must not make the encoder restart every
+    /// second for everyone else. One already waiting drops only a config or a key unit here
+    /// (deltas skip it), and may have dropped the answer to its own reset, so its reader
+    /// asks again once it drains.
+    fn overflow(&mut self) -> bool {
+        let newly_behind = !self.waiting_for_key;
+        if !newly_behind {
+            self.missed_key.store(true, Ordering::Release);
+        }
+        self.skip_to_key();
+        newly_behind
     }
 }
 
@@ -418,10 +455,12 @@ impl MediaHub {
                 generation: generation.clone(),
                 waiting_for_key: true,
                 missed_key: missed_key.clone(),
+                needs_config: false,
                 closed: closed.clone(),
             };
             if let Some(config) = &state.cached_config {
-                // A fresh queue: only a closed receiver could refuse it, and it is ours.
+                // A fresh queue takes any frame (an empty one skips the byte budget), so only
+                // a closed receiver could refuse it, and it is ours: the config always arrives.
                 let _ = slot.offer(config, false);
             }
             state.subscribers.push(slot);
@@ -556,6 +595,13 @@ impl MediaHub {
     /// never asks here. When that one drops a key unit or the config before it, its reader
     /// asks once on draining the queue (see [`MediaSubscriber::next_frame`]), so a socket
     /// that stays blocked never asks again.
+    ///
+    /// A socket that dropped a config (a rotation's, say) gets the newest config again
+    /// immediately before its next key unit, since the client decodes a key unit with the
+    /// last config it received. A config that does not fit holds the key unit back with it,
+    /// and the socket still needs the config; one that fits is queued and not sent again.
+    /// The wait ends only when the key unit is queued, and a socket that misses either
+    /// counts as missing its key unit. A socket that lost no config gets no extra one.
     fn dispatch(&self, unit: &VideoUnit) {
         let frame = Bytes::from(encode_frame(unit));
         let delta = unit.kind == UnitKind::Delta;
@@ -564,32 +610,38 @@ impl MediaHub {
         if unit.kind == UnitKind::Config {
             state.cached_config = Some(frame.clone());
         }
+        // The newest config, for a socket that lost one before this key unit.
+        let config = match unit.kind {
+            UnitKind::Key => state.cached_config.clone(),
+            UnitKind::Config | UnitKind::Delta => None,
+        };
         let mut overflowed = false;
         state.subscribers.retain_mut(|slot| {
             if delta && slot.waiting_for_key {
                 return true;
             }
-            match slot.offer(&frame, delta) {
+            let offered = match unit.kind {
+                UnitKind::Key => slot.offer_key(&frame, config.as_ref()),
+                UnitKind::Config | UnitKind::Delta => slot.offer(&frame, delta),
+            };
+            match offered {
                 Offer::Sent => {
-                    if unit.kind == UnitKind::Key {
-                        slot.waiting_for_key = false;
-                        // A key unit makes good any it missed, so a drain asks for none.
-                        slot.missed_key.store(false, Ordering::Release);
+                    match unit.kind {
+                        UnitKind::Config => slot.needs_config = false,
+                        UnitKind::Key => {
+                            slot.waiting_for_key = false;
+                            // A key unit makes good any it missed, so a drain asks for none.
+                            slot.missed_key.store(false, Ordering::Release);
+                        }
+                        UnitKind::Delta => {}
                     }
                     true
                 }
                 Offer::Overflow => {
-                    // Only a socket that newly falls behind asks for a key unit: one that
-                    // stays stalled must not make the encoder restart every second for
-                    // everyone else. One already waiting drops only a config or a key unit
-                    // here (deltas skip it), and may have dropped the answer to its own
-                    // reset, so its reader asks again once it drains.
-                    if slot.waiting_for_key {
-                        slot.missed_key.store(true, Ordering::Release);
-                    } else {
-                        overflowed = true;
+                    if unit.kind == UnitKind::Config {
+                        slot.needs_config = true;
                     }
-                    slot.skip_to_key();
+                    overflowed |= slot.overflow();
                     true
                 }
                 Offer::Closed => false,
@@ -1480,29 +1532,146 @@ mod tests {
         );
     }
 
-    /// A dropped config is made good by the key unit that follows it, so draining after
-    /// that asks for nothing and the socket keeps its deltas.
+    /// A dropped config is made good by the key unit that follows it, with the config sent
+    /// again just before it, so draining after that asks for nothing and the socket keeps
+    /// its deltas.
     #[tokio::test(start_paused = true)]
     async fn a_key_that_lands_after_a_dropped_config_ends_the_miss() {
         let hub = HubFixture::new();
-        let mut slow = hub.subscribe_with_capacity(2);
+        let mut slow = hub.subscribe_with_capacity(3);
         hub.wait_written(1).await;
         hub.feed([config(), key(1)]).await;
         tokio::time::advance(RESET_MIN_INTERVAL).await;
-        hub.feed([delta(2)]).await;
+        hub.feed([delta(2), delta(3)]).await;
         hub.wait_written(2).await;
-        // The answer's config is dropped; the reader then takes one frame, so its key fits.
+        // The answer's config is dropped; the reader then takes two frames, so the config
+        // sent again and its key both fit.
         hub.feed([config()]).await;
+        for kind in [0, 1] {
+            assert_eq!(
+                slow.subscriber.next_frame().await.map(|frame| frame[0]),
+                Some(kind)
+            );
+        }
+        hub.feed([key(3)]).await;
+        tokio::time::advance(RESET_MIN_INTERVAL).await;
+        assert_eq!(received_media(&mut slow).await, [("config", 0), ("key", 3)]);
+        hub.feed([delta(4)]).await;
+        assert_eq!(received_media(&mut slow).await, [("delta", 4)]);
+        assert_eq!(hub.resets(), 2, "the drain asked for nothing");
+    }
+
+    /// A config whose SPS and PPS differ from [`config`]'s, as after a rotation. Its pts 7
+    /// tells it apart in [`Watcher::received`]; the hub sends a config frame as it got it.
+    fn rotated_config() -> VideoUnit {
+        VideoUnit {
+            kind: UnitKind::Config,
+            pts_us: 7,
+            data: Bytes::from_static(&[0, 0, 0, 1, 0x67, 0x64, 0, 0, 0, 1, 0x68, 0xee]),
+        }
+    }
+
+    /// Fills a two-frame socket with config 0 and key 1, then rotates the screen: the
+    /// rotated config arrives while the queue is still full, so the socket drops it and
+    /// falls behind, which asks for a reset.
+    async fn drop_a_rotated_config(hub: &HubFixture) -> Watcher {
+        let slow = hub.subscribe_with_capacity(2);
+        hub.wait_written(1).await;
+        hub.feed([config(), key(1)]).await;
+        tokio::time::advance(RESET_MIN_INTERVAL).await;
+        hub.feed([rotated_config()]).await;
+        assert_eq!(hub.resets(), 2, "one at subscribe, one when it fell behind");
+        hub.wait_written(2).await;
+        slow
+    }
+
+    /// Codex's PR review: a socket drops a rotation's changed config while its queue is
+    /// full, then has room for the key unit that follows. The client decodes a key unit
+    /// with the last config it received, so the rotated config must come just before it.
+    #[tokio::test(start_paused = true)]
+    async fn a_socket_that_dropped_a_rotated_config_gets_it_before_the_next_key() {
+        let hub = HubFixture::new();
+        let mut slow = drop_a_rotated_config(&hub).await;
+        assert_eq!(received_media(&mut slow).await, [("config", 0), ("key", 1)]);
+        hub.feed([key(5)]).await;
+        assert_eq!(
+            received_media(&mut slow).await,
+            [("config", 7), ("key", 5)],
+            "the rotated config goes just before the key unit"
+        );
+        // Both reached it, so its wait is over: the next delta does too.
+        hub.feed([delta(6)]).await;
+        assert_eq!(received_media(&mut slow).await, [("delta", 6)]);
+        assert_eq!(hub.resets(), 2);
+    }
+
+    /// The config sent again does not fit either: the key unit is held back with it, the
+    /// socket keeps waiting and still needs the config, and its drain asks for a key unit.
+    #[tokio::test(start_paused = true)]
+    async fn a_resent_config_that_does_not_fit_keeps_the_socket_waiting() {
+        let hub = HubFixture::new();
+        let mut slow = drop_a_rotated_config(&hub).await;
+        // Key 3 comes while the queue is still full, so neither it nor the config goes in.
+        hub.feed([key(3), delta(4)]).await;
+        tokio::time::sleep(RESET_MIN_INTERVAL * 3).await;
+        assert_eq!(hub.resets(), 2, "a blocked socket asks for nothing");
+        assert_eq!(received_media(&mut slow).await, [("config", 0), ("key", 1)]);
+        assert_eq!(hub.resets(), 3, "draining asks again");
+        hub.wait_written(3).await;
+        // The answer's key unit comes after the rotated config, even with no config of its
+        // own.
+        hub.feed([key(5)]).await;
+        assert_eq!(received_media(&mut slow).await, [("config", 7), ("key", 5)]);
+        hub.feed([delta(6)]).await;
+        assert_eq!(received_media(&mut slow).await, [("delta", 6)]);
+    }
+
+    /// The config sent again fits but its key unit does not. The socket keeps waiting and
+    /// its drain asks again; the config is queued and reaches the client, so the next key
+    /// unit comes without another copy.
+    #[tokio::test(start_paused = true)]
+    async fn a_resent_config_that_fits_without_its_key_is_not_sent_twice() {
+        let hub = HubFixture::new();
+        let mut slow = drop_a_rotated_config(&hub).await;
+        // The reader takes one frame: room for the config, none for key 3.
         assert_eq!(
             slow.subscriber.next_frame().await.map(|frame| frame[0]),
             Some(0)
         );
-        hub.feed([key(3)]).await;
-        tokio::time::advance(RESET_MIN_INTERVAL).await;
-        assert_eq!(received_media(&mut slow).await, [("key", 1), ("key", 3)]);
-        hub.feed([delta(4)]).await;
-        assert_eq!(received_media(&mut slow).await, [("delta", 4)]);
-        assert_eq!(hub.resets(), 2, "the drain asked for nothing");
+        hub.feed([key(3), delta(4)]).await;
+        assert_eq!(received_media(&mut slow).await, [("key", 1), ("config", 7)]);
+        // Draining asks again, when the window of the last reset ends.
+        hub.wait_written(3).await;
+        assert_eq!(hub.resets(), 3);
+        hub.feed([key(5)]).await;
+        assert_eq!(received_media(&mut slow).await, [("key", 5)]);
+        hub.feed([delta(6)]).await;
+        assert_eq!(received_media(&mut slow).await, [("delta", 6)]);
+    }
+
+    /// A socket that lost no config gets none extra: the one beside the socket that dropped
+    /// the rotated config sees each config once, and so does that socket once it has it.
+    #[tokio::test(start_paused = true)]
+    async fn a_socket_that_lost_no_config_gets_no_extra_one() {
+        let hub = HubFixture::new();
+        let mut fast = hub.subscribe();
+        let mut slow = drop_a_rotated_config(&hub).await;
+        assert_eq!(received_media(&mut slow).await, [("config", 0), ("key", 1)]);
+        hub.feed([key(5)]).await;
+        assert_eq!(received_media(&mut slow).await, [("config", 7), ("key", 5)]);
+        hub.feed([delta(6), key(8)]).await;
+        assert_eq!(received_media(&mut slow).await, [("delta", 6), ("key", 8)]);
+        assert_eq!(
+            received_media(&mut fast).await,
+            [
+                ("config", 0),
+                ("key", 1),
+                ("config", 7),
+                ("key", 5),
+                ("delta", 6),
+                ("key", 8)
+            ]
+        );
     }
 
     /// A key unit can reach the socket between its reader taking the last frame (which
