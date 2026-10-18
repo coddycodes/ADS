@@ -296,6 +296,10 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
   const [stillImages, setStillImages] = useState<StillImages | null>(null);
   const [pasteNote, setPasteNote] = useState<PasteNote | null>(null);
   const [rotateNote, setRotateNote] = useState<RotateNote | null>(null);
+  // The newest Rotate press. Rotates settle in press order, but only the newest press may
+  // leave a note: an older refusal arriving after a newer press would say "didn't rotate"
+  // over a screen that is turning or has turned.
+  const latestRotatePressRef = useRef(0);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -451,14 +455,20 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
     if (device === null || !device.canRotate) return;
     const { deviceId } = device;
     const orientation = rotatedOrientation(device.orientation, direction);
+    const press = ++latestRotatePressRef.current;
     setRotateNote(null);
     const result = await runRotate({ environmentId, input: { deviceId, orientation } });
     if (result._tag === "Failure") {
       reportFailure(result, "Could not rotate the device. Try again.");
       return;
     }
-    // The device ended as it was: say so, rather than leave the press looking ignored.
-    if (mountedRef.current && result.value.orientation !== orientation) {
+    // The device ended as it was: say so, rather than leave the press looking ignored. A
+    // newer press has cleared the note and owns the next one.
+    if (
+      mountedRef.current &&
+      press === latestRotatePressRef.current &&
+      result.value.orientation !== orientation
+    ) {
       setRotateNote({ deviceId });
     }
   };

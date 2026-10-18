@@ -16,8 +16,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 type AnyProps = Record<string, unknown>;
 type CommandResult = { _tag: "Success"; value: unknown } | { _tag: "Failure"; error: unknown };
-/** A fixed result, or one made from the command's input. */
-type CommandReply = CommandResult | ((input: unknown) => CommandResult);
+/** A fixed result, or one made from the command's input, possibly settled later. */
+type CommandReply = CommandResult | ((input: unknown) => CommandResult | Promise<CommandResult>);
 
 const h = vi.hoisted(() => ({
   availability: { known: true, supported: true, enabled: true },
@@ -474,13 +474,51 @@ describe("DevicePanel", () => {
     expect(container.querySelector("[data-rotate-note]")).toBeNull();
     await click(button(container, "Rotate left"));
     expect(container.querySelector("[role='status'][data-rotate-note]")?.textContent).toBe(
-      "Pixel 8 didn't rotate. The app on screen keeps its orientation.",
+      "Pixel 8 didn't rotate. The app on screen may lock its orientation, or auto-rotate may be off on the device.",
     );
     // The next press clears it, and a turn that lands says nothing.
     h.results.rotate = { _tag: "Success", value: { orientation: "landscape" } };
     await click(button(container, "Rotate left"));
     expect(container.querySelector("[data-rotate-note]")).toBeNull();
     expect(container.querySelector("[role='alert']")).toBeNull();
+  });
+
+  /** A rotate command whose results the test settles, in the order it chooses. */
+  function pendingRotates() {
+    const settle: Array<(orientation: string) => void> = [];
+    h.results.rotate = () =>
+      new Promise<CommandResult>((resolve) => {
+        settle.push((orientation) => resolve({ _tag: "Success", value: { orientation } }));
+      });
+    return async (press: number, orientation: string) => {
+      await act(async () => settle[press]!(orientation));
+    };
+  }
+
+  it("never shows the note of an older press that settles after a newer one", async () => {
+    withCatalog(catalog({ devices: [snapshot()] }));
+    const settle = pendingRotates();
+    const container = await render();
+    await click(button(container, "Rotate left"));
+    await click(button(container, "Rotate right"));
+    // The older press is refused, but the newer one has cleared the note since.
+    await settle(0, "portrait");
+    expect(container.querySelector("[data-rotate-note]")).toBeNull();
+    // The newer press turns, so nothing says otherwise.
+    await settle(1, "reverseLandscape");
+    expect(container.querySelector("[data-rotate-note]")).toBeNull();
+  });
+
+  it("shows the note of the newest press when an older one turned", async () => {
+    withCatalog(catalog({ devices: [snapshot()] }));
+    const settle = pendingRotates();
+    const container = await render();
+    await click(button(container, "Rotate left"));
+    await click(button(container, "Rotate right"));
+    await settle(0, "landscape");
+    expect(container.querySelector("[data-rotate-note]")).toBeNull();
+    await settle(1, "portrait");
+    expect(container.querySelector("[data-rotate-note]")).not.toBeNull();
   });
 
   it("lets the kept-orientation note go after a few seconds", async () => {

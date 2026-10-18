@@ -1252,7 +1252,9 @@ minutes. Then:
   screen turns only when the device's auto-rotate is on and the app allows
   it; an iOS screen turns when the app on screen supports that orientation.
   **Rotate left** from portrait gives landscape on both. When an Android
-  screen keeps its orientation, the panel says so for a few seconds.
+  screen keeps its orientation, the panel says the device didn't rotate for a
+  few seconds, and that the app on screen may lock its orientation or the
+  device's auto-rotate may be off.
 
 On iOS, text that a US keyboard can type is typed key by key. Other text, such
 as accented letters or emoji, is pasted into the simulator instead, and iOS

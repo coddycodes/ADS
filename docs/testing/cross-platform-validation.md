@@ -3098,8 +3098,8 @@ Record each client's OS, app or browser version, and profile type.
    screen (the Pixel launcher refuses landscape), **Rotate left** leaves the
    catalog in portrait, the sensor goes back within about 2.5 s (a later app
    does not turn on its own), the panel shows "<device> didn't rotate. The app
-   on screen keeps its orientation." for a few seconds, and a tap on an app
-   icon opens it. From landscape in Chrome, **Rotate left** again asks for
+   on screen may lock its orientation, or auto-rotate may be off on the
+   device." for a few seconds, and a tap on an app icon opens it. From landscape in Chrome, **Rotate left** again asks for
    180°, which phones refuse: the catalog stays on what the guest shows
    (`mCurrentRotation`), the same note shows, and a tap lands where the picture
    shows it. A turn that lands shows no note.
