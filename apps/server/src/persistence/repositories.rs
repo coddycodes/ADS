@@ -926,7 +926,7 @@ impl Repositories {
 
     /// OpenCode deliveries dismissed while uncertain whose pending turn marker still holds the
     /// queue: they are released once OpenCode shows the session idle.
-    pub async fn list_dismissed_uncertain_opencode_markers(
+    pub(crate) async fn list_dismissed_uncertain_opencode_markers(
         &self,
     ) -> Result<Vec<ProviderTurnDelivery>> {
         self.database

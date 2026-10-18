@@ -46,7 +46,8 @@ const DELIVERY_RETRY_BACKOFF_MAX: Duration = Duration::from_secs(30);
 const SHUTDOWN_TASK_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const FORCE_CANCEL_TASK_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
 const RECONCILIATION_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(10);
-/// The longest wait between checks of a session OpenCode reports busy.
+/// The longest wait between checks of a session OpenCode reports busy, for restart recovery and
+/// for a dismissed uncertain delivery alike.
 const SETTLEMENT_BACKOFF_MAX: Duration = Duration::from_secs(10);
 
 #[cfg(test)]
@@ -589,7 +590,8 @@ async fn run(
                             Ok(has_unavailable) if has_unavailable => {
                                 reconciliation_ready_at =
                                     Some(Instant::now() + reconciliation_backoff);
-                                reconciliation_backoff = next_backoff(reconciliation_backoff);
+                                reconciliation_backoff =
+                                    next_reconciliation_backoff(reconciliation_backoff);
                             }
                             Ok(_) => {
                                 reconciliation_ready_at = None;
@@ -599,14 +601,16 @@ async fn run(
                                 tracing::warn!(%error, "provider delivery recovery failed; retrying");
                                 reconciliation_ready_at =
                                     Some(Instant::now() + reconciliation_backoff);
-                                reconciliation_backoff = next_backoff(reconciliation_backoff);
+                                reconciliation_backoff =
+                                    next_reconciliation_backoff(reconciliation_backoff);
                             }
                         }
                     }
                     Err(error) => {
                         tracing::warn!(%error, "provider delivery recovery task failed; retrying");
                         reconciliation_ready_at = Some(Instant::now() + reconciliation_backoff);
-                        reconciliation_backoff = next_backoff(reconciliation_backoff);
+                        reconciliation_backoff =
+                            next_reconciliation_backoff(reconciliation_backoff);
                     }
                 }
             }
@@ -1255,6 +1259,13 @@ fn next_backoff(current: Duration) -> Duration {
     current.saturating_mul(2).min(RETRY_BACKOFF_MAX)
 }
 
+/// The wait before recovery asks a provider again that could not answer, such as an OpenCode
+/// session still busy with a found message: doubling up to `SETTLEMENT_BACKOFF_MAX`, so a long
+/// turn does not cost a status request every second.
+fn next_reconciliation_backoff(current: Duration) -> Duration {
+    current.saturating_mul(2).min(SETTLEMENT_BACKOFF_MAX)
+}
+
 fn next_delivery_backoff(current: Duration) -> Duration {
     current.saturating_mul(2).min(DELIVERY_RETRY_BACKOFF_MAX)
 }
@@ -1663,6 +1674,22 @@ mod tests {
         future::ready,
         sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     };
+
+    /// Recovery asks a provider that cannot answer yet (an OpenCode session still busy) again
+    /// after a doubling backoff of up to ten seconds, so a long turn does not cost a status
+    /// request every second.
+    #[test]
+    fn recovery_rechecks_back_off_to_ten_seconds() {
+        let mut delay = RETRY_BACKOFF_MIN;
+        let mut delays = Vec::new();
+        for _ in 0..12 {
+            delays.push(delay);
+            delay = next_reconciliation_backoff(delay);
+        }
+        assert_eq!(delays[1], RETRY_BACKOFF_MIN * 2);
+        assert!(delays.contains(&Duration::from_millis(6400)));
+        assert_eq!(delays.last(), Some(&Duration::from_secs(10)));
+    }
 
     struct NeverFactory;
 

@@ -447,7 +447,8 @@ Idle suspension must never stop work the provider still runs:
   retry of an uncertain delivery and a retry after a 408 or 429; restart
   recovery reconciles the same way and clears the marker when OpenCode reports
   the session idle. While OpenCode reports the session busy, or its status
-  cannot be read, the delivery stays sending and is asked again, unless the
+  cannot be read, the delivery stays sending and is asked again after a doubling backoff of up
+  to 10 seconds, unless the
   resumed runtime already reports the running execution as a provider-started
   turn, which binds the marker until its idle status settles it. A server
   without a status endpoint keeps the marker. A failed lookup sent nothing, so the
