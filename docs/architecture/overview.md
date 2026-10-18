@@ -2203,9 +2203,11 @@ full-size screen), at most 60 fps, 6 bits per pixel per second clamped to
 2–12 Mbit/s, with key frames no more than 120 frames or 2 s apart. SimScreen
 signals only when the screen changes, so an unchanged screen encodes nothing;
 its sockets get the hub's once-a-second keepalive instead (below), which keeps
-the client's 5 s stall check from firing on a still picture. A new
-output size (a rotation) builds a new session, whose config and key units go
-out first. The units feed the same
+the client's 5 s stall check from firing on a still picture. A reset forces
+the next frame to be a key frame, encoded at once even on an unchanged screen,
+and if VideoToolbox drops that frame the encoder forces another; other drops
+ask for nothing. A new output size (a rotation) builds a new session, whose
+config and key units go out first. The units feed the same
 `MediaHub`, tickets, and sockets as Android.
 
 **Input.** A live simulator takes input in-process. Touches, keys, and

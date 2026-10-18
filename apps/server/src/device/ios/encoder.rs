@@ -427,10 +427,33 @@ struct Output {
     warned: AtomicBool,
 }
 
+/// The `sourceFrameRefcon` of a frame encoded as a forced key frame; VideoToolbox hands it
+/// back to [`on_output`] with that frame. Only its address is used, never what it points at.
+static FORCED_KEY: u8 = 0;
+
+fn forced_key_refcon() -> *mut c_void {
+    (&raw const FORCED_KEY).cast_mut().cast()
+}
+
 impl Output {
-    fn deliver(&self, status: i32, flags: VTEncodeInfoFlags, sample: *mut CMSampleBuffer) {
+    /// Handles the encoder's output for one frame; `frame_refcon` is the frame's
+    /// `sourceFrameRefcon`, [`forced_key_refcon`] for a forced key frame.
+    fn deliver(
+        &self,
+        frame_refcon: *mut c_void,
+        status: i32,
+        flags: VTEncodeInfoFlags,
+        sample: *mut CMSampleBuffer,
+    ) {
         if flags.contains(VTEncodeInfoFlags::FrameDropped) {
-            // The encoder skipped this frame; later frames reference earlier ones only.
+            // The encoder skipped this frame; later frames reference earlier ones only. A
+            // skipped forced key frame is asked for again: a still screen encodes nothing
+            // more, and the socket waiting for it would get no key unit. Other drops ask
+            // for nothing, since the encoder is behind already.
+            if frame_refcon == forced_key_refcon() {
+                tracing::debug!("the H.264 encoder dropped a forced key frame; forcing another");
+                self.requests.force_key.store(true, Ordering::Release);
+            }
             return;
         }
         let sample = match NonNull::new(sample) {
@@ -476,7 +499,7 @@ impl Output {
 /// and `try_send`s it, and a panic stops here instead of unwinding into VideoToolbox.
 unsafe extern "C-unwind" fn on_output(
     refcon: *mut c_void,
-    _frame_refcon: *mut c_void,
+    frame_refcon: *mut c_void,
     status: i32,
     flags: VTEncodeInfoFlags,
     sample: *mut CMSampleBuffer,
@@ -486,7 +509,7 @@ unsafe extern "C-unwind" fn on_output(
         // until every session created with it has completed its frames and been
         // invalidated, so no callback outlives it.
         let output = unsafe { &*refcon.cast_const().cast::<Output>() };
-        output.deliver(status, flags, sample);
+        output.deliver(frame_refcon, status, flags, sample);
     }));
     if delivered.is_err() {
         tracing::error!("the H.264 output callback panicked; dropping the frame");
@@ -679,20 +702,36 @@ impl Compressor {
         Ok(compressor)
     }
 
+    /// Encodes `frame`; `force_key` is the frame options that make it a key frame, for one
+    /// that must be.
     fn encode(
         &self,
         frame: &CVPixelBuffer,
         pts_us: i64,
-        options: Option<&CFDictionary>,
+        force_key: Option<&CFDictionary>,
     ) -> Result<(), DeviceError> {
         // SAFETY: CMTimeMake only builds a value.
         let pts = unsafe { CMTime::new(pts_us, MICROSECONDS) };
+        // A forced key frame carries a marker back to the output callback, so a drop of it
+        // can ask for another.
+        let frame_refcon = if force_key.is_some() {
+            forced_key_refcon()
+        } else {
+            null_mut()
+        };
         // SAFETY: `frame` is a live pixel buffer of the session's size; `kCMTimeInvalid`
-        // means "no duration"; `options` is nil or a frame-options dictionary; the refcon
-        // and info pointers may be null.
+        // means "no duration"; `force_key` is nil or a frame-options dictionary; the frame
+        // refcon is null or the address of a static that is never dereferenced, and the
+        // info pointer may be null.
         let status = unsafe {
-            self.session
-                .encode_frame(frame, pts, kCMTimeInvalid, options, null_mut(), null_mut())
+            self.session.encode_frame(
+                frame,
+                pts,
+                kCMTimeInvalid,
+                force_key,
+                frame_refcon,
+                null_mut(),
+            )
         };
         if status != 0 {
             tracing::warn!(status, "VTCompressionSessionEncodeFrame failed");
@@ -1480,6 +1519,35 @@ mod tests {
     /// Units the callback queued so far.
     fn drain(units: &mut mpsc::Receiver<VideoUnit>) -> Vec<VideoUnit> {
         std::iter::from_fn(|| units.try_recv().ok()).collect()
+    }
+
+    fn output(requests: &Arc<Requests>) -> Output {
+        let (sender, _) = mpsc::channel(1);
+        Output {
+            units: sender,
+            state: Mutex::new(EncoderState::default()),
+            requests: requests.clone(),
+            warned: AtomicBool::new(false),
+        }
+    }
+
+    /// Audit Minor 4: VideoToolbox may drop the frame a reset forced to be a key frame, and a
+    /// still screen then encodes nothing more. That drop asks for a key frame again, which
+    /// the encoder loop's retry encodes without new damage; a drop of any other frame asks
+    /// for nothing, since the encoder is behind already.
+    #[test]
+    fn a_dropped_forced_key_frame_is_forced_again() {
+        let requests = Arc::new(Requests::default());
+        let output = output(&requests);
+        output.deliver(null_mut(), 0, VTEncodeInfoFlags::FrameDropped, null_mut());
+        assert!(!requests.force_key.load(Ordering::Acquire));
+        output.deliver(
+            forced_key_refcon(),
+            0,
+            VTEncodeInfoFlags::FrameDropped,
+            null_mut(),
+        );
+        assert!(requests.force_key.load(Ordering::Acquire));
     }
 
     #[test]
