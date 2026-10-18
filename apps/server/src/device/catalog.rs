@@ -66,8 +66,9 @@ pub enum DeviceState {
     Failed,
 }
 
-/// How the device is turned from its natural portrait position, one convention for every
-/// platform (iOS is the reference).
+/// How the device is turned from its natural orientation, one convention for every
+/// platform (iOS is the reference). `Portrait` is that natural orientation whatever the
+/// panel's shape: a tablet whose panel is naturally landscape is `Portrait` at rest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Orientation {

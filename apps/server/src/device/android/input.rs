@@ -70,7 +70,8 @@ pub(crate) fn reported_orientation(rotation: i32) -> Option<Orientation> {
 }
 
 /// Natural-panel pixels for a point `(u, v)` normalized to `0..1` in the upright picture of
-/// a device turned to `orientation`, whose native portrait panel is `width` x `height`. The
+/// a device turned to `orientation`, whose panel in its natural orientation (`Portrait`,
+/// whatever the panel's shape) is `width` x `height`. The
 /// emulator's `Touch.x`/`y` is "the physical location on the screen", the unrotated panel,
 /// whatever the guest's rotation (native verification item 3): a tap at (109, 66) of a
 /// 2400x1080 landscape picture arrived as panel (109, 66) before this mapping.
@@ -453,6 +454,15 @@ mod tests {
         }
     }
 
+    /// `Portrait` is the natural orientation, so a landscape-native panel maps unturned.
+    #[test]
+    fn a_landscape_native_panel_at_rest_maps_touches_unchanged() {
+        let tablet = |u, v| to_panel_pixels(u, v, 2560, 1600, Orientation::Portrait);
+        assert_eq!(tablet(0.0, 0.0), (0, 0));
+        assert_eq!(tablet(0.25, 0.75), (640, 1200));
+        assert_eq!(tablet(1.0, 1.0), (2559, 1599));
+    }
+
     #[test]
     fn points_off_the_picture_are_clamped_to_the_panel() {
         assert_eq!(panel(1.2, -0.1, Orientation::Portrait), (1079, 0));
@@ -474,7 +484,7 @@ mod tests {
         let client = EmulatorClient::connect(fake.port, Some("test-token".into()))
             .await
             .unwrap();
-        let tracker = OrientationTracker::new();
+        let tracker = OrientationTracker::new(PANEL);
         let display = tracker.start_display();
         display.set(576, 1280);
         (fake, client, tracker, display)

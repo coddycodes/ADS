@@ -96,10 +96,11 @@ pub enum DeviceKey {
     ArrowRight,
 }
 
-/// The upright picture's size in `orientation` of a device whose native (portrait) display
-/// is `width` x `height`: a landscape screen swaps the axes, as the emulator's rotated video
-/// does (native verification item 3). Touches are not mapped here: each backend turns the
-/// upright picture's points into what its input path expects.
+/// The upright picture's size in `orientation` of a device whose native display (in its
+/// natural orientation, `Portrait`) is `width` x `height`: a landscape screen swaps the
+/// axes, as the emulator's rotated video does (native verification item 3). Touches are not
+/// mapped here: each backend turns the upright picture's points into what its input path
+/// expects.
 pub(crate) fn oriented_size(width: u32, height: u32, orientation: Orientation) -> (u32, u32) {
     match orientation {
         Orientation::Portrait | Orientation::ReversePortrait => (width, height),

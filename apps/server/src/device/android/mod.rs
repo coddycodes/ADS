@@ -168,10 +168,11 @@ struct RunningAndroid {
 
 impl RunningAndroid {
     fn new(running: RunningEmulator, adb: PathBuf, registry: ProcessAttributionRegistry) -> Self {
+        let native = (running.width, running.height);
         Self {
             client: running.client.clone(),
             serial: running.serial.clone(),
-            native: (running.width, running.height),
+            native,
             #[cfg(test)]
             pid: running.helper.pid,
             emulator: Mutex::new(Some(running)),
@@ -179,7 +180,7 @@ impl RunningAndroid {
             registry,
             input: tokio::sync::Mutex::new(None),
             input_tasks: TaskTracker::new(),
-            orientation: OrientationTracker::new(),
+            orientation: OrientationTracker::new(native),
         }
     }
 

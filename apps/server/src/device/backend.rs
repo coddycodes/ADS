@@ -85,7 +85,7 @@ pub(crate) trait DeviceBackend: Send + Sync + 'static {
 }
 
 pub(crate) trait RunningDevice: Send + Sync + 'static {
-    /// Native (portrait) display size.
+    /// Native display size, in the device's natural orientation (`Portrait`).
     fn native_size(&self) -> (u32, u32);
     /// Whether the device turns; the catalog reports it once the device is `Ready`.
     fn can_rotate(&self) -> bool;

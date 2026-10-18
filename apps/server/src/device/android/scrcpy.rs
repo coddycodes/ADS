@@ -862,7 +862,7 @@ mod tests {
         };
         let source = FakeScrcpySource::spawn(vec![config_unit(), key_unit(1), delta_unit(2)]).await;
         let sdk = FakeSdk::new().adb_forwards_to(source.port).write();
-        let tracker = crate::device::android::orientation::OrientationTracker::new();
+        let tracker = crate::device::android::orientation::OrientationTracker::new((1080, 2400));
         let mut session = ScrcpySession::start(
             &sdk.adb(),
             "emulator-5554",
@@ -965,7 +965,8 @@ mod tests {
             &sdk.adb(),
             "emulator-5554",
             &ProcessAttributionRegistry::new(),
-            crate::device::android::orientation::OrientationTracker::new().start_display(),
+            crate::device::android::orientation::OrientationTracker::new((1080, 2400))
+                .start_display(),
         )
         .await
         .err()
@@ -987,7 +988,8 @@ mod tests {
             &sdk.adb(),
             "emulator-5554",
             &crate::diagnostics::ProcessAttributionRegistry::new(),
-            crate::device::android::orientation::OrientationTracker::new().start_display(),
+            crate::device::android::orientation::OrientationTracker::new((1080, 2400))
+                .start_display(),
         )
         .await
     }
