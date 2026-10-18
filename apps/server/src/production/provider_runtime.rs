@@ -288,6 +288,8 @@ pub enum ProviderDeliveryOutcome {
     DefinitelyNotSent {
         detail: String,
     },
+    /// The provider already has the message, so it was not sent again and starts no turn.
+    AlreadyDelivered,
     /// Not sent, and the provider asked to wait at least `retry_after` before sending it again.
     NotSentRetryAfter {
         detail: String,
@@ -6373,7 +6375,11 @@ async fn spawn_delivery(
             Ok((row.clone(), active_provider_session_id(entry, row)?))
         })
         .transpose()?;
-    entry.idle_generation.fetch_add(1, Ordering::Relaxed);
+    let delivery_idle_generation = entry.idle_generation.fetch_add(1, Ordering::Relaxed) + 1;
+    let idle_generation = entry.idle_generation.clone();
+    let idle_timeout = entry.idle_timeout;
+    #[cfg(test)]
+    let idle_deadline_test_observer = entry.idle_deadline_test_observer.clone();
     let driver = entry.driver.clone();
     let pending_context_handoff = entry.pending_context_handoff.clone();
     let identity = ProviderSessionIdentity {
@@ -6467,6 +6473,7 @@ async fn spawn_delivery(
                 && matches!(
                     outcome,
                     ProviderDeliveryOutcome::Accepted { .. }
+                        | ProviderDeliveryOutcome::AlreadyDelivered
                         | ProviderDeliveryOutcome::Ambiguous { .. }
                 )
             {
@@ -6474,6 +6481,27 @@ async fn spawn_delivery(
             }
             outcome
         };
+        // A delivery that started no turn (not sent, refused, or a message the provider already
+        // had) gets no completion to re-arm the idle deadline it cancelled, so it is re-armed
+        // here unless something newer did. The deadline still checks the session is idle.
+        if !matches!(
+            outcome,
+            ProviderDeliveryOutcome::Accepted { .. }
+                | ProviderDeliveryOutcome::AcceptedInNewConversation { .. }
+                | ProviderDeliveryOutcome::Ambiguous { .. }
+        ) && let Some(generation) =
+            reserve_idle_rearm(&idle_generation, delivery_idle_generation)
+        {
+            schedule_idle_suspend(
+                terminal_sender.clone(),
+                terminal.thread_id.clone(),
+                idle_generation.clone(),
+                generation,
+                idle_timeout,
+                #[cfg(test)]
+                idle_deadline_test_observer.clone(),
+            );
+        }
         // Steer acceptance does not start a turn or overwrite a concurrent settle.
         if let ProviderDeliveryOutcome::Accepted { turn_id } = &outcome
             && steer_delivery.is_none()
@@ -11786,7 +11814,11 @@ impl ProviderDriver for OpenCodeDriver {
         self.child.is_some()
     }
     fn holds_unsettled_work(&self) -> BoxRuntimeFuture<'_, bool> {
-        Box::pin(self.runtime.has_unfinished_rewind())
+        // A turn OpenCode is still running, such as one whose request answer was lost, ends
+        // only with OpenCode's own events, which this runtime must stay up to receive.
+        Box::pin(async move {
+            self.runtime.has_unfinished_rewind().await || self.runtime.has_active_turn().await
+        })
     }
     fn start(&self) -> BoxRuntimeFuture<'_, Result<StartedSession, ProviderRuntimeError>> {
         Box::pin(async move {
@@ -11867,6 +11899,9 @@ impl ProviderDriver for OpenCodeDriver {
                     ProviderDeliveryOutcome::DefinitelyNotSent {
                         detail: delivery_detail(&provider_error("opencode")(error), None),
                     }
+                }
+                Err(crate::provider::opencode::runtime::OpenCodeRuntimeError::AlreadyDelivered) => {
+                    ProviderDeliveryOutcome::AlreadyDelivered
                 }
                 // OpenCode could not take the message yet, so it is sent again later.
                 Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::RetryLater { retry_after, .. }) => {
@@ -16018,6 +16053,8 @@ mod tests {
         targeted_active: Arc<AtomicUsize>,
         activity_capabilities: crate::activity::ActivityCapabilities,
         unsettled_work: bool,
+        /// What deliveries answer instead of sending.
+        delivery_outcome: Option<super::ProviderDeliveryOutcome>,
     }
 
     struct SupervisorDriver {
@@ -16277,6 +16314,26 @@ mod tests {
                     runtime_payload: Some(json!({"transport":"unit"})),
                     activity_capabilities: self.state.lock().unwrap().activity_capabilities.clone(),
                 })
+            })
+        }
+
+        fn deliver(
+            &self,
+            text: String,
+            attachments: Vec<Value>,
+            interaction_mode: String,
+            _: String,
+        ) -> super::BoxRuntimeFuture<'_, super::ProviderDeliveryOutcome> {
+            Box::pin(async move {
+                if let Some(outcome) = self.state.lock().unwrap().delivery_outcome.clone() {
+                    return outcome;
+                }
+                match self.send(text, attachments, interaction_mode).await {
+                    Ok(turn_id) => super::ProviderDeliveryOutcome::Accepted { turn_id },
+                    Err(error) => super::ProviderDeliveryOutcome::Ambiguous {
+                        detail: super::delivery_detail(&error, None),
+                    },
+                }
             })
         }
 
@@ -23926,6 +23983,32 @@ done
         idle_generation.fetch_add(1, Ordering::Relaxed);
         assert_eq!(super::reserve_idle_rearm(&idle_generation, 8), None);
         assert_eq!(idle_generation.load(Ordering::Relaxed), 9);
+    }
+
+    /// A delivery that starts no turn (a message the provider already had, or one not sent)
+    /// gets no completion to re-arm the idle deadline it cancelled: the delivery re-arms it.
+    #[tokio::test(start_paused = true)]
+    async fn idle_deadline_rearms_after_a_delivery_that_started_no_turn() {
+        // The paused clock advances on its own here, so a missing deadline fails the wait.
+        for outcome in [
+            super::ProviderDeliveryOutcome::AlreadyDelivered,
+            super::ProviderDeliveryOutcome::DefinitelyNotSent {
+                detail: "the lookup failed".to_owned(),
+            },
+        ] {
+            let mut fixture = IdleDeadlineFixture::new(BUSY_SESSION_IDLE_TIMEOUT).await;
+            fixture.state.lock().unwrap().delivery_outcome = Some(outcome.clone());
+            let handle = fixture.admit("first").await;
+            assert_eq!(handle.completion().await, outcome);
+            let armed = tokio::time::timeout(Duration::from_secs(5), fixture.next_deadline())
+                .await
+                .unwrap_or_else(|_| panic!("the idle deadline is armed again after {outcome:?}"));
+            assert!(
+                matches!(armed, super::IdleDeadlineTestEvent::Armed { .. }),
+                "{armed:?}"
+            );
+            fixture.close().await;
+        }
     }
 
     #[tokio::test(start_paused = true)]

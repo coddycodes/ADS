@@ -21,6 +21,9 @@ pub enum TurnDeliveryFailureReason {
     ModelSelectionRefused,
     /// Paired only with a delivered retry that recovered into a fresh native conversation.
     StartedNewConversation,
+    /// Internal, never shown or stored: paired only with a delivery recorded delivered because
+    /// the provider already had the message, so no turn started for it here.
+    FoundWithoutTurn,
 }
 
 impl TurnDeliveryFailureReason {
@@ -28,6 +31,7 @@ impl TurnDeliveryFailureReason {
         match self {
             Self::ModelSelectionRefused => "modelSelectionRefused",
             Self::StartedNewConversation => "startedNewConversation",
+            Self::FoundWithoutTurn => "foundWithoutTurn",
         }
     }
 }

@@ -4367,6 +4367,202 @@ async fn opencode_message_asked_to_wait_is_sent_again_after_retry_after() {
     server.abort();
 }
 
+/// OpenCode 1 runs the model again for a message id it already has once a later message
+/// followed, so an explicit retry of an uncertain delivery looks the message up first and never
+/// sends it again when OpenCode has it.
+#[cfg(unix)]
+#[tokio::test]
+async fn retrying_an_uncertain_opencode_message_it_already_has_does_not_send_it_again() {
+    let stored = Arc::new(StdMutex::new(Vec::<String>::new()));
+    let posts = stored.clone();
+    let lookups = stored.clone();
+    let app = Router::new()
+        .route(
+            "/session",
+            post(|| async { Json(json!({"id":"opencode-retry-session"})) }),
+        )
+        .route(
+            "/session/{session_id}",
+            get(|| async { Json(json!({"id":"opencode-retry-session"})) }),
+        )
+        .route(
+            "/event",
+            get(|| async { Sse::new(stream::pending::<Result<Event, Infallible>>()) }),
+        )
+        .route(
+            "/session/{session_id}/message",
+            get(|| async { Json(json!({"data":[]})) }),
+        )
+        .route(
+            "/session/{session_id}/message/{message_id}",
+            get(
+                move |AxumPath((session_id, message_id)): AxumPath<(String, String)>| {
+                    let stored = lookups.clone();
+                    async move {
+                        if stored.lock().unwrap().contains(&message_id) {
+                            Json(json!({
+                                "info":{"id":message_id, "sessionID":session_id, "role":"user"},
+                                "parts":[]
+                            }))
+                            .into_response()
+                        } else {
+                            StatusCode::NOT_FOUND.into_response()
+                        }
+                    }
+                },
+            ),
+        )
+        .route(
+            "/session/{session_id}/prompt_async",
+            post(move |Json(body): Json<Value>| {
+                let posts = posts.clone();
+                async move {
+                    let mut posts = posts.lock().unwrap();
+                    posts.push(body["messageID"].as_str().unwrap_or_default().to_owned());
+                    // OpenCode stored the first send, but a gateway lost its answer.
+                    if posts.len() == 1 {
+                        StatusCode::BAD_GATEWAY
+                    } else {
+                        StatusCode::NO_CONTENT
+                    }
+                }
+            }),
+        )
+        .route(
+            "/provider",
+            get(|| async {
+                Json(json!({
+                    "connected": ["openai"],
+                    "all": [{"id":"openai", "models":{"gpt-5":{"variants":{"high":{}}}}}]
+                }))
+            }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("OpenCode fixture bind");
+    let endpoint = format!("http://{}", listener.local_addr().expect("fixture address"));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("OpenCode fixture serve");
+    });
+
+    let temp = TempDir::new().expect("provider fixture directory");
+    let (engine, database) = engine_and_database().await;
+    let settings = TempDir::new().expect("settings");
+    std::fs::write(
+        settings.path().join("settings.json"),
+        serde_json::to_vec(&json!({ "providerInstances": {
+            "retry-opencode": {
+                "driver":"opencode", "enabled":true,
+                "config":{"binaryPath":"retry-opencode-route", "serverUrl":endpoint}
+            }
+        }}))
+        .expect("settings json"),
+    )
+    .expect("write settings");
+    let command_id = "retried-uncertain-opencode".to_owned();
+    let mut row = delivery_row("opencode", &format!("{command_id}-key"));
+    row.command_id = command_id.clone();
+    row.message_id = format!("message-{command_id}");
+    row.provider_instance_id = "retry-opencode".to_owned();
+    row.payload = json!({
+        "type":"thread.turn.start", "commandId":command_id, "threadId":"t1",
+        "message":{"messageId":row.message_id, "role":"user", "text":"hello", "attachments":[]},
+        "modelSelection":{"instanceId":"retry-opencode", "model":"openai/gpt-5", "options":[]},
+        "runtimeMode":"full-access", "interactionMode":"default", "createdAt":NOW
+    });
+    freeze_row_route(&engine, &settings, &mut row).await;
+    let message_id = row.message_id.clone();
+    seed_pending_delivery(&database, row).await;
+    // The turn admission's pending marker, which an accepted turn's session update would bind.
+    let marker = message_id.clone();
+    database
+        .call(move |connection| {
+            connection.execute(
+                "INSERT INTO projection_turns (thread_id, turn_id, pending_message_id, state, requested_at, checkpoint_files_json) VALUES ('t1', NULL, ?, 'running', ?, '[]')",
+                rusqlite::params![marker, NOW],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("pending turn marker");
+    let supervisor = Arc::new(ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        Arc::new(NativeFixtureFactory {
+            inner: NativeProviderDriverFactory::new(temp.path().join("attachments")),
+            binary_path: None,
+            endpoint: Some(endpoint.clone()),
+            cwd: Some(temp.path().to_path_buf()),
+            environment: Vec::new(),
+            launches: Arc::new(StdMutex::new(Vec::new())),
+        }),
+        activity_projection(&engine),
+        SupervisorOptions::default(),
+    ));
+    let service = TurnDeliveryService::start(
+        engine.clone(),
+        supervisor.clone(),
+        settings.path().to_path_buf(),
+    );
+    let settled = |state: TurnDeliveryState| {
+        let engine = engine.clone();
+        let command_id = command_id.clone();
+        async move {
+            timeout(Duration::from_secs(10), async {
+                loop {
+                    let delivery = engine
+                        .repositories()
+                        .get_provider_turn_delivery(command_id.clone())
+                        .await
+                        .expect("delivery row")
+                        .expect("durable delivery");
+                    if delivery.state == state {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("the delivery never became {state:?}"));
+        }
+    };
+    settled(TurnDeliveryState::Uncertain).await;
+
+    engine
+        .dispatch(
+            serde_json::from_value(json!({
+                "type":"thread.turn-delivery.resolve", "commandId":"retry-uncertain",
+                "threadId":"t1", "messageId":message_id, "action":"retry", "createdAt":NOW
+            }))
+            .expect("delivery resolution command"),
+        )
+        .await
+        .expect("retry");
+    settled(TurnDeliveryState::Delivered).await;
+    assert_eq!(
+        stored.lock().unwrap().len(),
+        1,
+        "OpenCode already had the message, so it is not sent again"
+    );
+    let pending = database
+        .call(|connection| {
+            Ok(connection.query_row(
+                "SELECT COUNT(*) FROM projection_turns WHERE thread_id = 't1' AND turn_id IS NULL AND state = 'running'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
+        .await
+        .expect("pending turns");
+    assert_eq!(pending, 0, "the found message holds no queued follow-up");
+
+    service.shutdown().await;
+    supervisor.shutdown().await.expect("supervisor shutdown");
+    engine.shutdown().await;
+    server.abort();
+}
+
 #[tokio::test]
 async fn admitted_turn_freezes_native_session_before_provider_delivery_begins() {
     let (engine, _) = engine_and_database().await;
