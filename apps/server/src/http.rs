@@ -44,8 +44,8 @@ use crate::{
     production::http_routes::{self, HttpRoutesState},
     remote_update::RemoteUpdateSupport,
     rpc::{
-        CHUNKED_RPC_SUBPROTOCOL, E2eePreauthAdmission, MAX_E2EE_CIPHERTEXT_BYTES, RpcRegistry,
-        RpcSessionContext, run_session,
+        E2eePreauthAdmission, MAX_E2EE_CIPHERTEXT_BYTES, RpcRegistry, RpcSessionContext,
+        plain_subprotocols, remote_compression_enabled, run_session,
     },
 };
 
@@ -354,7 +354,11 @@ async fn websocket(
     let reach = client_reach(connection, &headers);
     if state.config.unsafe_no_auth {
         return upgrade
-            .protocols([CHUNKED_RPC_SUBPROTOCOL])
+            .protocols(
+                plain_subprotocols(remote_compression_enabled())
+                    .iter()
+                    .copied(),
+            )
             .max_frame_size(MAX_PLAIN_WEBSOCKET_FRAME_BYTES)
             .max_message_size(MAX_PLAIN_WEBSOCKET_MESSAGE_BYTES)
             .on_upgrade(move |socket| {
@@ -375,7 +379,11 @@ async fn websocket(
             let rpc_context =
                 RpcSessionContext::authenticated(principal, auth.clone()).with_reach(reach);
             upgrade
-                .protocols([CHUNKED_RPC_SUBPROTOCOL])
+                .protocols(
+                    plain_subprotocols(remote_compression_enabled())
+                        .iter()
+                        .copied(),
+                )
                 .max_frame_size(MAX_PLAIN_WEBSOCKET_FRAME_BYTES)
                 .max_message_size(MAX_PLAIN_WEBSOCKET_MESSAGE_BYTES)
                 .on_upgrade(move |socket| async move {

@@ -122,6 +122,14 @@ from the schema-only `WsRpcGroup`. The Rust mirror is
 | Server to client | `Pong`                | Answer a protocol probe.                                                          |
 | Server to client | `ClientProtocolError` | Report malformed or unsupported client protocol input.                            |
 
+A stream has one `Chunk` in flight: the server sends the next only after the
+client's `Ack` for the previous one. Items the handler queued meanwhile leave
+together in that next `Chunk`, in order, up to 64 KiB of encoded values (or the
+connection's message limit when smaller); a failure or an item that does not
+fit goes out after it. A slow link therefore costs a stream one round trip per
+`Chunk` rather than one per item: before this, typing over a 250 ms link echoed
+one key per round trip.
+
 Schemas validate payloads at the client boundary. The Rust session validates
 request IDs, registered method names, authorization scopes, cancellation, and
 stream flow before invoking handlers. The read loop never waits on the
@@ -187,6 +195,15 @@ records are used there only when the client lists `interleave-v1` in
 `e2ee_auth` and the server confirms it. Likewise, `0x10` marks every record of a
 raw-deflate compressed server message only after the client lists `deflate-v1`
 and the server confirms it ([Remote environments](./remote.md#direct-connection-e2ee)).
+
+A plain client that can inflate raw deflate offers
+`bibcode.rpc.chunked-deflate.v1` before `bibcode.rpc.chunked.v1`, except on a
+loopback socket that is not an SSH tunnel (a backend on the same machine). The
+server prefers it unless `BIBCODE_REMOTE_COMPRESSION=0` is set. Selecting it means
+chunked records as above, and a data message of at least 16 KiB that compresses
+smaller leaves in the `deflate-v1` form: binary records that all carry `0x10`,
+even below 64 KiB. A server that predates it selects `bibcode.rpc.chunked.v1`
+([design](../superpowers/specs/2026-10-13-e2ee-message-compression-design.md#addendum-2026-10-17-compression-on-plain-ws)).
 
 A response that does not fit the connection's message limit (64 MiB on E2EE and
 record-framed plain sockets) fails only its own request with a typed

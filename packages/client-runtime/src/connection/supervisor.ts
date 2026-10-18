@@ -287,6 +287,16 @@ export class EnvironmentSupervisor extends Context.Service<
     readonly target: ConnectionTarget;
     readonly state: SubscriptionRef.SubscriptionRef<SupervisorConnectionState>;
     readonly session: SubscriptionRef.SubscriptionRef<Option.Option<RpcSession.RpcSession>>;
+    /**
+     * The session read subscriptions follow (`subscribe` for the tags in
+     * `PRE_VERIFICATION_SUBSCRIPTIONS`, and the shell). It is published from
+     * `configuring` on, a round trip before `session`, and holds their data until the
+     * connection is verified; it is the same object `session` later publishes, and it is
+     * cleared with the lease. Absent on test doubles, whose followers use `session`.
+     */
+    readonly subscriptionSession?: SubscriptionRef.SubscriptionRef<
+      Option.Option<RpcSession.RpcSession>
+    >;
     readonly prepared: SubscriptionRef.SubscriptionRef<Option.Option<PreparedConnection>>;
     readonly connect: Effect.Effect<void>;
     readonly disconnect: Effect.Effect<void>;
@@ -330,10 +340,17 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         : connectingState(initialIntent, 0, 1, null),
   );
   const session = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(Option.none());
+  const subscriptionSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
+    Option.none(),
+  );
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none());
 
   const clearLease = Effect.all(
-    [SubscriptionRef.set(session, Option.none()), SubscriptionRef.set(prepared, Option.none())],
+    [
+      SubscriptionRef.set(session, Option.none()),
+      SubscriptionRef.set(subscriptionSession, Option.none()),
+      SubscriptionRef.set(prepared, Option.none()),
+    ],
     { discard: true },
   );
 
@@ -362,8 +379,21 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     lastFailure: ConnectionAttemptError | null,
     progress: ConnectionDriver.ConnectionDriverProgress,
   ) {
-    if ("prepared" in progress && progress.stage === "synchronizing") {
+    if (
+      "prepared" in progress &&
+      progress.stage === "synchronizing" &&
+      Option.getOrNull(yield* SubscriptionRef.get(prepared)) !== progress.prepared
+    ) {
       yield* SubscriptionRef.set(prepared, Option.some(progress.prepared));
+    }
+    // Read subscriptions follow this from `configuring` on, alongside the config request;
+    // the session holds their data until the connection is verified.
+    if (
+      "session" in progress &&
+      progress.session !== undefined &&
+      progress.stage === "configuring"
+    ) {
+      yield* SubscriptionRef.set(subscriptionSession, Option.some(progress.session));
     }
     yield* setState(
       connectingState(yield* Ref.get(intent), generation, attempt, lastFailure, progress.stage),
@@ -660,8 +690,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
 
     const connectedAt = yield* Clock.currentTimeMillis;
-    yield* SubscriptionRef.set(prepared, Option.some(active.lease.prepared));
-    yield* SubscriptionRef.set(session, Option.some(active.lease.session));
+    // Usually published at configuring already: publishing the same values again would
+    // make every consumer subscribe a second time.
+    if (Option.getOrNull(yield* SubscriptionRef.get(prepared)) !== active.lease.prepared) {
+      yield* SubscriptionRef.set(prepared, Option.some(active.lease.prepared));
+    }
+    if (Option.getOrNull(yield* SubscriptionRef.get(session)) !== active.lease.session) {
+      yield* SubscriptionRef.set(session, Option.some(active.lease.session));
+    }
     yield* setState({
       desired: true,
       network: currentIntent.network,
@@ -672,6 +708,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       lastFailure: null,
       retryAt: null,
     });
+    // Only now: data the session held while unverified must find the environment connected.
+    yield* active.lease.open ?? Effect.void;
 
     const connectedExit = yield* Effect.raceFirst(
       active.lease.session.closed.pipe(
@@ -877,6 +915,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     },
     state,
     session,
+    subscriptionSession,
     prepared,
     connect,
     disconnect,

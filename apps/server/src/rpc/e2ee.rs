@@ -828,7 +828,7 @@ impl E2eeFeatures {
 }
 
 /// `BIBCODE_REMOTE_COMPRESSION=0` keeps every message uncompressed.
-fn remote_compression_enabled() -> bool {
+pub(crate) fn remote_compression_enabled() -> bool {
     compression_allowed(std::env::var_os("BIBCODE_REMOTE_COMPRESSION").as_deref())
 }
 

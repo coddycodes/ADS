@@ -1,3 +1,5 @@
+import * as NodeZlib from "node:zlib";
+
 import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
@@ -14,6 +16,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -969,7 +972,7 @@ describe("RpcSessionFactory", () => {
       }),
     ).pipe(withFixedRandom),
   );
-  it.effect("offers the chunked subprotocol on plain sockets only", () =>
+  it.effect("offers the chunked subprotocols, compression first, on plain sockets only", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
       yield* Effect.scoped(
@@ -977,11 +980,104 @@ describe("RpcSessionFactory", () => {
           const session = yield* factory.connect(PREPARED);
           yield* Effect.forkChild(session.ready);
           const socket = yield* awaitSocket(sockets);
-          expect(socket.protocols).toEqual(["bibcode.rpc.chunked.v1"]);
+          expect(socket.protocols).toEqual([
+            "bibcode.rpc.chunked-deflate.v1",
+            "bibcode.rpc.chunked.v1",
+          ]);
           expect(socket.binaryType).toBe("arraybuffer");
         }),
       );
     }),
+  );
+
+  it.effect("sends read subscriptions while configuring and holds their data until verified", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const ready = yield* Effect.forkChild(session.ready);
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        yield* awaitRequest(socket, 0);
+        const gate = yield* RpcSession.makeVerifiedSessionGate(session);
+
+        const servers = yield* Effect.forkChild(
+          Stream.runHead(gate.session.client[WS_METHODS.subscribeDiscoveredLocalServers]({})),
+        );
+        const settings = yield* Effect.forkChild(
+          gate.session.client[WS_METHODS.serverGetSettings]({}),
+        );
+        // The subscription leaves before the config arrives: no round trip of its own after it.
+        const subscription = yield* awaitRequest(socket, 1);
+        expect(subscription.tag).toBe(WS_METHODS.subscribeDiscoveredLocalServers);
+        const list = { servers: [], scannedAt: "2026-10-17T00:00:00.000Z" };
+        socket.serverMessage(
+          encodeJson({ _tag: "Chunk", requestId: subscription.id, values: [list] }),
+        );
+        for (let index = 0; index < 20; index += 1) yield* Effect.yieldNow;
+        // Unverified data stays held, and the unary call has not left.
+        expect(servers.pollUnsafe()).toBeUndefined();
+        expect(requestFrames(socket)).toHaveLength(2);
+
+        yield* completeInitialConfig(socket);
+        yield* Fiber.join(ready);
+        yield* gate.open;
+        expect(yield* Fiber.join(servers)).toEqual(Option.some(list));
+        const settingsRequest = yield* awaitRequest(socket, 2);
+        expect(settingsRequest.tag).toBe(WS_METHODS.serverGetSettings);
+        socket.serverMessage(
+          encodeJson({
+            _tag: "Exit",
+            requestId: settingsRequest.id,
+            exit: { _tag: "Success", value: encodeServerSettings(DEFAULT_SERVER_SETTINGS) },
+          }),
+        );
+        expect(yield* Fiber.join(settings)).toEqual(DEFAULT_SERVER_SETTINGS);
+      }),
+    ),
+  );
+
+  it.effect("releases nothing from an attempt that ends unverified", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        yield* Effect.forkChild(session.ready);
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        yield* awaitRequest(socket, 0);
+        const gate = yield* RpcSession.makeVerifiedSessionGate(session);
+        const servers = yield* Effect.forkChild(
+          Effect.flip(
+            Stream.runHead(gate.session.client[WS_METHODS.subscribeDiscoveredLocalServers]({})),
+          ),
+        );
+        const subscription = yield* awaitRequest(socket, 1);
+        socket.serverMessage(
+          encodeJson({
+            _tag: "Chunk",
+            requestId: subscription.id,
+            values: [{ servers: [], scannedAt: "2026-10-17T00:00:00.000Z" }],
+          }),
+        );
+        const settings = yield* Effect.forkChild(
+          Effect.flip(gate.session.client[WS_METHODS.serverGetSettings]({})),
+        );
+        const config = yield* Effect.forkChild(gate.session.initialConfig);
+        yield* completeInitialConfig(socket);
+        yield* gate.close;
+        // A one-shot call fails; the subscription and the config read wait until their
+        // follower moves on, and deliver nothing from the unverified server.
+        expect((yield* Fiber.join(settings))._tag).toBe("RpcClientError");
+        for (let index = 0; index < 20; index += 1) yield* Effect.yieldNow;
+        expect(servers.pollUnsafe()).toBeUndefined();
+        expect(config.pollUnsafe()).toBeUndefined();
+        // The unary call never left.
+        expect(requestFrames(socket).map((request) => request.tag)).not.toContain(
+          WS_METHODS.serverGetSettings,
+        );
+      }),
+    ),
   );
 
   it.effect("reassembles records when the server selected the subprotocol", () =>
@@ -1014,6 +1110,38 @@ describe("RpcSessionFactory", () => {
         socket.serverMessage(record(0x01, body.subarray(0, 10)));
         socket.serverMessage(record(0x02, new TextEncoder().encode(encodeJson({ _tag: "Pong" }))));
         socket.serverMessage(record(0x00, body.subarray(10)));
+        expect(yield* Fiber.join(settings)).toEqual(DEFAULT_SERVER_SETTINGS);
+      }),
+    ),
+  );
+
+  it.effect("inflates compressed records when the server selected compression", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const ready = yield* Effect.forkChild(session.ready);
+        const socket = yield* awaitSocket(sockets);
+        socket.protocol = "bibcode.rpc.chunked-deflate.v1";
+        socket.open();
+        yield* completeInitialConfig(socket);
+        yield* Fiber.join(ready);
+
+        const settings = yield* Effect.forkChild(session.client[WS_METHODS.serverGetSettings]({}));
+        const request = yield* awaitRequest(socket, 1);
+        const body = new TextEncoder().encode(
+          encodeJson({
+            _tag: "Exit",
+            requestId: request.id,
+            exit: { _tag: "Success", value: encodeServerSettings(DEFAULT_SERVER_SETTINGS) },
+          }),
+        );
+        const deflated = NodeZlib.deflateRawSync(body);
+        const record = new Uint8Array(1 + 4 + deflated.length);
+        record[0] = 0x10;
+        new DataView(record.buffer).setUint32(1, body.length);
+        record.set(deflated, 5);
+        socket.serverMessage(record);
         expect(yield* Fiber.join(settings)).toEqual(DEFAULT_SERVER_SETTINGS);
       }),
     ),

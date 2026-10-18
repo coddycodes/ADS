@@ -287,6 +287,10 @@ content, so only large server messages are compressed, each on its own;
 `BIBCODE_REMOTE_COMPRESSION=0` in the server environment stops the server from
 confirming `deflate-v1`
 ([design](../superpowers/specs/2026-10-13-e2ee-message-compression-design.md)).
+SSH environments and plain remote servers get the same compression on plain
+`/ws` through the `bibcode.rpc.chunked-deflate.v1` subprotocol, which the same
+switch stops the server from selecting
+([RPC and orchestration](./rpc-and-orchestration.md#wire-protocol)).
 Invalid credentials receive
 `e2ee_error/unauthorized`; malformed protocol receives `e2ee_error/protocol`;
 both paths close the socket.

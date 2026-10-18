@@ -280,6 +280,36 @@ describe("ConnectionDriver storage identity", () => {
       }),
   );
 
+  it.effect("hands consumers the session at configuring and keeps it as the lease", () =>
+    Effect.gen(function* () {
+      const connectionTarget = target("early");
+      const store = yield* makeIdentityStore(new Map([["platform:primary", "store-a"]]));
+      const ready = yield* Deferred.make<void>();
+      const harness = yield* makeDriver(
+        new Map([[connectionTarget.environmentId, "store-a"]]),
+        new Map([[connectionTarget.environmentId, "store-a"]]),
+        store.identities,
+        { ready: Deferred.await(ready) },
+      );
+      const early = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const connecting = yield* harness.driver
+        .connect(entry(connectionTarget), (progress) =>
+          progress.stage === "configuring" && progress.session !== undefined
+            ? Ref.update(early, (current) => [...current, progress.session])
+            : Effect.void,
+        )
+        .pipe(Effect.forkChild);
+
+      yield* TestClock.adjust(0);
+      // Consumers can subscribe before the config and identity check, a round trip sooner.
+      expect(yield* Ref.get(early)).toHaveLength(1);
+      yield* Deferred.succeed(ready, undefined);
+      const lease = yield* Fiber.join(connecting);
+      // The same object, so consumers do not subscribe a second time.
+      expect(lease.session).toBe((yield* Ref.get(early))[0]);
+    }),
+  );
+
   it.effect("releases a failed connection without reporting configuring", () =>
     Effect.gen(function* () {
       const connectionTarget = target("failed-connect");

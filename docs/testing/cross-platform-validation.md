@@ -1641,7 +1641,10 @@ crosses the proxy.
 First record the size of the first config snapshot: the data the RPC WebSocket
 receives before the banner disappears, shown in the browser's network-panel
 frames. The checks exercise the old 15-second limit only when size ÷ rate
-exceeds 15 seconds (about 250 KB on a host with many Claude skills).
+exceeds 15 seconds (about 250 KB on a host with many Claude skills). Read
+subscriptions (the open thread's included) leave with the config request, so
+their snapshots share the link while the config arrives: add their size ÷ rate
+to the expected times below, or record the figures with the thread closed.
 
 Check establishment before the large-diff transfers:
 
@@ -1701,6 +1704,32 @@ Then check liveness during large-diff transfers:
 
 Record the rates, transfer durations, close codes, the exact status text, and
 the server log lines.
+
+## High-latency measurement
+
+For changes that add, remove or reorder RPCs on a user action, or change how
+messages are framed, batched or compressed, measure the actions on a delayed
+link. Build the server and the web bundle, then run the harness at no delay
+and at a 250 ms round trip (relayed VPN peers measure 236–252 ms):
+
+```sh
+cargo build -p bibcode-server --bin bibcode
+VITE_HOSTED_APP_URL=https://hosted.invalid vp run --filter=@bibcode/web build
+node scripts/measure-remote-latency.ts --rtt 0,250 --out <report>.json
+```
+
+It needs `/usr/bin/chromium` (or `--chromium <path>`) and uses only
+disposable data and fixture providers. Build the server with `cargo build`
+right before the run: a `cargo test` run rebuilds `target/debug/bibcode` with
+the hermetic test guard, which refuses tools on the ambient `PATH` (for
+example `hermetic-test-guard: refused jj at <ambient PATH>` in the run's
+`server.log`), and the server stops responding during the harness setup. Add `--jitter 20` for a relayed peer's
+spread. Compare the 250 ms table with the previous measurement in
+`docs/architecture/measurements/`: an action that gains RPCs or sequential
+round trips, or terminal echo lag above about two round trips, is a regression
+to explain. The sequential column is inferred from timing and is noisy for
+typing rows; use their echo lag instead. Record the tables in the execution
+report.
 
 ## Git Manager validation scenario
 

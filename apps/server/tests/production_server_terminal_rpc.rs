@@ -1914,18 +1914,20 @@ async fn server_terminal_auxiliary_rpcs_surface_runtime_state_validation_and_int
         assert_eq!(relay_status["version"], "1.0.0");
 
         send_request(cloud_install, "1", "cloud.installRelayClient", json!({})).await;
-        let progress = next_chunk_and_ack(cloud_install, "1").await;
+        // Items queued behind an unacknowledged chunk may share the next one.
+        let mut events = next_chunk_and_ack(cloud_install, "1").await;
+        while events.len() < 2 {
+            events.extend(next_chunk_and_ack(cloud_install, "1").await);
+        }
         assert_eq!(
-            progress,
-            vec![json!({ "type": "progress", "stage": "download" })]
-        );
-        let complete = next_chunk_and_ack(cloud_install, "1").await;
-        assert_eq!(
-            complete,
-            vec![json!({
-                "type": "complete",
-                "status": { "status": "missing", "version": "1.0.0" }
-            })]
+            events,
+            vec![
+                json!({ "type": "progress", "stage": "download" }),
+                json!({
+                    "type": "complete",
+                    "status": { "status": "missing", "version": "1.0.0" }
+                }),
+            ]
         );
         assert!(matches!(
             next_message(cloud_install).await,

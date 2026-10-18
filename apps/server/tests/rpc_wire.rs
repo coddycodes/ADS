@@ -375,24 +375,23 @@ async fn eof_still_allows_stream_acknowledgements_before_shutdown() {
         }),
     )
     .await;
-    assert!(matches!(
-        next_server_message(&mut socket).await,
-        ServerMessage::Chunk { .. }
-    ));
+    let ServerMessage::Chunk { mut values, .. } = next_server_message(&mut socket).await else {
+        panic!("the stream starts with a chunk");
+    };
     send_json(&mut socket, json!({ "_tag": "Eof" })).await;
-    send_json(&mut socket, json!({ "_tag": "Ack", "requestId": "10" })).await;
-    assert!(matches!(
-        next_server_message(&mut socket).await,
-        ServerMessage::Chunk { .. }
-    ));
-    send_json(&mut socket, json!({ "_tag": "Ack", "requestId": "10" })).await;
-    assert!(matches!(
-        next_server_message(&mut socket).await,
-        ServerMessage::Exit {
-            exit: RpcExit::Success { value: None },
-            ..
+    // Every Ack after the Eof still lets the stream go on; queued items may share a chunk.
+    loop {
+        send_json(&mut socket, json!({ "_tag": "Ack", "requestId": "10" })).await;
+        match next_server_message(&mut socket).await {
+            ServerMessage::Chunk { values: more, .. } => values.extend(more),
+            ServerMessage::Exit {
+                exit: RpcExit::Success { value: None },
+                ..
+            } => break,
+            other => panic!("unexpected message {other:?}"),
         }
-    ));
+    }
+    assert_eq!(values, vec![json!(1), json!(2)]);
 
     handle.shutdown();
     handle.join().await.expect("server joins");
@@ -559,13 +558,23 @@ async fn connect_plain(
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     Option<String>,
 ) {
+    connect_plain_offering(address, chunked.then_some("bibcode.rpc.chunked.v1")).await
+}
+
+async fn connect_plain_offering(
+    address: std::net::SocketAddr,
+    protocols: Option<&'static str>,
+) -> (
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    Option<String>,
+) {
     let mut request = format!("ws://{address}/ws")
         .into_client_request()
         .expect("WebSocket request");
-    if chunked {
+    if let Some(protocols) = protocols {
         request.headers_mut().insert(
             "Sec-WebSocket-Protocol",
-            HeaderValue::from_static("bibcode.rpc.chunked.v1"),
+            HeaderValue::from_static(protocols),
         );
     }
     let (socket, response) = connect_async(request).await.expect("WebSocket connects");
@@ -646,6 +655,84 @@ async fn chunked_subprotocol_splits_large_responses_into_records() {
     let response: Value = serde_json::from_slice(&body).expect("records reassemble");
     assert_eq!(response["requestId"], "2");
     socket.close(None).await.expect("close WebSocket");
+    handle.shutdown();
+    handle.join().await.expect("server joins");
+}
+
+#[tokio::test]
+async fn deflate_subprotocol_compresses_large_responses_into_records() {
+    use std::io::Read as _;
+    let temp = TempDir::new().expect("temporary base directory");
+    let handle = ServerRuntime::start_with_registry(test_config(&temp), bytes_registry())
+        .await
+        .expect("server starts");
+    // A new client offers both; the server prefers compression.
+    let (mut socket, selected) = connect_plain_offering(
+        handle.local_addr(),
+        Some("bibcode.rpc.chunked-deflate.v1, bibcode.rpc.chunked.v1"),
+    )
+    .await;
+    assert_eq!(selected.as_deref(), Some("bibcode.rpc.chunked-deflate.v1"));
+
+    send_json(
+        &mut socket,
+        json!({ "_tag": "Request", "id": "1", "tag": "fixture.bytes", "payload": { "bytes": 1024 }, "headers": [] }),
+    )
+    .await;
+    let small = timeout(
+        Duration::from_secs(2),
+        next_frame_past_heartbeat(&mut socket),
+    )
+    .await
+    .expect("small response")
+    .expect("socket open")
+    .expect("frame");
+    assert!(
+        matches!(small, Message::Text(_)),
+        "small messages stay uncompressed text frames"
+    );
+
+    send_json(
+        &mut socket,
+        json!({ "_tag": "Request", "id": "2", "tag": "fixture.bytes", "payload": { "bytes": 200 * 1024 }, "headers": [] }),
+    )
+    .await;
+    let mut flags = Vec::new();
+    let mut body = Vec::new();
+    loop {
+        let frame = timeout(
+            Duration::from_secs(2),
+            next_frame_past_heartbeat(&mut socket),
+        )
+        .await
+        .expect("record")
+        .expect("socket open")
+        .expect("frame");
+        let Message::Binary(record) = frame else {
+            panic!("compressed messages arrive as binary records, got {frame:?}");
+        };
+        flags.push(record[0]);
+        body.extend_from_slice(&record[1..]);
+        if record[0] & 0x01 == 0 {
+            break;
+        }
+    }
+    assert!(flags.iter().all(|flag| flag & 0x10 != 0), "{flags:?}");
+    assert!(body.len() < 20 * 1024, "200 KiB of one byte compresses");
+    let declared = u32::from_be_bytes(body[..4].try_into().expect("length prefix"));
+    let mut inflated = Vec::new();
+    flate2::read::DeflateDecoder::new(&body[4..])
+        .read_to_end(&mut inflated)
+        .expect("raw deflate");
+    assert_eq!(inflated.len(), declared as usize);
+    let response: Value = serde_json::from_slice(&inflated).expect("inflates to JSON");
+    assert_eq!(response["requestId"], "2");
+    socket.close(None).await.expect("close WebSocket");
+
+    // A client offering only chunked records, like an old one, gets them uncompressed.
+    let (socket, selected) = connect_plain(handle.local_addr(), true).await;
+    assert_eq!(selected.as_deref(), Some("bibcode.rpc.chunked.v1"));
+    drop(socket);
     handle.shutdown();
     handle.join().await.expect("server joins");
 }
