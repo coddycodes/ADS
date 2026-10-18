@@ -880,6 +880,7 @@ impl OrchestrationEffectCallbacks for RuntimeEffectCallbacks {
         &'a self,
         thread_id: &'a str,
         turns: i64,
+        rewind_key: &'a str,
     ) -> BoxEffectFuture<'a, ProviderRewind> {
         Box::pin(async move {
             let _admission = self
@@ -893,6 +894,7 @@ impl OrchestrationEffectCallbacks for RuntimeEffectCallbacks {
                 &self.settings_root,
                 thread_id,
                 turns,
+                rewind_key,
             )
             .await
         })
@@ -2805,7 +2807,7 @@ mod tests {
         );
         assert!(
             callbacks
-                .rollback_provider("missing-thread", 1)
+                .rollback_provider("missing-thread", 1, "rewind-key")
                 .await
                 .is_err()
         );

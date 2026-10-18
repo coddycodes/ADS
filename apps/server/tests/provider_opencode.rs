@@ -1926,7 +1926,7 @@ async fn opencode_runtime_failure_boundaries_reject_invalid_sessions_and_http_st
             .is_err()
     );
     assert!(runtime.send_command("test", "args", None).await.is_err());
-    assert!(runtime.rollback_thread(1).await.is_err());
+    assert!(runtime.rollback_thread(1, "rewind-key").await.is_err());
     assert!(
         runtime
             .respond_to_user_input("missing", json!({}))
@@ -2059,7 +2059,7 @@ async fn opencode_runtime_maps_transport_loss_across_every_live_operation() {
     );
     assert!(runtime.send_command("review", "src", None).await.is_err());
     assert!(runtime.interrupt_turn().await.is_err());
-    assert!(runtime.rollback_thread(1).await.is_err());
+    assert!(runtime.rollback_thread(1, "rewind-key").await.is_err());
     assert!(
         runtime
             .respond_to_permission("transport-permission", "decline")
@@ -2217,7 +2217,10 @@ async fn opencode_runtime_matches_session_and_rollback_traces() {
             json!({ "info": { "id": "assistant-2", "role": "assistant" }, "parts": [] }),
         ];
     }
-    let rollback = runtime.rollback_thread(2).await.expect("rollback");
+    let rollback = runtime
+        .rollback_thread(2, "rewind-key")
+        .await
+        .expect("rollback");
     assert_eq!(
         serde_json::to_value(rollback).expect("rollback json"),
         fixture("rollback.json")
@@ -2232,7 +2235,7 @@ async fn opencode_runtime_matches_session_and_rollback_traces() {
     }
     assert_eq!(
         runtime
-            .rollback_thread(1)
+            .rollback_thread(1, "rewind-key")
             .await
             .expect("targeted rollback")
             .turns
@@ -5340,12 +5343,14 @@ async fn reconciliation_batches_apply_through_production_projection_from_none_sc
         .await
         .expect("child reconciliation applies atomically");
 
+    // The child is busy and its latest message has no completion time, so it is active. (The
+    // history DTO carries that missing time as `null`, which was once misread as completed.)
     let roster = projection
         .list_roster(
             &scope.scope,
             &scope.scope_id,
             ActivitySection::Subagents,
-            ActivityRosterBucket::Done,
+            ActivityRosterBucket::Active,
             None,
             10,
         )

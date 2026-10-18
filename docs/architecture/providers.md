@@ -171,16 +171,86 @@ protocol:
 
 See [Checkpoint revert](./rpc-and-orchestration.md#checkpoint-revert).
 
-The OpenCode driver speaks the V1 server API of OpenCode 1.x. OpenCode 2
-replaced it with `/api/*` routes and answers V1 GET paths with its web UI as
-HTTP 200, so the adapter identifies the API before use
+The OpenCode driver speaks two wires. OpenCode 1.x serves the V1 server API;
+OpenCode 2 replaced it with `/api/*` routes and answers V1 GET paths with its
+web UI as HTTP 200, so the adapter identifies the API before use
 (`provider::opencode::probe_server_api`): an authenticated `GET /global/health`
-that returns `{"healthy": true}` is the V1 API, and a `GET /api/info` that
-returns a version is OpenCode 2. A managed server is ready only on the V1
-answer; an OpenCode 2 answer stops it and fails the launch with an actionable
-provider error. A configured Server URL is checked once at launch with the same
-probe. Inventory reads the CLI's `--version` and reports OpenCode 2 as an error
-without starting its server.
+that returns `{"healthy": true}` is V1, and a `GET /api/info` that reports a 2.x
+version is V2. A managed server is ready only on one of those answers; a
+configured Server URL is probed once at launch and falls back to V1 when it does
+not answer. Any other major version stops the launch with an actionable
+`IncompatibleProvider` error. On both wires a durable delivery is sent with a
+deterministic `msg_` id derived from its key (`provider::opencode::v2::message_id`),
+since OpenCode 2 and OpenCode 1.18 and later reject an id that does not start
+with `msg`, and reconciliation reads that message back. On OpenCode 1 it also
+reads the raw key, the id earlier BiBCode versions sent and OpenCode accepted
+before 1.18, so such a delivery is not sent twice; a refused raw id (HTTP 400)
+reads as absent. `OpenCodeSessionRuntime` shares its event channel,
+turn state and lifecycle between the wires and branches at the requests and at
+event decoding: on V2, `provider::opencode::v2` folds the global `/api/event`
+stream into the root session's turn (`session.execution.*`,
+`session.text.*`, `session.step.*`), surfaces permission requests and forms of
+the root and its descendant sessions, and reports an execution OpenCode starts
+on its own (a background subagent's result) as a turn. Subagent activity uses
+the same tracker on both wires: `provider::opencode::v2_activity` maps V2 events
+and the V2 session tree, active-session and history reads onto the V1 shapes the
+tracker consumes. Its V1 → V2 mapping and
+staging are recorded in
+[the OpenCode V2 client design](../superpowers/specs/2026-10-15-opencode-v2-client-design.md).
+Inventory reads the CLI's `--version` and does not start an OpenCode server it
+cannot drive. On V2 it reads `/api/provider`, `/api/model`, `/api/agent`,
+`/api/command` and `/api/skill` with `location[directory]`, and
+`provider::opencode::v2::catalog` shapes them like the V1 catalogs. A
+just-started OpenCode 2 server answers before it has loaded them (its agent
+list, which always holds the built-in agents, reads empty for about 100 ms), so
+an empty agent list is read again with a bounded backoff (1.5 s in all); V2 skills
+are a separate catalog, so a slash skill is sent as a prompt that attaches it
+rather than through the command route. Rewinding n turns on V2 stages a revert
+at the first message of the n-th most recent turn (`POST …/revert/stage`),
+which drops it and everything after it, then commits it
+(`POST …/revert/commit`). A turn is one execution, which OpenCode 2 ends with an
+`idle` history entry, so a turn OpenCode started on its own (opened by a
+synthetic message) counts like a prompt's. Only the conversation is reverted (`files: false`);
+checkpoint revert restores the files. A commit whose answer is lost but whose
+target message is gone counts as done; a stage that did not commit is cleared
+(`DELETE …/revert`), since OpenCode commits a leftover stage with the next
+prompt. Each rewind carries an idempotency key from the checkpoint revert,
+naming the transcript it counts from (`{thread}/{newest checkpoint turn}`).
+Until a rewind reports success the runtime remembers the turns already dropped
+and any revert whose outcome it could not read, so a retry with the same key
+drops only the turns still missing and prompts wait; a different key starts
+afresh. The idle deadline keeps the session up until the rewind settles (see
+Unsettled driver state below), and the progress is also kept with the OpenCode
+session itself, in its metadata under `bibcode.rewind` (no BiBCode schema): it
+is written before each stage, marked finished before the rewind reports success
+(a mark whose answer is lost is read back: one that landed succeeds, and any
+other fails the rewind, whose retry drops nothing more), and restored when a session is resumed after a restart, which also
+clears a leftover stage. A same-key retry after a finished rewind drops
+nothing, so a rewind that succeeded but whose completion BiBCode never recorded
+is applied once. Other providers ignore the key: Codex `thread/revert` takes no
+idempotency field. A revert still staged on the session
+(`revert` set) is cleared, never counted as landed. Each rewind request is
+bounded, because the provider supervisor awaits it.
+
+The OpenCode terminal observer (`provider_terminal::opencode`) serves both
+majors from one capability probe: OpenCode 1's `attach --help` documents
+`attach <url> --dir --session`, while OpenCode 2, which has no `attach`, prints
+its root help with `--server` and `--session`. The helper is started without
+`--log-level`, whose accepted spelling differs between the majors, and either
+readiness line (`opencode server listening on` or `server listening on`) is
+accepted. The client identifies the helper by its health answer (V1) or
+`/api/info` (V2); on V2 it creates the owned root with `/api/session`, reads
+`/api/session/active`, the session tree and histories, and maps them and the
+`/api/event` stream onto the V1 shapes through `provider::opencode::v2_activity`.
+The OpenCode 2 terminal opens the root with
+`opencode --server <url> --session <root> <dir>` and receives the helper
+password as `OPENCODE_PASSWORD`. The client requests a provider terminal as
+`opencode --model <model>`; before any preparation the terminal manager asks the
+preparer for the command's native form (`TerminalLaunchPreparer::native_command`),
+which for the configured OpenCode executable follows the same capability probe:
+OpenCode 2, which has no `--model`, gets `--standalone` with the model added to
+`OPENCODE_CONFIG_CONTENT`, so an unobserved terminal starts too, and the
+observer reads the model from there.
 
 Provider-specific events are normalized into shared orchestration contracts;
 provider wire payloads do not leak into React state. See
@@ -338,7 +408,19 @@ Idle suspension must never stop work the provider still runs:
   starts itself), the session is also projected `running` with that turn unless
   it already reads so. Cursor, OpenCode, and Grok announce a turn before BiBCode
   sends it, so their announcement does not change the projection: a send that
-  fails reports no completion.
+  fails reports no completion (OpenCode settles a turn whose request it never
+  accepted, a 4xx refusal or a connection that never opened, with a `cancelled`
+  completion, `stopReason: "not_sent"`, which re-arms the idle deadline. The
+  refusal fails the delivery and the unopened connection retries it, so neither
+  waits as uncertain. A 408 or 429 is no refusal: the delivery is retried, no
+  sooner than OpenCode's `Retry-After`. A prompt that reuses an accepted message
+  id is answered 2xx by OpenCode 1.18, 1.19 and 2, so a retried delivery never
+  reads as refused. A request whose answer was lost, or a server or gateway
+  error, keeps its turn for OpenCode's own events to end and leaves the delivery
+  uncertain). A turn such a driver did not send, one the
+  provider started itself (an OpenCode 2 execution that delivers a background
+  subagent's result, or one still running when a session is resumed), carries
+  `providerStarted: true` and is projected `running` too.
 - **Live provider work** is the session's in-memory set of actors (Claude
   subagents, Codex child agents) and work items (background tasks and
   terminals) whose latest projected lifecycle is `starting` or `running`
@@ -360,6 +442,10 @@ Idle suspension must never stop work the provider still runs:
   background shells or subagents BiBCode cannot see, so their sessions are not
   idle-suspended; they end with the thread, an explicit stop, or server
   shutdown.
+- **Unsettled driver state.** A driver can report state only its live runtime
+  holds (`ProviderDriver::holds_unsettled_work`): an OpenCode 2 checkpoint
+  rewind that has not reported success. The deadline re-arms instead of
+  suspending until it settles.
 
 Each suspension logs why at INFO (`suspending an idle provider session: no turn,
 subagent, or background task is running`), or at WARN when live work stopped
@@ -742,12 +828,12 @@ conflicting resolved/canonical ownership are unknown rather than inferred.
 
 The source/action mapping is installation-specific:
 
-| Provider | Recognized source and latest metadata                                                                                           | Server update action                                                                                                    |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Codex    | npm `@openai/codex`, selected only for a recognized standalone, Homebrew cask, or package-manager path                          | `codex update` for standalone; `brew upgrade --cask codex` for Homebrew; the matching package-manager command otherwise |
-| Claude   | Native stable/latest channel, Homebrew `claude-code` or `claude-code@latest` cask, WinGet, or a marked Linux repository channel | Native `claude update`, Homebrew, and WinGet actions are executable; apt/dnf/apk guidance is display-only               |
-| Cursor   | Official Cursor release paths and parsed official installer metadata                                                            | Resolved `cursor-agent update` only for an official path                                                                |
-| OpenCode | npm `opencode-ai`, selected only for a recognized native, Homebrew, or package-manager path                                     | Native `opencode upgrade`, Homebrew, or the matching package-manager command                                            |
+| Provider | Recognized source and latest metadata                                                                                                                          | Server update action                                                                                                    |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Codex    | npm `@openai/codex`, selected only for a recognized standalone, Homebrew cask, or package-manager path                                                         | `codex update` for standalone; `brew upgrade --cask codex` for Homebrew; the matching package-manager command otherwise |
+| Claude   | Native stable/latest channel, Homebrew `claude-code` or `claude-code@latest` cask, WinGet, or a marked Linux repository channel                                | Native `claude update`, Homebrew, and WinGet actions are executable; apt/dnf/apk guidance is display-only               |
+| Cursor   | Official Cursor release paths and parsed official installer metadata                                                                                           | Resolved `cursor-agent update` only for an official path                                                                |
+| OpenCode | npm `opencode-ai` (1.x) or `@opencode/cli` (2.x, by package path or installed major), selected only for a recognized native, Homebrew, or package-manager path | Native `opencode upgrade`, Homebrew, or the matching package-manager command                                            |
 
 Claude channel discovery defaults native installations to `latest` when user
 settings are missing or malformed. It reads only regular local evidence under

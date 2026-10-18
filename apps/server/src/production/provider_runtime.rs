@@ -90,7 +90,7 @@ use crate::{
         },
         opencode::OpenCodeSessionRuntime,
         option_needs_value_refusal, option_on_or_off_refusal, option_without_id_refusal,
-        unsupported_option_refusal,
+        parse_provider_command, unsupported_option_refusal,
     },
     server_settings::{ProviderBinarySettingsState, ProviderSettingsStore},
 };
@@ -277,14 +277,31 @@ impl std::fmt::Debug for ProviderActivityControls {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderDeliveryOutcome {
-    Accepted { turn_id: Option<String> },
-    AcceptedInNewConversation { turn_id: Option<String> },
-    DefinitelyNotSent { detail: String },
-    Ambiguous { detail: String },
-    Rejected { detail: String },
+    Accepted {
+        turn_id: Option<String>,
+    },
+    AcceptedInNewConversation {
+        turn_id: Option<String>,
+    },
+    DefinitelyNotSent {
+        detail: String,
+    },
+    /// Not sent, and the provider asked to wait at least `retry_after` before sending it again.
+    NotSentRetryAfter {
+        detail: String,
+        retry_after: Duration,
+    },
+    Ambiguous {
+        detail: String,
+    },
+    Rejected {
+        detail: String,
+    },
     // A deterministic refusal of the turn's own model or options (`InvalidOption`),
     // refused again on every unchanged attempt.
-    Refused { detail: String },
+    Refused {
+        detail: String,
+    },
 }
 
 /// What an undelivered turn shows when restart recovery finds its conversation gone.
@@ -419,7 +436,14 @@ pub trait ProviderDriver: Send + Sync {
         &self,
         options: Vec<Value>,
     ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>>;
-    fn rollback(&self, turn_count: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>>;
+    /// Drops the newest `turn_count` turns. `rewind_key` identifies the checkpoint revert (the
+    /// thread's transcript it counts from), so a driver that can make a retried rewind apply once
+    /// does; others ignore it.
+    fn rollback(
+        &self,
+        turn_count: i64,
+        rewind_key: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>>;
     fn next_event(&self) -> BoxRuntimeFuture<'_, Option<ProviderEvent>>;
     fn shutdown(&self) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>>;
     /// The pid and exit status of the provider process this driver owns, once it has exited.
@@ -432,6 +456,12 @@ pub trait ProviderDriver: Send + Sync {
     /// running its turn after BiBCode detaches, so Stop must not settle it by retirement.
     fn owns_native_work(&self) -> bool {
         true
+    }
+    /// Whether the driver holds state only its live runtime knows and that is not settled yet,
+    /// such as an OpenCode 2 rewind whose outcome could not be confirmed. The idle deadline does
+    /// not suspend such a session; it checks again at the next deadline.
+    fn holds_unsettled_work(&self) -> BoxRuntimeFuture<'_, bool> {
+        Box::pin(std::future::ready(false))
     }
 }
 
@@ -578,6 +608,7 @@ enum SupervisorMessage {
     Rewind {
         thread_id: String,
         turn_count: i64,
+        rewind_key: String,
         response: oneshot::Sender<Result<ProviderRewind, ProviderRuntimeError>>,
     },
     CaptureSessionIdentity {
@@ -1176,10 +1207,12 @@ impl ProviderRuntimeSupervisor {
         &self,
         thread_id: &str,
         turn_count: i64,
+        rewind_key: &str,
     ) -> Result<ProviderRewind, ProviderRuntimeError> {
         self.request(|response| SupervisorMessage::Rewind {
             thread_id: thread_id.to_owned(),
             turn_count,
+            rewind_key: rewind_key.to_owned(),
             response,
         })
         .await
@@ -2661,7 +2694,11 @@ mod workspace_loss_tests {
             Box::pin(async { Ok(()) })
         }
 
-        fn rollback(&self, _: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+        fn rollback(
+            &self,
+            _: i64,
+            _: String,
+        ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
             Box::pin(async { Ok(()) })
         }
 
@@ -5383,9 +5420,10 @@ async fn run_supervisor(
             SupervisorMessage::Rewind {
                 thread_id,
                 turn_count,
+                rewind_key,
                 response,
             } => {
-                let result = rewind_session(&sessions, &thread_id, turn_count).await;
+                let result = rewind_session(&sessions, &thread_id, turn_count, rewind_key).await;
                 let _ = response.send(result);
             }
             SupervisorMessage::CaptureSessionIdentity {
@@ -6001,7 +6039,15 @@ async fn run_supervisor(
                         Ok(confirmed_idle) => {
                             let activity_enabled =
                                 activity.agent_activity_controller().snapshot().enabled;
+                            // State only the live runtime holds would be lost by suspension.
+                            let unsettled = match sessions.get(&thread_id) {
+                                Some(entry) if confirmed_idle => {
+                                    entry.driver.holds_unsettled_work().await
+                                }
+                                _ => false,
+                            };
                             confirmed_idle
+                                && !unsettled
                                 && sessions.get(&thread_id).is_some_and(|entry| {
                                     let lifecycle = entry
                                         .activity_lifecycle
@@ -7619,6 +7665,7 @@ async fn rewind_session(
     sessions: &HashMap<String, SessionEntry>,
     thread_id: &str,
     turn_count: i64,
+    rewind_key: String,
 ) -> Result<ProviderRewind, ProviderRuntimeError> {
     let entry = sessions
         .get(thread_id)
@@ -7630,7 +7677,7 @@ async fn rewind_session(
             provider_label: entry.launch.provider_label.clone(),
         });
     }
-    let rewound = entry.driver.rollback(turn_count).await;
+    let rewound = entry.driver.rollback(turn_count, rewind_key).await;
     // A rewind uses the session like a turn does: it idles again under the normal deadline,
     // also when the session was reopened only for this revert.
     let generation = entry.idle_generation.fetch_add(1, Ordering::Relaxed) + 1;
@@ -7658,8 +7705,9 @@ pub async fn rewind_thread_conversation(
     settings_root: &PathBuf,
     thread_id: &str,
     turn_count: i64,
+    rewind_key: &str,
 ) -> Result<ProviderRewind, String> {
-    match supervisor.rewind(thread_id, turn_count).await {
+    match supervisor.rewind(thread_id, turn_count, rewind_key).await {
         Err(ProviderRuntimeError::SessionNotFound { .. }) => {}
         outcome => return outcome.map_err(|error| delivery_detail(&error, None)),
     }
@@ -7694,7 +7742,7 @@ pub async fn rewind_thread_conversation(
         ));
     }
     supervisor
-        .rewind(thread_id, turn_count)
+        .rewind(thread_id, turn_count, rewind_key)
         .await
         .map_err(|error| delivery_detail(&error, Some(&label)))
 }
@@ -8169,20 +8217,6 @@ fn selection_effort(options: &[Value]) -> Option<String> {
     ["reasoningEffort", "effort", "reasoning"]
         .into_iter()
         .find_map(|id| selection_string_option_from(options, id))
-}
-
-fn parse_provider_command(text: &str) -> Option<(&str, &str)> {
-    let command = text.strip_prefix('/')?;
-    let split = command.find(char::is_whitespace).unwrap_or(command.len());
-    let name = &command[..split];
-    if name.is_empty()
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.'))
-    {
-        return None;
-    }
-    Some((name, command[split..].trim()))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -8763,7 +8797,10 @@ async fn project_provider_event(
     let created_at = now();
     let command_id = format!("provider:{}", Uuid::new_v4());
     let assistant_message_id = assistant_message_id(&event);
-    if event.event_type == "turn.started" && provider_reports_its_turns(&launch.provider) {
+    if event.event_type == "turn.started"
+        && (provider_reports_its_turns(&launch.provider)
+            || event.payload.get("providerStarted") == Some(&Value::Bool(true)))
+    {
         // A turn the provider started itself (a Codex goal continuation, Claude answering a
         // finished background task) runs like a delivered one: the thread reads running, and idle
         // suspension waits for its `turn.completed`.
@@ -9428,7 +9465,8 @@ async fn session_is_confirmed_idle(
 /// Whether every `turn.started` the driver emits is a turn the provider reported running. Codex
 /// emits it for each `turn/started` notification, and Claude for a turn it starts itself (its
 /// delivered turns begin on their replay). Cursor, OpenCode, and Grok announce a turn before
-/// BiBCode sends it, so a send that then fails would leave the thread reading running.
+/// BiBCode sends it, so a send that then fails would leave the thread reading running; such a
+/// driver marks a turn the provider started itself with `providerStarted: true` instead.
 fn provider_reports_its_turns(provider: &str) -> bool {
     matches!(provider, "codex" | "claude" | "claudeAgent")
 }
@@ -10974,7 +11012,14 @@ impl ProviderDriver for CodexDriver {
             Ok(())
         })
     }
-    fn rollback(&self, turn_count: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    // Codex's `thread/revert` takes only `threadId` and `beforeTurnId` (ThreadRevertParams from
+    // `codex app-server generate-json-schema`, codex-cli 0.163.0): no idempotency field, so the
+    // rewind key is not used.
+    fn rollback(
+        &self,
+        turn_count: i64,
+        _rewind_key: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async move {
             let count = u64::try_from(turn_count).map_err(|_| ProviderRuntimeError::Provider {
                 provider: "codex".to_owned(),
@@ -11241,7 +11286,11 @@ impl ProviderDriver for CursorDriver {
                 .map_err(|error| option_error("cursor", error))
         })
     }
-    fn rollback(&self, _: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        _: i64,
+        _: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         unsupported("cursor", "checkpoint rollback")
     }
     fn next_event(&self) -> BoxRuntimeFuture<'_, Option<ProviderEvent>> {
@@ -11446,7 +11495,11 @@ impl ProviderDriver for GrokDriver {
     ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         reject_unsupported_options("grok", options)
     }
-    fn rollback(&self, _: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        _: i64,
+        _: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         unsupported("grok", "checkpoint rollback")
     }
     fn next_event(&self) -> BoxRuntimeFuture<'_, Option<ProviderEvent>> {
@@ -11490,24 +11543,23 @@ impl OpenCodeDriver {
         activity_enabled: bool,
     ) -> Result<Self, ProviderRuntimeError> {
         if let Some(endpoint) = request.endpoint.as_ref() {
-            // A configured server that does not answer yet keeps today's behaviour (the session
-            // request reports it); only a server identified as OpenCode 2 is refused here.
+            // A configured server that does not answer yet keeps today's behaviour (V1, and the
+            // session request reports the failure); a version BiBCode cannot drive is refused.
             let client = reqwest::Client::builder()
                 .timeout(crate::provider::opencode::API_PROBE_TIMEOUT)
                 .build()
                 .map_err(provider_error("opencode"))?;
-            if let crate::provider::opencode::OpenCodeServerApi::Unsupported { version } =
-                crate::provider::opencode::probe_server_api(
-                    &client,
-                    endpoint,
-                    request.server_password.as_deref(),
-                )
-                .await
-            {
-                tracing::warn!(%version, "configured OpenCode server is OpenCode 2; launch refused");
+            let api = crate::provider::opencode::probe_server_api(
+                &client,
+                endpoint,
+                request.server_password.as_deref(),
+            )
+            .await;
+            if let crate::provider::opencode::OpenCodeServerApi::Unsupported { version } = &api {
+                tracing::warn!(%version, "configured OpenCode server version is unsupported; launch refused");
                 return Err(ProviderRuntimeError::IncompatibleProvider {
                     provider: "opencode".to_owned(),
-                    detail: crate::provider::opencode::unsupported_server_message(&version, false),
+                    detail: crate::provider::opencode::unsupported_server_message(version, false),
                 });
             }
             let runtime =
@@ -11522,6 +11574,9 @@ impl OpenCodeDriver {
                 activity_enabled,
             )
             .map_err(provider_error("opencode"))?;
+            if matches!(api, crate::provider::opencode::OpenCodeServerApi::V2 { .. }) {
+                runtime.use_v2_api();
+            }
             runtime.configure_runtime_mode(&request.runtime_mode).await;
             return Ok(Self {
                 runtime,
@@ -11540,10 +11595,12 @@ impl OpenCodeDriver {
         drop(listener);
         let endpoint = format!("http://127.0.0.1:{port}");
         let local_password = Uuid::new_v4().to_string();
-        request.environment.insert(
-            "OPENCODE_SERVER_PASSWORD".to_owned(),
-            local_password.clone(),
-        );
+        // OpenCode 2 prefers an inherited `OPENCODE_PASSWORD` to `OPENCODE_SERVER_PASSWORD`.
+        for name in ["OPENCODE_SERVER_PASSWORD", "OPENCODE_PASSWORD"] {
+            request
+                .environment
+                .insert(name.to_owned(), local_password.clone());
+        }
         let args = vec![
             "serve".to_owned(),
             "--hostname=127.0.0.1".to_owned(),
@@ -11564,7 +11621,7 @@ impl OpenCodeDriver {
         if let Some(stderr) = server_stderr {
             drain_opencode_output(stderr, "stderr");
         }
-        wait_for_endpoint(&endpoint, &local_password, &child).await?;
+        let protocol = wait_for_endpoint(&endpoint, &local_password, &child).await?;
         let runtime =
             OpenCodeSessionRuntime::new_with_options_reconciliation_revision_and_agent_activity(
                 &endpoint,
@@ -11577,6 +11634,9 @@ impl OpenCodeDriver {
                 activity_enabled,
             )
             .map_err(provider_error("opencode"))?;
+        if protocol == crate::provider::opencode::OpenCodeProtocol::V2 {
+            runtime.use_v2_api();
+        }
         runtime.configure_runtime_mode(&request.runtime_mode).await;
         if let Some(mcp) = request.mcp.as_ref() {
             runtime
@@ -11610,6 +11670,9 @@ impl OpenCodeDriver {
 impl ProviderDriver for OpenCodeDriver {
     fn owns_native_work(&self) -> bool {
         self.child.is_some()
+    }
+    fn holds_unsettled_work(&self) -> BoxRuntimeFuture<'_, bool> {
+        Box::pin(self.runtime.has_unfinished_rewind())
     }
     fn start(&self) -> BoxRuntimeFuture<'_, Result<StartedSession, ProviderRuntimeError>> {
         Box::pin(async move {
@@ -11685,8 +11748,23 @@ impl ProviderDriver for OpenCodeDriver {
                     turn_id: Some(turn_id),
                 },
                 Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::MissingSession)
-                | Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::InvalidResponse(_)) => {
+                | Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::InvalidResponse(_))
+                | Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::NotSent(_)) => {
                     ProviderDeliveryOutcome::DefinitelyNotSent {
+                        detail: delivery_detail(&provider_error("opencode")(error), None),
+                    }
+                }
+                // OpenCode could not take the message yet, so it is sent again later.
+                Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::RetryLater { retry_after, .. }) => {
+                    let detail = delivery_detail(&provider_error("opencode")(error), None);
+                    match retry_after {
+                        Some(retry_after) => ProviderDeliveryOutcome::NotSentRetryAfter { detail, retry_after },
+                        None => ProviderDeliveryOutcome::DefinitelyNotSent { detail },
+                    }
+                }
+                // OpenCode refused the message, so it was not delivered and is not sent again.
+                Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::RequestRefused(_)) => {
+                    ProviderDeliveryOutcome::Rejected {
                         detail: delivery_detail(&provider_error("opencode")(error), None),
                     }
                 }
@@ -11779,14 +11857,18 @@ impl ProviderDriver for OpenCodeDriver {
                 .map_err(|error| option_error("opencode", error))
         })
     }
-    fn rollback(&self, count: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        count: i64,
+        rewind_key: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async move {
             let count = usize::try_from(count).map_err(|_| ProviderRuntimeError::Provider {
                 provider: "opencode".to_owned(),
                 detail: "turn count must be non-negative".to_owned(),
             })?;
             self.runtime
-                .rollback_thread(count)
+                .rollback_thread(count, &rewind_key)
                 .await
                 .map(|_| ())
                 .map_err(provider_error("opencode"))
@@ -14615,7 +14697,11 @@ impl ProviderDriver for ClaudeDriver {
             })
         })
     }
-    fn rollback(&self, _: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        _: i64,
+        _: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         unsupported("claude", "checkpoint rollback")
     }
     fn next_event(&self) -> BoxRuntimeFuture<'_, Option<ProviderEvent>> {
@@ -15642,15 +15728,16 @@ fn drain_opencode_output(
     });
 }
 
-/// Waits until the managed OpenCode server answers its V1 API. Any HTTP response is not enough:
-/// OpenCode 2 answers V1 paths with its web UI, and is stopped with an actionable error instead.
+/// Waits until the managed OpenCode server answers an API BiBCode speaks, and returns which. Any
+/// HTTP response is not enough: OpenCode 2 answers V1 paths with its web UI. A version BiBCode
+/// cannot drive is stopped with an actionable error.
 async fn wait_for_endpoint(
     endpoint: &str,
     password: &str,
     child: &SharedChild,
-) -> Result<(), ProviderRuntimeError> {
+) -> Result<crate::provider::opencode::OpenCodeProtocol, ProviderRuntimeError> {
     use crate::provider::opencode::{
-        OpenCodeServerApi, probe_server_api, unsupported_server_message,
+        OpenCodeProtocol, OpenCodeServerApi, probe_server_api, unsupported_server_message,
     };
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let client = reqwest::Client::builder()
@@ -15672,15 +15759,18 @@ async fn wait_for_endpoint(
                     detail: "server process exited before claiming its reserved port".to_owned(),
                 });
             }
-            if let OpenCodeServerApi::Unsupported { version } = api {
-                tracing::warn!(%version, "managed OpenCode server is OpenCode 2; launch refused");
-                kill_child(child).await;
-                return Err(ProviderRuntimeError::IncompatibleProvider {
-                    provider: "opencode".to_owned(),
-                    detail: unsupported_server_message(&version, true),
-                });
-            }
-            return Ok(());
+            return match api {
+                OpenCodeServerApi::V2 { .. } => Ok(OpenCodeProtocol::V2),
+                OpenCodeServerApi::Unsupported { version } => {
+                    tracing::warn!(%version, "managed OpenCode server version is unsupported; launch refused");
+                    kill_child(child).await;
+                    Err(ProviderRuntimeError::IncompatibleProvider {
+                        provider: "opencode".to_owned(),
+                        detail: unsupported_server_message(&version, true),
+                    })
+                }
+                OpenCodeServerApi::V1 | OpenCodeServerApi::Unavailable => Ok(OpenCodeProtocol::V1),
+            };
         }
         if tokio::time::Instant::now() >= deadline {
             kill_child(child).await;
@@ -15813,6 +15903,7 @@ mod tests {
         targeted_release: Option<Arc<tokio::sync::Notify>>,
         targeted_active: Arc<AtomicUsize>,
         activity_capabilities: crate::activity::ActivityCapabilities,
+        unsettled_work: bool,
     }
 
     struct SupervisorDriver {
@@ -16053,6 +16144,11 @@ mod tests {
     }
 
     impl ProviderDriver for SupervisorDriver {
+        fn holds_unsettled_work(&self) -> super::BoxRuntimeFuture<'_, bool> {
+            Box::pin(std::future::ready(
+                self.state.lock().unwrap().unsettled_work,
+            ))
+        }
         fn owns_native_work(&self) -> bool {
             !self.state.lock().unwrap().externally_owned
         }
@@ -16260,6 +16356,7 @@ mod tests {
         fn rollback(
             &self,
             turn_count: i64,
+            _rewind_key: String,
         ) -> super::BoxRuntimeFuture<'_, Result<(), super::ProviderRuntimeError>> {
             Box::pin(async move {
                 self.state.lock().unwrap().rollbacks.push(turn_count);
@@ -23409,6 +23506,23 @@ done
                 .unwrap();
         }
 
+        async fn emit_payload(&self, event_type: &str, turn_id: &str, payload: Value) {
+            self.events
+                .send(super::ProviderEvent {
+                    native_event_id: None,
+                    event_type: event_type.to_owned(),
+                    thread_id: "t1".to_owned(),
+                    turn_id: Some(turn_id.to_owned()),
+                    item_id: None,
+                    request_id: None,
+                    payload,
+                    activity: Vec::new(),
+                    activity_controls: Default::default(),
+                })
+                .await
+                .unwrap();
+        }
+
         async fn emit_activity(&self, native_event_id: &str, mutation: ProviderActivityMutation) {
             self.emit_activity_batch(native_event_id, vec![mutation])
                 .await;
@@ -23863,6 +23977,32 @@ done
         fixture.close().await;
     }
 
+    /// A rewind whose outcome the provider could not confirm lives only in its runtime (an
+    /// OpenCode 2 commit whose answer and check were lost), so the idle deadline keeps the
+    /// session up until the rewind settles, then suspends it normally.
+    #[tokio::test(start_paused = true)]
+    async fn idle_deadline_keeps_a_session_whose_rewind_is_unsettled() {
+        let _clock = keep_idle_clock_paused();
+        let mut fixture = IdleDeadlineFixture::new(BUSY_SESSION_IDLE_TIMEOUT).await;
+        IdleDeadlineFixture::accepted(fixture.admit("first").await, "idle-turn-1").await;
+        fixture.stream("idle-turn-1", "assistant-first").await;
+        fixture
+            .emit("turn.completed", "idle-turn-1", "assistant-first")
+            .await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Armed { generation: 2 }
+        );
+        fixture.state.lock().unwrap().unsettled_work = true;
+        fixture
+            .assert_busy_after_timeout(2, "the idle deadline suspended an unsettled rewind")
+            .await;
+
+        fixture.state.lock().unwrap().unsettled_work = false;
+        fixture.assert_suspended_after_timeout(3).await;
+        fixture.close().await;
+    }
+
     #[tokio::test(start_paused = true)]
     async fn idle_deadline_suspends_a_running_subagent_after_the_quiet_cap() {
         let _clock = keep_idle_clock_paused();
@@ -24022,6 +24162,56 @@ done
         );
         fixture.assert_projection("ready", None).await;
         fixture.assert_suspended_after_timeout(4).await;
+        fixture.close().await;
+    }
+
+    /// OpenCode announces the turns BiBCode sends before sending them, but marks a turn it started
+    /// itself (an OpenCode 2 execution delivering a background subagent's result): that one runs
+    /// like a delivered turn, so the thread reads running and the idle deadline waits for it.
+    #[tokio::test(start_paused = true)]
+    async fn a_turn_opencode_started_itself_reads_running() {
+        let _clock = keep_idle_clock_paused();
+        let mut fixture =
+            IdleDeadlineFixture::new_for_provider(BUSY_SESSION_IDLE_TIMEOUT, "opencode").await;
+        IdleDeadlineFixture::accepted(fixture.admit("first").await, "idle-turn-1").await;
+        fixture.stream("idle-turn-1", "assistant-first").await;
+        fixture
+            .emit("turn.completed", "idle-turn-1", "assistant-first")
+            .await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Armed { generation: 2 }
+        );
+        fixture
+            .emit_payload(
+                "turn.started",
+                "provider-turn",
+                json!({ "providerStarted": true }),
+            )
+            .await;
+        fixture.stream("provider-turn", "assistant-provider").await;
+        fixture
+            .assert_projection("running", Some("provider-turn"))
+            .await;
+        tokio::time::advance(fixture.idle_timeout * 2).await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Evaluated {
+                generation: 2,
+                outcome: super::IdleDeadlineEvaluation::Stale,
+            }
+        );
+        fixture
+            .assert_live("the idle deadline suspended a turn OpenCode started itself")
+            .await;
+        fixture
+            .emit("turn.completed", "provider-turn", "assistant-provider")
+            .await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Armed { generation: 4 }
+        );
+        fixture.assert_projection("ready", None).await;
         fixture.close().await;
     }
 
@@ -25125,7 +25315,7 @@ done
                 .unwrap();
         }
         assert_eq!(
-            supervisor.rewind("t1", 2).await.unwrap(),
+            supervisor.rewind("t1", 2, "rewind-key").await.unwrap(),
             ProviderRewind::Rewound
         );
         let revert_command: OrchestrationCommand = serde_json::from_value(json!({
@@ -25490,7 +25680,7 @@ done
             .await
             .expect("Claude interaction mode should update");
         assert!(claude.set_model("other".to_owned()).await.is_err());
-        assert!(claude.rollback(1).await.is_err());
+        assert!(claude.rollback(1, "rewind-key".to_owned()).await.is_err());
         assert_eq!(
             match deadline.observe(claude.next_event()).await {
                 Ok(event) => event.expect("Claude stderr event"),
@@ -25665,8 +25855,11 @@ done
                 .is_some()
         );
         codex.interrupt(None).await.expect("Codex should interrupt");
-        codex.rollback(0).await.expect("Codex should roll back");
-        assert!(codex.rollback(-1).await.is_err());
+        codex
+            .rollback(0, "rewind-key".to_owned())
+            .await
+            .expect("Codex should roll back");
+        assert!(codex.rollback(-1, "rewind-key".to_owned()).await.is_err());
         assert!(
             codex
                 .set_mode("approval-required".to_owned())
@@ -25777,7 +25970,7 @@ done
                 .set_interaction_mode("plan".to_owned())
                 .await
                 .expect("ACP interaction mode should update");
-            assert!(driver.rollback(1).await.is_err());
+            assert!(driver.rollback(1, "rewind-key".to_owned()).await.is_err());
             assert!(
                 driver
                     .approve("unknown".to_owned(), "accept".to_owned())
@@ -25812,18 +26005,19 @@ done
         Arc::new(tokio::sync::Mutex::new(child))
     }
 
-    /// OpenCode 2 answers HTTP 200 HTML on every V1 path, so the managed server must not count as
-    /// ready: the launch fails at once with the setting to change, and the server is stopped.
+    /// A version BiBCode cannot drive is refused from its first answer: the launch fails at once
+    /// with the setting to change, and the server is stopped.
     #[tokio::test]
-    async fn opencode_readiness_rejects_an_opencode_2_server_with_an_actionable_error() {
+    async fn opencode_readiness_rejects_an_unsupported_version_with_an_actionable_error() {
         use crate::provider::opencode::server_fixtures;
-        let (endpoint, server) = server_fixtures::serve(server_fixtures::v2("secret")).await;
+        let (endpoint, server) =
+            server_fixtures::serve(server_fixtures::api_server("secret", "3.0.0")).await;
         let child = opencode_endpoint_child();
 
         let started = tokio::time::Instant::now();
         let error = super::wait_for_endpoint(&endpoint, "secret", &child)
             .await
-            .expect_err("an OpenCode 2 server is not the API BiBCode speaks");
+            .expect_err("OpenCode 3 is not an API BiBCode speaks");
         server.abort();
 
         assert!(
@@ -25836,7 +26030,7 @@ done
         assert_eq!(provider, "opencode");
         assert_eq!(
             detail,
-            "OpenCode 2.0.29 isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x executable."
+            "OpenCode 3.0.0 isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x or 2.x executable."
         );
         assert_eq!(
             super::delivery_detail(&error, Some("OpenCode")),
@@ -25854,25 +26048,35 @@ done
         );
     }
 
+    /// OpenCode 2 answers HTTP 200 HTML on every V1 path; readiness identifies it by `/api/info`
+    /// and selects the V2 wire, while OpenCode 1 is identified by its health route.
     #[tokio::test]
-    async fn opencode_readiness_accepts_the_v1_api_with_the_launch_password() {
-        use crate::provider::opencode::server_fixtures;
-        let (endpoint, server) = server_fixtures::serve(server_fixtures::v1("secret")).await;
-        let child = opencode_endpoint_child();
-
-        super::wait_for_endpoint(&endpoint, "secret", &child)
-            .await
-            .expect("the V1 health route is readiness");
-        server.abort();
-        super::kill_child(&child).await;
+    async fn opencode_readiness_selects_the_protocol_the_server_speaks() {
+        use crate::provider::opencode::{OpenCodeProtocol, server_fixtures};
+        for (app, expected) in [
+            (server_fixtures::v1("secret"), OpenCodeProtocol::V1),
+            (server_fixtures::v2("secret"), OpenCodeProtocol::V2),
+        ] {
+            let (endpoint, server) = server_fixtures::serve(app).await;
+            let child = opencode_endpoint_child();
+            assert_eq!(
+                super::wait_for_endpoint(&endpoint, "secret", &child)
+                    .await
+                    .expect("ready"),
+                expected
+            );
+            server.abort();
+            super::kill_child(&child).await;
+        }
     }
 
-    /// A configured Server URL that runs OpenCode 2 fails the launch with the setting to change,
-    /// instead of a later "error decoding response body" or "HTTP 405".
+    /// A configured Server URL that runs a version BiBCode cannot drive fails the launch with the
+    /// setting to change, instead of a later "error decoding response body" or "HTTP 405".
     #[tokio::test]
-    async fn opencode_configured_server_url_rejects_opencode_2() {
+    async fn opencode_configured_server_url_rejects_an_unsupported_version() {
         use crate::provider::opencode::server_fixtures;
-        let (endpoint, server) = server_fixtures::serve(server_fixtures::v2("secret")).await;
+        let (endpoint, server) =
+            server_fixtures::serve(server_fixtures::api_server("secret", "3.0.0")).await;
         let temp = TempDir::new().expect("OpenCode fixture directory");
         let factory =
             super::NativeProviderDriverFactory::new(temp.path().join("state").join("attachments"));
@@ -25881,11 +26085,7 @@ done
         request.server_password = Some("secret".to_owned());
 
         let error = match factory.create(request).await {
-            Ok(driver) => driver
-                .start()
-                .await
-                .map(|_| ())
-                .expect_err("an OpenCode 2 server cannot start a V1 session"),
+            Ok(_) => panic!("an OpenCode 3 server must be refused at launch"),
             Err(error) => error,
         };
         server.abort();
@@ -25895,7 +26095,7 @@ done
         };
         assert_eq!(
             detail,
-            "The OpenCode server at Server URL runs 2.0.29, which isn't supported yet. In Settings → Providers, point Server URL at an OpenCode 1.x server."
+            "The OpenCode server at Server URL runs 3.0.0, which isn't supported yet. In Settings → Providers, point Server URL at an OpenCode 1.x or 2.x server."
         );
     }
 
@@ -26047,8 +26247,11 @@ done
             .set_model("openai/gpt-5.4".to_owned())
             .await
             .expect("OpenCode model should update");
-        driver.rollback(0).await.expect("OpenCode should roll back");
-        assert!(driver.rollback(-1).await.is_err());
+        driver
+            .rollback(0, "rewind-key".to_owned())
+            .await
+            .expect("OpenCode should roll back");
+        assert!(driver.rollback(-1, "rewind-key".to_owned()).await.is_err());
         assert!(driver.set_mode("full-access".to_owned()).await.is_err());
         assert!(
             driver

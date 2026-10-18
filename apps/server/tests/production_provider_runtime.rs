@@ -525,7 +525,11 @@ impl ProviderDriver for FakeDriver {
         })
     }
 
-    fn rollback(&self, turn_count: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        turn_count: i64,
+        _rewind_key: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async move {
             let (workspace, error) = {
                 let mut state = self.state.lock().unwrap();
@@ -1324,6 +1328,7 @@ impl OrchestrationEffectCallbacks for SupervisorEffectsCallbacks {
         &'a self,
         thread_id: &'a str,
         turns: i64,
+        rewind_key: &'a str,
     ) -> BoxEffectFuture<'a, ProviderRewind> {
         Box::pin(async move {
             rewind_thread_conversation(
@@ -1332,6 +1337,7 @@ impl OrchestrationEffectCallbacks for SupervisorEffectsCallbacks {
                 &self.settings.path().to_path_buf(),
                 thread_id,
                 turns,
+                rewind_key,
             )
             .await
         })
@@ -3526,6 +3532,10 @@ async fn assert_opencode_restart_reconciliation(
             get(
                 move |AxumPath((session_id, message_id)): AxumPath<(String, String)>| async move {
                     match mode {
+                        // Only the delivery key's `msg_` id reads back.
+                        "found" if !message_id.starts_with("msg_") => {
+                            StatusCode::NOT_FOUND.into_response()
+                        }
                         "found" => (
                             StatusCode::OK,
                             Json(json!({
@@ -3643,9 +3653,11 @@ async fn assert_opencode_restart_reconciliation(
     );
 
     if should_resend {
+        // OpenCode rejects an id that does not start with `msg` (1.18 and later), so the key is
+        // sent as a deterministic `msg_` id.
         assert_eq!(
             prompt_bodies.lock().unwrap()[0]["messageID"],
-            row.delivery_key
+            format!("msg_{}", row.delivery_key.replace('-', ""))
         );
     }
 
@@ -3839,6 +3851,11 @@ struct OptionCase {
 /// Runs `case` until its delivery settles, and asserts it settles once: failed with the refusal,
 /// or delivered, after a single launch.
 async fn assert_option_case_settles_once(case: OptionCase) {
+    assert_option_case_settles_after(case, 1).await;
+}
+
+/// Runs `case` until its delivery settles after `attempts` sends of one launch.
+async fn assert_option_case_settles_after(case: OptionCase, attempts: i64) {
     let temp = TempDir::new().expect("provider fixture directory");
     let (engine, database) = engine_and_database().await;
     let settings = TempDir::new().expect("settings");
@@ -3899,7 +3916,7 @@ async fn assert_option_case_settles_once(case: OptionCase) {
             if matches!(
                 delivery.state,
                 TurnDeliveryState::Failed | TurnDeliveryState::Delivered
-            ) || delivery.attempts >= 3
+            ) || delivery.attempts >= attempts.max(3)
             {
                 break delivery;
             }
@@ -3921,8 +3938,8 @@ async fn assert_option_case_settles_once(case: OptionCase) {
     };
     assert_eq!(
         (settled.state, settled.attempts),
-        (expected, 1),
-        "{}: the turn must settle once instead of retrying: {:?}",
+        (expected, attempts),
+        "{}: the turn must settle after {attempts} attempt(s): {:?}",
         case.provider,
         settled.last_error
     );
@@ -3939,7 +3956,7 @@ async fn assert_option_case_settles_once(case: OptionCase) {
     let later = read_delivery().await;
     assert_eq!(
         (later.state, later.attempts),
-        (expected, 1),
+        (expected, attempts),
         "{}",
         case.provider
     );
@@ -4183,6 +4200,151 @@ async fn opencode_option_the_model_does_not_advertise_fails_the_turn_once() {
         refusal: Some("Fast is not supported by the selected model."),
     })
     .await;
+    server.abort();
+}
+
+/// A message OpenCode refuses (HTTP 4xx) was never accepted, so its delivery fails once instead of
+/// waiting as uncertain, which would hold every later message on the thread.
+#[cfg(unix)]
+#[tokio::test]
+async fn opencode_refused_message_fails_the_delivery_once() {
+    let app = Router::new()
+        .route(
+            "/session",
+            post(|| async { Json(json!({"id":"opencode-refused-session"})) }),
+        )
+        .route(
+            "/session/{session_id}",
+            get(|| async { Json(json!({"id":"opencode-refused-session"})) }),
+        )
+        .route(
+            "/event",
+            get(|| async { Sse::new(stream::pending::<Result<Event, Infallible>>()) }),
+        )
+        .route(
+            "/session/{session_id}/message",
+            get(|| async { Json(json!({"data":[]})) }),
+        )
+        .route(
+            "/session/{session_id}/prompt_async",
+            post(|| async { axum::http::StatusCode::BAD_REQUEST }),
+        )
+        .route(
+            "/provider",
+            get(|| async {
+                Json(json!({
+                    "connected": ["openai"],
+                    "all": [{"id":"openai", "models":{"gpt-5":{"variants":{"high":{}}}}}]
+                }))
+            }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("OpenCode fixture bind");
+    let endpoint = format!("http://{}", listener.local_addr().expect("fixture address"));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("OpenCode fixture serve");
+    });
+    assert_option_case_settles_once(OptionCase {
+        provider: "opencode",
+        instance_config: json!({
+            "driver":"opencode", "enabled":true,
+            "config":{"binaryPath":"refusing-opencode-route", "serverUrl":endpoint}
+        }),
+        binary_path: None,
+        endpoint: Some(endpoint.clone()),
+        environment: Vec::new(),
+        model: "openai/gpt-5",
+        option: json!({"id":"variant","value":"high"}),
+        refusal: Some("OpenCode refused this message: prompt_async returned HTTP 400 Bad Request"),
+    })
+    .await;
+    server.abort();
+}
+
+/// OpenCode answers HTTP 429 (or 408) when it cannot take a message yet. That is no refusal: the
+/// delivery is sent again, no sooner than its `Retry-After`.
+#[cfg(unix)]
+#[tokio::test]
+async fn opencode_message_asked_to_wait_is_sent_again_after_retry_after() {
+    let sends = Arc::new(StdMutex::new(Vec::<Instant>::new()));
+    let prompt_sends = sends.clone();
+    let app = Router::new()
+        .route(
+            "/session",
+            post(|| async { Json(json!({"id":"opencode-throttled-session"})) }),
+        )
+        .route(
+            "/session/{session_id}",
+            get(|| async { Json(json!({"id":"opencode-throttled-session"})) }),
+        )
+        .route(
+            "/event",
+            get(|| async { Sse::new(stream::pending::<Result<Event, Infallible>>()) }),
+        )
+        .route(
+            "/session/{session_id}/message",
+            get(|| async { Json(json!({"data":[]})) }),
+        )
+        .route(
+            "/session/{session_id}/prompt_async",
+            post(move || {
+                let sends = prompt_sends.clone();
+                async move {
+                    let mut sends = sends.lock().unwrap();
+                    sends.push(Instant::now());
+                    if sends.len() == 1 {
+                        (StatusCode::TOO_MANY_REQUESTS, [("retry-after", "1")]).into_response()
+                    } else {
+                        StatusCode::NO_CONTENT.into_response()
+                    }
+                }
+            }),
+        )
+        .route(
+            "/provider",
+            get(|| async {
+                Json(json!({
+                    "connected": ["openai"],
+                    "all": [{"id":"openai", "models":{"gpt-5":{"variants":{"high":{}}}}}]
+                }))
+            }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("OpenCode fixture bind");
+    let endpoint = format!("http://{}", listener.local_addr().expect("fixture address"));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("OpenCode fixture serve");
+    });
+    assert_option_case_settles_after(
+        OptionCase {
+            provider: "opencode",
+            instance_config: json!({
+                "driver":"opencode", "enabled":true,
+                "config":{"binaryPath":"throttled-opencode-route", "serverUrl":endpoint}
+            }),
+            binary_path: None,
+            endpoint: Some(endpoint.clone()),
+            environment: Vec::new(),
+            model: "openai/gpt-5",
+            option: json!({"id":"variant","value":"high"}),
+            refusal: None,
+        },
+        2,
+    )
+    .await;
+    let sends = sends.lock().unwrap().clone();
+    assert_eq!(sends.len(), 2);
+    assert!(
+        sends[1] - sends[0] >= Duration::from_millis(950),
+        "sent again after {:?}, before its Retry-After",
+        sends[1] - sends[0]
+    );
     server.abort();
 }
 
@@ -13640,7 +13802,7 @@ async fn native_claude_driver_supports_the_complete_live_command_surface() {
         Err(ProviderRuntimeError::UnsupportedCapability { provider, .. }) if provider == "claude"
     ));
     assert!(matches!(
-        driver.rollback(1).await,
+        driver.rollback(1, "rewind-key".to_owned()).await,
         Err(ProviderRuntimeError::UnsupportedCapability { provider, .. }) if provider == "claude"
     ));
 
@@ -15447,9 +15609,9 @@ async fn native_opencode_driver_supports_session_turn_and_control_commands() {
     );
     driver.interrupt(None).await.unwrap();
     driver.set_model("openai/gpt-5.4".to_owned()).await.unwrap();
-    driver.rollback(0).await.unwrap();
+    driver.rollback(0, "rewind-key".to_owned()).await.unwrap();
     assert!(matches!(
-        driver.rollback(-1).await,
+        driver.rollback(-1, "rewind-key".to_owned()).await,
         Err(ProviderRuntimeError::Provider { provider, .. }) if provider == "opencode"
     ));
     assert!(matches!(
@@ -15674,12 +15836,15 @@ done
     driver.interrupt(None).await.unwrap();
     // Like Codex 0.162.1, the fixture starts a paginated thread and answers `thread/revert`
     // only before the listed turn.
-    timeout(Duration::from_secs(10), driver.rollback(1))
-        .await
-        .expect("Codex should answer the revert")
-        .expect("Codex should revert the paginated thread");
+    timeout(
+        Duration::from_secs(10),
+        driver.rollback(1, "rewind-key".to_owned()),
+    )
+    .await
+    .expect("Codex should answer the revert")
+    .expect("Codex should revert the paginated thread");
     assert!(matches!(
-        driver.rollback(-1).await,
+        driver.rollback(-1, "rewind-key".to_owned()).await,
         Err(ProviderRuntimeError::Provider { provider, .. }) if provider == "codex"
     ));
     assert!(matches!(
@@ -17280,7 +17445,7 @@ done
         .await
         .unwrap();
     assert!(matches!(
-        cursor.rollback(1).await,
+        cursor.rollback(1, "rewind-key".to_owned()).await,
         Err(ProviderRuntimeError::UnsupportedCapability { provider, .. }) if provider == "cursor"
     ));
     assert!(matches!(
@@ -17322,7 +17487,7 @@ done
         .await
         .unwrap();
     assert!(matches!(
-        grok.rollback(1).await,
+        grok.rollback(1, "rewind-key".to_owned()).await,
         Err(ProviderRuntimeError::UnsupportedCapability { provider, .. }) if provider == "grok"
     ));
     assert!(matches!(

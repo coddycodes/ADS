@@ -27,9 +27,9 @@ use tokio::{
 use super::TerminalObserverGeneration;
 use super::model::TerminalObserverGenerationLease;
 use super::{
-    PreparedTerminalLaunch, PreparedTerminalObserver, ProviderTerminalObserverFactory,
-    ProviderTerminalObserverFactoryInput, TerminalAgentActivityAdmission,
-    TerminalAgentActivityControl, TerminalAgentActivityObservation,
+    NativeTerminalCommand, PreparedTerminalLaunch, PreparedTerminalObserver,
+    ProviderTerminalObserverFactory, ProviderTerminalObserverFactoryInput,
+    TerminalAgentActivityAdmission, TerminalAgentActivityControl, TerminalAgentActivityObservation,
     TerminalAgentActivityObservationKind, TerminalAgentActivityState,
     TerminalAgentActivityTransition, TerminalGenerationActivityPublisher,
     TerminalObserverWorkerContext,
@@ -116,7 +116,10 @@ pub trait OpenCodeCapabilityProbeRunner: Send + Sync {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpenCodeCapabilities {
     pub serve: bool,
+    /// OpenCode 1: `opencode attach <url> --dir <dir> --session <id>`.
     pub attach: bool,
+    /// OpenCode 2: `opencode --server <url> --session <id> <dir>`.
+    pub server_session: bool,
 }
 
 pub struct CachedOpenCodeCapabilityProbe {
@@ -171,12 +174,18 @@ impl CachedOpenCodeCapabilityProbe {
             return None;
         }
         let attach_help = bounded_probe_text(&attach.stdout, &attach.stderr);
+        let attach = attach_help.contains("opencode attach <url>")
+            && attach_help.contains("--dir")
+            && attach_help.contains("--session");
         Some(OpenCodeCapabilities {
             // `serve` is proven by the concurrently launched helper reaching
             // its post-bind readiness line and authenticated health endpoint.
             serve: true,
-            attach: attach_help.contains("opencode attach <url>")
-                && attach_help.contains("--dir")
+            attach,
+            // OpenCode 2 has no `attach`, so it prints its root help, whose `--server` and
+            // `--session` flags open a session of a running server.
+            server_session: !attach
+                && attach_help.contains("--server")
                 && attach_help.contains("--session"),
         })
     }
@@ -514,7 +523,12 @@ impl OpenCodeTerminalObserverFactory {
         &self,
         input: ProviderTerminalObserverFactoryInput,
     ) -> Option<PreparedTerminalLaunch> {
-        let model = opencode_model_arg(&input.launch.args)?;
+        let model = opencode_model_arg(&input.launch.args).or_else(|| {
+            standalone_model(
+                &input.launch.args,
+                input.launch.launch_env.get("OPENCODE_CONFIG_CONTENT"),
+            )
+        })?;
         validate_opencode_config(input.launch.launch_env.get("OPENCODE_CONFIG_CONTENT"))?;
         let executable = opencode::resolve_owned_executable(
             Platform::current(),
@@ -529,6 +543,8 @@ impl OpenCodeTerminalObserverFactory {
             OPENCODE_USERNAME.to_owned(),
         );
         helper_env.insert("OPENCODE_SERVER_PASSWORD".to_owned(), password.clone());
+        // OpenCode 2 prefers an inherited `OPENCODE_PASSWORD` to `OPENCODE_SERVER_PASSWORD`.
+        helper_env.insert("OPENCODE_PASSWORD".to_owned(), password.clone());
         let helper_launch = OpenCodeHelperLaunch {
             executable: executable.clone(),
             args: vec![
@@ -537,9 +553,9 @@ impl OpenCodeTerminalObserverFactory {
                 "127.0.0.1".to_owned(),
                 "--port".to_owned(),
                 "0".to_owned(),
+                // Both majors log at INFO by default; OpenCode 1 spells the flag value `INFO` and
+                // OpenCode 2 `info`, and the version is not known before the helper starts.
                 "--print-logs".to_owned(),
-                "--log-level".to_owned(),
-                "INFO".to_owned(),
             ],
             cwd: input.launch.cwd.clone(),
             env: helper_env,
@@ -572,7 +588,7 @@ impl OpenCodeTerminalObserverFactory {
         let (capabilities, ready) = tokio::join!(self.probe.probe(Path::new(&executable)), helper,);
         let (endpoint, resources) = ready.ok()?;
         let capabilities = capabilities?;
-        if !capabilities.serve || !capabilities.attach {
+        if !capabilities.serve || !(capabilities.attach || capabilities.server_session) {
             return None;
         };
         if !valid_loopback_endpoint(&endpoint) {
@@ -617,23 +633,42 @@ impl OpenCodeTerminalObserverFactory {
                 activity: Arc::new(TerminalAgentActivityControl::enabled()),
             }),
         };
+        let directory = input.launch.cwd.to_string_lossy().into_owned();
+        let (args, private_env) = if capabilities.attach {
+            (
+                vec![
+                    "attach".to_owned(),
+                    endpoint,
+                    "--dir".to_owned(),
+                    directory,
+                    "--session".to_owned(),
+                    root_session_id,
+                ],
+                BTreeMap::from([
+                    (
+                        "OPENCODE_SERVER_USERNAME".to_owned(),
+                        OPENCODE_USERNAME.to_owned(),
+                    ),
+                    ("OPENCODE_SERVER_PASSWORD".to_owned(), password),
+                ]),
+            )
+        } else {
+            // OpenCode 2's client reads the server password from `OPENCODE_PASSWORD`.
+            (
+                vec![
+                    "--server".to_owned(),
+                    endpoint,
+                    "--session".to_owned(),
+                    root_session_id,
+                    directory,
+                ],
+                BTreeMap::from([("OPENCODE_PASSWORD".to_owned(), password)]),
+            )
+        };
         Some(PreparedTerminalLaunch {
             executable,
-            args: vec![
-                "attach".to_owned(),
-                endpoint,
-                "--dir".to_owned(),
-                input.launch.cwd.to_string_lossy().into_owned(),
-                "--session".to_owned(),
-                root_session_id,
-            ],
-            private_env: BTreeMap::from([
-                (
-                    "OPENCODE_SERVER_USERNAME".to_owned(),
-                    OPENCODE_USERNAME.to_owned(),
-                ),
-                ("OPENCODE_SERVER_PASSWORD".to_owned(), password),
-            ]),
+            args,
+            private_env,
             observer: Box::new(observer),
         })
     }
@@ -645,6 +680,35 @@ impl ProviderTerminalObserverFactory for OpenCodeTerminalObserverFactory {
         input: ProviderTerminalObserverFactoryInput,
     ) -> Pin<Box<dyn Future<Output = Option<PreparedTerminalLaunch>> + Send + '_>> {
         Box::pin(self.prepare_inner(input))
+    }
+
+    /// OpenCode 2 has no `--model`: the requested `--model <model>` becomes a private server
+    /// (`--standalone`) whose configuration (`OPENCODE_CONFIG_CONTENT`) selects the model.
+    /// OpenCode 1 keeps the command as requested.
+    fn native_command(
+        &self,
+        executable: &Path,
+        args: &[String],
+        launch_env: &BTreeMap<String, String>,
+    ) -> Pin<Box<dyn Future<Output = Option<NativeTerminalCommand>> + Send + '_>> {
+        let executable = opencode::resolve_owned_executable(Platform::current(), executable);
+        let model = opencode_model_arg(args);
+        let config = launch_env.get("OPENCODE_CONFIG_CONTENT").cloned();
+        Box::pin(async move {
+            let model = model?;
+            validate_opencode_config(config.as_ref())?;
+            if !self.probe.probe(&executable).await?.server_session {
+                return None;
+            }
+            let mut config = config
+                .and_then(|config| serde_json::from_str::<Value>(&config).ok())
+                .unwrap_or_else(|| json!({}));
+            config["model"] = json!(model);
+            Some(NativeTerminalCommand {
+                args: vec!["--standalone".to_owned()],
+                env: BTreeMap::from([("OPENCODE_CONFIG_CONTENT".to_owned(), config.to_string())]),
+            })
+        })
     }
 
     fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
@@ -663,6 +727,23 @@ fn opencode_model_arg(args: &[String]) -> Option<String> {
             .map(str::to_owned),
         _ => None,
     }
+}
+
+/// The model of an OpenCode 2 command in its native form (`--standalone`, the model in the
+/// configuration).
+fn standalone_model(args: &[String], config: Option<&String>) -> Option<String> {
+    let [flag] = args else {
+        return None;
+    };
+    if flag != "--standalone" {
+        return None;
+    }
+    serde_json::from_str::<Value>(config?)
+        .ok()?
+        .get("model")
+        .and_then(Value::as_str)
+        .filter(|model| valid_model(model))
+        .map(str::to_owned)
 }
 
 fn valid_model(model: &str) -> bool {
@@ -2143,9 +2224,12 @@ async fn read_opencode_readiness(
             return Err("OpenCode helper readiness output exceeded its bound".to_owned());
         }
         let line = String::from_utf8_lossy(&line);
+        let line = line.trim_end_matches(['\r', '\n']);
+        // OpenCode 1 prints `opencode server listening on <url>`, OpenCode 2 `server listening
+        // on <url>`.
         if let Some(endpoint) = line
-            .trim_end_matches(['\r', '\n'])
             .strip_prefix("opencode server listening on ")
+            .or_else(|| line.strip_prefix("server listening on "))
         {
             return Ok(endpoint.trim().to_owned());
         }
@@ -3167,21 +3251,39 @@ impl OpenCodeRemoteClientFactory for SystemOpenCodeRemoteClientFactory {
                 .connect_timeout(OPENCODE_REQUEST_TIMEOUT)
                 .build()
                 .map_err(|error| format!("failed to build OpenCode client: {error}"))?;
-            let remote = SystemOpenCodeRemoteClient {
+            let mut remote = SystemOpenCodeRemoteClient {
                 client,
                 endpoint,
                 directory,
+                protocol: opencode::OpenCodeProtocol::V1,
             };
-            let health = remote
-                .request_json(reqwest::Method::GET, &["global", "health"], None)
-                .await?;
-            let version = health.get("version").and_then(Value::as_str);
-            if health.get("healthy").and_then(Value::as_bool) != Some(true)
-                || version.is_none_or(|version| {
-                    parse_opencode_version(version).as_deref() != Some(version)
+            let valid_version = |version: Option<&str>| {
+                version.is_some_and(|version| {
+                    parse_opencode_version(version).as_deref() == Some(version)
                 })
+            };
+            // OpenCode 2 answers V1 paths with its web UI, which is not JSON.
+            match remote
+                .request_json(reqwest::Method::GET, &["global", "health"], None)
+                .await
             {
-                return Err("OpenCode helper health was invalid".to_owned());
+                Ok(health) => {
+                    if health.get("healthy").and_then(Value::as_bool) != Some(true)
+                        || !valid_version(health.get("version").and_then(Value::as_str))
+                    {
+                        return Err("OpenCode helper health was invalid".to_owned());
+                    }
+                }
+                Err(_) => {
+                    let info = remote
+                        .request_json(reqwest::Method::GET, &["api", "info"], None)
+                        .await?;
+                    let version = info.get("version").and_then(Value::as_str);
+                    if !valid_version(version) || !version.is_some_and(|v| v.starts_with("2.")) {
+                        return Err("OpenCode helper health was invalid".to_owned());
+                    }
+                    remote.protocol = opencode::OpenCodeProtocol::V2;
+                }
             }
             Ok(Box::new(remote) as Box<dyn OpenCodeRemoteClient>)
         })
@@ -3192,6 +3294,9 @@ struct SystemOpenCodeRemoteClient {
     client: reqwest::Client,
     endpoint: String,
     directory: PathBuf,
+    /// OpenCode 2 serves `/api/*`; its answers are mapped onto the OpenCode 1 shapes the
+    /// activity tracker consumes.
+    protocol: opencode::OpenCodeProtocol,
 }
 
 struct SystemOpenCodeEventStream {
@@ -3205,11 +3310,64 @@ impl fmt::Debug for SystemOpenCodeRemoteClient {
             .debug_struct("SystemOpenCodeRemoteClient")
             .field("endpoint", &self.endpoint)
             .field("directory", &self.directory)
+            .field("protocol", &self.protocol)
             .finish_non_exhaustive()
     }
 }
 
 impl SystemOpenCodeRemoteClient {
+    fn is_v2(&self) -> bool {
+        self.protocol == opencode::OpenCodeProtocol::V2
+    }
+
+    /// A request whose answer body does not matter.
+    async fn request_ok(
+        &self,
+        method: reqwest::Method,
+        segments: &[&str],
+        body: Option<Value>,
+    ) -> Result<(), String> {
+        tokio::time::timeout(OPENCODE_REQUEST_TIMEOUT, async {
+            let mut request = self.client.request(method, self.url(segments)?);
+            if let Some(body) = body {
+                request = request.json(&body);
+            }
+            let response = request
+                .send()
+                .await
+                .map_err(|_| "OpenCode request failed".to_owned())?;
+            if !response.status().is_success() {
+                return Err(format!(
+                    "OpenCode request failed with {}",
+                    response.status()
+                ));
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|_| "OpenCode request timed out".to_owned())?
+    }
+
+    async fn get_url_json(&self, url: url::Url) -> Result<Value, String> {
+        tokio::time::timeout(OPENCODE_REQUEST_TIMEOUT, async {
+            let response = self
+                .client
+                .get(url)
+                .send()
+                .await
+                .map_err(|_| "OpenCode request failed".to_owned())?;
+            if !response.status().is_success() {
+                return Err(format!(
+                    "OpenCode request failed with {}",
+                    response.status()
+                ));
+            }
+            read_bounded_json(response).await
+        })
+        .await
+        .map_err(|_| "OpenCode request timed out".to_owned())?
+    }
+
     fn url(&self, segments: &[&str]) -> Result<url::Url, String> {
         let mut url =
             url::Url::parse(&self.endpoint).map_err(|_| "invalid OpenCode endpoint".to_owned())?;
@@ -3293,6 +3451,46 @@ impl OpenCodeEventStream for SystemOpenCodeEventStream {
     }
 }
 
+/// OpenCode 2's event stream as the OpenCode 1 events the activity tracker consumes. One V2 event
+/// can stand for several V1 events, or for none.
+struct OpenCodeV2EventStream {
+    inner: SystemOpenCodeEventStream,
+    normalizer: opencode::v2_activity::V2ActivityNormalizer,
+    pending: VecDeque<Vec<u8>>,
+}
+
+impl OpenCodeEventStream for OpenCodeV2EventStream {
+    fn discard_next(&mut self) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + '_>> {
+        Box::pin(async move {
+            if self.pending.pop_front().is_some() {
+                return Ok(());
+            }
+            self.inner.discard_next().await
+        })
+    }
+
+    fn next_data(&mut self) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, String>> + Send + '_>> {
+        Box::pin(async move {
+            loop {
+                if let Some(data) = self.pending.pop_front() {
+                    return Ok(data);
+                }
+                let data = self.inner.next_data().await?;
+                // Data that is not JSON goes on as is, for the consumer to reject.
+                let Ok(event) = serde_json::from_slice::<Value>(&data) else {
+                    return Ok(data);
+                };
+                self.pending.extend(
+                    self.normalizer
+                        .normalize(&event)
+                        .iter()
+                        .filter_map(|event| serde_json::to_vec(event).ok()),
+                );
+            }
+        })
+    }
+}
+
 impl OpenCodeRemoteClient for SystemOpenCodeRemoteClient {
     fn create_root(
         &mut self,
@@ -3303,16 +3501,33 @@ impl OpenCodeRemoteClient for SystemOpenCodeRemoteClient {
             let (provider_id, id) = model
                 .split_once('/')
                 .ok_or_else(|| "OpenCode model is not provider-qualified".to_owned())?;
+            let model = json!({
+                "providerID": provider_id,
+                "id": id,
+            });
+            if self.is_v2() {
+                let response = self
+                    .request_json(
+                        reqwest::Method::POST,
+                        &["api", "session"],
+                        Some(json!({
+                            "location": { "directory": self.directory.to_string_lossy() },
+                            "model": model,
+                        })),
+                    )
+                    .await?;
+                return response
+                    .pointer("/data/id")
+                    .and_then(Value::as_str)
+                    .filter(|id| valid_native_id(id))
+                    .map(str::to_owned)
+                    .ok_or_else(|| "OpenCode root response did not contain a valid ID".to_owned());
+            }
             let response = self
                 .request_json(
                     reqwest::Method::POST,
                     &["session"],
-                    Some(json!({
-                        "model": {
-                            "providerID": provider_id,
-                            "id": id,
-                        }
-                    })),
+                    Some(json!({ "model": model })),
                 )
                 .await?;
             response
@@ -3330,6 +3545,15 @@ impl OpenCodeRemoteClient for SystemOpenCodeRemoteClient {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + '_>> {
         let root_session_id = root_session_id.to_owned();
         Box::pin(async move {
+            if self.is_v2() {
+                return self
+                    .request_ok(
+                        reqwest::Method::DELETE,
+                        &["api", "session", &root_session_id],
+                        None,
+                    )
+                    .await;
+            }
             self.request_json(
                 reqwest::Method::DELETE,
                 &["session", &root_session_id],
@@ -3346,6 +3570,15 @@ impl OpenCodeRemoteClient for SystemOpenCodeRemoteClient {
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + '_>> {
         let root_session_id = root_session_id.to_owned();
         Box::pin(async move {
+            if self.is_v2() {
+                return self
+                    .request_ok(
+                        reqwest::Method::POST,
+                        &["api", "session", &root_session_id, "interrupt"],
+                        None,
+                    )
+                    .await;
+            }
             self.request_json(
                 reqwest::Method::POST,
                 &["session", &root_session_id, "abort"],
@@ -3362,6 +3595,16 @@ impl OpenCodeRemoteClient for SystemOpenCodeRemoteClient {
     ) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + '_>> {
         let root_session_id = root_session_id.to_owned();
         Box::pin(async move {
+            if self.is_v2() {
+                let response = self
+                    .request_json(
+                        reqwest::Method::GET,
+                        &["api", "session", &root_session_id],
+                        None,
+                    )
+                    .await?;
+                return Ok(response.get("data").cloned().unwrap_or(Value::Null));
+            }
             self.request_json(reqwest::Method::GET, &["session", &root_session_id], None)
                 .await
         })
@@ -3369,6 +3612,12 @@ impl OpenCodeRemoteClient for SystemOpenCodeRemoteClient {
 
     fn statuses(&mut self) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + '_>> {
         Box::pin(async move {
+            if self.is_v2() {
+                let response = self
+                    .request_json(reqwest::Method::GET, &["api", "session", "active"], None)
+                    .await?;
+                return Ok(opencode::v2_activity::statuses(&response));
+            }
             self.request_json(reqwest::Method::GET, &["session", "status"], None)
                 .await
         })
@@ -3380,6 +3629,14 @@ impl OpenCodeRemoteClient for SystemOpenCodeRemoteClient {
     ) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + '_>> {
         let session_id = session_id.to_owned();
         Box::pin(async move {
+            if self.is_v2() {
+                let mut url = self.url(&["api", "session"])?;
+                url.query_pairs_mut()
+                    .append_pair("parentID", &session_id)
+                    .append_pair("limit", &MAX_RECONCILED_CHILDREN.to_string());
+                let response = self.get_url_json(url).await?;
+                return Ok(opencode::v2_activity::children(&response));
+            }
             self.request_json(
                 reqwest::Method::GET,
                 &["session", &session_id, "children"],
@@ -3395,6 +3652,12 @@ impl OpenCodeRemoteClient for SystemOpenCodeRemoteClient {
     ) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + '_>> {
         let session_id = session_id.to_owned();
         Box::pin(async move {
+            if self.is_v2() {
+                let mut url = self.url(&["api", "session", &session_id, "message"])?;
+                url.query_pairs_mut().append_pair("limit", "200");
+                let response = self.get_url_json(url).await?;
+                return Ok(opencode::v2_activity::history(&session_id, &response));
+            }
             let mut url = self.url(&["session", &session_id, "message"])?;
             url.query_pairs_mut().append_pair("limit", "200");
             tokio::time::timeout(OPENCODE_REQUEST_TIMEOUT, async {
@@ -3422,9 +3685,14 @@ impl OpenCodeRemoteClient for SystemOpenCodeRemoteClient {
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn OpenCodeEventStream>, String>> + Send + '_>>
     {
         Box::pin(async move {
-            let mut url = self.url(&["event"])?;
-            url.query_pairs_mut()
-                .append_pair("directory", &self.directory.to_string_lossy());
+            let url = if self.is_v2() {
+                self.url(&["api", "event"])?
+            } else {
+                let mut url = self.url(&["event"])?;
+                url.query_pairs_mut()
+                    .append_pair("directory", &self.directory.to_string_lossy());
+                url
+            };
             let response = tokio::time::timeout(
                 OPENCODE_REQUEST_TIMEOUT,
                 self.client
@@ -3444,10 +3712,18 @@ impl OpenCodeRemoteClient for SystemOpenCodeRemoteClient {
             {
                 return Err("OpenCode SSE endpoint rejected the observer".to_owned());
             }
-            Ok(Box::new(SystemOpenCodeEventStream {
+            let stream = SystemOpenCodeEventStream {
                 response,
                 sse_decoder: OpenCodeSseDecoder::default(),
-            }) as Box<dyn OpenCodeEventStream>)
+            };
+            if self.is_v2() {
+                return Ok(Box::new(OpenCodeV2EventStream {
+                    inner: stream,
+                    normalizer: opencode::v2_activity::V2ActivityNormalizer::default(),
+                    pending: VecDeque::new(),
+                }) as Box<dyn OpenCodeEventStream>);
+            }
+            Ok(Box::new(stream) as Box<dyn OpenCodeEventStream>)
         })
     }
 }
@@ -5619,6 +5895,202 @@ mod tests {
         }
         server.abort();
         let _ = within_fixture_deadline("the aborted fixture server to stop", server).await;
+    }
+
+    /// An OpenCode 2 helper, shaped like 2.0.29: V1 paths answer its web UI, `/api/*` the API.
+    async fn opencode_2_fixture_handler(
+        State(recorded): State<RecordedRequests>,
+        request: Request,
+    ) -> Response<Body> {
+        let method = request.method().clone();
+        let uri = request.uri().to_string();
+        let headers = request.headers().clone();
+        let body = to_bytes(request.into_body(), OPENCODE_HTTP_BODY_LIMIT)
+            .await
+            .unwrap_or_default()
+            .to_vec();
+        recorded
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((method.clone(), uri.clone(), headers, body));
+        match (method, uri.as_str()) {
+            (Method::GET, "/global/health") => Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/html")
+                .body(Body::from("<!doctype html><title>OpenCode</title>"))
+                .expect("web UI response"),
+            (Method::GET, "/api/info") => json_response(json!({ "version": "2.0.29" })),
+            (Method::POST, "/api/session") => {
+                json_response(json!({ "data": { "id": "ses_root" } }))
+            }
+            (Method::GET, "/api/session/ses_root") => {
+                json_response(json!({ "data": { "id": "ses_root" } }))
+            }
+            (Method::GET, "/api/session/active") => {
+                json_response(json!({ "data": { "ses_child": { "type": "running" } } }))
+            }
+            (Method::GET, uri) if uri.starts_with("/api/session?parentID=ses_root&limit=") => {
+                json_response(json!({ "data": [{
+                    "id": "ses_child",
+                    "parentID": "ses_root",
+                    "title": "Inspect repository",
+                    "time": { "created": 1, "updated": 2 },
+                }]}))
+            }
+            (Method::GET, "/api/session/ses_child/message?limit=200") => {
+                json_response(json!({ "data": [] }))
+            }
+            (Method::POST, "/api/session/ses_root/interrupt") => {
+                json_response(json!({ "interrupted": true }))
+            }
+            (Method::DELETE, "/api/session/ses_root") => Response::builder()
+                .status(StatusCode::NO_CONTENT)
+                .body(Body::empty())
+                .expect("deleted response"),
+            (Method::GET, "/api/event") => Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/event-stream")
+                .body(Body::from(
+                    "data: {\"id\":\"evt_1\",\"type\":\"server.connected\",\"data\":{}}\n\n\
+                     data: {\"id\":\"evt_2\",\"type\":\"session.created\",\"created\":5,\
+                     \"data\":{\"sessionID\":\"ses_child\",\"parentID\":\"ses_root\",\
+                     \"title\":\"Inspect repository\"}}\n\n",
+                ))
+                .expect("SSE response"),
+            _ => Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::empty())
+                .expect("not-found response"),
+        }
+    }
+
+    /// Against an OpenCode 2 helper the client speaks `/api/*` and hands the observer the
+    /// OpenCode 1 shapes its tracker consumes.
+    #[tokio::test]
+    async fn system_client_drives_an_opencode_2_helper_through_its_api() {
+        let recorded = RecordedRequests::default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("OpenCode 2 fixture listener");
+        let address = listener.local_addr().expect("OpenCode 2 fixture address");
+        let server = tokio::spawn(
+            axum::serve(
+                listener,
+                Router::new()
+                    .fallback(any(opencode_2_fixture_handler))
+                    .with_state(recorded.clone()),
+            )
+            .into_future(),
+        );
+        let directory = tempfile::tempdir().expect("OpenCode 2 fixture directory");
+        let mut remote = SystemOpenCodeRemoteClientFactory
+            .connect(
+                &format!("http://127.0.0.1:{}", address.port()),
+                OPENCODE_USERNAME,
+                "fixture-secret",
+                directory.path(),
+            )
+            .await
+            .expect("OpenCode 2 client");
+
+        assert_eq!(
+            remote.create_root("mock/mock-model").await.expect("root"),
+            "ses_root"
+        );
+        assert_eq!(
+            remote.root("ses_root").await.expect("root")["id"],
+            "ses_root"
+        );
+        assert_eq!(
+            remote.statuses().await.expect("statuses"),
+            json!({ "ses_child": { "type": "busy" } })
+        );
+        let children = remote.children("ses_root").await.expect("children");
+        assert_eq!(children[0]["id"], "ses_child");
+        assert_eq!(children[0]["parentID"], "ses_root");
+        assert_eq!(
+            remote.messages("ses_child").await.expect("history"),
+            json!([])
+        );
+        remote.abort("ses_root").await.expect("interrupt");
+        remote
+            .cleanup_pre_spawn("ses_root")
+            .await
+            .expect("delete root");
+        let mut stream = remote.open_event_stream().await.expect("event stream");
+        let connected: Value = serde_json::from_slice(
+            &within_fixture_deadline("server.connected", stream.next_data())
+                .await
+                .expect("server.connected"),
+        )
+        .expect("JSON");
+        assert_eq!(connected["type"], "server.connected");
+        let created: Value = serde_json::from_slice(
+            &within_fixture_deadline("session.created", stream.next_data())
+                .await
+                .expect("session.created"),
+        )
+        .expect("JSON");
+        assert_eq!(created["type"], "session.created");
+        assert_eq!(created["properties"]["info"]["parentID"], "ses_root");
+
+        {
+            let requests = recorded
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let create = requests
+                .iter()
+                .find(|(method, uri, _, _)| *method == Method::POST && uri == "/api/session")
+                .expect("create-root request");
+            let create: Value = serde_json::from_slice(&create.3).expect("create-root JSON");
+            assert_eq!(
+                create["model"],
+                json!({ "providerID": "mock", "id": "mock-model" })
+            );
+            assert_eq!(
+                create["location"]["directory"],
+                directory.path().to_string_lossy().as_ref()
+            );
+            assert!(requests.iter().all(|(_, _, headers, _)| {
+                headers
+                    .get(reqwest::header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    == Some("Basic b3BlbmNvZGU6Zml4dHVyZS1zZWNyZXQ=")
+            }));
+        }
+        server.abort();
+        let _ = within_fixture_deadline("the aborted fixture server to stop", server).await;
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn system_helper_launcher_reads_the_opencode_2_readiness_line() {
+        let sandbox = TestSandbox::new("opencode-2-helper-readiness");
+        let script = sandbox.executable_script(
+            "helper",
+            "printf 'server listening on http://127.0.0.1:43128\\n'\nexec sleep 3600",
+            "",
+        );
+        let launcher = SystemOpenCodeHelperLauncher::default();
+        let ready = within_fixture_deadline(
+            "the OpenCode 2 helper to report readiness",
+            launcher.start(sandbox_script_launch(
+                &sandbox,
+                &script,
+                ProcessAttributionRegistry::new(),
+            )),
+        )
+        .await
+        .expect("OpenCode 2 readiness");
+        within_fixture_deadline(
+            "the OpenCode 2 helper to be reaped",
+            ready.process.terminate_and_reap(),
+        )
+        .await;
+        within_fixture_deadline("the OpenCode 2 launcher to shut down", launcher.shutdown()).await;
+        assert_eq!(ready.endpoint, "http://127.0.0.1:43128");
     }
 
     #[test]

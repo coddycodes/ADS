@@ -36,6 +36,8 @@ const DELETED_THREAD_DETAIL: &str =
 const MAX_CONCURRENT_THREADS: usize = 4;
 const RETRY_BACKOFF_MIN: Duration = Duration::from_millis(50);
 const RETRY_BACKOFF_MAX: Duration = Duration::from_secs(1);
+/// The longest a provider's `Retry-After` holds a delivery back, so a far-off value cannot park it.
+const RETRY_AFTER_MAX: Duration = Duration::from_secs(30);
 const SHUTDOWN_TASK_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const FORCE_CANCEL_TASK_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
 const RECONCILIATION_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -551,13 +553,18 @@ async fn run(
                             retry_backoffs.remove(&command_id);
                         }
                         Ok(DeliveryTaskOutcome::DefinitelyNotSent) => {
-                            schedule_retry(&mut retry_backoffs, command_id);
+                            schedule_retry(&mut retry_backoffs, command_id, Duration::ZERO);
+                            #[cfg(test)]
+                            retry_probe.record();
+                        }
+                        Ok(DeliveryTaskOutcome::RetryAfter(retry_after)) => {
+                            schedule_retry(&mut retry_backoffs, command_id, retry_after);
                             #[cfg(test)]
                             retry_probe.record();
                         }
                         Err(error) => {
                             tracing::warn!(%error, "provider delivery transition failed");
-                            schedule_retry(&mut retry_backoffs, command_id);
+                            schedule_retry(&mut retry_backoffs, command_id, Duration::ZERO);
                             #[cfg(test)]
                             retry_probe.record();
                         }
@@ -620,7 +627,13 @@ fn min_delay(left: Option<Duration>, right: Option<Duration>) -> Option<Duration
     }
 }
 
-fn schedule_retry(retry_backoffs: &mut HashMap<String, DeliveryRetry>, command_id: String) {
+/// Schedules the next attempt after the backoff, and no sooner than `at_least` (a provider's
+/// `Retry-After`, capped at `RETRY_AFTER_MAX`).
+fn schedule_retry(
+    retry_backoffs: &mut HashMap<String, DeliveryRetry>,
+    command_id: String,
+    at_least: Duration,
+) {
     let delay = retry_backoffs
         .get(&command_id)
         .map(|retry| retry.next_delay)
@@ -628,7 +641,7 @@ fn schedule_retry(retry_backoffs: &mut HashMap<String, DeliveryRetry>, command_i
     retry_backoffs.insert(
         command_id,
         DeliveryRetry {
-            ready_at: Instant::now() + delay,
+            ready_at: Instant::now() + delay.max(at_least.min(RETRY_AFTER_MAX)),
             next_delay: next_backoff(delay),
         },
     );
@@ -1009,6 +1022,8 @@ struct DeliveryCompletion {
 enum DeliveryTaskOutcome {
     Finished,
     DefinitelyNotSent,
+    /// Not sent; the next attempt waits at least this long.
+    RetryAfter(Duration),
 }
 
 fn remove_completion(
@@ -1386,6 +1401,15 @@ fn provider_delivery_outcome(
             Some(detail),
             None,
             DeliveryTaskOutcome::DefinitelyNotSent,
+        ),
+        ProviderDeliveryOutcome::NotSentRetryAfter {
+            detail,
+            retry_after,
+        } => (
+            TurnDeliveryState::Pending,
+            Some(detail),
+            None,
+            DeliveryTaskOutcome::RetryAfter(retry_after),
         ),
         ProviderDeliveryOutcome::Ambiguous { detail } => (
             TurnDeliveryState::Uncertain,

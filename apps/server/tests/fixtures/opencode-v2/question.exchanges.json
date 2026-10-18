@@ -1,0 +1,384 @@
+{
+  "session": "ses_ebf1c0691ffe8XahS2VFgcccN9",
+  "exchanges": [
+    {
+      "method": "POST",
+      "path": "/api/session",
+      "body": {
+        "title": "BiBCode capture",
+        "location": {
+          "directory": "/work/project"
+        },
+        "model": {
+          "providerID": "mock",
+          "id": "mock-model"
+        },
+        "agent": "build",
+        "permissions": [
+          {
+            "action": "*",
+            "resource": "*",
+            "effect": "allow"
+          },
+          {
+            "action": "shell",
+            "resource": "*",
+            "effect": "ask"
+          }
+        ]
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "ses_ebf1c0691ffe8XahS2VFgcccN9",
+          "projectID": "bca2a4c13ad5ce3ef167f49a0f2c24bd5afe14dc",
+          "agent": "build",
+          "model": {
+            "id": "mock-model",
+            "providerID": "mock",
+            "variant": "default"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1792090044784,
+            "updated": 1792090044784
+          },
+          "title": "BiBCode capture",
+          "permissions": [
+            {
+              "action": "*",
+              "resource": "*",
+              "effect": "allow"
+            },
+            {
+              "action": "shell",
+              "resource": "*",
+              "effect": "ask"
+            }
+          ],
+          "location": {
+            "directory": "/work/project"
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1c0691ffe8XahS2VFgcccN9",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "ses_ebf1c0691ffe8XahS2VFgcccN9",
+          "projectID": "bca2a4c13ad5ce3ef167f49a0f2c24bd5afe14dc",
+          "agent": "build",
+          "model": {
+            "id": "mock-model",
+            "providerID": "mock",
+            "variant": "default"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1792090044784,
+            "updated": 1792090044784
+          },
+          "title": "BiBCode capture",
+          "permissions": [
+            {
+              "action": "*",
+              "resource": "*",
+              "effect": "allow"
+            },
+            {
+              "action": "shell",
+              "resource": "*",
+              "effect": "ask"
+            }
+          ],
+          "location": {
+            "directory": "/work/project"
+          }
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/session/ses_ebf1c0691ffe8XahS2VFgcccN9/prompt",
+      "body": {
+        "id": "msg_bibcodecapture1792090044787",
+        "text": "ASK_QUESTION please"
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "msg_bibcodecapture1792090044787",
+          "sessionID": "ses_ebf1c0691ffe8XahS2VFgcccN9",
+          "time": {
+            "created": 1792090044789
+          },
+          "type": "user",
+          "payload": {
+            "text": "ASK_QUESTION please"
+          },
+          "delivery": "steer"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1c0691ffe8XahS2VFgcccN9/form",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "frm_140e3f991001m0p3AQcBGrZ34g",
+            "sessionID": "ses_ebf1c0691ffe8XahS2VFgcccN9",
+            "title": "Questions",
+            "metadata": {
+              "kind": "question",
+              "tool": {
+                "messageID": "msg_140e3f981001mj9gjNMXoEa4PC",
+                "id": "call_question_1"
+              }
+            },
+            "fields": [
+              {
+                "key": "q0",
+                "title": "Color",
+                "description": "Pick a color",
+                "type": "string",
+                "options": [
+                  {
+                    "value": "Red",
+                    "label": "Red",
+                    "description": "Warm"
+                  },
+                  {
+                    "value": "Blue",
+                    "label": "Blue",
+                    "description": "Cool"
+                  }
+                ],
+                "custom": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/session/ses_ebf1c0691ffe8XahS2VFgcccN9/form/frm_140e3f991001m0p3AQcBGrZ34g/reply",
+      "body": {
+        "answer": {
+          "q0": "Blue"
+        }
+      },
+      "status": 204,
+      "response": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1c0691ffe8XahS2VFgcccN9/message",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "msg_140e3f9f9001C6zGBCdhs6gfua",
+            "time": {
+              "created": 1792090044921
+            },
+            "type": "idle",
+            "outcome": "succeeded"
+          },
+          {
+            "id": "msg_140e3f9ea001Iy7tvVH8kVB17Z",
+            "time": {
+              "created": 1792090044912,
+              "streamed": 1792090044919,
+              "completed": 1792090044919
+            },
+            "type": "assistant",
+            "agent": "build",
+            "model": {
+              "id": "mock-model",
+              "providerID": "mock",
+              "variant": "default"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Done after tool."
+              }
+            ],
+            "finish": "stop",
+            "rawFinish": "stop",
+            "cost": 0,
+            "tokens": {
+              "input": 11,
+              "output": 5,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            }
+          },
+          {
+            "id": "msg_140e3f981001mj9gjNMXoEa4PC",
+            "time": {
+              "created": 1792090044807,
+              "streamed": 1792090044815,
+              "completed": 1792090044898
+            },
+            "type": "assistant",
+            "agent": "build",
+            "model": {
+              "id": "mock-model",
+              "providerID": "mock",
+              "variant": "default"
+            },
+            "content": [
+              {
+                "type": "tool",
+                "id": "call_question_1",
+                "name": "question",
+                "executed": false,
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "questions": [
+                      {
+                        "header": "Color",
+                        "question": "Pick a color",
+                        "options": [
+                          {
+                            "label": "Red",
+                            "description": "Warm"
+                          },
+                          {
+                            "label": "Blue",
+                            "description": "Cool"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "User has answered your questions: \"Pick a color\"=\"Blue\". You can now continue with the user's answers in mind."
+                    }
+                  ],
+                  "metadata": {
+                    "answers": [["Blue"]],
+                    "truncated": false
+                  }
+                },
+                "time": {
+                  "created": 1792090044812,
+                  "ran": 1792090044814,
+                  "completed": 1792090044897
+                }
+              }
+            ],
+            "finish": "tool-calls",
+            "rawFinish": "tool_calls",
+            "cost": 0,
+            "tokens": {
+              "input": 11,
+              "output": 5,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            }
+          },
+          {
+            "id": "msg_bibcodecapture1792090044787",
+            "time": {
+              "created": 1792090044797
+            },
+            "text": "ASK_QUESTION please",
+            "type": "user"
+          }
+        ],
+        "cursor": {
+          "previous": "eyJpZCI6Im1zZ18xNDBlM2Y5ZjkwMDFDNnpHQkNkaHM2Z2Z1YSIsIm9yZGVyIjoiZGVzYyIsImRpcmVjdGlvbiI6InByZXZpb3VzIn0",
+          "next": "eyJpZCI6Im1zZ19iaWJjb2RlY2FwdHVyZTE3OTIwOTAwNDQ3ODciLCJvcmRlciI6ImRlc2MiLCJkaXJlY3Rpb24iOiJuZXh0In0"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1c0691ffe8XahS2VFgcccN9/message/msg_bibcodecapture1792090044787",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "msg_bibcodecapture1792090044787",
+          "time": {
+            "created": 1792090044797
+          },
+          "text": "ASK_QUESTION please",
+          "type": "user"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1c0691ffe8XahS2VFgcccN9/message/msg_doesnotexist000000000000",
+      "body": null,
+      "status": 404,
+      "response": {
+        "_tag": "MessageNotFoundError",
+        "sessionID": "ses_ebf1c0691ffe8XahS2VFgcccN9",
+        "messageID": "msg_doesnotexist000000000000",
+        "message": "Message not found: msg_doesnotexist000000000000"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/active",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": {}
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session?parentID=ses_ebf1c0691ffe8XahS2VFgcccN9",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": [],
+        "cursor": {
+          "previous": null,
+          "next": null
+        }
+      }
+    }
+  ]
+}

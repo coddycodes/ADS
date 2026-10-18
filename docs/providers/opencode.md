@@ -18,12 +18,26 @@ Server password: empty
 
 ## Supported versions
 
-BiBCode drives OpenCode 1.x through its V1 server API. OpenCode 2 replaced that
-API with `/api/*` routes and is not supported yet. When the resolved `opencode`
-reports version 2 or later, the provider shows an error asking you to set
-**Binary path** to an OpenCode 1.x executable, and inventory does not start an
-OpenCode 2 server. A configured **Server URL** that runs OpenCode 2 reports the
-same error, naming **Server URL** instead.
+BiBCode drives OpenCode 1.x through its V1 server API and OpenCode 2.x through
+the `/api/*` API that replaced it. It picks the API from what the server
+answers, so the same instance works with either version.
+
+With OpenCode 2, chats work: messages and slash commands, streamed replies,
+permission requests (including those of subagents), questions, Stop,
+OpenCode's own follow-up turns that deliver a background subagent's result, and
+subagent activity. The provider row lists OpenCode 2 models (with their
+variants), agents, commands and skills; a slash skill attaches the skill to
+your message; a command wins over a skill of the same name. When a configured
+**Server URL** answers but its catalogs can't be read, the row stays ready with
+a notice and chats use the server's default model. Reverting to a checkpoint
+rewinds the OpenCode 2 conversation, then restores the files. The provider
+terminal is observed too (see below).
+
+The provider row reads OpenCode's `--version` on every check, including the
+quick one, so a version BiBCode cannot drive never reads Ready. A version
+BiBCode cannot drive (3.x or later) shows an error asking you to set
+**Binary path** to an OpenCode 1.x or 2.x executable; a configured
+**Server URL** that runs one reports the same error, naming **Server URL**.
 
 ## Updates and version advisories
 
@@ -32,12 +46,19 @@ its canonical target, not from a separate package-manager inventory. Native
 OpenCode installations use the resolved `opencode upgrade` action; recognized
 Homebrew installations use `brew upgrade anomalyco/tap/opencode`; recognized
 npm, pnpm, Bun, and Vite+ paths use their matching global-install command.
-Each recognized row gets its latest-version advisory from npm's `opencode-ai`
-latest document, while the update action remains installation-specific.
+Each recognized row gets its latest-version advisory from npm: OpenCode 1 is
+published as `opencode-ai`, OpenCode 2 as `@opencode/cli`. A package-manager
+install of OpenCode 2 (a path through `node_modules/@opencode/cli`) updates and
+compares against `@opencode/cli`; where the path cannot tell (a native or
+Homebrew install), an installed 2.x version compares against `@opencode/cli`.
+The update action remains installation-specific.
 
-On Windows, a recognized npm-backed `opencode.cmd` path selects `npm install
--g opencode-ai@latest`; the server resolves the platform's npm command shim
-from the provider environment. This is path-based source selection, so Windows
+On Windows, a recognized npm-backed `opencode.cmd` (or OpenCode 2's
+`opencode2.cmd`) runs the package beside it: `node_modules/opencode-ai` selects
+`npm install -g opencode-ai@latest`, `node_modules/@opencode/cli` selects
+`npm install -g @opencode/cli@latest`, and BiBCode supervises that package's
+native `opencode.exe`. The server resolves the platform's npm command shim from
+the provider environment. This is path-based source selection, so Windows
 runtime behavior still depends on the actual host's npm shim and `PATH`.
 
 An arbitrary custom executable or wrapper is manual-only. BiBCode does not
@@ -55,12 +76,13 @@ session:
 opencode serve --hostname=127.0.0.1 --port=<available-port>
 ```
 
-BiBCode generates a temporary password, waits until the loopback endpoint's
-authenticated `GET /global/health` answers `{"healthy": true}`, and stops the
-child process with the provider session. Any other answer, such as the HTML that
-OpenCode 2 serves for V1 paths, is not readiness. An OpenCode 2 server is
-identified by its `GET /api/info` version and stopped at once with the
-unsupported-version error. Inventory
+BiBCode generates a temporary password, waits until the loopback endpoint
+answers an API it speaks, and stops the child process with the provider
+session. OpenCode 1 is ready when its authenticated `GET /global/health` answers
+`{"healthy": true}`; OpenCode 2 when `GET /api/info` reports a 2.x version. Any
+other answer, such as the HTML that OpenCode 2 serves for V1 paths, is not
+readiness, and an unsupported version is stopped at once with its error.
+Inventory
 uses the same managed-server approach to discover authentication state, models,
 agents, and commands. On Windows, a standard npm `opencode.cmd` installation is
 resolved to its packaged native `opencode.exe` for managed launches so the
@@ -92,4 +114,9 @@ colors; it does not replace your normal OpenCode configuration.
 OpenCode chats and provider terminals can publish structured activity when the
 installed provider path supports observation. Failure to prepare terminal
 observation leaves the normal terminal command available without structured
-activity.
+activity. An observed terminal runs against a private OpenCode server that
+BiBCode starts for it: OpenCode 1 opens it with `opencode attach`, OpenCode 2
+with `opencode --server … --session …`. OpenCode 2 has no `--model` flag, so
+an unobserved OpenCode 2 terminal runs `opencode --standalone` (its own private
+server) with the selected model in its configuration; OpenCode 1 runs
+`opencode --model …`.

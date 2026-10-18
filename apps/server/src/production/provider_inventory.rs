@@ -56,6 +56,8 @@ const CLAUDE_CAPABILITY_PROBE_ARGS: [&str; 12] = [
 const LOCAL_OPENCODE_HEALTH_TIMEOUT: Duration = Duration::from_millis(250);
 const LOCAL_OPENCODE_INVENTORY_TIMEOUT: Duration = Duration::from_secs(30);
 const LOCAL_OPENCODE_STARTUP_ATTEMPTS: usize = 50;
+/// A configured OpenCode 2 server answered, but its catalogs could not be read.
+const OPENCODE_2_CATALOG_UNREADABLE: &str = "BiBCode couldn't read this OpenCode server's models, agents and commands, so chats use its default model. They are read again at the next provider check.";
 const PROBE_OUTPUT_LIMIT: usize = 256 * 1024;
 
 #[derive(Clone)]
@@ -533,64 +535,82 @@ async fn probe_one_snapshot(
     if include_slow_capabilities
         && definition.driver == "opencode"
         && let Some(endpoint) = definition.endpoint.as_deref()
-        && let Some(inventory) = probe_opencode(
+    {
+        let protocol =
+            match opencode_server_protocol(endpoint, definition.server_password.as_deref()).await {
+                Ok(protocol) => protocol,
+                Err(version) => {
+                    return ProviderProbeResult::new(
+                        snapshot(
+                            definition,
+                            true,
+                            None,
+                            "error",
+                            json!({ "status": "unknown" }),
+                            default_models,
+                            ProviderCapabilities::default(),
+                            Some(&opencode::unsupported_server_message(&version, false)),
+                            checked_at,
+                            "available",
+                        ),
+                        RichMetadataOutcome::Failed,
+                    );
+                }
+            };
+        if let Some(inventory) = probe_opencode(
             endpoint,
             definition.server_password.as_deref(),
             &definition.custom_models,
+            protocol,
+            cwd,
         )
         .await
-    {
-        let models = serde_json::to_value(inventory.models)
-            .ok()
-            .and_then(|value| value.as_array().cloned())
-            .unwrap_or_else(|| custom_models(&definition.custom_models));
-        let capabilities = ProviderCapabilities {
-            slash_commands: inventory.commands,
-            skills: inventory.skills,
-            agents: inventory.agents,
-            ..ProviderCapabilities::default()
-        };
-        return ProviderProbeResult::new(
-            snapshot(
-                definition,
-                true,
-                None,
-                "ready",
-                inventory.auth,
-                models,
-                capabilities,
-                None,
-                checked_at,
-                "available",
-            ),
-            RichMetadataOutcome::Succeeded,
-        );
-    }
-    if include_slow_capabilities
-        && definition.driver == "opencode"
-        && let Some(endpoint) = definition.endpoint.as_deref()
-        && let Ok(client) = reqwest::Client::builder()
-            .timeout(opencode::API_PROBE_TIMEOUT)
-            .build()
-        && let opencode::OpenCodeServerApi::Unsupported { version } =
-            opencode::probe_server_api(&client, endpoint, definition.server_password.as_deref())
-                .await
-    {
-        return ProviderProbeResult::new(
-            snapshot(
-                definition,
-                true,
-                None,
-                "error",
-                json!({ "status": "unknown" }),
-                default_models,
-                ProviderCapabilities::default(),
-                Some(&opencode::unsupported_server_message(&version, false)),
-                checked_at,
-                "available",
-            ),
-            RichMetadataOutcome::Failed,
-        );
+        {
+            let models = serde_json::to_value(inventory.models)
+                .ok()
+                .and_then(|value| value.as_array().cloned())
+                .unwrap_or_else(|| custom_models(&definition.custom_models));
+            let capabilities = ProviderCapabilities {
+                slash_commands: inventory.commands,
+                skills: inventory.skills,
+                agents: inventory.agents,
+                ..ProviderCapabilities::default()
+            };
+            return ProviderProbeResult::new(
+                snapshot(
+                    definition,
+                    true,
+                    None,
+                    "ready",
+                    inventory.auth,
+                    models,
+                    capabilities,
+                    None,
+                    checked_at,
+                    "available",
+                ),
+                RichMetadataOutcome::Succeeded,
+            );
+        }
+        if protocol == opencode::OpenCodeProtocol::V2 {
+            // The server answered as OpenCode 2, so chats work without its catalogs; a local CLI
+            // says nothing about it.
+            return ProviderProbeResult::new(
+                snapshot(
+                    definition,
+                    true,
+                    None,
+                    "ready",
+                    json!({ "status": "unknown" }),
+                    default_models,
+                    ProviderCapabilities::default(),
+                    Some(OPENCODE_2_CATALOG_UNREADABLE),
+                    checked_at,
+                    "available",
+                ),
+                RichMetadataOutcome::Failed,
+            );
+        }
     }
     let mut rich_metadata = if include_slow_capabilities {
         RichMetadataOutcome::Failed
@@ -621,6 +641,36 @@ async fn probe_one_snapshot(
         );
     };
     if !include_slow_capabilities {
+        // A version BiBCode cannot drive must not read Ready until the full probe runs.
+        if definition.driver == "opencode" {
+            let output =
+                run_command(&executable, &["--version"], cwd, &definition.environment).await;
+            let version = normalize_provider_version(
+                &definition.driver,
+                output
+                    .as_ref()
+                    .and_then(|output| first_line(&output.stdout, &output.stderr)),
+            );
+            if let Some(opencode::OpenCodeCliSupport::Unsupported(unsupported)) =
+                version.as_deref().map(opencode::cli_support)
+            {
+                return ProviderProbeResult::new(
+                    snapshot(
+                        definition,
+                        true,
+                        version,
+                        "error",
+                        json!({ "status": "unknown" }),
+                        default_models,
+                        ProviderCapabilities::default(),
+                        Some(unsupported),
+                        checked_at,
+                        "available",
+                    ),
+                    rich_metadata,
+                );
+            }
+        }
         return ProviderProbeResult::new(
             snapshot(
                 definition,
@@ -789,10 +839,9 @@ async fn probe_one_snapshot(
             }
         }
         "opencode" => {
-            // OpenCode 2 cannot answer the V1 API, so do not start its server to find out.
-            if let Some(unsupported) = version
-                .as_deref()
-                .and_then(opencode::unsupported_cli_message)
+            // A version BiBCode cannot drive is reported without starting its server.
+            if let Some(opencode::OpenCodeCliSupport::Unsupported(unsupported)) =
+                version.as_deref().map(opencode::cli_support)
             {
                 status = "error";
                 message = Some(unsupported);
@@ -1392,39 +1441,179 @@ async fn probe_cursor_models(
         .and_then(|value| value.as_array().cloned())
 }
 
+/// The wire a configured OpenCode server speaks, or the version it reports when BiBCode cannot
+/// drive it. A server that does not answer is read as OpenCode 1, as before.
+pub(super) async fn opencode_server_protocol(
+    endpoint: &str,
+    server_password: Option<&str>,
+) -> Result<opencode::OpenCodeProtocol, String> {
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(opencode::API_PROBE_TIMEOUT)
+        .build()
+    else {
+        return Ok(opencode::OpenCodeProtocol::V1);
+    };
+    match opencode::probe_server_api(&client, endpoint, server_password).await {
+        opencode::OpenCodeServerApi::V2 { .. } => Ok(opencode::OpenCodeProtocol::V2),
+        opencode::OpenCodeServerApi::Unsupported { version } => Err(version),
+        opencode::OpenCodeServerApi::V1 | opencode::OpenCodeServerApi::Unavailable => {
+            Ok(opencode::OpenCodeProtocol::V1)
+        }
+    }
+}
+
 async fn probe_opencode(
     endpoint: &str,
     server_password: Option<&str>,
     custom_models: &[String],
+    protocol: opencode::OpenCodeProtocol,
+    cwd: &Path,
 ) -> Option<opencode::OpenCodeInventorySnapshot> {
-    probe_opencode_with_timeout(endpoint, server_password, custom_models, PROBE_TIMEOUT).await
+    probe_opencode_with_timeout(
+        endpoint,
+        server_password,
+        custom_models,
+        PROBE_TIMEOUT,
+        protocol,
+        cwd,
+    )
+    .await
 }
 
+/// OpenCode 2 catalogs are read for `cwd`, the directory BiBCode's sessions use; OpenCode 1
+/// inventory reads stay unscoped, as they always were.
 async fn probe_opencode_with_timeout(
     endpoint: &str,
     server_password: Option<&str>,
     custom_models: &[String],
     request_timeout: Duration,
+    protocol: opencode::OpenCodeProtocol,
+    cwd: &Path,
 ) -> Option<opencode::OpenCodeInventorySnapshot> {
     let client = reqwest::Client::builder()
         .timeout(request_timeout)
         .build()
         .ok()?;
-    let endpoint = endpoint.trim_end_matches('/');
-    let (providers, agents, commands) = tokio::join!(
-        get_opencode_json(&client, endpoint, "/provider", server_password, None),
-        get_opencode_json(&client, endpoint, "/agent", server_password, None),
-        get_opencode_json(&client, endpoint, "/command", server_password, None),
-    );
-    let providers = providers?;
-    let agents = agents?;
-    let commands = commands?;
+    let scope = (protocol == opencode::OpenCodeProtocol::V2).then_some(cwd);
+    let (providers, agents, commands) =
+        fetch_opencode_catalog(&client, endpoint, server_password, scope, protocol).await?;
     Some(opencode::build_inventory_snapshot(
         &providers,
         &agents,
         &commands,
         custom_models,
     ))
+}
+
+/// An OpenCode server's provider list, agents and commands (skills included) in the OpenCode 1
+/// shapes `build_inventory_snapshot` reads. `cwd` scopes the agent and command catalogs.
+async fn fetch_opencode_catalog(
+    client: &reqwest::Client,
+    endpoint: &str,
+    server_password: Option<&str>,
+    cwd: Option<&Path>,
+    protocol: opencode::OpenCodeProtocol,
+) -> Option<(Value, Value, Value)> {
+    let endpoint = endpoint.trim_end_matches('/');
+    match protocol {
+        opencode::OpenCodeProtocol::V1 => {
+            let (providers, agents, commands) = tokio::join!(
+                get_opencode_json(client, endpoint, "/provider", server_password, None),
+                get_opencode_json(client, endpoint, "/agent", server_password, cwd),
+                get_opencode_json(client, endpoint, "/command", server_password, cwd),
+            );
+            Some((providers?, agents?, commands?))
+        }
+        opencode::OpenCodeProtocol::V2 => {
+            let [providers, models, agents, commands, skills] = read_opencode_v2_catalogs(
+                client,
+                endpoint,
+                server_password,
+                cwd,
+                ["provider", "model", "agent", "command", "skill"],
+            )
+            .await?;
+            use opencode::v2::catalog;
+            Some((
+                catalog::provider_list(&providers, &models),
+                catalog::agents(&agents),
+                catalog::commands(&commands, &skills),
+            ))
+        }
+    }
+}
+
+/// Waits before each re-read of a just-started OpenCode 2 server's catalogs: 1.5 s in all.
+const OPENCODE_2_CATALOG_RETRY_DELAYS: [Duration; 4] = [
+    Duration::from_millis(100),
+    Duration::from_millis(200),
+    Duration::from_millis(400),
+    Duration::from_millis(800),
+];
+
+/// Reads OpenCode 2 catalogs together (`routes` must include `agent`). A just-started server
+/// answers before it has loaded them: its agent list, which always holds the built-in agents,
+/// reads empty for about 100 ms (seen on 2.0.29). So an empty agent list is read again, after a
+/// bounded backoff, rather than published as no agents.
+pub(super) async fn read_opencode_v2_catalogs<const N: usize>(
+    client: &reqwest::Client,
+    endpoint: &str,
+    server_password: Option<&str>,
+    cwd: Option<&Path>,
+    routes: [&'static str; N],
+) -> Option<[Value; N]> {
+    let agent = routes.iter().position(|route| *route == "agent");
+    let mut delays = OPENCODE_2_CATALOG_RETRY_DELAYS.iter();
+    loop {
+        let reads = futures_util::future::join_all(
+            routes.map(|route| get_opencode_v2_json(client, endpoint, route, server_password, cwd)),
+        )
+        .await;
+        let catalogs: [Value; N] = reads
+            .into_iter()
+            .collect::<Option<Vec<_>>>()?
+            .try_into()
+            .ok()?;
+        let agents_loaded = agent.is_none_or(|agent| {
+            catalogs[agent]
+                .get("data")
+                .and_then(Value::as_array)
+                .is_none_or(|agents| !agents.is_empty())
+        });
+        match delays.next() {
+            Some(delay) if !agents_loaded => tokio::time::sleep(*delay).await,
+            _ => return Some(catalogs),
+        }
+    }
+}
+
+async fn get_opencode_v2_json(
+    client: &reqwest::Client,
+    endpoint: &str,
+    route: &str,
+    server_password: Option<&str>,
+    cwd: Option<&Path>,
+) -> Option<Value> {
+    let mut url = reqwest::Url::parse(&format!("{endpoint}/api/{route}")).ok()?;
+    if let Some(cwd) = cwd {
+        url.query_pairs_mut()
+            .append_pair("location[directory]", &cwd.to_string_lossy());
+    }
+    let request = client.get(url);
+    let request = match server_password.filter(|value| !value.is_empty()) {
+        Some(password) => request.basic_auth("opencode", Some(password)),
+        None => request,
+    };
+    let value = request
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json::<Value>()
+        .await
+        .ok()?;
+    value.get("data").is_some().then_some(value)
 }
 
 async fn get_opencode_json(
@@ -1479,12 +1668,14 @@ async fn probe_local_opencode(
         cwd,
         environment,
         &CancellationToken::new(),
-        |endpoint, password| async move {
+        |endpoint, password, protocol| async move {
             probe_opencode_with_timeout(
                 &endpoint,
                 Some(&password),
                 custom_models,
                 LOCAL_OPENCODE_INVENTORY_TIMEOUT,
+                protocol,
+                cwd,
             )
             .await
         },
@@ -1500,7 +1691,7 @@ async fn with_local_opencode<T, F, Fut>(
     discover: F,
 ) -> Option<T>
 where
-    F: FnOnce(String, String) -> Fut,
+    F: FnOnce(String, String, opencode::OpenCodeProtocol) -> Fut,
     Fut: std::future::Future<Output = Option<T>>,
 {
     let executable = opencode::resolve_owned_executable(Platform::current(), executable);
@@ -1524,7 +1715,9 @@ where
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     let local_password = uuid::Uuid::new_v4().to_string();
+    // OpenCode 2 prefers an inherited `OPENCODE_PASSWORD` to `OPENCODE_SERVER_PASSWORD`.
     command.env("OPENCODE_SERVER_PASSWORD", &local_password);
+    command.env("OPENCODE_PASSWORD", &local_password);
     sanitize_provider_subprocess_environment(&mut command);
     let mut child = supervised_command(command).spawn().ok()?;
     let inventory = tokio::select! {
@@ -1533,16 +1726,18 @@ where
         result = async {
             for _ in 0..LOCAL_OPENCODE_STARTUP_ATTEMPTS {
                 if child.try_wait().ok().flatten().is_some() { return None; }
-                match local_opencode_api(&endpoint, Some(&local_password)).await {
-                    opencode::OpenCodeServerApi::V1 => {
-                        let snapshot = discover(endpoint, local_password).await;
-                        return child.try_wait().ok().flatten().is_none().then_some(snapshot).flatten();
-                    }
-                    // OpenCode 2 never answers the V1 API: stop now instead of waiting it out.
+                let protocol = match local_opencode_api(&endpoint, Some(&local_password)).await {
+                    opencode::OpenCodeServerApi::V1 => opencode::OpenCodeProtocol::V1,
+                    opencode::OpenCodeServerApi::V2 { .. } => opencode::OpenCodeProtocol::V2,
+                    // BiBCode cannot read these catalogs: stop now instead of waiting it out.
                     opencode::OpenCodeServerApi::Unsupported { .. } => return None,
-                    opencode::OpenCodeServerApi::Unavailable => {}
-                }
-                sleep(Duration::from_millis(100)).await;
+                    opencode::OpenCodeServerApi::Unavailable => {
+                        sleep(Duration::from_millis(100)).await;
+                        continue;
+                    }
+                };
+                let snapshot = discover(endpoint, local_password, protocol).await;
+                return child.try_wait().ok().flatten().is_none().then_some(snapshot).flatten();
             }
             None
         } => result,
@@ -1955,18 +2150,87 @@ mod tests {
         assert!(String::from_utf8_lossy(&output.stdout).contains(SENTINEL));
     }
 
-    /// OpenCode 2 replaced the server API BiBCode uses, so its row must not read Ready, and the
-    /// probe must not start a server that cannot answer.
+    /// Reads the catalogs of a real OpenCode 2 server (see `live_opencode_2_round_trip` in
+    /// `provider::opencode` for the environment).
+    #[tokio::test]
+    #[ignore = "needs a live OpenCode 2 server"]
+    async fn live_opencode_2_inventory() {
+        let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
+        let endpoint = var("BIBCODE_OPENCODE_V2_LIVE");
+        let password = var("BIBCODE_OPENCODE_V2_PASSWORD");
+        assert_eq!(
+            opencode_server_protocol(&endpoint, Some(&password)).await,
+            Ok(opencode::OpenCodeProtocol::V2)
+        );
+        let inventory = probe_opencode(
+            &endpoint,
+            Some(&password),
+            &[],
+            opencode::OpenCodeProtocol::V2,
+            Path::new(&var("BIBCODE_OPENCODE_V2_DIRECTORY")),
+        )
+        .await
+        .expect("catalogs");
+        assert!(
+            inventory
+                .models
+                .iter()
+                .any(|model| model.slug == var("BIBCODE_OPENCODE_V2_MODEL"))
+        );
+        assert!(
+            inventory
+                .agents
+                .iter()
+                .any(|agent| agent["name"] == "build")
+        );
+        assert!(!inventory.skills.is_empty());
+    }
+
+    /// Starts a real OpenCode 2 binary the way inventory does and reads its catalogs. Set
+    /// `BIBCODE_OPENCODE_V2_BINARY` (a copy under the temporary directory, which the hermetic
+    /// test guard allows), `BIBCODE_OPENCODE_V2_HOME` (a scratch home whose configuration points
+    /// the default model at a scripted local endpoint), `BIBCODE_OPENCODE_V2_DIRECTORY` and
+    /// `BIBCODE_OPENCODE_V2_MODEL`.
+    #[tokio::test]
+    #[ignore = "needs a live OpenCode 2 binary"]
+    async fn live_opencode_2_local_inventory() {
+        let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
+        let home = std::path::PathBuf::from(var("BIBCODE_OPENCODE_V2_HOME"));
+        let environment = [
+            ("HOME", home.clone()),
+            ("XDG_CONFIG_HOME", home.join(".config")),
+            ("XDG_DATA_HOME", home.join(".local/share")),
+            ("XDG_STATE_HOME", home.join(".local/state")),
+            ("XDG_CACHE_HOME", home.join(".cache")),
+        ]
+        .map(|(name, value)| (OsString::from(name), value.into_os_string()));
+        let inventory = probe_local_opencode(
+            Path::new(&var("BIBCODE_OPENCODE_V2_BINARY")),
+            Path::new(&var("BIBCODE_OPENCODE_V2_DIRECTORY")),
+            &[],
+            &environment,
+        )
+        .await
+        .expect("the managed OpenCode 2 server answers its catalogs");
+        assert!(
+            inventory
+                .models
+                .iter()
+                .any(|model| model.slug == var("BIBCODE_OPENCODE_V2_MODEL"))
+        );
+    }
+
+    /// A CLI whose version BiBCode cannot drive is reported without starting its server.
     #[cfg(unix)]
     #[tokio::test]
-    async fn opencode_2_cli_is_reported_unsupported_without_starting_its_server() {
+    async fn an_unknown_opencode_cli_version_is_reported_without_starting_a_server() {
         let root = tempfile::tempdir().expect("inventory root");
         let marker = root.path().join("served");
         let executable = root.path().join("opencode");
         crate::test_support::executable_fixture::write_executable(
             &executable,
             format!(
-                "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'opencode v2.0.29\\n'; exit 0; fi\n: > '{}'\nexit 1\n",
+                "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'opencode v3.0.0\\n'; exit 0; fi\n: > '{}'\nexit 1\n",
                 marker.to_string_lossy()
             ),
         );
@@ -1990,25 +2254,133 @@ mod tests {
         .await;
 
         let snapshot = &providers[0].snapshot;
-        assert_eq!(snapshot["version"], "opencode v2.0.29");
+        assert_eq!(snapshot["version"], "opencode v3.0.0");
         assert_eq!(snapshot["status"], "error");
         assert_eq!(
             snapshot["message"],
-            "OpenCode 2 isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x executable."
+            "This OpenCode version isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x or 2.x executable."
         );
-        assert!(
-            !marker.exists(),
-            "the inventory must not start an OpenCode 2 server"
-        );
+        assert!(!marker.exists(), "no server may be started");
     }
 
+    /// The quick probe reads OpenCode's `--version` too, so a version BiBCode cannot drive never
+    /// reads Ready, while a supported one stays ready.
+    #[cfg(unix)]
     #[tokio::test]
-    async fn opencode_2_server_url_is_reported_unsupported() {
+    async fn the_quick_probe_reports_an_unknown_opencode_version() {
+        for (version, status) in [("opencode v3.0.0", "error"), ("opencode v2.0.29", "ready")] {
+            let root = tempfile::tempdir().expect("inventory root");
+            let executable = root.path().join("opencode");
+            crate::test_support::executable_fixture::write_executable(
+                &executable,
+                format!(
+                    "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '{version}\\n'; exit 0; fi\nexit 1\n"
+                ),
+            );
+            let settings = json!({
+                "enableProviderUpdateChecks": false,
+                "providerInstances": {
+                    "opencode": {
+                        "driver": "opencode",
+                        "enabled": true,
+                        "config": { "binaryPath": executable }
+                    }
+                }
+            });
+
+            let providers = probe(
+                &settings,
+                Some("opencode"),
+                root.path(),
+                &ProviderMaintenance::new(),
+            )
+            .await;
+
+            let snapshot = &providers[0].snapshot;
+            assert_eq!(snapshot["status"], status, "{version}");
+            if status == "error" {
+                assert_eq!(snapshot["version"], version);
+                assert_eq!(
+                    snapshot["message"],
+                    "This OpenCode version isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x or 2.x executable."
+                );
+            }
+        }
+    }
+
+    /// An OpenCode 2 server's catalogs, as captured from 2.0.29, behind its `/api/info`.
+    fn opencode_2_catalog_server() -> axum::Router {
+        opencode_2_catalog_server_with_cold_agents(0)
+    }
+
+    /// As `opencode_2_catalog_server`, but its first `cold` agent lists are empty, as a
+    /// just-started OpenCode 2 server answers before it has loaded its agents.
+    fn opencode_2_catalog_server_with_cold_agents(cold: usize) -> axum::Router {
+        use axum::{extract::OriginalUri, http::HeaderMap, routing::any};
+        let agent_reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let path = format!(
+            "{}/tests/fixtures/opencode-v2/catalog.exchanges.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let exchanges: Value =
+            serde_json::from_str(&std::fs::read_to_string(path).expect("catalog fixture"))
+                .expect("catalog JSON");
+        let app = crate::provider::opencode::server_fixtures::v2("secret");
+        app.route(
+            "/api/{route}",
+            any(move |uri: OriginalUri, headers: HeaderMap| {
+                let exchanges = exchanges.clone();
+                let agent_reads = agent_reads.clone();
+                async move {
+                    let expected = format!(
+                        "Basic {}",
+                        base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            "opencode:secret"
+                        )
+                    );
+                    assert_eq!(headers["authorization"], expected.as_str());
+                    assert!(
+                        uri.0
+                            .query()
+                            .is_some_and(|query| query.starts_with("location%5Bdirectory%5D=")),
+                        "catalogs are read for the session directory: {}",
+                        uri.0
+                    );
+                    let route = uri.0.path().to_owned();
+                    if route == "/api/agent"
+                        && agent_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < cold
+                    {
+                        return Json(json!({ "data": [] }));
+                    }
+                    Json(
+                        exchanges["exchanges"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .find(|exchange| {
+                                exchange["method"] == "GET"
+                                    && exchange["path"].as_str().unwrap().split('?').next()
+                                        == Some(route.as_str())
+                            })
+                            .map(|exchange| exchange["response"].clone())
+                            .unwrap_or_else(|| json!({ "data": [] })),
+                    )
+                }
+            }),
+        )
+    }
+
+    /// A just-started OpenCode 2 server lists no agents for its first ~100 ms (seen on 2.0.29),
+    /// though it always has built-in ones; its catalogs are read again until they are listed.
+    #[tokio::test]
+    async fn a_just_started_opencode_2_server_is_read_again_until_its_agents_load() {
         use crate::provider::opencode::server_fixtures;
-        let (endpoint, server) = server_fixtures::serve(server_fixtures::v2("secret")).await;
         let sandbox = tempfile::tempdir().unwrap();
         let missing =
             crate::test_support::hermetic_providers::missing_provider_executable(sandbox.path());
+        let (endpoint, server) =
+            server_fixtures::serve(opencode_2_catalog_server_with_cold_agents(2)).await;
         let settings = json!({
             "enableProviderUpdateChecks": false,
             "providerInstances": {
@@ -2033,12 +2405,72 @@ mod tests {
         .await;
         server.abort();
 
-        let snapshot = &providers[0].snapshot;
-        assert_eq!(snapshot["status"], "error");
-        assert_eq!(
-            snapshot["message"],
-            "The OpenCode server at Server URL runs 2.0.29, which isn't supported yet. In Settings → Providers, point Server URL at an OpenCode 1.x server."
+        let agents = providers[0].snapshot["agents"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            agents.iter().any(|agent| agent["name"] == "build"),
+            "{agents:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn opencode_server_urls_report_their_catalogs_or_an_unsupported_version() {
+        use crate::provider::opencode::server_fixtures;
+        let sandbox = tempfile::tempdir().unwrap();
+        let missing =
+            crate::test_support::hermetic_providers::missing_provider_executable(sandbox.path());
+        for (app, version) in [
+            (opencode_2_catalog_server(), "2.0.29"),
+            // Answers `/api/info` but none of the catalogs.
+            (server_fixtures::v2("secret"), "2 without catalogs"),
+            (server_fixtures::api_server("secret", "3.0.0"), "3.0.0"),
+        ] {
+            let (endpoint, server) = server_fixtures::serve(app).await;
+            let settings = json!({
+                "enableProviderUpdateChecks": false,
+                "providerInstances": {
+                    "remote": {
+                        "driver": "opencode",
+                        "enabled": true,
+                        "config": {
+                            "binaryPath": missing,
+                            "serverUrl": endpoint,
+                            "serverPassword": "secret"
+                        }
+                    }
+                }
+            });
+
+            let providers = probe_full(
+                &settings,
+                Some("remote"),
+                sandbox.path(),
+                &ProviderMaintenance::new(),
+            )
+            .await;
+            server.abort();
+
+            let snapshot = &providers[0].snapshot;
+            if version == "2.0.29" {
+                assert_eq!(snapshot["status"], "ready");
+                assert!(snapshot.get("message").is_none_or(Value::is_null));
+                assert_eq!(snapshot["models"][0]["slug"], "mock/mock-model");
+                let skills = snapshot["skills"].as_array().expect("skills");
+                assert!(skills.iter().any(|skill| skill["name"] == "report"));
+            } else if version == "2 without catalogs" {
+                assert_eq!(snapshot["installed"], true);
+                assert_eq!(snapshot["status"], "ready");
+                assert_eq!(snapshot["message"], OPENCODE_2_CATALOG_UNREADABLE);
+            } else {
+                assert_eq!(snapshot["status"], "error");
+                assert_eq!(
+                    snapshot["message"],
+                    "The OpenCode server at Server URL runs 3.0.0, which isn't supported yet. In Settings → Providers, point Server URL at an OpenCode 1.x or 2.x server."
+                );
+            }
+        }
     }
 
     #[cfg(unix)]
@@ -2609,16 +3041,21 @@ mod tests {
         let missing =
             crate::test_support::hermetic_providers::missing_provider_executable(sandbox.path());
         let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(6));
-        let app = Router::new().route(
-            "/{*path}",
-            get(move || {
-                let barrier = barrier.clone();
-                async move {
-                    barrier.wait().await;
-                    Json(json!({}))
-                }
-            }),
-        );
+        let app = Router::new()
+            .route(
+                "/global/health",
+                get(|| async { Json(json!({ "healthy": true })) }),
+            )
+            .route(
+                "/{*path}",
+                get(move || {
+                    let barrier = barrier.clone();
+                    async move {
+                        barrier.wait().await;
+                        Json(json!({}))
+                    }
+                }),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind fake OpenCode server");
@@ -2724,15 +3161,23 @@ mod tests {
             None,
             &["custom/model".to_owned()],
             Duration::from_millis(75),
+            opencode::OpenCodeProtocol::V1,
+            Path::new("."),
         )
         .await;
         server.abort();
 
         assert!(inventory.is_none());
         assert!(
-            probe_opencode("http://127.0.0.1:1", None, &[])
-                .await
-                .is_none()
+            probe_opencode(
+                "http://127.0.0.1:1",
+                None,
+                &[],
+                opencode::OpenCodeProtocol::V1,
+                Path::new("."),
+            )
+            .await
+            .is_none()
         );
     }
 

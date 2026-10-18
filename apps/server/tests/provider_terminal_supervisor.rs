@@ -13133,6 +13133,137 @@ async fn opencode_parallel_terminals_have_unique_endpoints_credentials_roots_and
     manager.shutdown().await;
 }
 
+/// OpenCode 2 has no `attach`: its `attach --help` prints the root help, and the observed
+/// terminal opens the owned root with `--server`/`--session`, the password in `OPENCODE_PASSWORD`.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn opencode_2_terminals_open_the_owned_root_with_server_flags() {
+    let root = tempfile::tempdir().expect("OpenCode 2 root");
+    let configured = root.path().join("configured-opencode");
+    std::fs::write(&configured, b"configured").expect("configured OpenCode executable");
+    let helper = Arc::new(OpenCodeFixtureHelperLauncher {
+        endpoints: Mutex::new(VecDeque::from(["http://127.0.0.1:41003".to_owned()])),
+        ..OpenCodeFixtureHelperLauncher::default()
+    });
+    let helper_launches = helper.clone();
+    let remote_state = Arc::new(OpenCodeFixtureRemoteState {
+        root_session_ids: Mutex::new(VecDeque::from(["ses_root".to_owned()])),
+        ..OpenCodeFixtureRemoteState::default()
+    });
+    let probe_runner = Arc::new(OpenCodeProbeFixtureRunner {
+        calls: Mutex::new(Vec::new()),
+        outputs: Mutex::new(VecDeque::from([OpenCodeProbeOutput {
+            success: true,
+            stdout: "USAGE\n  opencode <subcommand> [flags] [<directory>]\n\nFLAGS\n  \
+                     --server string         Connect to a server URL\n  \
+                     --session, -s string    Session ID to continue\n"
+                .to_owned(),
+            stderr: String::new(),
+        }])),
+        delay: std::time::Duration::ZERO,
+    });
+    let database = Database::open_in_memory().await.expect("database");
+    database
+        .call(|connection| {
+            run_migrations(connection, None)?;
+            Ok(())
+        })
+        .await
+        .expect("migrations");
+    let projection = ActivityProjection::new(ActivityRepository::new(database));
+    let mut settings = ProviderSettingsState::default();
+    settings.providers.opencode.binary_path = configured.to_string_lossy().into_owned();
+    let supervisor = ProviderTerminalActivitySupervisor::new(
+        settings.clone(),
+        ProviderTerminalInventory::from_settings(&settings),
+        projection,
+        ProcessAttributionRegistry::new(),
+        root.path().join("runtime"),
+        ProviderTerminalObserverFactories {
+            opencode: Some(Arc::new(OpenCodeTerminalObserverFactory::new(
+                Arc::new(CachedOpenCodeCapabilityProbe::new(probe_runner)),
+                helper,
+                Arc::new(OpenCodeFixtureRemoteFactory {
+                    state: remote_state,
+                }),
+                std::time::Duration::from_secs(1),
+            ))),
+            ..ProviderTerminalObserverFactories::default()
+        },
+    )
+    .expect("OpenCode 2 supervisor");
+    let backend = Arc::new(RecordingBackend::new(Arc::new(Mutex::new(Vec::new()))));
+    let manager = TerminalManager::new(
+        backend.clone(),
+        TerminalManagerOptions {
+            launch_preparer: Some(Arc::new(supervisor)),
+            ..TerminalManagerOptions::default()
+        },
+    );
+    let mut input = TerminalOpenInput::new(
+        "thread-opencode-2",
+        "terminal-opencode-2",
+        root.path().to_path_buf(),
+        80,
+        24,
+    );
+    input.command = Some(TerminalLaunchCommand {
+        executable: configured.to_string_lossy().into_owned(),
+        args: vec!["--model".to_owned(), "mock/mock-model".to_owned()],
+        label: Some("OpenCode".to_owned()),
+        activity: Some(ProviderTerminalActivityLaunch {
+            driver_kind: "opencode".to_owned(),
+            provider_instance_id: "opencode".to_owned(),
+        }),
+        env: None,
+    });
+    manager
+        .open(input)
+        .await
+        .expect("observed OpenCode 2 terminal");
+
+    let spawns = backend.spawns();
+    assert_eq!(spawns.len(), 1);
+    assert_eq!(
+        spawns[0].args,
+        [
+            "--server".to_owned(),
+            "http://127.0.0.1:41003".to_owned(),
+            "--session".to_owned(),
+            "ses_root".to_owned(),
+            root.path().to_string_lossy().into_owned(),
+        ]
+    );
+    let password = spawns[0]
+        .env
+        .get("OPENCODE_PASSWORD")
+        .expect("OpenCode 2 client credential");
+    assert!(
+        !spawns[0]
+            .args
+            .iter()
+            .any(|argument| argument.contains(password))
+    );
+    // OpenCode 2 prefers `OPENCODE_PASSWORD` to `OPENCODE_SERVER_PASSWORD`, so the helper gets
+    // both: one inherited from BiBCode's environment cannot override its own.
+    {
+        let launches = helper_launches
+            .launches
+            .lock()
+            .expect("helper launches lock");
+        assert_eq!(launches[0].env.get("OPENCODE_PASSWORD"), Some(password));
+        assert_eq!(
+            launches[0].env.get("OPENCODE_SERVER_PASSWORD"),
+            Some(password)
+        );
+    }
+    manager
+        .close("thread-opencode-2", Some("terminal-opencode-2"))
+        .await
+        .expect("close terminal");
+    manager.shutdown().await;
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_helper_already_exited_before_prepared_observer_is_rejected() {
@@ -13390,6 +13521,155 @@ async fn opencode_helper_exit_in_manager_gap_falls_back_to_original_pty() {
     manager.shutdown().await;
 }
 
+/// OpenCode 2 has no `--model`, so the requested `opencode --model <model>` would not start. The
+/// server runs it as OpenCode 2 accepts: a private server (`--standalone`) whose configuration
+/// selects the model, also when observation is not prepared. OpenCode 1 keeps `--model`.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn opencode_terminal_arguments_follow_the_installed_major_version() {
+    let fixture = opencode_attach_fixture();
+    let opencode_2_help = "USAGE\n  opencode <subcommand> [flags] [<directory>]\n\nFLAGS\n  \
+                           --standalone            Run with a private server\n  \
+                           --server string         Connect to a server URL\n  \
+                           --session, -s string    Session ID to continue\n";
+    for (help, probe_delay, expected_args, expected_config) in [
+        (
+            opencode_2_help.to_owned(),
+            std::time::Duration::ZERO,
+            vec!["--standalone".to_owned()],
+            serde_json::json!({ "theme": "system", "model": "mock/mock-model" }),
+        ),
+        // A cold capability probe may take most of its 900 ms budget; the native form still
+        // applies.
+        (
+            opencode_2_help.to_owned(),
+            std::time::Duration::from_millis(700),
+            vec!["--standalone".to_owned()],
+            serde_json::json!({ "theme": "system", "model": "mock/mock-model" }),
+        ),
+        (
+            fixture["attachHelp"]
+                .as_str()
+                .expect("OpenCode 1 attach help")
+                .to_owned(),
+            std::time::Duration::ZERO,
+            vec!["--model".to_owned(), "mock/mock-model".to_owned()],
+            serde_json::json!({ "theme": "system" }),
+        ),
+    ] {
+        let root = tempfile::tempdir().expect("OpenCode arguments root");
+        let configured = root.path().join("configured-opencode");
+        std::fs::write(&configured, b"configured").expect("configured OpenCode executable");
+        // The helper fails, so the terminal starts unobserved.
+        let helper = Arc::new(OpenCodeFixtureHelperLauncher {
+            fail: AtomicBool::new(true),
+            ..OpenCodeFixtureHelperLauncher::default()
+        });
+        let runner = Arc::new(OpenCodeProbeFixtureRunner {
+            calls: Mutex::new(Vec::new()),
+            outputs: Mutex::new(VecDeque::from([OpenCodeProbeOutput {
+                success: true,
+                stdout: help,
+                stderr: String::new(),
+            }])),
+            delay: probe_delay,
+        });
+        let factory = Arc::new(OpenCodeTerminalObserverFactory::new(
+            Arc::new(CachedOpenCodeCapabilityProbe::new(runner)),
+            helper,
+            Arc::new(OpenCodeFixtureRemoteFactory {
+                state: Arc::new(OpenCodeFixtureRemoteState::default()),
+            }),
+            std::time::Duration::from_millis(50),
+        ));
+        let database = Database::open_in_memory().await.expect("database");
+        database
+            .call(|connection| {
+                run_migrations(connection, None)?;
+                Ok(())
+            })
+            .await
+            .expect("migrations");
+        let mut settings = ProviderSettingsState::default();
+        settings.providers.opencode.binary_path = configured.to_string_lossy().into_owned();
+        let supervisor = ProviderTerminalActivitySupervisor::new(
+            settings.clone(),
+            ProviderTerminalInventory::from_settings(&settings),
+            ActivityProjection::new(ActivityRepository::new(database)),
+            ProcessAttributionRegistry::new(),
+            root.path().join("runtime"),
+            ProviderTerminalObserverFactories {
+                opencode: Some(factory),
+                ..ProviderTerminalObserverFactories::default()
+            },
+        )
+        .expect("OpenCode arguments supervisor");
+        let backend = Arc::new(RecordingBackend::new(Arc::new(Mutex::new(Vec::new()))));
+        let manager = TerminalManager::new(
+            backend.clone(),
+            TerminalManagerOptions {
+                launch_preparer: Some(Arc::new(supervisor)),
+                ..TerminalManagerOptions::default()
+            },
+        );
+        let mut input = TerminalOpenInput::new(
+            "thread-opencode-arguments",
+            "terminal-opencode-arguments",
+            root.path().to_path_buf(),
+            80,
+            24,
+        );
+        input.env = BTreeMap::from([(
+            "OPENCODE_CONFIG_CONTENT".to_owned(),
+            "{\"theme\":\"system\"}".to_owned(),
+        )]);
+        input.command = Some(TerminalLaunchCommand {
+            executable: configured.to_string_lossy().into_owned(),
+            args: vec!["--model".to_owned(), "mock/mock-model".to_owned()],
+            label: Some("OpenCode".to_owned()),
+            activity: Some(ProviderTerminalActivityLaunch {
+                driver_kind: "opencode".to_owned(),
+                provider_instance_id: "opencode".to_owned(),
+            }),
+            env: Some(BTreeMap::from([(
+                "OPENCODE_CONFIG_CONTENT".to_owned(),
+                "{\"theme\":\"system\"}".to_owned(),
+            )])),
+        });
+        manager
+            .open(input)
+            .await
+            .expect("unobserved OpenCode terminal");
+        let spawn = backend.spawns().pop().expect("OpenCode spawn");
+        assert_eq!(spawn.args, expected_args);
+        // The session keeps the requested command, so a relaunch derives the native form again,
+        // and the published descriptor stays the client's.
+        let summaries = manager.subscribe_metadata().await.initial;
+        let command = summaries[0].command.clone().expect("saved command");
+        assert_eq!(command.args, ["--model", "mock/mock-model"]);
+        assert_eq!(
+            command.env.expect("saved env")["OPENCODE_CONFIG_CONTENT"],
+            "{\"theme\":\"system\"}"
+        );
+        let config: serde_json::Value = serde_json::from_str(
+            spawn
+                .env
+                .get("OPENCODE_CONFIG_CONTENT")
+                .expect("OpenCode config"),
+        )
+        .expect("OpenCode config JSON");
+        assert_eq!(config, expected_config);
+        manager
+            .close(
+                "thread-opencode-arguments",
+                Some("terminal-opencode-arguments"),
+            )
+            .await
+            .expect("close terminal");
+        manager.shutdown().await;
+    }
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn opencode_helper_failure_and_unsafe_args_are_exact_pass_through() {
@@ -13563,6 +13843,133 @@ async fn opencode_helper_failure_and_unsafe_args_are_exact_pass_through() {
         }
         manager.shutdown().await;
     }
+}
+
+/// Observes a terminal of a real OpenCode 2 binary through the production factory: the
+/// capability probe, the authenticated helper, the `/api` client and root correlation. The PTY
+/// itself is recorded, not run. Set `BIBCODE_OPENCODE_V2_BINARY` (a copy under the temporary
+/// directory, which the hermetic test guard allows), `BIBCODE_OPENCODE_V2_HOME` (a scratch home
+/// whose configuration points the default model at a scripted local endpoint) and
+/// `BIBCODE_OPENCODE_V2_MODEL`.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a live OpenCode 2 binary"]
+async fn live_opencode_2_terminal_observation() {
+    let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
+    let binary = var("BIBCODE_OPENCODE_V2_BINARY");
+    let home = std::path::PathBuf::from(var("BIBCODE_OPENCODE_V2_HOME"));
+    let root = tempfile::tempdir().expect("OpenCode 2 terminal root");
+    let database = Database::open_in_memory().await.expect("database");
+    database
+        .call(|connection| {
+            run_migrations(connection, None)?;
+            Ok(())
+        })
+        .await
+        .expect("migrations");
+    let projection = ActivityProjection::new(ActivityRepository::new(database));
+    let mut settings = ProviderSettingsState::default();
+    settings.providers.opencode.binary_path = binary.clone();
+    let supervisor = ProviderTerminalActivitySupervisor::new(
+        settings.clone(),
+        ProviderTerminalInventory::from_settings(&settings),
+        projection.clone(),
+        ProcessAttributionRegistry::new(),
+        root.path().join("runtime"),
+        ProviderTerminalObserverFactories {
+            opencode: Some(Arc::new(OpenCodeTerminalObserverFactory::system())),
+            ..ProviderTerminalObserverFactories::default()
+        },
+    )
+    .expect("OpenCode 2 supervisor");
+    let backend = Arc::new(RecordingBackend::new(Arc::new(Mutex::new(Vec::new()))));
+    let manager = TerminalManager::new(
+        backend.clone(),
+        TerminalManagerOptions {
+            launch_preparer: Some(Arc::new(supervisor)),
+            ..TerminalManagerOptions::default()
+        },
+    );
+    let mut input = TerminalOpenInput::new(
+        "thread-live-opencode-2",
+        "terminal-live-opencode-2",
+        root.path().to_path_buf(),
+        80,
+        24,
+    );
+    input.env = [
+        ("HOME", home.clone()),
+        ("XDG_CONFIG_HOME", home.join(".config")),
+        ("XDG_DATA_HOME", home.join(".local/share")),
+        ("XDG_STATE_HOME", home.join(".local/state")),
+        ("XDG_CACHE_HOME", home.join(".cache")),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_owned(), value.to_string_lossy().into_owned()))
+    .collect();
+    input.command = Some(TerminalLaunchCommand {
+        executable: binary,
+        args: vec!["--model".to_owned(), var("BIBCODE_OPENCODE_V2_MODEL")],
+        label: Some("OpenCode".to_owned()),
+        activity: Some(ProviderTerminalActivityLaunch {
+            driver_kind: "opencode".to_owned(),
+            provider_instance_id: "opencode".to_owned(),
+        }),
+        env: None,
+    });
+    let started = std::time::Instant::now();
+    manager.open(input).await.expect("OpenCode 2 terminal");
+    let elapsed = started.elapsed();
+
+    let spawn = backend.spawns().pop().expect("OpenCode 2 PTY spawn");
+    assert_eq!(
+        spawn.args.first().map(String::as_str),
+        Some("--server"),
+        "observed launch (preparation took {elapsed:?})"
+    );
+    assert_eq!(spawn.args.get(2).map(String::as_str), Some("--session"));
+    assert!(spawn.env.contains_key("OPENCODE_PASSWORD"));
+    let endpoint = spawn.args[1].clone();
+    let scope = ActivityScopeRef::Terminal {
+        thread_id: "thread-live-opencode-2".to_owned(),
+        terminal_id: "terminal-live-opencode-2".to_owned(),
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if projection
+                .snapshot(&scope)
+                .await
+                .is_ok_and(|snapshot| snapshot.capabilities.terminal_observation)
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("OpenCode 2 root correlation");
+    manager
+        .close("thread-live-opencode-2", Some("terminal-live-opencode-2"))
+        .await
+        .expect("close terminal");
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if tokio::net::TcpStream::connect(
+                endpoint
+                    .strip_prefix("http://")
+                    .expect("loopback OpenCode endpoint"),
+            )
+            .await
+            .is_err()
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("owned OpenCode 2 helper reaped on terminal close");
+    manager.shutdown().await;
 }
 
 #[cfg(all(unix, target_os = "macos"))]

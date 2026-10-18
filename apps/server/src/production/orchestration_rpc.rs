@@ -3098,6 +3098,7 @@ mod tests {
         fn rollback(
             &self,
             _turn_count: i64,
+            _rewind_key: String,
         ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
             Box::pin(async { Ok(()) })
         }

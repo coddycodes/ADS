@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc, Mutex as StdMutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -40,6 +40,8 @@ use super::{
         parse_model_slug,
     },
     sse::OpenCodeSseDecoder,
+    v2::{self, FormField, V2Output, V2TurnTranslator},
+    v2_activity::{self, V2ActivityNormalizer},
 };
 
 const PROVIDER: &str = "opencode";
@@ -48,6 +50,17 @@ const RECONCILIATION_HINT_CAPACITY: usize = 1;
 const RECONCILIATION_DEBOUNCE: Duration = Duration::from_millis(250);
 const RECONCILIATION_DEFERRED_DELAY: Duration = Duration::from_millis(10);
 const RECONCILIATION_TIMEOUT: Duration = Duration::from_secs(5);
+/// Bounds each request of an OpenCode 2 rewind, which the provider supervisor awaits.
+const REWIND_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Bounds the whole history scan that finds a rewind's target, however many pages it reads.
+const REWIND_SCAN_TIMEOUT: Duration = Duration::from_secs(30);
+/// Shown while a rewind's outcome is unknown; reverting again settles it.
+const UNFINISHED_REVERT: &str =
+    "A checkpoint revert didn't finish. Revert to that checkpoint again to finish it.";
+/// OpenCode 2's largest message-list page.
+const MESSAGE_PAGE_LIMIT: usize = 200;
+/// Bounds the OpenCode 2 skill and command reads that route a slash invocation.
+const SLASH_CATALOG_TIMEOUT: Duration = Duration::from_secs(5);
 const RECONCILIATION_RETRY_MIN: Duration = Duration::from_millis(100);
 const RECONCILIATION_RETRY_MAX: Duration = Duration::from_secs(2);
 const RECONCILIATION_CHILD_LIMIT: usize = 50;
@@ -134,6 +147,98 @@ pub enum OpenCodeRuntimeError {
     UnknownPermission(String),
     #[error("Session is not started")]
     MissingSession,
+    /// A request failed before the turn itself was submitted, so it was not sent.
+    #[error("OpenCode request failed before the turn was sent: {0}")]
+    NotSent(String),
+    /// OpenCode answered the turn's own request with a 4xx, so it did not accept the turn.
+    #[error("OpenCode refused this message: {0}")]
+    RequestRefused(String),
+    /// OpenCode answered the turn's own request with 408 or 429: it did not accept the turn, and
+    /// it may be sent again, after `retry_after` when OpenCode named it.
+    #[error("OpenCode could not take this message yet: {detail}")]
+    RetryLater {
+        detail: String,
+        retry_after: Option<Duration>,
+    },
+}
+
+async fn within_rewind_deadline<T>(
+    request: impl std::future::Future<Output = Result<T, OpenCodeRuntimeError>>,
+) -> Result<T, OpenCodeRuntimeError> {
+    tokio::time::timeout(REWIND_REQUEST_TIMEOUT, request)
+        .await
+        .unwrap_or_else(|_| {
+            Err(OpenCodeRuntimeError::Http(
+                "OpenCode did not answer in time".to_owned(),
+            ))
+        })
+}
+
+/// A failed HTTP request made before the turn's own request did not send the turn.
+fn not_sent(error: OpenCodeRuntimeError) -> OpenCodeRuntimeError {
+    match error {
+        OpenCodeRuntimeError::Http(detail) => OpenCodeRuntimeError::NotSent(detail),
+        error => error,
+    }
+}
+
+/// The turn's own request failed in transport: one whose connection never opened was not sent,
+/// and any later failure may have followed acceptance.
+fn turn_transport_error(error: reqwest::Error) -> OpenCodeRuntimeError {
+    if error.is_connect() {
+        OpenCodeRuntimeError::NotSent(error.to_string())
+    } else {
+        OpenCodeRuntimeError::Http(error.to_string())
+    }
+}
+
+/// The turn's own request was answered with an error. A 408 or 429 was not accepted and may be
+/// sent again; any other 4xx is a refusal; a server or gateway error may have followed acceptance.
+fn turn_status_error(response: &reqwest::Response, request: &str) -> OpenCodeRuntimeError {
+    let status = response.status();
+    let detail = format!("{request} returned HTTP {status}");
+    if matches!(
+        status,
+        reqwest::StatusCode::REQUEST_TIMEOUT | reqwest::StatusCode::TOO_MANY_REQUESTS
+    ) {
+        OpenCodeRuntimeError::RetryLater {
+            detail,
+            retry_after: retry_after(response.headers()),
+        }
+    } else if status.is_client_error() {
+        OpenCodeRuntimeError::RequestRefused(detail)
+    } else {
+        OpenCodeRuntimeError::Http(detail)
+    }
+}
+
+/// A `Retry-After` header, in seconds or as an HTTP date.
+fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let value = headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim();
+    value
+        .parse::<u64>()
+        .map(Duration::from_secs)
+        .ok()
+        .or_else(|| {
+            httpdate::parse_http_date(value)
+                .ok()?
+                .duration_since(std::time::SystemTime::now())
+                .ok()
+        })
+}
+
+/// Whether OpenCode never accepted the turn's own request.
+fn turn_was_not_accepted(error: &OpenCodeRuntimeError) -> bool {
+    matches!(
+        error,
+        OpenCodeRuntimeError::NotSent(_)
+            | OpenCodeRuntimeError::RequestRefused(_)
+            | OpenCodeRuntimeError::RetryLater { .. }
+    )
 }
 
 impl OptionRefusal for OpenCodeRuntimeError {
@@ -187,6 +292,104 @@ struct RuntimeInner {
     activity_flush_gate: Mutex<()>,
     owner_state: Arc<RuntimeOwnerState>,
     activity: Mutex<OpenCodeRuntimeActivityState>,
+    /// The server speaks the OpenCode 2 `/api/*` wire. Set once, before `start` or `resume`.
+    protocol_v2: AtomicBool,
+    v2: Mutex<V2State>,
+    /// Serializes OpenCode 2 rewinds with the settling a prompt does first, so each unsettled
+    /// revert is accounted for once.
+    v2_rewind: Mutex<()>,
+}
+
+/// OpenCode 2 session state: the root-turn translator, the asks waiting for an answer (keyed by
+/// request or form id, with the turn and the session that asked), and the model and agent last
+/// sent to the session.
+#[derive(Default)]
+struct V2State {
+    translator: Option<V2TurnTranslator>,
+    normalizer: V2ActivityNormalizer,
+    permissions: HashMap<String, (Option<String>, String)>,
+    forms: HashMap<String, V2PendingForm>,
+    /// Asks BiBCode is replying to: OpenCode's own settlement of them is left to the reply, so
+    /// the resolution carries BiBCode's decision and is reported once.
+    answering: HashSet<String>,
+    /// Asks OpenCode settled while BiBCode's reply was in flight: the reply succeeded even if its
+    /// HTTP response was lost.
+    settled_while_answering: HashSet<String>,
+    synced_model: Option<(String, String, Option<String>)>,
+    synced_agent: bool,
+    /// The runtime mode whose permission rules the session has.
+    synced_runtime_mode: Option<String>,
+    /// A resumed session checks for a running execution once its event stream is connected, so
+    /// the execution's end cannot slip between the check and the subscription.
+    adopt_on_connect: bool,
+    /// The progress of a checkpoint rewind that has not reported success, counted from BiBCode's
+    /// unchanged transcript. See `v2_rollback`.
+    rewind: V2RewindProgress,
+    /// The last rewind that reported success, as kept with the session: a retry of it (same key,
+    /// from a BiBCode transcript that did not record its completion) drops nothing more.
+    finished_rewind: Option<V2RewindProgress>,
+}
+
+#[derive(Clone, Default, Eq, PartialEq)]
+struct V2RewindProgress {
+    /// The checkpoint revert's idempotency key: the BiBCode transcript the turns are counted
+    /// from. A rewind with another key starts afresh.
+    key: Option<String>,
+    /// Turns OpenCode is known to have dropped.
+    dropped: usize,
+    /// A revert whose outcome is unknown: the turns it drops and the user message it staged at.
+    unsettled: Option<(usize, String)>,
+    /// The rewind reported success.
+    finished: bool,
+}
+
+impl V2RewindProgress {
+    fn for_key(key: &str) -> Self {
+        Self {
+            key: Some(key.to_owned()),
+            ..Self::default()
+        }
+    }
+
+    /// Turns dropped, or a revert in doubt, that BiBCode's transcript does not show yet.
+    fn is_unfinished(&self) -> bool {
+        !self.finished && (self.dropped > 0 || self.unsettled.is_some())
+    }
+
+    /// The progress as kept in the OpenCode 2 session's metadata (`bibcode.rewind`).
+    fn to_json(&self) -> Value {
+        let mut record = json!({ "key": self.key, "dropped": self.dropped });
+        if let Some((turns, target)) = &self.unsettled {
+            record["unsettled"] = json!({ "turns": turns, "target": target });
+        }
+        if self.finished {
+            record["finished"] = json!(true);
+        }
+        record
+    }
+
+    fn from_json(record: &Value) -> Option<Self> {
+        let dropped = usize::try_from(record.get("dropped")?.as_u64()?).ok()?;
+        let unsettled = match record.get("unsettled") {
+            None | Some(Value::Null) => None,
+            Some(unsettled) => Some((
+                usize::try_from(unsettled.get("turns")?.as_u64()?).ok()?,
+                unsettled.get("target")?.as_str()?.to_owned(),
+            )),
+        };
+        Some(Self {
+            key: record.get("key").and_then(Value::as_str).map(str::to_owned),
+            dropped,
+            unsettled,
+            finished: record.get("finished").and_then(Value::as_bool) == Some(true),
+        })
+    }
+}
+
+struct V2PendingForm {
+    turn_id: Option<String>,
+    session_id: String,
+    fields: Vec<FormField>,
 }
 
 struct RuntimeOwnerState {
@@ -538,6 +741,9 @@ impl OpenCodeSessionRuntime {
                     history_cursors: HashMap::new(),
                     capabilities: ActivityCapabilities::none(),
                 }),
+                protocol_v2: AtomicBool::new(false),
+                v2: Mutex::new(V2State::default()),
+                v2_rewind: Mutex::new(()),
             }),
         };
         runtime.start_reconciliation_worker(reconciliation_hint_rx);
@@ -591,7 +797,97 @@ impl OpenCodeSessionRuntime {
         }
     }
 
+    /// Speak the OpenCode 2 `/api/*` wire. Call before `start` or `resume`.
+    pub(crate) fn use_v2_api(&self) {
+        self.inner.protocol_v2.store(true, Ordering::SeqCst);
+    }
+
+    fn is_v2(&self) -> bool {
+        self.inner.protocol_v2.load(Ordering::SeqCst)
+    }
+
     pub async fn start(&self) -> Result<String, OpenCodeRuntimeError> {
+        let session_id = if self.is_v2() {
+            self.v2_create_session().await?
+        } else {
+            self.v1_create_session().await?
+        };
+        self.started(&session_id, json!({})).await?;
+        Ok(session_id)
+    }
+
+    async fn started(&self, session_id: &str, payload: Value) -> Result<(), OpenCodeRuntimeError> {
+        *self.inner.session_id.lock().await = Some(session_id.to_owned());
+        if self.is_v2() {
+            let mut v2 = self.inner.v2.lock().await;
+            v2.translator = Some(V2TurnTranslator::new(session_id));
+            v2.normalizer = V2ActivityNormalizer::default();
+            v2.permissions.clear();
+            v2.forms.clear();
+            v2.answering.clear();
+            v2.settled_while_answering.clear();
+        }
+        let resumed_v2 = self.is_v2() && payload.get("resumed").is_some();
+        if resumed_v2 {
+            self.v2_restore_pending_asks(session_id).await;
+        }
+        self.reset_activity_root(session_id).await;
+        self.emit("session.started", None, None, payload).await;
+        self.emit("thread.started", None, None, json!({})).await;
+        if resumed_v2 {
+            self.inner.v2.lock().await.adopt_on_connect = true;
+        }
+        self.start_event_pump().await?;
+        self.request_reconciliation(true, None, true).await;
+        Ok(())
+    }
+
+    async fn v2_create_session(&self) -> Result<String, OpenCodeRuntimeError> {
+        let runtime_mode = self.inner.runtime_mode.lock().await.clone();
+        let model = self.inner.model.lock().await.clone();
+        let variant = self.inner.selected_variant.lock().await.clone();
+        let body = v2::session_create_body(
+            &format!("BiBCode {}", self.inner.thread_id),
+            &self.inner.directory,
+            &runtime_mode,
+            self.inner.agent.as_deref(),
+            model.as_ref().map(|(provider_id, model_id)| {
+                v2::model_ref(provider_id, model_id, variant.as_deref())
+            }),
+        );
+        let response = self
+            .inner
+            .client
+            .post(self.v2_url(&["session"], false)?)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(OpenCodeRuntimeError::Http(format!(
+                "session.create returned HTTP {}",
+                response.status()
+            )));
+        }
+        let value = response
+            .json::<Value>()
+            .await
+            .map_err(|error| OpenCodeRuntimeError::InvalidResponse(error.to_string()))?;
+        let session_id = value
+            .pointer("/data/id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                OpenCodeRuntimeError::InvalidResponse("session.create missing id".to_owned())
+            })?
+            .to_owned();
+        let mut v2 = self.inner.v2.lock().await;
+        v2.synced_model = model.map(|(provider_id, model_id)| (provider_id, model_id, variant));
+        v2.synced_agent = true;
+        v2.synced_runtime_mode = Some(runtime_mode);
+        Ok(session_id)
+    }
+
+    async fn v1_create_session(&self) -> Result<String, OpenCodeRuntimeError> {
         let permission = build_permission_rules(&self.inner.runtime_mode.lock().await);
         let response = self
             .inner
@@ -616,12 +912,6 @@ impl OpenCodeSessionRuntime {
                 OpenCodeRuntimeError::InvalidResponse("session.create missing id".to_owned())
             })?
             .to_owned();
-        *self.inner.session_id.lock().await = Some(session_id.clone());
-        self.reset_activity_root(&session_id).await;
-        self.emit("session.started", None, None, json!({})).await;
-        self.emit("thread.started", None, None, json!({})).await;
-        self.start_event_pump().await?;
-        self.request_reconciliation(true, None, true).await;
         Ok(session_id)
     }
 
@@ -630,10 +920,15 @@ impl OpenCodeSessionRuntime {
         if session_id.is_empty() {
             return Err(OpenCodeRuntimeError::MissingSession);
         }
+        let url = if self.is_v2() {
+            self.v2_url(&["session", session_id], false)?
+        } else {
+            self.request_url(&format!("/session/{session_id}"))?
+        };
         let response = self
             .inner
             .client
-            .get(self.request_url(&format!("/session/{session_id}"))?)
+            .get(url)
             .send()
             .await
             .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
@@ -648,13 +943,43 @@ impl OpenCodeSessionRuntime {
                 response.status()
             )));
         }
-        *self.inner.session_id.lock().await = Some(session_id.to_owned());
-        self.reset_activity_root(session_id).await;
-        self.emit("session.started", None, None, json!({ "resumed": true }))
-            .await;
-        self.emit("thread.started", None, None, json!({})).await;
-        self.start_event_pump().await?;
-        self.request_reconciliation(true, None, true).await;
+        if self.is_v2() {
+            // A stage left by a rewind that did not finish would commit with the next prompt.
+            let session = response
+                .json::<Value>()
+                .await
+                .map_err(|error| OpenCodeRuntimeError::InvalidResponse(error.to_string()))?;
+            if session
+                .pointer("/data/revert")
+                .is_some_and(|revert| !revert.is_null())
+            {
+                within_rewind_deadline(self.v2_clear_revert(session_id)).await?;
+            }
+            // A checkpoint rewind that had not reported success when the runtime went away
+            // continues from the progress kept with the session.
+            if let Some(progress) = session
+                .pointer("/data/metadata/bibcode/rewind")
+                .and_then(V2RewindProgress::from_json)
+            {
+                let mut v2 = self.inner.v2.lock().await;
+                if progress.finished {
+                    v2.finished_rewind = Some(progress);
+                } else {
+                    v2.rewind = progress;
+                }
+            }
+            // The resumed session keeps the model, agent and permission rules it had. A runtime
+            // mode change relaunches with a resume, and OpenCode may keep working on its own, so
+            // the permission rules apply now; the model and agent go with the next prompt.
+            {
+                let mut v2 = self.inner.v2.lock().await;
+                v2.synced_model = None;
+                v2.synced_agent = false;
+                v2.synced_runtime_mode = None;
+            }
+            self.v2_sync_permissions(session_id).await?;
+        }
+        self.started(session_id, json!({ "resumed": true })).await?;
         Ok(session_id.to_owned())
     }
 
@@ -664,6 +989,31 @@ impl OpenCodeSessionRuntime {
         url: &str,
         authorization_header: &str,
     ) -> Result<(), OpenCodeRuntimeError> {
+        if self.is_v2() {
+            // OpenCode 2 registers MCP servers only on an experimental route.
+            let response = self
+                .inner
+                .client
+                .put(self.v2_url(&["experimental", "mcp", name], true)?)
+                .json(&json!({
+                    "config": {
+                        "type": "remote",
+                        "url": url,
+                        "headers": { "Authorization": authorization_header },
+                        "oauth": false,
+                    }
+                }))
+                .send()
+                .await
+                .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
+            if !response.status().is_success() {
+                return Err(OpenCodeRuntimeError::Http(format!(
+                    "OpenCode MCP registration returned HTTP {}",
+                    response.status()
+                )));
+            }
+            return Ok(());
+        }
         let mut endpoint = Url::parse(&format!("{}/mcp", self.inner.base_url))
             .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
         endpoint
@@ -701,13 +1051,55 @@ impl OpenCodeSessionRuntime {
         message_id: Option<&str>,
     ) -> Result<String, OpenCodeRuntimeError> {
         let session_id = self.session_id().await?;
+        if self.is_v2() {
+            let message_id = message_id.map(v2::message_id);
+            // The checks run before the turn is announced: when one fails nothing was sent, and
+            // a started turn would wait for a completion that never comes.
+            let mut body = v2::prompt_body(text, &attachments, message_id.as_deref());
+            self.v2_settle_rewind_before_prompt(&session_id).await?;
+            self.v2_sync_selection(&session_id)
+                .await
+                .map_err(not_sent)?;
+            // A slash skill with attachments arrives here rather than as a command.
+            if let Some((name, rest)) = text.and_then(crate::provider::parse_provider_command)
+                && self.v2_is_skill(name).await?
+            {
+                body = v2::prompt_body(Some(rest), &attachments, message_id.as_deref());
+                body["skills"] = json!([{ "id": name }]);
+            }
+            let turn_id = self.begin_turn().await;
+            let result = async {
+                let response = self
+                    .inner
+                    .client
+                    .post(self.v2_url(&["session", &session_id, "prompt"], false)?)
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(turn_transport_error)?;
+                if !response.status().is_success() {
+                    return Err(turn_status_error(&response, "prompt"));
+                }
+                Ok(())
+            }
+            .await;
+            if let Err(error) = result {
+                // Only a request OpenCode never accepted settles the turn now; one it may have
+                // accepted keeps its turn, which OpenCode's own events end.
+                if turn_was_not_accepted(&error) {
+                    self.settle_unsent_turn(turn_id).await;
+                }
+                return Err(error);
+            }
+            return Ok(turn_id);
+        }
         let turn_id = self.begin_turn().await;
         let mut body = json!({
             "sessionID": session_id,
             "parts": crate::provider::attachments::prompt_parts(text, attachments),
         });
         if let Some(message_id) = message_id {
-            body["messageID"] = json!(message_id);
+            body["messageID"] = json!(v2::message_id(message_id));
         }
         if let Some((provider_id, model_id)) = self.inner.model.lock().await.as_ref() {
             body["model"] = json!({
@@ -721,34 +1113,69 @@ impl OpenCodeSessionRuntime {
         if let Some(agent) = self.inner.agent.as_ref() {
             body["agent"] = json!(agent);
         }
-        let response = self
-            .inner
-            .client
-            .post(self.request_url(&format!("/session/{session_id}/prompt_async"))?)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
-        if !response.status().is_success() {
-            *self.inner.active_turn_id.lock().await = None;
-            return Err(OpenCodeRuntimeError::Http(format!(
-                "prompt_async returned HTTP {}",
-                response.status()
-            )));
+        let result = async {
+            let response = self
+                .inner
+                .client
+                .post(self.request_url(&format!("/session/{session_id}/prompt_async"))?)
+                .json(&body)
+                .send()
+                .await
+                .map_err(turn_transport_error)?;
+            if !response.status().is_success() {
+                return Err(turn_status_error(&response, "prompt_async"));
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(error) = result {
+            // Only a request OpenCode never accepted settles the turn now; one it may have
+            // accepted keeps its turn, which OpenCode's own events end.
+            if turn_was_not_accepted(&error) {
+                self.settle_unsent_turn(turn_id).await;
+            }
+            return Err(error);
         }
         Ok(turn_id)
     }
 
     pub async fn message_exists(&self, message_id: &str) -> Result<bool, OpenCodeRuntimeError> {
         let session_id = self.session_id().await?;
+        if self.is_v2() {
+            return self
+                .v2_user_message_exists(&session_id, &v2::message_id(message_id))
+                .await;
+        }
+        // Deliveries are sent under the key's `msg_` id. One sent before that carried the raw key
+        // (OpenCode accepted it before 1.18), so a delivery found under either form exists.
+        let derived = v2::message_id(message_id);
+        if self.v1_user_message_exists(&session_id, &derived).await? {
+            return Ok(true);
+        }
+        if derived == message_id {
+            return Ok(false);
+        }
+        self.v1_user_message_exists(&session_id, message_id).await
+    }
+
+    /// Whether an OpenCode 1 session has the user message `message_id`. A refused id (HTTP 400:
+    /// OpenCode 1.18 and later accept only `msg` ids) cannot name a message there.
+    async fn v1_user_message_exists(
+        &self,
+        session_id: &str,
+        message_id: &str,
+    ) -> Result<bool, OpenCodeRuntimeError> {
         let response = self
             .inner
             .client
-            .get(self.session_request_url(&session_id, &["message", message_id])?)
+            .get(self.session_request_url(session_id, &["message", message_id])?)
             .send()
             .await
             .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
+        if response.status() == reqwest::StatusCode::NOT_FOUND
+            || (response.status() == reqwest::StatusCode::BAD_REQUEST
+                && !message_id.starts_with("msg"))
+        {
             return Ok(false);
         }
         if !response.status().is_success() {
@@ -770,7 +1197,7 @@ impl OpenCodeSessionRuntime {
                 )
             })?;
         if info.get("id").and_then(Value::as_str) != Some(message_id)
-            || info.get("sessionID").and_then(Value::as_str) != Some(session_id.as_str())
+            || info.get("sessionID").and_then(Value::as_str) != Some(session_id)
             || info.get("role").and_then(Value::as_str) != Some("user")
             || value.get("parts").and_then(Value::as_array).is_none()
         {
@@ -794,13 +1221,62 @@ impl OpenCodeSessionRuntime {
                 "command name cannot be empty".to_owned(),
             ));
         }
+        if self.is_v2() {
+            // OpenCode 2 takes no message id for a command, so a command's delivery cannot be
+            // looked up exactly afterwards: if BiBCode stops between OpenCode accepting the
+            // command and recording the delivery, restart recovery finds no message and sends
+            // it again. The window is that of one database write.
+            // The checks run before the turn is announced: when one fails nothing was sent.
+            self.v2_settle_rewind_before_prompt(&session_id).await?;
+            self.v2_sync_selection(&session_id)
+                .await
+                .map_err(not_sent)?;
+            // OpenCode 2 skills are not commands: a slash skill is a prompt that attaches the
+            // skill (and, unlike a command, takes a message id, so it is looked up exactly).
+            let (route, body) = if self.v2_is_skill(command).await? {
+                let mut body = v2::prompt_body(
+                    Some(arguments.trim()),
+                    &[],
+                    message_id.map(v2::message_id).as_deref(),
+                );
+                body["skills"] = json!([{ "id": command }]);
+                ("prompt", body)
+            } else {
+                ("command", v2::command_body(command, arguments.trim()))
+            };
+            let turn_id = self.begin_turn().await;
+            let result = async {
+                let response = self
+                    .inner
+                    .client
+                    .post(self.v2_url(&["session", &session_id, route], false)?)
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(turn_transport_error)?;
+                if !response.status().is_success() {
+                    return Err(turn_status_error(&response, "command"));
+                }
+                Ok(())
+            }
+            .await;
+            if let Err(error) = result {
+                // Only a request OpenCode never accepted settles the turn now; one it may have
+                // accepted keeps its turn, which OpenCode's own events end.
+                if turn_was_not_accepted(&error) {
+                    self.settle_unsent_turn(turn_id).await;
+                }
+                return Err(error);
+            }
+            return Ok(turn_id);
+        }
         let turn_id = self.begin_turn().await;
         let mut body = json!({
             "command": command,
             "arguments": arguments.trim(),
         });
         if let Some(message_id) = message_id {
-            body["messageID"] = json!(message_id);
+            body["messageID"] = json!(v2::message_id(message_id));
         }
         if let Some(agent) = self.inner.agent.as_ref() {
             body["agent"] = json!(agent);
@@ -811,20 +1287,28 @@ impl OpenCodeSessionRuntime {
         if let Some(variant) = self.inner.selected_variant.lock().await.clone() {
             body["variant"] = Value::String(variant);
         }
-        let response = self
-            .inner
-            .client
-            .post(self.request_url(&format!("/session/{session_id}/command"))?)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
-        if !response.status().is_success() {
-            *self.inner.active_turn_id.lock().await = None;
-            return Err(OpenCodeRuntimeError::Http(format!(
-                "command returned HTTP {}",
-                response.status()
-            )));
+        let result = async {
+            let response = self
+                .inner
+                .client
+                .post(self.request_url(&format!("/session/{session_id}/command"))?)
+                .json(&body)
+                .send()
+                .await
+                .map_err(turn_transport_error)?;
+            if !response.status().is_success() {
+                return Err(turn_status_error(&response, "command"));
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(error) = result {
+            // Only a request OpenCode never accepted settles the turn now; one it may have
+            // accepted keeps its turn, which OpenCode's own events end.
+            if turn_was_not_accepted(&error) {
+                self.settle_unsent_turn(turn_id).await;
+            }
+            return Err(error);
         }
         Ok(turn_id)
     }
@@ -948,6 +1432,32 @@ impl OpenCodeSessionRuntime {
                 options_need_model_refusal(),
             )
         })?;
+        if self.is_v2() {
+            let response = self
+                .inner
+                .client
+                .get(self.v2_url(&["model"], true)?)
+                .send()
+                .await
+                .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
+            if !response.status().is_success() {
+                return Err(OpenCodeRuntimeError::Http(format!(
+                    "model inventory returned HTTP {}",
+                    response.status()
+                )));
+            }
+            let models = response
+                .json::<Value>()
+                .await
+                .map_err(|error| OpenCodeRuntimeError::InvalidResponse(error.to_string()))?;
+            let variants =
+                v2::model_variants(&models, &provider_id, &model_id).ok_or_else(|| {
+                    OpenCodeRuntimeError::InvalidResponse(
+                        "selected model has no advertised variants".to_owned(),
+                    )
+                })?;
+            return Ok((provider_id, variants));
+        }
         let response = self
             .inner
             .client
@@ -985,13 +1495,47 @@ impl OpenCodeSessionRuntime {
         Ok((provider_id, variants))
     }
 
+    /// Settles a turn announced for a request that failed. The turn is announced before its
+    /// request because OpenCode can stream the execution's first events before the request
+    /// returns, and they belong to it; when the request fails, the start would otherwise wait for
+    /// a completion that never comes (and the supervisor's idle deadline with it). It settles as
+    /// cancelled, not failed: the delivery reports the failure and retries or resolves it.
+    async fn settle_unsent_turn(&self, turn_id: String) {
+        // The completion is published while the turn is still held, so a turn OpenCode starts
+        // next (seen once it is cleared) cannot be announced before this one has ended.
+        let mut active = self.inner.active_turn_id.lock().await;
+        if active.as_deref() != Some(turn_id.as_str()) {
+            // OpenCode already settled it (its own events ended the turn).
+            return;
+        }
+        self.emit(
+            "turn.completed",
+            Some(turn_id),
+            None,
+            json!({ "state": "cancelled", "stopReason": "not_sent" }),
+        )
+        .await;
+        *active = None;
+    }
+
     async fn begin_turn(&self) -> String {
+        self.begin_turn_with(json!({})).await
+    }
+
+    /// A turn OpenCode started on its own. It is marked so the supervisor projects it running:
+    /// BiBCode's own turns are announced before they are sent, and a send can still fail.
+    async fn begin_provider_started_turn(&self) -> String {
+        self.begin_turn_with(json!({ "providerStarted": true }))
+            .await
+    }
+
+    async fn begin_turn_with(&self, payload: Value) -> String {
         let turn_id = format!("turn-{}", Uuid::new_v4());
         *self.inner.active_user_message_id.lock().await = None;
         self.inner.assistant_message_ids.lock().await.clear();
         self.inner.assistant_text.lock().await.clear();
         *self.inner.active_turn_id.lock().await = Some(turn_id.clone());
-        self.emit("turn.started", Some(turn_id.clone()), None, json!({}))
+        self.emit("turn.started", Some(turn_id.clone()), None, payload)
             .await;
         turn_id
     }
@@ -1005,6 +1549,61 @@ impl OpenCodeSessionRuntime {
         request_id: &str,
         decision: &str,
     ) -> Result<(), OpenCodeRuntimeError> {
+        if self.is_v2() {
+            // The ask stays pending until OpenCode accepts the reply, so a failed reply can be
+            // retried.
+            let session_id = {
+                let mut v2 = self.inner.v2.lock().await;
+                let (_, session_id) = v2.permissions.get(request_id).cloned().ok_or_else(|| {
+                    OpenCodeRuntimeError::UnknownPermission(request_id.to_owned())
+                })?;
+                v2.answering.insert(request_id.to_owned());
+                session_id
+            };
+            let sent = async {
+                let response = self
+                    .inner
+                    .client
+                    .post(self.v2_url(
+                        &["session", &session_id, "permission", request_id, "reply"],
+                        false,
+                    )?)
+                    .json(&json!({ "decision": v2::permission_decision(decision) }))
+                    .send()
+                    .await
+                    .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
+                if !response.status().is_success() {
+                    return Err(OpenCodeRuntimeError::Http(format!(
+                        "permission reply returned HTTP {}",
+                        response.status()
+                    )));
+                }
+                Ok(())
+            }
+            .await;
+            let pending = {
+                let mut v2 = self.inner.v2.lock().await;
+                v2.answering.remove(request_id);
+                if !v2.settled_while_answering.remove(request_id) {
+                    sent?;
+                }
+                v2.permissions.remove(request_id)
+            };
+            let Some((turn_id, _)) = pending else {
+                return Ok(());
+            };
+            self.emit(
+                "request.resolved",
+                turn_id,
+                Some(request_id.to_owned()),
+                json!({
+                    "requestType": "exec_command_approval",
+                    "decision": decision,
+                }),
+            )
+            .await;
+            return Ok(());
+        }
         let turn_id = self
             .inner
             .pending_permissions
@@ -1046,6 +1645,22 @@ impl OpenCodeSessionRuntime {
 
     pub async fn interrupt_turn(&self) -> Result<(), OpenCodeRuntimeError> {
         let session_id = self.session_id().await?;
+        if self.is_v2() {
+            let response = self
+                .inner
+                .client
+                .post(self.v2_url(&["session", &session_id, "interrupt"], false)?)
+                .send()
+                .await
+                .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
+            if !response.status().is_success() {
+                return Err(OpenCodeRuntimeError::Http(format!(
+                    "interrupt returned HTTP {}",
+                    response.status()
+                )));
+            }
+            return Ok(());
+        }
         self.inner
             .client
             .post(self.request_url(&format!("/session/{session_id}/abort"))?)
@@ -1060,6 +1675,63 @@ impl OpenCodeSessionRuntime {
         request_id: &str,
         answers: Value,
     ) -> Result<(), OpenCodeRuntimeError> {
+        if self.is_v2() {
+            // The form stays pending until OpenCode accepts the answer, so a failed reply can be
+            // retried.
+            let (session_id, answer) = {
+                let mut v2 = self.inner.v2.lock().await;
+                let form = v2
+                    .forms
+                    .get(request_id)
+                    .ok_or_else(|| OpenCodeRuntimeError::UnknownQuestion(request_id.to_owned()))?;
+                let pending = (
+                    form.session_id.clone(),
+                    v2::form_answer(&form.fields, &answers),
+                );
+                v2.answering.insert(request_id.to_owned());
+                pending
+            };
+            let sent = async {
+                let response = self
+                    .inner
+                    .client
+                    .post(self.v2_url(
+                        &["session", &session_id, "form", request_id, "reply"],
+                        false,
+                    )?)
+                    .json(&json!({ "answer": answer }))
+                    .send()
+                    .await
+                    .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
+                if !response.status().is_success() {
+                    return Err(OpenCodeRuntimeError::Http(format!(
+                        "form reply returned HTTP {}",
+                        response.status()
+                    )));
+                }
+                Ok(())
+            }
+            .await;
+            let pending = {
+                let mut v2 = self.inner.v2.lock().await;
+                v2.answering.remove(request_id);
+                if !v2.settled_while_answering.remove(request_id) {
+                    sent?;
+                }
+                v2.forms.remove(request_id)
+            };
+            let Some(form) = pending else {
+                return Ok(());
+            };
+            self.emit(
+                "user-input.resolved",
+                form.turn_id,
+                Some(request_id.to_owned()),
+                json!({ "answers": answers }),
+            )
+            .await;
+            return Ok(());
+        }
         let pending = self
             .inner
             .pending_questions
@@ -1104,10 +1776,16 @@ impl OpenCodeSessionRuntime {
         Ok(())
     }
 
+    /// `rewind_key` identifies the checkpoint revert (the BiBCode transcript it counts from), so
+    /// a retry is applied once. OpenCode 1 reverts in one request and does not use it.
     pub async fn rollback_thread(
         &self,
         num_turns: usize,
+        rewind_key: &str,
     ) -> Result<OpenCodeSessionSnapshot, OpenCodeRuntimeError> {
+        if self.is_v2() {
+            return self.v2_rollback(num_turns, rewind_key).await;
+        }
         let session_id = self.session_id().await?;
         let messages = self
             .inner
@@ -1238,7 +1916,12 @@ impl OpenCodeSessionRuntime {
         let runtime = Arc::downgrade(&self.inner);
         let client = self.inner.client.clone();
         let cancellation = self.inner.reconciliation_cancellation.clone();
-        let url = self.request_url("/event")?;
+        let v2 = self.is_v2();
+        let url = if v2 {
+            self.v2_url(&["event"], false)?
+        } else {
+            self.request_url("/event")?
+        };
         let task = tokio::spawn(async move {
             let response = match tokio::select! {
                 () = cancellation.cancelled() => return,
@@ -1339,13 +2022,18 @@ impl OpenCodeSessionRuntime {
                             let Some(inner) = runtime.upgrade() else {
                                 return;
                             };
-                            OpenCodeSessionRuntime::internal(inner)
-                                .handle_sse_event_observed_at(
-                                    &session_id,
-                                    event,
-                                    observation_time_ms(),
-                                )
-                                .await;
+                            let runtime = OpenCodeSessionRuntime::internal(inner);
+                            if v2 {
+                                runtime.handle_v2_event(event).await;
+                            } else {
+                                runtime
+                                    .handle_sse_event_observed_at(
+                                        &session_id,
+                                        event,
+                                        observation_time_ms(),
+                                    )
+                                    .await;
+                            }
                         }
                     }
                     Ok(None) => {
@@ -1394,12 +2082,15 @@ impl OpenCodeSessionRuntime {
             .await;
     }
 
-    async fn handle_sse_event_observed_at(
+    /// Feeds one OpenCode 1-shaped event to activity tracking: verified children update the
+    /// tracker, and events about known sessions schedule reconciliation. OpenCode 2 events reach
+    /// it through `v2_activity`. Returns whether the event belongs to the root session's chat.
+    async fn observe_activity_event(
         &self,
         session_id: &str,
-        event: Value,
+        event: &Value,
         received_at_ms: u64,
-    ) {
+    ) -> bool {
         let event_type = event
             .get("type")
             .and_then(Value::as_str)
@@ -1410,7 +2101,7 @@ impl OpenCodeSessionRuntime {
             if payload_identity == PayloadSessionIdentity::Missing {
                 self.request_reconciliation(false, None, true).await;
             }
-            return;
+            return false;
         }
         let payload_session_id = match payload_identity {
             PayloadSessionIdentity::Agreed(session_id) => Some(session_id),
@@ -1492,7 +2183,7 @@ impl OpenCodeSessionRuntime {
             }
         }
         match route {
-            OpenCodeEventRoute::Foreign => return,
+            OpenCodeEventRoute::Foreign => false,
             OpenCodeEventRoute::VerifiedChild => {
                 let (activity, generation) = {
                     let mut activity = self.inner.activity.lock().await;
@@ -1502,7 +2193,7 @@ impl OpenCodeSessionRuntime {
                         .as_mut()
                         .map(|tracker| {
                             tracker
-                                .handle_observed_event_at(&event, received_at_ms)
+                                .handle_observed_event_at(event, received_at_ms)
                                 .mutations
                         })
                         .unwrap_or_default();
@@ -1512,10 +2203,29 @@ impl OpenCodeSessionRuntime {
                 if is_activity_text_event(event_type, &properties) {
                     self.schedule_activity_text_flush(generation).await;
                 }
-                return;
+                false
             }
-            OpenCodeEventRoute::Root => {}
+            OpenCodeEventRoute::Root => true,
         }
+    }
+
+    async fn handle_sse_event_observed_at(
+        &self,
+        session_id: &str,
+        event: Value,
+        received_at_ms: u64,
+    ) {
+        if !self
+            .observe_activity_event(session_id, &event, received_at_ms)
+            .await
+        {
+            return;
+        }
+        let event_type = event
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let properties = event.get("properties").cloned().unwrap_or(Value::Null);
         let turn_id = self.inner.active_turn_id.lock().await.clone();
         match event_type {
             "message.updated" => {
@@ -1752,6 +2462,908 @@ impl OpenCodeSessionRuntime {
                 );
             }
         }
+    }
+
+    async fn handle_v2_event(&self, event: Value) {
+        let normalized = self.inner.v2.lock().await.normalizer.normalize(&event);
+        if !normalized.is_empty()
+            && let Ok(root_session_id) = self.session_id().await
+        {
+            let received_at_ms = observation_time_ms();
+            for activity_event in normalized {
+                self.observe_activity_event(&root_session_id, &activity_event, received_at_ms)
+                    .await;
+            }
+        }
+        if event.get("type").and_then(Value::as_str) == Some("server.connected") {
+            let adopt = std::mem::take(&mut self.inner.v2.lock().await.adopt_on_connect);
+            if adopt && let Ok(session_id) = self.session_id().await {
+                self.v2_adopt_running_execution(&session_id).await;
+            }
+        }
+        let outputs = match self.inner.v2.lock().await.translator.as_mut() {
+            Some(translator) => translator.handle(&event),
+            None => return,
+        };
+        for output in outputs {
+            let turn_id = self.inner.active_turn_id.lock().await.clone();
+            match output {
+                V2Output::ExecutionStarted => {
+                    // OpenCode 2 starts executions on its own, such as to deliver a background
+                    // subagent's result. Report them as turns rather than hiding them.
+                    if turn_id.is_none() {
+                        self.begin_provider_started_turn().await;
+                    }
+                }
+                V2Output::TextDelta { message_id, delta } => {
+                    self.emit_with_item_id(
+                        "content.delta",
+                        turn_id,
+                        Some(message_id),
+                        None,
+                        json!({ "streamKind": "assistant_text", "delta": delta }),
+                    )
+                    .await;
+                }
+                V2Output::AssistantCompleted { message_id } => {
+                    self.emit_with_item_id(
+                        "message.assistant.completed",
+                        turn_id,
+                        Some(message_id),
+                        None,
+                        json!({}),
+                    )
+                    .await;
+                }
+                V2Output::TurnEnded(failure) => {
+                    let Some(completed_turn_id) = self.inner.active_turn_id.lock().await.take()
+                    else {
+                        if let Some(failure) = failure.filter(|failure| failure.state == "failed") {
+                            self.emit(
+                                "runtime.error",
+                                None,
+                                None,
+                                json!({ "message": failure.message, "class": failure.class }),
+                            )
+                            .await;
+                        }
+                        continue;
+                    };
+                    let payload = match failure {
+                        None => json!({ "state": "completed", "stopReason": "completed" }),
+                        Some(failure) => json!({
+                            "state": failure.state,
+                            "stopReason": failure.stop_reason,
+                            "errorMessage": failure.message,
+                            "errorClass": failure.class,
+                        }),
+                    };
+                    self.emit("turn.completed", Some(completed_turn_id), None, payload)
+                        .await;
+                }
+                V2Output::PermissionAsked {
+                    request_id,
+                    session_id,
+                    detail,
+                } => {
+                    self.inner
+                        .v2
+                        .lock()
+                        .await
+                        .permissions
+                        .insert(request_id.clone(), (turn_id.clone(), session_id));
+                    self.emit(
+                        "request.opened",
+                        turn_id,
+                        Some(request_id),
+                        json!({ "requestType": "exec_command_approval", "detail": detail }),
+                    )
+                    .await;
+                }
+                V2Output::PermissionSettled { request_id } => {
+                    // Answered elsewhere, such as in the OpenCode terminal.
+                    let pending = {
+                        let mut v2 = self.inner.v2.lock().await;
+                        if v2.answering.contains(&request_id) {
+                            v2.settled_while_answering.insert(request_id.clone());
+                            None
+                        } else {
+                            v2.permissions.remove(&request_id)
+                        }
+                    };
+                    if let Some((turn_id, _)) = pending {
+                        self.emit(
+                            "request.resolved",
+                            turn_id,
+                            Some(request_id),
+                            json!({ "requestType": "exec_command_approval" }),
+                        )
+                        .await;
+                    }
+                }
+                V2Output::FormAsked {
+                    form_id,
+                    session_id,
+                    questions,
+                    fields,
+                } => {
+                    self.inner.v2.lock().await.forms.insert(
+                        form_id.clone(),
+                        V2PendingForm {
+                            turn_id: turn_id.clone(),
+                            session_id,
+                            fields,
+                        },
+                    );
+                    self.emit(
+                        "user-input.requested",
+                        turn_id,
+                        Some(form_id),
+                        json!({ "questions": questions }),
+                    )
+                    .await;
+                }
+                V2Output::FormUnanswerable {
+                    form_id,
+                    session_id,
+                } => {
+                    // A form BiBCode cannot show (such as a sign-in link) would block the agent;
+                    // cancelling it tells the agent nobody answered.
+                    let cancelled =
+                        match self.v2_url(&["session", &session_id, "form", &form_id], false) {
+                            Ok(url) => match self.inner.client.delete(url).send().await {
+                                Ok(response) if response.status().is_success() => Ok(()),
+                                Ok(response) => Err(format!("HTTP {}", response.status())),
+                                Err(error) => Err(error.to_string()),
+                            },
+                            Err(error) => Err(error.to_string()),
+                        };
+                    match cancelled {
+                        Ok(()) => tracing::warn!(
+                            provider = "opencode",
+                            "cancelled an OpenCode form BiBCode cannot show"
+                        ),
+                        Err(error) => {
+                            tracing::warn!(
+                                provider = "opencode",
+                                %error,
+                                "could not cancel an OpenCode form BiBCode cannot show"
+                            );
+                            self.emit(
+                                "runtime.error",
+                                turn_id,
+                                None,
+                                json!({
+                                    "message": "OpenCode is waiting for an answer BiBCode can't show. Answer it in the OpenCode terminal, or stop the turn.",
+                                    "class": "provider_error",
+                                }),
+                            )
+                            .await;
+                        }
+                    }
+                }
+                V2Output::FormSettled { form_id } => {
+                    let pending = {
+                        let mut v2 = self.inner.v2.lock().await;
+                        if v2.answering.contains(&form_id) {
+                            v2.settled_while_answering.insert(form_id.clone());
+                            None
+                        } else {
+                            v2.forms.remove(&form_id)
+                        }
+                    };
+                    if let Some(form) = pending {
+                        self.emit(
+                            "user-input.resolved",
+                            form.turn_id,
+                            Some(form_id),
+                            json!({ "answers": {} }),
+                        )
+                        .await;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Sends BiBCode's agent and model selection to an OpenCode 2 session when it changed, since
+    /// OpenCode 2 keeps them as session state rather than per prompt.
+    async fn v2_sync_selection(&self, session_id: &str) -> Result<(), OpenCodeRuntimeError> {
+        let model = self.inner.model.lock().await.clone();
+        let variant = self.inner.selected_variant.lock().await.clone();
+        let (synced_model, synced_agent, synced_runtime_mode) = {
+            let v2 = self.inner.v2.lock().await;
+            (
+                v2.synced_model.clone(),
+                v2.synced_agent,
+                v2.synced_runtime_mode.clone(),
+            )
+        };
+        if synced_runtime_mode.as_deref() != Some(self.inner.runtime_mode.lock().await.as_str()) {
+            self.v2_sync_permissions(session_id).await?;
+        }
+        if !synced_agent {
+            // A resumed session keeps the agent it last had, so no selected agent means
+            // OpenCode's default one, as a new session would get.
+            let agent = match self.inner.agent.clone() {
+                Some(agent) => Some(agent),
+                None => self.v2_default_agent().await?,
+            };
+            if let Some(agent) = agent.as_deref() {
+                let response = self
+                    .inner
+                    .client
+                    .post(self.v2_url(&["session", session_id, "agent"], false)?)
+                    .json(&json!({ "agent": agent }))
+                    .send()
+                    .await
+                    .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
+                if !response.status().is_success() {
+                    return Err(OpenCodeRuntimeError::Http(format!(
+                        "agent selection returned HTTP {}",
+                        response.status()
+                    )));
+                }
+            }
+            self.inner.v2.lock().await.synced_agent = true;
+        }
+        if let Some((provider_id, model_id)) = model {
+            let desired = (provider_id, model_id, variant);
+            if synced_model.as_ref() != Some(&desired) {
+                let response = self
+                    .inner
+                    .client
+                    .post(self.v2_url(&["session", session_id, "model"], false)?)
+                    .json(&json!({
+                        "model": v2::model_ref(&desired.0, &desired.1, desired.2.as_deref()),
+                    }))
+                    .send()
+                    .await
+                    .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
+                if !response.status().is_success() {
+                    return Err(OpenCodeRuntimeError::Http(format!(
+                        "model selection returned HTTP {}",
+                        response.status()
+                    )));
+                }
+                self.inner.v2.lock().await.synced_model = Some(desired);
+            }
+        }
+        Ok(())
+    }
+
+    /// Routes replies to the permission requests and forms a resumed session and its descendants
+    /// are still waiting on: OpenCode's event stream does not replay asks made before BiBCode
+    /// connected. The asks are not shown again; BiBCode already recorded those it saw.
+    async fn v2_restore_pending_asks(&self, root_session_id: &str) {
+        let mut sessions = vec![root_session_id.to_owned()];
+        let mut queue = VecDeque::from([(root_session_id.to_owned(), 0_usize)]);
+        while let Some((parent, depth)) = queue.pop_front() {
+            if depth == MAX_LINEAGE_DEPTH || sessions.len() >= RECONCILIATION_CHILD_LIMIT {
+                continue;
+            }
+            let url = match self
+                .v2_url(&["session"], false)
+                .and_then(|url| append_query_pair(url, "parentID", &parent))
+            {
+                Ok(url) => url,
+                Err(_) => break,
+            };
+            let Some(children) = self.v2_get_json(url).await else {
+                break;
+            };
+            let found = children
+                .get("data")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|child| child.get("id").and_then(Value::as_str))
+                .filter(|child| valid_key(child))
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            for child in found {
+                if !sessions.contains(&child) {
+                    queue.push_back((child.clone(), depth + 1));
+                    sessions.push(child);
+                }
+            }
+        }
+        for session_id in &sessions {
+            let permissions = match self.v2_url(&["session", session_id, "permission"], false) {
+                Ok(url) => self.v2_get_json(url).await,
+                Err(_) => None,
+            };
+            let forms = match self.v2_url(&["session", session_id, "form"], false) {
+                Ok(url) => self.v2_get_json(url).await,
+                Err(_) => None,
+            };
+            let mut v2 = self.inner.v2.lock().await;
+            if let Some(translator) = v2.translator.as_mut() {
+                translator.track_descendant(session_id);
+            }
+            for request_id in permissions
+                .iter()
+                .filter_map(|response| response.get("data").and_then(Value::as_array))
+                .flatten()
+                .filter_map(|request| request.get("id").and_then(Value::as_str))
+            {
+                v2.permissions
+                    .insert(request_id.to_owned(), (None, session_id.clone()));
+            }
+            for form in forms
+                .iter()
+                .filter_map(|response| response.get("data").and_then(Value::as_array))
+                .flatten()
+            {
+                if let (Some(form_id), Some((_, fields))) = (
+                    form.get("id").and_then(Value::as_str),
+                    v2::form_questions(form),
+                ) {
+                    v2.forms.insert(
+                        form_id.to_owned(),
+                        V2PendingForm {
+                            turn_id: None,
+                            session_id: session_id.clone(),
+                            fields,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    /// A resumed session may still be executing (OpenCode kept working while BiBCode was away);
+    /// its start is not replayed, so report it as a turn now and let its end complete it.
+    async fn v2_adopt_running_execution(&self, session_id: &str) {
+        let Ok(url) = self.v2_url(&["session", "active"], false) else {
+            return;
+        };
+        let running = self.v2_get_json(url).await.is_some_and(|active| {
+            active
+                .get("data")
+                .and_then(Value::as_object)
+                .is_some_and(|sessions| sessions.contains_key(session_id))
+        });
+        if running && self.inner.active_turn_id.lock().await.is_none() {
+            self.begin_provider_started_turn().await;
+        }
+    }
+
+    /// A best-effort OpenCode 2 read; failures are logged and read as absent.
+    async fn v2_get_json(&self, url: String) -> Option<Value> {
+        let result = async {
+            let response = self
+                .inner
+                .client
+                .get(url)
+                .send()
+                .await
+                .map_err(|error| error.to_string())?;
+            if !response.status().is_success() {
+                return Err(format!("HTTP {}", response.status()));
+            }
+            response
+                .json::<Value>()
+                .await
+                .map_err(|error| error.to_string())
+        }
+        .await;
+        result
+            .inspect_err(|error| {
+                tracing::warn!(provider = "opencode", %error, "OpenCode 2 read failed");
+            })
+            .ok()
+    }
+
+    /// Whether `name` is an OpenCode 2 skill that no command shares: a command wins a name
+    /// collision, as it does in the slash menu. An unreadable list fails the turn before it is
+    /// sent rather than guess the route.
+    async fn v2_is_skill(&self, name: &str) -> Result<bool, OpenCodeRuntimeError> {
+        let catalog = |kind: &'static str| async move {
+            let url = self.v2_url(&[kind], true)?;
+            tokio::time::timeout(SLASH_CATALOG_TIMEOUT, self.v2_get_json(url))
+                .await
+                .ok()
+                .flatten()
+                .ok_or_else(|| {
+                    OpenCodeRuntimeError::NotSent(format!("the {kind} list could not be read"))
+                })
+        };
+        Ok(v2::catalog::is_skill(&catalog("skill").await?, name)
+            && !v2::catalog::is_command(&catalog("command").await?, name))
+    }
+
+    /// OpenCode 2 reverts in two phases. Staging at a message drops it and everything after it, so
+    /// staging at the first message of the n-th most recent turn drops exactly n turns (every turn
+    /// when there are fewer); committing makes that final. Only the conversation is reverted
+    /// (`files: false`): checkpoint revert restores the files itself.
+    ///
+    /// Once a commit lands the conversation has changed for good, so it counts even if its answer
+    /// is lost (the target message is gone), and the final read is best effort. A stage that does
+    /// not commit is cleared, since OpenCode would commit it with the next prompt. Until a rewind
+    /// reports success BiBCode's transcript is unchanged, so the turns already dropped (and a
+    /// revert whose outcome could not be read) are remembered: a retry, or a rewind to another
+    /// checkpoint, drops only the turns still missing, and prompts wait. The memory lives in this
+    /// runtime and, so a BiBCode restart finds it, in the OpenCode session's own metadata
+    /// (`bibcode.rewind`), keyed by the checkpoint revert's `rewind_key`: it is written before
+    /// each stage and marked finished when the rewind succeeds, and a resumed session restores
+    /// it. A retry with the same key continues from it, or drops nothing more once it finished,
+    /// so the rewind is applied once even if BiBCode lost its completion; a rewind with another
+    /// key starts afresh. The driver keeps the session from idle suspension while it is
+    /// unfinished (`has_unfinished_rewind`).
+    async fn v2_rollback(
+        &self,
+        num_turns: usize,
+        rewind_key: &str,
+    ) -> Result<OpenCodeSessionSnapshot, OpenCodeRuntimeError> {
+        let session_id = self.session_id().await?;
+        let _rewinding = self.inner.v2_rewind.lock().await;
+        // A revert in doubt settles first, whatever rewind it belonged to.
+        self.v2_settle_unsettled_revert(&session_id).await?;
+        {
+            let mut v2 = self.inner.v2.lock().await;
+            if v2.rewind.key.is_none() && v2.rewind.is_unfinished() {
+                // Progress restored from a record that predates keys: this is its retry.
+                v2.rewind.key = Some(rewind_key.to_owned());
+            } else if v2.rewind.key.as_deref() != Some(rewind_key) {
+                // Progress of another rewind: BiBCode's transcript moved on since. A finished
+                // rewind with this key is a retry of it.
+                let finished = v2
+                    .finished_rewind
+                    .take()
+                    .filter(|finished| finished.key.as_deref() == Some(rewind_key));
+                v2.rewind = finished
+                    .map(|finished| V2RewindProgress {
+                        finished: false,
+                        ..finished
+                    })
+                    .unwrap_or_else(|| V2RewindProgress::for_key(rewind_key));
+            }
+        }
+        let dropped = self.inner.v2.lock().await.rewind.dropped;
+        let remaining = num_turns.checked_sub(dropped).ok_or_else(|| {
+            OpenCodeRuntimeError::Http("OpenCode already rewound past this checkpoint".to_owned())
+        })?;
+        if remaining > 0
+            && let Some(target) = tokio::time::timeout(
+                REWIND_SCAN_TIMEOUT,
+                self.v2_nth_latest_turn_start(&session_id, remaining),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(OpenCodeRuntimeError::Http(
+                    "OpenCode's history took too long to read".to_owned(),
+                ))
+            })?
+        {
+            // Kept with the session before anything changes, so a restart mid-rewind settles it.
+            let intent = V2RewindProgress {
+                key: Some(rewind_key.to_owned()),
+                dropped,
+                unsettled: Some((remaining, target.clone())),
+                finished: false,
+            };
+            self.v2_store_rewind(&session_id, &intent).await?;
+            let revert = |phase: &'static str| {
+                self.v2_url(&["session", &session_id, "revert", phase], false)
+            };
+            let committed = async {
+                within_rewind_deadline(
+                    self.v2_send(
+                        self.inner
+                            .client
+                            .post(revert("stage")?)
+                            .json(&json!({ "messageID": target, "files": false })),
+                        "revert staging",
+                    ),
+                )
+                .await?;
+                within_rewind_deadline(
+                    self.v2_send(self.inner.client.post(revert("commit")?), "revert commit"),
+                )
+                .await
+            }
+            .await;
+            if let Err(error) = committed {
+                self.inner.v2.lock().await.rewind.unsettled = Some((remaining, target));
+                // The commit may have landed with only its answer lost.
+                if let Err(settling) = self.v2_settle_unsettled_revert(&session_id).await {
+                    tracing::warn!(
+                        provider = "opencode",
+                        error = %settling,
+                        "OpenCode 2 rewind outcome is unknown"
+                    );
+                    return Err(error);
+                }
+                if self.inner.v2.lock().await.rewind.dropped < num_turns {
+                    return Err(error);
+                }
+            }
+        }
+        // Every turn is dropped, but BiBCode's transcript shows that only once this reports
+        // success; until then the progress holds prompts and a retry drops nothing more.
+        self.inner.v2.lock().await.rewind = V2RewindProgress {
+            key: Some(rewind_key.to_owned()),
+            dropped: num_turns,
+            unsettled: None,
+            finished: false,
+        };
+        // Success needs the record marked finished, or a later runtime would restore the progress
+        // and hold prompts for a retry that never comes. A failed write may still have landed, and
+        // a later runtime would then release prompts while BiBCode's transcript still shows the
+        // dropped turns, so the record is read back: a finished one for this rewind succeeds.
+        // Anything else fails the rewind, and its retry (same key) marks it finished without
+        // dropping more.
+        let finished = V2RewindProgress {
+            finished: true,
+            ..self.inner.v2.lock().await.rewind.clone()
+        };
+        if let Err(error) = self.v2_store_rewind(&session_id, &finished).await {
+            let recorded = within_rewind_deadline(async {
+                Ok(self
+                    .v2_get_json(self.v2_url(&["session", &session_id], false)?)
+                    .await)
+            })
+            .await
+            .ok()
+            .flatten()
+            .and_then(|session| {
+                session
+                    .pointer("/data/metadata/bibcode/rewind")
+                    .and_then(V2RewindProgress::from_json)
+            });
+            if recorded.as_ref() != Some(&finished) {
+                return Err(error);
+            }
+        }
+        {
+            let mut v2 = self.inner.v2.lock().await;
+            v2.rewind = V2RewindProgress::default();
+            v2.finished_rewind = Some(finished);
+            // The dropped turns may have switched the model or agent; the next prompt sets them.
+            v2.synced_model = None;
+            v2.synced_agent = false;
+        }
+        let turns = within_rewind_deadline(async {
+            Ok(self
+                .v2_get_json(self.v2_url(&["session", &session_id, "message"], false)?)
+                .await)
+        })
+        .await
+        .ok()
+        .flatten()
+        .and_then(|messages| messages.get("data").and_then(Value::as_array).cloned())
+        .unwrap_or_default();
+        Ok(OpenCodeSessionSnapshot {
+            thread_id: self.inner.thread_id.clone(),
+            turns,
+        })
+    }
+
+    /// Settles a revert whose outcome is unknown: one that landed (its target message is gone)
+    /// counts its turns as dropped, and one that did not is cleared so OpenCode cannot commit it
+    /// with the next prompt. Fails, keeping it unsettled, when neither can be confirmed.
+    async fn v2_settle_unsettled_revert(
+        &self,
+        session_id: &str,
+    ) -> Result<(), OpenCodeRuntimeError> {
+        let Some((turns, target)) = self.inner.v2.lock().await.rewind.unsettled.clone() else {
+            return Ok(());
+        };
+        // A revert still staged on the session has not landed, whatever its target's lookup says.
+        let staged = within_rewind_deadline(async {
+            self.v2_get_json(self.v2_url(&["session", session_id], false)?)
+                .await
+                .ok_or_else(|| {
+                    OpenCodeRuntimeError::Http("the session could not be read".to_owned())
+                })
+        })
+        .await?
+        .pointer("/data/revert")
+        .is_some_and(|revert| !revert.is_null());
+        if staged
+            || within_rewind_deadline(self.v2_message_type(session_id, &target))
+                .await?
+                .is_some()
+        {
+            within_rewind_deadline(self.v2_clear_revert(session_id)).await?;
+        } else {
+            self.inner.v2.lock().await.rewind.dropped += turns;
+        }
+        let progress = {
+            let mut v2 = self.inner.v2.lock().await;
+            v2.rewind.unsettled = None;
+            v2.rewind.clone()
+        };
+        // The kept record still names the unsettled revert, which settles the same way again.
+        if let Err(error) = self.v2_store_rewind(session_id, &progress).await {
+            tracing::warn!(
+                provider = "opencode",
+                %error,
+                "OpenCode 2 rewind progress could not be kept with the session"
+            );
+        }
+        Ok(())
+    }
+
+    /// Keeps the rewind progress in the OpenCode 2 session's metadata (`bibcode.rewind`), so a
+    /// BiBCode restart finds it; an empty progress removes it. OpenCode replaces the metadata
+    /// whole, so the rest of it is read and written back.
+    async fn v2_store_rewind(
+        &self,
+        session_id: &str,
+        progress: &V2RewindProgress,
+    ) -> Result<(), OpenCodeRuntimeError> {
+        let url = self.v2_url(&["session", session_id], false)?;
+        let session = within_rewind_deadline(async {
+            self.v2_get_json(url.clone()).await.ok_or_else(|| {
+                OpenCodeRuntimeError::Http("the session could not be read".to_owned())
+            })
+        })
+        .await?;
+        let mut metadata = session
+            .pointer("/data/metadata")
+            .filter(|metadata| metadata.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        let mut bibcode = metadata
+            .get("bibcode")
+            .filter(|bibcode| bibcode.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        let empty = *progress == V2RewindProgress::default();
+        if empty && bibcode.get("rewind").is_none() {
+            return Ok(());
+        }
+        if let Some(bibcode) = bibcode.as_object_mut() {
+            if empty {
+                bibcode.remove("rewind");
+            } else {
+                bibcode.insert("rewind".to_owned(), progress.to_json());
+            }
+        }
+        if let Some(entries) = metadata.as_object_mut() {
+            if bibcode.as_object().is_some_and(serde_json::Map::is_empty) {
+                entries.remove("bibcode");
+            } else {
+                entries.insert("bibcode".to_owned(), bibcode);
+            }
+        }
+        within_rewind_deadline(
+            self.v2_send(
+                self.inner
+                    .client
+                    .patch(url)
+                    .json(&json!({ "metadata": metadata })),
+                "rewind progress",
+            ),
+        )
+        .await
+    }
+
+    async fn v2_clear_revert(&self, session_id: &str) -> Result<(), OpenCodeRuntimeError> {
+        self.v2_send(
+            self.inner
+                .client
+                .delete(self.v2_url(&["session", session_id, "revert"], false)?),
+            "revert clearing",
+        )
+        .await
+    }
+
+    /// Whether a checkpoint rewind has not reported success yet (turns already dropped, or a
+    /// revert whose outcome is unknown). Only this runtime remembers it, so the session must not
+    /// be suspended meanwhile.
+    pub async fn has_unfinished_rewind(&self) -> bool {
+        self.inner.v2.lock().await.rewind.is_unfinished()
+    }
+
+    /// A prompt waits while a checkpoint rewind is unfinished: OpenCode's conversation would no
+    /// longer match BiBCode's transcript, and a leftover stage would commit with the prompt.
+    async fn v2_settle_rewind_before_prompt(
+        &self,
+        session_id: &str,
+    ) -> Result<(), OpenCodeRuntimeError> {
+        let _rewinding = self.inner.v2_rewind.lock().await;
+        let settled = self.v2_settle_unsettled_revert(session_id).await;
+        if settled.is_err() || self.inner.v2.lock().await.rewind.is_unfinished() {
+            return Err(OpenCodeRuntimeError::NotSent(UNFINISHED_REVERT.to_owned()));
+        }
+        Ok(())
+    }
+
+    /// The first message of the n-th most recent turn, or of the oldest turn when there are
+    /// fewer. Pages through the history, newest first, within OpenCode's page-size limit.
+    async fn v2_nth_latest_turn_start(
+        &self,
+        session_id: &str,
+        n: usize,
+    ) -> Result<Option<String>, OpenCodeRuntimeError> {
+        let mut turns = v2::TurnStartFinder::default();
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut url = Url::parse(&self.v2_url(&["session", session_id, "message"], false)?)
+                .map_err(|error| OpenCodeRuntimeError::InvalidResponse(error.to_string()))?;
+            {
+                let mut query = url.query_pairs_mut();
+                query.append_pair("limit", &MESSAGE_PAGE_LIMIT.to_string());
+                match cursor.as_deref() {
+                    Some(cursor) => query.append_pair("cursor", cursor),
+                    None => query.append_pair("order", "desc"),
+                };
+            }
+            let page =
+                within_rewind_deadline(async { Ok(self.v2_get_json(url.to_string()).await) })
+                    .await?
+                    .ok_or_else(|| {
+                        OpenCodeRuntimeError::Http("the message list could not be read".to_owned())
+                    })?;
+            let messages = page
+                .get("data")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            for message in messages {
+                if let Some(start) = turns.push(message, n) {
+                    return Ok(Some(start));
+                }
+            }
+            cursor = page
+                .pointer("/cursor/next")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            if messages.is_empty() || cursor.is_none() {
+                return Ok(turns.finish(n));
+            }
+        }
+    }
+
+    async fn v2_user_message_exists(
+        &self,
+        session_id: &str,
+        message_id: &str,
+    ) -> Result<bool, OpenCodeRuntimeError> {
+        match self.v2_message_type(session_id, message_id).await? {
+            None => Ok(false),
+            Some(kind) if kind == "user" => Ok(true),
+            Some(_) => Err(OpenCodeRuntimeError::InvalidResponse(
+                "message lookup response has invalid identity or shape".to_owned(),
+            )),
+        }
+    }
+
+    /// The type of a session message, or `None` when the session has no such message.
+    async fn v2_message_type(
+        &self,
+        session_id: &str,
+        message_id: &str,
+    ) -> Result<Option<String>, OpenCodeRuntimeError> {
+        let response = self
+            .inner
+            .client
+            .get(self.v2_url(&["session", session_id, "message", message_id], false)?)
+            .send()
+            .await
+            .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(OpenCodeRuntimeError::Http(format!(
+                "message lookup returned HTTP {}",
+                response.status()
+            )));
+        }
+        let value: Value = response
+            .json()
+            .await
+            .map_err(|error| OpenCodeRuntimeError::InvalidResponse(error.to_string()))?;
+        let message = value.get("data").unwrap_or(&Value::Null);
+        match (
+            message.get("id").and_then(Value::as_str),
+            message.get("type").and_then(Value::as_str),
+        ) {
+            (Some(id), Some(kind)) if id == message_id => Ok(Some(kind.to_owned())),
+            _ => Err(OpenCodeRuntimeError::InvalidResponse(
+                "message lookup response has invalid identity or shape".to_owned(),
+            )),
+        }
+    }
+
+    async fn v2_send(
+        &self,
+        request: reqwest::RequestBuilder,
+        what: &str,
+    ) -> Result<(), OpenCodeRuntimeError> {
+        let response = request
+            .send()
+            .await
+            .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(OpenCodeRuntimeError::Http(format!(
+                "{what} returned HTTP {}",
+                response.status()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Gives an OpenCode 2 session the permission rules of BiBCode's runtime mode.
+    async fn v2_sync_permissions(&self, session_id: &str) -> Result<(), OpenCodeRuntimeError> {
+        let runtime_mode = self.inner.runtime_mode.lock().await.clone();
+        let response = self
+            .inner
+            .client
+            .patch(self.v2_url(&["session", session_id], false)?)
+            .json(&json!({ "permissions": v2::permission_rules(&runtime_mode) }))
+            .send()
+            .await
+            .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(OpenCodeRuntimeError::Http(format!(
+                "permission rules update returned HTTP {}",
+                response.status()
+            )));
+        }
+        self.inner.v2.lock().await.synced_runtime_mode = Some(runtime_mode);
+        Ok(())
+    }
+
+    /// OpenCode 2's default agent: the first visible primary agent it lists (`build` unless
+    /// configured otherwise).
+    async fn v2_default_agent(&self) -> Result<Option<String>, OpenCodeRuntimeError> {
+        let response = self
+            .inner
+            .client
+            .get(self.v2_url(&["agent"], true)?)
+            .send()
+            .await
+            .map_err(|error| OpenCodeRuntimeError::Http(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(OpenCodeRuntimeError::Http(format!(
+                "agent list returned HTTP {}",
+                response.status()
+            )));
+        }
+        let agents = response
+            .json::<Value>()
+            .await
+            .map_err(|error| OpenCodeRuntimeError::InvalidResponse(error.to_string()))?;
+        Ok(agents
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|agent| {
+                agent.get("mode").and_then(Value::as_str) == Some("primary")
+                    && agent.get("hidden").and_then(Value::as_bool) != Some(true)
+            })
+            .and_then(|agent| agent.get("id").and_then(Value::as_str))
+            .map(str::to_owned))
+    }
+
+    /// An OpenCode 2 `/api/...` URL. `location` scopes catalog reads to the session directory.
+    fn v2_url(&self, segments: &[&str], location: bool) -> Result<String, OpenCodeRuntimeError> {
+        let mut url = Url::parse(&self.inner.base_url).map_err(|error| {
+            OpenCodeRuntimeError::InvalidResponse(format!("invalid base URL: {error}"))
+        })?;
+        {
+            let mut path = url.path_segments_mut().map_err(|()| {
+                OpenCodeRuntimeError::InvalidResponse(
+                    "OpenCode base URL cannot accept relative paths".to_owned(),
+                )
+            })?;
+            path.pop_if_empty();
+            path.push("api");
+            for segment in segments {
+                path.push(segment);
+            }
+        }
+        if location {
+            url.query_pairs_mut()
+                .append_pair("location[directory]", &self.inner.directory);
+        }
+        Ok(url.to_string())
     }
 
     async fn emit(
@@ -2146,12 +3758,24 @@ impl OpenCodeSessionRuntime {
             if parent_depth == MAX_LINEAGE_DEPTH {
                 continue;
             }
-            let url = self
-                .session_request_url(&parent_session_id, &["children"])
-                .map_err(|_| ())?;
-            let response = self
-                .fetch_reconciliation_json::<Vec<OpenCodeChildSessionDto>>(url)
-                .await?;
+            let response = if self.is_v2() {
+                // One page as large as the reconciliation's child budget covers it.
+                let url = self
+                    .v2_url(&["session"], false)
+                    .and_then(|url| append_query_pair(url, "parentID", &parent_session_id))
+                    .and_then(|url| {
+                        append_query_pair(url, "limit", &RECONCILIATION_CHILD_LIMIT.to_string())
+                    })
+                    .map_err(|_| ())?;
+                self.fetch_reconciliation_v2(url, v2_activity::children)
+                    .await?
+            } else {
+                let url = self
+                    .session_request_url(&parent_session_id, &["children"])
+                    .map_err(|_| ())?;
+                self.fetch_reconciliation_json::<Vec<OpenCodeChildSessionDto>>(url)
+                    .await?
+            };
             let mut response = match response {
                 ReconciliationApiResult::Supported(response) => response,
                 ReconciliationApiResult::NotFound => {
@@ -2198,12 +3822,19 @@ impl OpenCodeSessionRuntime {
         let (statuses, status_support) = if known_status_support == EndpointSupport::Unsupported {
             (OpenCodeStatusMapDto::new(), EndpointSupport::Unsupported)
         } else {
-            match self
-                .fetch_reconciliation_json::<OpenCodeStatusMapDto>(
+            let response = if self.is_v2() {
+                self.fetch_reconciliation_v2(
+                    self.v2_url(&["session", "active"], false).map_err(|_| ())?,
+                    v2_activity::statuses,
+                )
+                .await?
+            } else {
+                self.fetch_reconciliation_json::<OpenCodeStatusMapDto>(
                     self.request_url("/session/status").map_err(|_| ())?,
                 )
                 .await?
-            {
+            };
+            match response {
                 ReconciliationApiResult::Supported(statuses) => {
                     (statuses, EndpointSupport::Supported)
                 }
@@ -2231,21 +3862,38 @@ impl OpenCodeSessionRuntime {
             {
                 continue;
             }
-            let url = self
-                .session_request_url(&session_id, &["message"])
-                .map_err(|_| ())?;
-            let url = append_query_pair(url, "limit", &RECONCILIATION_HISTORY_LIMIT.to_string())
-                .map_err(|_| ())?;
-            let response = self
-                .fetch_reconciliation_json::<Vec<OpenCodeMessageDto>>(url)
-                .await?;
+            let response = if self.is_v2() {
+                let url = self
+                    .v2_url(&["session", &session_id, "message"], false)
+                    .and_then(|url| {
+                        append_query_pair(url, "limit", &RECONCILIATION_HISTORY_LIMIT.to_string())
+                    })
+                    .map_err(|_| ())?;
+                let history_session_id = session_id.clone();
+                self.fetch_reconciliation_v2(url, move |response| {
+                    v2_activity::history(&history_session_id, response)
+                })
+                .await?
+            } else {
+                let url = self
+                    .session_request_url(&session_id, &["message"])
+                    .map_err(|_| ())?;
+                let url =
+                    append_query_pair(url, "limit", &RECONCILIATION_HISTORY_LIMIT.to_string())
+                        .map_err(|_| ())?;
+                self.fetch_reconciliation_json::<Vec<OpenCodeMessageDto>>(url)
+                    .await?
+            };
             let messages = match response {
                 ReconciliationApiResult::Supported(messages) => {
                     history_support = EndpointSupport::Supported;
                     bound_history(messages)
                 }
                 ReconciliationApiResult::NotFound => {
-                    if history_support == EndpointSupport::Unknown {
+                    // OpenCode 2 always has message history; a 404 is a session that went away.
+                    if history_support == EndpointSupport::Unknown && self.is_v2() {
+                        history_support = EndpointSupport::Supported;
+                    } else if history_support == EndpointSupport::Unknown {
                         match self.fetch_root_history_capability(root_session_id).await? {
                             EndpointSupport::Supported => {
                                 history_support = EndpointSupport::Supported;
@@ -2272,6 +3920,20 @@ impl OpenCodeSessionRuntime {
             status_support,
             history_support,
         })
+    }
+
+    /// An OpenCode 2 reconciliation read, mapped onto the OpenCode 1 shape the tracker reads.
+    async fn fetch_reconciliation_v2<T: DeserializeOwned>(
+        &self,
+        url: String,
+        map: impl FnOnce(&Value) -> Value,
+    ) -> Result<ReconciliationApiResult<T>, ()> {
+        match self.fetch_reconciliation_json::<Value>(url).await? {
+            ReconciliationApiResult::Supported(response) => serde_json::from_value(map(&response))
+                .map(ReconciliationApiResult::Supported)
+                .map_err(|_| ()),
+            ReconciliationApiResult::NotFound => Ok(ReconciliationApiResult::NotFound),
+        }
     }
 
     async fn fetch_reconciliation_json<T: DeserializeOwned>(
@@ -2940,6 +4602,7 @@ fn build_permission_rules(runtime_mode: &str) -> Vec<Value> {
 /// A classified opencode failure: the canonical turn state, the stop reason,
 /// the `RuntimeErrorClass`, and a message that is useful even when opencode
 /// supplied no text.
+#[derive(Debug)]
 pub(crate) struct OpenCodeFailure {
     pub(crate) state: &'static str,
     pub(crate) stop_reason: &'static str,
@@ -3224,6 +4887,229 @@ mod tests {
         runtime
     }
 
+    /// A turn announced for a request OpenCode 1 refused (or that never reached it) settles as
+    /// cancelled, so its start does not wait for a completion that never comes.
+    #[tokio::test]
+    async fn a_failed_opencode_1_request_settles_the_turn_it_announced() {
+        let app = Router::new()
+            .route(
+                "/session/{session_id}/prompt_async",
+                post(|| async { StatusCode::BAD_REQUEST }),
+            )
+            .route(
+                "/session/{session_id}/command",
+                post(|| async { StatusCode::BAD_REQUEST }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+        let runtime = super::OpenCodeSessionRuntime::new(
+            &format!("http://{address}"),
+            "unit-thread",
+            "/tmp/unit",
+            None,
+        );
+        *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
+
+        let prompt = runtime
+            .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
+            .await
+            .expect_err("the prompt is refused");
+        let command = runtime
+            .send_command("review", "", Some("delivery-2"))
+            .await
+            .expect_err("the command is refused");
+        for error in [&prompt, &command] {
+            assert!(
+                matches!(error, super::OpenCodeRuntimeError::RequestRefused(_)),
+                "{error}"
+            );
+        }
+
+        for _ in 0..2 {
+            let started = runtime.next_event().await.expect("turn.started");
+            assert_eq!(started.event_type, "turn.started");
+            let completed = runtime.next_event().await.expect("turn.completed");
+            assert_eq!(completed.event_type, "turn.completed");
+            assert_eq!(completed.turn_id, started.turn_id);
+            assert_eq!(completed.payload["state"], "cancelled");
+        }
+        assert!(runtime.inner.active_turn_id.lock().await.is_none());
+        server.abort();
+    }
+
+    /// A gateway error can follow acceptance (OpenCode behind a proxy), so it keeps the turn too.
+    #[tokio::test]
+    async fn a_gateway_error_keeps_the_turn_it_announced() {
+        let app = Router::new().route(
+            "/session/{session_id}/prompt_async",
+            post(|| async { StatusCode::GATEWAY_TIMEOUT }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+        let runtime = super::OpenCodeSessionRuntime::new(
+            &format!("http://{address}"),
+            "unit-thread",
+            "/tmp/unit",
+            None,
+        );
+        *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
+
+        let error = runtime
+            .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
+            .await
+            .expect_err("the gateway timed out");
+        assert!(
+            matches!(error, super::OpenCodeRuntimeError::Http(_)),
+            "{error}"
+        );
+        let started = runtime.next_event().await.expect("turn.started");
+        assert_eq!(started.event_type, "turn.started");
+        assert_no_queued_event(&runtime).await;
+        assert_eq!(
+            runtime.inner.active_turn_id.lock().await.as_deref(),
+            started.turn_id.as_deref()
+        );
+        server.abort();
+    }
+
+    /// A request whose connection drops after it was sent may have been accepted: its turn stays
+    /// active, for OpenCode's own events to end, rather than being settled as not sent.
+    #[tokio::test]
+    async fn an_ambiguous_opencode_request_keeps_the_turn_it_announced() {
+        use tokio::io::AsyncReadExt;
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            // Read the request, then drop the connection without answering.
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buffer = [0_u8; 4096];
+            let _ = socket.read(&mut buffer).await;
+        });
+        let runtime = super::OpenCodeSessionRuntime::new(
+            &format!("http://{address}"),
+            "unit-thread",
+            "/tmp/unit",
+            None,
+        );
+        *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
+
+        let turn = runtime
+            .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
+            .await
+            .expect_err("the answer is lost");
+        assert!(
+            matches!(turn, super::OpenCodeRuntimeError::Http(_)),
+            "{turn:?}"
+        );
+        let started = runtime.next_event().await.expect("turn.started");
+        assert_eq!(started.event_type, "turn.started", "{turn:?}");
+        assert_no_queued_event(&runtime).await;
+        assert_eq!(
+            runtime.inner.active_turn_id.lock().await.as_deref(),
+            started.turn_id.as_deref()
+        );
+        server.abort();
+    }
+
+    /// A 408 or 429 is no refusal: the turn settles as not sent, and the error carries OpenCode's
+    /// `Retry-After` so the delivery is sent again no sooner.
+    #[tokio::test]
+    async fn a_busy_answer_settles_the_turn_and_asks_to_retry_later() {
+        let app = Router::new()
+            .route(
+                "/session/{session_id}/prompt_async",
+                post(|| async {
+                    (StatusCode::TOO_MANY_REQUESTS, [("retry-after", "2")]).into_response()
+                }),
+            )
+            .route(
+                "/session/{session_id}/command",
+                post(|| async { StatusCode::REQUEST_TIMEOUT }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+        let runtime = super::OpenCodeSessionRuntime::new(
+            &format!("http://{address}"),
+            "unit-thread",
+            "/tmp/unit",
+            None,
+        );
+        *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
+
+        let prompt = runtime
+            .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
+            .await
+            .expect_err("OpenCode is busy");
+        assert!(
+            matches!(
+                prompt,
+                super::OpenCodeRuntimeError::RetryLater { retry_after: Some(delay), .. }
+                    if delay == std::time::Duration::from_secs(2)
+            ),
+            "{prompt:?}"
+        );
+        let command = runtime
+            .send_command("review", "", Some("delivery-2"))
+            .await
+            .expect_err("OpenCode timed out the request");
+        assert!(
+            matches!(
+                command,
+                super::OpenCodeRuntimeError::RetryLater {
+                    retry_after: None,
+                    ..
+                }
+            ),
+            "{command:?}"
+        );
+        for _ in 0..2 {
+            let started = runtime.next_event().await.expect("turn.started");
+            let completed = runtime.next_event().await.expect("turn.completed");
+            assert_eq!(completed.turn_id, started.turn_id);
+            assert_eq!(completed.payload["stopReason"], "not_sent");
+        }
+        server.abort();
+    }
+
+    /// A request whose connection never opens was not sent: it settles its turn and reports
+    /// `NotSent`, which the delivery retries.
+    #[tokio::test]
+    async fn a_connection_that_never_opens_settles_the_turn_as_not_sent() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        drop(listener);
+        let runtime = super::OpenCodeSessionRuntime::new(
+            &format!("http://{address}"),
+            "unit-thread",
+            "/tmp/unit",
+            None,
+        );
+        *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
+
+        let error = runtime
+            .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
+            .await
+            .expect_err("the connection never opens");
+        assert!(
+            matches!(error, super::OpenCodeRuntimeError::NotSent(_)),
+            "{error}"
+        );
+        let started = runtime.next_event().await.expect("turn.started");
+        let completed = runtime.next_event().await.expect("turn.completed");
+        assert_eq!(completed.turn_id, started.turn_id);
+        assert_eq!(completed.payload["stopReason"], "not_sent");
+        assert!(runtime.inner.active_turn_id.lock().await.is_none());
+    }
+
     #[tokio::test]
     async fn prompt_async_serializes_the_delivery_key_as_message_id() {
         type Bodies = Arc<Mutex<Vec<serde_json::Value>>>;
@@ -3257,15 +5143,123 @@ mod tests {
             .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
             .await
             .expect("send turn");
+        // Durable delivery keys are UUIDs; OpenCode 1.18 rejects a `messageID` that does not
+        // start with `msg` (HTTP 400), so the key becomes a deterministic `msg_` id.
+        runtime
+            .send_turn(
+                Some("hello"),
+                Vec::new(),
+                Some("e310d932-acde-44f5-aa48-2a07b9c93343"),
+            )
+            .await
+            .expect("send turn");
 
         assert_eq!(
             bodies.lock().await.as_slice(),
-            [json!({
-                "sessionID": "session-1",
-                "messageID": "delivery-1",
-                "parts": [{"type": "text", "text": "hello"}]
-            })]
+            [
+                json!({
+                    "sessionID": "session-1",
+                    "messageID": "msg_delivery1",
+                    "parts": [{"type": "text", "text": "hello"}]
+                }),
+                json!({
+                    "sessionID": "session-1",
+                    "messageID": "msg_e310d932acde44f5aa482a07b9c93343",
+                    "parts": [{"type": "text", "text": "hello"}]
+                })
+            ]
         );
+        server.abort();
+    }
+
+    /// Delivers a turn under a UUID delivery key to a real OpenCode 1 server and reads it back.
+    /// Set `BIBCODE_OPENCODE_V1_LIVE` (the server URL), `BIBCODE_OPENCODE_V1_PASSWORD` and
+    /// `BIBCODE_OPENCODE_V1_MODEL`, a scripted local endpoint so no provider credits are spent.
+    #[tokio::test]
+    #[ignore = "needs a live OpenCode 1 server"]
+    async fn live_opencode_1_durable_delivery() {
+        let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
+        let runtime =
+            super::OpenCodeSessionRuntime::new_with_options_reconciliation_revision_and_agent_activity(
+                &var("BIBCODE_OPENCODE_V1_LIVE"),
+                "live-thread",
+                "/tmp",
+                Some(&var("BIBCODE_OPENCODE_V1_MODEL")),
+                Some(&var("BIBCODE_OPENCODE_V1_PASSWORD")),
+                None,
+                0,
+                false,
+            )
+            .expect("runtime");
+        runtime.start().await.expect("session starts");
+        let key = uuid::Uuid::new_v4().to_string();
+        runtime
+            .send_turn(Some("SAY_HELLO please"), Vec::new(), Some(&key))
+            .await
+            .expect("OpenCode 1 accepts the delivery");
+        // `prompt_async` stores the message after it answers.
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !runtime.message_exists(&key).await.expect("lookup") {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the delivered message reads back");
+        assert!(
+            !runtime
+                .message_exists(&uuid::Uuid::new_v4().to_string())
+                .await
+                .expect("lookup")
+        );
+        runtime.stop().await.expect("stop");
+    }
+
+    /// A delivery sent before BiBCode derived `msg_` ids carried the raw key as its OpenCode 1
+    /// message id (accepted before 1.18). Reconciliation finds it under either form, so it is not
+    /// sent again; OpenCode 1.18 and later refuse a raw id (HTTP 400), which means no such
+    /// message exists there.
+    #[tokio::test]
+    async fn reconciliation_finds_a_delivery_under_its_legacy_raw_id() {
+        const LEGACY: &str = "e310d932-acde-44f5-aa48-2a07b9c93343";
+        const REFUSED: &str = "3f0c2a5e-0000-4000-8000-000000000001";
+        const ABSENT: &str = "3f0c2a5e-0000-4000-8000-000000000002";
+        async fn message(
+            Path((_session_id, message_id)): Path<(String, String)>,
+        ) -> impl IntoResponse {
+            if message_id == LEGACY {
+                return Json(json!({
+                    "info": { "id": LEGACY, "sessionID": "session-1", "role": "user" },
+                    "parts": []
+                }))
+                .into_response();
+            }
+            if message_id == REFUSED {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "name": "BadRequest", "data": { "kind": "Params" } })),
+                )
+                    .into_response();
+            }
+            StatusCode::NOT_FOUND.into_response()
+        }
+
+        let app = Router::new().route("/session/{session_id}/message/{message_id}", get(message));
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+        let runtime = super::OpenCodeSessionRuntime::new(
+            &format!("http://{address}"),
+            "unit-thread",
+            "/tmp/unit",
+            None,
+        );
+        *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
+
+        assert!(runtime.message_exists(LEGACY).await.expect("lookup"));
+        assert!(!runtime.message_exists(REFUSED).await.expect("lookup"));
+        assert!(!runtime.message_exists(ABSENT).await.expect("lookup"));
         server.abort();
     }
 
@@ -3275,46 +5269,46 @@ mod tests {
             Path((_session_id, message_id)): Path<(String, String)>,
         ) -> impl IntoResponse {
             match message_id.as_str() {
-                "delivery-found" => Json(json!({
+                "msg_deliveryfound" => Json(json!({
                     "info": {
-                        "id": "delivery-found",
+                        "id": "msg_deliveryfound",
                         "sessionID": "session-1",
                         "role": "user"
                     },
                     "parts": []
                 }))
                 .into_response(),
-                "delivery-absent" => StatusCode::NOT_FOUND.into_response(),
-                "delivery-malformed" => Json(json!({})).into_response(),
-                "delivery-assistant" => Json(json!({
+                "msg_deliveryabsent" | "delivery-absent" => StatusCode::NOT_FOUND.into_response(),
+                "msg_deliverymalformed" => Json(json!({})).into_response(),
+                "msg_deliveryassistant" => Json(json!({
                     "info": {
-                        "id": "delivery-assistant",
+                        "id": "msg_deliveryassistant",
                         "sessionID": "session-1",
                         "role": "assistant"
                     },
                     "parts": []
                 }))
                 .into_response(),
-                "delivery-system" => Json(json!({
+                "msg_deliverysystem" => Json(json!({
                     "info": {
-                        "id": "delivery-system",
+                        "id": "msg_deliverysystem",
                         "sessionID": "session-1",
                         "role": "system"
                     },
                     "parts": []
                 }))
                 .into_response(),
-                "delivery-missing-role" => Json(json!({
+                "msg_deliverymissingrole" => Json(json!({
                     "info": {
-                        "id": "delivery-missing-role",
+                        "id": "msg_deliverymissingrole",
                         "sessionID": "session-1"
                     },
                     "parts": []
                 }))
                 .into_response(),
-                "delivery-non-string-role" => Json(json!({
+                "msg_deliverynonstringrole" => Json(json!({
                     "info": {
-                        "id": "delivery-non-string-role",
+                        "id": "msg_deliverynonstringrole",
                         "sessionID": "session-1",
                         "role": 7
                     },

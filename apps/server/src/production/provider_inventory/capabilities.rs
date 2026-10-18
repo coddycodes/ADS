@@ -39,7 +39,7 @@ pub(crate) async fn discover_capabilities(
     } else if definition.driver == "opencode" && definition.endpoint.is_some() {
         tokio::select! {
             () = cancellation.cancelled() => None,
-            result = opencode_capabilities(definition.endpoint.as_deref().unwrap(), definition.server_password.as_deref(), cwd) => result,
+            result = opencode_capabilities(definition.endpoint.as_deref().unwrap(), definition.server_password.as_deref(), cwd, None) => result,
         }.ok_or_else(|| "Could not load OpenCode skills. Check the server connection and retry.".to_owned())?
     } else {
         let executable = resolve_provider_executable_with_environment(
@@ -118,8 +118,8 @@ pub(crate) async fn discover_capabilities(
                 cwd,
                 &definition.environment,
                 cancellation,
-                |endpoint, password| async move {
-                    opencode_capabilities(&endpoint, Some(&password), cwd).await
+                |endpoint, password, protocol| async move {
+                    opencode_capabilities(&endpoint, Some(&password), cwd, Some(protocol)).await
                 },
             )
             .await
@@ -227,22 +227,47 @@ async fn read_codex_capabilities(
     })
 }
 
+/// `protocol` is known for a server BiBCode started; a configured Server URL is identified first.
 async fn opencode_capabilities(
     endpoint: &str,
     password: Option<&str>,
     cwd: &Path,
+    protocol: Option<opencode::OpenCodeProtocol>,
 ) -> Option<ProviderCapabilities> {
+    let protocol = match protocol {
+        Some(protocol) => protocol,
+        None => opencode_server_protocol(endpoint, password).await.ok()?,
+    };
     let client = reqwest::Client::builder()
         .timeout(LOCAL_OPENCODE_INVENTORY_TIMEOUT)
         .build()
         .ok()?;
     let endpoint = endpoint.trim_end_matches('/');
-    let (commands, agents) = tokio::join!(
-        get_opencode_json(&client, endpoint, "/command", password, Some(cwd)),
-        get_opencode_json(&client, endpoint, "/agent", password, Some(cwd)),
-    );
-    let commands = commands?;
-    let agents = agents?;
+    let (commands, agents) = match protocol {
+        opencode::OpenCodeProtocol::V1 => {
+            let (commands, agents) = tokio::join!(
+                get_opencode_json(&client, endpoint, "/command", password, Some(cwd)),
+                get_opencode_json(&client, endpoint, "/agent", password, Some(cwd)),
+            );
+            (commands?, agents?)
+        }
+        opencode::OpenCodeProtocol::V2 => {
+            // Only the slash-menu catalogs: a failing model list must not hide skills.
+            let [agents, commands, skills] = read_opencode_v2_catalogs(
+                &client,
+                endpoint,
+                password,
+                Some(cwd),
+                ["agent", "command", "skill"],
+            )
+            .await?;
+            use opencode::v2::catalog;
+            (
+                catalog::commands(&commands, &skills),
+                catalog::agents(&agents),
+            )
+        }
+    };
     if !commands.is_array() || !agents.is_array() {
         return None;
     }
@@ -562,5 +587,65 @@ exec "$BIBCODE_TEST_EXECUTABLE" --exact production::provider_inventory::capabili
                 Some(libc::ESRCH)
             );
         }
+    }
+
+    /// The slash menu of an OpenCode 2 server loads from its agent, command and skill lists alone,
+    /// so a failing model list does not hide skills.
+    #[tokio::test]
+    async fn opencode_2_slash_catalogs_load_when_the_model_list_fails() {
+        use axum::{Json, http::StatusCode, routing::get};
+        let path = format!(
+            "{}/tests/fixtures/opencode-v2/catalog.exchanges.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let exchanges: Value =
+            serde_json::from_str(&std::fs::read_to_string(path).expect("catalog fixture"))
+                .expect("catalog JSON");
+        let captured = |route: &str| {
+            exchanges["exchanges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|exchange| {
+                    exchange["method"] == "GET"
+                        && exchange["path"].as_str().unwrap().split('?').next() == Some(route)
+                })
+                .expect("captured catalog")["response"]
+                .clone()
+        };
+        let mut app = opencode::server_fixtures::v2("secret").route(
+            "/api/model",
+            get(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
+        );
+        for route in ["/api/agent", "/api/command", "/api/skill"] {
+            let response = captured(route);
+            app = app.route(
+                route,
+                get(move || {
+                    let response = response.clone();
+                    async move { Json(response) }
+                }),
+            );
+        }
+        let (endpoint, server) = opencode::server_fixtures::serve(app).await;
+
+        let capabilities =
+            opencode_capabilities(&endpoint, Some("secret"), Path::new("/work/project"), None)
+                .await;
+        server.abort();
+
+        let capabilities = capabilities.expect("the slash menu loads");
+        assert!(
+            capabilities
+                .skills
+                .iter()
+                .any(|skill| skill["name"] == "report")
+        );
+        assert!(
+            capabilities
+                .slash_commands
+                .iter()
+                .any(|command| command["name"] == "review")
+        );
     }
 }
