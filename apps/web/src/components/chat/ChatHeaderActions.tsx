@@ -9,7 +9,7 @@ import {
 } from "@bibcode/contracts";
 import { scopeThreadRef } from "@bibcode/client-runtime/environment";
 import { MoreHorizontal } from "lucide-react";
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
 import { type ProviderInstanceEntry } from "~/providerInstances";
@@ -126,6 +126,10 @@ export const ChatHeaderActions = memo(function ChatHeaderActions({
   const openInActionsAvailable =
     showOpenInPicker && workspaceUnavailable === null && openInEditor.options.length > 0;
   const compactActionsAvailable = projectScriptActionsAvailable || openInActionsAvailable;
+  const activeThreadRef = useMemo(
+    () => scopeThreadRef(activeThreadEnvironmentId, activeThreadId),
+    [activeThreadEnvironmentId, activeThreadId],
+  );
 
   return (
     <div
@@ -174,7 +178,7 @@ export const ChatHeaderActions = memo(function ChatHeaderActions({
       {activeProjectName && (
         <GitActionsControl
           gitCwd={gitCwd}
-          activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
+          activeThreadRef={activeThreadRef}
           {...(draftId ? { draftId } : {})}
           // Trigger hidden: git actions live in the Source Control panel, but
           // the control must stay mounted for its thread-branch sync effect.

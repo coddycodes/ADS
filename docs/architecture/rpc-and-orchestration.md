@@ -271,10 +271,13 @@ labels such as the sidebar branch follow a checkout without waiting for the
 deadline; status reads, including watcher-driven reads, also nudge it when
 repository availability (`isRepo` or `repositoryUnavailableReason`) changes, so
 the sidebar follows a break or repair at once.
-The left panel names a card's branch from the latest summary even when it is
-stale, since a failed PR lookup marks a just-read base stale; only the PR and
-dirty indicators wait for a fresh value. A thread's recorded `branch` is the
-fallback when no summary names one.
+The left panel reads a card's branch, PR badge and dirty dot from the latest
+summary even when it is stale: a failed PR lookup marks a just-read base stale,
+and a stale PR is the last one the server read for the summary's own ref and
+provider. Hiding them would show an older branch, a missing PR, or a clean
+checkout. A thread's recorded `branch` is the fallback when no summary names
+one, and a workspace card's PR badge matches the branch the card names. An
+Agents view row names its branch by the same rule while its environment is live.
 Each successful base cycle publishes current local and provider state. A same-ref/provider PR from the immediately prior cycle may be carried
 only into cycle N+1 while enrichment runs or fails, preserving its original
 `observedAt` with `stale: true`; cycle N+2 expires it unless enrichment refreshes

@@ -70,7 +70,8 @@ The view's list column provides a filter, grouping by **Status** (the default),
 read**. Status groups have counts and appear in fixed **Working** → **Pending
 Approval** → **Awaiting Input** → **Done** order, with Done collapsed by
 default. Each row opens with the project name, the provider icon, the status
-dot, and the relative time, then shows the branch as its main line, the thread
+dot, and the relative time, then shows the branch as its main line (the
+checkout's current branch, as in the left panel), the thread
 title, a one-line conversation preview, and a footer with the status, the
 provider, and the environment badge. While a thread is working, the preview
 shows its current tool; otherwise it shows the latest assistant message or
@@ -965,7 +966,7 @@ Azure DevOps repository, which Pull Requests does not support.
 Each request is its own tab, labelled `!N` (`#N` on GitHub); opening one that is
 already open selects its tab. The tab and its selected section survive a reload.
 **Open full page** shows the request on the Pull Requests page for the thread's
-checkout. Deleting the request closes its tab, and a revert request opens in a
+checkout, and switches that page's **Worktree** picker to it. Deleting the request closes its tab, and a revert request opens in a
 new one. A tab whose Pull Requests setting is off, environment is
 disconnected, workspace was removed or host is unsupported explains what to do
 instead of showing an error, and recovers when the workspace returns. The detail
