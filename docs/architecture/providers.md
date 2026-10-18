@@ -414,8 +414,20 @@ Idle suspension must never stop work the provider still runs:
   refusal fails the delivery and the unopened connection retries it, so neither
   waits as uncertain. A 408 or 429 is no refusal: the delivery is retried, no
   sooner than OpenCode's `Retry-After`. A prompt that reuses an accepted message
-  id is answered 2xx by OpenCode 1.18, 1.19 and 2, so a retried delivery never
-  reads as refused. A request whose answer was lost, or a server or gateway
+  id is answered 2xx by OpenCode 1.18, 1.19 and 2, but OpenCode 1 then runs the
+  model again when a later message followed, and OpenCode 2 starts an empty
+  execution. So every send with a delivery key first looks the message up (its
+  `msg_` id, then a legacy raw id) and never sends one OpenCode already has: the
+  delivery is recorded delivered with no new turn, and its pending turn marker
+  is cleared. While the runtime still holds the turn whose answer was lost,
+  the retry reports that turn instead, so it stays running until OpenCode ends
+  it, and the session is not suspended meanwhile. A runtime that no longer
+  holds it (after a restart) reads OpenCode's session status and leaves the
+  delivery pending while the session is busy. That covers an explicit
+  retry of an uncertain delivery and a retry after a 408 or 429; restart
+  recovery reconciles the same way but keeps the marker, since it cannot tell
+  whether the turn still runs. A failed lookup sent nothing, so the
+  delivery is retried. A request whose answer was lost, or a server or gateway
   error, keeps its turn for OpenCode's own events to end and leaves the delivery
   uncertain). A turn such a driver did not send, one the
   provider started itself (an OpenCode 2 execution that delivers a background

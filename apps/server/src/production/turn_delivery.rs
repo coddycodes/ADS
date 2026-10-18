@@ -1402,6 +1402,13 @@ fn provider_delivery_outcome(
             None,
             DeliveryTaskOutcome::DefinitelyNotSent,
         ),
+        // An earlier attempt reached the provider: the message is delivered, with no new turn.
+        ProviderDeliveryOutcome::AlreadyDelivered => (
+            TurnDeliveryState::Delivered,
+            None,
+            Some(TurnDeliveryFailureReason::FoundWithoutTurn),
+            DeliveryTaskOutcome::Finished,
+        ),
         ProviderDeliveryOutcome::NotSentRetryAfter {
             detail,
             retry_after,

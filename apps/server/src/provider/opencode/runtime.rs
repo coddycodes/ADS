@@ -155,12 +155,19 @@ pub enum OpenCodeRuntimeError {
     RequestRefused(String),
     /// OpenCode answered the turn's own request with 408 or 429: it did not accept the turn, and
     /// it may be sent again, after `retry_after` when OpenCode named it.
+    /// OpenCode already has the delivery's message, so it is not sent again.
+    #[error("OpenCode already has this message")]
+    AlreadyDelivered,
     #[error("OpenCode could not take this message yet: {detail}")]
     RetryLater {
         detail: String,
         retry_after: Option<Duration>,
     },
 }
+
+/// How long the lookup before a delivery's send may take; a stalled one would hold the thread's
+/// delivery, so it ends as not sent and the delivery is retried.
+const DELIVERY_LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 async fn within_rewind_deadline<T>(
     request: impl std::future::Future<Output = Result<T, OpenCodeRuntimeError>>,
@@ -229,6 +236,18 @@ fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
                 .duration_since(std::time::SystemTime::now())
                 .ok()
         })
+}
+
+/// A message lookup answered with an error. A 408 or 429 keeps OpenCode's `Retry-After`, so a
+/// delivery that looks its message up first waits as asked.
+fn lookup_status_error(response: &reqwest::Response) -> OpenCodeRuntimeError {
+    match turn_status_error(response, "message lookup") {
+        retry @ OpenCodeRuntimeError::RetryLater { .. } => retry,
+        _ => OpenCodeRuntimeError::Http(format!(
+            "message lookup returned HTTP {}",
+            response.status()
+        )),
+    }
 }
 
 /// Whether OpenCode never accepted the turn's own request.
@@ -1051,6 +1070,9 @@ impl OpenCodeSessionRuntime {
         message_id: Option<&str>,
     ) -> Result<String, OpenCodeRuntimeError> {
         let session_id = self.session_id().await?;
+        if let Some(turn_id) = self.ensure_not_delivered(message_id).await? {
+            return Ok(turn_id);
+        }
         if self.is_v2() {
             let message_id = message_id.map(v2::message_id);
             // The checks run before the turn is announced: when one fails nothing was sent, and
@@ -1139,6 +1161,78 @@ impl OpenCodeSessionRuntime {
         Ok(turn_id)
     }
 
+    /// A delivery OpenCode already has is not sent again: OpenCode 1 runs the model again for an
+    /// older message id it already has, and OpenCode 2 starts an empty execution. Every resend of
+    /// a delivery (an explicit retry, a retry after a 408 or 429) passes through here. A lookup
+    /// that fails sent nothing, so the delivery is retried.
+    ///
+    /// Finding the message proves delivery, not that its turn ended. While this runtime still
+    /// holds a turn (one whose request answer was lost), the delivery reports that turn as
+    /// accepted (`Ok(Some)`), so it is projected running until OpenCode ends it. A runtime that
+    /// does not hold it (after a restart) asks OpenCode: while the session still works the
+    /// delivery waits as not sent, and once it is idle it is `AlreadyDelivered`, with no turn.
+    async fn ensure_not_delivered(
+        &self,
+        message_id: Option<&str>,
+    ) -> Result<Option<String>, OpenCodeRuntimeError> {
+        let Some(message_id) = message_id else {
+            return Ok(None);
+        };
+        let exists = tokio::time::timeout(DELIVERY_LOOKUP_TIMEOUT, self.message_exists(message_id))
+            .await
+            .unwrap_or_else(|_| {
+                Err(OpenCodeRuntimeError::Http(
+                    "the message lookup took too long".to_owned(),
+                ))
+            })
+            .map_err(not_sent)?;
+        if !exists {
+            return Ok(None);
+        }
+        if let Some(turn_id) = self.inner.active_turn_id.lock().await.clone() {
+            return Ok(Some(turn_id));
+        }
+        let session_id = self.session_id().await?;
+        let working = tokio::time::timeout(
+            DELIVERY_LOOKUP_TIMEOUT,
+            self.session_still_working(&session_id),
+        )
+        .await
+        .unwrap_or(Err(()));
+        match working {
+            Ok(false) => Err(OpenCodeRuntimeError::AlreadyDelivered),
+            Ok(true) => Err(OpenCodeRuntimeError::NotSent(
+                "OpenCode is still working on this message".to_owned(),
+            )),
+            Err(()) => Err(OpenCodeRuntimeError::NotSent(
+                "OpenCode's session status could not be read".to_owned(),
+            )),
+        }
+    }
+
+    /// Whether OpenCode reports the session busy or retrying. A server without a status endpoint
+    /// cannot tell, so it counts as idle.
+    async fn session_still_working(&self, session_id: &str) -> Result<bool, ()> {
+        let statuses = if self.is_v2() {
+            self.fetch_reconciliation_v2::<OpenCodeStatusMapDto>(
+                self.v2_url(&["session", "active"], false).map_err(|_| ())?,
+                v2_activity::statuses,
+            )
+            .await?
+        } else {
+            self.fetch_reconciliation_json::<OpenCodeStatusMapDto>(
+                self.request_url("/session/status").map_err(|_| ())?,
+            )
+            .await?
+        };
+        Ok(match statuses {
+            ReconciliationApiResult::Supported(statuses) => statuses
+                .get(session_id)
+                .is_some_and(|status| !matches!(status, OpenCodeSessionStatusDto::Idle)),
+            ReconciliationApiResult::NotFound => false,
+        })
+    }
+
     pub async fn message_exists(&self, message_id: &str) -> Result<bool, OpenCodeRuntimeError> {
         let session_id = self.session_id().await?;
         if self.is_v2() {
@@ -1179,10 +1273,7 @@ impl OpenCodeSessionRuntime {
             return Ok(false);
         }
         if !response.status().is_success() {
-            return Err(OpenCodeRuntimeError::Http(format!(
-                "message lookup returned HTTP {}",
-                response.status()
-            )));
+            return Err(lookup_status_error(&response));
         }
         let value: Value = response
             .json()
@@ -1220,6 +1311,10 @@ impl OpenCodeSessionRuntime {
             return Err(OpenCodeRuntimeError::InvalidResponse(
                 "command name cannot be empty".to_owned(),
             ));
+        }
+        // An OpenCode 2 command carries no message id, so its lookup finds nothing.
+        if let Some(turn_id) = self.ensure_not_delivered(message_id).await? {
+            return Ok(turn_id);
         }
         if self.is_v2() {
             // OpenCode 2 takes no message id for a command, so a command's delivery cannot be
@@ -3151,6 +3246,12 @@ impl OpenCodeSessionRuntime {
         .await
     }
 
+    /// Whether a turn is announced and not yet ended, such as one OpenCode may still be running
+    /// after its request's answer was lost.
+    pub async fn has_active_turn(&self) -> bool {
+        self.inner.active_turn_id.lock().await.is_some()
+    }
+
     /// Whether a checkpoint rewind has not reported success yet (turns already dropped, or a
     /// revert whose outcome is unknown). Only this runtime remembers it, so the session must not
     /// be suspended meanwhile.
@@ -3249,10 +3350,7 @@ impl OpenCodeSessionRuntime {
             return Ok(None);
         }
         if !response.status().is_success() {
-            return Err(OpenCodeRuntimeError::Http(format!(
-                "message lookup returned HTTP {}",
-                response.status()
-            )));
+            return Err(lookup_status_error(&response));
         }
         let value: Value = response
             .json()
@@ -5000,7 +5098,7 @@ mod tests {
         *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
 
         let turn = runtime
-            .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
+            .send_turn(Some("hello"), Vec::new(), None)
             .await
             .expect_err("the answer is lost");
         assert!(
@@ -5014,6 +5112,8 @@ mod tests {
             runtime.inner.active_turn_id.lock().await.as_deref(),
             started.turn_id.as_deref()
         );
+        // The session must stay up for OpenCode's events to end it.
+        assert!(runtime.has_active_turn().await);
         server.abort();
     }
 
@@ -5080,8 +5180,47 @@ mod tests {
         server.abort();
     }
 
-    /// A request whose connection never opens was not sent: it settles its turn and reports
-    /// `NotSent`, which the delivery retries.
+    /// A rate-limited lookup before a send keeps OpenCode's `Retry-After`; nothing is sent.
+    #[tokio::test]
+    async fn a_rate_limited_lookup_asks_to_retry_later() {
+        let app = Router::new().route(
+            "/session/{session_id}/message/{message_id}",
+            get(|| async {
+                (StatusCode::TOO_MANY_REQUESTS, [("retry-after", "3")]).into_response()
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+        let runtime = super::OpenCodeSessionRuntime::new(
+            &format!("http://{address}"),
+            "unit-thread",
+            "/tmp/unit",
+            None,
+        );
+        *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
+
+        let error = runtime
+            .send_turn(Some("hello"), Vec::new(), Some("msg_delivery1"))
+            .await
+            .expect_err("the lookup is rate limited");
+        assert!(
+            matches!(
+                error,
+                super::OpenCodeRuntimeError::RetryLater { retry_after: Some(delay), .. }
+                    if delay == std::time::Duration::from_secs(3)
+            ),
+            "{error:?}"
+        );
+        assert_no_queued_event(&runtime).await;
+        server.abort();
+    }
+
+    /// A request whose connection never opens was not sent: it reports `NotSent`, which the
+    /// delivery retries. A keyed send fails at its lookup, before any turn is announced; an
+    /// unkeyed prompt settles the turn it announced.
     #[tokio::test]
     async fn a_connection_that_never_opens_settles_the_turn_as_not_sent() {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
@@ -5095,8 +5234,17 @@ mod tests {
         );
         *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
 
-        let error = runtime
+        let keyed = runtime
             .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
+            .await
+            .expect_err("the lookup's connection never opens");
+        assert!(
+            matches!(keyed, super::OpenCodeRuntimeError::NotSent(_)),
+            "{keyed}"
+        );
+        assert_no_queued_event(&runtime).await;
+        let error = runtime
+            .send_turn(Some("hello"), Vec::new(), None)
             .await
             .expect_err("the connection never opens");
         assert!(
@@ -5108,6 +5256,95 @@ mod tests {
         assert_eq!(completed.turn_id, started.turn_id);
         assert_eq!(completed.payload["stopReason"], "not_sent");
         assert!(runtime.inner.active_turn_id.lock().await.is_none());
+    }
+
+    /// A delivery OpenCode already has is not sent again (OpenCode 1 would run the model again)
+    /// and announces no turn.
+    #[tokio::test]
+    async fn a_delivery_opencode_already_has_is_not_sent_again() {
+        let prompts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let posted = prompts.clone();
+        let busy = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let status = busy.clone();
+        let app = Router::new()
+            .route(
+                "/session/status",
+                get(move || {
+                    let busy = status.load(std::sync::atomic::Ordering::SeqCst);
+                    async move {
+                        if busy {
+                            Json(json!({ "session-1": { "type": "busy" } }))
+                        } else {
+                            Json(json!({}))
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/session/{session_id}/message/{message_id}",
+                get(
+                    |Path((session_id, message_id)): Path<(String, String)>| async move {
+                        Json(json!({
+                            "info": { "id": message_id, "sessionID": session_id, "role": "user" },
+                            "parts": []
+                        }))
+                    },
+                ),
+            )
+            .route(
+                "/session/{session_id}/prompt_async",
+                post(move || {
+                    posted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    async { StatusCode::NO_CONTENT }
+                }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+        let runtime = super::OpenCodeSessionRuntime::new(
+            &format!("http://{address}"),
+            "unit-thread",
+            "/tmp/unit",
+            None,
+        );
+        *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
+
+        let error = runtime
+            .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
+            .await
+            .expect_err("OpenCode already has it");
+        assert!(
+            matches!(error, super::OpenCodeRuntimeError::AlreadyDelivered),
+            "{error}"
+        );
+        assert_eq!(prompts.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_no_queued_event(&runtime).await;
+
+        // A runtime that holds no turn (after a restart) waits while OpenCode still works.
+        busy.store(true, std::sync::atomic::Ordering::SeqCst);
+        let waiting = runtime
+            .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
+            .await
+            .expect_err("OpenCode still works on it");
+        assert!(
+            matches!(waiting, super::OpenCodeRuntimeError::NotSent(_)),
+            "{waiting}"
+        );
+        busy.store(false, std::sync::atomic::Ordering::SeqCst);
+
+        // While the turn whose answer was lost still runs, the retry reports that turn, so it is
+        // projected running until OpenCode ends it.
+        *runtime.inner.active_turn_id.lock().await = Some("turn-still-running".to_owned());
+        let turn = runtime
+            .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
+            .await
+            .expect("the running turn is reported");
+        assert_eq!(turn, "turn-still-running");
+        assert_eq!(prompts.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_no_queued_event(&runtime).await;
+        server.abort();
     }
 
     #[tokio::test]
@@ -5210,6 +5447,86 @@ mod tests {
                 .message_exists(&uuid::Uuid::new_v4().to_string())
                 .await
                 .expect("lookup")
+        );
+        runtime.stop().await.expect("stop");
+    }
+
+    /// OpenCode 1 runs the model again when an older accepted message id is sent after a later
+    /// message, so a delivery OpenCode already has is never sent again. Set the
+    /// `BIBCODE_OPENCODE_V1_*` variables above and `BIBCODE_OPENCODE_MOCK_REQUESTS`, the scripted
+    /// model's request log, whose agent calls are counted.
+    #[tokio::test]
+    #[ignore = "needs a live OpenCode 1 server and the scripted model's request log"]
+    async fn live_opencode_1_resent_delivery_runs_the_model_once() {
+        let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
+        let log = var("BIBCODE_OPENCODE_MOCK_REQUESTS");
+        // Agent calls (those offering tools) whose newest user message names `marker`.
+        let calls = |marker: &str| {
+            std::fs::read_to_string(&log)
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .filter(|request| request.get("tools").is_some_and(|tools| !tools.is_null()))
+                .filter(|request| {
+                    request["messages"]
+                        .as_array()
+                        .and_then(|messages| messages.iter().rev().find(|m| m["role"] == "user"))
+                        .is_some_and(|user| user.to_string().contains(marker))
+                })
+                .count()
+        };
+        let runtime =
+            super::OpenCodeSessionRuntime::new_with_options_reconciliation_revision_and_agent_activity(
+                &var("BIBCODE_OPENCODE_V1_LIVE"),
+                "live-thread",
+                "/tmp",
+                Some(&var("BIBCODE_OPENCODE_V1_MODEL")),
+                Some(&var("BIBCODE_OPENCODE_V1_PASSWORD")),
+                None,
+                0,
+                false,
+            )
+            .expect("runtime");
+        runtime.start().await.expect("session starts");
+        let first = uuid::Uuid::new_v4().to_string();
+        let second = uuid::Uuid::new_v4().to_string();
+        let settle = || tokio::time::sleep(std::time::Duration::from_secs(4));
+        runtime
+            .send_turn(
+                Some(&format!("SAY_HELLO {first}")),
+                Vec::new(),
+                Some(&first),
+            )
+            .await
+            .expect("the first message is accepted");
+        settle().await;
+        runtime
+            .send_turn(
+                Some(&format!("SAY_HELLO {second}")),
+                Vec::new(),
+                Some(&second),
+            )
+            .await
+            .expect("the second message is accepted");
+        settle().await;
+        assert_eq!((calls(&first), calls(&second)), (1, 1));
+
+        let resent = runtime
+            .send_turn(
+                Some(&format!("SAY_HELLO {first}")),
+                Vec::new(),
+                Some(&first),
+            )
+            .await;
+        settle().await;
+        assert_eq!(
+            (calls(&first), calls(&second)),
+            (1, 1),
+            "the model ran again for a resent message: {resent:?}"
+        );
+        assert!(
+            matches!(resent, Err(super::OpenCodeRuntimeError::AlreadyDelivered)),
+            "{resent:?}"
         );
         runtime.stop().await.expect("stop");
     }

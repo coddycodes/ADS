@@ -5085,6 +5085,8 @@ async fn persist_turn_delivery_transition(
                 return Ok(None);
             }
             let next_state = turn_delivery_state_name(transition.next_state);
+            let found_without_turn = transition.next_state == TurnDeliveryState::Delivered
+                && reason == Some(TurnDeliveryFailureReason::FoundWithoutTurn);
             let reason = reason.filter(|reason| matches!((transition.next_state, reason),
                 (TurnDeliveryState::Failed, TurnDeliveryFailureReason::ModelSelectionRefused)
                 | (TurnDeliveryState::Delivered, TurnDeliveryFailureReason::StartedNewConversation)))
@@ -5115,9 +5117,14 @@ async fn persist_turn_delivery_transition(
             if let Some(reason) = reason {
                 payload["delivery"]["reason"] = json!(reason);
             }
+            let metadata = if found_without_turn {
+                json!({ "foundWithoutTurn": true })
+            } else {
+                json!({})
+            };
             let planned = make_event(
                 "thread.turn-delivery-updated", "thread", &thread_id, &transition.updated_at,
-                &format!("server:turn-delivery:{}", transition.command_id), json!({}), payload,
+                &format!("server:turn-delivery:{}", transition.command_id), metadata, payload,
             );
             let saved = append_event_tx(&transaction, planned)?;
             for projector in PROJECTOR_NAMES {
@@ -6080,6 +6087,27 @@ fn apply_turns_projector_tx(
                 [&thread_id],
             )?;
             transaction.execute("INSERT INTO projection_turns (thread_id, turn_id, pending_message_id, source_proposed_plan_thread_id, source_proposed_plan_id, assistant_message_id, state, requested_at, started_at, completed_at, checkpoint_turn_count, checkpoint_ref, checkpoint_status, checkpoint_files_json) VALUES (?, NULL, ?, ?, ?, NULL, 'running', ?, NULL, NULL, NULL, NULL, NULL, '[]')", params![thread_id, required_str(payload,"messageId")?, optional_string(payload.pointer("/sourceProposedPlan/threadId")), optional_string(payload.pointer("/sourceProposedPlan/planId")), required_str(payload,"createdAt")?])?;
+        }
+        // A delivery recorded delivered because the provider already had the message, with no
+        // turn of its runtime still running (an explicit retry found it), started no turn here.
+        // Its pending marker would stay running and hold queued follow-ups, so it goes. Only that
+        // explicit outcome clears it: an accepted turn keeps its marker until its session update,
+        // and restart recovery keeps it, since it cannot tell whether that turn still runs.
+        "thread.turn-delivery-updated"
+            if event
+                .event
+                .metadata
+                .get("foundWithoutTurn")
+                .and_then(Value::as_bool)
+                == Some(true) =>
+        {
+            transaction.execute(
+                "DELETE FROM projection_turns WHERE thread_id = ? AND pending_message_id = ? AND turn_id IS NULL AND state = 'running'",
+                params![
+                    required_str(payload, "threadId")?,
+                    required_str(payload, "messageId")?
+                ],
+            )?;
         }
         "thread.session-set" => {
             let session = payload
@@ -11348,6 +11376,65 @@ mod tests {
             panic!("expected project create command");
         };
         assert_eq!(workspace_root, "/canonical/requested-workspace");
+    }
+
+    /// A delivery recorded delivered because the provider already had the message (found by an
+    /// explicit retry) clears its own pending turn marker, which would
+    /// otherwise stay running and hold queued follow-ups. Another message's marker is kept, and so
+    /// is the marker of an ordinary delivered turn, which its own session update settles.
+    #[tokio::test]
+    async fn a_delivery_delivered_without_a_turn_clears_its_pending_turn() {
+        let database = Database::open_in_memory().await.expect("database");
+        let running = database
+            .call(|connection| {
+                run_migrations(connection, None)?;
+                let transaction = connection.transaction()?;
+                let requested = |message_id: &str| {
+                    projector_event(
+                        "thread.turn-start-requested",
+                        json!({
+                            "threadId":"projector-thread", "messageId":message_id,
+                            "createdAt":"2026-07-10T10:00:00.000Z"
+                        }),
+                        json!({}),
+                    )
+                };
+                let delivered = |message_id: &str, found_without_turn: bool| {
+                    projector_event(
+                        "thread.turn-delivery-updated",
+                        json!({
+                            "threadId":"projector-thread", "messageId":message_id,
+                            "state":"delivered", "provider":"opencode",
+                            "updatedAt":"2026-07-10T10:00:01.000Z"
+                        }),
+                        if found_without_turn {
+                            json!({ "foundWithoutTurn": true })
+                        } else {
+                            json!({})
+                        },
+                    )
+                };
+                let mut context = ProjectionContext::default();
+                apply_turns_projector_tx(&transaction, &requested("other"), &mut context)?;
+                apply_turns_projector_tx(&transaction, &delivered("found", true), &mut context)?;
+                apply_turns_projector_tx(&transaction, &delivered("other", false), &mut context)?;
+                let kept: i64 = transaction.query_row(
+                    "SELECT COUNT(*) FROM projection_turns WHERE turn_id IS NULL AND state = 'running'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                apply_turns_projector_tx(&transaction, &requested("found"), &mut context)?;
+                apply_turns_projector_tx(&transaction, &delivered("found", true), &mut context)?;
+                let left: i64 = transaction.query_row(
+                    "SELECT COUNT(*) FROM projection_turns WHERE turn_id IS NULL AND state = 'running'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                Ok((kept, left))
+            })
+            .await
+            .expect("projection");
+        assert_eq!(running, (1, 0));
     }
 
     #[tokio::test]
