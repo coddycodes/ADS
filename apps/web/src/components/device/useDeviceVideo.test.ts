@@ -226,7 +226,6 @@ describe("DeviceVideoSession", () => {
       "unauthorized",
       "wrongDevice",
       "wrongChannel",
-      "limit",
     ]) {
       const { mintTicket, modes, video, worker } = session();
       video.start();
@@ -241,15 +240,24 @@ describe("DeviceVideoSession", () => {
     warn.mockRestore();
   });
 
-  it("falls back at once when the device already has as many video viewers as it allows", async () => {
-    const { mintTicket, modes, video, worker } = session();
+  it("retries a limit close with backoff before falling back", async () => {
+    // A viewer that vanished without closing can hold a slot until the server reaps it.
+    const { advance, mintTicket, modes, video, worker } = session();
     video.start();
     await flush();
     worker().emit({ type: "firstFrame" });
+    for (const delay of [500, 1_000, 2_000]) {
+      worker().emit({ type: "closed", reason: "limit" });
+      await advance(delay - 1);
+      const sent = worker().tickets.length;
+      await advance(1);
+      expect(worker().tickets.length).toBe(sent + 1);
+    }
+    expect(modes.some((mode) => mode.kind === "jpeg")).toBe(false);
+    // A device that stays full falls back once the reconnects are spent.
     worker().emit({ type: "closed", reason: "limit" });
-    await vi.advanceTimersByTimeAsync(10_000);
     expect(modes.at(-1)).toEqual({ kind: "jpeg", reason: "rejected" });
-    expect(mintTicket).toHaveBeenCalledTimes(1);
+    expect(mintTicket).toHaveBeenCalledTimes(4);
   });
 
   it("stops trying video, without still images, when the device stopped", async () => {

@@ -3116,8 +3116,9 @@ Record each client's OS, app or browser version, and profile type.
    was skipped.
 8. **Two clients.** With the desktop and the browser both showing the device,
    both see each other's input. Where five desktop windows can show the
-   device, the fifth video socket is refused with `limit` and that window
-   shows still images.
+   device, the fifth video socket is refused with `limit`; that window retries
+   three times within a few seconds and then shows still images. Close one of
+   the other four and reopen the fifth window's Device panel: it shows video.
 9. **Agents.** In a thread on the environment, ask the agent to list devices,
    take a screenshot, and close the device. `device_screenshot` returns a PNG
    no wider than 1080 px. Turn the setting off: the agent's next `device_*`

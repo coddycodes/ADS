@@ -2265,12 +2265,14 @@ arrives within 5 s, or on a decoder error. Close reasons fall into three
 groups:
 
 - **Still images at once:** `host-identity`, `disabled`, `unauthorized`,
-  `wrongDevice`, `wrongChannel`, and `limit`, which a new ticket cannot fix,
-  and a `DeviceMediaUnavailableError` from `device.createMediaTicket` (a
-  server running with `--unsafe-no-auth` has no session to bind a ticket to).
+  `wrongDevice`, and `wrongChannel`, which a new ticket cannot fix, and a
+  `DeviceMediaUnavailableError` from `device.createMediaTicket` (a server
+  running with `--unsafe-no-auth` has no session to bind a ticket to).
 - **Stop without still images:** `stopped`. The catalog already shows the
   device's state, and video starts again with the next ready device.
-- **Retried:** `expired`, `reused`, `failed`, `slow`, and a connection that is
+- **Retried:** `expired`, `reused`, `failed`, `slow`, `limit` (one of the
+  device's viewers may be a client that vanished, which the server reaps within
+  50 s), and a connection that is
   refused or drops without a close frame (`network`, such as 1006 or the
   pre-upgrade 503), with a new ticket each time, at most 3 times in 60 s with
   backoff, before falling back to still images. A ticket that cannot be minted

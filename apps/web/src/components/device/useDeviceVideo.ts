@@ -41,14 +41,16 @@ export const WORKER_STOP_GRACE_MS = 1_000;
 
 /**
  * Close reasons a new ticket cannot fix, which switch to still images at once: the pinned host
- * key (or prologue) is wrong, previews were turned off, the session lost its rights, the device
- * is gone, the ticket was minted on another channel than the socket uses (a client bug that a
- * retry would only repeat), or the device already has as many video viewers as it allows.
+ * key (or prologue) is wrong, previews were turned off, the session was revoked, the device is
+ * gone, or the ticket was minted on another channel than the socket uses (a client bug that a
+ * retry would only repeat).
  *
  * The server's other reasons: `stopped` (the device stopped or is not ready) ends the attempt
  * without still images, since the device list already shows the state and video starts again
- * with the next ready device; `expired`, `reused`, `failed`, and `slow` are retried, as are the
- * client's own `network` (a dropped or refused connection) and `protocol`.
+ * with the next ready device; `expired` (the ticket, or the session it was minted on), `reused`,
+ * `failed`, `slow`, and `limit` (the device has as many video viewers as it allows, one of
+ * which may be a vanished client the server has yet to reap) are retried, as are the client's
+ * own `network` (a dropped or refused connection) and `protocol`.
  */
 const FINAL_CLOSE_REASONS: ReadonlySet<string> = new Set([
   "host-identity",
@@ -56,7 +58,6 @@ const FINAL_CLOSE_REASONS: ReadonlySet<string> = new Set([
   "unauthorized",
   "wrongDevice",
   "wrongChannel",
-  "limit",
 ]);
 
 /** The parts of a `Worker` the session uses. */
