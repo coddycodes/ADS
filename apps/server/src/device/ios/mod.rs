@@ -1742,8 +1742,22 @@ mod tests {
         }
         // The caller's future is gone, as `run_unary` drops it.
         assert_eq!(hid.sent(), [key(SHIFT, true)]);
+        // A later batch, made while the first is still held, waits for the task that owns
+        // the input lock. Were the guard left with the caller, it would be free here and
+        // `b` would go out while the Shift down is still unanswered.
+        let next = manager.input(&id, vec![text("b")]);
+        tokio::pin!(next);
+        let early = tokio::time::timeout(std::time::Duration::from_millis(100), &mut next).await;
+        assert!(
+            early.is_err(),
+            "a later batch waits for the batch whose caller left"
+        );
+        assert!(
+            hid.sent().is_empty(),
+            "nothing of the later batch has gone out"
+        );
         let _ = go.send(());
-        manager.input(&id, vec![text("b")]).await.unwrap();
+        next.await.unwrap();
         assert_eq!(
             hid.sent(),
             [
