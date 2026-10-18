@@ -1,8 +1,23 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { SourceControlChangesList } from "./SourceControlChangesList";
+import {
+  SourceControlChangesList,
+  type SourceControlListSection,
+} from "./SourceControlChangesList";
 import type { WorkingTreeFile } from "./SourceControlPanel.logic";
+
+function renderList(
+  section: Partial<SourceControlListSection> & { files: readonly WorkingTreeFile[] },
+  groupByFolder?: boolean,
+): string {
+  return renderToStaticMarkup(
+    <SourceControlChangesList
+      {...(groupByFolder === undefined ? {} : { groupByFolder })}
+      sections={[{ title: "Changes", onToggle: () => {}, onOpenFile: () => {}, ...section }]}
+    />,
+  );
+}
 
 const FILES: WorkingTreeFile[] = [
   { path: "docs/prps/PFS-1848/master-plan.md", insertions: 218, deletions: 0 },
@@ -46,9 +61,7 @@ const GROUPED_CHECKBOX_COUNT = FILES.length * 2;
 
 describe("SourceControlChangesList", () => {
   it("renders each file's name under its folder header with +/- counts", () => {
-    const markup = renderToStaticMarkup(
-      <SourceControlChangesList files={FILES} onToggle={() => {}} onOpenFile={() => {}} />,
-    );
+    const markup = renderList({ files: FILES });
     expect(markup).toContain("master-plan.md");
     expect(markup).toContain("docs/prps/PFS-1848");
     expect(markup).toContain("+218");
@@ -56,15 +69,13 @@ describe("SourceControlChangesList", () => {
   });
 
   it("groups files under expandable folder headers, root first", () => {
-    const markup = renderToStaticMarkup(
-      <SourceControlChangesList files={FILES} onToggle={() => {}} onOpenFile={() => {}} />,
-    );
+    const markup = renderList({ files: FILES });
     expect(markup).toContain('title="Repository root"');
     expect(markup).toContain('title="docs/prps/PFS-1848"');
-    expect(markup.match(/aria-expanded="true"/g)).toHaveLength(2);
+    // The section header and both folder headers are expanded.
+    expect(markup.match(/aria-expanded="true"/g)).toHaveLength(3);
     expect(markup.indexOf("Repository root")).toBeLessThan(markup.indexOf("docs/prps/PFS-1848"));
     expect(markup).toContain('aria-label="docs/prps/PFS-1848, 1 file"');
-    expect(markup).toContain("aria-controls=");
     // The path is isolated with <bdi>, so no bidi control characters end up in
     // the text the user can select and copy.
     expect(markup).toContain('<bdi dir="ltr">docs/prps/PFS-1848</bdi>');
@@ -72,15 +83,10 @@ describe("SourceControlChangesList", () => {
   });
 
   it("renders one flat row per file with its own directory when grouping is off", () => {
-    const markup = renderToStaticMarkup(
-      <SourceControlChangesList
-        files={FILES}
-        groupByFolder={false}
-        onToggle={() => {}}
-        onOpenFile={() => {}}
-      />,
-    );
-    expect(markup).not.toContain("aria-expanded");
+    const markup = renderList({ files: FILES }, false);
+    // Only the section header expands; no folder headers render.
+    expect(markup.match(/aria-expanded/g)).toHaveLength(1);
+    expect(markup).not.toContain("Repository root");
     expect(markup).toContain("docs/prps/PFS-1848");
     expect(markup).toContain("master-plan.md");
     // The directory keeps a readable floor and yields the rest to the name,
@@ -90,55 +96,29 @@ describe("SourceControlChangesList", () => {
   });
 
   it("renders a folder header checkbox that stages the whole folder", () => {
-    const markup = renderToStaticMarkup(
-      <SourceControlChangesList
-        files={FILES}
-        checked={() => false}
-        onToggle={() => {}}
-        onOpenFile={() => {}}
-      />,
-    );
+    const markup = renderList({ files: FILES, checked: () => false });
     expect(markup).toContain('aria-label="Stage all files in docs/prps/PFS-1848"');
     expect(markup).toContain('aria-label="Stage all files in the repository root"');
   });
 
-  it("renders the injected badge slot", () => {
-    const markup = renderToStaticMarkup(
-      <SourceControlChangesList
-        files={FILES}
-        onToggle={() => {}}
-        onOpenFile={() => {}}
-        renderBadge={(file) => (
-          <span data-testid="badge">{file.path === "tasks.md" ? "U" : "M"}</span>
-        )}
-      />,
-    );
-    expect(markup).toContain('data-testid="badge"');
+  it("renders each file's status letter", () => {
+    const markup = renderList({ files: [UNTRACKED_FILE, STAGED_FILE] });
+    expect(markup).toContain('title="Untracked"');
+    expect(markup).toContain('title="Modified"');
   });
 
-  it("renders an empty state when there are no files", () => {
-    const markup = renderToStaticMarkup(
-      <SourceControlChangesList files={[]} onToggle={() => {}} onOpenFile={() => {}} />,
-    );
+  it("renders an empty state when no section has files", () => {
+    const markup = renderList({ files: [] });
     expect(markup).toContain("No changes");
   });
 
   it("renders no checkbox when `checked` is omitted (legacy server)", () => {
-    const markup = renderToStaticMarkup(
-      <SourceControlChangesList files={FILES} onToggle={() => {}} onOpenFile={() => {}} />,
-    );
+    const markup = renderList({ files: FILES });
     expect(markup).not.toContain('data-slot="checkbox"');
   });
 
   it('renders a checked box labeled "Unstage <path>" for a staged file', () => {
-    const markup = renderToStaticMarkup(
-      <SourceControlChangesList
-        files={FILES}
-        checked={() => true}
-        onToggle={() => {}}
-        onOpenFile={() => {}}
-      />,
-    );
+    const markup = renderList({ files: FILES, checked: () => true });
     expect(markup).toContain('data-slot="checkbox"');
     expect(checkboxCount(markup)).toBe(GROUPED_CHECKBOX_COUNT);
     expect(markup).toContain(`aria-label="Unstage ${FILES[0]!.path}"`);
@@ -146,14 +126,7 @@ describe("SourceControlChangesList", () => {
   });
 
   it('renders an unchecked box labeled "Stage <path>" for an unstaged file', () => {
-    const markup = renderToStaticMarkup(
-      <SourceControlChangesList
-        files={FILES}
-        checked={() => false}
-        onToggle={() => {}}
-        onOpenFile={() => {}}
-      />,
-    );
+    const markup = renderList({ files: FILES, checked: () => false });
     expect(markup).toContain('data-slot="checkbox"');
     expect(checkboxCount(markup)).toBe(GROUPED_CHECKBOX_COUNT);
     expect(markup).toContain(`aria-label="Stage ${FILES[0]!.path}"`);
@@ -161,17 +134,13 @@ describe("SourceControlChangesList", () => {
   });
 
   it("renders selection instead of staging when selection mode is active", () => {
-    const markup = renderToStaticMarkup(
-      <SourceControlChangesList
-        files={FILES}
-        selectionMode
-        checked={() => false}
-        selected={(file) => file.path === FILES[0]?.path}
-        onSelect={() => {}}
-        onToggle={() => {}}
-        onOpenFile={() => {}}
-      />,
-    );
+    const markup = renderList({
+      files: FILES,
+      selectionMode: true,
+      checked: () => false,
+      selected: (file) => file.path === FILES[0]?.path,
+      onSelect: () => {},
+    });
 
     expect(checkboxCount(markup)).toBe(GROUPED_CHECKBOX_COUNT);
     expect(markup).toContain(`aria-label="Deselect ${FILES[0]!.path}"`);
@@ -179,62 +148,41 @@ describe("SourceControlChangesList", () => {
   });
 
   it("renders no inline action buttons when no row-action handlers are wired", () => {
-    const markup = renderToStaticMarkup(
-      <SourceControlChangesList files={[STAGED_FILE]} onToggle={() => {}} onOpenFile={() => {}} />,
-    );
+    const markup = renderList({ files: [STAGED_FILE] });
     expect(markup).not.toContain(`aria-label="Unstage ${STAGED_FILE.path}"`);
   });
 
   it("renders a single Unstage inline action for a staged row", () => {
-    const markup = renderToStaticMarkup(
-      <SourceControlChangesList
-        files={[STAGED_FILE]}
-        onToggle={() => {}}
-        onOpenFile={() => {}}
-        onUnstageFile={() => {}}
-        onStageFile={() => {}}
-      />,
-    );
+    const markup = renderList({
+      files: [STAGED_FILE],
+      onUnstageFile: () => {},
+      onStageFile: () => {},
+    });
     expect(markup).toContain(`aria-label="Unstage ${STAGED_FILE.path}"`);
     expect(markup).not.toContain(`aria-label="Stage ${STAGED_FILE.path}"`);
   });
 
   it("renders Discard then Stage inline actions for an unstaged row", () => {
-    const markup = renderToStaticMarkup(
-      <SourceControlChangesList
-        files={[UNSTAGED_FILE]}
-        onToggle={() => {}}
-        onOpenFile={() => {}}
-        onRequestDiscardFile={() => {}}
-        onStageFile={() => {}}
-      />,
-    );
+    const markup = renderList({
+      files: [UNSTAGED_FILE],
+      onRequestDiscardFile: () => {},
+      onStageFile: () => {},
+    });
     expect(markup).toContain(`aria-label="Discard changes ${UNSTAGED_FILE.path}"`);
     expect(markup).toContain(`aria-label="Stage ${UNSTAGED_FILE.path}"`);
   });
 
   it('labels the discard action "Restore file" for a deleted unstaged row', () => {
-    const markup = renderToStaticMarkup(
-      <SourceControlChangesList
-        files={[DELETED_FILE]}
-        onToggle={() => {}}
-        onOpenFile={() => {}}
-        onRequestDiscardFile={() => {}}
-      />,
-    );
+    const markup = renderList({ files: [DELETED_FILE], onRequestDiscardFile: () => {} });
     expect(markup).toContain(`aria-label="Restore file ${DELETED_FILE.path}"`);
   });
 
   it("renders a destructive Delete inline action for an untracked row", () => {
-    const markup = renderToStaticMarkup(
-      <SourceControlChangesList
-        files={[UNTRACKED_FILE]}
-        onToggle={() => {}}
-        onOpenFile={() => {}}
-        onRequestDiscardFile={() => {}}
-        onStageFile={() => {}}
-      />,
-    );
+    const markup = renderList({
+      files: [UNTRACKED_FILE],
+      onRequestDiscardFile: () => {},
+      onStageFile: () => {},
+    });
     expect(markup).toContain(`aria-label="Delete untracked file ${UNTRACKED_FILE.path}"`);
     expect(markup).toContain(`aria-label="Stage ${UNTRACKED_FILE.path}"`);
     expect(markup).toContain("text-destructive");

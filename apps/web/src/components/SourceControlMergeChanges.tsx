@@ -4,6 +4,7 @@ import { memo } from "react";
 import { Button } from "~/components/ui/button";
 
 import type { WorkingTreeFile } from "./SourceControlPanel.logic";
+import { WindowedList } from "./WindowedList";
 
 export interface SourceControlMergeChangesProps {
   readonly files: readonly WorkingTreeFile[];
@@ -16,6 +17,12 @@ export interface SourceControlMergeChangesProps {
   /** Why files cannot open in an external editor here (e.g. none is installed). */
   readonly openInEditorDisabledReason?: string | null;
 }
+
+// Fits the xs buttons at every breakpoint; rows fill it, with no gap.
+const MERGE_ROW_HEIGHT = 28;
+const MERGE_LIST_MAX_HEIGHT = 192;
+const mergeRowHeight = () => MERGE_ROW_HEIGHT;
+const mergeRowKey = (file: WorkingTreeFile) => file.path;
 
 /** Conflicted paths of a merge in progress, each resolvable with one side or in an editor. */
 export const SourceControlMergeChanges = memo(function SourceControlMergeChanges({
@@ -32,10 +39,24 @@ export const SourceControlMergeChanges = memo(function SourceControlMergeChanges
       {openInEditorDisabledReason === null ? null : (
         <p className="px-1 pb-1 text-xs text-muted-foreground">{openInEditorDisabledReason}</p>
       )}
-      {/* Bounded so the strip above stays visible and every row stays reachable. */}
-      <ul className="max-h-48 space-y-0.5 overflow-y-auto">
-        {files.map((file) => (
-          <li className="flex min-w-0 items-center gap-1 px-1 text-xs" key={file.path}>
+      {/* Bounded so the strip above stays visible and every row stays reachable;
+          virtualized so a merge with thousands of conflicts mounts one screenful (#119). */}
+      <WindowedList
+        className="min-w-0 overflow-x-hidden overscroll-y-contain"
+        role="list"
+        aria-label="Conflicted files"
+        style={{ height: Math.min(files.length * MERGE_ROW_HEIGHT, MERGE_LIST_MAX_HEIGHT) }}
+        items={files}
+        itemHeight={mergeRowHeight}
+        itemKey={mergeRowKey}
+        textSurface="background"
+        renderItem={(file, index) => (
+          <div
+            role="listitem"
+            aria-posinset={index + 1}
+            aria-setsize={files.length}
+            className="flex h-full min-w-0 items-center gap-1 px-1 text-xs"
+          >
             <span className="min-w-0 flex-1 truncate font-mono" title={file.path}>
               {file.path}
             </span>
@@ -79,9 +100,9 @@ export const SourceControlMergeChanges = memo(function SourceControlMergeChanges
             >
               Mark resolved
             </Button>
-          </li>
-        ))}
-      </ul>
+          </div>
+        )}
+      />
     </section>
   );
 });

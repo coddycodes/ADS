@@ -25,6 +25,10 @@ function buttonLabelled(label: string): HTMLButtonElement {
 
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  // happy-dom has no layout; give the virtualized list a viewport to fill.
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    DOMRect.fromRect({ x: 0, y: 0, width: 400, height: 192 }),
+  );
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -35,6 +39,7 @@ afterEach(async () => {
   root = null;
   container.remove();
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  vi.restoreAllMocks();
 });
 
 describe("SourceControlMergeChanges", () => {
@@ -68,7 +73,28 @@ describe("SourceControlMergeChanges", () => {
     expect(onMarkResolved).toHaveBeenCalledWith("src/a.txt");
   });
 
-  it("scrolls a long conflict list instead of clipping it", async () => {
+  it("bounds a long conflict list to a scrolling strip instead of clipping it", async () => {
+    const files = Array.from({ length: 40 }, (_, index) => ({
+      ...CONFLICTED,
+      path: `src/${index}.txt`,
+    }));
+    await act(async () =>
+      root?.render(
+        <SourceControlMergeChanges
+          disabled={false}
+          files={files}
+          onMarkResolved={vi.fn()}
+          onOpenInEditor={vi.fn()}
+          onResolve={vi.fn()}
+        />,
+      ),
+    );
+    const list = container.querySelector<HTMLElement>('[role="list"]');
+    expect(list?.style.height).toBe("192px");
+    expect(list?.querySelector("[role='listitem']")?.getAttribute("aria-setsize")).toBe("40");
+  });
+
+  it("sizes a short conflict list to its rows", async () => {
     await act(async () =>
       root?.render(
         <SourceControlMergeChanges
@@ -80,8 +106,7 @@ describe("SourceControlMergeChanges", () => {
         />,
       ),
     );
-    expect(container.querySelector("ul")?.className).toMatch(/overflow-y-auto/);
-    expect(container.querySelector("ul")?.className).toMatch(/max-h-/);
+    expect(container.querySelector<HTMLElement>('[role="list"]')?.style.height).toBe("28px");
   });
 
   it("explains why a file cannot be opened without an external editor", async () => {

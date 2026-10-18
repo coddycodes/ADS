@@ -1267,11 +1267,14 @@ The Source Control panel is Orca-parity for the shipped local Git workflow:
   Files in the repository root come first under `/`, then directories in path
   order. A directory too long for the panel truncates from its start so the
   deepest folder stays readable, and the header tooltip carries the full path.
-  A collapsed folder stays collapsed until the panel or its section is
-  collapsed; the state is not persisted.
+  A collapsed folder stays collapsed, also while its section is collapsed,
+  until the panel closes; the state is not persisted.
 - The folder header checkbox stages or unstages every file in that folder in one
   request, and selects or deselects them in selection mode. It shows a mixed
   state when only some of the folder's files are staged or selected.
+- The change sections and the **Merge Changes** list render only the rows in
+  view, so a working tree with thousands of changes stays responsive. Rows keep
+  their screen order for Tab and screen readers.
 - **Group by folder** next to the panel actions switches between the folder view
   and a flat list whose rows each show their own directory. The choice is
   remembered per user; folder grouping is the default.
