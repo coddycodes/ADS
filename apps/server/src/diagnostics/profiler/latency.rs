@@ -148,7 +148,8 @@ pub fn is_long_running(method: &str) -> bool {
             // 15 s), and a rediscovery runs the Xcode probes.
             | "device.open"
             // Wait on the emulator: stopping it (up to 10 s), a stalled input stream (up to
-            // 5 s), and reading back a rotation (about 1.5 s).
+            // 5 s), and reading back a rotation (a 2.5 s window on Android, longer when a
+            // read is slow or another rotate of the device runs first; 1.2 s on iOS).
             | "device.close"
             | "device.input"
             | "device.rotate"
