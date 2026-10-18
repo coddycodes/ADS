@@ -2238,10 +2238,20 @@ pasteboard write per event means a later paste never replaces text iOS has
 not read yet, but while iOS shows its **Allow Paste** prompt, keys typed
 afterwards can arrive before the pasted text. The server tracks every key and
 button the simulator may hold down, the Shift and Cmd it adds for typing and
-pasting included. When a send fails, it lifts the touch and then releases them
-all, modifiers last. A release that fails then goes out first in the next
+pasting included. When a step of a batch fails (a send, or the `pbcopy` of a
+paste), it lifts the touch and then releases them all, modifiers last: buttons
+at once, keys only while the keyboard is ready. A failed DTUHID send marks its
+connection dead, so after one the key releases are not tried but wait for the
+keyboard to reconnect. A release that fails or waits goes out first in the next
 `device.input` call, once the keyboard is ready again, and the call fails if it
-fails again. A second key up, from the client's own release, is harmless.
+fails again. A second key up, from the client's own release, is harmless. Once
+a batch is admitted (planned, checked, and holding the device's input lock), it
+runs on a task of its own, which keeps the lock until the batch and that
+recovery are done. A request cancelled or a connection lost meanwhile therefore
+never cuts it off between a press and its release, and the next batch goes out
+after it. A stop first releases the input connections, which refuse the rest of
+the batch, then waits for that task: at most the step in flight, a HID send's
+2 s or a `pbcopy`'s 15 s timeout.
 
 **Rotation and orientation.** `device.rotate` sends the target orientation to
 the simulator's `PurpleWorkspacePort` and then reads back the reported

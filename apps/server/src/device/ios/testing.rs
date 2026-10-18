@@ -11,7 +11,7 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 
 use super::{
     HidFactory, IosBackend, IosBackendConfig,
@@ -249,11 +249,21 @@ pub(crate) fn manager_for(runner: SimctlRunner) -> (DeviceManager, watch::Sender
 
 type FailWhen = Box<dyn Fn(&HidAction) -> bool + Send>;
 
+/// A send held after it was recorded, as a DTUHID send waits for its barrier once the
+/// message is on its way: it signals `reached`, then finishes once `go` fires or is dropped.
+struct Hold {
+    when: FailWhen,
+    reached: oneshot::Sender<()>,
+    go: oneshot::Receiver<()>,
+}
+
 /// An input sink that records what it is sent and never calls a framework.
 pub(crate) struct RecordingHid {
     sent: Mutex<Vec<HidAction>>,
     /// Fails the sends this accepts, as many times as it counts.
     fail_next: Mutex<Option<(FailWhen, usize)>>,
+    /// Holds the next send this accepts.
+    hold_next: Mutex<Option<Hold>>,
     rotations: Mutex<Vec<u32>>,
     keyboard: AtomicBool,
     released: AtomicBool,
@@ -265,6 +275,7 @@ impl RecordingHid {
         Arc::new(Self {
             sent: Mutex::default(),
             fail_next: Mutex::default(),
+            hold_next: Mutex::default(),
             rotations: Mutex::default(),
             keyboard: AtomicBool::new(true),
             released: AtomicBool::new(false),
@@ -289,6 +300,22 @@ impl RecordingHid {
         when: impl Fn(&HidAction) -> bool + Send + 'static,
     ) {
         *lock(&self.fail_next) = (times > 0).then(|| (Box::new(when) as FailWhen, times));
+    }
+
+    /// The next send that `when` accepts is recorded, then waits: the first channel fires
+    /// once it does, and the send finishes once the second fires or is dropped.
+    pub(crate) fn hold_next(
+        &self,
+        when: impl Fn(&HidAction) -> bool + Send + 'static,
+    ) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (reached, reached_rx) = oneshot::channel();
+        let (go_tx, go) = oneshot::channel();
+        *lock(&self.hold_next) = Some(Hold {
+            when: Box::new(when),
+            reached,
+            go,
+        });
+        (reached_rx, go_tx)
     }
 
     /// What was sent since the last call.
@@ -340,7 +367,19 @@ impl HidSink for RecordingHid {
                     return Err(HidError::Failed("a recorded failure".to_owned()));
                 }
             }
+            let hold = {
+                let mut hold = lock(&self.hold_next);
+                if hold.as_ref().is_some_and(|hold| (hold.when)(&action)) {
+                    hold.take()
+                } else {
+                    None
+                }
+            };
             lock(&self.sent).push(action);
+            if let Some(hold) = hold {
+                let _ = hold.reached.send(());
+                let _ = hold.go.await;
+            }
             Ok(())
         })
     }

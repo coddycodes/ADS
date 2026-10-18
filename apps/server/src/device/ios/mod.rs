@@ -32,7 +32,7 @@ use futures_util::{
     future::BoxFuture,
     stream::{self, BoxStream},
 };
-use tokio_util::sync::CancellationToken;
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use self::{
     coresim::{CoreSim, HidClient, Screen},
@@ -528,8 +528,12 @@ struct Shared {
     held: Mutex<Option<(f64, f64)>>,
     /// The keys and buttons the guest may still hold, and the releases still owed.
     presses: Mutex<Presses>,
-    /// One input batch at a time, so batches arrive in order.
-    input_lock: tokio::sync::Mutex<()>,
+    /// One input batch at a time, so batches arrive in order. An admitted batch's task
+    /// holds it until the batch and its recovery are done.
+    input_lock: Arc<tokio::sync::Mutex<()>>,
+    /// The tasks that send admitted batches, whether or not their callers still wait; a
+    /// stop waits for them.
+    input_tasks: TaskTracker,
     runner: Arc<SimctlRunner>,
     /// Its entry in the backend's booted set, which only this launch's stop removes.
     ownership: Ownership,
@@ -561,7 +565,8 @@ impl RunningSimulator {
             pointer: Mutex::new(PointerState::default()),
             held: Mutex::new(None),
             presses: Mutex::new(Presses::default()),
-            input_lock: tokio::sync::Mutex::new(()),
+            input_lock: Arc::default(),
+            input_tasks: TaskTracker::new(),
             runner,
             ownership,
             exit: Mutex::new(None),
@@ -622,6 +627,11 @@ impl Shared {
         if let Control::Live(sink) = &self.control {
             sink.release().await;
         }
+        // A batch still sending finishes first. The released sink refuses its remaining
+        // sends without FFI, so this waits at most for the step in flight: a HID send's 2 s
+        // barrier or completion, or a `pbcopy`'s 15 s timeout and 2 s cleanup.
+        self.input_tasks.close();
+        self.input_tasks.wait().await;
         *lock(&self.pointer) = PointerState::default();
         lock(&self.held).take();
         *lock(&self.presses) = Presses::default();
@@ -655,11 +665,14 @@ impl Shared {
 
     /// Plans and sends one validated batch in order; a paste is `simctl pbcopy` then Cmd+V.
     ///
-    /// Releases owed since a failed send go out first, once the keyboard is ready for the
-    /// keys among them. A call with a send that fails, theirs included, then lifts the
-    /// touch the guest may hold and releases every key and button it may hold, best effort.
+    /// Once the batch is admitted (planned, the keyboard checked, the input lock taken), it
+    /// is sent on a task of its own that holds the lock, and this call waits for its
+    /// result. A caller that goes away, as the RPC layer drops a request whose connection
+    /// closed, therefore never cuts a batch short between a press and its release, or
+    /// before the recovery below: the batch and its recovery finish, and the next batch
+    /// goes out after them.
     async fn input(
-        &self,
+        self: &Arc<Self>,
         events: Vec<DeviceInputEvent>,
         orientation: Orientation,
     ) -> Result<(), DeviceOpError> {
@@ -672,7 +685,7 @@ impl Shared {
                 )));
             }
         };
-        let _serial = self.input_lock.lock().await;
+        let serial = self.input_lock.clone().lock_owned().await;
         if self.stopping.load(Ordering::SeqCst) {
             return Err(DeviceOpError::NotReady(DeviceState::Stopped));
         }
@@ -683,13 +696,33 @@ impl Shared {
             return Err(DeviceOpError::InvalidInput(KEYBOARD_NOT_READY.to_owned()));
         }
         *lock(&self.pointer) = pointer;
-        let result = match self.release_presses(sink.as_ref(), Releasing::Owed).await {
-            Ok(()) => self.send_plan(sink.as_ref(), plan).await,
+        let shared = self.clone();
+        let batch = self.input_tasks.spawn(async move {
+            let _serial = serial;
+            shared.send_admitted(sink.as_ref(), plan).await
+        });
+        batch.await.unwrap_or_else(|error| {
+            tracing::warn!(%error, "an input batch's task ended without a result");
+            Err(DeviceOpError::Emulator(INPUT_FAILED.to_owned()))
+        })
+    }
+
+    /// Sends an admitted batch. Releases owed since a failed send go out first, once the
+    /// keyboard is ready for the keys among them. A call with a send that fails, theirs
+    /// included, then lifts the touch the guest may hold and releases every key and button
+    /// it may hold, best effort.
+    async fn send_admitted(
+        &self,
+        sink: &dyn HidSink,
+        plan: Vec<HidAction>,
+    ) -> Result<(), DeviceOpError> {
+        let result = match self.release_presses(sink, Releasing::Owed).await {
+            Ok(()) => self.send_plan(sink, plan).await,
             Err(error) => Err(sink_error(error, INPUT_FAILED)),
         };
         if result.is_err() {
-            self.lift_held_touch(sink.as_ref()).await;
-            if let Err(error) = self.release_presses(sink.as_ref(), Releasing::All).await {
+            self.lift_held_touch(sink).await;
+            if let Err(error) = self.release_presses(sink, Releasing::All).await {
                 tracing::debug!(?error, "could not release a held key after a failed send");
             }
         }
@@ -1689,6 +1722,97 @@ mod tests {
                 sent_touch(TouchPhase::Up, 0.3, 0.4),
             ]
         );
+        manager.shutdown().await;
+    }
+
+    /// Codex review P2: the RPC layer drops a request's future when its connection closes.
+    /// A batch dropped after Shift went down used to stop there, with Shift neither released
+    /// nor owed, so it stayed down. An admitted batch now finishes on its own task, which
+    /// holds the input lock, so the next batch goes out after it.
+    #[tokio::test]
+    async fn a_batch_whose_caller_goes_away_still_finishes() {
+        let sim = one_device();
+        let hid = RecordingHid::new();
+        let (manager, _enabled, id) = ready_live_fake(&sim, &hid).await;
+        // The Shift down is on its way to the guest, and its barrier has not run.
+        let (reached, go) = hid.hold_next(|action| *action == key(SHIFT, true));
+        tokio::select! {
+            result = manager.input(&id, vec![text("A")]) => panic!("the batch finished: {result:?}"),
+            reached = reached => reached.expect("the Shift down was sent"),
+        }
+        // The caller's future is gone, as `run_unary` drops it.
+        assert_eq!(hid.sent(), [key(SHIFT, true)]);
+        let _ = go.send(());
+        manager.input(&id, vec![text("b")]).await.unwrap();
+        assert_eq!(
+            hid.sent(),
+            [
+                key(KEY_A, true),
+                key(KEY_A, false),
+                key(SHIFT, false),
+                key(0x05, true),
+                key(0x05, false),
+            ]
+        );
+        // Nothing is held or owed: a failed send after it lifts only the touch.
+        hid.fail_next(|action| {
+            matches!(
+                action,
+                HidAction::Touch {
+                    phase: TouchPhase::Move,
+                    ..
+                }
+            )
+        });
+        let failed = manager
+            .input(
+                &id,
+                vec![
+                    touch(TouchAction::Down, 0.1, 0.2),
+                    touch(TouchAction::Move, 0.3, 0.4),
+                ],
+            )
+            .await;
+        assert!(
+            matches!(failed, Err(DeviceOpError::Emulator(_))),
+            "{failed:?}"
+        );
+        assert_eq!(
+            hid.sent(),
+            [
+                sent_touch(TouchPhase::Down, 0.1, 0.2),
+                sent_touch(TouchPhase::Up, 0.3, 0.4),
+            ]
+        );
+        manager.shutdown().await;
+    }
+
+    /// A stop waits for a batch still sending, whose caller went away. The sink is released
+    /// first, so it refuses the rest of the batch and the stop ends once the send in flight
+    /// does.
+    #[tokio::test]
+    async fn a_stop_waits_for_a_batch_still_sending() {
+        let sim = one_device();
+        let hid = RecordingHid::new();
+        let (manager, _enabled, id) = ready_live_fake(&sim, &hid).await;
+        let (reached, go) = hid.hold_next(|action| *action == key(SHIFT, true));
+        tokio::select! {
+            result = manager.input(&id, vec![text("A")]) => panic!("the batch finished: {result:?}"),
+            reached = reached => reached.expect("the Shift down was sent"),
+        }
+        let close = manager.close(&id);
+        tokio::pin!(close);
+        let early = tokio::time::timeout(std::time::Duration::from_millis(300), &mut close).await;
+        assert!(early.is_err(), "the stop waits for the batch");
+        assert!(hid.released(), "the sink is released before the wait");
+        let _ = go.send(());
+        tokio::time::timeout(std::time::Duration::from_secs(5), close)
+            .await
+            .expect("the stop ends once the send in flight does")
+            .unwrap();
+        // The rest of the batch was refused without reaching the guest.
+        assert_eq!(hid.sent(), [key(SHIFT, true)]);
+        assert!(hid.sent_after_release() > 0);
         manager.shutdown().await;
     }
 
