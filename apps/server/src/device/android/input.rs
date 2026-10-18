@@ -22,6 +22,36 @@ use crate::device::{
 /// How long one event may wait for room in the emulator's input stream.
 const INPUT_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// The most characters one `KeyboardEvent.text` send carries. The emulator types a `text`
+/// as one burst of key events, each followed by a sync, and the guest's keyboard buffer
+/// holds 64 events: on a live Pixel_8 AVD (emulator 37.2.12.0) ` PASTED-ok`, 32 key events
+/// with its Shift presses, was dropped whole (`SYN_DROPPED` in the guest, no error), while
+/// 22 to 24 key events arrived. One character is at most four key events (Shift down, the
+/// key down and up, Shift up).
+const TEXT_CHARS_PER_SEND: usize = 1;
+
+/// The pause between two text sends of one batch. Sends made back to back reach the guest
+/// as one burst as well: ten one-character sends of ` PASTED-ok` without a pause were
+/// dropped whole, like one `text`. With a pause the guest dropped none, over 1,000
+/// characters: 1 ms (about 2.9 ms between sends, as the timer rounds up) and 5 ms (about
+/// 7.5 ms) both measured clean. 5 ms leaves the guest's reader seven sends, over 50 ms, to
+/// fall behind before its buffer fills.
+const TEXT_SEND_INTERVAL: Duration = Duration::from_millis(5);
+
+/// The most text characters one batch may carry. Android drops a key queued for more than
+/// 10 s ("Dropped event because it is stale"), and the focused app takes keys one at a time:
+/// on the live Pixel_8, Chrome's address bar (with Gboard) took roughly 7 to 12 characters a
+/// second, so 300 pasted characters lost their tail whatever the pause (104 arrived at 1 ms,
+/// 265 at 50 ms), and a lost Shift release garbled the characters after it. 100 is the
+/// measured safe bound in that field, the slowest measured: 100 arrived exactly, twice.
+/// Typing is never refused: a batch holds at most 64 events, and typed text is one
+/// character per event.
+pub(crate) const MAX_ANDROID_TEXT_PER_BATCH: usize = 100;
+
+/// Why a batch with more than [`MAX_ANDROID_TEXT_PER_BATCH`] text characters is refused.
+const TOO_MUCH_TEXT: &str =
+    "This device can paste up to 100 characters at a time. Paste longer text in parts.";
+
 /// How long [`rotate`] waits for the guest to turn, and how often it reads the orientation
 /// back meanwhile. Tests shorten it, so a refusal does not take the whole window.
 #[derive(Clone, Copy, Debug)]
@@ -246,6 +276,12 @@ async fn deliver(
 /// "most" other symbols are ignored, yet the call still succeeds: refusing means no
 /// character is dropped while the call reports success, and the device sees none of the
 /// batch, so the client's own release of a press in it goes out again.
+///
+/// A batch with more than [`MAX_ANDROID_TEXT_PER_BATCH`] text characters is refused the same
+/// way, after the ASCII check: the guest would drop the tail of the paste without a word.
+///
+/// Text that passes is typed in sends of at most [`TEXT_CHARS_PER_SEND`] characters, in
+/// order and [`TEXT_SEND_INTERVAL`] apart, so the guest never sees a burst it drops.
 pub(super) async fn send_batch(
     client: &EmulatorClient,
     tasks: &TaskTracker,
@@ -260,8 +296,20 @@ pub(super) async fn send_batch(
     {
         return Err(DeviceOpError::InvalidInput(UNTYPEABLE_TEXT.to_owned()));
     }
+    let text_chars: usize = events
+        .iter()
+        .map(|event| match event {
+            DeviceInputEvent::Text { text } => text.chars().count(),
+            DeviceInputEvent::Touch { .. } | DeviceInputEvent::Key { .. } => 0,
+        })
+        .sum();
+    if text_chars > MAX_ANDROID_TEXT_PER_BATCH {
+        return Err(DeviceOpError::InvalidInput(TOO_MUCH_TEXT.to_owned()));
+    }
     // Held for the whole batch, so concurrent batches never interleave.
     let mut state = input.lock().await;
+    // Whether a text send of this batch went out, so the next one waits its turn.
+    let mut typed = false;
     for event in events {
         let (message, pointer) = match event {
             DeviceInputEvent::Touch {
@@ -290,13 +338,10 @@ pub(super) async fn send_batch(
                 };
                 (key_event(event), None)
             }
-            DeviceInputEvent::Text { text } => (
-                key_event(proto::KeyboardEvent {
-                    text,
-                    ..Default::default()
-                }),
-                None,
-            ),
+            DeviceInputEvent::Text { text } => {
+                send_text(client, tasks, &mut state, &text, &mut typed).await?;
+                continue;
+            }
         };
         send(client, tasks, &mut state, message)
             .await
@@ -309,6 +354,50 @@ pub(super) async fn send_batch(
         }
     }
     Ok(())
+}
+
+/// Types `text` as `KeyboardEvent.text` sends of at most [`TEXT_CHARS_PER_SEND`]
+/// characters, in order, each [`TEXT_SEND_INTERVAL`] after the batch's previous text send
+/// (`typed` says whether there was one). The caller holds the input lock throughout, so no
+/// other event lands between them.
+async fn send_text(
+    client: &EmulatorClient,
+    tasks: &TaskTracker,
+    state: &mut Option<InputState>,
+    text: &str,
+    typed: &mut bool,
+) -> Result<(), DeviceOpError> {
+    let mut sends = 0_usize;
+    for chunk in text_chunks(text) {
+        if *typed {
+            tokio::time::sleep(TEXT_SEND_INTERVAL).await;
+        }
+        let event = key_event(proto::KeyboardEvent {
+            text: chunk,
+            ..Default::default()
+        });
+        send(client, tasks, state, event)
+            .await
+            .map_err(|error| emulator_failure("input", &error))?;
+        *typed = true;
+        sends += 1;
+    }
+    // Counts only: the text itself is never logged.
+    tracing::debug!(
+        chars = text.chars().count(),
+        sends,
+        "typed text on the device"
+    );
+    Ok(())
+}
+
+/// `text` in pieces of at most [`TEXT_CHARS_PER_SEND`] characters, in order.
+fn text_chunks(text: &str) -> impl Iterator<Item = String> + '_ {
+    let mut chars = text.chars();
+    std::iter::from_fn(move || {
+        let chunk: String = chars.by_ref().take(TEXT_CHARS_PER_SEND).collect();
+        (!chunk.is_empty()).then_some(chunk)
+    })
 }
 
 /// Asks the emulator to turn toward `to`, then follows what the guest shows in `tracker`,
@@ -812,6 +901,323 @@ mod tests {
             "{error:?}"
         );
         assert_eq!(*sensor.lock().await, Orientation::Landscape);
+    }
+
+    /// What the fake recorded, in order: each text send's text, and `<down>` or `<up>` for a
+    /// touch.
+    fn recorded(fake: &FakeHandle) -> Vec<String> {
+        fake.inputs
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|event| match &event.r#type {
+                Some(proto::input_event::Type::KeyEvent(key)) => key.text.clone(),
+                Some(proto::input_event::Type::TouchEvent(touch)) => {
+                    if touch.touches[0].pressure > 0 {
+                        "<down>".to_owned()
+                    } else {
+                        "<up>".to_owned()
+                    }
+                }
+                other => panic!("not a key or a touch: {other:?}"),
+            })
+            .collect()
+    }
+
+    /// Sends `events` through `input` as one batch, for an upright phone panel.
+    async fn send_to(
+        client: &EmulatorClient,
+        input: &tokio::sync::Mutex<Option<InputState>>,
+        events: Vec<DeviceInputEvent>,
+    ) -> Result<(), DeviceOpError> {
+        send_batch(
+            client,
+            &TaskTracker::new(),
+            input,
+            events,
+            PANEL,
+            Orientation::Portrait,
+        )
+        .await
+    }
+
+    fn text(text: &str) -> DeviceInputEvent {
+        DeviceInputEvent::Text { text: text.into() }
+    }
+
+    fn touch(action: TouchAction) -> DeviceInputEvent {
+        DeviceInputEvent::Touch {
+            action,
+            pointer_id: 0,
+            x: 0.5,
+            y: 0.5,
+        }
+    }
+
+    /// A live Pixel_8 dropped a toolbar Paste of ` PASTED-ok` whole, with no error: one
+    /// `KeyboardEvent.text` of about 32 key events never arrived. A text event goes out as
+    /// sends of at most `TEXT_CHARS_PER_SEND` characters, in order.
+    #[tokio::test]
+    async fn text_is_sent_in_small_chunks_in_order() {
+        let fake = FakeController::spawn().await;
+        let client = EmulatorClient::connect(fake.port, Some("test-token".into()))
+            .await
+            .unwrap();
+        let input = tokio::sync::Mutex::new(None);
+        let pasted = "The Quick BROWN fox JUMPS over 12 LAZY d";
+        assert_eq!(pasted.len(), 40);
+        send_to(&client, &input, vec![text(pasted)]).await.unwrap();
+        wait_until(|| recorded(&fake).concat().len() >= pasted.len()).await;
+        let sent = recorded(&fake);
+        assert!(
+            sent.iter()
+                .all(|chunk| (1..=TEXT_CHARS_PER_SEND).contains(&chunk.chars().count())),
+            "{sent:?}"
+        );
+        assert_eq!(sent.len(), pasted.len().div_ceil(TEXT_CHARS_PER_SEND));
+        assert_eq!(sent.concat(), pasted);
+    }
+
+    /// A text event's sends stay together where the event was, even with another batch sent
+    /// at the same time, and the touches around it are still tracked: nothing is left down.
+    #[tokio::test]
+    async fn text_chunks_keep_their_place_between_other_events() {
+        let fake = FakeController::spawn().await;
+        let client = EmulatorClient::connect(fake.port, Some("test-token".into()))
+            .await
+            .unwrap();
+        let input = tokio::sync::Mutex::new(None);
+        let batch = |typed: &str| {
+            vec![
+                touch(TouchAction::Down),
+                text(typed),
+                touch(TouchAction::Up),
+            ]
+        };
+        let (first, second) = tokio::join!(
+            send_to(&client, &input, batch("abcdeFGHIJ")),
+            send_to(&client, &input, batch("KLMNOpqrst")),
+        );
+        first.unwrap();
+        second.unwrap();
+        let expected = |typed: &str| {
+            let chars: Vec<char> = typed.chars().collect();
+            let mut events = vec!["<down>".to_owned()];
+            events.extend(
+                chars
+                    .chunks(TEXT_CHARS_PER_SEND)
+                    .map(|chunk| chunk.iter().collect::<String>()),
+            );
+            events.push("<up>".to_owned());
+            events
+        };
+        // Each batch ends with its touch's release, so both are in once two have arrived.
+        wait_until(|| {
+            recorded(&fake)
+                .iter()
+                .filter(|event| *event == "<up>")
+                .count()
+                >= 2
+        })
+        .await;
+        let sent = recorded(&fake);
+        let in_order = |a: &str, b: &str| [expected(a), expected(b)].concat();
+        assert!(
+            sent == in_order("abcdeFGHIJ", "KLMNOpqrst")
+                || sent == in_order("KLMNOpqrst", "abcdeFGHIJ"),
+            "{sent:?}"
+        );
+        assert!(input.lock().await.as_ref().unwrap().pressed.is_empty());
+    }
+
+    /// A mixed-case ASCII string of `len` characters, with letters, digits, and symbols.
+    fn mixed(len: usize) -> String {
+        "aB3-cD_eF.gH9iJ kL0mN"
+            .chars()
+            .cycle()
+            .zip(0..len)
+            .map(|(c, i)| {
+                if i % 7 == 6 {
+                    char::from(b'0' + (i % 10) as u8)
+                } else {
+                    c
+                }
+            })
+            .collect()
+    }
+
+    /// A connected client and an input stream nothing drains until the test reads it.
+    async fn captured_input(
+        room: usize,
+    ) -> (
+        FakeHandle,
+        EmulatorClient,
+        tokio::sync::Mutex<Option<InputState>>,
+        mpsc::Receiver<proto::InputEvent>,
+    ) {
+        let fake = FakeController::spawn().await;
+        let client = EmulatorClient::connect(fake.port, Some("test-token".into()))
+            .await
+            .unwrap();
+        let (sink, received) = mpsc::channel(room);
+        let input = tokio::sync::Mutex::new(Some(InputState {
+            sink,
+            pressed: BTreeMap::new(),
+        }));
+        (fake, client, input, received)
+    }
+
+    fn sent_text(event: proto::InputEvent) -> String {
+        match event.r#type {
+            Some(proto::input_event::Type::KeyEvent(key)) => key.text,
+            other => panic!("not a text send: {other:?}"),
+        }
+    }
+
+    /// Back-to-back sends reach the guest as one burst, and a live Pixel_8 dropped every
+    /// key of ` PASTED-ok` sent so (`SYN_DROPPED` on its keyboard). The longest text
+    /// Android takes goes out a character at a time, in order, `TEXT_SEND_INTERVAL` apart.
+    #[tokio::test]
+    async fn a_hundred_characters_are_typed_in_order_with_a_pause_between_sends() {
+        let (_fake, client, input, mut received) = captured_input(MAX_ANDROID_TEXT_PER_BATCH).await;
+        let pasted = mixed(MAX_ANDROID_TEXT_PER_BATCH);
+        tokio::time::pause();
+        let reading = async {
+            let mut sends = Vec::new();
+            while sends
+                .iter()
+                .map(|(_, sent): &(_, String)| sent.len())
+                .sum::<usize>()
+                < pasted.len()
+            {
+                let event = received.recv().await.unwrap();
+                sends.push((tokio::time::Instant::now(), sent_text(event)));
+            }
+            sends
+        };
+        let (typed, sends) = tokio::join!(send_to(&client, &input, vec![text(&pasted)]), reading);
+        typed.unwrap();
+        assert_eq!(
+            sends
+                .iter()
+                .map(|(_, sent)| sent.as_str())
+                .collect::<String>(),
+            pasted
+        );
+        assert_eq!(sends.len(), pasted.len().div_ceil(TEXT_CHARS_PER_SEND));
+        for pair in sends.windows(2) {
+            let gap = pair[1].0 - pair[0].0;
+            assert!(gap >= TEXT_SEND_INTERVAL, "{gap:?}");
+        }
+    }
+
+    /// Android drops a key queued for more than 10 s, and Chrome's address bar took about
+    /// 10 characters a second, so a long paste would lose its tail without a word. More than
+    /// `MAX_ANDROID_TEXT_PER_BATCH` characters in one batch, in one text event or several,
+    /// are refused before anything is sent. The ASCII refusal still comes first.
+    #[tokio::test]
+    async fn more_than_a_hundred_characters_in_a_batch_are_refused_before_anything_is_sent() {
+        let (_fake, client, input, mut received) = captured_input(256).await;
+        let too_much = DeviceOpError::InvalidInput(TOO_MUCH_TEXT.to_owned());
+        let over = mixed(MAX_ANDROID_TEXT_PER_BATCH + 1);
+        let error = send_to(&client, &input, vec![text(&over)])
+            .await
+            .unwrap_err();
+        assert_eq!(error, too_much);
+        let (first, second) = over.split_at(60);
+        let error = send_to(&client, &input, vec![text(first), text(second)])
+            .await
+            .unwrap_err();
+        assert_eq!(error, too_much);
+        let error = send_to(&client, &input, vec![text("é"), text(&over)])
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            DeviceOpError::InvalidInput(UNTYPEABLE_TEXT.to_owned())
+        );
+        assert!(
+            received.try_recv().is_err(),
+            "a refused batch sent something"
+        );
+    }
+
+    /// The length refusal is all or nothing, like the ASCII one: the touch in the batch is
+    /// not sent, so no pointer is left down.
+    #[tokio::test]
+    async fn a_touch_with_too_much_text_is_refused_whole() {
+        let (_fake, client, input, mut received) = captured_input(256).await;
+        let error = send_to(
+            &client,
+            &input,
+            vec![
+                touch(TouchAction::Down),
+                text(&mixed(MAX_ANDROID_TEXT_PER_BATCH + 1)),
+                touch(TouchAction::Up),
+            ],
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, DeviceOpError::InvalidInput(TOO_MUCH_TEXT.to_owned()));
+        assert!(
+            received.try_recv().is_err(),
+            "a refused batch sent something"
+        );
+        assert!(input.lock().await.as_ref().unwrap().pressed.is_empty());
+    }
+
+    /// Typing is never refused: a batch holds at most 64 events, and typed text is one
+    /// character per event.
+    #[tokio::test]
+    async fn sixty_four_typed_characters_are_accepted() {
+        let (_fake, client, input, mut received) = captured_input(256).await;
+        let typed = mixed(crate::device::input::MAX_INPUT_EVENTS);
+        let events = typed.chars().map(|c| text(&c.to_string())).collect();
+        tokio::time::pause();
+        send_to(&client, &input, events).await.unwrap();
+        let mut sent = String::new();
+        while let Ok(event) = received.try_recv() {
+            sent.push_str(&sent_text(event));
+        }
+        assert_eq!(sent, typed);
+    }
+
+    /// Review of the chunked text: a stream that stops taking input fails the batch at the
+    /// first send that waits out `INPUT_SEND_TIMEOUT`, once, not once per character, and the
+    /// rest of the batch is not sent.
+    #[tokio::test]
+    async fn a_stuck_stream_fails_the_text_after_one_send_timeout() {
+        let fake = FakeController::spawn().await;
+        let client = EmulatorClient::connect(fake.port, Some("test-token".into()))
+            .await
+            .unwrap();
+        // Room for one send, and nothing ever reads it.
+        let (sink, stuck) = mpsc::channel(1);
+        let input = tokio::sync::Mutex::new(Some(InputState {
+            sink,
+            pressed: BTreeMap::new(),
+        }));
+        tokio::time::pause();
+        let started = tokio::time::Instant::now();
+        let error = send_to(
+            &client,
+            &input,
+            vec![text("abcdefghij"), touch(TouchAction::Down)],
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, DeviceOpError::Emulator(_)), "{error:?}");
+        let waited = started.elapsed();
+        assert!(
+            (INPUT_SEND_TIMEOUT..2 * INPUT_SEND_TIMEOUT).contains(&waited),
+            "{waited:?}"
+        );
+        // Only `a` got in; the touch after the text was never sent or recorded as down.
+        assert_eq!(stuck.len(), 1);
+        let state = input
+            .try_lock()
+            .expect("the batch let go of the input lock");
+        assert!(state.as_ref().unwrap().pressed.is_empty());
     }
 
     #[tokio::test]

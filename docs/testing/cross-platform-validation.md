@@ -3120,7 +3120,14 @@ Record each client's OS, app or browser version, and profile type.
    on the screen that ends outside the panel: the touch ends and nothing stays
    pressed. In a text field, type, use Backspace, Enter, and the arrow keys,
    and paste ASCII text into the focused screen, then copy other ASCII text and
-   choose the toolbar's **Paste**: both arrive. Android sends only printable
+   choose the toolbar's **Paste**: both arrive. In Chrome's address bar, the
+   slowest field measured, also paste with **Paste** ` PASTED-ok`,
+   ` CCCCCCCCCC`, and a mixed-case string of exactly 100 characters: each
+   arrives exactly, with no character lost or reordered (the guest once dropped
+   such text whole, and the tail of longer pastes, without an error). Then paste
+   one of 101 or more characters: it is refused, the panel shows "This device
+   can paste up to 100 characters at a time. Paste longer text in parts.", and
+   nothing reaches the field. Android sends only printable
    ASCII, Return, and Tab, and the emulator promises only printable ASCII: in a
    multi-line field (a notes app or a message being written), paste text with
    a line break and a tab between words, and record whether the line break and

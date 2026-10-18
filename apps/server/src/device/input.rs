@@ -291,6 +291,7 @@ mod device_tests {
         DeviceOpError,
         android::{
             grpc::proto::{self, rotation::SkinRotation},
+            input::MAX_ANDROID_TEXT_PER_BATCH,
             testing::{ManagerFixture, wait_until},
         },
     };
@@ -332,8 +333,11 @@ mod device_tests {
         (key.key.as_str(), key.event_type)
     }
 
-    fn text_of(event: &proto::InputEvent) -> &str {
-        &keyboard(event).text
+    fn texts_of(events: &[proto::InputEvent]) -> Vec<&str> {
+        events
+            .iter()
+            .map(|event| keyboard(event).text.as_str())
+            .collect()
     }
 
     #[tokio::test]
@@ -356,12 +360,13 @@ mod device_tests {
             )
             .await
             .unwrap();
-        let inputs = fixture.controller.wait_inputs(5).await;
+        let inputs = fixture.controller.wait_inputs(6).await;
         assert_eq!(touch_pressure(&inputs[0]), 1);
         assert_eq!(touch_xy(&inputs[1]), (648, 1200));
         assert_eq!(touch_pressure(&inputs[2]), 0);
         assert_eq!(key_of(&inputs[3]), ("GoBack", 0 /* keydown */));
-        assert_eq!(text_of(&inputs[4]), "hi");
+        // Text is typed a character per send (`android::input::TEXT_CHARS_PER_SEND`).
+        assert_eq!(texts_of(&inputs[4..]), ["h", "i"]);
         // Shutdown waits for the input stream's task, which ends with the device.
         tokio::time::timeout(Duration::from_secs(20), fixture.manager.shutdown())
             .await
@@ -430,9 +435,8 @@ mod device_tests {
                 )
                 .await
                 .unwrap();
-            let inputs = fixture.controller.wait_inputs(1).await;
-            assert_eq!(inputs.len(), 1, "{refused:?}: {inputs:?}");
-            assert_eq!(text_of(&inputs[0]), "ok");
+            let inputs = fixture.controller.wait_inputs(2).await;
+            assert_eq!(texts_of(&inputs), ["o", "k"], "{refused:?}");
         }
     }
 
@@ -464,13 +468,12 @@ mod device_tests {
             )
             .await
             .unwrap();
-        let inputs = fixture.controller.wait_inputs(1).await;
-        assert_eq!(inputs.len(), 1, "{inputs:?}");
-        assert_eq!(text_of(&inputs[0]), "ok");
+        let inputs = fixture.controller.wait_inputs(2).await;
+        assert_eq!(texts_of(&inputs), ["o", "k"]);
     }
 
     #[tokio::test]
-    async fn printable_ascii_with_newline_and_tab_is_sent_whole() {
+    async fn printable_ascii_with_newline_and_tab_arrives_in_order() {
         let fixture = ManagerFixture::ready_device().await;
         let text = "Hello, World! ~{}[]\\|\"'`\nline two\r\n\tindented";
         fixture
@@ -481,8 +484,76 @@ mod device_tests {
             )
             .await
             .unwrap();
-        let inputs = fixture.controller.wait_inputs(1).await;
-        assert_eq!(text_of(&inputs[0]), text);
+        let inputs = fixture.controller.wait_inputs(text.len()).await;
+        assert_eq!(texts_of(&inputs).concat(), text);
+    }
+
+    /// The longest paste Android takes, 100 characters, arrives whole and in order, a
+    /// character per send.
+    #[tokio::test]
+    async fn a_paste_of_a_hundred_characters_arrives_whole_and_in_order() {
+        let fixture = ManagerFixture::ready_device().await;
+        let text = pasted(MAX_ANDROID_TEXT_PER_BATCH);
+        fixture
+            .manager
+            .input(
+                &fixture.id,
+                vec![DeviceInputEvent::Text { text: text.clone() }],
+            )
+            .await
+            .unwrap();
+        let inputs = fixture.controller.wait_inputs(text.len()).await;
+        let sent = texts_of(&inputs);
+        assert_eq!(sent.len(), text.len());
+        assert_eq!(sent.concat(), text);
+    }
+
+    /// The copy a batch with too much text shows (`android::input::TOO_MUCH_TEXT`).
+    const TOO_MUCH_TEXT: &str =
+        "This device can paste up to 100 characters at a time. Paste longer text in parts.";
+
+    /// Android would drop the tail of a longer paste without a word (the guest drops keys
+    /// queued past 10 s), so it is refused whole, with a typed `DeviceInputError`, and the
+    /// touch in the same batch is not sent either: `ok` afterwards arrives alone.
+    #[tokio::test]
+    async fn a_paste_over_a_hundred_characters_is_refused_whole() {
+        let fixture = ManagerFixture::ready_device().await;
+        let error = fixture
+            .manager
+            .input(
+                &fixture.id,
+                vec![
+                    touch(TouchAction::Down, 0.5, 0.5),
+                    DeviceInputEvent::Text {
+                        text: pasted(MAX_ANDROID_TEXT_PER_BATCH + 1),
+                    },
+                ],
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error, DeviceOpError::InvalidInput(TOO_MUCH_TEXT.into()));
+        let rpc = error.to_rpc_error();
+        assert_eq!(rpc["_tag"], "DeviceInputError");
+        assert_eq!(rpc["message"], TOO_MUCH_TEXT);
+        fixture
+            .manager
+            .input(
+                &fixture.id,
+                vec![DeviceInputEvent::Text { text: "ok".into() }],
+            )
+            .await
+            .unwrap();
+        let inputs = fixture.controller.wait_inputs(2).await;
+        assert_eq!(texts_of(&inputs), ["o", "k"]);
+    }
+
+    /// `len` mixed-case characters.
+    fn pasted(len: usize) -> String {
+        "The Quick BROWN fox, 0123456789! "
+            .chars()
+            .cycle()
+            .take(len)
+            .collect()
     }
 
     #[tokio::test]

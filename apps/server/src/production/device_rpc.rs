@@ -474,7 +474,8 @@ mod tests {
             )
             .await
             .expect("input is forwarded");
-        assert_eq!(fixture.controller.wait_inputs(3).await.len(), 3);
+        // The text is typed a character per send: two events and five sends.
+        assert_eq!(fixture.controller.wait_inputs(7).await.len(), 7);
 
         let invalid = harness
             .call(

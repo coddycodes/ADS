@@ -2038,8 +2038,32 @@ the shared set stays, because iOS types it as keys. The refusal is all or
 nothing, so a touch, key, or other text in the same batch is not sent either,
 and the client sends the releases of any press in it once more, as above. iOS
 still pastes such text.
-Pasting Unicode through the emulator's clipboard (`setClipboard` plus a paste
-key) is not implemented. Touch points are normalized `0..1` of the upright
+Two guest limits drop typed text without an error, both measured on a live
+Pixel_8 AVD (API 35, emulator 37.2.12.0). First, the emulator types a
+`KeyboardEvent.text` as one burst of key events, a sync after each, and the
+guest's keyboard buffer holds 64 events: ` PASTED-ok`, 32 key events with its
+Shift presses, was dropped whole (`SYN_DROPPED` in the guest), while 22 to 24
+key events arrived. Back-to-back sends make one burst too, so ten
+one-character sends of it were dropped the same way. Text is therefore typed
+one character per send (`android::input::TEXT_CHARS_PER_SEND`), at most four
+key events, with `TEXT_SEND_INTERVAL` (5 ms, about 7.5 ms between sends as the
+timer rounds up) between the batch's text sends, all under the device's input
+lock, so no other event lands between them. With the pause the guest dropped
+nothing over 1,000 characters. Second, Android drops a key queued for more than
+10 s ("Dropped event because it is stale"), and the focused app takes keys one
+at a time: Chrome's address bar, with Gboard, took roughly 7 to 12 characters a
+second, so 300 pasted characters lost their tail whatever the pause (104
+arrived at 1 ms, 265 at 50 ms; all 300 only at 100 ms, which took 36 s), and a
+lost Shift release garbled what followed. Settings search took 300 at 5 ms but
+lost the tail of 1,000. So `send_batch` also refuses, after the ASCII check and
+in the same all-or-nothing way, a batch whose text events total more than
+`MAX_ANDROID_TEXT_PER_BATCH` (100) characters, with a `DeviceInputError` that
+says "This device can paste up to 100 characters at a time. Paste longer text
+in parts." 100 characters arrived exactly in Chrome's address bar, the slowest
+field measured, in both runs. Typing is never refused: a batch holds at most 64 events, and
+typed text is one character per event. A follow-up would paste longer and
+Unicode text through the emulator's clipboard (`setClipboard` plus Ctrl+V), as
+the proto recommends for large text; it is not implemented. Touch points are normalized `0..1` of the upright
 picture. The emulator's `Touch.x`/`y` is the physical location on the unrotated
 panel, so `android::input::to_panel_pixels` turns each point into panel pixels
 in the natural orientation, for the orientation the guest reported (measured on
