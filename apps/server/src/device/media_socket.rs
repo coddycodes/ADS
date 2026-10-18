@@ -72,8 +72,9 @@ pub(crate) const TICKET_WAIT: Duration = Duration::from_secs(5);
 pub(crate) const DEVICE_MEDIA_NOISE_PROLOGUE: &[u8] = b"bibcode-device-media/1";
 /// How long one frame may wait for the client before the socket closes as `slow`.
 pub(crate) const SEND_STALL_TIMEOUT: Duration = Duration::from_secs(10);
-/// How long closing may take: sending the close frame, then waiting for the client's
-/// answering close. The socket is dropped after it either way.
+/// How long closing may take outside tests ([`MediaSocketState::close_linger`]): sending
+/// the close frame, then waiting for the client's answering close. The socket is dropped
+/// after it either way.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 /// Inbound messages are only the ticket and `{"type":"keyframe"}`; on the E2EE route this
 /// bounds the decrypted logical message.
@@ -99,6 +100,9 @@ pub(crate) struct MediaSocketState {
     pub e2ee_preauth: Duration,
     /// The liveness check of a streaming socket; [`HeartbeatTiming::SHARED`] outside tests.
     pub heartbeat: HeartbeatTiming,
+    /// How long a close may take, the client's answering close included; [`CLOSE_TIMEOUT`]
+    /// outside tests.
+    pub close_linger: Duration,
 }
 
 impl MediaSocketState {
@@ -110,6 +114,7 @@ impl MediaSocketState {
             send_stall: SEND_STALL_TIMEOUT,
             e2ee_preauth: E2EE_HANDSHAKE_TIMEOUT,
             heartbeat: HeartbeatTiming::SHARED,
+            close_linger: CLOSE_TIMEOUT,
         }
     }
 }
@@ -149,9 +154,9 @@ trait MediaTransport {
     /// Sends a WebSocket Ping, which the browser answers on its own; `Err` once the client
     /// is gone.
     async fn ping(&mut self) -> Result<(), ()>;
-    /// Closes with code 4400 and `reason`, finishing the closing handshake (see
-    /// [`send_close`]).
-    async fn close(self, reason: &'static str);
+    /// Closes with code 4400 and `reason`, finishing the closing handshake within `linger`
+    /// (see [`send_close`]).
+    async fn close(self, reason: &'static str, linger: Duration);
 }
 
 /// Plain WebSocket messages: text in, binary out.
@@ -177,8 +182,8 @@ where
         self.0.send(Message::Ping(Bytes::new())).await.map_err(drop)
     }
 
-    async fn close(mut self, reason: &'static str) {
-        let _ = tokio::time::timeout(CLOSE_TIMEOUT, async {
+    async fn close(mut self, reason: &'static str, linger: Duration) {
+        let _ = tokio::time::timeout(linger, async {
             if send_close(&mut self.0, reason).await.is_ok() {
                 await_client_close(&mut self.0).await;
             }
@@ -240,8 +245,8 @@ impl MediaTransport for E2eeTransport {
     }
 
     /// The close frame, and the client's answer, are WebSocket frames below the records.
-    async fn close(mut self, reason: &'static str) {
-        let _ = tokio::time::timeout(CLOSE_TIMEOUT, async {
+    async fn close(mut self, reason: &'static str, linger: Duration) {
+        let _ = tokio::time::timeout(linger, async {
             if send_close(&mut self.writer, reason).await.is_ok() {
                 await_client_close(&mut self.reader).await;
             }
@@ -378,11 +383,12 @@ async fn serve<T: MediaTransport>(
     lease: E2eePreauthLease,
     ticket_deadline: Instant,
 ) {
+    let linger = state.close_linger;
     let ticket = match tokio::time::timeout_at(ticket_deadline, socket.recv()).await {
         Err(_) => {
             tracing::warn!("device media socket sent no ticket in time");
             drop(lease);
-            return socket.close("expired").await;
+            return socket.close("expired", linger).await;
         }
         Ok(Received::Message(message)) => match serde_json::from_slice(&message) {
             Ok(Inbound::Ticket { ticket }) => ticket,
@@ -390,13 +396,13 @@ async fn serve<T: MediaTransport>(
             _ => {
                 tracing::warn!("device media socket's first message was not a ticket");
                 drop(lease);
-                return socket.close("expired").await;
+                return socket.close("expired", linger).await;
             }
         },
         Ok(Received::Ignored) => {
             tracing::warn!("device media socket's first message was not a ticket");
             drop(lease);
-            return socket.close("expired").await;
+            return socket.close("expired", linger).await;
         }
         // The client left before it sent a ticket.
         Ok(Received::Gone) => return,
@@ -407,7 +413,7 @@ async fn serve<T: MediaTransport>(
             let reason = error.close_reason();
             tracing::warn!(reason, "device media ticket refused");
             drop(lease);
-            return socket.close(reason).await;
+            return socket.close(reason, linger).await;
         }
     };
     drop(ticket);
@@ -417,7 +423,7 @@ async fn serve<T: MediaTransport>(
     // it, as `/ws` does.
     let Some(expires_at_ms) = state.auth.active_session_expiry(&principal).await else {
         tracing::warn!("device media ticket's session is no longer active");
-        return socket.close("unauthorized").await;
+        return socket.close("unauthorized", linger).await;
     };
     let session_shutdown = CancellationToken::new();
     let Ok(connection_guard) = state
@@ -426,7 +432,7 @@ async fn serve<T: MediaTransport>(
         .await
     else {
         tracing::warn!("device media ticket's session is no longer active");
-        return socket.close("unauthorized").await;
+        return socket.close("unauthorized", linger).await;
     };
     // The expiry has a token of its own, cancelled with the session's, so the guard wakes
     // the socket at the expiry. The close reason comes from the clock, not from which token
@@ -448,13 +454,13 @@ async fn serve<T: MediaTransport>(
             };
             let reason = stream(&mut socket, subscriber, &state.devices, session, liveness).await;
             if let Some(reason) = reason {
-                socket.close(reason).await;
+                socket.close(reason, linger).await;
             }
         }
         Err(error) => {
             let reason = error.close_reason();
             tracing::warn!(reason, "device media socket could not join the stream");
-            socket.close(reason).await;
+            socket.close(reason, linger).await;
         }
     }
     session_shutdown.cancel();
@@ -596,12 +602,12 @@ async fn stream<T: MediaTransport>(
 ///
 /// A transport's `close` then reads, and discards, what the client still sends until its
 /// answering close arrives or the connection ends ([`await_client_close`]), all within
-/// [`CLOSE_TIMEOUT`], and only then drops the socket. Dropping it at once can lose the
-/// reason: a client that stopped reading for a while has Pings queued, and its WebSocket
-/// layer writes a Pong for each before it reads the close frame. On a connection the server
-/// already dropped, Linux resets those writes, and the client fails before it sees the close.
-/// The bound keeps a client that never answers from holding the task: its slot was already
-/// freed when the stream ended.
+/// [`MediaSocketState::close_linger`] ([`CLOSE_TIMEOUT`] outside tests), and only then
+/// drops the socket. Dropping it at once can lose the reason: a client that stopped reading
+/// for a while has Pings queued, and its WebSocket layer writes a Pong for each before it
+/// reads the close frame. On a connection the server already dropped, Linux resets those
+/// writes, and the client fails before it sees the close. The bound keeps a client that
+/// never answers from holding the task: its slot was already freed when the stream ended.
 async fn send_close<S>(socket: &mut S, reason: &'static str) -> Result<(), ()>
 where
     S: Sink<Message, Error = axum::Error> + Unpin,
@@ -674,15 +680,31 @@ mod tests {
 
         /// `e2ee_preauth` bounds the E2EE handshake and ticket together.
         async fn start_custom(packets: Vec<Vec<u8>>, e2ee_preauth: Duration) -> Self {
-            Self::start_full(packets, e2ee_preauth, HeartbeatTiming::SHARED).await
+            Self::start_full(
+                packets,
+                e2ee_preauth,
+                HeartbeatTiming::SHARED,
+                CLOSE_TIMEOUT,
+            )
+            .await
         }
 
         /// Streaming sockets check liveness at `heartbeat`.
         async fn start_with_heartbeat(heartbeat: HeartbeatTiming) -> Self {
+            Self::start_with_heartbeat_and_linger(heartbeat, CLOSE_TIMEOUT).await
+        }
+
+        /// Streaming sockets check liveness at `heartbeat`, and a close may take
+        /// `close_linger`.
+        async fn start_with_heartbeat_and_linger(
+            heartbeat: HeartbeatTiming,
+            close_linger: Duration,
+        ) -> Self {
             Self::start_full(
                 vec![config_unit(), key_unit(1), delta_unit(2)],
                 E2EE_HANDSHAKE_TIMEOUT,
                 heartbeat,
+                close_linger,
             )
             .await
         }
@@ -691,6 +713,7 @@ mod tests {
             packets: Vec<Vec<u8>>,
             e2ee_preauth: Duration,
             heartbeat: HeartbeatTiming,
+            close_linger: Duration,
         ) -> Self {
             let source = FakeScrcpySource::spawn(packets).await;
             let fixture =
@@ -720,6 +743,7 @@ mod tests {
             let mut state = MediaSocketState::new(fixture.manager.clone(), auth.clone());
             state.e2ee_preauth = e2ee_preauth;
             state.heartbeat = heartbeat;
+            state.close_linger = close_linger;
             let admission = state.admission.clone();
             let app = Router::new()
                 .route(
@@ -1247,6 +1271,13 @@ mod tests {
         check_interval: Duration::from_millis(100),
     };
 
+    /// How long a close may take in the tests whose client reads nothing until the server
+    /// has closed it and freed its slot. Production's 1 s starts before the slot is freed,
+    /// and a loaded runner could let it pass before the client reads again: the server
+    /// would then drop the connection, and on Linux the client's Pongs would be reset
+    /// before it read the reason.
+    const SLOW_CLIENT_CLOSE_LINGER: Duration = Duration::from_secs(5);
+
     /// Reads `client` for `period`, as a browser that answers Pings would: the WebSocket
     /// layer queues a Pong for each Ping read and sends it with the next read. Returns the
     /// Pings and binary messages seen; a close fails the test.
@@ -1270,7 +1301,9 @@ mod tests {
     /// closed as `slow` once the heartbeat's silence limit passes.
     #[tokio::test]
     async fn a_client_that_stops_answering_is_closed_as_slow() {
-        let harness = Harness::start_with_heartbeat(TEST_HEARTBEAT).await;
+        let harness =
+            Harness::start_with_heartbeat_and_linger(TEST_HEARTBEAT, SLOW_CLIENT_CLOSE_LINGER)
+                .await;
         let mut client = harness.connect(&harness.ticket(MediaChannel::Plain)).await;
         assert_eq!(next_frame(&mut client).await[0], 0);
         // The client stops reading, so it answers no Ping.
@@ -1310,7 +1343,9 @@ mod tests {
     /// client answers the close.
     #[tokio::test]
     async fn a_slow_close_waits_for_the_clients_answer_on_both_routes() {
-        let harness = Harness::start_with_heartbeat(TEST_HEARTBEAT).await;
+        let harness =
+            Harness::start_with_heartbeat_and_linger(TEST_HEARTBEAT, SLOW_CLIENT_CLOSE_LINGER)
+                .await;
         for (round, channel) in [MediaChannel::Plain, MediaChannel::E2ee]
             .into_iter()
             .enumerate()
@@ -1343,7 +1378,7 @@ mod tests {
                 "the server dropped the connection before the client answered its close"
             );
             // The answer goes out with the next read, and the server then ends cleanly.
-            let end = tokio::time::timeout(CLOSE_TIMEOUT * 2, client.next())
+            let end = tokio::time::timeout(SLOW_CLIENT_CLOSE_LINGER, client.next())
                 .await
                 .expect("the server ends the connection once the client answers");
             assert!(end.is_none(), "{end:?}");
@@ -1351,9 +1386,9 @@ mod tests {
         harness.fixture.manager.shutdown().await;
     }
 
-    /// A client that never answers the close is dropped once [`CLOSE_TIMEOUT`] passes. A
-    /// refused socket leaves the pre-auth pool before its close, so such a client holds no
-    /// admission slot while the server waits for it.
+    /// A client that never answers the close is dropped once [`CLOSE_TIMEOUT`], the
+    /// production linger, passes. A refused socket leaves the pre-auth pool before its
+    /// close, so such a client holds no admission slot while the server waits for it.
     #[tokio::test]
     async fn a_client_that_never_answers_the_close_is_dropped_in_time() {
         let harness = Harness::start().await;
@@ -1403,7 +1438,9 @@ mod tests {
     /// below the Noise records.
     #[tokio::test]
     async fn an_e2ee_client_is_checked_for_liveness_too() {
-        let harness = Harness::start_with_heartbeat(TEST_HEARTBEAT).await;
+        let harness =
+            Harness::start_with_heartbeat_and_linger(TEST_HEARTBEAT, SLOW_CLIENT_CLOSE_LINGER)
+                .await;
         let mut client = harness
             .connect_e2ee(&harness.ticket(MediaChannel::E2ee))
             .await;
