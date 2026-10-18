@@ -2009,7 +2009,18 @@ keys when the screen or the window loses focus, and everything when the page
 is hidden or the screen closes. When a batch is refused, its key releases and
 its touch releases (as cancels where the touch was lifted) go out once more at
 once, ahead of later input; one refused again stays held for the next of
-those. Touch points are normalized `0..1` of the upright picture. The
+those. The emulator's `KeyboardEvent.text` translates only printable ASCII and
+drops most other characters while the call succeeds, so Android refuses what it
+cannot type instead of sending it: `android::input::send_batch` fails a batch
+with any text event outside printable ASCII, Return, and Tab (the set
+`isUsTypeable` in `deviceKeyMap.ts` calls US-typeable) with a `DeviceInputError`
+that says "This device can type only plain ASCII text. Type other characters
+with the on-screen keyboard.", before it sends anything. The refusal is all or
+nothing, so a touch or key in the same batch is not sent either, and the client
+sends the releases of any press in it once more, as above. iOS still pastes such
+text. Pasting Unicode through the emulator's clipboard (`setClipboard` plus a
+paste key) is not implemented. Touch points are normalized `0..1` of the upright
+picture. The
 emulator's `Touch.x`/`y` is the physical location on the unrotated panel, so
 `android::input::to_panel_pixels` turns each point into panel pixels in the
 natural orientation, for the orientation the guest reported (measured on a real

@@ -351,6 +351,102 @@ mod device_tests {
         assert!(fixture.controller.inputs.lock().unwrap().is_empty());
     }
 
+    /// The copy a refused batch shows (`android::input::UNTYPEABLE_TEXT`); the client shows the
+    /// server's message as it is.
+    const ASCII_ONLY: &str = "This device can type only plain ASCII text. Type other characters with the on-screen keyboard.";
+
+    /// Review finding P2: the emulator's `KeyboardEvent.text` drops most characters outside
+    /// printable ASCII (`emulator_controller.proto`) while the call succeeds. A batch that
+    /// carries one is refused whole, with a typed `DeviceInputError`, and none of it reaches
+    /// the emulator. `ok` after each refusal proves the stream saw nothing before it: the
+    /// stream is ordered, so an event that had been sent would arrive ahead of `ok`.
+    #[tokio::test]
+    async fn refuses_text_the_emulator_would_drop() {
+        for refused in ["héllo", "日本語", "ok 😀", "tab\u{7f}del", "caf\u{e9}"] {
+            let fixture = ManagerFixture::ready_device().await;
+            let error = fixture
+                .manager
+                .input(
+                    &fixture.id,
+                    vec![DeviceInputEvent::Text {
+                        text: refused.into(),
+                    }],
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error,
+                DeviceOpError::InvalidInput(ASCII_ONLY.into()),
+                "{refused:?}"
+            );
+            let rpc = error.to_rpc_error();
+            assert_eq!(rpc["_tag"], "DeviceInputError");
+            assert_eq!(rpc["message"], ASCII_ONLY);
+            // The refusal never echoes what was typed.
+            assert!(!rpc["message"].as_str().unwrap().contains(refused));
+            fixture
+                .manager
+                .input(
+                    &fixture.id,
+                    vec![DeviceInputEvent::Text { text: "ok".into() }],
+                )
+                .await
+                .unwrap();
+            let inputs = fixture.controller.wait_inputs(1).await;
+            assert_eq!(inputs.len(), 1, "{refused:?}: {inputs:?}");
+            assert_eq!(text_of(&inputs[0]), "ok");
+        }
+    }
+
+    /// The refusal is all or nothing: the touch before the text is not sent either, so no
+    /// pointer is left down on the device.
+    #[tokio::test]
+    async fn a_mixed_batch_with_untypeable_text_is_refused_whole() {
+        let fixture = ManagerFixture::ready_device().await;
+        let error = fixture
+            .manager
+            .input(
+                &fixture.id,
+                vec![
+                    touch(TouchAction::Down, 0.5, 0.5),
+                    DeviceInputEvent::Text {
+                        text: "héllo".into(),
+                    },
+                    touch(TouchAction::Up, 0.5, 0.5),
+                ],
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error, DeviceOpError::InvalidInput(ASCII_ONLY.into()));
+        fixture
+            .manager
+            .input(
+                &fixture.id,
+                vec![DeviceInputEvent::Text { text: "ok".into() }],
+            )
+            .await
+            .unwrap();
+        let inputs = fixture.controller.wait_inputs(1).await;
+        assert_eq!(inputs.len(), 1, "{inputs:?}");
+        assert_eq!(text_of(&inputs[0]), "ok");
+    }
+
+    #[tokio::test]
+    async fn printable_ascii_with_newline_and_tab_is_sent_whole() {
+        let fixture = ManagerFixture::ready_device().await;
+        let text = "Hello, World! ~{}[]\\|\"'`\nline two\r\n\tindented";
+        fixture
+            .manager
+            .input(
+                &fixture.id,
+                vec![DeviceInputEvent::Text { text: text.into() }],
+            )
+            .await
+            .unwrap();
+        let inputs = fixture.controller.wait_inputs(1).await;
+        assert_eq!(text_of(&inputs[0]), text);
+    }
+
     #[tokio::test]
     async fn dangling_touch_is_released_on_stream_reset() {
         let fixture = ManagerFixture::ready_device().await;

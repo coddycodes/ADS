@@ -3078,8 +3078,14 @@ Record each client's OS, app or browser version, and profile type.
    Swipe down from the top to open the notification shade, and start a drag
    on the screen that ends outside the panel: the touch ends and nothing stays
    pressed. In a text field, type, use Backspace, Enter, and the arrow keys,
-   and paste text into the focused screen, then copy other text and choose
-   the toolbar's **Paste**: both arrive. Use **Back**,
+   and paste ASCII text into the focused screen, then copy other ASCII text and
+   choose the toolbar's **Paste**: both arrive. Android types only printable
+   ASCII, Return, and Tab. Type `é` on the focused screen, and paste `café 😀`
+   with ⌘V or Ctrl+V and with **Paste**: each is refused, the panel shows "This
+   device can type only plain ASCII text. Type other characters with the
+   on-screen keyboard.", and nothing reaches the field. Then type `é` with the
+   guest's on-screen keyboard and record whether it appears with
+   `hw.keyboard=yes` or what turns it on. Use **Back**,
    **Home**, **Recents**, **Power**, and both volume buttons.
 6. **Rotation (native items 2, 3, and 4).** Turn on auto-rotate
    (`adb -s <serial> shell settings put system accelerometer_rotation 1`) and

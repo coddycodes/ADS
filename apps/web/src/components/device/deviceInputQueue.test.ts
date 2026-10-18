@@ -391,6 +391,50 @@ describe("DeviceInputQueue", () => {
     expect(sent.at(-1)).toEqual([keyEvent("up"), touch("cancel", 0.2, 0.2)]);
   });
 
+  const text = (value: string): DeviceInputEvent => ({ type: "text", text: value });
+
+  it("sends nothing more for a refused batch of text", async () => {
+    // The server refuses text the emulator would drop, as a whole: nothing of the batch was
+    // sent, and text holds nothing down, so there is no release to send again.
+    const { frame, queue, sent } = scriptedQueue((call) => call === 1);
+    queue.push(text("héllo"));
+    frame();
+    await settle();
+    expect(sent).toEqual([[text("héllo")]]);
+    queue.releaseAll();
+    await settle();
+    expect(sent).toHaveLength(1);
+    // Later input still goes out.
+    queue.push(text("hello"));
+    frame();
+    await settle();
+    expect(sent.at(-1)).toEqual([text("hello")]);
+  });
+
+  it("re-sends the releases of a refused batch that also carried text", async () => {
+    const { frame, queue, sent } = scriptedQueue((call) => call === 2);
+    queue.push(keyEvent("down"));
+    queue.push(touch("down", 0.1, 0.1));
+    frame();
+    await settle();
+    // Both lifts share a batch with text the server refuses, so neither reached the device.
+    queue.push(keyEvent("up"));
+    queue.push(text("héllo"));
+    queue.push(touch("up", 0.3, 0.3));
+    frame();
+    await settle();
+    expect(sent.slice(1)).toEqual([
+      [keyEvent("up"), text("héllo"), touch("up", 0.3, 0.3)],
+      // Once more, at once: the key release and a cancel where the touch was lifted, and
+      // none of the text.
+      [keyEvent("up"), touch("cancel", 0.3, 0.3)],
+    ]);
+    // They were accepted, so nothing is held: a blur sends nothing more.
+    queue.releaseAll();
+    await settle();
+    expect(sent).toHaveLength(3);
+  });
+
   it("forgets a touch once it is lifted", () => {
     const sent: Array<ReadonlyArray<DeviceInputEvent>> = [];
     const queue = new DeviceInputQueue(

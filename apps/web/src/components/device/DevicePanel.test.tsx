@@ -1033,6 +1033,35 @@ describe("DevicePanel with iOS simulators", () => {
       "The simulator is not accepting keyboard input yet. Try again in a few seconds.",
     );
   });
+
+  it("shows the server's reason when an Android device refuses text it cannot type", async () => {
+    const message =
+      "This device can type only plain ASCII text. Type other characters with the on-screen keyboard.";
+    h.results.input = { _tag: "Failure", error: { _tag: "DeviceInputError", message } };
+    const readText = vi.fn(() => Promise.resolve("héllo"));
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { readText } });
+    try {
+      withCatalog(catalog({ devices: [snapshot()] }));
+      const container = await render();
+      await click(button(container, "Paste"));
+      await flushInput();
+      // The refusal is the server's own words, not the generic fallback.
+      expect(container.querySelector("[role='status'][data-input-error]")?.textContent).toBe(
+        message,
+      );
+      // Text holds nothing down, so the refused batch is not sent again as a release.
+      expect(h.calls.filter((call) => call.command === "input").map((call) => call.input)).toEqual([
+        {
+          environmentId: ENVIRONMENT_ID,
+          input: { deviceId: "d-1", events: [{ type: "text", text: "héllo" }] },
+        },
+      ]);
+      // iOS's Allow Paste reminder does not apply to an Android device.
+      expect(container.querySelector("[data-paste-note]")).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("device selection helpers", () => {
