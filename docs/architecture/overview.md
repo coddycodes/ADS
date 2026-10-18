@@ -2133,7 +2133,13 @@ does one that answers nothing, not even the Ping the
 for 45 s.
 Rejections close with code 4400 and one of `expired`, `reused`, `wrongChannel`,
 `wrongDevice`, `limit`, `disabled`, `stopped`, `failed`, `unauthorized`, or
-`slow`; a wrong pinned key or prologue closes with 4403 `host-identity`.
+`slow`; a wrong pinned key or prologue closes with 4403 `host-identity`. A 4400
+close finishes the WebSocket closing handshake: the server reads, and discards,
+what the client still sends until the client answers the close, for at most 1 s
+including the close frame, and only then drops the connection. A client that
+stopped reading has Pings queued and writes a Pong for each before it reads the
+close; on a connection already dropped, Linux resets those writes and the
+reason is lost. The socket's device slot is freed before the close starts.
 Pre-auth admission, deadlines, and the 503 refusal are in
 [Remote architecture](./remote.md#device-media-sockets).
 

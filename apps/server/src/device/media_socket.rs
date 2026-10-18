@@ -71,7 +71,8 @@ pub(crate) const TICKET_WAIT: Duration = Duration::from_secs(5);
 pub(crate) const DEVICE_MEDIA_NOISE_PROLOGUE: &[u8] = b"bibcode-device-media/1";
 /// How long one frame may wait for the client before the socket closes as `slow`.
 pub(crate) const SEND_STALL_TIMEOUT: Duration = Duration::from_secs(10);
-/// How long a close frame may take; the socket is dropped after it either way.
+/// How long closing may take: sending the close frame, then waiting for the client's
+/// answering close. The socket is dropped after it either way.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 /// Inbound messages are only the ticket and `{"type":"keyframe"}`; on the E2EE route this
 /// bounds the decrypted logical message.
@@ -147,7 +148,8 @@ trait MediaTransport {
     /// Sends a WebSocket Ping, which the browser answers on its own; `Err` once the client
     /// is gone.
     async fn ping(&mut self) -> Result<(), ()>;
-    /// Sends a close frame with code 4400 and `reason`.
+    /// Closes with code 4400 and `reason`, finishing the closing handshake (see
+    /// [`send_close`]).
     async fn close(self, reason: &'static str);
 }
 
@@ -174,8 +176,13 @@ where
         self.0.send(Message::Ping(Bytes::new())).await.map_err(drop)
     }
 
-    async fn close(self, reason: &'static str) {
-        close(self.0, reason).await;
+    async fn close(mut self, reason: &'static str) {
+        let _ = tokio::time::timeout(CLOSE_TIMEOUT, async {
+            if send_close(&mut self.0, reason).await.is_ok() {
+                await_client_close(&mut self.0).await;
+            }
+        })
+        .await;
     }
 }
 
@@ -231,8 +238,14 @@ impl MediaTransport for E2eeTransport {
             .map_err(drop)
     }
 
-    async fn close(self, reason: &'static str) {
-        close(self.writer, reason).await;
+    /// The close frame, and the client's answer, are WebSocket frames below the records.
+    async fn close(mut self, reason: &'static str) {
+        let _ = tokio::time::timeout(CLOSE_TIMEOUT, async {
+            if send_close(&mut self.writer, reason).await.is_ok() {
+                await_client_close(&mut self.reader).await;
+            }
+        })
+        .await;
     }
 }
 
@@ -573,19 +586,39 @@ async fn stream<T: MediaTransport>(
     }
 }
 
-/// Sends the close frame, giving up after [`CLOSE_TIMEOUT`] on a client that reads nothing.
-async fn close<S>(mut socket: S, reason: &'static str)
+/// Sends the close frame with code 4400 and `reason`; `Err` once the client is gone.
+///
+/// A transport's `close` then reads, and discards, what the client still sends until its
+/// answering close arrives or the connection ends ([`await_client_close`]), all within
+/// [`CLOSE_TIMEOUT`], and only then drops the socket. Dropping it at once can lose the
+/// reason: a client that stopped reading for a while has Pings queued, and its WebSocket
+/// layer writes a Pong for each before it reads the close frame. On a connection the server
+/// already dropped, Linux resets those writes, and the client fails before it sees the close.
+/// The bound keeps a client that never answers from holding the task: its slot was already
+/// freed when the stream ended.
+async fn send_close<S>(socket: &mut S, reason: &'static str) -> Result<(), ()>
 where
     S: Sink<Message, Error = axum::Error> + Unpin,
 {
-    let _ = tokio::time::timeout(
-        CLOSE_TIMEOUT,
-        socket.send(Message::Close(Some(CloseFrame {
+    socket
+        .send(Message::Close(Some(CloseFrame {
             code: CLOSE_CODE,
             reason: reason.into(),
-        }))),
-    )
-    .await;
+        })))
+        .await
+        .map_err(drop)
+}
+
+/// Reads and discards until the client's close, a read error, or the end of the stream.
+async fn await_client_close<S>(socket: &mut S)
+where
+    S: Stream<Item = Result<Message, axum::Error>> + Unpin,
+{
+    while let Some(Ok(message)) = socket.next().await {
+        if matches!(message, Message::Close(_)) {
+            return;
+        }
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -1245,6 +1278,90 @@ mod tests {
         assert_eq!(
             close_reason(&mut client).await,
             (CLOSE_CODE, "slow".to_owned())
+        );
+        harness.fixture.manager.shutdown().await;
+    }
+
+    /// Waits up to `period` for the server to end the TCP connection under `client`, below
+    /// the WebSocket layer, without sending anything; `true` once it did.
+    async fn tcp_ended_within(client: &mut Client, period: Duration) -> bool {
+        let MaybeTlsStream::Plain(tcp) = client.get_mut() else {
+            panic!("test sockets are plain TCP");
+        };
+        let mut byte = [0_u8; 1];
+        match tokio::time::timeout(period, tokio::io::AsyncReadExt::read(tcp, &mut byte)).await {
+            Ok(Ok(0) | Err(_)) => true,
+            Ok(Ok(_)) => panic!("the server sent more after its close frame"),
+            Err(_) => false,
+        }
+    }
+
+    /// CI on Linux lost the `slow` reason: a client that stopped reading has Pings queued,
+    /// and its WebSocket layer writes a Pong for each before it reads the close frame. On a
+    /// connection the server already dropped, Linux resets those writes (`BrokenPipe`) and
+    /// the close never reaches the client. The server finishes the closing handshake
+    /// instead: it keeps the connection, reading what the client still sends, until the
+    /// client answers the close.
+    #[tokio::test]
+    async fn a_slow_close_waits_for_the_clients_answer_on_both_routes() {
+        let harness = Harness::start_with_heartbeat(TEST_HEARTBEAT).await;
+        for (round, channel) in [MediaChannel::Plain, MediaChannel::E2ee]
+            .into_iter()
+            .enumerate()
+        {
+            let ticket = harness.ticket(channel);
+            let mut client = match channel {
+                MediaChannel::Plain => harness.connect(&ticket).await,
+                MediaChannel::E2ee => harness.connect_e2ee(&ticket).await.socket,
+            };
+            // The client reads nothing until the server has closed it as `slow` and freed
+            // its slot (each round's hub removes its own forward). Then it reads the Pings
+            // queued before the close, answering each, and the close.
+            wait_until(|| {
+                harness
+                    .fixture
+                    .sdk
+                    .adb_log()
+                    .matches("forward --remove")
+                    .count()
+                    > round
+            })
+            .await;
+            assert_eq!(
+                close_reason(&mut client).await,
+                (CLOSE_CODE, "slow".to_owned())
+            );
+            // Its answering close is not sent yet, so the server still holds the connection.
+            assert!(
+                !tcp_ended_within(&mut client, Duration::from_millis(250)).await,
+                "the server dropped the connection before the client answered its close"
+            );
+            // The answer goes out with the next read, and the server then ends cleanly.
+            let end = tokio::time::timeout(CLOSE_TIMEOUT * 2, client.next())
+                .await
+                .expect("the server ends the connection once the client answers");
+            assert!(end.is_none(), "{end:?}");
+        }
+        harness.fixture.manager.shutdown().await;
+    }
+
+    /// A client that never answers the close is dropped once [`CLOSE_TIMEOUT`] passes.
+    #[tokio::test]
+    async fn a_client_that_never_answers_the_close_is_dropped_in_time() {
+        let harness = Harness::start().await;
+        let mut client = harness.connect("not-a-ticket").await;
+        assert_eq!(
+            close_reason(&mut client).await,
+            (CLOSE_CODE, "expired".to_owned())
+        );
+        let closed = std::time::Instant::now();
+        assert!(
+            tcp_ended_within(&mut client, CLOSE_TIMEOUT * 2).await,
+            "the server kept a client that never answered its close"
+        );
+        assert!(
+            closed.elapsed() >= Duration::from_millis(250),
+            "the server dropped the connection without waiting for an answer"
         );
         harness.fixture.manager.shutdown().await;
     }
