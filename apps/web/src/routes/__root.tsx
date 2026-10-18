@@ -152,12 +152,11 @@ export const Route = createRootRoute({
         ? await withDeadline(resolveInitialServerAuthGateState(), SERVED_SESSION_CHECK_DEADLINE_MS)
         : await resolveInitialServerAuthGateState();
     } catch (error) {
+      // A stalled check is abandoned whatever happens next, so the next attempt, such as
+      // pairing this server or a retry once it recovers, asks the server again.
+      if (error instanceof ServedSessionCheckStalled) abandonServerAuthBootstrap();
       if (await servedRemoteClient()) {
-        if (error instanceof ServedSessionCheckStalled) {
-          setServedSessionStalled(true);
-          // The next check, such as pairing this server, asks the server again.
-          abandonServerAuthBootstrap();
-        }
+        if (error instanceof ServedSessionCheckStalled) setServedSessionStalled(true);
         return remoteClientState;
       }
       throw error;

@@ -583,6 +583,29 @@ describe("Route.beforeLoad", () => {
       }
     });
 
+    // With nothing else paired there is no remote-client fallback, but the stalled check is
+    // still abandoned, so the next attempt asks the recovered server instead of timing out again.
+    it("asks again after a stalled check when nothing else is paired", async () => {
+      vi.useFakeTimers();
+      try {
+        s.servedByThisBackend = true;
+        s.savedEnvironments = false;
+        s.authGateStalled = true;
+        window.location.href = "https://box.lan/";
+        const stalled = beforeLoad()({ location: { pathname: "/" } }).catch((error) => error);
+        await vi.advanceTimersByTimeAsync(20_000);
+        expect(await stalled).toBeInstanceOf(Error);
+
+        s.authGateStalled = false;
+        s.authGate = { status: "authenticated" };
+        const retried = beforeLoad()({ location: { pathname: "/" } });
+        await vi.advanceTimersByTimeAsync(0);
+        expect((await retried).authGateState.status).toBe("authenticated");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("still reports an unreachable server when nothing else is paired", async () => {
       s.servedByThisBackend = true;
       s.authGateFailure = new Error("This server is unreachable.");
