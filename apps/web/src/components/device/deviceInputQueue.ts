@@ -18,9 +18,9 @@ const nextAnimationFrame = (flush: () => void) => {
  * Ctrl+Backspace's, is dropped, so the device never gets a spurious one.
  *
  * A batch that `send` rejects may have left a key or a touch down on the device. Its releases
- * go out once more, at once and ahead of later input, a touch's as a cancel where it was
- * lifted; one that fails again is held, so the next blur, hide, or unmount lifts it. After
- * `dispose` there is no next one (see there).
+ * go out once more, at once, ahead of later input and in a batch of their own, a touch's as a
+ * cancel where it was lifted; one that fails again is held, so the next blur, hide, or unmount
+ * lifts it. After `dispose` there is no next one (see there).
  */
 export class DeviceInputQueue {
   private pending: DeviceInputEvent[] = [];
@@ -148,7 +148,7 @@ export class DeviceInputQueue {
       this.urgent = false;
       return;
     }
-    const batch = this.pending.splice(0, MAX_INPUT_BATCH);
+    const batch = this.pending.splice(0, this.nextBatchLength());
     this.sending = true;
     let sent: Promise<void>;
     try {
@@ -170,9 +170,23 @@ export class DeviceInputQueue {
   }
 
   /**
-   * Sends again, once and at once, the release of each key or touch that a failed batch
-   * left up last, ahead of what was queued since; one already sent again is held instead,
-   * unless later input for it is queued. Presses are not sent again: they stay held.
+   * How many waiting events the next batch takes: the releases sent again at the head of the
+   * queue go out alone, so input queued since (such as text the server refuses) cannot make
+   * them fail again; otherwise up to {@link MAX_INPUT_BATCH}.
+   */
+  private nextBatchLength(): number {
+    let retried = 0;
+    while (retried < this.pending.length && this.retries.has(this.pending[retried]!)) {
+      retried += 1;
+    }
+    return retried > 0 ? Math.min(retried, MAX_INPUT_BATCH) : MAX_INPUT_BATCH;
+  }
+
+  /**
+   * Sends again, once and at once and in a batch of their own, the release of each key or
+   * touch that a failed batch left up last, ahead of what was queued since; one already sent
+   * again is held instead, unless later input for it is queued. Presses are not sent again:
+   * they stay held.
    */
   private recover(batch: ReadonlyArray<DeviceInputEvent>): void {
     const last = new Map<string, DeviceInputEvent>();

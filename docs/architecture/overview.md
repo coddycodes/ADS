@@ -2009,8 +2009,9 @@ flight. The client tracks the keys and touches it holds down: it lifts the
 keys when the screen or the window loses focus, and everything when the page
 is hidden or the screen closes. When a batch is refused, its key releases and
 its touch releases (as cancels where the touch was lifted) go out once more at
-once, ahead of later input; one refused again stays held for the next of
-those. The emulator's `KeyboardEvent.text` translates only printable ASCII and
+once, ahead of later input and in a batch of their own, so text queued since
+that the server refuses cannot refuse them again; one refused again stays held
+for the next of those. The emulator's `KeyboardEvent.text` translates only printable ASCII and
 drops most other characters while the call succeeds, so Android refuses what it
 cannot type instead of sending it: `android::input::send_batch` fails a batch
 with any text event outside printable ASCII, Return, and Tab (the set

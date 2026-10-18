@@ -2,6 +2,7 @@ import type { DeviceInputEvent } from "@bibcode/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { DeviceInputQueue } from "./deviceInputQueue";
+import { isUsTypeable } from "./deviceKeyMap";
 
 const touch = (
   action: "down" | "move" | "up" | "cancel",
@@ -321,7 +322,8 @@ describe("DeviceInputQueue", () => {
     queue.push(keyEvent("down"));
     release();
     await settle();
-    expect(sent.slice(2)).toEqual([[keyEvent("up"), keyEvent("down")]]);
+    // The release first, alone, then the new press.
+    expect(sent.slice(2)).toEqual([[keyEvent("up")], [keyEvent("down")]]);
     // The new press is still held, so a blur lifts it.
     queue.releaseKeys();
     await settle();
@@ -433,6 +435,51 @@ describe("DeviceInputQueue", () => {
     queue.releaseAll();
     await settle();
     expect(sent).toHaveLength(3);
+  });
+
+  it("re-sends releases in a batch of their own, so text queued since cannot refuse them again", async () => {
+    // As the server does on Android: a batch with text the emulator would drop is refused
+    // whole.
+    const sent: Array<ReadonlyArray<DeviceInputEvent>> = [];
+    const frames: Array<() => void> = [];
+    let refuse!: () => void;
+    const queue = new DeviceInputQueue(
+      (events) => {
+        sent.push(events);
+        if (sent.length === 2) {
+          return new Promise<void>((_, reject) => {
+            refuse = () => reject(new Error("refused"));
+          });
+        }
+        const untypeable = events.some(
+          (event) => event.type === "text" && !isUsTypeable(event.text),
+        );
+        return untypeable ? Promise.reject(new Error("refused")) : Promise.resolve();
+      },
+      (flush) => frames.push(flush),
+    );
+    const frame = () => frames.shift()?.();
+    queue.push(keyEvent("down"));
+    frame();
+    await settle();
+    queue.push(keyEvent("up"));
+    queue.push(text("café"));
+    frame();
+    // Typed while that batch is in flight.
+    queue.push(text("é"));
+    refuse();
+    await settle();
+    await settle();
+    expect(sent.slice(1)).toEqual([
+      [keyEvent("up"), text("café")],
+      // The release alone, then the text, refused on its own.
+      [keyEvent("up")],
+      [text("é")],
+    ]);
+    // The release was accepted, so Backspace is not held: a blur sends nothing more.
+    queue.releaseKeys();
+    await settle();
+    expect(sent).toHaveLength(4);
   });
 
   it("forgets a touch once it is lifted", () => {
