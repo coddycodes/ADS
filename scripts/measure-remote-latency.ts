@@ -930,6 +930,22 @@ export async function runScenarios(
   await page.evaluate(`document.querySelector(".xterm textarea").focus()`);
   await page.send("Input.insertText", { text: "\u0015" });
 
+  // Connect to first thread paint: a reload straight onto a thread's route, the way the
+  // app reopens where it was, with nothing cached in the page.
+  const threadPath = await page.evaluate<string>(
+    `(${threadButton(project)}?.click(), new Promise((resolve) =>
+      setTimeout(() => resolve(location.pathname), 500)))`,
+  );
+  await measure("reload onto a thread route until it paints, no local cache", async () => {
+    await page.send("Storage.clearDataForOrigin", {
+      origin: harness.origin,
+      storageTypes: "local_storage,indexeddb,cache_storage,service_workers,websql,file_systems",
+    });
+    await page.evaluate("window.__beforeReload = true");
+    await page.navigate(`${harness.origin}${threadPath}`);
+    return page.waitFor(`!window.__beforeReload && ${answered(TYPED)}`);
+  });
+
   await measure("open thread after reload, no local cache", async () => {
     // Without this the thread paints from the page's own cache before any RPC returns.
     await page.send("Storage.clearDataForOrigin", {
