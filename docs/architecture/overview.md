@@ -2071,7 +2071,11 @@ only `{"type":"keyframe"}` after a decoder error.
 
 Each socket has a 2 MiB, 256-frame queue. On overflow the hub drops that
 socket's queued deltas, forwards nothing until the next key unit, and sends
-`RESET_VIDEO` at most once per second per device. A socket that accepts no
+`RESET_VIDEO` at most once per second per device. A reset asked for inside
+that second (a socket joining, overflowing, or reporting a decoder error) is
+deferred, not dropped: when the second ends the hub's task sends one reset
+for every request made in it, if a socket still waits for a key unit, because
+a still screen encodes nothing unasked. A socket that accepts no
 frame for 10 s closes as `slow`. Rejections close with code 4400 and one of
 `expired`, `reused`, `wrongChannel`, `wrongDevice`, `limit`, `disabled`,
 `stopped`, `failed`, `unauthorized`, or `slow`; a wrong pinned key or prologue

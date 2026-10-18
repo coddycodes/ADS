@@ -258,6 +258,16 @@ enum Offer {
     Closed,
 }
 
+/// What the hub's task does next about `RESET_VIDEO`.
+enum ResetStep {
+    /// Write one now.
+    Write,
+    /// Wait until then, when the window of a deferred request ends.
+    At(Instant),
+    /// Nothing is asked for.
+    Idle,
+}
+
 impl SubscriberSlot {
     fn offer(&self, frame: &Bytes, delta: bool) -> Offer {
         let queued = self.queued_bytes.load(Ordering::Acquire);
@@ -296,7 +306,12 @@ struct HubState {
     subscribers: Vec<SubscriberSlot>,
     cached_config: Option<Bytes>,
     last_reset: Option<Instant>,
-    /// `RESET_VIDEO` requests made, sent or not yet.
+    /// A reset the hub's task has yet to write.
+    reset_unsent: bool,
+    /// A reset asked for inside the rate-limit window, for the task to send when it ends.
+    reset_deferred: bool,
+    /// `RESET_VIDEO` writes started, sent or not yet; a deferred request counts once it
+    /// falls due.
     resets: u64,
     /// Units fanned out so far.
     dispatched: u64,
@@ -439,18 +454,57 @@ impl MediaHub {
     }
 
     /// Asks the encoder for a fresh config and key unit, at most once per
-    /// [`RESET_MIN_INTERVAL`] per device.
+    /// [`RESET_MIN_INTERVAL`] per device. A request inside the window is deferred, never
+    /// dropped: when the window ends, the hub's task sends one reset for every request made
+    /// in it, if a socket still waits for a key unit then. A still screen encodes nothing
+    /// unasked (iOS, and the Android emulator's encoder), so a viewer that joins, or a
+    /// decoder that recovers, inside the window would otherwise wait for a key unit forever.
     fn maybe_reset(&self, state: &mut HubState) {
         let now = Instant::now();
         if state
             .last_reset
             .is_some_and(|last| now.duration_since(last) < RESET_MIN_INTERVAL)
         {
+            if !state.reset_deferred {
+                state.reset_deferred = true;
+                // Wakes the task to wait for the window's end.
+                self.reset.notify_one();
+            }
             return;
         }
-        state.last_reset = Some(now);
-        state.resets += 1;
+        Self::start_reset(state, now);
+        state.reset_unsent = true;
         self.reset.notify_one();
+    }
+
+    fn start_reset(state: &mut HubState, now: Instant) {
+        state.last_reset = Some(now);
+        state.reset_deferred = false;
+        state.resets += 1;
+    }
+
+    /// The task's next reset step at `now`. A deferred request that falls due starts a
+    /// reset only while some socket still waits for a key unit; either way it is spent.
+    fn next_reset(&self, now: Instant) -> ResetStep {
+        let mut state = self.lock();
+        if state.reset_unsent {
+            state.reset_unsent = false;
+            return ResetStep::Write;
+        }
+        if !state.reset_deferred {
+            return ResetStep::Idle;
+        }
+        if let Some(last) = state.last_reset
+            && now < last + RESET_MIN_INTERVAL
+        {
+            return ResetStep::At(last + RESET_MIN_INTERVAL);
+        }
+        state.reset_deferred = false;
+        if !state.subscribers.iter().any(|slot| slot.waiting_for_key) {
+            return ResetStep::Idle;
+        }
+        Self::start_reset(&mut state, now);
+        ResetStep::Write
     }
 
     /// Tells every socket with nothing queued that the stream is still open. A socket with
@@ -576,16 +630,17 @@ pub(super) async fn run<S: VideoSource>(
     // A quiet source (an unchanged iOS screen sends nothing) still proves the stream alive
     // to its sockets, which treat a long silence as a stall.
     let mut keepalive_at = Instant::now() + KEEPALIVE_INTERVAL;
+    // When a deferred reset falls due; the one deadline the reset rate limit needs.
+    let mut reset_at: Option<Instant> = None;
     let failed = loop {
         tokio::select! {
             biased;
             () = hub.cancel.cancelled() => break false,
-            () = hub.reset.notified() => {
-                match tokio::time::timeout(RESET_WRITE_TIMEOUT, source.reset_video()).await {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => tracing::warn!(%error, "device media reset failed"),
-                    Err(_) => tracing::warn!("device media reset timed out"),
-                }
+            () = hub.reset.notified() => reset_at = serve_resets(&hub, &mut source).await,
+            () = tokio::time::sleep_until(reset_at.unwrap_or_else(Instant::now)),
+                if reset_at.is_some() =>
+            {
+                reset_at = serve_resets(&hub, &mut source).await;
             }
             unit = source.next_unit() => match unit {
                 Some(unit) => {
@@ -605,6 +660,23 @@ pub(super) async fn run<S: VideoSource>(
     }
     hub.close(failed);
     source.stop(hub.device_ended.load(Ordering::Acquire)).await;
+}
+
+/// Writes each reset the hub asks for now; returns when a deferred one falls due, if any.
+async fn serve_resets<S: VideoSource>(hub: &MediaHub, source: &mut S) -> Option<Instant> {
+    loop {
+        match hub.next_reset(Instant::now()) {
+            ResetStep::Write => {
+                match tokio::time::timeout(RESET_WRITE_TIMEOUT, source.reset_video()).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => tracing::warn!(%error, "device media reset failed"),
+                    Err(_) => tracing::warn!("device media reset timed out"),
+                }
+            }
+            ResetStep::At(deadline) => return Some(deadline),
+            ResetStep::Idle => return None,
+        }
+    }
 }
 
 /// One media socket's view of a device's stream.
@@ -955,6 +1027,20 @@ mod tests {
 
         fn resets(&self) -> u64 {
             self.hub.lock().resets
+        }
+
+        /// Waits, as paused time allows, until the source has received `count` resets.
+        async fn wait_written(&self, count: usize) {
+            for _ in 0..500 {
+                if self.written.load(Ordering::Acquire) >= count {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            panic!(
+                "the source received {} resets, not {count}",
+                self.written.load(Ordering::Acquire)
+            );
         }
     }
 
@@ -1316,6 +1402,55 @@ mod tests {
         tokio::time::advance(RESET_MIN_INTERVAL).await;
         held.push(hub.subscribe());
         assert_eq!(hub.resets(), 2);
+    }
+
+    /// Codex's case: a second viewer joins a still screen just after the first one's key
+    /// unit. Its reset falls inside the window, and the screen sends nothing unasked, so
+    /// the reset is sent when the window ends and the key unit follows.
+    #[tokio::test(start_paused = true)]
+    async fn a_reset_asked_for_inside_the_window_is_sent_when_it_ends() {
+        let hub = HubFixture::new();
+        let started = Instant::now();
+        let mut first = hub.subscribe();
+        hub.wait_written(1).await;
+        hub.feed([config(), key(1)]).await;
+        assert_eq!(first.kinds().await, ["config", "key"]);
+        let mut second = hub.subscribe();
+        assert_eq!(hub.resets(), 1, "the second request is rate limited");
+        hub.wait_written(2).await;
+        assert!(Instant::now() - started >= RESET_MIN_INTERVAL);
+        assert_eq!(hub.resets(), 2);
+        // The encoder answers the reset with a fresh config and key unit.
+        hub.feed([config(), key(2)]).await;
+        assert_eq!(second.kinds().await, ["config", "config", "key"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn many_requests_inside_the_window_make_one_reset_when_it_ends() {
+        let hub = HubFixture::new();
+        let first = hub.subscribe();
+        let second = hub.subscribe();
+        let _third = hub.subscribe();
+        first.subscriber.request_keyframe();
+        second.subscriber.request_keyframe();
+        assert_eq!(hub.resets(), 1);
+        hub.wait_written(2).await;
+        // Nothing is asked for after the window, so nothing more is sent.
+        tokio::time::sleep(RESET_MIN_INTERVAL * 3).await;
+        assert_eq!(hub.resets(), 2);
+        assert_eq!(hub.written.load(Ordering::Acquire), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_deferred_reset_is_dropped_once_every_socket_has_its_key() {
+        let hub = HubFixture::new();
+        let _first = hub.subscribe();
+        let _second = hub.subscribe();
+        // A key unit reaches both sockets before the window ends.
+        hub.feed([config(), key(1)]).await;
+        tokio::time::sleep(RESET_MIN_INTERVAL * 2).await;
+        assert_eq!(hub.resets(), 1);
+        assert_eq!(hub.written.load(Ordering::Acquire), 1);
     }
 
     #[tokio::test]
