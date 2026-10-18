@@ -143,8 +143,8 @@ export class DeviceVideoSession {
   private async connect(): Promise<void> {
     const ticket = await this.deps.mintTicket().catch(() => null);
     if (this.ended) return;
-    if (ticket === CONNECTION_DOWN) return this.retryOnceConnected();
-    if (typeof ticket === "object" && ticket !== null && "unavailable" in ticket) {
+    if (typeof ticket === "object" && ticket !== null) {
+      if ("connectionDown" in ticket) return this.retryOnceConnected();
       return this.fallBack(ticket.unavailable, ticket.message);
     }
     const target = this.deps.target();
