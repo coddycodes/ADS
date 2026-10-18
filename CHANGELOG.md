@@ -59,6 +59,13 @@ BiBCode v0.10.0 adds device previews: an Android emulator, or an iOS simulator o
 
 - Server tests that capture logs, start terminal observers, or depend on the profiler setting run in a process of their own, and the worktree lifecycle test reads every event of a combined update; several tests that failed under load no longer do.
 
+### Known limitations
+
+- On an iOS simulator, a touch whose release fails, and whose cleanup then also fails, can leave a finger held down on the simulator.
+- Two simulators with the same name show as identical rows in the Device picker.
+- When two chats share one checkout, reverts in both can finish in the order their providers reopen rather than the order you asked, so the earlier revert can overwrite the later one's files.
+- The Source Control speedup for thousands of changes and the reconnect memory fix were measured on Linux; their macOS measurements are still to be done.
+
 ## [v0.9.4] - 2026-10-15
 
 BiBCode v0.9.4 opens pull and merge requests in a thread's right panel, keeps Claude background agents and other provider work running after a turn ends, stops the server from burning CPU on failed thread subscriptions, makes **Revert to this message** work again, keeps the Claude MCP token off the command line, and reports OpenCode 2 as not supported yet instead of failing late. This release includes the changes since v0.9.3.
