@@ -10,7 +10,7 @@
   - #96 unchanged reconnects.
 - **Failed:**
   - five server tests that fail the same way on `main` on this Mac (host-specific);
-  - three Git signal tests that are flaky under load.
+  - Git signal tests, which fail only in this machine's main checkout (environmental, see below).
 - **Not verified:** the #96 memory expectations (inconclusive proxy), VoiceOver order, and Android ⌘V.
 
 This covers PR #123 (device previews, #70) after the v0.9.5 integration branch (PR #126) was merged into it. It also covers the macOS checks still owed from v0.9.5: #119 (Source Control with thousands of changes) and #96 (thread memory across reconnects).
@@ -57,23 +57,27 @@ These gates ran at `73cbd34c`, the merge, before any fix. The final code revisio
 
 The broad package and integration runs below were not repeated at `22c5fba8`. That commit changes only Android input, its tests, a profiler comment and docs.
 
-| Command                                                                                         | Result   | Totals or notes                                                                                                                                |
-| ----------------------------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cargo check --workspace --all-targets --locked`                                                | exit 0   | 2 min 5 s                                                                                                                                      |
-| `cargo fmt --all --check`                                                                       | exit 0   |                                                                                                                                                |
-| `cargo clippy --workspace --all-targets -- -D warnings`                                         | exit 0   | Covers the macOS-only `device/ios`                                                                                                             |
-| `cargo test -p bibcode-server --lib device::`                                                   | exit 0   | 290 passed                                                                                                                                     |
-| `cargo test -p bibcode-server --test device_rpc --test device_media_socket`                     | exit 0   | 1 + 11 passed                                                                                                                                  |
-| `BIBCODE_IOS_SIM_TESTS=1 cargo test -p bibcode-server --test ios_simulator -- --test-threads=1` | exit 0   | 8/8, real simulator, none left booted                                                                                                          |
-| `vp check`                                                                                      | exit 0   | 2,904 files formatted, no lint findings                                                                                                        |
-| `vp run typecheck`                                                                              | exit 0   |                                                                                                                                                |
-| `vp run -r --concurrency-limit 1 test`                                                          | exit 1   | Stops at `bibcode` (server lib): 3,681 passed, 4 failed (host-specific, see below). The packages after it were run one by one.                 |
-| `vp run --filter <pkg> test`                                                                    | exit 0   | web 8,685, client-runtime 1,137, contracts 797, shared 830, scripts 750, relay 241. Desktop 490 and oxlint plugin passed inside the graph run. |
-| `cargo test -p bibcode-server --tests --no-fail-fast`                                           | exit 101 | 87 targets OK. Failures: the 4 lib host failures, `preview_gateway` (host), and 3 `production_git_manager_rpc` signal tests (flaky under load) |
+| Command                                                                                         | Result   | Totals or notes                                                                                                                                        |
+| ----------------------------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cargo check --workspace --all-targets --locked`                                                | exit 0   | 2 min 5 s                                                                                                                                              |
+| `cargo fmt --all --check`                                                                       | exit 0   |                                                                                                                                                        |
+| `cargo clippy --workspace --all-targets -- -D warnings`                                         | exit 0   | Covers the macOS-only `device/ios`                                                                                                                     |
+| `cargo test -p bibcode-server --lib device::`                                                   | exit 0   | 290 passed                                                                                                                                             |
+| `cargo test -p bibcode-server --test device_rpc --test device_media_socket`                     | exit 0   | 1 + 11 passed                                                                                                                                          |
+| `BIBCODE_IOS_SIM_TESTS=1 cargo test -p bibcode-server --test ios_simulator -- --test-threads=1` | exit 0   | 8/8, real simulator, none left booted                                                                                                                  |
+| `vp check`                                                                                      | exit 0   | 2,904 files formatted, no lint findings                                                                                                                |
+| `vp run typecheck`                                                                              | exit 0   |                                                                                                                                                        |
+| `vp run -r --concurrency-limit 1 test`                                                          | exit 1   | Stops at `bibcode` (server lib): 3,681 passed, 4 failed (host-specific, see below). The packages after it were run one by one.                         |
+| `vp run --filter <pkg> test`                                                                    | exit 0   | web 8,685, client-runtime 1,137, contracts 797, shared 830, scripts 750, relay 241. Desktop 490 and oxlint plugin passed inside the graph run.         |
+| `cargo test -p bibcode-server --tests --no-fail-fast`                                           | exit 101 | 87 targets OK. Failures: the 4 lib host failures, `preview_gateway` (host), and 3 `production_git_manager_rpc` signal tests (environmental, see below) |
 
 **Host-specific failures on this Mac.** They fail the same way at `main`: `provider_runtime an_exited_provider_process_is_read_without_reaping_it`, three `server_terminal::input_admission_tests`, and `preview_gateway a_refused_upstream_is_retried_once_on_the_other_loopback_family`.
 
-**`production_git_manager_rpc` signal tests.** These are `signal_tracks_a_repository_whose_head_is_a_clone_placeholder`, `git_manager_signal_generation_bumps_after_an_external_commit` and `git_manager_signal_observes_a_sibling_worktree_head_switch`. All three failed in the loaded full run (load average about 10, with an emulator and a packaged app running). Run alone: 68/68 once, then 67/68 (one failure). The branch changes this area only through v0.9.5's `git/watcher/pruned.rs`.
+**`production_git_manager_rpc` signal tests.** These are `signal_tracks_a_repository_whose_head_is_a_clone_placeholder`, `git_manager_signal_generation_bumps_after_an_external_commit` and `git_manager_signal_observes_a_sibling_worktree_head_switch`. In the main checkout (`/Users/admin/projects/BibCode`, whose `target/` holds 325 GB), these tests fail with `operation event timeout` (`production_git_manager_rpc.rs:3797`, a 15 s wait for a watcher signal), even on a quiet machine: 1–4 of 68 fail per run.
+
+From fresh worktrees with a separate target directory, the same target passed 68/68 three times on both v0.9.5 (`57b6df16`) and this PR head (`31d8c3c0`), about 8 s per run against about 20 s in the main checkout.
+
+So the failure comes from this machine's main checkout, not from the code. The branch's Git code and this test file are identical to v0.9.5's.
 
 ## Device previews evidence
 
@@ -189,7 +193,7 @@ The fixture has 312 staged, 50 conflicted (`UU`, merge in progress) and about 3,
 - **#96 copy count:** it needs a heap snapshot. The footprint can't separate 0.4 from 1.0 MB per reconnect.
 - **Android long pastes:** over 100 characters is refused, not delivered. The follow-up is `setClipboard` plus a paste key, which would also carry Unicode.
 - **Duplicate simulator names:** two simulators with the same name appear as identical picker rows ("iPhone 17 · iOS 27.0").
-- **Git signal tests:** the `production_git_manager_rpc` signal tests are flaky on a loaded Mac.
+- **Git signal tests:** the `production_git_manager_rpc` signal tests time out in this machine's main checkout but pass from fresh worktrees. The environmental cause (likely file-event pressure around the large checkout) is not isolated further.
 
 ## Publication state
 
