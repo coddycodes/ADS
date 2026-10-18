@@ -317,6 +317,27 @@ pub(crate) fn form_answer(fields: &[FormField], answers: &Value) -> Value {
     Value::Object(answer)
 }
 
+/// What a permission request asks for, as shown to the user: its action and resources.
+pub(crate) fn permission_detail(request: &Value) -> String {
+    let action = non_empty(request.get("action")).unwrap_or("tool");
+    let resources = request
+        .get("resources")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    if resources.is_empty() {
+        action.to_owned()
+    } else {
+        format!("{action}: {resources}")
+    }
+}
+
 fn non_empty(value: Option<&Value>) -> Option<&str> {
     value
         .and_then(Value::as_str)
@@ -422,27 +443,10 @@ impl V2TurnTranslator {
                 if !self.tracks(session_id) {
                     return Vec::new();
                 }
-                let action = non_empty(data.get("action")).unwrap_or("tool");
-                let resources = data
-                    .get("resources")
-                    .and_then(Value::as_array)
-                    .map(|values| {
-                        values
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    })
-                    .unwrap_or_default();
-                let detail = if resources.is_empty() {
-                    action.to_owned()
-                } else {
-                    format!("{action}: {resources}")
-                };
                 vec![V2Output::PermissionAsked {
                     request_id: request_id.to_owned(),
                     session_id: session_id.to_owned(),
-                    detail,
+                    detail: permission_detail(data),
                 }]
             }
             "permission.replied" => data

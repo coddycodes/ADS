@@ -8935,6 +8935,23 @@ async fn project_provider_event(
 ) -> Result<(), ProviderRuntimeError> {
     let created_at = now();
     let command_id = format!("provider:{}", Uuid::new_v4());
+    // An ask OpenCode lists again on resume (`recovered`, with OpenCode's unique request id) is
+    // recorded once: one the thread already has, asked or resolved, is not added again. Other
+    // providers may reuse request ids across their own restarts, so only recovered asks match.
+    if event.payload.get("recovered") == Some(&Value::Bool(true))
+        && matches!(
+            event.event_type.as_str(),
+            "request.opened" | "user-input.requested"
+        )
+        && let Some(request_id) = event.request_id.as_ref()
+        && engine
+            .repositories()
+            .request_is_recorded(launch.thread_id.clone(), request_id.clone())
+            .await
+            .map_err(|error| ProviderRuntimeError::Persistence(error.to_string()))?
+    {
+        return Ok(());
+    }
     let assistant_message_id = assistant_message_id(&event);
     if event.event_type == "turn.started"
         && (provider_reports_its_turns(&launch.provider)
