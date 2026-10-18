@@ -16,7 +16,7 @@
 //!
 //! | Reason | Cause |
 //! | --- | --- |
-//! | `expired` | the ticket expired, is unknown or malformed, or did not arrive in time |
+//! | `expired` | the ticket expired, is unknown or malformed, or did not arrive in time; or the ticket's session expired while the socket streamed |
 //! | `reused` | the ticket was already used |
 //! | `wrongChannel` | the ticket was minted over the other channel |
 //! | `wrongDevice` | the ticket's device is no longer known |
@@ -24,7 +24,7 @@
 //! | `disabled` | device previews were turned off |
 //! | `stopped` | the device stopped, failed, or is not ready |
 //! | `failed` | the device's video stream failed |
-//! | `unauthorized` | the ticket's session was revoked or expired |
+//! | `unauthorized` | the ticket's session was revoked, or had ended before the socket joined |
 //! | `slow` | the client accepted no frame for 10 s |
 //!
 //! While device previews are off, both routes refuse with `503` before admission, holding
@@ -371,15 +371,23 @@ async fn serve<T: MediaTransport>(
         tracing::warn!("device media ticket's session is no longer active");
         return socket.close("unauthorized").await;
     };
+    // The expiry has a token of its own, cancelled with the session's, so the socket can
+    // tell an expiry, which the client retries with a ticket from its renewed session, from
+    // a revocation.
+    let session_expired = session_shutdown.child_token();
     let expiration_guard =
-        crate::http::spawn_session_expiration_guard(expires_at_ms, session_shutdown.clone());
+        crate::http::spawn_session_expiration_guard(expires_at_ms, session_expired.clone());
     match state.devices.attach_media(&device_id) {
         Ok(subscriber) => {
+            let session = SessionEnd {
+                revoked: &session_shutdown,
+                expired: &session_expired,
+            };
             let reason = stream(
                 &mut socket,
                 subscriber,
                 &state.devices,
-                &session_shutdown,
+                session,
                 state.send_stall,
             )
             .await;
@@ -398,13 +406,34 @@ async fn serve<T: MediaTransport>(
     connection_guard.close().await;
 }
 
+/// How the socket's session can end while it streams.
+#[derive(Clone, Copy)]
+struct SessionEnd<'a> {
+    /// Cancelled when the session is revoked (and when the socket ends).
+    revoked: &'a CancellationToken,
+    /// Cancelled when the session's expiry passes, and with `revoked`.
+    expired: &'a CancellationToken,
+}
+
+impl SessionEnd<'_> {
+    /// The close reason once either token is cancelled: a revocation wins over the expiry
+    /// it also cancels.
+    async fn ended(self) -> &'static str {
+        tokio::select! {
+            biased;
+            () = self.revoked.cancelled() => "unauthorized",
+            () = self.expired.cancelled() => "expired",
+        }
+    }
+}
+
 /// Sends frames until the stream or the session ends, or a frame waits longer than
 /// `send_stall` (`Some` close reason), or the client leaves (`None`).
 async fn stream<T: MediaTransport>(
     socket: &mut T,
     mut subscriber: super::media::MediaSubscriber,
     devices: &DeviceManager,
-    session_shutdown: &CancellationToken,
+    session: SessionEnd<'_>,
     send_stall: Duration,
 ) -> Option<&'static str> {
     let closed = subscriber.closed.clone();
@@ -414,7 +443,7 @@ async fn stream<T: MediaTransport>(
         tokio::select! {
             biased;
             () = closed.cancelled() => return Some(end_reason(&subscriber)),
-            () = session_shutdown.cancelled() => return Some("unauthorized"),
+            reason = session.ended() => return Some(reason),
             inbound = socket.recv() => match inbound {
                 Received::Message(message) => {
                     if matches!(serde_json::from_slice(&message), Ok(Inbound::Keyframe)) {
@@ -432,7 +461,7 @@ async fn stream<T: MediaTransport>(
                 // its stream or session. An E2EE frame's records are sent under one timeout.
                 tokio::select! {
                     () = closed.cancelled() => return Some(end_reason(&subscriber)),
-                    () = session_shutdown.cancelled() => return Some("unauthorized"),
+                    reason = session.ended() => return Some(reason),
                     sent = tokio::time::timeout(send_stall, socket.send(frame)) => {
                         match sent {
                             Ok(Ok(())) => {}
@@ -1116,7 +1145,10 @@ mod tests {
                 &mut PlainTransport(StalledSocket),
                 subscriber,
                 &harness.fixture.manager,
-                &CancellationToken::new(),
+                SessionEnd {
+                    revoked: &CancellationToken::new(),
+                    expired: &CancellationToken::new(),
+                },
                 Duration::from_millis(200),
             ),
         )
@@ -1145,11 +1177,15 @@ mod tests {
             .expect("attach");
         let devices = harness.fixture.manager.clone();
         let streaming = tokio::spawn(async move {
+            let expired = session_shutdown.child_token();
             stream(
                 &mut PlainTransport(StalledSocket),
                 subscriber,
                 &devices,
-                &session_shutdown,
+                SessionEnd {
+                    revoked: &session_shutdown,
+                    expired: &expired,
+                },
                 SEND_STALL_TIMEOUT,
             )
             .await
@@ -1168,6 +1204,63 @@ mod tests {
             .expect("revocation ends the stalled socket")
             .expect("stream task");
         assert_eq!(reason, Some("unauthorized"));
+        harness.fixture.manager.shutdown().await;
+    }
+
+    /// Milliseconds since the epoch, as session expiries are kept.
+    fn epoch_ms() -> i64 {
+        i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after the epoch")
+                .as_millis(),
+        )
+        .expect("epoch milliseconds")
+    }
+
+    /// Audit Important 1: a session that expires (a DPoP one does every hour) closes its
+    /// media sockets as `expired`, which the client retries with a ticket from its renewed
+    /// session, not as `unauthorized`, which it takes as final.
+    #[tokio::test]
+    async fn a_socket_closes_as_expired_when_its_session_expires() {
+        let harness = Harness::start().await;
+        harness
+            .auth
+            .set_session_expiry_for_test(&harness.session_id, epoch_ms() + 1_500)
+            .await;
+        let mut client = harness.connect(&harness.ticket(MediaChannel::Plain)).await;
+        assert_eq!(next_frame(&mut client).await[0], 0);
+        let started = std::time::Instant::now();
+        assert_eq!(
+            close_reason(&mut client).await,
+            (CLOSE_CODE, "expired".to_owned())
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
+        harness.fixture.manager.shutdown().await;
+    }
+
+    /// A revocation still closes as `unauthorized`, even on a session that would expire
+    /// soon after.
+    #[tokio::test]
+    async fn revoking_a_session_before_it_expires_closes_as_unauthorized() {
+        let harness = Harness::start().await;
+        harness
+            .auth
+            .set_session_expiry_for_test(&harness.session_id, epoch_ms() + 3_000)
+            .await;
+        let mut client = harness.connect(&harness.ticket(MediaChannel::Plain)).await;
+        assert_eq!(next_frame(&mut client).await[0], 0);
+        assert!(
+            harness
+                .auth
+                .revoke_client("administrator", &harness.session_id)
+                .await
+                .expect("revoke")
+        );
+        assert_eq!(
+            close_reason(&mut client).await,
+            (CLOSE_CODE, "unauthorized".to_owned())
+        );
         harness.fixture.manager.shutdown().await;
     }
 
