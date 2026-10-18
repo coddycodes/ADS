@@ -2086,7 +2086,11 @@ still screen even though scrcpy v4.1 asks the encoder to repeat the previous
 frame after 100 ms. It passes through
 the E2EE record layer like any frame. The client resets its stall clock on it
 and never decodes it; it does not count as a first frame. The client sends
-only `{"type":"keyframe"}` after a decoder error.
+only `{"type":"keyframe"}`, after a decoder error or when its decoder falls
+behind, and the latter at most once per second. A request that falls inside that
+second is held until it ends and sent then if no key frame has arrived, because
+a still screen produces no frame to retry on; a key frame, a reconfigure, or
+stopping drops it.
 
 Each socket has a 2 MiB, 256-frame queue. On overflow the hub drops that
 socket's queued deltas, forwards nothing until the next key unit, and sends

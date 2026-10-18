@@ -72,6 +72,39 @@ const delta = (pts: number): MediaFrame => ({
   data: new Uint8Array([0, 0, 0, 1, 0x41, pts]),
 });
 
+/**
+ * A manual clock for the pipeline's `now` and `schedule`: time and timers move only in
+ * `advance`, which runs each timer it reaches, in order.
+ */
+function fakeClock() {
+  let time = 0;
+  let nextId = 0;
+  const timers = new Map<number, { readonly at: number; readonly callback: () => void }>();
+  const now = () => time;
+  const schedule = (callback: () => void, delayMs: number) => {
+    const id = nextId++;
+    timers.set(id, { at: time + delayMs, callback });
+    return () => {
+      timers.delete(id);
+    };
+  };
+  return {
+    now,
+    options: { now, schedule } satisfies DecoderPipelineOptions,
+    /** Timers scheduled and neither run nor cancelled. */
+    get pending() {
+      return timers.size;
+    },
+    advance(ms: number) {
+      time += ms;
+      const due = [...timers].filter(([, timer]) => timer.at <= time);
+      for (const [id, timer] of due.toSorted(([, a], [, b]) => a.at - b.at)) {
+        if (timers.delete(id)) timer.callback();
+      }
+    },
+  };
+}
+
 function harness(options: DecoderPipelineOptions = {}) {
   const decoders: FakeDecoder[] = [];
   const factory: VideoDecoderFactory<FakeFrame> = (init) => {
@@ -87,8 +120,41 @@ function harness(options: DecoderPipelineOptions = {}) {
     failed: vi.fn(),
     unsupported: vi.fn(),
   };
-  const pipeline = createDecoderPipeline(factory, events, options);
+  // Timers run only for a test that passes its own clock, so a held-back request leaks none.
+  const pipeline = createDecoderPipeline(factory, events, {
+    schedule: fakeClock().options.schedule,
+    ...options,
+  });
   return { decoders, events, pipeline, current: () => decoders.at(-1)! };
+}
+
+/** The decoder falls behind for one chunk: the pipeline drops it and waits for a key frame. */
+function fallBehind(
+  decoder: FakeDecoder,
+  pipeline: { push(frame: MediaFrame): void },
+  pts: number,
+) {
+  decoder.decodeQueueSize = MAX_DECODE_QUEUE + 1;
+  pipeline.push(delta(pts));
+  decoder.decodeQueueSize = 0;
+}
+
+/**
+ * A backlog drop at 0 asks for a key frame; the recovery key frame decodes at 300; the decoder
+ * falls behind again at 500, inside the rate-limit window, so that request is held back until 1000.
+ */
+function heldBackRequest() {
+  const clock = fakeClock();
+  const run = harness(clock.options);
+  run.pipeline.push(config(SPS_PORTRAIT));
+  run.pipeline.push(key(1));
+  fallBehind(run.current(), run.pipeline, 2);
+  clock.advance(300);
+  run.pipeline.push(key(3));
+  run.current().output(new FakeFrame(576, 1280));
+  clock.advance(200);
+  fallBehind(run.current(), run.pipeline, 4);
+  return { clock, ...run };
 }
 
 describe("createDecoderPipeline", () => {
@@ -274,6 +340,133 @@ describe("createDecoderPipeline", () => {
     expect(events.requestKeyframe).not.toHaveBeenCalled();
   });
 
+  it("sends a held-back key frame request when its window ends, though no frame follows", () => {
+    const { clock, events } = heldBackRequest();
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(1);
+
+    // The screen is still, so the encoder sends nothing until it is asked.
+    clock.advance(KEYFRAME_REQUEST_INTERVAL_MS - 500 - 1);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(1);
+    clock.advance(1);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(2);
+    clock.advance(10 * KEYFRAME_REQUEST_INTERVAL_MS);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(2);
+    expect(clock.pending).toBe(0);
+  });
+
+  it("starts a new window when the held-back request is sent", () => {
+    const { clock, current, events, pipeline } = heldBackRequest();
+    clock.advance(500);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(2);
+    // A delta still dropped for the wait is held back until the second after that request.
+    clock.advance(100);
+    pipeline.push(delta(5));
+    expect(current().decoded.map((chunk) => chunk.timestamp)).toEqual([1, 3]);
+    expect(clock.pending).toBe(1);
+    clock.advance(KEYFRAME_REQUEST_INTERVAL_MS - 100 - 1);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(2);
+    clock.advance(1);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps one held-back request pending however many are held back", () => {
+    const { clock, current, events, pipeline } = heldBackRequest();
+    clock.advance(100);
+    fallBehind(current(), pipeline, 5);
+    clock.advance(100);
+    pipeline.push(delta(6));
+    expect(clock.pending).toBe(1);
+    clock.advance(KEYFRAME_REQUEST_INTERVAL_MS);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops a held-back request when the key frame arrives before its window ends", () => {
+    const { clock, current, events, pipeline } = heldBackRequest();
+    expect(clock.pending).toBe(1);
+    clock.advance(200);
+    pipeline.push(key(7));
+    expect(clock.pending).toBe(0);
+    clock.advance(10 * KEYFRAME_REQUEST_INTERVAL_MS);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(1);
+    expect(current().decoded.map((chunk) => chunk.timestamp)).toEqual([1, 3, 7]);
+  });
+
+  it("drops a held-back request when the decoder is reconfigured", () => {
+    const { clock, events, pipeline } = heldBackRequest();
+    expect(clock.pending).toBe(1);
+    // The reconfigure has its own key frame coming, so nothing more is asked for.
+    pipeline.push(config(SPS_LANDSCAPE));
+    expect(clock.pending).toBe(0);
+    clock.advance(10 * KEYFRAME_REQUEST_INTERVAL_MS);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops a held-back request when the pipeline stops", () => {
+    const { clock, events, pipeline } = heldBackRequest();
+    expect(clock.pending).toBe(1);
+    pipeline.push({ kind: "config", ptsUs: 0n, data: new Uint8Array([0, 0, 0, 1, ...PPS]) });
+    expect(events.failed).toHaveBeenCalledTimes(1);
+    expect(clock.pending).toBe(0);
+    clock.advance(10 * KEYFRAME_REQUEST_INTERVAL_MS);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops a held-back request when it is disposed, leaving no timer", () => {
+    const { clock, events, pipeline } = heldBackRequest();
+    expect(clock.pending).toBe(1);
+    pipeline.dispose();
+    expect(clock.pending).toBe(0);
+    clock.advance(10 * KEYFRAME_REQUEST_INTERVAL_MS);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the held-back request when a request goes out directly after the window", () => {
+    // A clock that passes the window without running the timer: the request is sent directly.
+    let now = 0;
+    const clock = fakeClock();
+    const { current, events, pipeline } = harness({
+      now: () => now,
+      schedule: clock.options.schedule,
+    });
+    pipeline.push(config(SPS_PORTRAIT));
+    pipeline.push(key(1));
+    fallBehind(current(), pipeline, 2);
+    pipeline.push(key(3));
+    now = 500;
+    fallBehind(current(), pipeline, 4);
+    expect(clock.pending).toBe(1);
+    now = KEYFRAME_REQUEST_INTERVAL_MS;
+    pipeline.push(delta(5));
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(2);
+    expect(clock.pending).toBe(0);
+  });
+
+  it("holds back a request made when a codec check ends, until its window ends", async () => {
+    const clock = fakeClock();
+    const isCodecSupported = vi.fn(async () => true);
+    const { events, pipeline } = harness({ ...clock.options, isCodecSupported });
+    const settle = async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    };
+    // Frames beyond the hold limit are dropped, so the check ends with a key frame to ask for.
+    const checkedStream = async (sps: ReadonlyArray<number>) => {
+      pipeline.push(config(sps));
+      for (let pts = 1; pts <= 31; pts++) pipeline.push(delta(pts));
+      await settle();
+    };
+    await checkedStream(SPS_PORTRAIT);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(1);
+
+    clock.advance(200);
+    await checkedStream([0x67, 0x4d, 0x40, 0x28, 0x01]);
+    expect(isCodecSupported).toHaveBeenCalledTimes(2);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(1);
+    expect(clock.pending).toBe(1);
+    clock.advance(KEYFRAME_REQUEST_INTERVAL_MS - 200);
+    expect(events.requestKeyframe).toHaveBeenCalledTimes(2);
+  });
+
   it("runs one codec check at a time and configures once", async () => {
     let answer: (supported: boolean) => void = () => undefined;
     const isCodecSupported = vi.fn(() => new Promise<boolean>((resolve) => (answer = resolve)));
@@ -402,6 +595,55 @@ describe("createDeviceVideoWorkerRuntime", () => {
     sockets[0]!.handlers.onFrame(config(SPS_PORTRAIT));
     decoders[0]!.fail();
     expect(sockets[0]!.requestKeyframe).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a held-back key frame request through the socket when its window ends", () => {
+    vi.useFakeTimers();
+    try {
+      const { decoders, handle, sockets } = runtime();
+      handle({ type: "start", target, ticket: "T1" });
+      const { onFrame } = sockets[0]!.handlers;
+      onFrame(config(SPS_PORTRAIT));
+      onFrame(key(1));
+      fallBehind(decoders[0]!, { push: onFrame }, 2);
+      expect(sockets[0]!.requestKeyframe).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(300);
+      onFrame(key(3));
+      vi.advanceTimersByTime(200);
+      fallBehind(decoders[0]!, { push: onFrame }, 4);
+      expect(sockets[0]!.requestKeyframe).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(1);
+
+      vi.advanceTimersByTime(KEYFRAME_REQUEST_INTERVAL_MS);
+      expect(sockets[0]!.requestKeyframe).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves no timer running, or request to send, once stopped", () => {
+    vi.useFakeTimers();
+    try {
+      const { decoders, handle, sockets } = runtime();
+      handle({ type: "start", target, ticket: "T1" });
+      const { onFrame } = sockets[0]!.handlers;
+      onFrame(config(SPS_PORTRAIT));
+      onFrame(key(1));
+      fallBehind(decoders[0]!, { push: onFrame }, 2);
+      onFrame(key(3));
+      vi.advanceTimersByTime(200);
+      fallBehind(decoders[0]!, { push: onFrame }, 4);
+      expect(vi.getTimerCount()).toBe(1);
+
+      handle({ type: "stop" });
+      expect(vi.getTimerCount()).toBe(0);
+      vi.advanceTimersByTime(10 * KEYFRAME_REQUEST_INTERVAL_MS);
+      expect(sockets[0]!.requestKeyframe).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("posts unsupported when the stream's codec cannot be decoded", async () => {

@@ -72,6 +72,8 @@ export interface DecoderPipelineOptions {
   /** Whether the decoder accepts `codec`, asked once per codec the stream announces. */
   readonly isCodecSupported?: (codec: string) => Promise<boolean>;
   readonly now?: () => number;
+  /** Runs `callback` after `delayMs`; the returned function cancels it. Defaults to `setTimeout`. */
+  readonly schedule?: (callback: () => void, delayMs: number) => () => void;
 }
 
 export interface DecoderPipeline {
@@ -99,9 +101,12 @@ const concat = (head: Uint8Array, tail: Uint8Array): Uint8Array => {
  * Annex-B with no `description`, so the config's SPS and PPS are prepended to every key frame.
  *
  * A decoder more than `MAX_DECODE_QUEUE` chunks behind drops deltas until the next key frame,
- * which it asks for at most once per `KEYFRAME_REQUEST_INTERVAL_MS`. A decoder error gets one
- * recovery (a new decoder, the cached config, and a key frame request); a second error before a
- * decoded frame gives up.
+ * which it asks for at most once per `KEYFRAME_REQUEST_INTERVAL_MS`. A request that falls inside
+ * that window is not lost: one is held until the window ends and sent then if a key frame is still
+ * awaited, because an encoder with a still screen sends nothing more until it is asked. It is
+ * dropped when a key frame arrives, the decoder is reconfigured, or the pipeline stops. A decoder
+ * error gets one recovery (a new decoder, the cached config, and a key frame request); a second
+ * error before a decoded frame gives up.
  */
 export function createDecoderPipeline<F extends DecodedVideoFrame>(
   createDecoder: VideoDecoderFactory<F>,
@@ -109,6 +114,12 @@ export function createDecoderPipeline<F extends DecodedVideoFrame>(
   options: DecoderPipelineOptions = {},
 ): DecoderPipeline {
   const now = options.now ?? (() => performance.now());
+  const schedule =
+    options.schedule ??
+    ((callback, delayMs) => {
+      const timer = setTimeout(callback, delayMs);
+      return () => clearTimeout(timer);
+    });
   const supportedCodecs = new Map<string, boolean>();
   /** Codecs whose support check has not answered yet; one check per codec at a time. */
   const checking = new Set<string>();
@@ -123,6 +134,8 @@ export function createDecoderPipeline<F extends DecodedVideoFrame>(
   let width = 0;
   let height = 0;
   let lastKeyframeRequest = Number.NEGATIVE_INFINITY;
+  /** Cancels the one request held back until its rate-limit window ends; `null` if none is. */
+  let cancelHeldRequest: (() => void) | null = null;
   /** Frames that arrived while the codec check for the current config runs. */
   let held: MediaFrame[] | null = null;
 
@@ -132,18 +145,41 @@ export function createDecoderPipeline<F extends DecodedVideoFrame>(
     if (current !== null && current.state !== "closed") current.close();
   };
 
+  const dropHeldRequest = () => {
+    const cancel = cancelHeldRequest;
+    cancelHeldRequest = null;
+    cancel?.();
+  };
+
   const stop = (event: () => void) => {
     stopped = true;
     held = null;
+    dropHeldRequest();
     closeDecoder();
     event();
   };
 
-  const requestKeyframeThrottled = () => {
-    const at = now();
-    if (at - lastKeyframeRequest < KEYFRAME_REQUEST_INTERVAL_MS) return;
+  const requestKeyframe = (at: number) => {
+    dropHeldRequest();
     lastKeyframeRequest = at;
     events.requestKeyframe();
+  };
+
+  /**
+   * Asks for a key frame unless one was asked for less than `KEYFRAME_REQUEST_INTERVAL_MS` ago, in
+   * which case the request is held until that window ends (one at most) and sent then, if the
+   * pipeline still waits for a key frame. A frame arriving later would otherwise be the only
+   * retry, and a still screen produces none.
+   */
+  const requestKeyframeThrottled = () => {
+    const at = now();
+    const wait = lastKeyframeRequest + KEYFRAME_REQUEST_INTERVAL_MS - at;
+    if (wait <= 0) return requestKeyframe(at);
+    if (cancelHeldRequest !== null) return;
+    cancelHeldRequest = schedule(() => {
+      cancelHeldRequest = null;
+      if (!stopped && waitingForKey) requestKeyframe(now());
+    }, wait);
   };
 
   const onError = (source: VideoDecoderHandle) => {
@@ -152,8 +188,7 @@ export function createDecoderPipeline<F extends DecodedVideoFrame>(
     if (recovering) return stop(events.failed);
     recovering = true;
     configure();
-    lastKeyframeRequest = now();
-    events.requestKeyframe();
+    requestKeyframe(now());
   };
 
   const open = (): VideoDecoderHandle => {
@@ -181,6 +216,8 @@ export function createDecoderPipeline<F extends DecodedVideoFrame>(
     if (config === null) return;
     decoder ??= open();
     const current = decoder;
+    // The new stream starts with its own key frame; nothing held back is still wanted.
+    dropHeldRequest();
     waitingForKey = true;
     skippingBacklog = false;
     try {
@@ -212,6 +249,7 @@ export function createDecoderPipeline<F extends DecodedVideoFrame>(
     if (frame.kind === "key") {
       waitingForKey = false;
       skippingBacklog = false;
+      dropHeldRequest();
       decode({
         type: "key",
         timestamp: Number(frame.ptsUs),
@@ -284,6 +322,7 @@ export function createDecoderPipeline<F extends DecodedVideoFrame>(
     dispose() {
       stopped = true;
       held = null;
+      dropHeldRequest();
       closeDecoder();
     },
   };
