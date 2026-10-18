@@ -22,7 +22,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// Whether `orientation` is turned a quarter from the device's natural orientation.
-fn is_landscape(orientation: Orientation) -> bool {
+pub(crate) fn is_landscape(orientation: Orientation) -> bool {
     matches!(
         orientation,
         Orientation::Landscape | Orientation::ReverseLandscape
@@ -113,6 +113,15 @@ impl OrientationTracker {
     /// Each derived orientation, as it changes.
     pub(crate) fn subscribe(&self) -> watch::Receiver<Orientation> {
         self.derived.subscribe()
+    }
+
+    /// Whether the running scrcpy session's display is turned from the native panel;
+    /// `None` without a session.
+    pub(crate) fn display_turned(&self) -> Option<bool> {
+        let state = lock(&self.state);
+        state
+            .display
+            .map(|(_, display)| is_turned(display, self.native))
     }
 
     /// A skin rotation the emulator reported; returns the orientation it leads to.
@@ -262,10 +271,15 @@ mod tests {
         assert_eq!(tablet(Landscape, TABLET_AT_REST, Portrait), Portrait);
         let tracker = OrientationTracker::new(TABLET);
         let display = tracker.start_display();
+        assert_eq!(tracker.display_turned(), None);
         display.set(1280, 800);
         assert_eq!(tracker.current(), Portrait);
+        assert_eq!(tracker.display_turned(), Some(false));
         display.set(800, 1280);
         assert_eq!(tracker.current(), Landscape);
+        assert_eq!(tracker.display_turned(), Some(true));
+        drop(display);
+        assert_eq!(tracker.display_turned(), None);
     }
 
     #[test]

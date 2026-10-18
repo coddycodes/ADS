@@ -26,6 +26,12 @@ use super::grpc::proto::{
 
 /// Token the fake requires as `authorization: Bearer test-token`.
 const TOKEN: &str = "test-token";
+/// A rotation window short enough that a refusal costs a test little, with room for a few
+/// reads from the fake.
+pub(crate) const FAST_ROTATION: super::input::RotationTiming = super::input::RotationTiming {
+    window: std::time::Duration::from_millis(300),
+    poll: std::time::Duration::from_millis(25),
+};
 const INITIAL_FRAME: (u32, u32, u8) = (1080, 2400, 0x80);
 
 /// A 1x1 PNG served for PNG screenshot requests (the requested size is only reported
@@ -52,12 +58,26 @@ pub(crate) struct FakeHandle {
     input_streams: Arc<AtomicUsize>,
     input_resets: watch::Sender<u64>,
     fail_rotation: Arc<AtomicBool>,
+    fail_screenshots: Arc<AtomicBool>,
+    skin_follows_sensor: Arc<AtomicBool>,
 }
 
 impl FakeHandle {
     /// Makes every `setPhysicalModel` call fail from now on.
     pub(crate) fn fail_rotation(&self) {
         self.fail_rotation.store(true, Ordering::SeqCst);
+    }
+
+    /// Makes every `getScreenshot` call fail from now on, as a degraded emulator's do.
+    /// `streamScreenshot` keeps working.
+    pub(crate) fn fail_screenshots(&self) {
+        self.fail_screenshots.store(true, Ordering::SeqCst);
+    }
+
+    /// Makes each `setPhysicalModel` rotation set the reported rotation, as a real
+    /// emulator's skin follows its sensor whether or not the guest turns.
+    pub(crate) fn skin_follows_sensor(&self) {
+        self.skin_follows_sensor.store(true, Ordering::SeqCst);
     }
 
     /// Reports `rotation` on every served image from now on, with the display's width and
@@ -114,10 +134,14 @@ pub(crate) struct FakeController {
     frames: watch::Receiver<(u32, u32, u8)>,
     vm_state: Arc<Mutex<Option<i32>>>,
     rotation: watch::Receiver<Option<SkinRotation>>,
+    /// Sets `rotation` when the skin follows the sensor.
+    skin: watch::Sender<Option<SkinRotation>>,
     screenshot_streams: Arc<AtomicUsize>,
     input_streams: Arc<AtomicUsize>,
     input_resets: watch::Receiver<u64>,
     fail_rotation: Arc<AtomicBool>,
+    fail_screenshots: Arc<AtomicBool>,
+    skin_follows_sensor: Arc<AtomicBool>,
 }
 
 /// Counts one open stream until dropped.
@@ -156,6 +180,8 @@ impl FakeController {
             input_streams: Arc::default(),
             input_resets: input_resets_tx,
             fail_rotation: Arc::default(),
+            fail_screenshots: Arc::default(),
+            skin_follows_sensor: Arc::default(),
         };
         let service = EmulatorControllerServer::with_interceptor(
             Self {
@@ -164,10 +190,13 @@ impl FakeController {
                 frames,
                 vm_state: handle.vm_state.clone(),
                 rotation,
+                skin: handle.rotation.clone(),
                 screenshot_streams: handle.screenshot_streams.clone(),
                 input_streams: handle.input_streams.clone(),
                 input_resets,
                 fail_rotation: handle.fail_rotation.clone(),
+                fail_screenshots: handle.fail_screenshots.clone(),
+                skin_follows_sensor: handle.skin_follows_sensor.clone(),
             },
             require_token,
         );
@@ -281,6 +310,9 @@ impl EmulatorController for FakeController {
         &self,
         request: Request<proto::ImageFormat>,
     ) -> Result<Response<proto::Image>, Status> {
+        if self.fail_screenshots.load(Ordering::SeqCst) {
+            return Err(Status::unavailable("fake screenshot failure"));
+        }
         let frame = *self.frames.borrow();
         let rotation = *self.rotation.borrow();
         Ok(Response::new(frame_image(
@@ -350,6 +382,15 @@ impl EmulatorController for FakeController {
             .lock()
             .expect("fake rotations lock")
             .push(rotation);
+        if self.skin_follows_sensor.load(Ordering::SeqCst) {
+            let skin = match rotation[2].rem_euclid(360.0).round() as u32 {
+                90 => SkinRotation::Landscape,
+                180 => SkinRotation::ReversePortrait,
+                270 => SkinRotation::ReverseLandscape,
+                _ => SkinRotation::Portrait,
+            };
+            self.skin.send_replace(Some(skin));
+        }
         Ok(Response::new(()))
     }
 
@@ -985,7 +1026,8 @@ impl ManagerFixture {
             discovery_dirs: sdk.discovery_dirs(),
             registry: crate::diagnostics::ProcessAttributionRegistry::new(),
             grpc_port: Some(controller.port),
-        });
+        })
+        .with_rotation_timing(FAST_ROTATION);
         let manager = crate::device::DeviceManager::start(crate::device::DeviceManagerConfig {
             backends: vec![std::sync::Arc::new(backend)],
             enabled: signal,

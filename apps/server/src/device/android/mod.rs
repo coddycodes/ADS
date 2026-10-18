@@ -24,7 +24,7 @@ use self::{
         EmulatorClient,
         proto::{self, image_format::ImgFormat},
     },
-    input::{InputState, reported_orientation},
+    input::{InputState, RotationTiming, reported_orientation},
     orientation::OrientationTracker,
     sdk::{AndroidSdk, SdkEnv},
 };
@@ -63,6 +63,7 @@ pub(crate) struct AndroidBackend {
     registry: ProcessAttributionRegistry,
     software_gpu: bool,
     grpc_port: Option<u16>,
+    rotation: RotationTiming,
     /// The SDK the last discovery found; launches use it.
     sdk: Mutex<Option<AndroidSdk>>,
 }
@@ -77,8 +78,17 @@ impl AndroidBackend {
             registry: config.registry,
             software_gpu,
             grpc_port: config.grpc_port,
+            rotation: RotationTiming::default(),
             sdk: Mutex::new(None),
         }
+    }
+
+    /// Rotates with `timing` instead of the real device's, so a refusal is quick. Only the
+    /// unix `ManagerFixture` builds a backend.
+    #[cfg(all(test, unix))]
+    pub(crate) fn with_rotation_timing(mut self, timing: RotationTiming) -> Self {
+        self.rotation = timing;
+        self
     }
 }
 
@@ -129,10 +139,12 @@ impl DeviceBackend for AndroidBackend {
             );
             launcher.grpc_port = self.grpc_port;
             match launcher.launch(image_id, on_phase, cancel).await {
-                Ok(running) => Ok(
-                    Box::new(RunningAndroid::new(running, adb, self.registry.clone()))
-                        as Box<dyn RunningDevice>,
-                ),
+                Ok(running) => Ok(Box::new(RunningAndroid::new(
+                    running,
+                    adb,
+                    self.registry.clone(),
+                    self.rotation,
+                )) as Box<dyn RunningDevice>),
                 Err(error) => Err(match error {
                     LaunchError::Exited(message) => LaunchFailure::Exited(message),
                     LaunchError::BootTimeout => LaunchFailure::BootTimeout,
@@ -164,10 +176,19 @@ struct RunningAndroid {
     /// The orientation the guest really shows, derived from the emulator's skin rotation
     /// and the running scrcpy session's display size.
     orientation: Arc<OrientationTracker>,
+    /// The orientation whose vector the sensor was last sent (at rest after boot), locked
+    /// for a whole rotate so the device's rotates run one at a time.
+    sensor: tokio::sync::Mutex<Orientation>,
+    rotation: RotationTiming,
 }
 
 impl RunningAndroid {
-    fn new(running: RunningEmulator, adb: PathBuf, registry: ProcessAttributionRegistry) -> Self {
+    fn new(
+        running: RunningEmulator,
+        adb: PathBuf,
+        registry: ProcessAttributionRegistry,
+        rotation: RotationTiming,
+    ) -> Self {
         let native = (running.width, running.height);
         Self {
             client: running.client.clone(),
@@ -181,6 +202,8 @@ impl RunningAndroid {
             input: tokio::sync::Mutex::new(None),
             input_tasks: TaskTracker::new(),
             orientation: OrientationTracker::new(native),
+            sensor: tokio::sync::Mutex::new(Orientation::Portrait),
+            rotation,
         }
     }
 
@@ -256,8 +279,9 @@ impl RunningDevice for RunningAndroid {
     }
 
     /// The derived orientation as it changes, so a turn the guest makes on its own (an app
-    /// that forces landscape, seen as a new scrcpy display size) reaches the catalog. `rotate`
-    /// reports the same derived values, so the two settle on one orientation.
+    /// that forces landscape, seen as a new scrcpy display size) reaches the catalog. It is
+    /// the catalog's only writer for this device: `rotate` reports nothing itself, so a
+    /// stale report can never land after a newer one.
     fn orientation_changes(&self) -> Option<BoxStream<'static, Orientation>> {
         let mut changes = self.orientation.subscribe();
         changes.mark_changed();
@@ -286,18 +310,24 @@ impl RunningDevice for RunningAndroid {
         ))
     }
 
+    /// Reports through [`orientation_changes`](Self::orientation_changes) only, never
+    /// through `report`.
     fn rotate<'a>(
         &'a self,
         to: Orientation,
-        report: &'a (dyn Fn(Orientation, u32, u32) + Send + Sync),
+        _report: &'a (dyn Fn(Orientation, u32, u32) + Send + Sync),
     ) -> BoxFuture<'a, Result<(), DeviceOpError>> {
-        Box::pin(input::rotate(
-            &self.client,
-            self.native,
-            &self.orientation,
-            to,
-            report,
-        ))
+        Box::pin(async move {
+            input::rotate(
+                &self.client,
+                &self.orientation,
+                &self.sensor,
+                self.rotation,
+                to,
+            )
+            .await
+            .map(|_| ())
+        })
     }
 
     fn exited(&self) -> Option<String> {
@@ -465,9 +495,67 @@ pub(crate) fn emulator_failure(operation: &'static str, error: &DeviceError) -> 
     tracing::warn!(operation, %error, "device emulator call failed");
     let what = match operation {
         "rotate" => "did not rotate",
+        // The screen kept its orientation, and the sensor could not follow it back.
+        "rotate back" => "did not turn back after the screen kept its orientation",
         _ => "did not accept the input",
     };
     DeviceOpError::Emulator(format!(
         "The emulator {what}. Try again; if it keeps failing, stop the device and start it again."
     ))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::time::Duration;
+
+    use crate::device::{
+        android::testing::{
+            FakeScrcpySource, ManagerFixture, config_unit, key_unit, session_packet,
+        },
+        catalog::{DeviceState, Orientation, Platform},
+    };
+
+    /// An app turns the screen on its own: only the scrcpy display says so (the skin stays
+    /// portrait), and `orientation_changes` carries the turn through the manager's follow
+    /// task to the catalog.
+    #[tokio::test]
+    async fn a_turn_the_guest_makes_alone_reaches_the_catalog() {
+        let source =
+            FakeScrcpySource::spawn(vec![config_unit(), key_unit(1), session_packet(1280, 720)])
+                .await;
+        let fixture =
+            ManagerFixture::with_sdk(|sdk| sdk.avds(&["Pixel"]).adb_forwards_to(source.port)).await;
+        let id = fixture
+            .manager
+            .open(Platform::Android, "Pixel")
+            .await
+            .expect("open Pixel");
+        let ready = fixture.wait_state(&id, DeviceState::Ready).await;
+        assert_eq!(ready.orientation, Orientation::Portrait);
+        let _video = fixture
+            .manager
+            .media_frames_for_tests(&id)
+            .expect("video starts");
+        let mut catalog = fixture.manager.catalog();
+        let turned = tokio::time::timeout(
+            Duration::from_secs(10),
+            catalog.wait_for(|catalog| {
+                catalog.devices.iter().any(|device| {
+                    device.device_id == id && device.orientation == Orientation::Landscape
+                })
+            }),
+        )
+        .await
+        .expect("the catalog follows the display")
+        .expect("catalog open")
+        .devices
+        .iter()
+        .find(|device| device.device_id == id)
+        .cloned()
+        .expect("device in catalog");
+        // The phone's native 1080x2400 panel, turned.
+        assert_eq!((turned.width, turned.height), (Some(2400), Some(1080)));
+        assert!(fixture.controller.rotations.lock().unwrap().is_empty());
+        fixture.manager.shutdown().await;
+    }
 }

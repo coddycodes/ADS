@@ -2025,12 +2025,20 @@ other shape is turned. The skin picks the exact orientation only when its
 class agrees; otherwise the previous orientation stays, or, when that disagrees
 too, `portrait` for the native shape and `landscape` for the other. With no
 scrcpy session (still images) the skin decides, because the gRPC screenshots
-are rotated by it. A turn the derived orientation
-has not taken within 2.5 s (measured: the display changed 0.67–0.90 s after
-`setPhysicalModel`) counts as refused, and the sensor is put back to the
-previous orientation so it matches the screen. The catalog, touch mapping,
-JPEG frames, PNG screenshots, and `orientation_changes` (which follows turns
-the guest makes on its own) all read that derived orientation.
+are rotated by it. `rotate` reads the orientation back
+every 250 ms in a 2.5 s window (measured: the display changed 0.67–0.90 s
+after `setPhysicalModel`); the last read starts by about 2.25 s, and one slow
+read can push the decision later. A turn no read has shown by then counts as
+refused only on positive evidence, a read that succeeded or a scrcpy display
+still in the other class, and the sensor is put back to the vector it held
+before the press, so it matches the screen. A failed read is no such evidence:
+it falls back to the derived orientation (which follows the scrcpy display),
+and with no evidence at all the sensor stays where it was sent. One device's
+rotates run one at a time, so an older one never undoes a newer one. The
+catalog, touch mapping, JPEG frames, PNG screenshots, and
+`orientation_changes` (which follows turns the guest makes on its own) all
+read that derived orientation; `orientation_changes` is the catalog's only
+writer for an Android device.
 
 **H.264 video.** Device video is the only application traffic outside typed
 RPC. On the first media subscriber, `device/android/scrcpy.rs` pushes the embedded
@@ -2258,7 +2266,9 @@ and `-grpc-use-token` (`emulator::default_discovery_dirs`,
 frame sizes arrive oriented while touches use unrotated panel pixels
 (`input::oriented_size`, `android::input::to_panel_pixels`, and the client's
 `displaySize`), and the scrcpy v4.1 stream after a rotation
-(`device::scrcpy`). The
+(`device::scrcpy`). One row was not seen live: the phone image refuses 180°,
+so `reversePortrait`'s vector `[0, 0, 180]` was never seen to give
+`ROTATION_180`, and that vector and its touch mapping rest on unit tests. The
 [device preview runbook](../testing/cross-platform-validation.md#android-device-previews)
 checks each one. The iOS live path was checked on Xcode 27 with the iOS 26.5
 runtime only; the
