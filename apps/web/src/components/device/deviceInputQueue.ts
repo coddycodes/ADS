@@ -19,7 +19,8 @@ const nextAnimationFrame = (flush: () => void) => {
  *
  * A batch that `send` rejects may have left a key or a touch down on the device. Its releases
  * go out once more, at once and ahead of later input, a touch's as a cancel where it was
- * lifted; one that fails again is held, so the next blur, hide, or unmount lifts it.
+ * lifted; one that fails again is held, so the next blur, hide, or unmount lifts it. After
+ * `dispose` there is no next one (see there).
  */
 export class DeviceInputQueue {
   private pending: DeviceInputEvent[] = [];
@@ -76,6 +77,11 @@ export class DeviceInputQueue {
   /**
    * Releases what is held, sends what is queued without waiting for a frame, and then accepts
    * nothing more.
+   *
+   * A release that fails twice after this is held again in a queue that nothing flushes any
+   * more, so it is dropped with the queue: no later blur, hide, or unmount reaches it. On iOS
+   * the server also releases the keys a failed send may have left down, but a release that
+   * fails there waits for the device's next input.
    */
   dispose(): void {
     if (this.closed) return;

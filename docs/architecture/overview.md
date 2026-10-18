@@ -2006,10 +2006,10 @@ from what the emulator reports, never from a rotate command.
 events (text at most 1,000 characters) and the client keeps one batch in
 flight. The client tracks the keys and touches it holds down: it lifts the
 keys when the screen or the window loses focus, and everything when the page
-is hidden or the screen closes. When a
-batch is refused, its key releases and its touch releases (as cancels where the
-touch was lifted) go out once more at once, ahead of later input; one refused
-again stays held for the next of those. Touch points are normalized `0..1` of the upright picture. The
+is hidden or the screen closes. When a batch is refused, its key releases and
+its touch releases (as cancels where the touch was lifted) go out once more at
+once, ahead of later input; one refused again stays held for the next of
+those. Touch points are normalized `0..1` of the upright picture. The
 emulator's `Touch.x`/`y` is the physical location on the unrotated panel, so
 `android::input::to_panel_pixels` turns each point into panel pixels in the
 natural orientation, for the orientation the guest reported (measured on a real
