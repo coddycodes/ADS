@@ -4,6 +4,15 @@ Use the shared [failure classification and repair procedure](./cross-platform-va
 first. Keep the initial failure and its exact command. A passing retry alone
 does not distinguish a regression, a fixture race, and a host resource limit.
 
+A step deadline must not contain a shorter per-frame deadline. In the external
+worktree lifecycle test, a real shell prints the adopted cwd within the step's
+15 s bound. A starved shell can go quiet for longer than the 10 s each RPC
+frame gets, so that loop reads frames with no deadline of their own. A shell
+stalled for 13 s on purpose shows the difference. The same test's provider
+fixture must record `shutdown` within the server's one-second graceful Codex
+shutdown before it is killed. A fixture with no CPU for that second is a host
+resource limit, not a fixture race.
+
 For an in-flight HTTP body, a client-side stream poll proves only that the
 client produced bytes, not that the server admitted the request. The Claude
 terminal dormant-hook test uses `Expect: 100-continue` and waits for the
