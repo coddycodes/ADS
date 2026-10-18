@@ -249,6 +249,10 @@ struct SubscriberSlot {
     /// Bumped when a unit is dropped: deltas queued before it are discarded unsent.
     generation: Arc<AtomicU64>,
     waiting_for_key: bool,
+    /// Set when the socket, already waiting for a key unit, overflows on that key unit or the
+    /// config before it, and cleared when a key unit reaches it. Its reader asks for a key
+    /// unit once when it drains the queue, since a still screen sends no other.
+    missed_key: Arc<AtomicBool>,
     closed: CancellationToken,
 }
 
@@ -269,6 +273,8 @@ enum ResetStep {
 }
 
 impl SubscriberSlot {
+    /// Queues `frame`, or reports `Overflow` when the queue is full in frames or bytes. The
+    /// caller decides what an overflow costs the socket (see [`MediaHub::dispatch`]).
     fn offer(&self, frame: &Bytes, delta: bool) -> Offer {
         let queued = self.queued_bytes.load(Ordering::Acquire);
         // An empty queue always takes the frame, so a unit larger than the budget still
@@ -394,6 +400,7 @@ impl MediaHub {
         let closed = CancellationToken::new();
         let queued_bytes = Arc::new(AtomicUsize::new(0));
         let generation = Arc::new(AtomicU64::new(0));
+        let missed_key = Arc::new(AtomicBool::new(false));
         let id = {
             let mut state = self.lock();
             if state.closed {
@@ -410,6 +417,7 @@ impl MediaHub {
                 queued_bytes: queued_bytes.clone(),
                 generation: generation.clone(),
                 waiting_for_key: true,
+                missed_key: missed_key.clone(),
                 closed: closed.clone(),
             };
             if let Some(config) = &state.cached_config {
@@ -425,6 +433,7 @@ impl MediaHub {
             closed,
             queued_bytes,
             generation,
+            missed_key,
             guard: MediaGuard {
                 hub: Some(self.clone()),
                 id,
@@ -528,6 +537,10 @@ impl MediaHub {
 
     /// Sends one unit to every socket: deltas skip sockets waiting for a key unit, and a
     /// socket whose queue is full drops what it has queued and waits for the next key.
+    /// A socket that newly falls behind asks for a key unit at once; one already waiting
+    /// never asks here. When that one drops a key unit or the config before it, its reader
+    /// asks once on draining the queue (see [`MediaSubscriber::next_frame`]), so a socket
+    /// that stays blocked never asks again.
     fn dispatch(&self, unit: &VideoUnit) {
         let frame = Bytes::from(encode_frame(unit));
         let delta = unit.kind == UnitKind::Delta;
@@ -545,14 +558,22 @@ impl MediaHub {
                 Offer::Sent => {
                     if unit.kind == UnitKind::Key {
                         slot.waiting_for_key = false;
+                        // A key unit makes good any it missed, so a drain asks for none.
+                        slot.missed_key.store(false, Ordering::Release);
                     }
                     true
                 }
                 Offer::Overflow => {
                     // Only a socket that newly falls behind asks for a key unit: one that
                     // stays stalled must not make the encoder restart every second for
-                    // everyone else.
-                    overflowed |= !slot.waiting_for_key;
+                    // everyone else. One already waiting drops only a config or a key unit
+                    // here (deltas skip it), and may have dropped the answer to its own
+                    // reset, so its reader asks again once it drains.
+                    if slot.waiting_for_key {
+                        slot.missed_key.store(true, Ordering::Release);
+                    } else {
+                        overflowed = true;
+                    }
                     slot.skip_to_key();
                     true
                 }
@@ -693,17 +714,27 @@ pub(crate) struct MediaSubscriber {
     pub closed: CancellationToken,
     queued_bytes: Arc<AtomicUsize>,
     generation: Arc<AtomicU64>,
+    /// The slot's [`SubscriberSlot::missed_key`].
+    missed_key: Arc<AtomicBool>,
     guard: MediaGuard,
 }
 
 impl MediaSubscriber {
     /// The next encoded frame; deltas queued before a drop are skipped. `None` once the hub
     /// closed this socket and its queue is empty.
+    ///
+    /// Taking the last queued frame of a socket that missed its key unit while its queue was
+    /// full asks for a key unit once, under the hub's reset rate limit: the queue has room
+    /// for the answer now, and a still screen would send no other.
     pub(crate) async fn next_frame(&mut self) -> Option<Bytes> {
         loop {
             let frame = self.frames.recv().await?;
-            self.queued_bytes
+            let queued = self
+                .queued_bytes
                 .fetch_sub(frame.bytes.len(), Ordering::AcqRel);
+            if queued == frame.bytes.len() && self.missed_key.swap(false, Ordering::AcqRel) {
+                self.request_keyframe();
+            }
             if frame.delta && frame.generation < self.generation.load(Ordering::Acquire) {
                 continue;
             }
@@ -1359,6 +1390,98 @@ mod tests {
         // One reset at subscribe, one when it fell behind, none while it stays stalled.
         assert_eq!(hub.resets(), 2);
         assert_eq!(fast.kinds().await, expected);
+    }
+
+    /// Fills a two-frame socket with the config and key 1, overflows it with delta 2, which
+    /// asks for a reset, then drops the config and key 3 that answer it while the socket's
+    /// queue is still full. Returns the socket and the reset count after the overflow.
+    async fn drop_the_answer_to_an_overflow(hub: &HubFixture) -> (Watcher, u64) {
+        let slow = hub.subscribe_with_capacity(2);
+        hub.wait_written(1).await;
+        hub.feed([config(), key(1)]).await;
+        tokio::time::advance(RESET_MIN_INTERVAL).await;
+        hub.feed([delta(2)]).await;
+        let after_overflow = hub.resets();
+        assert_eq!(
+            after_overflow, 2,
+            "one at subscribe, one when it fell behind"
+        );
+        hub.wait_written(2).await;
+        hub.feed([config(), key(3)]).await;
+        (slow, after_overflow)
+    }
+
+    /// Every frame queued for `watcher` except keepalives, which an empty queue gets once
+    /// the source has been quiet for a second.
+    async fn received_media(watcher: &mut Watcher) -> Vec<(&'static str, u64)> {
+        let mut received = watcher.received().await;
+        received.retain(|(kind, _)| *kind != "keepalive");
+        received
+    }
+
+    /// Codex's PR review: the config and key unit that answer an overflow's reset arrive
+    /// while the socket's queue is still full, so they are dropped too, and a still screen
+    /// sends nothing more. Once its reader drains the queue, the socket asks again.
+    #[tokio::test(start_paused = true)]
+    async fn a_socket_that_missed_its_key_asks_again_once_it_drains() {
+        let hub = HubFixture::new();
+        let (mut slow, after_overflow) = drop_the_answer_to_an_overflow(&hub).await;
+        // The source goes silent; while the socket reads nothing, it asks for nothing.
+        tokio::time::sleep(RESET_MIN_INTERVAL * 3).await;
+        assert_eq!(hub.resets(), after_overflow);
+        // The reader catches up: it gets what was queued, and draining asks for a key unit.
+        assert_eq!(received_media(&mut slow).await, [("config", 0), ("key", 1)]);
+        assert_eq!(hub.resets(), after_overflow + 1, "draining asks again");
+        hub.wait_written(3).await;
+        // The encoder answers, and the socket leaves its key wait: the next delta reaches it.
+        hub.feed([config(), key(4)]).await;
+        assert_eq!(received_media(&mut slow).await, [("config", 0), ("key", 4)]);
+        hub.feed([delta(5)]).await;
+        assert_eq!(received_media(&mut slow).await, [("delta", 5)]);
+    }
+
+    /// A socket that never reads asks for one reset when it falls behind, and none after
+    /// however many key units it drops; subscribing asked for the other one counted.
+    #[tokio::test(start_paused = true)]
+    async fn a_socket_that_stays_blocked_never_asks_again() {
+        let hub = HubFixture::new();
+        let (_blocked, after_overflow) = drop_the_answer_to_an_overflow(&hub).await;
+        for second in 0..5_u64 {
+            tokio::time::advance(RESET_MIN_INTERVAL).await;
+            // Each config and key unit is dropped too, and still nothing is asked for.
+            hub.feed([config(), key(10 + second)]).await;
+        }
+        tokio::time::sleep(RESET_MIN_INTERVAL * 3).await;
+        assert_eq!(hub.resets(), after_overflow);
+        assert_eq!(
+            hub.written.load(Ordering::Acquire),
+            usize::try_from(after_overflow).unwrap()
+        );
+    }
+
+    /// A dropped config is made good by the key unit that follows it, so draining after
+    /// that asks for nothing and the socket keeps its deltas.
+    #[tokio::test(start_paused = true)]
+    async fn a_key_that_lands_after_a_dropped_config_ends_the_miss() {
+        let hub = HubFixture::new();
+        let mut slow = hub.subscribe_with_capacity(2);
+        hub.wait_written(1).await;
+        hub.feed([config(), key(1)]).await;
+        tokio::time::advance(RESET_MIN_INTERVAL).await;
+        hub.feed([delta(2)]).await;
+        hub.wait_written(2).await;
+        // The answer's config is dropped; the reader then takes one frame, so its key fits.
+        hub.feed([config()]).await;
+        assert_eq!(
+            slow.subscriber.next_frame().await.map(|frame| frame[0]),
+            Some(0)
+        );
+        hub.feed([key(3)]).await;
+        tokio::time::advance(RESET_MIN_INTERVAL).await;
+        assert_eq!(received_media(&mut slow).await, [("key", 1), ("key", 3)]);
+        hub.feed([delta(4)]).await;
+        assert_eq!(received_media(&mut slow).await, [("delta", 4)]);
+        assert_eq!(hub.resets(), 2, "the drain asked for nothing");
     }
 
     #[tokio::test]
