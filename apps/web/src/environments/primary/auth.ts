@@ -640,7 +640,9 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
   bootstrapPromise = nextPromise;
   return nextPromise
     .then((result) => {
-      if (result.status === "authenticated") {
+      // Only the current attempt is remembered: one abandoned or replaced meanwhile may answer
+      // from before a restart or a revoked session.
+      if (result.status === "authenticated" && bootstrapPromise === nextPromise) {
         resolvedAuthenticatedGateState = result;
       }
       return result;
@@ -660,6 +662,15 @@ export async function reauthenticatePrimaryEnvironment(): Promise<ServerAuthGate
   resolvedAuthenticatedGateState = null;
   bootstrapPromise = null;
   return resolveInitialServerAuthGateState();
+}
+
+/**
+ * Stops reusing the session check in flight, so the next call asks the server again. A page that
+ * gave up waiting on a stalled check calls it; the stalled attempt may still settle, but nothing
+ * waits on it.
+ */
+export function abandonServerAuthBootstrap(): void {
+  bootstrapPromise = null;
 }
 
 export function __resetServerAuthBootstrapForTests() {

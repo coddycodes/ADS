@@ -174,7 +174,6 @@ interface CapturedSectionProps {
   onIgnoreFileName?: (path: string) => void;
   onIgnoreParentFolder?: (path: string) => void;
   isPrimaryEnv?: boolean;
-  groupByFolder?: boolean;
   onStageFiles?: (paths: readonly string[]) => void;
   onUnstageFiles?: (paths: readonly string[]) => void;
   onSelectFiles?: (files: readonly WorkingTreeFile[], selected: boolean) => void;
@@ -200,6 +199,7 @@ const captured = vi.hoisted(() => ({
   buttons: [] as CapturedButtonProps[],
   menuItems: [] as CapturedMenuItemProps[],
   sections: [] as CapturedSectionProps[],
+  groupByFolder: undefined as boolean | undefined,
   dialogs: [] as CapturedDialogProps[],
   textareas: [] as CapturedTextareaProps[],
   commits: [] as Array<{ reloadToken: number; nowMs: number; gitCwd: string | null }>,
@@ -212,6 +212,7 @@ const captured = vi.hoisted(() => ({
     this.buttons = [];
     this.menuItems = [];
     this.sections = [];
+    this.groupByFolder = undefined;
     this.dialogs = [];
     this.textareas = [];
     this.commits = [];
@@ -463,10 +464,6 @@ vi.mock("~/components/ui/menu", () => ({
   },
 }));
 
-vi.mock("~/components/ui/scroll-area", () => ({
-  ScrollArea: (props: { children?: unknown }) => <div>{props.children as never}</div>,
-}));
-
 vi.mock("~/components/ui/spinner", () => ({
   Spinner: () => <span data-testid="spinner" />,
 }));
@@ -485,17 +482,14 @@ vi.mock("./SourceControlCommits", () => ({
   },
 }));
 
-vi.mock("./SourceControlSection", () => ({
-  SourceControlSection: (props: CapturedSectionProps) => {
-    captured.sections.push(props);
-    return (
-      <section
-        data-testid="section"
-        data-title={props.title}
-        data-count={props.files.length}
-        data-disabled={props.disabled ? "true" : undefined}
-      />
-    );
+vi.mock("./SourceControlChangesList", () => ({
+  SourceControlChangesList: (props: {
+    sections: readonly CapturedSectionProps[];
+    groupByFolder?: boolean;
+  }) => {
+    captured.sections.push(...props.sections);
+    captured.groupByFolder = props.groupByFolder;
+    return <div data-testid="changes" />;
   },
 }));
 
@@ -1136,7 +1130,7 @@ describe("SourceControlPanel", () => {
     render();
     const grouped = captured.buttons.find((button) => button["aria-label"] === "Group by folder");
     expect(grouped?.["aria-pressed"]).toBe(true);
-    expect(sectionByTitle("Changes")?.groupByFolder).toBe(true);
+    expect(captured.groupByFolder).toBe(true);
     grouped?.onClick?.();
     expect(testState.setGroupByFolder).toHaveBeenCalledWith(false);
 
@@ -1147,7 +1141,7 @@ describe("SourceControlPanel", () => {
         "aria-pressed"
       ],
     ).toBe(false);
-    expect(sectionByTitle("Changes")?.groupByFolder).toBe(false);
+    expect(captured.groupByFolder).toBe(false);
   });
 
   it("hides the view toggle while the working tree is clean", () => {

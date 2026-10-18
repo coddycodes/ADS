@@ -3098,9 +3098,14 @@ where
 {
     request(socket, request_id, "git.runStackedAction", payload).await;
     let started = next_server_message(socket).await;
-    assert!(
-        matches!(started, ServerMessage::Chunk { ref values, .. } if values[0]["kind"] == "action_started")
-    );
+    let ServerMessage::Chunk { values, .. } = started else {
+        panic!("expected the stacked action to start, got {started:?}");
+    };
+    assert_eq!(values[0]["kind"], "action_started");
+    // An event already queued behind the start shares its chunk.
+    if let Some(event) = values.into_iter().nth(1) {
+        return event;
+    }
     send_json(socket, json!({ "_tag": "Ack", "requestId": request_id })).await;
     let event = next_server_message(socket).await;
     let ServerMessage::Chunk { values, .. } = event else {

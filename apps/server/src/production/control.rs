@@ -890,6 +890,7 @@ impl NativeServerControl {
             pause.entered.notify_one();
             pause.release.notified().await;
         }
+        let latest_source = capabilities.latest;
         let update = capabilities.update.ok_or_else(|| {
             provider_update_error(
                 provider,
@@ -1068,6 +1069,15 @@ impl NativeServerControl {
             pause.entered.notify_one();
             pause.release.notified().await;
         }
+        // The installed major decides an OpenCode package the path did not name.
+        let update = crate::production::provider_maintenance::ProviderMaintenanceCapabilities {
+            latest: latest_source,
+            update: Some(update),
+            ..crate::production::provider_maintenance::ProviderMaintenanceCapabilities::unknown()
+        }
+        .for_installed_version(&target.driver, before_version.as_deref())
+        .update
+        .expect("the update action is kept");
         let command_result = match self
             .provider_maintenance
             .run_update_command(&target, &update, &cancellation)

@@ -13,7 +13,8 @@ pub use methods::{ACTIVE_RPC_METHODS, MethodMode, RpcMethodSpec};
 pub use session::{RpcRegistry, RpcResult, RpcStreamChunk};
 
 pub(crate) use e2ee::{
-    E2eePreauthAdmission, MAX_E2EE_CIPHERTEXT_BYTES, effective_preauth_peer, run_e2ee_session,
+    E2eePreauthAdmission, MAX_E2EE_CIPHERTEXT_BYTES, effective_preauth_peer,
+    remote_compression_enabled, run_e2ee_session,
 };
 pub(crate) use methods::{MethodMutability, method_mutability};
 #[cfg(test)]
@@ -22,4 +23,4 @@ pub(crate) use session::{
     PreparedRpcResponse, RpcResponseEnqueueGuard, RpcResponseEnqueuePermit, RpcSessionContext,
     RpcUnaryResult, encoded_server_message_len, response_too_large_failure, run_session,
 };
-pub(crate) use transport::{CHUNKED_RPC_SUBPROTOCOL, MAX_RECORDED_MESSAGE_BYTES};
+pub(crate) use transport::{MAX_RECORDED_MESSAGE_BYTES, plain_subprotocols};

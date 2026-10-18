@@ -317,12 +317,27 @@ performing a production install.
   lock automatically.
 - `vp run measure:desktop-runtime -- ...`: capture startup, memory, and
   process-tree measurements.
-- `node scripts/throttle-proxy.ts --listen <host:port> --target <host:port> --control <host:port> [--down <bytes/s>] [--up <bytes/s>]`:
+- `node scripts/throttle-proxy.ts --listen <host:port> --target <host:port> --control <host:port> [--down <bytes/s>] [--up <bytes/s>] [--delay <ms>] [--jitter <ms>]`:
   development-only throttling TCP proxy for the
   [slow-link liveness scenario](../testing/cross-platform-validation.md#slow-link-liveness-scenario).
-  Each direction is paced separately with backpressure; `GET /set?down=&up=&freeze=0|1`
-  on the control address changes the link (0 bytes/s is unlimited) and `GET /state`
-  reports it.
+  Each direction is paced separately with backpressure. `--delay` holds every
+  byte that long in each direction (125 ms is a 250 ms round trip), plus up to
+  `--jitter` more, without reordering bytes. `GET /set?down=&up=&freeze=0|1&delay=&jitter=`
+  on the control address changes the link (0 bytes/s is unlimited), `GET /drop`
+  closes every open connection, and `GET /state` reports the settings.
+- `node scripts/measure-remote-latency.ts [--rtt 0,250] [--jitter <ms>] [--typing-interval <ms>] [--seed-messages <n>] [--out <json>] [--keep]`:
+  development-only
+  [high-latency measurement](../testing/cross-platform-validation.md#high-latency-measurement).
+  For each round trip it starts a disposable `bibcode serve` (`--server-bin`,
+  default `target/debug/bibcode`, which must come from `cargo build`: a binary left by
+  `cargo test` refuses tools on the ambient `PATH`) with the packaged-UI provider fixtures, puts
+  the throttle proxy between it and a headless Chromium (`--chromium`, default
+  `/usr/bin/chromium`), and drives user actions. It prints one JSON line per
+  action and a Markdown table of RPCs, sequential round trips, bytes, time to
+  visible result and terminal echo lag. It serves the web build from
+  `--static-dir` (default `apps/web/dist`) itself, so only server traffic is
+  delayed; build that with `VITE_HOSTED_APP_URL=https://hosted.invalid` so
+  the page treats its own origin as its server.
 - `node scripts/measure-vcs-runtime.ts`: on Windows, build and run the
   current-source server VCS idle-process measurement plus the production-Atom
   foreground queue benchmark. It defaults to 600 seconds and writes all

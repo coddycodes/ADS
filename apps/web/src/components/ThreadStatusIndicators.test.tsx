@@ -131,6 +131,7 @@ describe("thread status indicators", () => {
     expect(resolveThreadPr("main", null)).toBeNull();
     expect(resolveThreadPr("main", { refName: "other", pr } as never)).toBeNull();
     expect(resolveThreadPr("main", { refName: "main", pr: null } as never)).toBeNull();
+    // The server carries a stale PR only for the same ref and provider.
     expect(
       resolveThreadPr("main", {
         refName: "main",
@@ -138,7 +139,7 @@ describe("thread status indicators", () => {
         pr,
         stale: true,
       } as never),
-    ).toBeNull();
+    ).toBe(pr);
     expect(
       resolveThreadPr("main", {
         refName: "main",

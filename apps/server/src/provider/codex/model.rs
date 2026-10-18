@@ -389,6 +389,8 @@ pub(crate) struct ReconciliationBackgroundTerminal {
 }
 
 pub(crate) const CODEX_REMOTE_MESSAGE_MAX_BYTES: usize = 512 * 1024;
+/// The decode error for a payload over `CODEX_REMOTE_MESSAGE_MAX_BYTES`.
+pub(crate) const CODEX_REMOTE_JSON_TOO_LARGE: &str = "Codex remote JSON exceeded its fixed bound";
 pub(crate) const CODEX_RECONCILIATION_THREAD_LIMIT: usize = 50;
 pub(crate) const CODEX_RECONCILIATION_BACKGROUND_LIMIT: usize = 128;
 pub(crate) const CODEX_RECONCILIATION_TURN_LIMIT: usize = 20;
@@ -414,14 +416,14 @@ impl std::io::Write for BoundedJsonWriter {
     }
 }
 
-fn ensure_bounded_remote_value(value: &Value) -> Result<(), String> {
+fn ensure_bounded_remote_value(value: &impl Serialize) -> Result<(), String> {
     serde_json::to_writer(
         BoundedJsonWriter {
             remaining: CODEX_REMOTE_MESSAGE_MAX_BYTES,
         },
         value,
     )
-    .map_err(|error| format!("Codex remote JSON exceeded its fixed bound: {error}"))
+    .map_err(|_| CODEX_REMOTE_JSON_TOO_LARGE.to_owned())
 }
 
 pub(crate) fn decode_thread_list_response(mut value: Value) -> Result<ThreadListResponse, String> {
@@ -432,8 +434,10 @@ pub(crate) fn decode_thread_list_response(mut value: Value) -> Result<ThreadList
     serde_json::from_value(value).map_err(|error| error.to_string())
 }
 
+/// The transport's line limit bounds what Codex sends; the fixed bound applies to what is kept.
+/// A long thread is trimmed to its newest turns and items, and command output, which activity
+/// shows only as present (`safe_command_output`), is reduced to a marker before the check.
 pub(crate) fn decode_thread_read_response(mut value: Value) -> Result<ThreadReadResponse, String> {
-    ensure_bounded_remote_value(&value)?;
     if let Some(turns) = value
         .pointer_mut("/thread/turns")
         .and_then(Value::as_array_mut)
@@ -454,60 +458,190 @@ pub(crate) fn decode_thread_read_response(mut value: Value) -> Result<ThreadRead
             } else {
                 remaining_items -= items.len();
             }
+            reduce_command_output(items);
         }
     }
+    ensure_bounded_remote_value(&value)?;
     serde_json::from_value(value).map_err(|error| error.to_string())
 }
 
-pub(crate) fn delivery_key_exists(
-    value: &Value,
-    thread_id: &str,
-    delivery_key: &str,
-) -> Result<bool, String> {
-    ensure_bounded_remote_value(value)?;
-    let thread = value
-        .get("thread")
-        .and_then(Value::as_object)
-        .ok_or_else(|| "thread/read response missing thread".to_owned())?;
-    if thread.get("id").and_then(Value::as_str) != Some(thread_id) {
-        return Err("thread/read response has the wrong thread.id".to_owned());
+fn reduce_command_output(items: &mut [Value]) {
+    for output in items
+        .iter_mut()
+        .filter_map(|item| item.get_mut("aggregatedOutput"))
+    {
+        if output.as_str().is_some_and(|text| !text.is_empty()) {
+            *output = Value::String("…".to_owned());
+        }
     }
-    let turns = thread
-        .get("turns")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "thread/read response missing complete thread.turns".to_owned())?;
+}
+
+/// A `thread/turns/list` page: its turns in the order Codex sent them and the cursor to the next
+/// page. An absent or null cursor ends paging; any other non-string cursor is malformed, because
+/// treating it as the end would accept an incomplete history as complete.
+pub(crate) fn decode_turns_page(mut value: Value) -> Result<(Vec<Value>, Option<String>), String> {
+    let next_cursor = match value.get("nextCursor") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(cursor)) if !cursor.is_empty() => Some(cursor.clone()),
+        Some(_) => return Err("thread/turns/list response has an invalid nextCursor".to_owned()),
+    };
+    let Some(Value::Array(turns)) = value.get_mut("data").map(Value::take) else {
+        return Err("thread/turns/list response missing data array".to_owned());
+    };
+    Ok((turns, next_cursor))
+}
+
+/// Turns per `thread/turns/list` page for activity history. One page normally holds every turn
+/// activity keeps (`docs/superpowers/specs/2026-10-17-codex-activity-paging-design.md`).
+pub(crate) const CODEX_HISTORY_TURNS_PAGE_LIMIT: usize = CODEX_RECONCILIATION_TURN_LIMIT;
+
+/// The newest-first `thread/turns/list` paging every Codex transport uses to recover a thread's
+/// history: what to ask next, when to stop, and what to keep.
+pub(crate) struct TurnsPager {
+    thread_id: String,
+    turns: PagedTurns,
+    cursor: Option<String>,
+    seen_cursors: std::collections::HashSet<String>,
+    done: bool,
+}
+
+impl TurnsPager {
+    pub(crate) fn new(thread_id: &str) -> Self {
+        Self {
+            thread_id: thread_id.to_owned(),
+            turns: PagedTurns::new(),
+            cursor: None,
+            seen_cursors: std::collections::HashSet::new(),
+            done: false,
+        }
+    }
+
+    /// The next page's params, or `None` once activity holds the turns it keeps or Codex has no
+    /// more.
+    pub(crate) fn next_params(&self) -> Option<Value> {
+        if self.done || self.turns.is_full() {
+            return None;
+        }
+        let mut params = serde_json::json!({
+            "threadId": self.thread_id,
+            "limit": CODEX_HISTORY_TURNS_PAGE_LIMIT,
+            "sortDirection": "desc",
+            "itemsView": "full",
+        });
+        if let Some(cursor) = &self.cursor {
+            params["cursor"] = Value::String(cursor.clone());
+        }
+        Some(params)
+    }
+
+    pub(crate) fn accept_page(&mut self, page: Value) -> Result<(), String> {
+        let (turns, next_cursor) = decode_turns_page(page)?;
+        if turns.is_empty() {
+            self.done = true;
+            return Ok(());
+        }
+        self.turns.push_page(turns)?;
+        match next_cursor {
+            Some(next) if self.seen_cursors.insert(next.clone()) => self.cursor = Some(next),
+            _ => self.done = true,
+        }
+        Ok(())
+    }
+
+    pub(crate) fn into_thread(self, metadata: Value) -> Result<ThreadReadResponse, String> {
+        self.turns.into_thread(metadata)
+    }
+}
+
+/// Turns gathered newest first across `thread/turns/list` pages, held to what a decoded thread
+/// keeps as each page arrives: the newest `CODEX_RECONCILIATION_TURN_LIMIT` turns, the newest
+/// `CODEX_RECONCILIATION_ITEM_LIMIT` items, command output as a presence marker, and the fixed
+/// byte bound. Only one raw page is alive at a time.
+pub(crate) struct PagedTurns {
+    turns: Vec<Value>,
+    remaining_items: usize,
+}
+
+impl PagedTurns {
+    pub(crate) fn new() -> Self {
+        Self {
+            turns: Vec::new(),
+            remaining_items: CODEX_RECONCILIATION_ITEM_LIMIT,
+        }
+    }
+
+    pub(crate) fn is_full(&self) -> bool {
+        self.turns.len() >= CODEX_RECONCILIATION_TURN_LIMIT
+    }
+
+    pub(crate) fn push_page(&mut self, page: Vec<Value>) -> Result<(), String> {
+        let room = CODEX_RECONCILIATION_TURN_LIMIT.saturating_sub(self.turns.len());
+        for mut turn in page.into_iter().take(room) {
+            if let Some(items) = turn.get_mut("items").and_then(Value::as_array_mut) {
+                if items.len() > self.remaining_items {
+                    items.drain(..items.len() - self.remaining_items);
+                }
+                self.remaining_items -= items.len();
+                reduce_command_output(items);
+            }
+            self.turns.push(turn);
+        }
+        ensure_bounded_remote_value(&self.turns)
+    }
+
+    /// Attaches the turns, oldest first, to their thread's metadata-only `thread/read` and decodes
+    /// the result as a full-history read.
+    pub(crate) fn into_thread(self, mut metadata: Value) -> Result<ThreadReadResponse, String> {
+        let mut turns = self.turns;
+        turns.reverse();
+        metadata
+            .get_mut("thread")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "thread/read response missing thread".to_owned())?
+            .insert("turns".to_owned(), Value::Array(turns));
+        decode_thread_read_response(metadata)
+    }
+}
+
+/// Whether one `thread/turns/list` page holds the user message delivered with `delivery_key`.
+/// Nothing is retained, so no size bound applies beyond the transport's line limit.
+pub(crate) fn delivery_key_in_turns(turns: &[Value], delivery_key: &str) -> Result<bool, String> {
     for turn in turns {
         let turn = turn
             .as_object()
-            .ok_or_else(|| "thread/read response contains an invalid turn".to_owned())?;
+            .ok_or_else(|| "thread/turns/list response contains an invalid turn".to_owned())?;
         if turn.get("id").and_then(Value::as_str).is_none() {
-            return Err("thread/read response turn is missing id".to_owned());
+            return Err("thread/turns/list response turn is missing id".to_owned());
         }
         let items = turn
             .get("items")
             .and_then(Value::as_array)
-            .ok_or_else(|| "thread/read response turn is missing items".to_owned())?;
+            .ok_or_else(|| "thread/turns/list response turn is missing items".to_owned())?;
         for item in items {
             let item = item
                 .as_object()
-                .ok_or_else(|| "thread/read response contains an invalid item".to_owned())?;
+                .ok_or_else(|| "thread/turns/list response contains an invalid item".to_owned())?;
             let item_type = item
                 .get("type")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "thread/read response item is missing type".to_owned())?;
+                .ok_or_else(|| "thread/turns/list response item is missing type".to_owned())?;
             if item_type != "userMessage" {
                 continue;
             }
             if item.get("id").and_then(Value::as_str).is_none()
                 || item.get("content").and_then(Value::as_array).is_none()
             {
-                return Err("thread/read response contains an incomplete userMessage".to_owned());
+                return Err(
+                    "thread/turns/list response contains an incomplete userMessage".to_owned(),
+                );
             }
             match item.get("clientId") {
                 Some(Value::String(client_id)) if client_id == delivery_key => return Ok(true),
                 Some(Value::String(_) | Value::Null) | None => {}
                 Some(_) => {
-                    return Err("thread/read response userMessage.clientId is invalid".to_owned());
+                    return Err(
+                        "thread/turns/list response userMessage.clientId is invalid".to_owned()
+                    );
                 }
             }
         }
@@ -1144,7 +1278,127 @@ mod tests {
 
         assert!(
             response.is_err(),
-            "fake and real transports must share the same pre-decode payload bound"
+            "the history kept after trimming stays within the fixed bound"
+        );
+    }
+
+    #[test]
+    fn paged_turns_hold_the_item_budget_and_byte_bound_as_pages_arrive() {
+        let page = |first: usize, items_per_turn: usize, text: &str| {
+            (first..first + 5)
+                .map(|turn| {
+                    json!({
+                        "id": format!("turn-{turn}"),
+                        "items": (0..items_per_turn)
+                            .map(|item| json!({
+                                "id": format!("item-{turn}-{item}"),
+                                "type": "agentMessage",
+                                "text": text
+                            }))
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut turns = PagedTurns::new();
+        turns.push_page(page(0, 30, "x")).expect("first page");
+        turns.push_page(page(5, 30, "x")).expect("second page");
+        let kept_items = turns
+            .turns
+            .iter()
+            .map(|turn| turn["items"].as_array().expect("items").len())
+            .collect::<Vec<_>>();
+        assert_eq!(kept_items, [30, 30, 30, 30, 30, 30, 20, 0, 0, 0]);
+        assert_eq!(
+            turns.turns[6]["items"][0]["id"], "item-6-10",
+            "the newest items of the turn that crosses the budget are kept"
+        );
+
+        let mut turns = PagedTurns::new();
+        let large = "x".repeat(CODEX_REMOTE_MESSAGE_MAX_BYTES / 4);
+        turns
+            .push_page(page(0, 1, &large[..CODEX_REMOTE_MESSAGE_MAX_BYTES / 16]))
+            .expect("small page");
+        assert_eq!(
+            turns.push_page(page(5, 1, &large)),
+            Err(CODEX_REMOTE_JSON_TOO_LARGE.to_owned()),
+            "a page that pushes the kept history over the bound fails before the next page"
+        );
+    }
+
+    #[test]
+    fn turns_page_cursor_must_be_absent_null_or_a_string() {
+        for (cursor, expected) in [
+            (json!(null), Ok(None)),
+            (json!("turn-3"), Ok(Some("turn-3".to_owned()))),
+        ] {
+            assert_eq!(
+                decode_turns_page(json!({"data": [], "nextCursor": cursor})).map(|page| page.1),
+                expected
+            );
+        }
+        assert_eq!(
+            decode_turns_page(json!({"data": []})).map(|page| page.1),
+            Ok(None)
+        );
+        assert!(decode_turns_page(json!({"data": [], "nextCursor": 123})).is_err());
+        assert!(decode_turns_page(json!({"data": "turns"})).is_err());
+    }
+
+    #[test]
+    fn thread_read_bounds_the_trimmed_history_not_the_reply() {
+        let message = "x".repeat(20 * 1024);
+        let turns = (0..CODEX_RECONCILIATION_TURN_LIMIT + 10)
+            .map(|index| {
+                json!({
+                    "id": format!("turn-{index}"),
+                    "items": [{
+                        "id": format!("message-{index}"),
+                        "type": "agentMessage",
+                        "text": message
+                    }]
+                })
+            })
+            .collect::<Vec<_>>();
+        let long_thread = json!({"thread": {"id": "long-thread", "turns": turns}});
+        assert!(
+            serde_json::to_vec(&long_thread).expect("long thread").len()
+                > CODEX_REMOTE_MESSAGE_MAX_BYTES
+        );
+        let response = decode_thread_read_response(long_thread).expect("trimmed long thread");
+        assert_eq!(response.thread.turns.len(), CODEX_RECONCILIATION_TURN_LIMIT);
+
+        let response = decode_thread_read_response(json!({
+            "thread": {
+                "id": "large-output",
+                "turns": [{
+                    "id": "turn-1",
+                    "items": [
+                        {
+                            "id": "command-1",
+                            "type": "commandExecution",
+                            "aggregatedOutput": "x".repeat(CODEX_REMOTE_MESSAGE_MAX_BYTES)
+                        },
+                        {"id": "command-2", "type": "commandExecution", "aggregatedOutput": ""}
+                    ]
+                }]
+            }
+        }))
+        .expect("command output is not retained");
+        let outputs = response.thread.turns[0]
+            .items
+            .iter()
+            .map(|item| match item {
+                ReconciliationThreadItem::CommandExecution {
+                    aggregated_output, ..
+                } => aggregated_output.as_deref(),
+                _ => panic!("command item"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            outputs,
+            [Some("…"), Some("")],
+            "output presence survives, its text does not"
         );
     }
 
@@ -1390,43 +1644,39 @@ mod tests {
 
     #[test]
     fn delivery_readback_requires_a_complete_exact_client_id_match() {
-        let found = json!({
-            "thread": {
-                "id": "provider-thread-1",
-                "turns": [{
-                    "id": "turn-1",
-                    "items": [{
-                        "type": "userMessage",
-                        "id": "user-1",
-                        "clientId": "delivery-1",
-                        "content": [{"type": "text", "text": "hello"}]
-                    }]
-                }]
-            }
-        });
-        let absent = json!({
-            "thread": {
-                "id": "provider-thread-1",
-                "turns": [{"id": "turn-1", "items": []}]
-            }
-        });
+        let found = [json!({
+            "id": "turn-1",
+            "items": [{
+                "type": "userMessage",
+                "id": "user-1",
+                "clientId": "delivery-1",
+                "content": [{"type": "text", "text": "hello"}]
+            }]
+        })];
+        let other = [json!({
+            "id": "turn-1",
+            "items": [{
+                "type": "userMessage",
+                "id": "user-1",
+                "clientId": "delivery-2",
+                "content": []
+            }]
+        })];
 
+        assert_eq!(delivery_key_in_turns(&found, "delivery-1"), Ok(true));
+        assert_eq!(delivery_key_in_turns(&other, "delivery-1"), Ok(false));
         assert_eq!(
-            delivery_key_exists(&found, "provider-thread-1", "delivery-1"),
-            Ok(true)
-        );
-        assert_eq!(
-            delivery_key_exists(&absent, "provider-thread-1", "delivery-1"),
+            delivery_key_in_turns(&[json!({"id": "turn-1", "items": []})], "delivery-1"),
             Ok(false)
         );
-        assert!(delivery_key_exists(&json!({}), "provider-thread-1", "delivery-1").is_err());
+        assert!(delivery_key_in_turns(&[json!({})], "delivery-1").is_err());
         assert!(
-            delivery_key_exists(
-                &json!({"thread":{"id":"provider-thread-1","turns":[{}]}}),
-                "provider-thread-1",
+            delivery_key_in_turns(
+                &[json!({"id": "turn-1", "items": [{"type": "userMessage", "id": "user-1"}]})],
                 "delivery-1"
             )
-            .is_err()
+            .is_err(),
+            "an incomplete userMessage cannot prove absence"
         );
     }
 }

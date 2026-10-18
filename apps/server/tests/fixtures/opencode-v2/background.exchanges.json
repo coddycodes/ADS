@@ -1,0 +1,399 @@
+{
+  "session": "ses_ebf1abfafffeiBiCMnBS30eQGc",
+  "exchanges": [
+    {
+      "method": "POST",
+      "path": "/api/session",
+      "body": {
+        "title": "BiBCode capture",
+        "location": {
+          "directory": "/work/project"
+        },
+        "model": {
+          "providerID": "mock",
+          "id": "mock-model"
+        },
+        "agent": "build",
+        "permissions": [
+          {
+            "action": "*",
+            "resource": "*",
+            "effect": "allow"
+          }
+        ]
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "ses_ebf1abfafffeiBiCMnBS30eQGc",
+          "projectID": "bca2a4c13ad5ce3ef167f49a0f2c24bd5afe14dc",
+          "agent": "build",
+          "model": {
+            "id": "mock-model",
+            "providerID": "mock",
+            "variant": "default"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1792090128470,
+            "updated": 1792090128470
+          },
+          "title": "BiBCode capture",
+          "permissions": [
+            {
+              "action": "*",
+              "resource": "*",
+              "effect": "allow"
+            }
+          ],
+          "location": {
+            "directory": "/work/project"
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1abfafffeiBiCMnBS30eQGc",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "ses_ebf1abfafffeiBiCMnBS30eQGc",
+          "projectID": "bca2a4c13ad5ce3ef167f49a0f2c24bd5afe14dc",
+          "agent": "build",
+          "model": {
+            "id": "mock-model",
+            "providerID": "mock",
+            "variant": "default"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "time": {
+            "created": 1792090128470,
+            "updated": 1792090128470
+          },
+          "title": "BiBCode capture",
+          "permissions": [
+            {
+              "action": "*",
+              "resource": "*",
+              "effect": "allow"
+            }
+          ],
+          "location": {
+            "directory": "/work/project"
+          }
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/session/ses_ebf1abfafffeiBiCMnBS30eQGc/prompt",
+      "body": {
+        "id": "msg_bibcodecapture1792090128476",
+        "text": "SPAWN_BACKGROUND please"
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "msg_bibcodecapture1792090128476",
+          "sessionID": "ses_ebf1abfafffeiBiCMnBS30eQGc",
+          "time": {
+            "created": 1792090128775
+          },
+          "type": "user",
+          "payload": {
+            "text": "SPAWN_BACKGROUND please"
+          },
+          "delivery": "steer"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1abfafffeiBiCMnBS30eQGc/message",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "msg_140e54211001zG4DDm2EFMjx23",
+            "time": {
+              "created": 1792090128913
+            },
+            "type": "idle",
+            "outcome": "succeeded"
+          },
+          {
+            "id": "msg_140e54204001LuNxBJk4dyR0gl",
+            "time": {
+              "created": 1792090128904,
+              "streamed": 1792090128911,
+              "completed": 1792090128912
+            },
+            "type": "assistant",
+            "agent": "build",
+            "model": {
+              "id": "mock-model",
+              "providerID": "mock",
+              "variant": "default"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Background result noted."
+              }
+            ],
+            "finish": "stop",
+            "rawFinish": "stop",
+            "cost": 0,
+            "tokens": {
+              "input": 11,
+              "output": 5,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            }
+          },
+          {
+            "id": "msg_140e541d2001exT4ib4q81HRCC",
+            "metadata": {
+              "source": "subagent",
+              "childID": "ses_ebf1abe38ffehjo9nJ2bmLUanH",
+              "agent": "General",
+              "state": "completed"
+            },
+            "time": {
+              "created": 1792090128898
+            },
+            "text": "<subagent sessionID=\"ses_ebf1abe38ffehjo9nJ2bmLUanH\" state=\"completed\" description=\"Background task\">\nChild finished.\n</subagent>",
+            "description": "Background task",
+            "type": "synthetic"
+          },
+          {
+            "id": "msg_140e541f6001a0yj3rdG7ae7i8",
+            "time": {
+              "created": 1792090128886
+            },
+            "type": "idle",
+            "outcome": "succeeded"
+          },
+          {
+            "id": "msg_140e541db001FHOTuGkLNnLlRs",
+            "time": {
+              "created": 1792090128864,
+              "streamed": 1792090128884,
+              "completed": 1792090128884
+            },
+            "type": "assistant",
+            "agent": "build",
+            "model": {
+              "id": "mock-model",
+              "providerID": "mock",
+              "variant": "default"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Done after tool."
+              }
+            ],
+            "finish": "stop",
+            "rawFinish": "stop",
+            "cost": 0,
+            "tokens": {
+              "input": 11,
+              "output": 5,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            }
+          },
+          {
+            "id": "msg_140e541ae00135vglLJiS0Gzs0",
+            "time": {
+              "created": 1792090128822,
+              "streamed": 1792090128837,
+              "completed": 1792090128852
+            },
+            "type": "assistant",
+            "agent": "build",
+            "model": {
+              "id": "mock-model",
+              "providerID": "mock",
+              "variant": "default"
+            },
+            "content": [
+              {
+                "type": "tool",
+                "id": "call_subagent_bg",
+                "name": "subagent",
+                "executed": false,
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "agent": "general",
+                    "description": "Background task",
+                    "prompt": "CHILD_WORK slowly",
+                    "background": true
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "The subagent is working in the background (sessionID: ses_ebf1abe38ffehjo9nJ2bmLUanH). You will be notified automatically when it finishes.\nDO NOT sleep, poll for progress, ask the subagent for status, or duplicate this subagent's work; avoid working with the same files or topics it is using.\nWork on non-overlapping tasks, or briefly tell the user what you launched and end your response."
+                    }
+                  ],
+                  "metadata": {
+                    "sessionID": "ses_ebf1abe38ffehjo9nJ2bmLUanH",
+                    "status": "running",
+                    "truncated": false
+                  }
+                },
+                "time": {
+                  "created": 1792090128832,
+                  "ran": 1792090128836,
+                  "completed": 1792090128850
+                }
+              }
+            ],
+            "finish": "tool-calls",
+            "rawFinish": "tool_calls",
+            "cost": 0,
+            "tokens": {
+              "input": 11,
+              "output": 5,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            }
+          },
+          {
+            "id": "msg_bibcodecapture1792090128476",
+            "time": {
+              "created": 1792090128808
+            },
+            "text": "SPAWN_BACKGROUND please",
+            "type": "user"
+          }
+        ],
+        "cursor": {
+          "previous": "eyJpZCI6Im1zZ18xNDBlNTQyMTEwMDF6RzRERG0yRUZNangyMyIsIm9yZGVyIjoiZGVzYyIsImRpcmVjdGlvbiI6InByZXZpb3VzIn0",
+          "next": "eyJpZCI6Im1zZ19iaWJjb2RlY2FwdHVyZTE3OTIwOTAxMjg0NzYiLCJvcmRlciI6ImRlc2MiLCJkaXJlY3Rpb24iOiJuZXh0In0"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1abfafffeiBiCMnBS30eQGc/message/msg_bibcodecapture1792090128476",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "msg_bibcodecapture1792090128476",
+          "time": {
+            "created": 1792090128808
+          },
+          "text": "SPAWN_BACKGROUND please",
+          "type": "user"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/ses_ebf1abfafffeiBiCMnBS30eQGc/message/msg_doesnotexist000000000000",
+      "body": null,
+      "status": 404,
+      "response": {
+        "_tag": "MessageNotFoundError",
+        "sessionID": "ses_ebf1abfafffeiBiCMnBS30eQGc",
+        "messageID": "msg_doesnotexist000000000000",
+        "message": "Message not found: msg_doesnotexist000000000000"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/active",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": {}
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/session?parentID=ses_ebf1abfafffeiBiCMnBS30eQGc",
+      "body": null,
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "ses_ebf1abe38ffehjo9nJ2bmLUanH",
+            "parentID": "ses_ebf1abfafffeiBiCMnBS30eQGc",
+            "projectID": "bca2a4c13ad5ce3ef167f49a0f2c24bd5afe14dc",
+            "agent": "general",
+            "model": {
+              "id": "mock-model",
+              "providerID": "mock",
+              "variant": "default"
+            },
+            "cost": 0,
+            "tokens": {
+              "input": 11,
+              "output": 5,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            },
+            "outcome": "succeeded",
+            "time": {
+              "created": 1792090128846,
+              "updated": 1792090128890,
+              "idle": 1792090128891
+            },
+            "title": "Background task",
+            "permissions": [
+              {
+                "action": "*",
+                "resource": "*",
+                "effect": "allow"
+              }
+            ],
+            "location": {
+              "directory": "/work/project"
+            }
+          }
+        ],
+        "cursor": {
+          "previous": "eyJwYXJlbnRJRCI6InNlc19lYmYxYWJmYWZmZmVpQmlDTW5CUzMwZVFHYyIsImFuY2hvciI6eyJpZCI6InNlc19lYmYxYWJlMzhmZmVoam85bkoyYm1MVWFuSCIsInRpbWUiOjE3OTIwOTAxMjg4OTAsImRpcmVjdGlvbiI6InByZXZpb3VzIn19",
+          "next": "eyJwYXJlbnRJRCI6InNlc19lYmYxYWJmYWZmZmVpQmlDTW5CUzMwZVFHYyIsImFuY2hvciI6eyJpZCI6InNlc19lYmYxYWJlMzhmZmVoam85bkoyYm1MVWFuSCIsInRpbWUiOjE3OTIwOTAxMjg4OTAsImRpcmVjdGlvbiI6Im5leHQifX0"
+        }
+      }
+    }
+  ]
+}

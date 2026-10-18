@@ -1294,6 +1294,32 @@ describe("GitManagerCreatePullRequestDialog", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it("hands an existing request to onDone like a created one", async () => {
+    const onDone = vi.fn();
+    const { onOpenChange } = await renderDialog(vi.fn(), vi.fn(), null, { onDone });
+    await chooseTarget("release/next");
+    h.script = [{ outcome: "success", events: [finished("opened_existing")] }];
+    await act(async () => button("Publish and create pull request").click());
+    await act(async () => button("Done").click());
+    expect(onDone).toHaveBeenCalledWith({ number: 7, provider: "github" });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  // A status refresh after the request settled can lose the host (a cold status
+  // names none); without a provider the request cannot be opened, so Done only closes.
+  it("only closes on Done once the status no longer names the host", async () => {
+    const onDone = vi.fn();
+    const { onOpenChange } = await renderDialog(vi.fn(), vi.fn(), null, { onDone });
+    await chooseTarget("release/next");
+    h.script = [{ outcome: "success", events: [finished("created")] }];
+    await act(async () => button("Publish and create pull request").click());
+    h.status = status({ sourceControlProvider: undefined });
+    await renderDialog(vi.fn(), onOpenChange, null, { onDone });
+    await act(async () => button("Done").click());
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it("cancels freely before starting and refuses to close while publishing", async () => {
     const { onOpenChange } = await renderDialog();
     await act(async () => button("Cancel").click());

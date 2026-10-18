@@ -833,7 +833,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const status = resolveWorkspaceCardStatus(thread, lastVisitedAt);
   const branchLabel = resolveWorkspaceBranchLabel(gitStatus.data, thread.branch);
   const showBranchText = shouldShowWorkspaceBranchText(branchLabel, thread.title);
-  const pr = resolveThreadPr(thread.branch, gitStatus.data);
+  // The badge belongs to the branch the card names, not the recorded one, which
+  // lags checkouts made while the thread was closed.
+  const pr = resolveThreadPr(branchLabel, gitStatus.data);
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const dirty = resolveWorkspaceDirty(gitStatus.data);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
@@ -1368,8 +1370,7 @@ const SidebarPrimaryCard = memo(function SidebarPrimaryCard(props: SidebarPrimar
   const status = primaryThread
     ? resolveWorkspaceCardStatus(primaryThread, lastVisitedAt)
     : WORKSPACE_CARD_STATUS.idle;
-  const freshSummary = summary && !("stale" in summary && summary.stale) ? summary : null;
-  const prStatus = prStatusIndicator(freshSummary?.pr ?? null, freshSummary?.sourceControlProvider);
+  const prStatus = prStatusIndicator(summary?.pr ?? null, summary?.sourceControlProvider);
   const dirty = resolveWorkspaceDirty(summary);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const showBranchText = shouldShowWorkspaceBranchText(branchName, title);

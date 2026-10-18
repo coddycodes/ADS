@@ -15,7 +15,7 @@ use axum::{
     http::{
         HeaderMap, HeaderValue, Method, StatusCode, Uri,
         header::{
-            CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, ETAG, HOST, IF_NONE_MATCH, LOCATION,
+            CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, ETAG, HOST, IF_NONE_MATCH, LOCATION, VARY,
         },
     },
     middleware::{self, Next},
@@ -44,8 +44,8 @@ use crate::{
     production::http_routes::{self, HttpRoutesState},
     remote_update::RemoteUpdateSupport,
     rpc::{
-        CHUNKED_RPC_SUBPROTOCOL, E2eePreauthAdmission, MAX_E2EE_CIPHERTEXT_BYTES, RpcRegistry,
-        RpcSessionContext, run_session,
+        E2eePreauthAdmission, MAX_E2EE_CIPHERTEXT_BYTES, RpcRegistry, RpcSessionContext,
+        plain_subprotocols, remote_compression_enabled, run_session,
     },
 };
 
@@ -354,7 +354,11 @@ async fn websocket(
     let reach = client_reach(connection, &headers);
     if state.config.unsafe_no_auth {
         return upgrade
-            .protocols([CHUNKED_RPC_SUBPROTOCOL])
+            .protocols(
+                plain_subprotocols(remote_compression_enabled())
+                    .iter()
+                    .copied(),
+            )
             .max_frame_size(MAX_PLAIN_WEBSOCKET_FRAME_BYTES)
             .max_message_size(MAX_PLAIN_WEBSOCKET_MESSAGE_BYTES)
             .on_upgrade(move |socket| {
@@ -375,7 +379,11 @@ async fn websocket(
             let rpc_context =
                 RpcSessionContext::authenticated(principal, auth.clone()).with_reach(reach);
             upgrade
-                .protocols([CHUNKED_RPC_SUBPROTOCOL])
+                .protocols(
+                    plain_subprotocols(remote_compression_enabled())
+                        .iter()
+                        .copied(),
+                )
                 .max_frame_size(MAX_PLAIN_WEBSOCKET_FRAME_BYTES)
                 .max_message_size(MAX_PLAIN_WEBSOCKET_MESSAGE_BYTES)
                 .on_upgrade(move |socket| async move {
@@ -748,10 +756,65 @@ async fn serve_static(
             None => return (StatusCode::NOT_FOUND, "Not Found").into_response(),
         },
     };
+    if candidate == root.join("index.html") {
+        return serve_entry_document(&candidate, method, headers).await;
+    }
     let content_hashed = candidate
         .strip_prefix(&root)
         .is_ok_and(is_content_hashed_asset);
     stream_file(candidate, content_hashed, method, headers).await
+}
+
+/// The web app's entry document, marked as served by this server: a
+/// `<meta name="bibcode-served-host">` names the host the request was served for. The app pairs
+/// with its own origin only when the marker matches the host it runs on; a copy of this document
+/// deployed elsewhere, or a page without it, stays a remote client. Only a plain authority is
+/// written, so the Host header cannot inject markup, and the response varies by Host so no cache
+/// serves one host's marker to another.
+async fn serve_entry_document(path: &Path, method: &Method, headers: &HeaderMap) -> Response {
+    let document = match tokio::fs::read_to_string(path).await {
+        Ok(document) => document,
+        Err(_) => return internal_server_error(),
+    };
+    let document = match served_host(headers) {
+        Some(host) => match document.find("</head>") {
+            Some(head_end) => format!(
+                "{}<meta name=\"bibcode-served-host\" content=\"{host}\">{}",
+                &document[..head_end],
+                &document[head_end..]
+            ),
+            None => document,
+        },
+        None => document,
+    };
+    let length = document.len();
+    let body = if method == Method::HEAD {
+        Body::empty()
+    } else {
+        Body::from(document)
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "text/html")
+        .header(CONTENT_LENGTH, length)
+        .header(CACHE_CONTROL, HTML_CACHE_CONTROL)
+        .header(VARY, "Host")
+        .header("x-content-type-options", "nosniff")
+        .header("content-security-policy", content_security_policy(headers))
+        .body(body)
+        .unwrap_or_else(|_| internal_server_error())
+}
+
+/// The request's Host as a lowercase authority, when it is nothing else: name, IPv4 or bracketed
+/// IPv6 characters and a port.
+fn served_host(headers: &HeaderMap) -> Option<String> {
+    let host = headers.get(HOST)?.to_str().ok()?;
+    let authority = host.parse::<hyper::http::uri::Authority>().ok()?;
+    (authority.as_str() == host
+        && host.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b':' | b'[' | b']')
+        }))
+    .then(|| host.to_ascii_lowercase())
 }
 
 fn safe_relative_path(request_path: &str) -> Result<PathBuf, ()> {
@@ -984,6 +1047,53 @@ mod tests {
     }
 
     use super::*;
+
+    /// The web app served by this server says so: its entry document names the host it was
+    /// served for, which the app compares with its own before pairing with this server. Nothing
+    /// else carries the marker, and a Host that is not a plain authority adds none.
+    #[tokio::test]
+    async fn the_served_entry_document_names_its_host() {
+        let root = tempfile::tempdir().expect("static root");
+        std::fs::write(
+            root.path().join("index.html"),
+            "<!doctype html><html><head><title>BiBCode</title></head><body></body></html>",
+        )
+        .expect("entry document");
+        std::fs::create_dir(root.path().join("assets")).expect("assets");
+        std::fs::write(root.path().join("assets/app-AbCd1234.js"), "</head>").expect("asset");
+        let serve = |path: &'static str, host: &'static str| {
+            let root = root.path().to_path_buf();
+            async move {
+                let mut headers = HeaderMap::new();
+                headers.insert(HOST, HeaderValue::from_static(host));
+                let response = serve_static(&root, path, &Method::GET, &headers).await;
+                let vary = response.headers().get("vary").cloned();
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .expect("body");
+                (String::from_utf8(body.to_vec()).expect("utf-8"), vary)
+            }
+        };
+        for path in ["/", "/pair", "/index.html"] {
+            let (body, vary) = serve(path, "Box.LAN:3773").await;
+            assert!(
+                body.contains(r#"<meta name="bibcode-served-host" content="box.lan:3773"></head>"#),
+                "{path}: {body}"
+            );
+            assert_eq!(
+                vary.as_ref().map(|value| value.to_str().unwrap()),
+                Some("Host")
+            );
+        }
+        let (body, _) = serve("/", "[::1]:3773").await;
+        assert!(body.contains(r#"content="[::1]:3773""#), "{body}");
+        for host in [r#"box.lan" onload="x"#, "box.lan:3773/x", "a b"] {
+            let (body, _) = serve("/", host).await;
+            assert!(!body.contains("bibcode-served-host"), "{host}: {body}");
+        }
+        let (asset, _) = serve("/assets/app-AbCd1234.js", "box.lan:3773").await;
+        assert_eq!(asset, "</head>");
+    }
 
     #[test]
     fn forwarded_host_is_trusted_only_from_a_loopback_peer() {

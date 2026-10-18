@@ -1584,6 +1584,53 @@ impl std::fmt::Debug for CommandAdmissionClaim {
     }
 }
 
+/// One lock per thread that its checkpoint revert and its turn deliveries each hold for their
+/// whole run, so no turn starts between a revert's busy check and its completion, and a revert
+/// waits for a delivery already in flight. It is in memory only: the effects worker never
+/// replays a revert requested before a restart, so no revert can outlive the process.
+#[derive(Clone, Default)]
+struct ThreadTurnFence {
+    threads: Arc<StdMutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
+}
+
+/// Held while a thread's revert or turn delivery runs; dropping it releases the thread.
+pub(crate) struct ThreadTurnReservation {
+    _guard: OwnedMutexGuard<()>,
+}
+
+impl ThreadTurnFence {
+    async fn reserve(&self, thread_id: &str) -> ThreadTurnReservation {
+        ThreadTurnReservation {
+            _guard: self.gate(thread_id).lock_owned().await,
+        }
+    }
+
+    fn gate(&self, thread_id: &str) -> Arc<AsyncMutex<()>> {
+        let mut threads = self
+            .threads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        threads.retain(|_, gate| gate.strong_count() > 0);
+        threads
+            .get(thread_id)
+            .and_then(Weak::upgrade)
+            .unwrap_or_else(|| {
+                let gate = Arc::new(AsyncMutex::new(()));
+                threads.insert(thread_id.to_owned(), Arc::downgrade(&gate));
+                gate
+            })
+    }
+
+    fn is_reserved(&self, thread_id: &str) -> bool {
+        self.threads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(thread_id)
+            .and_then(Weak::upgrade)
+            .is_some_and(|gate| gate.try_lock().is_err())
+    }
+}
+
 #[derive(Clone, Default)]
 struct WorkspaceOwnershipFence {
     keys: Arc<StdMutex<HashMap<String, Weak<WorkspaceOwnershipKey>>>>,
@@ -1809,6 +1856,7 @@ pub struct OrchestrationEngine {
     project_command_effects: Arc<StdMutex<Option<Arc<dyn ProjectCommandEffects>>>>,
     command_admission: CommandAdmissionFence,
     workspace_ownership: WorkspaceOwnershipFence,
+    thread_turns: ThreadTurnFence,
     #[cfg(test)]
     test_hooks: TestHooks,
 }
@@ -1848,6 +1896,7 @@ impl OrchestrationEngine {
             project_command_effects,
             command_admission: CommandAdmissionFence::default(),
             workspace_ownership: WorkspaceOwnershipFence::default(),
+            thread_turns: ThreadTurnFence::default(),
             #[cfg(test)]
             test_hooks: options.test_hooks,
         })
@@ -2486,6 +2535,17 @@ impl OrchestrationEngine {
             .turn_delivery_wake
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(wake);
+    }
+
+    /// Waits until no revert or turn delivery of the thread runs, then holds the thread until the
+    /// reservation drops. See `ThreadTurnFence`.
+    pub(crate) async fn reserve_thread_turns(&self, thread_id: &str) -> ThreadTurnReservation {
+        self.thread_turns.reserve(thread_id).await
+    }
+
+    /// Whether a revert or turn delivery of the thread runs now.
+    pub(crate) fn thread_turns_reserved(&self, thread_id: &str) -> bool {
+        self.thread_turns.is_reserved(thread_id)
     }
 
     pub(crate) fn wake_turn_delivery(&self) {
@@ -5068,13 +5128,13 @@ async fn persist_turn_delivery_transition(
             let transaction = connection.transaction()?;
             let current = transaction
                 .query_row(
-                    "SELECT thread_id, message_id, provider_kind, state, attempts, mode, held, provider_instance_id FROM provider_turn_outbox WHERE command_id = ?",
+                    "SELECT thread_id, message_id, provider_kind, state, attempts, mode, held, provider_instance_id, last_error, failure_reason FROM provider_turn_outbox WHERE command_id = ?",
                     [&transition.command_id],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, i64>(4)?, row.get::<_, String>(5)?, row.get::<_, bool>(6)?, row.get::<_, String>(7)?)),
+                    |row| Ok(((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, i64>(4)?, row.get::<_, String>(5)?, row.get::<_, bool>(6)?, row.get::<_, String>(7)?), (row.get::<_, Option<String>>(8)?, row.get::<_, Option<String>>(9)?))),
                 )
                 .optional()?;
-            let Some((thread_id, message_id, provider, state, attempts, mut mode, held, provider_instance_id)) = current else {
-                return Ok(None);
+            let Some(((thread_id, message_id, provider, state, attempts, mut mode, held, provider_instance_id), (last_error, failure_reason))) = current else {
+                return Ok(DeliveryTransitionCommit::Stale);
             };
             if attempts != transition.expected_attempt
                 || !transition
@@ -5082,9 +5142,22 @@ async fn persist_turn_delivery_transition(
                     .iter()
                     .any(|expected| turn_delivery_state_name(*expected) == state)
             {
-                return Ok(None);
+                return Ok(DeliveryTransitionCommit::Stale);
             }
             let next_state = turn_delivery_state_name(transition.next_state);
+            // A claimed delivery that fails again the same way returns to exactly what the thread
+            // already shows (pending, the same detail): claiming emits nothing. Record the
+            // attempt, but announce nothing, or every retry re-sends the thread (a provider that
+            // could not start updated it every second).
+            let unchanged_retry = state == turn_delivery_state_name(TurnDeliveryState::Sending)
+                && transition.next_state == TurnDeliveryState::Pending
+                && transition.detail.is_some()
+                && transition.detail == last_error
+                && failure_reason.is_none();
+            let found_without_turn = matches!(
+                transition.next_state,
+                TurnDeliveryState::Delivered | TurnDeliveryState::Dismissed
+            ) && reason == Some(TurnDeliveryFailureReason::FoundWithoutTurn);
             let reason = reason.filter(|reason| matches!((transition.next_state, reason),
                 (TurnDeliveryState::Failed, TurnDeliveryFailureReason::ModelSelectionRefused)
                 | (TurnDeliveryState::Delivered, TurnDeliveryFailureReason::StartedNewConversation)))
@@ -5092,7 +5165,7 @@ async fn persist_turn_delivery_transition(
             if transition.next_state == TurnDeliveryState::Queued {
                 let Some(row) = crate::persistence::requeue_provider_turn_on(
                     &transaction, &transition.command_id, transition.expected_attempt, &transition.updated_at,
-                )? else { return Ok(None); };
+                )? else { return Ok(DeliveryTransitionCommit::Stale); };
                 mode = row.mode.as_str().to_owned();
                 transaction.execute("UPDATE provider_turn_outbox SET last_error = ?, failure_reason = NULL WHERE command_id = ?", params![transition.detail, transition.command_id])?;
             } else {
@@ -5100,7 +5173,11 @@ async fn persist_turn_delivery_transition(
                     "UPDATE provider_turn_outbox SET state = ?, last_error = ?, failure_reason = ?, updated_at = ? WHERE command_id = ? AND state = ? AND attempts = ?",
                     params![next_state, transition.detail, reason, transition.updated_at, transition.command_id, state, transition.expected_attempt],
                 )?;
-                if updated == 0 { return Ok(None); }
+                if updated == 0 { return Ok(DeliveryTransitionCommit::Stale); }
+                if unchanged_retry {
+                    transaction.commit()?;
+                    return Ok(DeliveryTransitionCommit::Unannounced);
+                }
             }
             let turn_id = if transition.next_state == TurnDeliveryState::Delivered && mode == "steer" {
                 transition.turn_id.or(crate::persistence::provider_turn_steer_target_on(&transaction, &thread_id, &message_id)?)
@@ -5115,9 +5192,14 @@ async fn persist_turn_delivery_transition(
             if let Some(reason) = reason {
                 payload["delivery"]["reason"] = json!(reason);
             }
+            let metadata = if found_without_turn {
+                json!({ "foundWithoutTurn": true })
+            } else {
+                json!({})
+            };
             let planned = make_event(
                 "thread.turn-delivery-updated", "thread", &thread_id, &transition.updated_at,
-                &format!("server:turn-delivery:{}", transition.command_id), json!({}), payload,
+                &format!("server:turn-delivery:{}", transition.command_id), metadata, payload,
             );
             let saved = append_event_tx(&transaction, planned)?;
             for projector in PROJECTOR_NAMES {
@@ -5139,16 +5221,26 @@ async fn persist_turn_delivery_transition(
             }
             rebuild_thread_derived_fields_tx(&transaction, &saved.event.aggregate_id)?;
             transaction.commit()?;
-            Ok(Some(saved))
+            Ok(DeliveryTransitionCommit::Announced(Box::new(saved)))
         })
         .await
         .map_err(wrap_persistence)?;
-    if let Some(event) = committed {
-        let _ = events.send(event);
-        Ok(true)
-    } else {
-        Ok(false)
+    match committed {
+        DeliveryTransitionCommit::Announced(event) => {
+            let _ = events.send(*event);
+            Ok(true)
+        }
+        DeliveryTransitionCommit::Unannounced => Ok(true),
+        DeliveryTransitionCommit::Stale => Ok(false),
     }
+}
+
+/// How a delivery transition was committed: `Stale` when the row had moved on, `Unannounced` when
+/// it changed nothing the thread shows.
+enum DeliveryTransitionCommit {
+    Stale,
+    Unannounced,
+    Announced(Box<OrchestrationEvent>),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6080,6 +6172,27 @@ fn apply_turns_projector_tx(
                 [&thread_id],
             )?;
             transaction.execute("INSERT INTO projection_turns (thread_id, turn_id, pending_message_id, source_proposed_plan_thread_id, source_proposed_plan_id, assistant_message_id, state, requested_at, started_at, completed_at, checkpoint_turn_count, checkpoint_ref, checkpoint_status, checkpoint_files_json) VALUES (?, NULL, ?, ?, ?, NULL, 'running', ?, NULL, NULL, NULL, NULL, NULL, '[]')", params![thread_id, required_str(payload,"messageId")?, optional_string(payload.pointer("/sourceProposedPlan/threadId")), optional_string(payload.pointer("/sourceProposedPlan/planId")), required_str(payload,"createdAt")?])?;
+        }
+        // A delivery recorded delivered because the provider already had the message and no turn
+        // of it still runs (an explicit retry, or restart recovery with the session idle, found
+        // it) started no turn here. Its pending marker would stay running and hold queued
+        // follow-ups, so it goes. Only that explicit outcome clears it: an accepted turn keeps its
+        // marker until its session update, and so does a found turn that may still run.
+        "thread.turn-delivery-updated"
+            if event
+                .event
+                .metadata
+                .get("foundWithoutTurn")
+                .and_then(Value::as_bool)
+                == Some(true) =>
+        {
+            transaction.execute(
+                "DELETE FROM projection_turns WHERE thread_id = ? AND pending_message_id = ? AND turn_id IS NULL AND state = 'running'",
+                params![
+                    required_str(payload, "threadId")?,
+                    required_str(payload, "messageId")?
+                ],
+            )?;
         }
         "thread.session-set" => {
             let session = payload
@@ -11348,6 +11461,65 @@ mod tests {
             panic!("expected project create command");
         };
         assert_eq!(workspace_root, "/canonical/requested-workspace");
+    }
+
+    /// A delivery recorded delivered because the provider already had the message (found by an
+    /// explicit retry) clears its own pending turn marker, which would
+    /// otherwise stay running and hold queued follow-ups. Another message's marker is kept, and so
+    /// is the marker of an ordinary delivered turn, which its own session update settles.
+    #[tokio::test]
+    async fn a_delivery_delivered_without_a_turn_clears_its_pending_turn() {
+        let database = Database::open_in_memory().await.expect("database");
+        let running = database
+            .call(|connection| {
+                run_migrations(connection, None)?;
+                let transaction = connection.transaction()?;
+                let requested = |message_id: &str| {
+                    projector_event(
+                        "thread.turn-start-requested",
+                        json!({
+                            "threadId":"projector-thread", "messageId":message_id,
+                            "createdAt":"2026-07-10T10:00:00.000Z"
+                        }),
+                        json!({}),
+                    )
+                };
+                let delivered = |message_id: &str, found_without_turn: bool| {
+                    projector_event(
+                        "thread.turn-delivery-updated",
+                        json!({
+                            "threadId":"projector-thread", "messageId":message_id,
+                            "state":"delivered", "provider":"opencode",
+                            "updatedAt":"2026-07-10T10:00:01.000Z"
+                        }),
+                        if found_without_turn {
+                            json!({ "foundWithoutTurn": true })
+                        } else {
+                            json!({})
+                        },
+                    )
+                };
+                let mut context = ProjectionContext::default();
+                apply_turns_projector_tx(&transaction, &requested("other"), &mut context)?;
+                apply_turns_projector_tx(&transaction, &delivered("found", true), &mut context)?;
+                apply_turns_projector_tx(&transaction, &delivered("other", false), &mut context)?;
+                let kept: i64 = transaction.query_row(
+                    "SELECT COUNT(*) FROM projection_turns WHERE turn_id IS NULL AND state = 'running'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                apply_turns_projector_tx(&transaction, &requested("found"), &mut context)?;
+                apply_turns_projector_tx(&transaction, &delivered("found", true), &mut context)?;
+                let left: i64 = transaction.query_row(
+                    "SELECT COUNT(*) FROM projection_turns WHERE turn_id IS NULL AND state = 'running'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                Ok((kept, left))
+            })
+            .await
+            .expect("projection");
+        assert_eq!(running, (1, 0));
     }
 
     #[tokio::test]

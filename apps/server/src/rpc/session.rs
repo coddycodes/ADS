@@ -27,7 +27,7 @@ use super::{
     methods::{ACTIVE_RPC_METHODS, MethodMode},
     transport::{
         self, CHUNKED_RPC_SUBPROTOCOL, CONTROL_LANE_CAPACITY, ConnectionEnd, ConnectionLiveness,
-        OutboundFraming,
+        DEFLATE_RPC_SUBPROTOCOL, OutboundFraming,
     },
 };
 use crate::{
@@ -48,6 +48,9 @@ const OUTBOUND_CAPACITY: usize = 64;
 const MAX_IN_FLIGHT_REQUESTS: usize = 64;
 const INPUT_RESERVED_CONTROL_REQUESTS: usize = 8;
 const OUTBOUND_SEND_TIMEOUT: Duration = Duration::from_secs(5);
+/// Items a stream queued while its previous Chunk awaited an Ack merge into one Chunk of
+/// at most this many encoded bytes (a plain socket's whole-frame size).
+const STREAM_COALESCE_MAX_BYTES: usize = 64 * 1024;
 pub(crate) const SOCKET_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const PUMP_JOIN_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -686,13 +689,14 @@ pub(crate) async fn run_session(
     context: RpcSessionContext,
     session_shutdown: CancellationToken,
 ) {
-    let framing = if socket
-        .protocol()
-        .is_some_and(|protocol| protocol.as_bytes() == CHUNKED_RPC_SUBPROTOCOL.as_bytes())
-    {
-        OutboundFraming::PlainRecords
-    } else {
-        OutboundFraming::Whole
+    let framing = match socket.protocol().map(axum::http::HeaderValue::as_bytes) {
+        Some(protocol) if protocol == CHUNKED_RPC_SUBPROTOCOL.as_bytes() => {
+            OutboundFraming::PlainRecords { deflate: false }
+        }
+        Some(protocol) if protocol == DEFLATE_RPC_SUBPROTOCOL.as_bytes() => {
+            OutboundFraming::PlainRecords { deflate: true }
+        }
+        _ => OutboundFraming::Whole,
     };
     let liveness = ConnectionLiveness::new();
     let (socket_writer, socket_reader) = socket.split();
@@ -1309,17 +1313,28 @@ async fn run_stream(
     let method = request.tag.clone();
     let mut first_item = RequestTimer::stream(&request.headers);
     let mut stream = handler(request, context, cancellation.clone());
+    let coalesce_max_bytes = outbound
+        .message_limit()
+        .map_or(STREAM_COALESCE_MAX_BYTES, |limit| {
+            limit.min(STREAM_COALESCE_MAX_BYTES)
+        });
+    // An item taken while merging that has to go out on its own.
+    let mut carried = None;
     loop {
-        let item = tokio::select! {
-            biased;
-            () = cancellation.cancelled() => {
-                let _ = try_send_control_message(
-                    &outbound,
-                    ServerMessage::interrupt(request_id),
-                );
-                return;
+        let item = if let Some(item) = carried.take() {
+            Some(item)
+        } else {
+            tokio::select! {
+                biased;
+                () = cancellation.cancelled() => {
+                    let _ = try_send_control_message(
+                        &outbound,
+                        ServerMessage::interrupt(request_id),
+                    );
+                    return;
+                }
+                item = stream.recv() => item,
             }
-            item = stream.recv() => item,
         };
         let Some(item) = item else {
             send_stream_terminal(
@@ -1357,6 +1372,8 @@ async fn run_stream(
                     .await;
                     return;
                 }
+                let values =
+                    coalesce_queued_chunks(&mut stream, values, &mut carried, coalesce_max_bytes);
                 if let Err(failure) = send_method_message(
                     &outbound,
                     &session_shutdown,
@@ -1397,6 +1414,44 @@ async fn run_stream(
             }
         }
     }
+}
+
+/// Appends to `values` the items `stream` has already queued, in order, while the merged
+/// Chunk stays within `max_bytes`.
+///
+/// A stream has one Chunk in flight per Ack, so on a slow link every queued item would
+/// otherwise wait a round trip of its own: typing behind a 250 ms link echoed one key per
+/// 250 ms. A failure, an empty item, or an item that does not fit stops the merge and is
+/// left in `carried` to go out on its own.
+fn coalesce_queued_chunks(
+    stream: &mut mpsc::Receiver<RpcStreamChunk>,
+    mut values: Vec<Value>,
+    carried: &mut Option<RpcStreamChunk>,
+    max_bytes: usize,
+) -> Vec<Value> {
+    // Counted only once there is something to merge.
+    let mut bytes = None;
+    while let Ok(item) = stream.try_recv() {
+        let next = match item {
+            Ok(next) if !next.is_empty() => next,
+            other => {
+                *carried = Some(other);
+                break;
+            }
+        };
+        let current = match bytes {
+            Some(bytes) => bytes,
+            None => encoded_json_len(&values).unwrap_or(usize::MAX),
+        };
+        let merged = current.saturating_add(encoded_json_len(&next).unwrap_or(usize::MAX));
+        if merged > max_bytes {
+            *carried = Some(Ok(next));
+            break;
+        }
+        bytes = Some(merged);
+        values.extend(next);
+    }
+    values
 }
 
 async fn run_latest_stream(
@@ -2107,6 +2162,133 @@ mod tests {
             .await
             .expect("request cancellation unblocks the outbound capacity wait")
             .expect("latest stream task joins");
+    }
+
+    fn stream_request() -> RpcRequest {
+        RpcRequest {
+            id: RequestId::try_from("1").expect("request id"),
+            tag: "test.stream".to_owned(),
+            payload: json!({}),
+            headers: Vec::new(),
+            trace_id: None,
+            span_id: None,
+            sampled: None,
+        }
+    }
+
+    fn queued_stream(items: Vec<RpcStreamChunk>) -> (StreamHandler, mpsc::Sender<RpcStreamChunk>) {
+        let (chunk_sender, chunk_receiver) = mpsc::channel(64);
+        for item in items {
+            chunk_sender.try_send(item).expect("queue stream chunk");
+        }
+        let chunk_receiver = Arc::new(std::sync::Mutex::new(Some(chunk_receiver)));
+        let handler: StreamHandler = Arc::new(move |_request, _context, _cancellation| {
+            chunk_receiver
+                .lock()
+                .expect("stream receiver lock")
+                .take()
+                .expect("single stream invocation")
+        });
+        (handler, chunk_sender)
+    }
+
+    async fn next_outbound(receiver: &mut mpsc::Receiver<RpcOutboundFrame>) -> Value {
+        let frame = timeout(Duration::from_secs(1), receiver.recv())
+            .await
+            .expect("a message leaves")
+            .expect("outbound frame");
+        let (Message::Text(text), _) = frame.into_wire().expect("encode").into_parts() else {
+            panic!("RPC messages are text frames");
+        };
+        serde_json::from_str(&text).expect("message JSON")
+    }
+
+    #[tokio::test]
+    async fn stream_sends_items_queued_behind_an_unacknowledged_chunk_as_one_chunk() {
+        // One Chunk is in flight per Ack, a round trip each. Items the handler queued
+        // meanwhile leave together, so a slow link costs one round trip, not one per item.
+        let (handler, _keep_open) = queued_stream(vec![
+            Ok(vec![json!("a")]),
+            Ok(vec![json!("b")]),
+            Ok(vec![json!("c"), json!("d")]),
+        ]);
+        let (outbound, mut receiver, _control) = unbudgeted_outbound(8);
+        let (_ack_sender, ack_receiver) = mpsc::channel(1);
+        let task = tokio::spawn(run_stream(
+            stream_request(),
+            handler,
+            RpcSessionContext::unauthenticated(),
+            CancellationToken::new(),
+            CancellationToken::new(),
+            ack_receiver,
+            outbound,
+        ));
+
+        let first = next_outbound(&mut receiver).await;
+        assert_eq!(first["_tag"], "Chunk");
+        assert_eq!(first["values"], json!(["a", "b", "c", "d"]));
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn stream_keeps_order_and_delivers_a_failure_after_the_merged_chunk() {
+        let (handler, _keep_open) = queued_stream(vec![
+            Ok(vec![json!("a")]),
+            Ok(vec![json!("b")]),
+            Err(json!({ "_tag": "TestError" })),
+            Ok(vec![json!("never")]),
+        ]);
+        let (outbound, mut receiver, _control) = unbudgeted_outbound(8);
+        let (ack_sender, ack_receiver) = mpsc::channel(1);
+        let task = tokio::spawn(run_stream(
+            stream_request(),
+            handler,
+            RpcSessionContext::unauthenticated(),
+            CancellationToken::new(),
+            CancellationToken::new(),
+            ack_receiver,
+            outbound,
+        ));
+
+        let first = next_outbound(&mut receiver).await;
+        assert_eq!(first["values"], json!(["a", "b"]));
+        ack_sender.send(()).await.expect("acknowledge");
+        let terminal = next_outbound(&mut receiver).await;
+        assert_eq!(terminal["_tag"], "Exit");
+        assert_eq!(terminal["exit"]["_tag"], "Failure");
+        timeout(Duration::from_secs(1), task)
+            .await
+            .expect("stream ends after its failure")
+            .expect("stream task joins");
+    }
+
+    #[tokio::test]
+    async fn stream_merges_queued_items_only_up_to_the_chunk_byte_bound() {
+        let large = "x".repeat(STREAM_COALESCE_MAX_BYTES / 2);
+        let (handler, _keep_open) = queued_stream(vec![
+            Ok(vec![json!(large.clone())]),
+            Ok(vec![json!(large.clone())]),
+            Ok(vec![json!(large.clone())]),
+        ]);
+        let (outbound, mut receiver, _control) = unbudgeted_outbound(8);
+        let (ack_sender, ack_receiver) = mpsc::channel(1);
+        let task = tokio::spawn(run_stream(
+            stream_request(),
+            handler,
+            RpcSessionContext::unauthenticated(),
+            CancellationToken::new(),
+            CancellationToken::new(),
+            ack_receiver,
+            outbound,
+        ));
+
+        // Two halves plus JSON framing exceed the bound, so each item leaves alone.
+        for _ in 0..3 {
+            let chunk = next_outbound(&mut receiver).await;
+            assert_eq!(chunk["values"].as_array().map(Vec::len), Some(1));
+            ack_sender.send(()).await.expect("acknowledge");
+        }
+        task.abort();
     }
 
     #[tokio::test(start_paused = true)]

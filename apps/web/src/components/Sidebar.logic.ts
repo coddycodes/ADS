@@ -284,11 +284,15 @@ export function resolveWorkspaceBranchLabel(
   return liveBranch || fallbackBranch;
 }
 
-/** Whether the checkout has uncommitted changes, per a fresh (not stale) status. */
+/**
+ * Whether the checkout has uncommitted changes, per the latest status even when it
+ * is stale: a failed PR lookup marks a just-read base stale, and hiding the dot
+ * would claim the checkout is clean.
+ */
 export function resolveWorkspaceDirty(
   status: VcsStatusResult | VcsStatusSummary | null | undefined,
 ): boolean {
-  return Boolean(status && !("stale" in status && status.stale) && status.hasWorkingTreeChanges);
+  return Boolean(status?.hasWorkingTreeChanges);
 }
 
 /** Line 2 hides the branch when it repeats the title (the primary card's title is its branch). */

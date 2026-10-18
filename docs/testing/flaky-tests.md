@@ -4,6 +4,19 @@ Use the shared [failure classification and repair procedure](./cross-platform-va
 first. Keep the initial failure and its exact command. A passing retry alone
 does not distinguish a regression, a fixture race, and a host resource limit.
 
+A test that reads an RPC stream reads every value of each Chunk: the server
+coalesces queued events into one Chunk. A loop that kept only the first value
+dropped the line it waited for, and then timed out with the line already in the
+terminal's history. Output text can also split across values, so a test
+matches it against the accumulated transcript. A step deadline must not contain
+a shorter per-frame deadline either: a loop bounded by its step reads frames
+with no deadline of their own.
+
+Check that the server stopped a provider from the server side, for example that
+its process is gone, rather than from the fixture. The server gives Codex one
+second to shut down gracefully and then kills it. A fixture that records
+`shutdown` itself misses that record whenever it gets no CPU in that second.
+
 For an in-flight HTTP body, a client-side stream poll proves only that the
 client produced bytes, not that the server admitted the request. The Claude
 terminal dormant-hook test uses `Expect: 100-continue` and waits for the
@@ -39,7 +52,32 @@ it. A sibling test that hits the same `warn!` first on another thread, with no
 subscriber, turns it off for the capture: an expected event is missing, and an
 absence check passes without checking anything (#112). A capture that checks
 absence also emits the event on purpose afterwards and checks that it arrived.
-Captures in integration-test binaries share this exposure.
+Captures in integration-test binaries share this exposure: they include
+`tests/support/reexec.rs` by `#[path]` and call `reexec::in_own_process` with
+the test's bare name. To reproduce, let a sibling test with no subscriber reach
+the callsite after the capture is installed; the expected event goes missing
+every time.
+
+The profiler is process-wide as well: `profiler::is_enabled` reads the handle of
+the server started last in the process. A test that turns the profiler on, or
+that checks a client batch is refused while it is off, therefore runs in its
+own process. Otherwise a sibling's toggle makes the batch accepted, and a
+sibling's server start resets the toggle.
+
+Provider-terminal observer workers share a process-wide admission cap. A test
+in `provider_terminal_supervisor` that starts one runs in its own process
+(`own_process!`), so the binary's concurrent tests cannot hold the slots it
+needs: a refused worker leaves its terminal unobserved, and the test waits for
+an observation that never arrives. OpenCode and Codex then never report their
+initial observation or handshake. Widening the tests' readiness waits does not
+help. CPU contention and CPU quotas did not reproduce this while the cap was
+sixteen. Evicting the test binary from the page cache
+(`posix_fadvise(POSIX_FADV_DONTNEED)`) before each run did, and so does a
+sibling that holds every slot through `TerminalObserverGeneration::worker_context`.
+The tests that cover a refused worker hold the slots that way in their own
+process and install a process-wide subscriber after holding them, because the
+refusal is logged on the manager's callback thread. A new test that starts an
+observer worker uses `own_process!` too.
 
 For WebSocket heartbeat integration, separate exact cadence from connection
 survival. Controlled-clock transport tests pin the 15-second cadence and the

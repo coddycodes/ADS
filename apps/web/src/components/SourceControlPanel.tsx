@@ -39,7 +39,6 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
-import { ScrollArea } from "~/components/ui/scroll-area";
 import { Spinner } from "~/components/ui/spinner";
 import { Textarea } from "~/components/ui/textarea";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -86,6 +85,7 @@ import {
   resolveDefaultBranchActionDialogCopy,
   resolveQuickAction,
 } from "./GitActionsControl.logic";
+import { SourceControlChangesList } from "./SourceControlChangesList";
 import { SourceControlCommits } from "./SourceControlCommits";
 import {
   BUSY_REASON,
@@ -108,7 +108,6 @@ import {
   type WorkingTreeFile,
   workingTreeFiles,
 } from "./SourceControlPanel.logic";
-import { SourceControlSection } from "./SourceControlSection";
 import { GIT_MANAGER_STASH_MERGE_DISABLED_REASON } from "./gitManager/gitManagerAvailability";
 import { GitManagerInProgressStrip } from "./gitManager/GitManagerInProgressStrip";
 import { GitManagerMergeDialog } from "./gitManager/merge/GitManagerMergeDialog";
@@ -987,7 +986,6 @@ export default function SourceControlPanel({
     onStageFiles: (paths: readonly string[]) => void runStage([...paths]),
     onUnstageFiles: (paths: readonly string[]) => void runUnstage([...paths]),
     onSelectFiles: setFilesSelected,
-    groupByFolder,
   };
 
   const rowActionProps = {
@@ -999,6 +997,19 @@ export default function SourceControlPanel({
     onCopyPath,
     onOpenExternalEditor,
     isPrimaryEnv,
+  };
+
+  // What the Staged Changes, Changes and Untracked Files sections share.
+  const stagingSectionProps = {
+    checked: isFileStaged,
+    onToggle: onToggleFile,
+    onOpenFile: openFileInDiff,
+    disabled: isBusy || ignorePending,
+    ...rowActionProps,
+    ...folderActionProps,
+    selectionMode: activeSelectionMode,
+    selected: (file: WorkingTreeFile) => selectedFilePaths.has(file.path),
+    onSelect: toggleSelectedFile,
   };
 
   if (workspaceUnavailable) {
@@ -1303,7 +1314,7 @@ export default function SourceControlPanel({
             ) : null}
           </div>
         ) : null}
-        <ScrollArea className="min-h-0 flex-1 rounded-md border border-border/60">
+        <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border/60">
           {statusQuery.isPending && !status ? (
             <p className="flex items-center gap-2 px-3 py-6 text-xs text-muted-foreground">
               <Spinner className="size-3.5" aria-hidden /> Loading changes…
@@ -1313,94 +1324,75 @@ export default function SourceControlPanel({
           ) : !hasAreas ? (
             // Legacy server (no staging areas): one flat list of all changes.
             // No stage/unstage RPCs exist here, so no per-row checkbox renders.
-            <SourceControlSection
-              title="Changes"
-              files={files}
-              onToggle={LEGACY_NOOP_TOGGLE}
-              onOpenFile={openFileInDiff}
-              disabled={isBusy}
+            <SourceControlChangesList
               groupByFolder={groupByFolder}
+              sections={[
+                {
+                  title: "Changes",
+                  files,
+                  onToggle: LEGACY_NOOP_TOGGLE,
+                  onOpenFile: openFileInDiff,
+                  disabled: isBusy,
+                },
+              ]}
             />
           ) : (
-            <>
-              <SourceControlSection
-                title="Staged Changes"
-                files={groups.staged}
-                checked={isFileStaged}
-                onToggle={onToggleFile}
-                onOpenFile={openFileInDiff}
-                primaryAction={{
-                  icon: "unstage",
-                  label: "Unstage all",
-                  onClick: () => void runUnstage(groups.staged.map((file) => file.path)),
-                }}
-                disabled={isBusy || ignorePending}
-                {...rowActionProps}
-                {...folderActionProps}
-                selectionMode={activeSelectionMode}
-                selected={(file) => selectedFilePaths.has(file.path)}
-                onSelect={toggleSelectedFile}
-                allSelected={groups.staged.every((file) => selectedFilePaths.has(file.path))}
-                onSelectAll={(selected) => setFilesSelected(groups.staged, selected)}
-              />
-              <SourceControlSection
-                title="Changes"
-                files={groups.unstaged}
-                checked={isFileStaged}
-                onToggle={onToggleFile}
-                onOpenFile={openFileInDiff}
-                primaryAction={{
-                  icon: "stage",
-                  label: "Stage all",
-                  onClick: () => void runStage(groups.unstaged.map((file) => file.path)),
-                }}
-                onDiscard={() =>
-                  setPendingDiscard({
-                    kind: "bulk",
-                    paths: groups.unstaged.map((file) => file.path),
-                    variant: "discard",
-                  })
-                }
-                disabled={isBusy || ignorePending}
-                {...rowActionProps}
-                {...folderActionProps}
-                selectionMode={activeSelectionMode}
-                selected={(file) => selectedFilePaths.has(file.path)}
-                onSelect={toggleSelectedFile}
-                allSelected={groups.unstaged.every((file) => selectedFilePaths.has(file.path))}
-                onSelectAll={(selected) => setFilesSelected(groups.unstaged, selected)}
-              />
-              <SourceControlSection
-                title="Untracked Files"
-                files={groups.untracked}
-                checked={isFileStaged}
-                onToggle={onToggleFile}
-                onOpenFile={openFileInDiff}
-                primaryAction={{
-                  icon: "stage",
-                  label: "Stage all",
-                  onClick: () => void runStage(groups.untracked.map((file) => file.path)),
-                }}
-                onDiscard={() =>
-                  setPendingDiscard({
-                    kind: "bulk",
-                    paths: groups.untracked.map((file) => file.path),
-                    variant: "delete-untracked",
-                  })
-                }
-                discardVariant="delete-untracked"
-                disabled={isBusy || ignorePending}
-                {...rowActionProps}
-                {...folderActionProps}
-                selectionMode={activeSelectionMode}
-                selected={(file) => selectedFilePaths.has(file.path)}
-                onSelect={toggleSelectedFile}
-                allSelected={groups.untracked.every((file) => selectedFilePaths.has(file.path))}
-                onSelectAll={(selected) => setFilesSelected(groups.untracked, selected)}
-              />
-            </>
+            <SourceControlChangesList
+              groupByFolder={groupByFolder}
+              sections={[
+                {
+                  ...stagingSectionProps,
+                  title: "Staged Changes",
+                  files: groups.staged,
+                  primaryAction: {
+                    icon: "unstage",
+                    label: "Unstage all",
+                    onClick: () => void runUnstage(groups.staged.map((file) => file.path)),
+                  },
+                  allSelected: groups.staged.every((file) => selectedFilePaths.has(file.path)),
+                  onSelectAll: (selected) => setFilesSelected(groups.staged, selected),
+                },
+                {
+                  ...stagingSectionProps,
+                  title: "Changes",
+                  files: groups.unstaged,
+                  primaryAction: {
+                    icon: "stage",
+                    label: "Stage all",
+                    onClick: () => void runStage(groups.unstaged.map((file) => file.path)),
+                  },
+                  onDiscard: () =>
+                    setPendingDiscard({
+                      kind: "bulk",
+                      paths: groups.unstaged.map((file) => file.path),
+                      variant: "discard",
+                    }),
+                  allSelected: groups.unstaged.every((file) => selectedFilePaths.has(file.path)),
+                  onSelectAll: (selected) => setFilesSelected(groups.unstaged, selected),
+                },
+                {
+                  ...stagingSectionProps,
+                  title: "Untracked Files",
+                  files: groups.untracked,
+                  primaryAction: {
+                    icon: "stage",
+                    label: "Stage all",
+                    onClick: () => void runStage(groups.untracked.map((file) => file.path)),
+                  },
+                  onDiscard: () =>
+                    setPendingDiscard({
+                      kind: "bulk",
+                      paths: groups.untracked.map((file) => file.path),
+                      variant: "delete-untracked",
+                    }),
+                  discardVariant: "delete-untracked",
+                  allSelected: groups.untracked.every((file) => selectedFilePaths.has(file.path)),
+                  onSelectAll: (selected) => setFilesSelected(groups.untracked, selected),
+                },
+              ]}
+            />
           )}
-        </ScrollArea>
+        </div>
 
         {summary.totalCount > 0 ? (
           <div className={cn("flex justify-end px-1 font-mono text-xs")}>

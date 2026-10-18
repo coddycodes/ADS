@@ -21,6 +21,10 @@ use tokio_util::sync::CancellationToken;
 #[cfg(test)]
 use crate::test_support::FixtureEvent;
 
+/// The largest single message Codex may send on any transport: a stdout line or a WebSocket
+/// message. What each decoder keeps is bounded again, far lower.
+pub const CODEX_TRANSPORT_MESSAGE_MAX_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Clone, Copy, Debug)]
 pub struct ConnectionConfig {
     pub max_stdout_line_bytes: usize,
@@ -30,7 +34,7 @@ pub struct ConnectionConfig {
 impl Default for ConnectionConfig {
     fn default() -> Self {
         Self {
-            max_stdout_line_bytes: 8 * 1024 * 1024,
+            max_stdout_line_bytes: CODEX_TRANSPORT_MESSAGE_MAX_BYTES,
             max_stderr_line_bytes: 64 * 1024,
         }
     }

@@ -441,6 +441,38 @@ pub(crate) struct ProviderMaintenanceCapabilities {
 }
 
 impl ProviderMaintenanceCapabilities {
+    /// OpenCode 2 is published as `@opencode/cli`; `opencode-ai` stays on the 1.x line. Where the
+    /// installation path did not name the package, the installed major decides it, for the
+    /// advisory and the package-manager update action alike.
+    pub(crate) fn for_installed_version(mut self, driver: &str, version: Option<&str>) -> Self {
+        use crate::provider::opencode::{OpenCodeCliSupport, OpenCodeProtocol, cli_support};
+        if driver != "opencode"
+            || self.latest != Some(LatestVersionSource::Npm("opencode-ai"))
+            || version.map(cli_support) != Some(OpenCodeCliSupport::Supported(OpenCodeProtocol::V2))
+        {
+            return self;
+        }
+        let package = OPENCODE_2_PACKAGE.package_name;
+        let replace = |value: &str| {
+            value
+                .replace("opencode-ai@latest", &format!("{package}@latest"))
+                .replace(" opencode-ai", &format!(" {package}"))
+        };
+        self.latest = Some(OPENCODE_2_PACKAGE.latest);
+        self.display_command = self.display_command.as_deref().map(replace);
+        if let Some(update) = self.update.as_mut() {
+            update.display = replace(&update.display);
+            for argument in &mut update.args {
+                if argument == "opencode-ai" {
+                    *argument = package.to_owned();
+                } else if argument == "opencode-ai@latest" {
+                    *argument = format!("{package}@latest");
+                }
+            }
+        }
+        self
+    }
+
     pub(crate) fn unknown() -> Self {
         Self {
             latest: None,
@@ -597,11 +629,20 @@ fn resolve_package_managed_capabilities(
     canonical: Option<&Path>,
     claude_hints: &ClaudeSourceHints,
 ) -> ProviderMaintenanceCapabilities {
-    let Some(definition) = package_definition(driver) else {
-        return ProviderMaintenanceCapabilities::unknown();
-    };
     let resolved_path = resolved.map(normalized_path);
     let canonical_path = canonical.map(normalized_path);
+    let opencode_2 = driver == "opencode"
+        && [&resolved_path, &canonical_path]
+            .into_iter()
+            .flatten()
+            .any(|path| path.contains("/node_modules/@opencode/cli/"));
+    let Some(definition) = (if opencode_2 {
+        Some(OPENCODE_2_PACKAGE)
+    } else {
+        package_definition(driver)
+    }) else {
+        return ProviderMaintenanceCapabilities::unknown();
+    };
     let ownership = match reconcile_installation_ownership(
         driver,
         resolved_path.as_deref(),
@@ -793,6 +834,18 @@ fn claude_source_capabilities(
     Some(capabilities)
 }
 
+/// OpenCode 2 is published as `@opencode/cli`; `opencode-ai` stays on the 1.x line.
+const OPENCODE_2_PACKAGE: PackageDefinition = PackageDefinition {
+    latest: LatestVersionSource::Npm("@opencode/cli"),
+    package_name: "@opencode/cli",
+    homebrew_args: &["upgrade", "anomalyco/tap/opencode"],
+    native_update: Some(NativeUpdate {
+        args: &["upgrade"],
+        lock_key: "opencode-native",
+        path_matches: is_opencode_native_path,
+    }),
+};
+
 fn package_definition(driver: &str) -> Option<PackageDefinition> {
     match driver {
         "codex" => Some(PackageDefinition {
@@ -895,25 +948,25 @@ fn path_ownership_evidence(driver: &str, path: &str) -> PathOwnershipEvidence {
     }
     if is_user_home_shim_path(&components, &[".vite-plus", "bin"]) {
         return exact_ownership_evidence(
-            exact_provider_basename(path, expected_binary),
+            provider_basename(driver, path, expected_binary),
             InstallationOwnership::VitePlus,
         );
     }
     if is_user_home_shim_path(&components, &[".bun", "bin"]) {
         return exact_ownership_evidence(
-            exact_provider_basename(path, expected_binary),
+            provider_basename(driver, path, expected_binary),
             InstallationOwnership::Bun,
         );
     }
     if is_pnpm_shim_path(&components) {
         return exact_ownership_evidence(
-            exact_provider_basename(path, expected_binary),
+            provider_basename(driver, path, expected_binary),
             InstallationOwnership::Pnpm,
         );
     }
     if is_npm_shim_path(&components) {
         return exact_ownership_evidence(
-            exact_provider_basename(path, expected_binary),
+            provider_basename(driver, path, expected_binary),
             InstallationOwnership::Npm,
         );
     }
@@ -963,6 +1016,12 @@ fn path_components(path: &str) -> Vec<&str> {
 
 fn contains_component(components: &[&str], expected: &str) -> bool {
     components.contains(&expected)
+}
+
+/// OpenCode 2's npm package also installs an `opencode2` shim.
+fn provider_basename(driver: &str, path: &str, expected: &str) -> bool {
+    exact_provider_basename(path, expected)
+        || (driver == "opencode" && exact_provider_basename(path, "opencode2"))
 }
 
 fn exact_provider_basename(path: &str, expected: &str) -> bool {
@@ -1029,13 +1088,16 @@ fn global_package_ownership(driver: &str, components: &[&str]) -> Option<Install
         .iter()
         .rposition(|component| *component == "node_modules")?;
     let package = &components[node_modules + 1..];
-    let expected = match driver {
-        "codex" => &["@openai", "codex"][..],
-        "claudeAgent" => &["@anthropic-ai", "claude-code"][..],
-        "opencode" => &["opencode-ai"][..],
+    let expected: &[&[&str]] = match driver {
+        "codex" => &[&["@openai", "codex"]],
+        "claudeAgent" => &[&["@anthropic-ai", "claude-code"]],
+        "opencode" => &[&["opencode-ai"], &["@opencode", "cli"]],
         _ => return None,
     };
-    if package.len() < expected.len() || &package[..expected.len()] != expected {
+    if !expected
+        .iter()
+        .any(|expected| package.starts_with(expected))
+    {
         return None;
     }
     let prefix = &components[..node_modules];

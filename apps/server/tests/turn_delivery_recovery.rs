@@ -1308,7 +1308,11 @@ impl ProviderDriver for CrashBoundaryDriver {
         })
     }
 
-    fn rollback(&self, _turn_count: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        _turn_count: i64,
+        _rewind_key: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async { Ok(()) })
     }
 
@@ -1343,6 +1347,7 @@ impl OrchestrationEffectCallbacks for RecoveryCallbacks {
         &'a self,
         _thread_id: &'a str,
         _turns: i64,
+        _rewind_key: &'a str,
     ) -> BoxEffectFuture<'a, ProviderRewind> {
         Box::pin(async { Ok(ProviderRewind::Rewound) })
     }

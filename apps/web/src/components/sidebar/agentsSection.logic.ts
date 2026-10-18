@@ -1,7 +1,16 @@
-import { scopeThreadRef, scopedThreadKey } from "@bibcode/client-runtime/environment";
-import type { EnvironmentThreadShell } from "@bibcode/client-runtime/state/models";
+import {
+  scopeProjectRef,
+  scopeThreadRef,
+  scopedProjectKey,
+  scopedThreadKey,
+} from "@bibcode/client-runtime/environment";
+import type {
+  EnvironmentProject,
+  EnvironmentThreadShell,
+} from "@bibcode/client-runtime/state/models";
 import type { EnvironmentAvailabilityStatus } from "@bibcode/client-runtime/state/shell";
 import {
+  type EnvironmentId,
   isProviderDriverKind,
   type OrchestrationConversationPreview,
   PROVIDER_DISPLAY_NAMES,
@@ -29,6 +38,8 @@ export interface AgentRow {
   readonly key: string;
   readonly ref: ScopedThreadRef;
   readonly shell: EnvironmentThreadShell;
+  /** The checkout's live branch when known, else the thread's recorded one. */
+  readonly branch: string | null;
   readonly group: AgentGroupId;
   readonly pill: ThreadStatusPill | null;
   readonly environmentLabel: string;
@@ -102,52 +113,107 @@ export function resolveAgentPreviewLine(
   );
 }
 
+/** A checkout whose passive VCS summary names the branch of the rows in it. */
+export interface AgentCheckout {
+  readonly key: string;
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+}
+
+function isAgentRowShell(shell: EnvironmentThreadShell): boolean {
+  return shell.archivedAt === null && shell.session !== null;
+}
+
+/**
+ * Each listed thread's checkout, as the left panel resolves it: its worktree, else its
+ * project's root. Only live environments are read; other rows keep the recorded branch.
+ */
+export function resolveAgentCheckouts(input: {
+  readonly shells: ReadonlyArray<EnvironmentThreadShell>;
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly availabilityByEnvironmentId: ReadonlyMap<string, EnvironmentAvailabilityStatus>;
+}): {
+  readonly checkoutKeyByThreadKey: ReadonlyMap<string, string>;
+  readonly checkouts: ReadonlyArray<AgentCheckout>;
+} {
+  const rootByProjectKey = new Map(
+    input.projects.map((project) => [
+      scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
+      project.workspaceRoot,
+    ]),
+  );
+  const checkoutKeyByThreadKey = new Map<string, string>();
+  const checkoutsByKey = new Map<string, AgentCheckout>();
+  for (const shell of input.shells) {
+    if (!isAgentRowShell(shell)) continue;
+    if (input.availabilityByEnvironmentId.get(shell.environmentId) !== "live") continue;
+    const cwd =
+      shell.worktreePath ??
+      rootByProjectKey.get(scopedProjectKey(scopeProjectRef(shell.environmentId, shell.projectId)));
+    if (cwd === undefined) continue;
+    const key = JSON.stringify([shell.environmentId, cwd]);
+    checkoutKeyByThreadKey.set(scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id)), key);
+    if (!checkoutsByKey.has(key)) {
+      checkoutsByKey.set(key, { key, environmentId: shell.environmentId, cwd });
+    }
+  }
+  return {
+    checkoutKeyByThreadKey,
+    checkouts: [...checkoutsByKey.values()].toSorted((left, right) =>
+      left.key < right.key ? -1 : left.key > right.key ? 1 : 0,
+    ),
+  };
+}
+
 export function buildAgentRows(input: {
   readonly shells: ReadonlyArray<EnvironmentThreadShell>;
   readonly projectTitleById: ReadonlyMap<string, string>;
   readonly environmentLabelById: ReadonlyMap<string, string>;
   readonly availabilityByEnvironmentId: ReadonlyMap<string, EnvironmentAvailabilityStatus>;
+  /** Live branch per thread key; a thread without one shows its recorded branch. */
+  readonly liveBranchByThreadKey?: ReadonlyMap<string, string>;
 }): ReadonlyArray<AgentRow> {
-  return input.shells
-    .filter((shell) => shell.archivedAt === null && shell.session !== null)
-    .map((shell) => {
-      const ref = scopeThreadRef(shell.environmentId, shell.id);
-      const pill = resolveThreadStatusPill({ thread: shell });
-      const group = resolveAgentGroup(pill);
-      const projectTitle = input.projectTitleById.get(shell.projectId) ?? "";
-      const environmentLabel = input.environmentLabelById.get(shell.environmentId) ?? "";
-      const environmentStatus = input.availabilityByEnvironmentId.get(shell.environmentId) ?? null;
-      const preview = shell.conversationPreview;
-      const provider = resolveAgentProvider(shell.session?.providerName);
+  return input.shells.filter(isAgentRowShell).map((shell) => {
+    const ref = scopeThreadRef(shell.environmentId, shell.id);
+    const key = scopedThreadKey(ref);
+    const branch = input.liveBranchByThreadKey?.get(key) ?? shell.branch;
+    const pill = resolveThreadStatusPill({ thread: shell });
+    const group = resolveAgentGroup(pill);
+    const projectTitle = input.projectTitleById.get(shell.projectId) ?? "";
+    const environmentLabel = input.environmentLabelById.get(shell.environmentId) ?? "";
+    const environmentStatus = input.availabilityByEnvironmentId.get(shell.environmentId) ?? null;
+    const preview = shell.conversationPreview;
+    const provider = resolveAgentProvider(shell.session?.providerName);
 
-      return {
-        key: scopedThreadKey(ref),
-        ref,
-        shell,
-        group,
-        pill,
-        environmentLabel,
-        environmentLive: environmentStatus === "live",
-        environmentStatus,
-        projectTitle,
-        providerDriverKind: provider.driverKind,
-        providerLabel: provider.label,
-        previewLine: resolveAgentPreviewLine(pill, preview),
-        searchText: normalizeSearchText(
-          [
-            shell.title,
-            projectTitle,
-            shell.branch ?? "",
-            environmentLabel,
-            shell.session?.providerName ?? "",
-            pill?.label ?? "",
-            preview?.prompt ?? "",
-            preview?.tool ?? "",
-            preview?.assistantMessage ?? "",
-          ].join(" "),
-        ),
-      } satisfies AgentRow;
-    });
+    return {
+      key,
+      ref,
+      shell,
+      branch,
+      group,
+      pill,
+      environmentLabel,
+      environmentLive: environmentStatus === "live",
+      environmentStatus,
+      projectTitle,
+      providerDriverKind: provider.driverKind,
+      providerLabel: provider.label,
+      previewLine: resolveAgentPreviewLine(pill, preview),
+      searchText: normalizeSearchText(
+        [
+          shell.title,
+          projectTitle,
+          branch ?? "",
+          environmentLabel,
+          shell.session?.providerName ?? "",
+          pill?.label ?? "",
+          preview?.prompt ?? "",
+          preview?.tool ?? "",
+          preview?.assistantMessage ?? "",
+        ].join(" "),
+      ),
+    } satisfies AgentRow;
+  });
 }
 
 function compareAgentRows(left: AgentRow, right: AgentRow): number {

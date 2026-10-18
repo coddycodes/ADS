@@ -2,20 +2,25 @@
 // @effect-diagnostics globalTimers:off - Pacing owns short, bounded timers.
 // @effect-diagnostics globalDate:off - Pacing schedules each piece against wall-clock send times.
 // @effect-diagnostics globalConsole:off - The CLI prints its bound addresses for the operator.
+// @effect-diagnostics globalRandom:off - Jitter only needs an unseeded spread of delays.
 /**
  * Throttling TCP proxy for the slow-link liveness runbook
- * (docs/testing/cross-platform-validation.md, "Slow-link liveness scenario").
+ * (docs/testing/cross-platform-validation.md, "Slow-link liveness scenario")
+ * and the high-latency measurement (scripts/measure-remote-latency.ts).
  * It is a development tool and never runs in production.
  *
  * Each direction is paced at its own rate. The proxy stops reading a source
- * while that direction holds 64 KiB, so a slow link makes the sender's socket
- * writes block (backpressure). `frozen` stops both directions without closing
- * either socket.
+ * while that direction holds 64 KiB beyond what is still in flight, so a slow
+ * link makes the sender's socket writes block (backpressure). `delay` holds
+ * every byte for that many milliseconds in each direction (a 125 ms delay is a
+ * 250 ms round trip), plus up to `jitter` more; bytes never reorder. `frozen`
+ * stops both directions without closing either socket.
  *
  *   node scripts/throttle-proxy.ts --listen 127.0.0.1:13854 --target 127.0.0.1:13853 \
- *     --control 127.0.0.1:13855 [--down <bytes/s>] [--up <bytes/s>]
+ *     --control 127.0.0.1:13855 [--down <bytes/s>] [--up <bytes/s>] [--delay <ms>] [--jitter <ms>]
  *
- * Control API: GET /set?down=<B/s>&up=<B/s>&freeze=0|1 (0 B/s is unlimited); GET /state.
+ * Control API: GET /set?down=<B/s>&up=<B/s>&freeze=0|1&delay=<ms>&jitter=<ms>
+ * (0 B/s is unlimited); GET /drop closes every open connection; GET /state.
  */
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
@@ -27,11 +32,17 @@ export interface LinkSettings {
   readonly up: number;
   /** Stops forwarding in both directions while true. */
   readonly frozen: boolean;
+  /** One-way latency in milliseconds, applied to each direction. */
+  readonly delay: number;
+  /** Extra one-way latency of up to this many milliseconds, chosen per piece. */
+  readonly jitter: number;
 }
 
-export const UNTHROTTLED: LinkSettings = { down: 0, up: 0, frozen: false };
+export const UNTHROTTLED: LinkSettings = { down: 0, up: 0, frozen: false, delay: 0, jitter: 0 };
 
 const QUEUE_HIGH_WATER_BYTES = 64 * 1024;
+/** Extra room while bytes wait out a delay, so latency alone does not cap an unlimited link. */
+const DELAY_WINDOW_BYTES = 8 * 1024 * 1024;
 const PIECE_BYTES = 4 * 1024;
 const FROZEN_POLL_MS = 20;
 
@@ -39,6 +50,8 @@ export interface ThrottleProxy {
   readonly port: number;
   readonly settings: () => LinkSettings;
   readonly update: (next: Partial<LinkSettings>) => LinkSettings;
+  /** Destroys every open connection, as a dropped link would; new ones still connect. */
+  readonly drop: () => void;
   readonly close: () => Promise<void>;
 }
 
@@ -48,10 +61,15 @@ function pace(
   destination: NodeNet.Socket,
   rate: () => number,
   frozen: () => boolean,
+  latency: () => number,
 ): () => void {
-  const queue: Array<Buffer> = [];
+  const queue: Array<{ readonly piece: Buffer; readonly readyAt: number }> = [];
   let queued = 0;
   let nextSendAt = 0;
+  let lastReadyAt = 0;
+  // ponytail: a fixed allowance for bytes in flight; size it from rate x delay if a
+  // measurement ever needs more than 8 MiB in flight.
+  const highWater = () => QUEUE_HIGH_WATER_BYTES + (latency() > 0 ? DELAY_WINDOW_BYTES : 0);
   let ended = false;
   let waitingForDrain = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -66,13 +84,19 @@ function pace(
       schedule(FROZEN_POLL_MS);
       return;
     }
-    const piece = queue.shift();
-    if (piece === undefined) {
+    const head = queue[0];
+    if (head === undefined) {
       if (ended) destination.end();
       return;
     }
+    if (head.readyAt > Date.now()) {
+      schedule(head.readyAt - Date.now());
+      return;
+    }
+    queue.shift();
+    const piece = head.piece;
     queued -= piece.length;
-    if (queued < QUEUE_HIGH_WATER_BYTES && source.isPaused()) source.resume();
+    if (queued < highWater() && source.isPaused()) source.resume();
     const bytesPerSecond = rate();
     const now = Date.now();
     nextSendAt =
@@ -89,12 +113,15 @@ function pace(
   }
 
   source.on("data", (data: Buffer) => {
+    // Later bytes never overtake earlier ones, whatever the jitter.
+    const readyAt = Math.max(lastReadyAt, Date.now() + latency());
+    lastReadyAt = readyAt;
     for (let offset = 0; offset < data.length; offset += PIECE_BYTES) {
       const piece = data.subarray(offset, offset + PIECE_BYTES);
-      queue.push(piece);
+      queue.push({ piece, readyAt });
       queued += piece.length;
     }
-    if (queued >= QUEUE_HIGH_WATER_BYTES) source.pause();
+    if (queued >= highWater()) source.pause();
     schedule(nextSendAt - Date.now());
   });
   source.on("end", () => {
@@ -119,17 +146,20 @@ export async function startThrottleProxy(options: {
     const upstream = NodeNet.connect(options.targetPort, options.targetHost);
     sockets.add(client);
     sockets.add(upstream);
+    const latency = () => settings.delay + Math.random() * settings.jitter;
     const stopDown = pace(
       upstream,
       client,
       () => settings.down,
       () => settings.frozen,
+      latency,
     );
     const stopUp = pace(
       client,
       upstream,
       () => settings.up,
       () => settings.frozen,
+      latency,
     );
     const destroyBoth = (): void => {
       stopDown();
@@ -156,6 +186,9 @@ export async function startThrottleProxy(options: {
       settings = { ...settings, ...next };
       return settings;
     },
+    drop: () => {
+      for (const socket of sockets) socket.destroy();
+    },
     close: () =>
       new Promise<void>((resolve) => {
         for (const socket of sockets) socket.destroy();
@@ -171,11 +204,16 @@ export function startControlServer(
 ): Promise<NodeHttp.Server> {
   const server = NodeHttp.createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://control.invalid");
+    if (url.pathname === "/drop") proxy.drop();
     if (url.pathname === "/set") {
       const down = url.searchParams.get("down");
       const up = url.searchParams.get("up");
       const freeze = url.searchParams.get("freeze");
+      const delay = url.searchParams.get("delay");
+      const jitter = url.searchParams.get("jitter");
       proxy.update({
+        ...(delay === null ? {} : { delay: Number(delay) }),
+        ...(jitter === null ? {} : { jitter: Number(jitter) }),
         ...(down === null ? {} : { down: Number(down) }),
         ...(up === null ? {} : { up: Number(up) }),
         ...(freeze === null ? {} : { frozen: freeze === "1" }),
@@ -215,7 +253,12 @@ export async function runThrottleProxyMain(
     listenPort: listen.port,
     targetHost: target.host,
     targetPort: target.port,
-    initial: { down: Number(args.get("--down") ?? 0), up: Number(args.get("--up") ?? 0) },
+    initial: {
+      down: Number(args.get("--down") ?? 0),
+      up: Number(args.get("--up") ?? 0),
+      delay: Number(args.get("--delay") ?? 0),
+      jitter: Number(args.get("--jitter") ?? 0),
+    },
   });
   const controlServer = await startControlServer(proxy, control.host, control.port);
   const controlPort = (controlServer.address() as NodeNet.AddressInfo).port;

@@ -75,6 +75,27 @@ mod tests {
             (
                 "opencode",
                 "opencode",
+                Some("/usr/local/bin/opencode"),
+                Some("/usr/local/lib/node_modules/@opencode/cli/bin/opencode.exe"),
+                Some("npm install -g @opencode/cli@latest"),
+            ),
+            (
+                "opencode",
+                "opencode",
+                Some("C:/Users/me/AppData/Roaming/npm/opencode.cmd"),
+                Some("C:/Users/me/AppData/Roaming/npm/node_modules/@opencode/cli/bin/opencode.exe"),
+                Some("npm install -g @opencode/cli@latest"),
+            ),
+            (
+                "opencode",
+                "opencode2",
+                Some("C:/Users/me/AppData/Roaming/npm/opencode2.cmd"),
+                Some("C:/Users/me/AppData/Roaming/npm/node_modules/@opencode/cli/bin/opencode.exe"),
+                Some("npm install -g @opencode/cli@latest"),
+            ),
+            (
+                "opencode",
+                "opencode",
                 Some("/home/linuxbrew/.linuxbrew/bin/opencode"),
                 Some("/home/linuxbrew/.linuxbrew/Cellar/opencode/1.0.0/bin/opencode"),
                 Some("brew upgrade anomalyco/tap/opencode"),
@@ -768,6 +789,63 @@ mod tests {
             "2026-08-01T12:00:00Z"
         );
         assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
+
+    /// OpenCode 1 is published as `opencode-ai` and OpenCode 2 as `@opencode/cli`, so each major
+    /// compares against its own line even where the installation path cannot tell them apart.
+    #[tokio::test]
+    async fn opencode_versions_compare_against_the_package_of_their_major() {
+        let app = Router::new().route(
+            "/{*path}",
+            get(|uri: axum::extract::OriginalUri| async move {
+                let version = if uri.0.path().contains("opencode%2Fcli") {
+                    "2.0.30"
+                } else {
+                    "1.19.2"
+                };
+                Json(json!({ "version": version }))
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("registry listener");
+        let address = listener.local_addr().expect("registry address");
+        tokio::spawn(async move { axum::serve(listener, app).await.expect("registry server") });
+        let maintenance = ProviderMaintenance::with_registry_base_url(
+            Url::parse(&format!("http://{address}/")).expect("registry URL"),
+        );
+        // A global npm shim whose package the path does not name.
+        let directory = tempfile::tempdir().expect("global npm directory");
+        let target = global_npm_target(directory.path(), "opencode");
+        for (installed, latest) in [("2.0.29", "2.0.30"), ("1.18.32", "1.19.2")] {
+            let mut snapshot = installed_snapshot("opencode", installed);
+            maintenance
+                .enrich_snapshot(&target, &mut snapshot, true)
+                .await;
+            assert_eq!(
+                snapshot["versionAdvisory"]["latestVersion"], latest,
+                "{installed}"
+            );
+            assert_eq!(snapshot["versionAdvisory"]["status"], "behind_latest");
+            // The update action installs the same package the advisory compares against.
+            let package = if installed.starts_with("2.") {
+                "@opencode/cli"
+            } else {
+                "opencode-ai"
+            };
+            assert_eq!(
+                snapshot["versionAdvisory"]["updateCommand"],
+                format!("npm install -g {package}@latest"),
+                "{installed}"
+            );
+            let update = maintenance
+                .capabilities(&target)
+                .await
+                .for_installed_version(&target.driver, Some(installed))
+                .update
+                .expect("update action");
+            assert_eq!(update.args, ["install", "-g", &format!("{package}@latest")]);
+        }
     }
 
     #[tokio::test]
@@ -1829,6 +1907,22 @@ impl ProviderMaintenance {
             Some(path) => tokio::fs::canonicalize(path).await.ok(),
             None => None,
         };
+        // A Windows npm shim is a batch file, not a link: the package it runs tells OpenCode 1
+        // (`opencode-ai`) from OpenCode 2 (`@opencode/cli`).
+        let canonical = match resolved.as_deref() {
+            Some(path) if target.driver == "opencode" => {
+                let owned = crate::provider::opencode::resolve_owned_executable(
+                    crate::process::Platform::current(),
+                    path,
+                );
+                if owned.as_path() == path {
+                    canonical
+                } else {
+                    Some(owned)
+                }
+            }
+            _ => canonical,
+        };
         if target.driver == "claudeAgent" {
             let hints = source::discover_claude_hints(target, resolved.as_deref()).await;
             source::capabilities_for_paths_with_claude_hints(
@@ -1913,11 +2007,14 @@ impl ProviderMaintenance {
         snapshot: &mut Value,
         checks_enabled: bool,
     ) {
-        let capabilities = self.capabilities(target).await;
         let current = snapshot
             .get("version")
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty());
+        let capabilities = self
+            .capabilities(target)
+            .await
+            .for_installed_version(&target.driver, current);
         let should_check = checks_enabled
             && snapshot.get("enabled").and_then(Value::as_bool) == Some(true)
             && snapshot.get("installed").and_then(Value::as_bool) == Some(true)

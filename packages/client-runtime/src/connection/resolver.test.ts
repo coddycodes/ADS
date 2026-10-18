@@ -12,6 +12,7 @@ import * as Ref from "effect/Ref";
 import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
 
 import * as ManagedRelay from "../relay/managedRelay.ts";
+import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
@@ -101,6 +102,8 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   readonly ensureSshTunnel?: ClientCapabilities.SshEnvironmentGateway["Service"]["ensureTunnel"];
   readonly mintSshBearer?: ClientCapabilities.SshEnvironmentGateway["Service"]["mintBearer"];
   readonly descriptor?: ExecutionEnvironmentDescriptor;
+  /** Receives the URL of every HTTP request. */
+  readonly httpRequests?: Array<string>;
   /** Shared with the test to observe credential writes. */
   readonly credentialMap?: Map<string, ConnectionCredential>;
   /** Connection ids still saved in the catalog; defaults to every profile. */
@@ -190,7 +193,10 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   });
 
   const dependencies = Layer.mergeAll(
-    remoteHttpClientLayer(() => Promise.resolve(Response.json(options?.descriptor ?? DESCRIPTOR))),
+    remoteHttpClientLayer((input) => {
+      options?.httpRequests?.push(String(input instanceof Request ? input.url : input));
+      return Promise.resolve(Response.json(options?.descriptor ?? DESCRIPTOR));
+    }),
     Layer.succeed(ConnectionProfileStore.ConnectionProfileStore, profileStore),
     Layer.succeed(ConnectionCredentialStore.ConnectionCredentialStore, credentialStore),
     Layer.succeed(
@@ -267,6 +273,39 @@ describe("ConnectionResolver", () => {
         e2ee: null,
         target,
       });
+    }),
+  );
+
+  it.effect("takes the descriptor the platform just fetched for its first attempt only", () =>
+    Effect.gen(function* () {
+      const httpRequests: Array<string> = [];
+      const brokerLayer = yield* makeDependencies({ httpRequests });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+      const httpBaseUrl = "http://127.0.0.1:3778";
+      const target = new PrimaryConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Primary",
+        httpBaseUrl,
+        wsBaseUrl: "ws://127.0.0.1:3778",
+      });
+      // The platform registers the environment from this fetch.
+      yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl, handOff: true }).pipe(
+        Effect.provide(
+          remoteHttpClientLayer((input) => {
+            httpRequests.push(String(input instanceof Request ? input.url : input));
+            return Promise.resolve(Response.json(DESCRIPTOR));
+          }),
+        ),
+      );
+      expect(httpRequests).toHaveLength(1);
+
+      // The first attempt follows at once: no second round trip for the same descriptor.
+      expect((yield* broker.prepare(catalogEntry(target))).descriptor).toEqual(DESCRIPTOR);
+      expect(httpRequests).toHaveLength(1);
+
+      // A later attempt (a reconnect) verifies a fresh descriptor.
+      yield* broker.prepare(catalogEntry(target));
+      expect(httpRequests).toHaveLength(2);
     }),
   );
 

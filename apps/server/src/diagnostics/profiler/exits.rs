@@ -90,14 +90,12 @@ impl StopRequests {
 
     /// The latest stop asked for `pid` within the last minute, and not before `started`: a
     /// stop asked earlier was for another process that had the same pid.
-    fn latest(&self, pid: u32, started: Option<Instant>) -> Option<Stop> {
+    fn latest(&self, pid: u32, started: Instant) -> Option<Stop> {
         self.0
             .iter()
             .rev()
             .find(|(noted, at, _)| {
-                *noted == pid
-                    && at.elapsed() < STOP_REQUEST_MEMORY
-                    && started.is_none_or(|started| *at >= started)
+                *noted == pid && at.elapsed() < STOP_REQUEST_MEMORY && *at >= started
             })
             .map(|(.., stop)| *stop)
     }
@@ -197,7 +195,8 @@ pub struct Exited<'a> {
     /// Its executable; OS crash records are matched by its file name.
     pub exe: &'a str,
     pub pid: u32,
-    pub uptime: Duration,
+    /// When it started, or when BiBCode began watching it; its uptime ends at the report.
+    pub started: Instant,
 }
 
 /// The web content process that ended, when the desktop knows it.
@@ -280,14 +279,18 @@ pub fn report_exit(watch: Watch, process: &Exited<'_>, status: &ExitStatus, requ
     if !counts(watch, class) {
         return;
     }
-    let started = Instant::now().checked_sub(process.uptime);
+    // Stops are compared with the start itself, not one rebuilt from the uptime with a
+    // second clock read: a preemption between the two reads would move it past a stop noted
+    // right after the start.
+    let started = process.started;
+    let uptime_duration = started.elapsed();
     match with_stop_requests(|requests| requests.latest(process.pid, started)) {
         Some(Stop::Ended) => return,
         Some(Stop::Interrupted) if !faulted(class) => return,
         Some(Stop::Interrupted) | None => {}
     }
     let label = redact_message(process.label);
-    let (kind, uptime) = (process.kind, human(process.uptime));
+    let (kind, uptime) = (process.kind, human(uptime_duration));
     let (outcome, likely_oom, severity, title, summary) = match class {
         ExitClass::Signal {
             signal,
@@ -327,7 +330,7 @@ pub fn report_exit(watch: Watch, process: &Exited<'_>, status: &ExitStatus, requ
         ),
         ExitClass::Requested | ExitClass::Clean => return,
     };
-    let uptime_ms = u64::try_from(process.uptime.as_millis()).unwrap_or(u64::MAX);
+    let uptime_ms = u64::try_from(uptime_duration.as_millis()).unwrap_or(u64::MAX);
     let mut evidence = Map::from_iter([
         ("pid".to_owned(), process.pid.into()),
         ("outcome".to_owned(), outcome.clone().into()),
@@ -336,7 +339,7 @@ pub fn report_exit(watch: Watch, process: &Exited<'_>, status: &ExitStatus, requ
     ]);
     // A sample from before the process started is of an earlier process with its pid.
     if let Some(sample) = last_sample(process.pid)
-        && started.is_none_or(|started| sample.at >= started)
+        && sample.at >= started
     {
         evidence.extend(sample_evidence(&sample));
     }
@@ -364,7 +367,7 @@ pub fn report_exit(watch: Watch, process: &Exited<'_>, status: &ExitStatus, requ
     if let (Some(occurrence), ExitClass::Signal { signal, .. }) = (occurrence, class)
         && dumps_core(signal)
     {
-        let started_at = time::OffsetDateTime::now_utc() - process.uptime;
+        let started_at = time::OffsetDateTime::now_utc() - uptime_duration;
         attach_coredump(occurrence, process.pid, process.exe, started_at);
     }
     #[cfg(not(target_os = "linux"))]
@@ -942,7 +945,7 @@ mod tests {
             label: "git",
             exe: "/usr/bin/git",
             pid,
-            uptime: Duration::from_secs(3),
+            started: Instant::now() - Duration::from_secs(3),
         }
     }
 
@@ -1166,11 +1169,27 @@ mod tests {
         note_stop_requested(4_000_000_102);
         std::thread::sleep(Duration::from_millis(20));
         let replacement = Exited {
-            uptime: Duration::from_millis(5),
+            started: Instant::now() - Duration::from_millis(5),
             ..git(4_000_000_102)
         };
         report_exit(Watch::Signals, &replacement, &crashed(), false);
         assert_eq!(captured.take().len(), 1, "the pid's new process crashed");
+    }
+
+    /// A stop noted right after the process started still excuses its exit when the report
+    /// runs late, as it does when the reporting thread is preempted.
+    #[test]
+    fn a_stop_noted_just_after_the_start_excuses_an_exit_reported_late() {
+        let captured = CapturedExits::start();
+        let started = Instant::now();
+        note_stop_requested(4_000_000_103);
+        std::thread::sleep(Duration::from_millis(20));
+        let stopped = Exited {
+            started,
+            ..git(4_000_000_103)
+        };
+        report_exit(Watch::Signals, &stopped, &crashed(), false);
+        assert!(captured.take().is_empty(), "BiBCode stopped it");
     }
 
     #[cfg(unix)]
@@ -1247,7 +1266,7 @@ mod tests {
             },
         );
         let young = Exited {
-            uptime: Duration::from_millis(10),
+            started: Instant::now() - Duration::from_millis(10),
             ..git(4_000_000_312)
         };
         report_exit(Watch::Signals, &young, &crashed(), false);

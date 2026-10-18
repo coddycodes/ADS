@@ -299,6 +299,12 @@ Delete the unused result values above. Do not leave an ambiguous status.
 - Light/dark upload and reconnect/Cancel screenshots:
 - Browser queued-data-after-close/Ping-Pong probe; WebKitGTK measured or explicitly not measured:
 
+## High-latency measurement
+
+- Server build profile, round trips and jitter measured:
+- Table printed by `scripts/measure-remote-latency.ts` at each round trip:
+- Actions that gained RPCs, sequential round trips or echo lag against the previous measurement, with the reason:
+
 ## SSH environment evidence
 
 See [Desktop-managed SSH environments](./ssh-environments.md).

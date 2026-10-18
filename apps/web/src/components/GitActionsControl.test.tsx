@@ -225,7 +225,9 @@ const testState = vi.hoisted(() => {
     serverThread: null as Record<string, unknown> | null,
     draftThread: null as Record<string, unknown> | null,
     setDraftThreadContext: vi.fn(),
-    updateThreadMetadata: vi.fn(() => Promise.resolve()),
+    updateThreadMetadata: vi.fn((_input: unknown) =>
+      Promise.resolve({ _tag: "Success" } as unknown),
+    ),
     refreshVcsStatus: vi.fn(() => Promise.resolve()),
     isGitActionRunning: false,
     discovery: null as unknown,
@@ -1738,6 +1740,61 @@ staticDescribe("status refresh on focus", () => {
         branch: "feature/live",
       },
     });
+  });
+
+  // After a Git Manager checkout the status stream publishes several new values
+  // before the server echoes the thread's new branch; each re-runs the effect.
+  it("sends one branch update per real branch change while the server catches up", async () => {
+    stubWindow();
+    testState.serverThread = { branch: "main", worktreePath: "/wt", updatedAt: "t1" };
+    for (let publication = 0; publication < 6; publication += 1) {
+      testState.gitStatus = status({ refName: "feature/live" });
+      render();
+      hooks.runEffects();
+    }
+    await flushPromises();
+    expect(testState.updateThreadMetadata).toHaveBeenCalledOnce();
+
+    testState.serverThread = { branch: "feature/live", worktreePath: "/wt", updatedAt: "t2" };
+    testState.gitStatus = status({ refName: "feature/next" });
+    render();
+    hooks.runEffects();
+    render();
+    hooks.runEffects();
+    expect(testState.updateThreadMetadata).toHaveBeenCalledTimes(2);
+    expect(testState.updateThreadMetadata).toHaveBeenLastCalledWith({
+      environmentId: ENVIRONMENT_ID,
+      input: { threadId: THREAD_REF.threadId, branch: "feature/next" },
+    });
+  });
+
+  // Another client, the catalog reconciler, or a resync snapshot can put the thread
+  // back on the old branch without this control seeing the echo in between.
+  it("writes again once newer thread state still names the old branch", async () => {
+    stubWindow();
+    testState.serverThread = { branch: "main", worktreePath: "/wt", updatedAt: "t1" };
+    testState.gitStatus = status({ refName: "feature/live" });
+    render();
+    hooks.runEffects();
+    testState.serverThread = { branch: "main", worktreePath: "/wt", updatedAt: "t2" };
+    testState.gitStatus = status({ refName: "feature/live" });
+    render();
+    hooks.runEffects();
+    await flushPromises();
+    expect(testState.updateThreadMetadata).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a branch update the server rejected", async () => {
+    stubWindow();
+    testState.updateThreadMetadata.mockResolvedValueOnce({ _tag: "Failure" } as never);
+    testState.serverThread = { branch: "main", worktreePath: "/wt", updatedAt: "t1" };
+    testState.gitStatus = status({ refName: "feature/live" });
+    render();
+    hooks.runEffects();
+    await flushPromises();
+    render();
+    hooks.runEffects();
+    expect(testState.updateThreadMetadata).toHaveBeenCalledTimes(2);
   });
 
   it("does not sync while a worktree base is being selected", () => {

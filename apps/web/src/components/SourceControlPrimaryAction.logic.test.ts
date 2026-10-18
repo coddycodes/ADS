@@ -437,6 +437,16 @@ describe("buildSourceControlMenuItems — always-rendered, disabled-with-reason"
     assert.notInclude(menuIds(items), "open_pr_panel");
   });
 
+  it("disables the in-panel action while an action is in flight", () => {
+    const items = buildSourceControlMenuItems(
+      makeInput({ status: { aheadCount: 2, pr: OPEN_PR }, isBusy: true }),
+    );
+    assert.deepInclude(menuItem(items, "open_pr_panel"), {
+      disabled: true,
+      reason: "Git action in progress.",
+    });
+  });
+
   it("disables every item with the busy reason while an action is in flight", () => {
     const items = buildSourceControlMenuItems(makeInput({ isBusy: true, stagedCount: 3 }));
     for (const item of items) {

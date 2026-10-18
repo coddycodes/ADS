@@ -132,7 +132,9 @@ function PullRequestPanelSurfaceContent({
     );
   }
   const openFullPage = () => {
-    // The full page reads its checkout from the project's saved choice: carry the thread's.
+    // The full page reads its checkout from the project's saved choice. Carry the thread's,
+    // so the page shows the same request against the same checkout; its Worktree picker
+    // shows the switch and changes it back in one step, like Git Manager's link.
     usePullRequestsStore.getState().setCheckoutCwd(stableProjectRef, gitCwd);
     void navigate({
       to: "/project/$environmentId/$projectId/pull-requests/$number",

@@ -40,7 +40,9 @@ use crate::{
             SessionInput, ThreadMessageInput,
         },
     },
-    persistence::{ProjectionThreadMessage, ProviderSessionRuntime, Repositories},
+    persistence::{
+        ProjectionThreadMessage, ProjectionThreadSession, ProviderSessionRuntime, Repositories,
+    },
     process::{
         Platform, PreparedLaunch, configure_supervised_background_command_wrap,
         launch_executable_extensions,
@@ -90,7 +92,7 @@ use crate::{
         },
         opencode::OpenCodeSessionRuntime,
         option_needs_value_refusal, option_on_or_off_refusal, option_without_id_refusal,
-        unsupported_option_refusal,
+        parse_provider_command, unsupported_option_refusal,
     },
     server_settings::{ProviderBinarySettingsState, ProviderSettingsStore},
 };
@@ -277,14 +279,33 @@ impl std::fmt::Debug for ProviderActivityControls {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderDeliveryOutcome {
-    Accepted { turn_id: Option<String> },
-    AcceptedInNewConversation { turn_id: Option<String> },
-    DefinitelyNotSent { detail: String },
-    Ambiguous { detail: String },
-    Rejected { detail: String },
+    Accepted {
+        turn_id: Option<String>,
+    },
+    AcceptedInNewConversation {
+        turn_id: Option<String>,
+    },
+    DefinitelyNotSent {
+        detail: String,
+    },
+    /// The provider already has the message, so it was not sent again and starts no turn.
+    AlreadyDelivered,
+    /// Not sent, and the provider asked to wait at least `retry_after` before sending it again.
+    NotSentRetryAfter {
+        detail: String,
+        retry_after: Duration,
+    },
+    Ambiguous {
+        detail: String,
+    },
+    Rejected {
+        detail: String,
+    },
     // A deterministic refusal of the turn's own model or options (`InvalidOption`),
     // refused again on every unchanged attempt.
-    Refused { detail: String },
+    Refused {
+        detail: String,
+    },
 }
 
 /// What an undelivered turn shows when restart recovery finds its conversation gone.
@@ -297,6 +318,8 @@ pub(crate) const STEER_TARGET_GONE_DETAIL: &str =
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderReconciliationOutcome {
     Found,
+    /// Found, and the provider reports the session idle, so no turn of the message still runs.
+    FoundSettled,
     Absent,
     Unavailable {
         detail: String,
@@ -419,7 +442,14 @@ pub trait ProviderDriver: Send + Sync {
         &self,
         options: Vec<Value>,
     ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>>;
-    fn rollback(&self, turn_count: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>>;
+    /// Drops the newest `turn_count` turns. `rewind_key` identifies the checkpoint revert (the
+    /// thread's transcript it counts from), so a driver that can make a retried rewind apply once
+    /// does; others ignore it.
+    fn rollback(
+        &self,
+        turn_count: i64,
+        rewind_key: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>>;
     fn next_event(&self) -> BoxRuntimeFuture<'_, Option<ProviderEvent>>;
     fn shutdown(&self) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>>;
     /// The pid and exit status of the provider process this driver owns, once it has exited.
@@ -432,6 +462,12 @@ pub trait ProviderDriver: Send + Sync {
     /// running its turn after BiBCode detaches, so Stop must not settle it by retirement.
     fn owns_native_work(&self) -> bool {
         true
+    }
+    /// Whether the driver holds state only its live runtime knows and that is not settled yet,
+    /// such as an OpenCode 2 rewind whose outcome could not be confirmed. The idle deadline does
+    /// not suspend such a session; it checks again at the next deadline.
+    fn holds_unsettled_work(&self) -> BoxRuntimeFuture<'_, bool> {
+        Box::pin(std::future::ready(false))
     }
 }
 
@@ -506,6 +542,13 @@ pub enum ProviderRuntimeError {
     ActivityTargetUnsupported { provider: String },
     #[error("failed to spawn {provider} provider process: {detail}")]
     Spawn { provider: String, detail: String },
+    /// The provider's executable does not exist. Every launch is refused the same way until the
+    /// user installs it or changes its Binary path, so a delivery fails once instead of retrying.
+    /// The Display equals the `Spawn` it replaces, so logs and RPC errors read as before.
+    #[error(
+        "failed to spawn {provider} provider process: provider executable was not found: {binary}"
+    )]
+    MissingExecutable { provider: String, binary: String },
     #[error("{provider} provider operation failed: {detail}")]
     Provider { provider: String, detail: String },
     /// Only absent/cursorless matching runtime state; conflicting identities remain rejected.
@@ -578,6 +621,7 @@ enum SupervisorMessage {
     Rewind {
         thread_id: String,
         turn_count: i64,
+        rewind_key: String,
         response: oneshot::Sender<Result<ProviderRewind, ProviderRuntimeError>>,
     },
     CaptureSessionIdentity {
@@ -858,6 +902,9 @@ struct ProviderActivityLifecycleState {
     /// of activity capabilities.
     live_background_tasks: usize,
     last_provider_event_at: Option<tokio::time::Instant>,
+    /// Chat Activity was turned on and the provider has not yet reported its scope live, so the
+    /// live sets may still miss children that ran while it was off.
+    awaiting_rediscovery: bool,
 }
 
 type SharedActivityLifecycle = Arc<StdMutex<ProviderActivityLifecycleState>>;
@@ -890,6 +937,23 @@ impl ProviderActivityLifecycleState {
             live_work_item_ids: HashSet::new(),
             live_background_tasks: 0,
             last_provider_event_at: None,
+            awaiting_rediscovery: false,
+        }
+    }
+
+    /// A live scope from the provider ends the wait for rediscovery: its reconciliation reports
+    /// the scope with the children it found. Applies also when the projection changed nothing.
+    fn observe_rediscovery(&mut self, mutations: &[ProviderActivityMutation]) {
+        if mutations.iter().any(|mutation| {
+            matches!(
+                mutation,
+                ProviderActivityMutation::SetScope {
+                    observation_state: ActivityObservationState::Live,
+                    ..
+                }
+            )
+        }) {
+            self.awaiting_rediscovery = false;
         }
     }
 
@@ -1176,10 +1240,12 @@ impl ProviderRuntimeSupervisor {
         &self,
         thread_id: &str,
         turn_count: i64,
+        rewind_key: &str,
     ) -> Result<ProviderRewind, ProviderRuntimeError> {
         self.request(|response| SupervisorMessage::Rewind {
             thread_id: thread_id.to_owned(),
             turn_count,
+            rewind_key: rewind_key.to_owned(),
             response,
         })
         .await
@@ -1945,13 +2011,15 @@ fn frozen_failure_outcome(
 }
 
 /// A durable turn is replayed unchanged, so a launch refused for the turn's own options fails the
-/// delivery once, and so does a provider this BiBCode cannot drive (it is refused again until its
-/// settings change). Every other launch failure, such as a spawn error, is retried.
+/// delivery once, and so does a provider this BiBCode cannot drive or whose executable is missing
+/// (each is refused again until its settings or installation change). Every other launch failure,
+/// such as another spawn error, is retried with backoff.
 fn launch_failure_outcome(error: &ProviderRuntimeError, label: &str) -> ProviderDeliveryOutcome {
     let detail = delivery_detail(error, Some(label));
     match error {
         ProviderRuntimeError::InvalidOption { .. } => ProviderDeliveryOutcome::Refused { detail },
-        ProviderRuntimeError::IncompatibleProvider { .. } => {
+        ProviderRuntimeError::IncompatibleProvider { .. }
+        | ProviderRuntimeError::MissingExecutable { .. } => {
             ProviderDeliveryOutcome::Rejected { detail }
         }
         _ => ProviderDeliveryOutcome::DefinitelyNotSent { detail },
@@ -2053,6 +2121,14 @@ pub(crate) fn delivery_detail(
         ProviderRuntimeError::Spawn { provider, detail } => {
             format!("{} could not start: {detail}", label(provider))
         }
+        ProviderRuntimeError::MissingExecutable { provider, binary } => format!(
+            // Retry keeps the turn's original route, so it launches only once the executable
+            // exists at the same path. A changed Binary path takes a new message, and the failed
+            // one holds back the thread's later messages until it is dismissed.
+            "{} could not start: {binary} was not found. Install it there and retry, or set its \
+             Binary path in Settings → Providers, then dismiss this message and send it again.",
+            label(provider)
+        ),
         ProviderRuntimeError::UnsupportedProvider { provider } => format!(
             "{} is turned off or not set up. Check it in Settings → Providers.",
             label(provider)
@@ -2210,6 +2286,7 @@ fn delivery_detail_names_provider(error: &ProviderRuntimeError) -> bool {
     matches!(
         error,
         ProviderRuntimeError::Spawn { .. }
+            | ProviderRuntimeError::MissingExecutable { .. }
             | ProviderRuntimeError::UnsupportedProvider { .. }
             | ProviderRuntimeError::UnsupportedCapability { .. }
             | ProviderRuntimeError::ActivityTargetUnsupported { .. }
@@ -2661,7 +2738,11 @@ mod workspace_loss_tests {
             Box::pin(async { Ok(()) })
         }
 
-        fn rollback(&self, _: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+        fn rollback(
+            &self,
+            _: i64,
+            _: String,
+        ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
             Box::pin(async { Ok(()) })
         }
 
@@ -5383,9 +5464,10 @@ async fn run_supervisor(
             SupervisorMessage::Rewind {
                 thread_id,
                 turn_count,
+                rewind_key,
                 response,
             } => {
-                let result = rewind_session(&sessions, &thread_id, turn_count).await;
+                let result = rewind_session(&sessions, &thread_id, turn_count, rewind_key).await;
                 let _ = response.send(result);
             }
             SupervisorMessage::CaptureSessionIdentity {
@@ -6001,7 +6083,15 @@ async fn run_supervisor(
                         Ok(confirmed_idle) => {
                             let activity_enabled =
                                 activity.agent_activity_controller().snapshot().enabled;
+                            // State only the live runtime holds would be lost by suspension.
+                            let unsettled = match sessions.get(&thread_id) {
+                                Some(entry) if confirmed_idle => {
+                                    entry.driver.holds_unsettled_work().await
+                                }
+                                _ => false,
+                            };
                             confirmed_idle
+                                && !unsettled
                                 && sessions.get(&thread_id).is_some_and(|entry| {
                                     let lifecycle = entry
                                         .activity_lifecycle
@@ -6287,7 +6377,11 @@ async fn spawn_delivery(
             Ok((row.clone(), active_provider_session_id(entry, row)?))
         })
         .transpose()?;
-    entry.idle_generation.fetch_add(1, Ordering::Relaxed);
+    let delivery_idle_generation = entry.idle_generation.fetch_add(1, Ordering::Relaxed) + 1;
+    let idle_generation = entry.idle_generation.clone();
+    let idle_timeout = entry.idle_timeout;
+    #[cfg(test)]
+    let idle_deadline_test_observer = entry.idle_deadline_test_observer.clone();
     let driver = entry.driver.clone();
     let pending_context_handoff = entry.pending_context_handoff.clone();
     let identity = ProviderSessionIdentity {
@@ -6381,6 +6475,7 @@ async fn spawn_delivery(
                 && matches!(
                     outcome,
                     ProviderDeliveryOutcome::Accepted { .. }
+                        | ProviderDeliveryOutcome::AlreadyDelivered
                         | ProviderDeliveryOutcome::Ambiguous { .. }
                 )
             {
@@ -6388,6 +6483,27 @@ async fn spawn_delivery(
             }
             outcome
         };
+        // A delivery that started no turn (not sent, refused, or a message the provider already
+        // had) gets no completion to re-arm the idle deadline it cancelled, so it is re-armed
+        // here unless something newer did. The deadline still checks the session is idle.
+        if !matches!(
+            outcome,
+            ProviderDeliveryOutcome::Accepted { .. }
+                | ProviderDeliveryOutcome::AcceptedInNewConversation { .. }
+                | ProviderDeliveryOutcome::Ambiguous { .. }
+        ) && let Some(generation) =
+            reserve_idle_rearm(&idle_generation, delivery_idle_generation)
+        {
+            schedule_idle_suspend(
+                terminal_sender.clone(),
+                terminal.thread_id.clone(),
+                idle_generation.clone(),
+                generation,
+                idle_timeout,
+                #[cfg(test)]
+                idle_deadline_test_observer.clone(),
+            );
+        }
         // Steer acceptance does not start a turn or overwrite a concurrent settle.
         if let ProviderDeliveryOutcome::Accepted { turn_id } = &outcome
             && steer_delivery.is_none()
@@ -6964,11 +7080,12 @@ async fn set_live_agent_activity_enabled(
             entry.activity_control.write().await.take();
             cancel_and_reap_activity_tasks(entry).await;
             // Disabling interrupts the projected activity, and no terminal report follows.
-            entry
+            let mut lifecycle = entry
                 .activity_lifecycle
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .forget_live_activity();
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            lifecycle.forget_live_activity();
+            lifecycle.awaiting_rediscovery = true;
         }
         match entry.driver.set_agent_activity_enabled(enabled).await {
             Ok(()) => {
@@ -7058,7 +7175,9 @@ fn normalize_agent_activity_transition_error(error: ProviderRuntimeError) -> Pro
         ProviderRuntimeError::UnsupportedProvider { .. } => "unsupported provider",
         ProviderRuntimeError::UnsupportedCapability { .. } => "unsupported capability",
         ProviderRuntimeError::ActivityTargetUnsupported { .. } => "targeted activity unsupported",
-        ProviderRuntimeError::Spawn { .. } => "provider spawn failure",
+        ProviderRuntimeError::Spawn { .. } | ProviderRuntimeError::MissingExecutable { .. } => {
+            "provider spawn failure"
+        }
         ProviderRuntimeError::Provider { .. }
         | ProviderRuntimeError::InvalidOption { .. }
         | ProviderRuntimeError::FrozenSessionUnavailable { .. }
@@ -7153,8 +7272,9 @@ async fn launch_session(
         runtime_payload_with_context_handoff(None, context_handoff),
     )
     .await?;
+    let activity_enabled_at_launch = activity_controller.snapshot().enabled;
     driver
-        .set_agent_activity_enabled(activity_controller.snapshot().enabled)
+        .set_agent_activity_enabled(activity_enabled_at_launch)
         .await?;
     let started = match driver.start().await {
         Ok(started) => started,
@@ -7246,6 +7366,13 @@ async fn launch_session(
             started.activity_capabilities.clone(),
         )))
     });
+    // A process started with Chat Activity off runs work unseen until turning it on has
+    // rediscovered it. One started with it on has nothing to rediscover, whatever an earlier
+    // process of the same session left behind.
+    activity_lifecycle
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .awaiting_rediscovery = !activity_enabled_at_launch;
     let activity_capable = provider_supports_agent_activity(&request.provider);
     if activity_capable && activity_controller.snapshot().enabled {
         let effective_activity_capabilities = activity_lifecycle
@@ -7619,18 +7746,37 @@ async fn rewind_session(
     sessions: &HashMap<String, SessionEntry>,
     thread_id: &str,
     turn_count: i64,
+    rewind_key: String,
 ) -> Result<ProviderRewind, ProviderRuntimeError> {
     let entry = sessions
         .get(thread_id)
         .ok_or_else(|| ProviderRuntimeError::SessionNotFound {
             thread_id: thread_id.to_owned(),
         })?;
+    // A finished turn can leave background work running in this process (a Claude background
+    // task, a Codex subagent), and the session then reads idle. Restoring files under it would
+    // not stick and a rewind would cut it off, so neither happens. This is the live work that
+    // keeps idle suspension away; work quiet for the quiet cap no longer counts.
+    if entry
+        .activity_lifecycle
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .has_recent_live_activity()
+    {
+        return Err(ProviderRuntimeError::Provider {
+            provider: entry.launch.provider.clone(),
+            detail: format!(
+                "{} is still running background work. Stop it or wait for it to finish, then revert.",
+                entry.launch.provider_label
+            ),
+        });
+    }
     if !crate::provider::supports_conversation_rewind(&entry.launch.provider) {
         return Ok(ProviderRewind::FilesOnly {
             provider_label: entry.launch.provider_label.clone(),
         });
     }
-    let rewound = entry.driver.rollback(turn_count).await;
+    let rewound = entry.driver.rollback(turn_count, rewind_key).await;
     // A rewind uses the session like a turn does: it idles again under the normal deadline,
     // also when the session was reopened only for this revert.
     let generation = entry.idle_generation.fetch_add(1, Ordering::Relaxed) + 1;
@@ -7648,30 +7794,71 @@ async fn rewind_session(
 }
 
 /// Drops the newest `turn_count` turns from a thread's provider conversation for a checkpoint
-/// revert. A session suspended while idle is reopened first with the launch a new message would
-/// use (the thread's provider, modes and saved resume cursor), except that a conversation the
-/// provider no longer has fails instead of starting a new one: a new conversation has nothing to
-/// rewind. A provider that cannot rewind is not reopened. Errors are the work-log text.
+/// revert, reopening a session suspended while idle first (see `reopen_for_rewind`). A provider
+/// that cannot rewind is not reopened. Errors are the work-log text.
 pub async fn rewind_thread_conversation(
     supervisor: &ProviderRuntimeSupervisor,
     engine: &OrchestrationEngine,
     settings_root: &PathBuf,
     thread_id: &str,
     turn_count: i64,
+    rewind_key: &str,
 ) -> Result<ProviderRewind, String> {
-    match supervisor.rewind(thread_id, turn_count).await {
+    match supervisor.rewind(thread_id, turn_count, rewind_key).await {
         Err(ProviderRuntimeError::SessionNotFound { .. }) => {}
         outcome => return outcome.map_err(|error| delivery_detail(&error, None)),
     }
+    let (label, can_rewind) =
+        reopen_for_rewind(supervisor, engine, settings_root, thread_id).await?;
+    if !can_rewind {
+        return Ok(ProviderRewind::FilesOnly {
+            provider_label: label,
+        });
+    }
+    supervisor
+        .rewind(thread_id, turn_count, rewind_key)
+        .await
+        .map_err(|error| delivery_detail(&error, Some(&label)))
+}
+
+/// Reopens a thread's session suspended while idle ahead of its revert's rewind, so the start
+/// runs off the effects worker. A live session, or a provider that cannot rewind, needs nothing.
+pub async fn prepare_thread_rewind(
+    supervisor: &ProviderRuntimeSupervisor,
+    engine: &OrchestrationEngine,
+    settings_root: &PathBuf,
+    thread_id: &str,
+) -> Result<(), String> {
+    if supervisor
+        .capture_session_identity(thread_id)
+        .await
+        .map_err(|error| delivery_detail(&error, None))?
+        .is_some()
+    {
+        return Ok(());
+    }
+    reopen_for_rewind(supervisor, engine, settings_root, thread_id)
+        .await
+        .map(|_| ())
+}
+
+/// Reopens a thread's suspended session for a rewind with the launch a new message would use
+/// (the thread's provider, modes and saved resume cursor), except that a conversation the provider
+/// no longer has fails instead of starting a new one: a new conversation has nothing to rewind.
+/// Returns the provider's label and whether it can rewind; one that cannot is not reopened.
+async fn reopen_for_rewind(
+    supervisor: &ProviderRuntimeSupervisor,
+    engine: &OrchestrationEngine,
+    settings_root: &PathBuf,
+    thread_id: &str,
+) -> Result<(String, bool), String> {
     let request = build_launch_request(engine, settings_root, thread_id, None, None, None, false)
         .await
         .map_err(|error| delivery_detail(&error, None))?;
-    if !crate::provider::supports_conversation_rewind(&request.provider) {
-        return Ok(ProviderRewind::FilesOnly {
-            provider_label: request.provider_label,
-        });
-    }
     let label = request.provider_label.clone();
+    if !crate::provider::supports_conversation_rewind(&request.provider) {
+        return Ok((label, false));
+    }
     // Without a saved conversation for this provider instance, a launch would start an empty
     // one and replace the thread's saved runtime, though there is nothing to rewind.
     if request.resume_cursor.is_none() {
@@ -7693,10 +7880,7 @@ pub async fn rewind_thread_conversation(
             "Couldn't reopen {label} to rewind its conversation, so nothing was reverted. {reason}"
         ));
     }
-    supervisor
-        .rewind(thread_id, turn_count)
-        .await
-        .map_err(|error| delivery_detail(&error, Some(&label)))
+    Ok((label, true))
 }
 
 async fn reconcile_model_selection(
@@ -8171,20 +8355,6 @@ fn selection_effort(options: &[Value]) -> Option<String> {
         .find_map(|id| selection_string_option_from(options, id))
 }
 
-fn parse_provider_command(text: &str) -> Option<(&str, &str)> {
-    let command = text.strip_prefix('/')?;
-    let split = command.find(char::is_whitespace).unwrap_or(command.len());
-    let name = &command[..split];
-    if name.is_empty()
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.'))
-    {
-        return None;
-    }
-    Some((name, command[split..].trim()))
-}
-
 #[allow(clippy::too_many_arguments)]
 fn spawn_event_pump(
     engine: OrchestrationEngine,
@@ -8368,14 +8538,17 @@ fn spawn_event_pump(
                                     }
                                     false
                                 }
-                                Ok(deltas) if !deltas.is_empty() => {
-                                    activity_lifecycle
+                                Ok(deltas) => {
+                                    let mut lifecycle = activity_lifecycle
                                         .lock()
-                                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                        .observe_projected_batch(&lifecycle_mutations, &deltas);
+                                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                                    if !deltas.is_empty() {
+                                        lifecycle
+                                            .observe_projected_batch(&lifecycle_mutations, &deltas);
+                                    }
+                                    lifecycle.observe_rediscovery(&lifecycle_mutations);
                                     true
                                 }
-                                Ok(_) => true,
                             };
                             if projection_succeeded
                                 && let Some(generation) = observed_generation
@@ -8609,7 +8782,7 @@ fn spawn_event_pump(
                     label: &launch.provider,
                     exe: &launch.binary_path,
                     pid,
-                    uptime: started.elapsed(),
+                    started,
                 },
                 &status,
                 false,
@@ -8762,8 +8935,28 @@ async fn project_provider_event(
 ) -> Result<(), ProviderRuntimeError> {
     let created_at = now();
     let command_id = format!("provider:{}", Uuid::new_v4());
+    // An ask OpenCode lists again on resume (`recovered`, with OpenCode's unique request id) is
+    // recorded once: one the thread already has, asked or resolved, is not added again. Other
+    // providers may reuse request ids across their own restarts, so only recovered asks match.
+    if event.payload.get("recovered") == Some(&Value::Bool(true))
+        && matches!(
+            event.event_type.as_str(),
+            "request.opened" | "user-input.requested"
+        )
+        && let Some(request_id) = event.request_id.as_ref()
+        && engine
+            .repositories()
+            .request_is_recorded(launch.thread_id.clone(), request_id.clone())
+            .await
+            .map_err(|error| ProviderRuntimeError::Persistence(error.to_string()))?
+    {
+        return Ok(());
+    }
     let assistant_message_id = assistant_message_id(&event);
-    if event.event_type == "turn.started" && provider_reports_its_turns(&launch.provider) {
+    if event.event_type == "turn.started"
+        && (provider_reports_its_turns(&launch.provider)
+            || event.payload.get("providerStarted") == Some(&Value::Bool(true)))
+    {
         // A turn the provider started itself (a Codex goal continuation, Claude answering a
         // finished background task) runs like a delivered one: the thread reads running, and idle
         // suspension waits for its `turn.completed`.
@@ -9419,16 +9612,20 @@ async fn session_is_confirmed_idle(
         .get_thread_session(thread_id.to_owned())
         .await
         .map_err(|error| ProviderRuntimeError::Persistence(error.to_string()))?
-        .is_some_and(|session| {
-            !matches!(session.status.as_str(), "running" | "starting")
-                && session.active_turn_id.is_none()
-        }))
+        .is_some_and(|session| !session_holds_a_turn(&session)))
+}
+
+/// Whether the projected session is starting or running a turn. Idle suspension and checkpoint
+/// revert both treat such a session as busy.
+pub(crate) fn session_holds_a_turn(session: &ProjectionThreadSession) -> bool {
+    matches!(session.status.as_str(), "running" | "starting") || session.active_turn_id.is_some()
 }
 
 /// Whether every `turn.started` the driver emits is a turn the provider reported running. Codex
 /// emits it for each `turn/started` notification, and Claude for a turn it starts itself (its
 /// delivered turns begin on their replay). Cursor, OpenCode, and Grok announce a turn before
-/// BiBCode sends it, so a send that then fails would leave the thread reading running.
+/// BiBCode sends it, so a send that then fails would leave the thread reading running; such a
+/// driver marks a turn the provider started itself with `providerStarted: true` instead.
 fn provider_reports_its_turns(provider: &str) -> bool {
     matches!(provider, "codex" | "claude" | "claudeAgent")
 }
@@ -9436,7 +9633,8 @@ fn provider_reports_its_turns(provider: &str) -> bool {
 /// Whether BiBCode can see the session's work outside a turn, so its absence means idle. Claude
 /// reports its background tasks on its own stream. Other providers report subagents and background
 /// work only through Activity, so with Chat Activity off, or for Cursor and Grok, which have no
-/// Activity adapter, an idle-looking session may still be working and is not suspended.
+/// Activity adapter, an idle-looking session may still be working and is not suspended. Nor is
+/// one whose Chat Activity was just turned back on, until the provider has rediscovered its work.
 fn session_reports_its_work(
     entry: &SessionEntry,
     lifecycle: &ProviderActivityLifecycleState,
@@ -9445,6 +9643,7 @@ fn session_reports_its_work(
     matches!(entry.launch.provider.as_str(), "claude" | "claudeAgent")
         || (entry.activity_capable
             && activity_enabled
+            && !lifecycle.awaiting_rediscovery
             && (lifecycle.capabilities.actors || lifecycle.capabilities.background_work))
 }
 
@@ -10297,9 +10496,9 @@ where
             .iter()
             .map(|(name, value)| (name.as_os_str(), value.as_os_str())),
     )
-    .ok_or_else(|| ProviderRuntimeError::Spawn {
+    .ok_or_else(|| ProviderRuntimeError::MissingExecutable {
         provider: provider.clone(),
-        detail: format!("provider executable was not found: {}", request.binary_path),
+        binary: request.binary_path.clone(),
     })?;
     let executable = if provider == "opencode" {
         crate::provider::opencode::resolve_owned_executable(Platform::current(), &executable)
@@ -10974,7 +11173,14 @@ impl ProviderDriver for CodexDriver {
             Ok(())
         })
     }
-    fn rollback(&self, turn_count: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    // Codex's `thread/revert` takes only `threadId` and `beforeTurnId` (ThreadRevertParams from
+    // `codex app-server generate-json-schema`, codex-cli 0.163.0): no idempotency field, so the
+    // rewind key is not used.
+    fn rollback(
+        &self,
+        turn_count: i64,
+        _rewind_key: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async move {
             let count = u64::try_from(turn_count).map_err(|_| ProviderRuntimeError::Provider {
                 provider: "codex".to_owned(),
@@ -11241,7 +11447,11 @@ impl ProviderDriver for CursorDriver {
                 .map_err(|error| option_error("cursor", error))
         })
     }
-    fn rollback(&self, _: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        _: i64,
+        _: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         unsupported("cursor", "checkpoint rollback")
     }
     fn next_event(&self) -> BoxRuntimeFuture<'_, Option<ProviderEvent>> {
@@ -11446,7 +11656,11 @@ impl ProviderDriver for GrokDriver {
     ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         reject_unsupported_options("grok", options)
     }
-    fn rollback(&self, _: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        _: i64,
+        _: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         unsupported("grok", "checkpoint rollback")
     }
     fn next_event(&self) -> BoxRuntimeFuture<'_, Option<ProviderEvent>> {
@@ -11490,24 +11704,23 @@ impl OpenCodeDriver {
         activity_enabled: bool,
     ) -> Result<Self, ProviderRuntimeError> {
         if let Some(endpoint) = request.endpoint.as_ref() {
-            // A configured server that does not answer yet keeps today's behaviour (the session
-            // request reports it); only a server identified as OpenCode 2 is refused here.
+            // A configured server that does not answer yet keeps today's behaviour (V1, and the
+            // session request reports the failure); a version BiBCode cannot drive is refused.
             let client = reqwest::Client::builder()
                 .timeout(crate::provider::opencode::API_PROBE_TIMEOUT)
                 .build()
                 .map_err(provider_error("opencode"))?;
-            if let crate::provider::opencode::OpenCodeServerApi::Unsupported { version } =
-                crate::provider::opencode::probe_server_api(
-                    &client,
-                    endpoint,
-                    request.server_password.as_deref(),
-                )
-                .await
-            {
-                tracing::warn!(%version, "configured OpenCode server is OpenCode 2; launch refused");
+            let api = crate::provider::opencode::probe_server_api(
+                &client,
+                endpoint,
+                request.server_password.as_deref(),
+            )
+            .await;
+            if let crate::provider::opencode::OpenCodeServerApi::Unsupported { version } = &api {
+                tracing::warn!(%version, "configured OpenCode server version is unsupported; launch refused");
                 return Err(ProviderRuntimeError::IncompatibleProvider {
                     provider: "opencode".to_owned(),
-                    detail: crate::provider::opencode::unsupported_server_message(&version, false),
+                    detail: crate::provider::opencode::unsupported_server_message(version, false),
                 });
             }
             let runtime =
@@ -11522,6 +11735,9 @@ impl OpenCodeDriver {
                 activity_enabled,
             )
             .map_err(provider_error("opencode"))?;
+            if matches!(api, crate::provider::opencode::OpenCodeServerApi::V2 { .. }) {
+                runtime.use_v2_api();
+            }
             runtime.configure_runtime_mode(&request.runtime_mode).await;
             return Ok(Self {
                 runtime,
@@ -11540,10 +11756,12 @@ impl OpenCodeDriver {
         drop(listener);
         let endpoint = format!("http://127.0.0.1:{port}");
         let local_password = Uuid::new_v4().to_string();
-        request.environment.insert(
-            "OPENCODE_SERVER_PASSWORD".to_owned(),
-            local_password.clone(),
-        );
+        // OpenCode 2 prefers an inherited `OPENCODE_PASSWORD` to `OPENCODE_SERVER_PASSWORD`.
+        for name in ["OPENCODE_SERVER_PASSWORD", "OPENCODE_PASSWORD"] {
+            request
+                .environment
+                .insert(name.to_owned(), local_password.clone());
+        }
         let args = vec![
             "serve".to_owned(),
             "--hostname=127.0.0.1".to_owned(),
@@ -11564,7 +11782,7 @@ impl OpenCodeDriver {
         if let Some(stderr) = server_stderr {
             drain_opencode_output(stderr, "stderr");
         }
-        wait_for_endpoint(&endpoint, &local_password, &child).await?;
+        let protocol = wait_for_endpoint(&endpoint, &local_password, &child).await?;
         let runtime =
             OpenCodeSessionRuntime::new_with_options_reconciliation_revision_and_agent_activity(
                 &endpoint,
@@ -11577,6 +11795,9 @@ impl OpenCodeDriver {
                 activity_enabled,
             )
             .map_err(provider_error("opencode"))?;
+        if protocol == crate::provider::opencode::OpenCodeProtocol::V2 {
+            runtime.use_v2_api();
+        }
         runtime.configure_runtime_mode(&request.runtime_mode).await;
         if let Some(mcp) = request.mcp.as_ref() {
             runtime
@@ -11610,6 +11831,13 @@ impl OpenCodeDriver {
 impl ProviderDriver for OpenCodeDriver {
     fn owns_native_work(&self) -> bool {
         self.child.is_some()
+    }
+    fn holds_unsettled_work(&self) -> BoxRuntimeFuture<'_, bool> {
+        // A turn OpenCode is still running, such as one whose request answer was lost, ends
+        // only with OpenCode's own events, which this runtime must stay up to receive.
+        Box::pin(async move {
+            self.runtime.has_unfinished_rewind().await || self.runtime.has_active_turn().await
+        })
     }
     fn start(&self) -> BoxRuntimeFuture<'_, Result<StartedSession, ProviderRuntimeError>> {
         Box::pin(async move {
@@ -11685,8 +11913,26 @@ impl ProviderDriver for OpenCodeDriver {
                     turn_id: Some(turn_id),
                 },
                 Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::MissingSession)
-                | Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::InvalidResponse(_)) => {
+                | Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::InvalidResponse(_))
+                | Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::NotSent(_)) => {
                     ProviderDeliveryOutcome::DefinitelyNotSent {
+                        detail: delivery_detail(&provider_error("opencode")(error), None),
+                    }
+                }
+                Err(crate::provider::opencode::runtime::OpenCodeRuntimeError::AlreadyDelivered) => {
+                    ProviderDeliveryOutcome::AlreadyDelivered
+                }
+                // OpenCode could not take the message yet, so it is sent again later.
+                Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::RetryLater { retry_after, .. }) => {
+                    let detail = delivery_detail(&provider_error("opencode")(error), None);
+                    match retry_after {
+                        Some(retry_after) => ProviderDeliveryOutcome::NotSentRetryAfter { detail, retry_after },
+                        None => ProviderDeliveryOutcome::DefinitelyNotSent { detail },
+                    }
+                }
+                // OpenCode refused the message, so it was not delivered and is not sent again.
+                Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::RequestRefused(_)) => {
+                    ProviderDeliveryOutcome::Rejected {
                         detail: delivery_detail(&provider_error("opencode")(error), None),
                     }
                 }
@@ -11702,7 +11948,23 @@ impl ProviderDriver for OpenCodeDriver {
     ) -> BoxRuntimeFuture<'_, ProviderReconciliationOutcome> {
         Box::pin(async move {
             match self.runtime.message_exists(&delivery_key).await {
-                Ok(true) => ProviderReconciliationOutcome::Found,
+                // Whether its turn still runs decides if its pending marker may go. A turn this
+                // runtime holds settles the marker itself. A session OpenCode reports busy with
+                // no turn held here, or a status that cannot be read, is asked again until it is
+                // idle; a server without a status endpoint keeps the marker.
+                Ok(true) if self.runtime.has_active_turn().await => {
+                    ProviderReconciliationOutcome::Found
+                }
+                Ok(true) => match self.runtime.session_idle().await {
+                    Ok(Some(true)) => ProviderReconciliationOutcome::FoundSettled,
+                    Ok(None) => ProviderReconciliationOutcome::Found,
+                    Ok(Some(false)) => ProviderReconciliationOutcome::Unavailable {
+                        detail: "OpenCode is still working on this message".to_owned(),
+                    },
+                    Err(error) => ProviderReconciliationOutcome::Unavailable {
+                        detail: error.to_string(),
+                    },
+                },
                 Ok(false) => ProviderReconciliationOutcome::Absent,
                 Err(error) => ProviderReconciliationOutcome::Unavailable {
                     detail: error.to_string(),
@@ -11779,14 +12041,18 @@ impl ProviderDriver for OpenCodeDriver {
                 .map_err(|error| option_error("opencode", error))
         })
     }
-    fn rollback(&self, count: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        count: i64,
+        rewind_key: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         Box::pin(async move {
             let count = usize::try_from(count).map_err(|_| ProviderRuntimeError::Provider {
                 provider: "opencode".to_owned(),
                 detail: "turn count must be non-negative".to_owned(),
             })?;
             self.runtime
-                .rollback_thread(count)
+                .rollback_thread(count, &rewind_key)
                 .await
                 .map(|_| ())
                 .map_err(provider_error("opencode"))
@@ -14615,7 +14881,11 @@ impl ProviderDriver for ClaudeDriver {
             })
         })
     }
-    fn rollback(&self, _: i64) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
+    fn rollback(
+        &self,
+        _: i64,
+        _: String,
+    ) -> BoxRuntimeFuture<'_, Result<(), ProviderRuntimeError>> {
         unsupported("claude", "checkpoint rollback")
     }
     fn next_event(&self) -> BoxRuntimeFuture<'_, Option<ProviderEvent>> {
@@ -15642,15 +15912,16 @@ fn drain_opencode_output(
     });
 }
 
-/// Waits until the managed OpenCode server answers its V1 API. Any HTTP response is not enough:
-/// OpenCode 2 answers V1 paths with its web UI, and is stopped with an actionable error instead.
+/// Waits until the managed OpenCode server answers an API BiBCode speaks, and returns which. Any
+/// HTTP response is not enough: OpenCode 2 answers V1 paths with its web UI. A version BiBCode
+/// cannot drive is stopped with an actionable error.
 async fn wait_for_endpoint(
     endpoint: &str,
     password: &str,
     child: &SharedChild,
-) -> Result<(), ProviderRuntimeError> {
+) -> Result<crate::provider::opencode::OpenCodeProtocol, ProviderRuntimeError> {
     use crate::provider::opencode::{
-        OpenCodeServerApi, probe_server_api, unsupported_server_message,
+        OpenCodeProtocol, OpenCodeServerApi, probe_server_api, unsupported_server_message,
     };
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let client = reqwest::Client::builder()
@@ -15672,15 +15943,18 @@ async fn wait_for_endpoint(
                     detail: "server process exited before claiming its reserved port".to_owned(),
                 });
             }
-            if let OpenCodeServerApi::Unsupported { version } = api {
-                tracing::warn!(%version, "managed OpenCode server is OpenCode 2; launch refused");
-                kill_child(child).await;
-                return Err(ProviderRuntimeError::IncompatibleProvider {
-                    provider: "opencode".to_owned(),
-                    detail: unsupported_server_message(&version, true),
-                });
-            }
-            return Ok(());
+            return match api {
+                OpenCodeServerApi::V2 { .. } => Ok(OpenCodeProtocol::V2),
+                OpenCodeServerApi::Unsupported { version } => {
+                    tracing::warn!(%version, "managed OpenCode server version is unsupported; launch refused");
+                    kill_child(child).await;
+                    Err(ProviderRuntimeError::IncompatibleProvider {
+                        provider: "opencode".to_owned(),
+                        detail: unsupported_server_message(&version, true),
+                    })
+                }
+                OpenCodeServerApi::V1 | OpenCodeServerApi::Unavailable => Ok(OpenCodeProtocol::V1),
+            };
         }
         if tokio::time::Instant::now() >= deadline {
             kill_child(child).await;
@@ -15813,6 +16087,9 @@ mod tests {
         targeted_release: Option<Arc<tokio::sync::Notify>>,
         targeted_active: Arc<AtomicUsize>,
         activity_capabilities: crate::activity::ActivityCapabilities,
+        unsettled_work: bool,
+        /// What deliveries answer instead of sending.
+        delivery_outcome: Option<super::ProviderDeliveryOutcome>,
     }
 
     struct SupervisorDriver {
@@ -16053,6 +16330,11 @@ mod tests {
     }
 
     impl ProviderDriver for SupervisorDriver {
+        fn holds_unsettled_work(&self) -> super::BoxRuntimeFuture<'_, bool> {
+            Box::pin(std::future::ready(
+                self.state.lock().unwrap().unsettled_work,
+            ))
+        }
         fn owns_native_work(&self) -> bool {
             !self.state.lock().unwrap().externally_owned
         }
@@ -16067,6 +16349,26 @@ mod tests {
                     runtime_payload: Some(json!({"transport":"unit"})),
                     activity_capabilities: self.state.lock().unwrap().activity_capabilities.clone(),
                 })
+            })
+        }
+
+        fn deliver(
+            &self,
+            text: String,
+            attachments: Vec<Value>,
+            interaction_mode: String,
+            _: String,
+        ) -> super::BoxRuntimeFuture<'_, super::ProviderDeliveryOutcome> {
+            Box::pin(async move {
+                if let Some(outcome) = self.state.lock().unwrap().delivery_outcome.clone() {
+                    return outcome;
+                }
+                match self.send(text, attachments, interaction_mode).await {
+                    Ok(turn_id) => super::ProviderDeliveryOutcome::Accepted { turn_id },
+                    Err(error) => super::ProviderDeliveryOutcome::Ambiguous {
+                        detail: super::delivery_detail(&error, None),
+                    },
+                }
             })
         }
 
@@ -16260,6 +16562,7 @@ mod tests {
         fn rollback(
             &self,
             turn_count: i64,
+            _rewind_key: String,
         ) -> super::BoxRuntimeFuture<'_, Result<(), super::ProviderRuntimeError>> {
             Box::pin(async move {
                 self.state.lock().unwrap().rollbacks.push(turn_count);
@@ -17152,6 +17455,60 @@ mod tests {
             super::delivery_route_fingerprint(&standard).expect("standard route fingerprint"),
             super::delivery_route_fingerprint(&fast).expect("fast route fingerprint")
         );
+    }
+
+    /// A provider whose executable is missing is refused the same way on every launch, so the
+    /// delivery fails once with what to do, instead of retrying a launch that cannot succeed.
+    #[tokio::test]
+    async fn a_missing_provider_executable_fails_the_delivery_once_with_what_to_do() {
+        let temp = TempDir::new().expect("provider fixture directory");
+        let mut request = native_launch(&temp, "claudeAgent");
+        // An absolute path: the hermetic guard refuses a search of the ambient PATH.
+        request.binary_path = temp.path().join("claude").to_string_lossy().into_owned();
+        let binary = request.binary_path.clone();
+        let error = match super::spawn_child(
+            &request,
+            &[],
+            false,
+            crate::diagnostics::ProcessAttributionRegistry::new(),
+        )
+        .await
+        {
+            Ok(_) => panic!("a missing executable cannot start"),
+            Err(error) => error,
+        };
+        let expected = format!(
+            "Work Claude could not start: {binary} was not found. Install it there and retry, or \
+             set its Binary path in Settings → Providers, then dismiss this message and send it \
+             again."
+        );
+        assert_eq!(
+            super::launch_failure_outcome(&error, "Work Claude"),
+            super::ProviderDeliveryOutcome::Rejected {
+                detail: expected.clone()
+            }
+        );
+        assert_eq!(
+            super::frozen_failure_outcome(&error, Some("Work Claude")),
+            super::ProviderDeliveryOutcome::Rejected { detail: expected }
+        );
+        // Logs and RPC errors read as before.
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "failed to spawn claudeAgent provider process: provider executable was not found: \
+                 {binary}"
+            )
+        );
+        // Any other spawn failure may pass, so it is still retried.
+        let other = super::ProviderRuntimeError::Spawn {
+            provider: "claudeAgent".to_owned(),
+            detail: "Resource temporarily unavailable".to_owned(),
+        };
+        assert!(matches!(
+            super::launch_failure_outcome(&other, "Work Claude"),
+            super::ProviderDeliveryOutcome::DefinitelyNotSent { .. }
+        ));
     }
 
     #[test]
@@ -19392,7 +19749,7 @@ done
 
     /// How BiBCode stopped a session whose provider process died.
     #[cfg(unix)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     enum SessionStop {
         None,
         /// Its event pump was cancelled before the stream ended.
@@ -19520,7 +19877,8 @@ done
             (4_100_000_003, SessionStop::Closed),
             (4_100_000_004, SessionStop::Noted),
         ] {
-            assert!(exits_reported_after_stream_end(pid, stop).await.is_empty());
+            let reported = exits_reported_after_stream_end(pid, stop).await;
+            assert!(reported.is_empty(), "{stop:?}: {reported:?}");
         }
     }
 
@@ -23409,6 +23767,23 @@ done
                 .unwrap();
         }
 
+        async fn emit_payload(&self, event_type: &str, turn_id: &str, payload: Value) {
+            self.events
+                .send(super::ProviderEvent {
+                    native_event_id: None,
+                    event_type: event_type.to_owned(),
+                    thread_id: "t1".to_owned(),
+                    turn_id: Some(turn_id.to_owned()),
+                    item_id: None,
+                    request_id: None,
+                    payload,
+                    activity: Vec::new(),
+                    activity_controls: Default::default(),
+                })
+                .await
+                .unwrap();
+        }
+
         async fn emit_activity(&self, native_event_id: &str, mutation: ProviderActivityMutation) {
             self.emit_activity_batch(native_event_id, vec![mutation])
                 .await;
@@ -23645,6 +24020,32 @@ done
         assert_eq!(idle_generation.load(Ordering::Relaxed), 9);
     }
 
+    /// A delivery that starts no turn (a message the provider already had, or one not sent)
+    /// gets no completion to re-arm the idle deadline it cancelled: the delivery re-arms it.
+    #[tokio::test(start_paused = true)]
+    async fn idle_deadline_rearms_after_a_delivery_that_started_no_turn() {
+        // The paused clock advances on its own here, so a missing deadline fails the wait.
+        for outcome in [
+            super::ProviderDeliveryOutcome::AlreadyDelivered,
+            super::ProviderDeliveryOutcome::DefinitelyNotSent {
+                detail: "the lookup failed".to_owned(),
+            },
+        ] {
+            let mut fixture = IdleDeadlineFixture::new(BUSY_SESSION_IDLE_TIMEOUT).await;
+            fixture.state.lock().unwrap().delivery_outcome = Some(outcome.clone());
+            let handle = fixture.admit("first").await;
+            assert_eq!(handle.completion().await, outcome);
+            let armed = tokio::time::timeout(Duration::from_secs(5), fixture.next_deadline())
+                .await
+                .unwrap_or_else(|_| panic!("the idle deadline is armed again after {outcome:?}"));
+            assert!(
+                matches!(armed, super::IdleDeadlineTestEvent::Armed { .. }),
+                "{armed:?}"
+            );
+            fixture.close().await;
+        }
+    }
+
     #[tokio::test(start_paused = true)]
     async fn idle_deadline_ignores_a_send_admitted_before_it_was_armed() {
         let _clock = keep_idle_clock_paused();
@@ -23863,6 +24264,32 @@ done
         fixture.close().await;
     }
 
+    /// A rewind whose outcome the provider could not confirm lives only in its runtime (an
+    /// OpenCode 2 commit whose answer and check were lost), so the idle deadline keeps the
+    /// session up until the rewind settles, then suspends it normally.
+    #[tokio::test(start_paused = true)]
+    async fn idle_deadline_keeps_a_session_whose_rewind_is_unsettled() {
+        let _clock = keep_idle_clock_paused();
+        let mut fixture = IdleDeadlineFixture::new(BUSY_SESSION_IDLE_TIMEOUT).await;
+        IdleDeadlineFixture::accepted(fixture.admit("first").await, "idle-turn-1").await;
+        fixture.stream("idle-turn-1", "assistant-first").await;
+        fixture
+            .emit("turn.completed", "idle-turn-1", "assistant-first")
+            .await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Armed { generation: 2 }
+        );
+        fixture.state.lock().unwrap().unsettled_work = true;
+        fixture
+            .assert_busy_after_timeout(2, "the idle deadline suspended an unsettled rewind")
+            .await;
+
+        fixture.state.lock().unwrap().unsettled_work = false;
+        fixture.assert_suspended_after_timeout(3).await;
+        fixture.close().await;
+    }
+
     #[tokio::test(start_paused = true)]
     async fn idle_deadline_suspends_a_running_subagent_after_the_quiet_cap() {
         let _clock = keep_idle_clock_paused();
@@ -23939,6 +24366,135 @@ done
                 "the idle deadline suspended a session whose subagent Chat Activity no longer shows",
             )
             .await;
+        fixture.close().await;
+    }
+
+    /// Turns Chat Activity off and back on, as the settings handler does, after a turn whose
+    /// subagent still runs. Turning it off forgets the subagent, and nothing has rediscovered it.
+    async fn toggle_activity_monitoring_off_and_on(fixture: &mut IdleDeadlineFixture) {
+        fixture.complete_first_turn_with_actor("running").await;
+        fixture.activity.agent_activity_controller().disable().await;
+        fixture
+            .supervisor
+            .set_agent_activity_enabled(false)
+            .await
+            .unwrap();
+        fixture.activity.agent_activity_controller().enable();
+        fixture
+            .supervisor
+            .set_agent_activity_enabled(true)
+            .await
+            .unwrap();
+    }
+
+    /// The provider's reconciliation pass after Chat Activity is turned back on: the scope is
+    /// live again, with the children it found.
+    fn rediscovery(children: Vec<ProviderActivityMutation>) -> Vec<ProviderActivityMutation> {
+        let mut batch = vec![ProviderActivityMutation::SetScope {
+            capabilities: crate::activity::ActivityCapabilities::structured_full(false),
+            observation_state: crate::activity::ActivityObservationState::Live,
+        }];
+        batch.extend(children);
+        batch
+    }
+
+    /// Turning Chat Activity back on makes a Codex or OpenCode session's work visible again before
+    /// the provider has rediscovered the subagents still running. No suspension happens until that
+    /// rediscovery lands.
+    #[tokio::test(start_paused = true)]
+    async fn idle_deadline_waits_for_rediscovery_after_activity_monitoring_is_reenabled() {
+        let _clock = keep_idle_clock_paused();
+        let mut fixture = IdleDeadlineFixture::new(BUSY_SESSION_IDLE_TIMEOUT).await;
+        toggle_activity_monitoring_off_and_on(&mut fixture).await;
+        fixture
+            .assert_busy_after_timeout(
+                2,
+                "the idle deadline suspended a session before Chat Activity rediscovered its subagent",
+            )
+            .await;
+
+        fixture
+            .emit_activity_batch(
+                "rediscovery",
+                rediscovery(vec![
+                    ProviderActivityMutation::upsert_actor("actor:sub", None, "Sub", "running")
+                        .unwrap(),
+                ]),
+            )
+            .await;
+        fixture
+            .assert_busy_after_timeout(3, "the idle deadline suspended a rediscovered subagent")
+            .await;
+        fixture
+            .emit_activity(
+                "subagent-stop",
+                ProviderActivityMutation::set_actor_status("actor:sub", "completed").unwrap(),
+            )
+            .await;
+        fixture.assert_suspended_after_timeout(4).await;
+        fixture.close().await;
+    }
+
+    /// Turning Chat Activity on for a session that already ran with it on starts no rediscovery,
+    /// so it must not wait for one.
+    #[tokio::test(start_paused = true)]
+    async fn idle_deadline_needs_no_rediscovery_when_activity_monitoring_was_never_off() {
+        let _clock = keep_idle_clock_paused();
+        let mut fixture = IdleDeadlineFixture::new(BUSY_SESSION_IDLE_TIMEOUT).await;
+        IdleDeadlineFixture::accepted(fixture.admit("first").await, "idle-turn-1").await;
+        fixture.stream("idle-turn-1", "assistant-first").await;
+        fixture
+            .emit("turn.completed", "idle-turn-1", "assistant-first")
+            .await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Armed { generation: 2 }
+        );
+        fixture
+            .supervisor
+            .set_agent_activity_enabled(true)
+            .await
+            .unwrap();
+        fixture.assert_suspended_after_timeout(2).await;
+        fixture.close().await;
+    }
+
+    /// A rediscovery that finds nothing running settles the hold, and the session idles again.
+    /// The live scope it reports is already projected, so the projection changes nothing.
+    #[tokio::test(start_paused = true)]
+    async fn idle_deadline_suspends_once_rediscovery_finds_nothing_running() {
+        let _clock = keep_idle_clock_paused();
+        let mut fixture = IdleDeadlineFixture::new(BUSY_SESSION_IDLE_TIMEOUT).await;
+        toggle_activity_monitoring_off_and_on(&mut fixture).await;
+        fixture
+            .assert_busy_after_timeout(2, "the idle deadline suspended before rediscovery")
+            .await;
+        fixture
+            .events
+            .send(super::ProviderEvent {
+                native_event_id: Some(
+                    super::ProviderNativeEventId::new("rediscovery".to_owned()).unwrap(),
+                ),
+                event_type: super::ACTIVITY_ONLY_PROVIDER_EVENT_TYPE.to_owned(),
+                thread_id: "t1".to_owned(),
+                turn_id: None,
+                item_id: None,
+                request_id: None,
+                payload: json!({}),
+                activity: rediscovery(Vec::new()),
+                activity_controls: Default::default(),
+            })
+            .await
+            .unwrap();
+        // A batch the projection does apply, so the pump has handled the rediscovery before it.
+        fixture
+            .emit_activity(
+                "after-rediscovery",
+                ProviderActivityMutation::upsert_actor("actor:done", None, "Done", "completed")
+                    .unwrap(),
+            )
+            .await;
+        fixture.assert_suspended_after_timeout(3).await;
         fixture.close().await;
     }
 
@@ -24022,6 +24578,56 @@ done
         );
         fixture.assert_projection("ready", None).await;
         fixture.assert_suspended_after_timeout(4).await;
+        fixture.close().await;
+    }
+
+    /// OpenCode announces the turns BiBCode sends before sending them, but marks a turn it started
+    /// itself (an OpenCode 2 execution delivering a background subagent's result): that one runs
+    /// like a delivered turn, so the thread reads running and the idle deadline waits for it.
+    #[tokio::test(start_paused = true)]
+    async fn a_turn_opencode_started_itself_reads_running() {
+        let _clock = keep_idle_clock_paused();
+        let mut fixture =
+            IdleDeadlineFixture::new_for_provider(BUSY_SESSION_IDLE_TIMEOUT, "opencode").await;
+        IdleDeadlineFixture::accepted(fixture.admit("first").await, "idle-turn-1").await;
+        fixture.stream("idle-turn-1", "assistant-first").await;
+        fixture
+            .emit("turn.completed", "idle-turn-1", "assistant-first")
+            .await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Armed { generation: 2 }
+        );
+        fixture
+            .emit_payload(
+                "turn.started",
+                "provider-turn",
+                json!({ "providerStarted": true }),
+            )
+            .await;
+        fixture.stream("provider-turn", "assistant-provider").await;
+        fixture
+            .assert_projection("running", Some("provider-turn"))
+            .await;
+        tokio::time::advance(fixture.idle_timeout * 2).await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Evaluated {
+                generation: 2,
+                outcome: super::IdleDeadlineEvaluation::Stale,
+            }
+        );
+        fixture
+            .assert_live("the idle deadline suspended a turn OpenCode started itself")
+            .await;
+        fixture
+            .emit("turn.completed", "provider-turn", "assistant-provider")
+            .await;
+        assert_eq!(
+            fixture.next_deadline().await,
+            super::IdleDeadlineTestEvent::Armed { generation: 4 }
+        );
+        fixture.assert_projection("ready", None).await;
         fixture.close().await;
     }
 
@@ -25125,7 +25731,7 @@ done
                 .unwrap();
         }
         assert_eq!(
-            supervisor.rewind("t1", 2).await.unwrap(),
+            supervisor.rewind("t1", 2, "rewind-key").await.unwrap(),
             ProviderRewind::Rewound
         );
         let revert_command: OrchestrationCommand = serde_json::from_value(json!({
@@ -25490,7 +26096,7 @@ done
             .await
             .expect("Claude interaction mode should update");
         assert!(claude.set_model("other".to_owned()).await.is_err());
-        assert!(claude.rollback(1).await.is_err());
+        assert!(claude.rollback(1, "rewind-key".to_owned()).await.is_err());
         assert_eq!(
             match deadline.observe(claude.next_event()).await {
                 Ok(event) => event.expect("Claude stderr event"),
@@ -25665,8 +26271,11 @@ done
                 .is_some()
         );
         codex.interrupt(None).await.expect("Codex should interrupt");
-        codex.rollback(0).await.expect("Codex should roll back");
-        assert!(codex.rollback(-1).await.is_err());
+        codex
+            .rollback(0, "rewind-key".to_owned())
+            .await
+            .expect("Codex should roll back");
+        assert!(codex.rollback(-1, "rewind-key".to_owned()).await.is_err());
         assert!(
             codex
                 .set_mode("approval-required".to_owned())
@@ -25777,7 +26386,7 @@ done
                 .set_interaction_mode("plan".to_owned())
                 .await
                 .expect("ACP interaction mode should update");
-            assert!(driver.rollback(1).await.is_err());
+            assert!(driver.rollback(1, "rewind-key".to_owned()).await.is_err());
             assert!(
                 driver
                     .approve("unknown".to_owned(), "accept".to_owned())
@@ -25812,18 +26421,19 @@ done
         Arc::new(tokio::sync::Mutex::new(child))
     }
 
-    /// OpenCode 2 answers HTTP 200 HTML on every V1 path, so the managed server must not count as
-    /// ready: the launch fails at once with the setting to change, and the server is stopped.
+    /// A version BiBCode cannot drive is refused from its first answer: the launch fails at once
+    /// with the setting to change, and the server is stopped.
     #[tokio::test]
-    async fn opencode_readiness_rejects_an_opencode_2_server_with_an_actionable_error() {
+    async fn opencode_readiness_rejects_an_unsupported_version_with_an_actionable_error() {
         use crate::provider::opencode::server_fixtures;
-        let (endpoint, server) = server_fixtures::serve(server_fixtures::v2("secret")).await;
+        let (endpoint, server) =
+            server_fixtures::serve(server_fixtures::api_server("secret", "3.0.0")).await;
         let child = opencode_endpoint_child();
 
         let started = tokio::time::Instant::now();
         let error = super::wait_for_endpoint(&endpoint, "secret", &child)
             .await
-            .expect_err("an OpenCode 2 server is not the API BiBCode speaks");
+            .expect_err("OpenCode 3 is not an API BiBCode speaks");
         server.abort();
 
         assert!(
@@ -25836,7 +26446,7 @@ done
         assert_eq!(provider, "opencode");
         assert_eq!(
             detail,
-            "OpenCode 2.0.29 isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x executable."
+            "OpenCode 3.0.0 isn't supported yet. In Settings → Providers, set Binary path to an OpenCode 1.x or 2.x executable."
         );
         assert_eq!(
             super::delivery_detail(&error, Some("OpenCode")),
@@ -25854,25 +26464,35 @@ done
         );
     }
 
+    /// OpenCode 2 answers HTTP 200 HTML on every V1 path; readiness identifies it by `/api/info`
+    /// and selects the V2 wire, while OpenCode 1 is identified by its health route.
     #[tokio::test]
-    async fn opencode_readiness_accepts_the_v1_api_with_the_launch_password() {
-        use crate::provider::opencode::server_fixtures;
-        let (endpoint, server) = server_fixtures::serve(server_fixtures::v1("secret")).await;
-        let child = opencode_endpoint_child();
-
-        super::wait_for_endpoint(&endpoint, "secret", &child)
-            .await
-            .expect("the V1 health route is readiness");
-        server.abort();
-        super::kill_child(&child).await;
+    async fn opencode_readiness_selects_the_protocol_the_server_speaks() {
+        use crate::provider::opencode::{OpenCodeProtocol, server_fixtures};
+        for (app, expected) in [
+            (server_fixtures::v1("secret"), OpenCodeProtocol::V1),
+            (server_fixtures::v2("secret"), OpenCodeProtocol::V2),
+        ] {
+            let (endpoint, server) = server_fixtures::serve(app).await;
+            let child = opencode_endpoint_child();
+            assert_eq!(
+                super::wait_for_endpoint(&endpoint, "secret", &child)
+                    .await
+                    .expect("ready"),
+                expected
+            );
+            server.abort();
+            super::kill_child(&child).await;
+        }
     }
 
-    /// A configured Server URL that runs OpenCode 2 fails the launch with the setting to change,
-    /// instead of a later "error decoding response body" or "HTTP 405".
+    /// A configured Server URL that runs a version BiBCode cannot drive fails the launch with the
+    /// setting to change, instead of a later "error decoding response body" or "HTTP 405".
     #[tokio::test]
-    async fn opencode_configured_server_url_rejects_opencode_2() {
+    async fn opencode_configured_server_url_rejects_an_unsupported_version() {
         use crate::provider::opencode::server_fixtures;
-        let (endpoint, server) = server_fixtures::serve(server_fixtures::v2("secret")).await;
+        let (endpoint, server) =
+            server_fixtures::serve(server_fixtures::api_server("secret", "3.0.0")).await;
         let temp = TempDir::new().expect("OpenCode fixture directory");
         let factory =
             super::NativeProviderDriverFactory::new(temp.path().join("state").join("attachments"));
@@ -25881,11 +26501,7 @@ done
         request.server_password = Some("secret".to_owned());
 
         let error = match factory.create(request).await {
-            Ok(driver) => driver
-                .start()
-                .await
-                .map(|_| ())
-                .expect_err("an OpenCode 2 server cannot start a V1 session"),
+            Ok(_) => panic!("an OpenCode 3 server must be refused at launch"),
             Err(error) => error,
         };
         server.abort();
@@ -25895,7 +26511,7 @@ done
         };
         assert_eq!(
             detail,
-            "The OpenCode server at Server URL runs 2.0.29, which isn't supported yet. In Settings → Providers, point Server URL at an OpenCode 1.x server."
+            "The OpenCode server at Server URL runs 3.0.0, which isn't supported yet. In Settings → Providers, point Server URL at an OpenCode 1.x or 2.x server."
         );
     }
 
@@ -26047,8 +26663,11 @@ done
             .set_model("openai/gpt-5.4".to_owned())
             .await
             .expect("OpenCode model should update");
-        driver.rollback(0).await.expect("OpenCode should roll back");
-        assert!(driver.rollback(-1).await.is_err());
+        driver
+            .rollback(0, "rewind-key".to_owned())
+            .await
+            .expect("OpenCode should roll back");
+        assert!(driver.rollback(-1, "rewind-key".to_owned()).await.is_err());
         assert!(driver.set_mode("full-access".to_owned()).await.is_err());
         assert!(
             driver

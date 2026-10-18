@@ -9,6 +9,8 @@ const harness = vi.hoisted(() => ({
   atomValues: new Map<string, unknown>(),
   refresh: vi.fn(),
   retries: [] as unknown[],
+  /** Keys of the mocked query atoms the hooks read. */
+  reads: [] as string[],
   key(atom: unknown): string {
     return (atom as { key: string }).key;
   },
@@ -22,14 +24,30 @@ vi.mock("react", async (importOriginal) => {
   };
 });
 
-vi.mock("@effect/atom-react", () => ({
-  useAtomValue: (atom: unknown) => harness.atomValues.get(harness.key(atom)),
-  useAtomRefresh: () => harness.refresh,
-}));
+vi.mock("@effect/atom-react", async () => {
+  // Real atoms (the hook's own placeholder) read through a real registry.
+  const { AtomRegistry } = await import("effect/unstable/reactivity");
+  const registry = AtomRegistry.make();
+  return {
+    useAtomValue: (atom: never) => {
+      const key = harness.key(atom);
+      if (key === undefined) return registry.get(atom);
+      harness.reads.push(key);
+      return harness.atomValues.get(key);
+    },
+    useAtomRefresh: () => harness.refresh,
+  };
+});
 
 vi.mock("~/state/projects", () => ({
   projectEnvironment: {
-    listEntries: ({ environmentId, input }: { environmentId: string; input: { cwd: string } }) => ({
+    fileTreeEntries: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: { cwd: string };
+    }) => ({
       key: `entries:${environmentId}:${input.cwd}`,
     }),
     readFile: ({
@@ -68,7 +86,11 @@ vi.mock("@bibcode/client-runtime/state/runtime", async (importOriginal) => ({
   },
 }));
 
-import { useProjectEntriesQuery, useProjectFileQuery } from "./projectFilesQueryState";
+import {
+  fileTreeSignalAction,
+  useProjectEntriesQuery,
+  useProjectFileQuery,
+} from "./projectFilesQueryState";
 
 const environmentId = EnvironmentId.make("environment-project-query-hooks");
 const entriesKey = `entries:${environmentId}:/repo`;
@@ -81,6 +103,7 @@ beforeEach(() => {
   harness.atomValues.clear();
   harness.refresh.mockReset();
   harness.retries.length = 0;
+  harness.reads.length = 0;
 });
 
 describe("project file query hooks", () => {
@@ -94,6 +117,20 @@ describe("project file query hooks", () => {
     result.refresh();
     expect(harness.refresh).toHaveBeenCalledOnce();
     expect(harness.retries).toEqual([{ key: entriesKey }]);
+  });
+
+  it("reads nothing and shows the list as loading until enabled", () => {
+    harness.atomValues.set(entriesKey, AsyncResult.success({ entries: [], truncated: false }));
+
+    expect(useProjectEntriesQuery(environmentId, "/repo", false)).toMatchObject({
+      data: null,
+      error: null,
+      isPending: true,
+    });
+    expect(harness.reads).toEqual([]);
+
+    expect(useProjectEntriesQuery(environmentId, "/repo", true).data).not.toBeNull();
+    expect(harness.reads).toEqual([entriesKey]);
   });
 
   it("names a transport cut-off with the connection-dropped copy", () => {
@@ -179,5 +216,27 @@ describe("project file query hooks", () => {
     harness.atomValues.set(fileKey, AsyncResult.success(data));
     harness.atomValues.set(optimisticKey, null);
     expect(useProjectFileQuery(environmentId, "/repo", "README.md").data).toBe(data);
+  });
+});
+
+describe("Files tree change signals", () => {
+  const resync = { cwd: "/repo" };
+  const later = { cwd: "/repo" };
+
+  it("covers the resync signal with the read that mounting the list makes", () => {
+    expect(fileTreeSignalAction(resync, null, false)).toBe("cover");
+    expect(fileTreeSignalAction(resync, null, true)).toBe("cover");
+  });
+
+  it("acts once per signal", () => {
+    expect(fileTreeSignalAction(null, null, true)).toBe("none");
+    expect(fileTreeSignalAction(resync, resync, true)).toBe("none");
+  });
+
+  // The preloader holds the list while the panel is closed; a change then must not cost a whole
+  // list read, but the panel must not show the stale list without reading it again.
+  it("leaves a later signal for the open panel to read", () => {
+    expect(fileTreeSignalAction(later, resync, false)).toBe("none");
+    expect(fileTreeSignalAction(later, resync, true)).toBe("read");
   });
 });

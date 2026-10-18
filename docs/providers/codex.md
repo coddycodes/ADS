@@ -164,15 +164,23 @@ as descendant-thread, history, and background-terminal discovery. Unsupported
 methods degrade the affected activity view instead of inventing data.
 
 BiBCode accepts validated `subAgentActivity` items as bounded child-discovery
-hints and direct-reads those child thread IDs. This remains effective when an
+hints and direct-reads those child thread IDs: thread metadata from
+`thread/read` without turns, then the newest 20 turns from
+`thread/turns/list`. This remains effective when an
 App Server version, including Codex 0.146, omits spawned children from
 `thread/list`; listing remains enabled as a complementary discovery source for
 versions that expose it. Malformed or out-of-scope hints are ignored. When read
 and list methods are incompatible, recovery capabilities downgrade truthfully
-without disabling ordinary chat. Valid mutations accepted before a later
-transient failure or same-root reconnect remain pending until a current
-reconciliation publication succeeds; replacing the root or disabling activity
-discards that root-owned pending state. Pending recovery coalesces superseded
+without disabling ordinary chat. Only a missing-method answer counts as
+incompatible: a large or undecodable reply to any reconciliation method is a
+failed read, retried on the next pass. Restart reconciliation of a durable
+delivery pages `thread/turns/list` newest first for the delivery key's
+`userMessage.clientId`. It reports the message absent only after the last page;
+a repeated cursor or more than 100 pages leaves the delivery unknown, so a
+delivered message is never sent twice.
+Valid mutations accepted before a later transient failure or same-root
+reconnect remain pending until a current reconciliation publication succeeds;
+replacing the root or disabling activity discards that root-owned pending state. Pending recovery coalesces superseded
 record states while preserving retained per-actor chronology, and orders each
 parent state before the child or reparent state that depends on it. Unsortable
 or cyclic topology stays pending behind a runtime warning. Valid publication is

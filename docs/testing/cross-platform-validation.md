@@ -105,13 +105,23 @@ For packaged visual validation on each available supported provider:
 Record unavailable provider/platform scenarios and visual evidence in the
 execution report. Hermetic tests do not establish a packaged native visual pass.
 
-OpenCode scenarios need OpenCode 1.x. Run `opencode --version` with the
-desktop's `PATH` first: OpenCode 2 prints `opencode v2.x.y`. With OpenCode 2,
-verify instead that the OpenCode row and the chat banner show the
-unsupported-version error naming Binary path, then either set Binary path to an
-OpenCode 1.x executable or record the OpenCode scenarios as unavailable. The
-version gate's focused checks are
-`cargo test -p bibcode-server --lib -j 2 -- opencode_readiness opencode_configured_server_url opencode_2_ provider::opencode::server_api_tests`.
+Run `opencode --version` with the desktop's `PATH` first and record it: OpenCode
+1 prints `1.x.y`, OpenCode 2 prints `opencode v2.x.y`. With OpenCode 2 the
+chat scenarios (messages, permissions, questions, Stop), subagent activity, the
+model, agent, command and skill catalogs, checkpoint revert with its
+conversation rewind, and observed provider terminals all apply; an observed
+OpenCode 2 terminal runs `opencode --server … --session …` instead of
+`opencode attach`, and an unobserved one (Chat Activity off) runs
+`opencode --standalone` with the selected model. The focused checks are
+`cargo test -p bibcode-server --lib -j 2 -- opencode`, which replays responses
+captured from a real OpenCode 2.0.29 server, and
+`cargo test -p bibcode-server --test provider_terminal_supervisor -- opencode`.
+The opt-in `live_opencode_2` tests (in the library and in
+`provider_terminal_supervisor`) drive a real OpenCode 2 binary or server. The
+doc comments of `live_opencode_2_round_trip`, `live_opencode_2_local_inventory`
+and `live_opencode_2_terminal_observation` list the environment they need; the
+server's default model must be a scripted local endpoint so no provider credits
+are spent.
 
 ## Revision and worktree preflight
 
@@ -371,7 +381,9 @@ must become the promotion time and place it after that reply, including after
 projection replay. Transaction rollback must preserve the original timestamps;
 steering and still-queued messages retain enqueue times. Dismissing a rejected head
 must unblock its tail; dismissing sending or uncertain work must preserve the
-barrier against automatic delivery before settlement. For a head refused for its
+barrier against automatic delivery before settlement. For OpenCode, a head
+dismissed while uncertain releases its tail once OpenCode shows the session
+idle, and not while it reports the session busy. For a head refused for its
 model or options, verify that it offers only **Dismiss**, later pending messages
 show **Waiting for an earlier message**, and the queued head card shows
 **Waiting for an earlier message** with **Send now** and **Steer** disabled and
@@ -1631,7 +1643,10 @@ crosses the proxy.
 First record the size of the first config snapshot: the data the RPC WebSocket
 receives before the banner disappears, shown in the browser's network-panel
 frames. The checks exercise the old 15-second limit only when size ÷ rate
-exceeds 15 seconds (about 250 KB on a host with many Claude skills).
+exceeds 15 seconds (about 250 KB on a host with many Claude skills). Read
+subscriptions (the open thread's included) leave with the config request, so
+their snapshots share the link while the config arrives: add their size ÷ rate
+to the expected times below, or record the figures with the thread closed.
 
 Check establishment before the large-diff transfers:
 
@@ -1691,6 +1706,32 @@ Then check liveness during large-diff transfers:
 
 Record the rates, transfer durations, close codes, the exact status text, and
 the server log lines.
+
+## High-latency measurement
+
+For changes that add, remove or reorder RPCs on a user action, or change how
+messages are framed, batched or compressed, measure the actions on a delayed
+link. Build the server and the web bundle, then run the harness at no delay
+and at a 250 ms round trip (relayed VPN peers measure 236–252 ms):
+
+```sh
+cargo build -p bibcode-server --bin bibcode
+VITE_HOSTED_APP_URL=https://hosted.invalid vp run --filter=@bibcode/web build
+node scripts/measure-remote-latency.ts --rtt 0,250 --out <report>.json
+```
+
+It needs `/usr/bin/chromium` (or `--chromium <path>`) and uses only
+disposable data and fixture providers. Build the server with `cargo build`
+right before the run: a `cargo test` run rebuilds `target/debug/bibcode` with
+the hermetic test guard, which refuses tools on the ambient `PATH` (for
+example `hermetic-test-guard: refused jj at <ambient PATH>` in the run's
+`server.log`), and the server stops responding during the harness setup. Add `--jitter 20` for a relayed peer's
+spread. Compare the 250 ms table with the previous measurement in
+`docs/architecture/measurements/`: an action that gains RPCs or sequential
+round trips, or terminal echo lag above about two round trips, is a regression
+to explain. The sequential column is inferred from timing and is noisy for
+typing rows; use their echo lag instead. Record the tables in the execution
+report.
 
 ## Git Manager validation scenario
 

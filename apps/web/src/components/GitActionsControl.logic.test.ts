@@ -77,6 +77,23 @@ describe("when: ref is clean and has an open PR", () => {
     );
   });
 
+  it("buildMenuItems disables opening the PR in the panel while busy", () => {
+    const withPr = status({
+      pr: {
+        number: 11,
+        title: "Existing PR",
+        url: "https://example.com/pr/11",
+        baseRef: "main",
+        headRef: "feature/test",
+        state: "open",
+      },
+    });
+    assert.deepInclude(buildMenuItems(withPr, true, true, true).at(-1), {
+      id: "pr_panel",
+      disabled: true,
+    });
+  });
+
   it("buildMenuItems disables commit/push and enables open PR", () => {
     const items = buildMenuItems(
       status({

@@ -1618,7 +1618,9 @@ describe("card line 2 helpers", () => {
     expect(shouldShowWorkspaceBranchText("fix-TRI-150", "Fix invoice date format")).toBe(true);
   });
 
-  it("reads uncommitted changes only from a fresh status", () => {
+  // A stale summary's working tree is the newest local read: a failed PR lookup
+  // marks a just-read base stale. No dot would claim the checkout is clean.
+  it("reads uncommitted changes from fresh and stale statuses", () => {
     expect(
       resolveWorkspaceDirty({ hasWorkingTreeChanges: true } as unknown as VcsStatusResult),
     ).toBe(true);
@@ -1627,7 +1629,7 @@ describe("card line 2 helpers", () => {
         hasWorkingTreeChanges: true,
         stale: true,
       } as unknown as VcsStatusSummary),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       resolveWorkspaceDirty({ hasWorkingTreeChanges: false } as unknown as VcsStatusResult),
     ).toBe(false);

@@ -13,7 +13,7 @@ import { RpcClient, RpcClientError } from "effect/unstable/rpc";
 
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import type { RpcSession } from "../rpc/session.ts";
+import { PRE_VERIFICATION_SUBSCRIPTIONS, type RpcSession } from "../rpc/session.ts";
 
 export class EnvironmentRpcUnavailableError extends Schema.TaggedError<EnvironmentRpcUnavailableError>()(
   "EnvironmentRpcUnavailableError",
@@ -193,11 +193,19 @@ export function runStream<TTag extends EnvironmentStreamCommandRpcTag>(
   );
 }
 
+/**
+ * A subscription's input, or a function read at every (re)subscribe, so a stream that resumes
+ * from what it already holds can say so each time.
+ */
+export type EnvironmentSubscriptionInput<TTag extends EnvironmentSubscriptionRpcTag> =
+  | EnvironmentRpcInput<TTag>
+  | (() => EnvironmentRpcInput<TTag>);
+
 export function subscribeInSession<TTag extends EnvironmentSubscriptionRpcTag>(
   session: RpcSession,
   environmentId: string,
   tag: TTag,
-  input: EnvironmentRpcInput<TTag>,
+  input: EnvironmentSubscriptionInput<TTag>,
   options?: EnvironmentSubscriptionOptions<TTag>,
 ): Stream.Stream<EnvironmentRpcStreamValue<TTag>, EnvironmentRpcStreamFailure<TTag>> {
   const method = session.client[tag] as (
@@ -218,7 +226,7 @@ export function subscribeInSession<TTag extends EnvironmentSubscriptionRpcTag>(
         Effect.gen(function* () {
           retryRequested = false;
           const subscribedAt = yield* Clock.currentTimeMillis;
-          return method(input).pipe(
+          return method(typeof input === "function" ? input() : input).pipe(
             Stream.catchCause((cause) => {
               const hasOnlyExpectedFailures =
                 cause.reasons.length > 0 && cause.reasons.every((reason) => reason._tag === "Fail");
@@ -299,7 +307,7 @@ export function subscribeInSession<TTag extends EnvironmentSubscriptionRpcTag>(
 
 export function subscribe<TTag extends EnvironmentSubscriptionRpcTag>(
   tag: TTag,
-  input: EnvironmentRpcInput<TTag>,
+  input: EnvironmentSubscriptionInput<TTag>,
   options?: EnvironmentSubscriptionOptions<TTag>,
 ): Stream.Stream<
   EnvironmentRpcStreamValue<TTag>,
@@ -309,7 +317,13 @@ export function subscribe<TTag extends EnvironmentSubscriptionRpcTag>(
   return Stream.unwrap(
     EnvironmentSupervisor.pipe(
       Effect.map((supervisor) =>
-        SubscriptionRef.changes(supervisor.session).pipe(
+        // A read subscription follows the session from `configuring` on (see
+        // `EnvironmentSupervisor.subscriptionSession`), a round trip sooner.
+        SubscriptionRef.changes(
+          PRE_VERIFICATION_SUBSCRIPTIONS.has(tag)
+            ? (supervisor.subscriptionSession ?? supervisor.session)
+            : supervisor.session,
+        ).pipe(
           Stream.switchMap(
             Option.match({
               onNone: () => Stream.empty,
