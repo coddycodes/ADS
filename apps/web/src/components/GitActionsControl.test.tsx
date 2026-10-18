@@ -1776,7 +1776,7 @@ staticDescribe("status refresh on focus", () => {
     testState.gitStatus = status({ refName: "feature/live" });
     render();
     hooks.runEffects();
-    testState.serverThread = { branch: "main", worktreePath: "/wt", updatedAt: "t3" };
+    testState.serverThread = { branch: "main", worktreePath: "/wt", updatedAt: "t2" };
     testState.gitStatus = status({ refName: "feature/live" });
     render();
     hooks.runEffects();
