@@ -2098,9 +2098,14 @@ push the decision later. A turn no read has shown by then counts as refused only
 on positive evidence, a read that succeeded or a scrcpy display still in the
 other class, and the sensor is put back to the vector it held before the press,
 so it matches the screen. A failed read is no such evidence: it falls back to
-the derived orientation (which follows the scrcpy display). With no evidence at
-all the turn is taken as asked: the sensor stays where it was sent, the skin is
-recorded at the requested orientation (it follows the sensor), and
+the derived orientation (which follows the scrcpy display). The skin follows the
+sensor, so it is recorded at the requested orientation as soon as the sensor is
+sent, unless the scrcpy display is already in that class (a 180° turn is not
+claimed before the guest takes it): a display that turns while every read fails
+then derives the request, not the shape fallback, which would mirror every tap
+after Rotate right until the window ends. With no evidence at all the turn is
+taken as asked: the sensor stays where it was sent, the skin is recorded at the
+requested orientation, and
 `device.rotate` returns the request, so its result, the catalog, and the touch
 mapping agree. One device's rotates run one at a time, so an older one never
 undoes a newer one. `device.rotate` returns `{ orientation }`, the orientation

@@ -48,6 +48,8 @@ pub(crate) struct FakeHandle {
     pub(crate) port: u16,
     pub(crate) inputs: Arc<Mutex<Vec<proto::InputEvent>>>,
     pub(crate) rotations: Arc<Mutex<Vec<[f32; 3]>>>,
+    /// `getScreenshot` calls received, failed ones included.
+    pub(crate) screenshot_reads: Arc<AtomicUsize>,
     /// Native display `(width, height, gray)`; every change emits one streamed frame.
     /// A `(0, 0, gray)` frame keeps the initial 1080x2400 display.
     pub(crate) frame_tx: watch::Sender<(u32, u32, u8)>,
@@ -148,6 +150,7 @@ pub(crate) struct FakeController {
     fail_rotation: Arc<AtomicBool>,
     fail_screenshots: Arc<AtomicBool>,
     skin_follows_sensor: Arc<AtomicBool>,
+    screenshot_reads: Arc<AtomicUsize>,
 }
 
 /// Counts one open stream until dropped.
@@ -178,6 +181,7 @@ impl FakeController {
             port,
             inputs: Arc::default(),
             rotations: Arc::default(),
+            screenshot_reads: Arc::default(),
             frame_tx,
             vm_state: Arc::default(),
             rotation: rotation_tx,
@@ -202,6 +206,7 @@ impl FakeController {
                 fail_rotation: handle.fail_rotation.clone(),
                 fail_screenshots: handle.fail_screenshots.clone(),
                 skin_follows_sensor: handle.skin_follows_sensor.clone(),
+                screenshot_reads: handle.screenshot_reads.clone(),
             },
             require_token,
         );
@@ -315,6 +320,7 @@ impl EmulatorController for FakeController {
         &self,
         request: Request<proto::ImageFormat>,
     ) -> Result<Response<proto::Image>, Status> {
+        self.screenshot_reads.fetch_add(1, Ordering::SeqCst);
         if self.fail_screenshots.load(Ordering::SeqCst) {
             return Err(Status::unavailable("fake screenshot failure"));
         }
