@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { keyboardEventToDeviceInput, splitDeviceText } from "./deviceKeyMap";
+import { isUsTypeable, keyboardEventToDeviceInput, splitDeviceText } from "./deviceKeyMap";
 
 const press = (
   key: string,
@@ -102,5 +102,35 @@ describe("splitDeviceText", () => {
     const parts = splitDeviceText(text);
     expect(parts).toEqual(["x".repeat(999), "😀y"]);
     expect(parts.join("")).toBe(text);
+  });
+});
+
+// The same vectors as the server's `us_typeable_text_is_printable_ascii_with_return_and_tab`
+// (`apps/server/src/device/input.rs`), so the two sets cannot drift apart unnoticed.
+describe("isUsTypeable", () => {
+  it("accepts every printable ASCII character, Return and Tab", () => {
+    const printable = Array.from({ length: 0x7f - 0x20 }, (_, index) =>
+      String.fromCharCode(0x20 + index),
+    ).join("");
+    expect(isUsTypeable(printable)).toBe(true);
+    expect(isUsTypeable("line one\nline two\r\n\tindented")).toBe(true);
+    expect(isUsTypeable("")).toBe(true);
+  });
+
+  it("refuses accented letters, CJK, emoji and other control characters", () => {
+    for (const refused of [
+      "héllo",
+      "é",
+      "日本",
+      "\u{1f600}",
+      "a b",
+      "\u007f",
+      "\u0000",
+      "\u001b",
+      "\u0008",
+      " ",
+    ]) {
+      expect(isUsTypeable(refused), JSON.stringify(refused)).toBe(false);
+    }
   });
 });

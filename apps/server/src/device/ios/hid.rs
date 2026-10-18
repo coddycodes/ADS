@@ -10,7 +10,7 @@ use super::{keymap::us_usage, pixels::IosOrientation, pixels::Turn};
 use crate::device::{
     DeviceOpError,
     catalog::Orientation,
-    input::{DeviceInputEvent, DeviceKey, KeyAction, TouchAction},
+    input::{DeviceInputEvent, DeviceKey, KeyAction, TouchAction, is_us_typeable},
 };
 
 /// Keys and text need DTUHID; legacy keyboard input is dropped (spec §0).
@@ -204,7 +204,7 @@ fn key_target(key: DeviceKey) -> Result<KeyTarget, DeviceOpError> {
 /// characters, `\r\n` as one Return); otherwise it is pasted whole, one pasteboard write
 /// per event, so a later paste never replaces text iOS has not read yet (spec §5).
 fn plan_text(text: &str, plan: &mut Vec<HidAction>) {
-    if !text.chars().all(|c| us_usage(c).is_some()) {
+    if !is_us_typeable(text) {
         plan.push(HidAction::Paste {
             text: text.to_owned(),
         });

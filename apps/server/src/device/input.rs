@@ -108,6 +108,16 @@ pub(crate) fn oriented_size(width: u32, height: u32, orientation: Orientation) -
     }
 }
 
+/// Whether every character of `text` is US-typeable: printable ASCII, Return (`\n`, `\r`),
+/// and Tab. Android's emulator types only this set from `KeyboardEvent.text`, so Android
+/// refuses the rest; iOS types it as US keys and pastes anything else. The client's
+/// `isUsTypeable` (`apps/web/src/components/device/deviceKeyMap.ts`) is the same set, and
+/// its test uses the same vectors as this one's.
+pub(crate) fn is_us_typeable(text: &str) -> bool {
+    text.chars()
+        .all(|c| matches!(c, ' '..='~' | '\n' | '\r' | '\t'))
+}
+
 fn validate(events: &[DeviceInputEvent]) -> Result<(), DeviceOpError> {
     let invalid = |message: &str| Err(DeviceOpError::InvalidInput(message.to_owned()));
     if events.is_empty() {
@@ -185,6 +195,31 @@ mod tests {
                 size,
                 "{orientation:?}"
             );
+        }
+    }
+
+    /// The set `isUsTypeable` in `deviceKeyMap.ts` accepts, with the same vectors as its
+    /// test: every printable ASCII character, Return, and Tab. Anything else would be dropped
+    /// by the Android emulator without a word.
+    #[test]
+    fn us_typeable_text_is_printable_ascii_with_return_and_tab() {
+        let printable: String = (0x20u8..=0x7e).map(char::from).collect();
+        assert!(is_us_typeable(&printable));
+        assert!(is_us_typeable("line one\nline two\r\n\tindented"));
+        assert!(is_us_typeable(""));
+        for refused in [
+            "h\u{e9}llo",
+            "\u{e9}",
+            "\u{65e5}\u{672c}",
+            "\u{1f600}",
+            "a\u{a0}b",
+            "\u{7f}",
+            "\u{0}",
+            "\u{1b}",
+            "\u{8}",
+            "\u{2028}",
+        ] {
+            assert!(!is_us_typeable(refused), "{refused:?}");
         }
     }
 

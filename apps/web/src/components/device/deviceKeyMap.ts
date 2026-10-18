@@ -67,7 +67,9 @@ const US_TYPEABLE = /^[\x20-\x7E\n\r\t]*$/;
 
 /**
  * Whether an iOS simulator gets `text` typed as keys. Any other text is pasted through the
- * simulator's pasteboard, where iOS may ask to Allow Paste.
+ * simulator's pasteboard, where iOS may ask to Allow Paste. The server's `is_us_typeable`
+ * (`apps/server/src/device/input.rs`) is the same set, outside which Android refuses text;
+ * the two tests share their vectors.
  */
 export function isUsTypeable(text: string): boolean {
   return US_TYPEABLE.test(text);

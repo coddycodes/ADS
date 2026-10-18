@@ -75,4 +75,37 @@ mod tests {
             assert!(us_usage(c).is_some(), "{c:?}");
         }
     }
+
+    /// The refused vectors of `is_us_typeable`'s test (and of `isUsTypeable`'s on the web):
+    /// none has a US key, so iOS pastes them.
+    #[test]
+    fn untypeable_characters_have_no_key() {
+        for c in [
+            '\u{e9}',
+            '\u{65e5}',
+            '\u{1f600}',
+            '\u{a0}',
+            '\u{7f}',
+            '\u{0}',
+            '\u{1b}',
+            '\u{8}',
+            '\u{2028}',
+        ] {
+            assert_eq!(us_usage(c), None, "{c:?}");
+        }
+    }
+
+    /// iOS decides type or paste with the shared `is_us_typeable`, so its table must type
+    /// exactly that set: a key for every character in it, and none outside it.
+    #[test]
+    fn the_table_types_exactly_the_us_typeable_set() {
+        let mut buffer = [0; 4];
+        for c in (0..=u32::from(char::MAX)).filter_map(char::from_u32) {
+            assert_eq!(
+                us_usage(c).is_some(),
+                crate::device::input::is_us_typeable(c.encode_utf8(&mut buffer)),
+                "{c:?}"
+            );
+        }
+    }
 }

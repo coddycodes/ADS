@@ -16,7 +16,7 @@ use super::{
 use crate::device::{
     DeviceError, DeviceOpError,
     catalog::Orientation,
-    input::{DeviceInputEvent, DeviceKey, KeyAction, TouchAction},
+    input::{DeviceInputEvent, DeviceKey, KeyAction, TouchAction, is_us_typeable},
 };
 
 /// How long one event may wait for room in the emulator's input stream.
@@ -46,16 +46,6 @@ impl Default for RotationTiming {
 /// device is not named: the running device's display name belongs to the manager, not to
 /// the backend.
 const UNTYPEABLE_TEXT: &str = "This device can type only plain ASCII text. Accented letters, emoji, and other characters can't be sent from here yet.";
-
-/// Whether the emulator types every character of `text` from `KeyboardEvent.text`. Its proto
-/// translates only printable ASCII and warns that "most" other symbols are ignored, yet the
-/// call still succeeds, so the rest is refused instead of sent: accented letters, CJK, emoji,
-/// and control characters other than Return and Tab. The same set as `isUsTypeable` in
-/// `apps/web/src/components/device/deviceKeyMap.ts`, which tells iOS what it can type.
-fn is_typeable(text: &str) -> bool {
-    text.chars()
-        .all(|c| matches!(c, ' '..='~' | '\n' | '\r' | '\t'))
-}
 
 /// The W3C `KeyboardEvent.key` value the emulator maps to `key`.
 pub(crate) fn w3c_key(key: DeviceKey) -> &'static str {
@@ -251,7 +241,9 @@ async fn deliver(
 /// last reported. Pointers are kept in panel pixels, so a release after a turn still lands
 /// where the pointer went down.
 ///
-/// A batch with text outside [`is_typeable`] is refused whole, before anything is sent: no
+/// A batch with text outside [`is_us_typeable`] is refused whole, before anything is sent.
+/// The emulator's proto promises only printable ASCII in `KeyboardEvent.text` and warns that
+/// "most" other symbols are ignored, yet the call still succeeds: refusing means no
 /// character is dropped while the call reports success, and the device sees none of the
 /// batch, so the client's own release of a press in it goes out again.
 pub(super) async fn send_batch(
@@ -264,7 +256,7 @@ pub(super) async fn send_batch(
 ) -> Result<(), DeviceOpError> {
     if events
         .iter()
-        .any(|event| matches!(event, DeviceInputEvent::Text { text } if !is_typeable(text)))
+        .any(|event| matches!(event, DeviceInputEvent::Text { text } if !is_us_typeable(text)))
     {
         return Err(DeviceOpError::InvalidInput(UNTYPEABLE_TEXT.to_owned()));
     }
@@ -420,30 +412,6 @@ async fn read_skin(client: &EmulatorClient) -> Option<Orientation> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The set `isUsTypeable` in `deviceKeyMap.ts` accepts: every printable ASCII character,
-    /// Return, and Tab. Anything else would be dropped by the emulator without a word.
-    #[test]
-    fn typeable_text_is_printable_ascii_with_return_and_tab() {
-        let printable: String = (0x20u8..=0x7e).map(char::from).collect();
-        assert!(is_typeable(&printable));
-        assert!(is_typeable("line one\nline two\r\n\tindented"));
-        assert!(is_typeable(""));
-        for refused in [
-            "h\u{e9}llo",
-            "\u{e9}",
-            "\u{65e5}\u{672c}",
-            "\u{1f600}",
-            "a\u{a0}b",
-            "\u{7f}",
-            "\u{0}",
-            "\u{1b}",
-            "\u{8}",
-            "\u{2028}",
-        ] {
-            assert!(!is_typeable(refused), "{refused:?}");
-        }
-    }
 
     #[test]
     fn maps_keys() {
