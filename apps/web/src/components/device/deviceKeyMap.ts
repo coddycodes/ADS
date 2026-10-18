@@ -14,24 +14,45 @@ const KEYS: Readonly<Record<string, DeviceKey>> = {
   ArrowRight: "arrowRight",
 };
 
+type KeyEventModifiers = Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey"> & {
+  readonly shiftKey?: boolean;
+};
+
 /**
- * The device input for a key pressed on the focused screen, or `null` to leave it to the app.
- * Printable characters become text on key down; editing and arrow keys become key presses.
- * Escape, Shift+Tab and anything with Ctrl, Cmd or Alt are not captured, so app shortcuts
- * and leaving the screen with the keyboard keep working.
+ * Whether a key press belongs to the app, not the device: a chord with Ctrl, Cmd or Alt, or
+ * Shift+Tab, which leaves the screen.
+ */
+export function isAppShortcut(event: KeyEventModifiers): boolean {
+  return (
+    event.ctrlKey ||
+    event.metaKey ||
+    event.altKey ||
+    (event.key === "Tab" && event.shiftKey === true)
+  );
+}
+
+/**
+ * The device input for a key on the focused screen, or `null` to leave it to the app.
+ *
+ * On key down, printable characters become text and editing and arrow keys become key presses.
+ * A shortcut ({@link isAppShortcut}) is not captured, so app shortcuts and leaving the screen
+ * with the keyboard keep working.
+ *
+ * A key-up for a mapped key is always a key release, whatever modifiers are held now: Ctrl may
+ * join after the press was forwarded, and a dropped release leaves the key held on the device.
+ * The input queue sends it only for a key it holds, so the release of a shortcut press that
+ * was never forwarded goes nowhere.
  */
 export function keyboardEventToDeviceInput(
-  event: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey"> & {
-    readonly shiftKey?: boolean;
-  },
+  event: KeyEventModifiers,
   action: "down" | "up" = "down",
 ): DeviceInputEvent | null {
-  if (event.ctrlKey || event.metaKey || event.altKey) return null;
-  if (event.key === "Tab" && event.shiftKey === true) return null;
   const key = KEYS[event.key];
+  if (action === "up") return key === undefined ? null : { type: "key", key, action };
+  if (isAppShortcut(event)) return null;
   if (key !== undefined) return { type: "key", key, action };
   // One code point: a character, not a named key such as "Shift" or "F5".
-  if (action === "down" && isSingleCodePoint(event.key)) return { type: "text", text: event.key };
+  if (isSingleCodePoint(event.key)) return { type: "text", text: event.key };
   return null;
 }
 

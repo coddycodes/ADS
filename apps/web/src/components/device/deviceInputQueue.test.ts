@@ -157,6 +157,35 @@ describe("DeviceInputQueue", () => {
     ]);
   });
 
+  it("forwards a key release only for a key it holds", () => {
+    const sent: Array<ReadonlyArray<DeviceInputEvent>> = [];
+    const flushes: Array<() => void> = [];
+    const queue = new DeviceInputQueue(
+      (events) => {
+        sent.push(events);
+        return new Promise<void>(() => undefined);
+      },
+      (flush) => flushes.push(flush),
+    );
+    // Ctrl+Backspace: its press stayed with the app, so its release must not reach the device.
+    queue.push({ type: "key", key: "backspace", action: "up" });
+    expect(flushes).toHaveLength(0);
+    // A held key is released whatever else changed since it went down.
+    queue.push({ type: "key", key: "backspace", action: "down" });
+    queue.push({ type: "key", key: "backspace", action: "up" });
+    // A second release of the same press is a duplicate.
+    queue.push({ type: "key", key: "backspace", action: "up" });
+    queue.push({ type: "key", key: "enter", action: "up" });
+    flushes.shift()?.();
+    expect(sent).toEqual([
+      [
+        { type: "key", key: "backspace", action: "down" },
+        { type: "key", key: "backspace", action: "up" },
+      ],
+    ]);
+    expect(flushes).toHaveLength(0);
+  });
+
   it("sends releases at once, without waiting for a frame", async () => {
     const sent: Array<ReadonlyArray<DeviceInputEvent>> = [];
     const flushes: Array<() => void> = [];

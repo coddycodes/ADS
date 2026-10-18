@@ -21,7 +21,7 @@ import {
 import { deviceEnvironment } from "../../state/device";
 import { Button } from "../ui/button";
 import { clampToBox, displaySize, letterbox, toNormalized } from "./deviceGeometry";
-import { keyboardEventToDeviceInput, splitDeviceText } from "./deviceKeyMap";
+import { isAppShortcut, keyboardEventToDeviceInput, splitDeviceText } from "./deviceKeyMap";
 import { JpegRenderer } from "./jpegRenderer";
 import { STILL_IMAGES_REASONS, type StillImages } from "./deviceMessages";
 import { useDeviceVideo } from "./useDeviceVideo";
@@ -349,7 +349,9 @@ export function DeviceScreen({
     if (inputDisabled || event.nativeEvent.isComposing) return;
     const input = keyboardEventToDeviceInput(event, action);
     if (input === null) return;
-    event.preventDefault();
+    // A release can be forwarded while Ctrl is held, to let go of a key pressed before it; only
+    // the screen's own keys are taken from the browser and app shortcuts.
+    if (!isAppShortcut(event)) event.preventDefault();
     onInput(input);
   };
   const handlePaste = (event: ReactClipboardEvent<HTMLCanvasElement>) => {

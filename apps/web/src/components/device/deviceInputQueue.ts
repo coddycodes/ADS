@@ -13,7 +13,9 @@ const nextAnimationFrame = (flush: () => void) => {
  * latest position per pointer, flushed once per animation frame.
  *
  * It also tracks what is held down, so keys and touches can be released when focus leaves the
- * screen or the queue closes, instead of staying pressed on the device.
+ * screen or the queue closes, instead of staying pressed on the device. A key release is
+ * accepted only for a key held down: the release of a press that was never forwarded, such as
+ * Ctrl+Backspace's, is dropped, so the device never gets a spurious one.
  */
 export class DeviceInputQueue {
   private pending: DeviceInputEvent[] = [];
@@ -35,9 +37,13 @@ export class DeviceInputQueue {
     return this.sending;
   }
 
-  /** Queues an event; a move replaces the waiting move of the same pointer. */
+  /**
+   * Queues an event; a move replaces the waiting move of the same pointer, and a key release
+   * for a key not held is dropped.
+   */
   push(event: DeviceInputEvent): void {
     if (this.closed) return;
+    if (event.type === "key" && event.action === "up" && !this.heldKeys.has(event.key)) return;
     this.enqueue(event);
   }
 

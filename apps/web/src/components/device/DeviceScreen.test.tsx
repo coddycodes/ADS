@@ -199,6 +199,74 @@ describe("DeviceScreen", () => {
     expect(sent.at(-1)).toEqual({ type: "key", key: "backspace", action: "up" });
   });
 
+  it("releases a held key even when Ctrl joins before the key comes up", async () => {
+    const canvas = await render();
+    const down = new KeyboardEvent("keydown", {
+      key: "Backspace",
+      bubbles: true,
+      cancelable: true,
+    });
+    const up = new KeyboardEvent("keyup", {
+      key: "Backspace",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      canvas.dispatchEvent(down);
+      canvas.dispatchEvent(up);
+    });
+    await settle();
+    expect(sent).toEqual([
+      { type: "key", key: "backspace", action: "down" },
+      { type: "key", key: "backspace", action: "up" },
+    ]);
+    // The press was the screen's, the Ctrl release is not: browser shortcuts see it as before.
+    expect(down.defaultPrevented).toBe(true);
+    expect(up.defaultPrevented).toBe(false);
+  });
+
+  it("sends nothing for Ctrl+Backspace, press or release, and leaves both to the app", async () => {
+    const canvas = await render();
+    const down = new KeyboardEvent("keydown", {
+      key: "Backspace",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    const up = new KeyboardEvent("keyup", {
+      key: "Backspace",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      canvas.dispatchEvent(down);
+      canvas.dispatchEvent(up);
+    });
+    await settle();
+    expect(sent).toEqual([]);
+    expect(down.defaultPrevented).toBe(false);
+    expect(up.defaultPrevented).toBe(false);
+  });
+
+  it("takes a plain key press and its release from the browser", async () => {
+    const canvas = await render();
+    const down = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    const up = new KeyboardEvent("keyup", { key: "Enter", bubbles: true, cancelable: true });
+    await act(async () => {
+      canvas.dispatchEvent(down);
+      canvas.dispatchEvent(up);
+    });
+    await settle();
+    expect(sent).toEqual([
+      { type: "key", key: "enter", action: "down" },
+      { type: "key", key: "enter", action: "up" },
+    ]);
+    expect(down.defaultPrevented).toBe(true);
+    expect(up.defaultPrevented).toBe(true);
+  });
+
   it("lifts a held key when the window loses focus", async () => {
     const canvas = await render();
     await act(async () => {

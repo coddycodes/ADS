@@ -51,6 +51,36 @@ describe("keyboardEventToDeviceInput", () => {
     expect(keyboardEventToDeviceInput(press("F5"))).toBeNull();
   });
 
+  it("leaves a chord with Ctrl, Cmd or Alt, and Shift+Tab, to the app on key down", () => {
+    expect(keyboardEventToDeviceInput(press("Backspace", { ctrlKey: true }))).toBeNull();
+    expect(keyboardEventToDeviceInput(press("Backspace", { metaKey: true }))).toBeNull();
+    expect(keyboardEventToDeviceInput(press("ArrowLeft", { altKey: true }))).toBeNull();
+    expect(keyboardEventToDeviceInput(press("Tab", { shiftKey: true }), "down")).toBeNull();
+  });
+
+  it("releases a key whatever modifiers are held when it comes up", () => {
+    // The press was forwarded before the modifier joined; dropping the release would leave the
+    // key held on the device.
+    for (const modifier of ["ctrlKey", "metaKey", "altKey"] as const) {
+      expect(keyboardEventToDeviceInput(press("Backspace", { [modifier]: true }), "up")).toEqual({
+        type: "key",
+        key: "backspace",
+        action: "up",
+      });
+    }
+    expect(keyboardEventToDeviceInput(press("Tab", { shiftKey: true }), "up")).toEqual({
+      type: "key",
+      key: "tab",
+      action: "up",
+    });
+  });
+
+  it("still releases nothing for keys that were never forwarded", () => {
+    expect(keyboardEventToDeviceInput(press("Escape"), "up")).toBeNull();
+    expect(keyboardEventToDeviceInput(press("c", { metaKey: true }), "up")).toBeNull();
+    expect(keyboardEventToDeviceInput(press("Shift"), "up")).toBeNull();
+  });
+
   it("sends no text when a printable key is released", () => {
     expect(keyboardEventToDeviceInput(press("a"), "up")).toBeNull();
   });
