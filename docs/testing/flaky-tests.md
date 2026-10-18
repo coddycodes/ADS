@@ -4,14 +4,18 @@ Use the shared [failure classification and repair procedure](./cross-platform-va
 first. Keep the initial failure and its exact command. A passing retry alone
 does not distinguish a regression, a fixture race, and a host resource limit.
 
-A step deadline must not contain a shorter per-frame deadline. In the external
-worktree lifecycle test, a real shell prints the adopted cwd within the step's
-15 s bound. A starved shell can go quiet for longer than the 10 s each RPC
-frame gets, so that loop reads frames with no deadline of their own. A shell
-stalled for 13 s on purpose shows the difference. The same test's provider
-fixture must record `shutdown` within the server's one-second graceful Codex
-shutdown before it is killed. A fixture with no CPU for that second is a host
-resource limit, not a fixture race.
+A test that reads an RPC stream reads every value of each Chunk: the server
+coalesces queued events into one Chunk. A loop that kept only the first value
+dropped the line it waited for, and then timed out with the line already in the
+terminal's history. Output text can also split across values, so a test
+matches it against the accumulated transcript. A step deadline must not contain
+a shorter per-frame deadline either: a loop bounded by its step reads frames
+with no deadline of their own.
+
+Check that the server stopped a provider from the server side, for example that
+its process is gone, rather than from the fixture. The server gives Codex one
+second to shut down gracefully and then kills it. A fixture that records
+`shutdown` itself misses that record whenever it gets no CPU in that second.
 
 For an in-flight HTTP body, a client-side stream poll proves only that the
 client produced bytes, not that the server admitted the request. The Claude

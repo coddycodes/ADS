@@ -56,7 +56,7 @@ async fn adopted_external_worktree_uses_normal_rpc_paths_and_survives_the_full_l
         .with_bind("127.0.0.1", 0)
         .with_unsafe_no_auth();
     let provider_cwd_fifo = state.path().join("provider-cwd.fifo");
-    let provider_shutdowns = state.path().join("provider-shutdowns.log");
+    let provider_pid_file = state.path().join("provider.pid");
     let setup_sentinel = state.path().join("adoption-must-not-run-setup");
     let fifo = Command::new("mkfifo")
         .arg(&provider_cwd_fifo)
@@ -64,7 +64,7 @@ async fn adopted_external_worktree_uses_normal_rpc_paths_and_survives_the_full_l
         .expect("create provider cwd FIFO");
     assert!(fifo.status.success(), "mkfifo failed");
     let provider_fixture =
-        write_cwd_recording_codex_fixture(state.path(), &provider_cwd_fifo, &provider_shutdowns);
+        write_cwd_recording_codex_fixture(state.path(), &provider_cwd_fifo, &provider_pid_file);
     hermetic_providers::write_hermetic_settings(
         &config.state_dir(),
         json!({
@@ -268,6 +268,8 @@ async fn adopted_external_worktree_uses_normal_rpc_paths_and_survives_the_full_l
         adopted_path.to_string_lossy(),
         "the production provider launch uses the adopted worktree cwd"
     );
+    let provider = provider_pid(&provider_pid_file);
+    assert!(provider_is_running(provider), "the provider session runs");
     assert!(
         !setup_sentinel.exists(),
         "adoption must not execute a runOnWorktreeCreate project script"
@@ -338,27 +340,27 @@ async fn adopted_external_worktree_uses_normal_rpc_paths_and_survives_the_full_l
     )
     .await;
     success(&mut socket, "30").await;
-    let terminal_cwd = timeout(Duration::from_secs(15), async {
-        loop {
-            let outputs =
+    let expected_cwd = format!("BIBCODE_ACTUAL_CWD={}", adopted_path.to_string_lossy());
+    // A Chunk can carry several events, and a PTY read can split a line between them.
+    let mut transcript = String::new();
+    timeout(Duration::from_secs(15), async {
+        while !transcript.contains(&expected_cwd) {
+            let events =
                 chunk_values_within_caller_deadline(&mut terminal_output_socket, "27").await;
             ack(&mut terminal_output_socket, "27").await;
-            if let Some(output) = outputs.into_iter().find(|output| {
-                output["type"] == "output"
-                    && output["data"].as_str().is_some_and(|data| {
-                        data.contains(&format!(
-                            "BIBCODE_ACTUAL_CWD={}",
-                            adopted_path.to_string_lossy()
-                        ))
-                    })
-            }) {
-                break output;
+            for event in events {
+                if event["type"] == "output"
+                    && let Some(data) = event["data"].as_str()
+                {
+                    transcript.push_str(data);
+                }
             }
         }
     })
     .await
-    .expect("terminal process reports its actual cwd within fifteen seconds");
-    assert_eq!(terminal_cwd["type"], "output");
+    .unwrap_or_else(|_| {
+        panic!("terminal process reports its actual cwd within fifteen seconds: {transcript:?}")
+    });
     terminal_output_socket
         .close(None)
         .await
@@ -434,7 +436,7 @@ async fn adopted_external_worktree_uses_normal_rpc_paths_and_survives_the_full_l
         "raw removal cannot retire the adopted owner"
     );
     assert!(
-        !provider_shutdowns.exists(),
+        provider_is_running(provider),
         "raw removal rejection cannot quiesce the active provider"
     );
     request(
@@ -474,7 +476,7 @@ async fn adopted_external_worktree_uses_normal_rpc_paths_and_survives_the_full_l
         "degraded observation retains every authoritative availability exactly"
     );
     assert!(
-        !provider_shutdowns.exists(),
+        provider_is_running(provider),
         "degraded observation must not invoke provider quiesce"
     );
     assert!(
@@ -505,13 +507,15 @@ async fn adopted_external_worktree_uses_normal_rpc_paths_and_survives_the_full_l
     )
     .await;
     let missing = success(&mut socket, "9").await;
-    assert_eq!(
-        fs::read_to_string(&provider_shutdowns)
-            .expect("provider shutdown audit")
-            .lines()
-            .count(),
-        1,
-        "one authoritative loss invokes provider quiesce exactly once"
+    // The server stops the provider whether or not it acknowledged the graceful shutdown in
+    // time: a starved provider is killed after Codex's 1 s grace.
+    let stop_deadline = tokio::time::Instant::now() + PROVIDER_STOP_BOUND;
+    while provider_is_running(provider) && tokio::time::Instant::now() < stop_deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        !provider_is_running(provider),
+        "authoritative loss stops the provider process"
     );
     request(
         &mut socket,
@@ -529,13 +533,9 @@ async fn adopted_external_worktree_uses_normal_rpc_paths_and_survives_the_full_l
             .any(|workspace| workspace["threadId"] == thread_id
                 && workspace["availability"] == "missing-registered")
     );
-    assert_eq!(
-        fs::read_to_string(&provider_shutdowns)
-            .expect("provider shutdown audit after repeated missing observation")
-            .lines()
-            .count(),
-        1,
-        "repeated missing observations must not invoke provider quiesce again"
+    assert!(
+        !provider_is_running(provider),
+        "repeated missing observations leave the provider stopped"
     );
     let terminal_quiesced = timeout(Duration::from_secs(15), async {
         loop {
@@ -961,7 +961,7 @@ fn init_repository(main: &Path) {
 fn write_cwd_recording_codex_fixture(
     directory: &Path,
     cwd_fifo: &Path,
-    shutdown_log: &Path,
+    pid_file: &Path,
 ) -> PathBuf {
     let executable = directory.join("codex-cwd-fixture.sh");
     let script = r#"#!/bin/sh
@@ -970,6 +970,7 @@ if [ "$1" = "--version" ]; then
   exit 0
 fi
 cwd=$(pwd)
+printf '%s\n' "$$" > "__BIBCODE_PID_FILE__"
 while IFS= read -r line; do
   id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
@@ -979,17 +980,38 @@ while IFS= read -r line; do
     *'"method":"thread/goal/set"'*) printf '{"id":%s,"result":{"goal":{"status":"active"}}}\n' "$id" ;;
     *'"method":"turn/start"'*) printf '{"id":%s,"result":{"turn":{"id":"fixture-turn"}}}\n{"method":"item/started","emittedAtMs":1001,"params":{"threadId":"%s","turnId":"fixture-turn","item":{"id":"cwd-observer","type":"collabAgentToolCall","tool":"spawnAgent","status":"inProgress","senderThreadId":"%s","receiverThreadIds":["cwd-observer"],"agentsStates":{"cwd-observer":{"status":"running","message":null}}},"startedAtMs":1001}}\n' "$id" "$cwd" "$cwd" ;;
     *'"method":"turn/interrupt"'*) printf '{"id":%s,"result":{}}\n' "$id" ;;
-    *'"method":"shutdown"'*) printf 'shutdown\n' >> "__BIBCODE_SHUTDOWN_LOG__"; printf '{"id":%s,"result":null}\n' "$id" ;;
+    *'"method":"shutdown"'*) printf '{"id":%s,"result":null}\n' "$id" ;;
   esac
 done
 "#
     .replace("__BIBCODE_CWD_FIFO__", &cwd_fifo.to_string_lossy())
-    .replace(
-        "__BIBCODE_SHUTDOWN_LOG__",
-        &shutdown_log.to_string_lossy(),
-    );
+    .replace("__BIBCODE_PID_FILE__", &pid_file.to_string_lossy());
     executable_fixture::write_executable(&executable, script);
     executable
+}
+
+/// The server stops a lost workspace's provider within one cleanup attempt (its 5 s graceful
+/// timeout, which contains Codex's 1 s graceful shutdown and the kill that follows), or in the
+/// retry it schedules 1 s after an attempt that timed out.
+#[cfg(unix)]
+const PROVIDER_STOP_BOUND: Duration = Duration::from_secs(5 + 1 + 5);
+
+/// The provider fixture's process id, which it records when it starts.
+#[cfg(unix)]
+fn provider_pid(pid_file: &Path) -> libc::pid_t {
+    fs::read_to_string(pid_file)
+        .expect("provider pid file")
+        .trim()
+        .parse()
+        .expect("provider pid")
+}
+
+/// Whether the process exists; the server reaps the provider when it stops it.
+#[cfg(unix)]
+fn provider_is_running(pid: libc::pid_t) -> bool {
+    // SAFETY: signal 0 only checks that the process exists.
+    let signalled = unsafe { libc::kill(pid, 0) } == 0;
+    signalled || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
 fn git(cwd: &Path, args: &[&str], path: Option<&Path>) {
@@ -1066,23 +1088,23 @@ async fn next_within_caller_deadline(socket: &mut TestSocket) -> ServerMessage {
     serde_json::from_str(&text).expect("valid server message")
 }
 
+/// The first value of the next Chunk, for a stream whose first Chunk starts with its snapshot.
 #[cfg(unix)]
 async fn chunk(socket: &mut TestSocket, request_id: &str) -> Value {
-    chunk_frames(socket, request_id, true)
+    chunk_values(socket, request_id)
         .await
         .into_iter()
         .next()
         .expect("stream value")
 }
 
-/// Every value of the next chunk: items queued behind an unacknowledged chunk share one.
+/// Every value of the next Chunk: the server coalesces queued events into one Chunk.
 #[cfg(unix)]
 async fn chunk_values(socket: &mut TestSocket, request_id: &str) -> Vec<Value> {
     chunk_frames(socket, request_id, true).await
 }
 
-/// Every value of the next chunk (items queued behind an unacknowledged chunk share one), with
-/// no per-frame deadline: the caller bounds the whole step.
+/// Every value of the next Chunk, with no per-frame deadline: the caller bounds the whole step.
 #[cfg(unix)]
 async fn chunk_values_within_caller_deadline(
     socket: &mut TestSocket,
