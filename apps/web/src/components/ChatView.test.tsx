@@ -3573,13 +3573,15 @@ describe("ChatView", () => {
         surface: { terminalId: activeCenterTerminalId },
         projectId,
       });
-      // The panel folds its seeded roster pages in during render and renders
-      // again; server rendering keeps no memo cache across that pass.
-      expect(h.activityStateTargets).toEqual([
-        { environmentId, input: scope },
-        { environmentId, input: scope },
-        { environmentId, input: scope },
-      ]);
+      // Every activity read targets the persisted terminal, never the active
+      // center pane. How many reads there are is not the behaviour: the panel
+      // folds its seeded roster pages in during render and renders again, and
+      // that pass reads twice uncompiled (root `vp test`) but three times under
+      // the React Compiler (the web package's lane).
+      expect(h.activityStateTargets.length).toBeGreaterThan(0);
+      for (const target of h.activityStateTargets) {
+        expect(target).toEqual({ environmentId, input: scope });
+      }
     });
 
     it("closes only Activity from a panel with hidden generic right-panel surfaces", async () => {
