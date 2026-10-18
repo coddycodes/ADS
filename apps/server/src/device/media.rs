@@ -454,12 +454,14 @@ impl MediaHub {
     }
 
     /// Asks the encoder for a fresh config and key unit, at most once per
-    /// [`RESET_MIN_INTERVAL`] per device; the window runs from the write, not from the
-    /// request. A request inside the window is deferred, never dropped: when the window
-    /// ends, the hub's task sends one reset for every request made in it, if a socket still
-    /// waits for a key unit then. A still screen encodes nothing unasked (iOS, and the
-    /// Android emulator's encoder), so a viewer that joins, or a decoder that recovers,
-    /// inside the window would otherwise wait for a key unit forever.
+    /// [`RESET_MIN_INTERVAL`] per device. The window runs from the write: the stamp taken
+    /// here gates later requests until the task writes the reset and stamps it again (a
+    /// reset made while the source starts is written much later). A request inside the
+    /// window is deferred, never dropped: when the window ends, the hub's task sends one
+    /// reset for every request made in it, if a socket still waits for a key unit then. A
+    /// still screen encodes nothing unasked (iOS, and the Android emulator's encoder), so a
+    /// viewer that joins, or a decoder that recovers, inside the window would otherwise
+    /// wait for a key unit forever.
     fn maybe_reset(&self, state: &mut HubState) {
         let now = Instant::now();
         if state
