@@ -2092,7 +2092,10 @@ second is held until it ends and sent then if no key frame has arrived, because
 a still screen produces no frame to retry on; a key frame, a reconfigure, or
 stopping drops it.
 
-Each socket has a 2 MiB, 256-frame queue. On overflow the hub drops that
+Each socket has a 2 MiB, 256-frame queue. A unit larger than the byte budget
+still reaches a socket with nothing queued; for a key unit, a queue that holds
+only configs and keepalives counts as empty, so a key unit and the config sent
+just before it arrive together. On overflow the hub drops that
 socket's queued deltas, forwards nothing until the next key unit, and sends
 `RESET_VIDEO` at most once per second per device. The second runs from the
 write, which for a reset asked for while the source still starts is when the

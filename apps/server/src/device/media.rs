@@ -241,6 +241,8 @@ impl TicketBook {
 struct QueuedFrame {
     generation: u64,
     delta: bool,
+    /// A key unit or a delta, counted in [`SubscriberSlot::media_bytes`].
+    media: bool,
     bytes: Bytes,
 }
 
@@ -249,6 +251,9 @@ struct SubscriberSlot {
     id: u64,
     sender: mpsc::Sender<QueuedFrame>,
     queued_bytes: Arc<AtomicUsize>,
+    /// The part of [`Self::queued_bytes`] that is key units and deltas, not configs or
+    /// keepalives.
+    media_bytes: Arc<AtomicUsize>,
     /// Bumped when a unit is dropped: deltas queued before it are discarded unsent.
     generation: Arc<AtomicU64>,
     waiting_for_key: bool,
@@ -287,25 +292,44 @@ enum ResetStep {
 }
 
 impl SubscriberSlot {
-    /// Queues `frame`, or reports `Overflow` when the queue is full in frames or bytes. The
-    /// caller decides what an overflow costs the socket (see [`MediaHub::dispatch`]).
-    fn offer(&self, frame: &Bytes, delta: bool) -> Offer {
+    /// Queues `frame`, a unit of `kind` or, for `None`, a keepalive, or reports `Overflow`
+    /// when the queue is full in frames or bytes. The caller decides what an overflow costs
+    /// the socket (see [`MediaHub::dispatch`]).
+    ///
+    /// An empty queue always takes the frame, so a unit larger than the budget still
+    /// reaches an idle socket. For a key unit the queue counts as empty while it holds only
+    /// configs and keepalives: the config always goes out just before its key unit, and
+    /// the two must arrive together.
+    fn offer(&self, frame: &Bytes, kind: Option<UnitKind>) -> Offer {
         let queued = self.queued_bytes.load(Ordering::Acquire);
-        // An empty queue always takes the frame, so a unit larger than the budget still
-        // reaches an idle socket.
-        if queued > 0 && queued + frame.len() > SOCKET_QUEUE_BYTES {
+        let backlog = if kind == Some(UnitKind::Key) {
+            // Only dispatch adds media bytes, under the hub lock, so this is never less
+            // than what the queue holds.
+            self.media_bytes.load(Ordering::Acquire)
+        } else {
+            queued
+        };
+        if backlog > 0 && queued + frame.len() > SOCKET_QUEUE_BYTES {
             return Offer::Overflow;
         }
+        let media = matches!(kind, Some(UnitKind::Key | UnitKind::Delta));
         self.queued_bytes.fetch_add(frame.len(), Ordering::AcqRel);
+        if media {
+            self.media_bytes.fetch_add(frame.len(), Ordering::AcqRel);
+        }
         let item = QueuedFrame {
             generation: self.generation.load(Ordering::Acquire),
-            delta,
+            delta: kind == Some(UnitKind::Delta),
+            media,
             bytes: frame.clone(),
         };
         match self.sender.try_send(item) {
             Ok(()) => Offer::Sent,
             Err(error) => {
                 self.queued_bytes.fetch_sub(frame.len(), Ordering::AcqRel);
+                if media {
+                    self.media_bytes.fetch_sub(frame.len(), Ordering::AcqRel);
+                }
                 match error {
                     mpsc::error::TrySendError::Full(_) => Offer::Overflow,
                     mpsc::error::TrySendError::Closed(_) => Offer::Closed,
@@ -328,12 +352,12 @@ impl SubscriberSlot {
         if self.needs_config
             && let Some(config) = config
         {
-            match self.offer(config, false) {
+            match self.offer(config, Some(UnitKind::Config)) {
                 Offer::Sent => self.needs_config = false,
                 refused => return refused,
             }
         }
-        self.offer(frame, false)
+        self.offer(frame, Some(UnitKind::Key))
     }
 
     /// What a full queue costs the socket. It drops what is queued and waits for the next
@@ -444,6 +468,7 @@ impl MediaHub {
         let (sender, frames) = mpsc::channel(capacity);
         let closed = CancellationToken::new();
         let queued_bytes = Arc::new(AtomicUsize::new(0));
+        let media_bytes = Arc::new(AtomicUsize::new(0));
         let generation = Arc::new(AtomicU64::new(0));
         let missed_key = Arc::new(AtomicBool::new(false));
         let id = {
@@ -460,6 +485,7 @@ impl MediaHub {
                 id,
                 sender,
                 queued_bytes: queued_bytes.clone(),
+                media_bytes: media_bytes.clone(),
                 generation: generation.clone(),
                 waiting_for_key: true,
                 missed_key: missed_key.clone(),
@@ -470,7 +496,7 @@ impl MediaHub {
             if let Some(config) = &state.cached_config {
                 // A fresh queue takes any frame (an empty one skips the byte budget), so only
                 // a closed receiver could refuse it, and it is ours: the config always arrives.
-                let _ = slot.offer(config, false);
+                let _ = slot.offer(config, Some(UnitKind::Config));
             }
             state.subscribers.push(slot);
             self.maybe_reset(&mut state);
@@ -480,6 +506,7 @@ impl MediaHub {
             frames,
             closed,
             queued_bytes,
+            media_bytes,
             generation,
             missed_key,
             guard: MediaGuard {
@@ -611,7 +638,7 @@ impl MediaHub {
                     .waiting_since
                     .max(last_reset)
                     .is_some_and(|since| now.duration_since(since) > WAIT_WATCHDOG);
-            !matches!(slot.offer(&FRAME, false), Offer::Closed)
+            !matches!(slot.offer(&FRAME, None), Offer::Closed)
         });
         if stuck {
             tracing::debug!("a device media socket still waits for a key unit; asking again");
@@ -652,7 +679,7 @@ impl MediaHub {
             }
             let offered = match unit.kind {
                 UnitKind::Key => slot.offer_key(&frame, config.as_ref()),
-                UnitKind::Config | UnitKind::Delta => slot.offer(&frame, delta),
+                UnitKind::Config | UnitKind::Delta => slot.offer(&frame, Some(unit.kind.clone())),
             };
             match offered {
                 Offer::Sent => {
@@ -823,6 +850,8 @@ pub(crate) struct MediaSubscriber {
     /// Cancelled when the stream ends for this socket.
     pub closed: CancellationToken,
     queued_bytes: Arc<AtomicUsize>,
+    /// The slot's [`SubscriberSlot::media_bytes`].
+    media_bytes: Arc<AtomicUsize>,
     generation: Arc<AtomicU64>,
     /// The slot's [`SubscriberSlot::missed_key`].
     missed_key: Arc<AtomicBool>,
@@ -843,6 +872,10 @@ impl MediaSubscriber {
             let queued = self
                 .queued_bytes
                 .fetch_sub(frame.bytes.len(), Ordering::AcqRel);
+            if frame.media {
+                self.media_bytes
+                    .fetch_sub(frame.bytes.len(), Ordering::AcqRel);
+            }
             if queued == frame.bytes.len()
                 && self.missed_key.swap(false, Ordering::AcqRel)
                 && let Some(hub) = &self.guard.hub
@@ -1631,7 +1664,11 @@ mod tests {
             kinds
         });
         tokio::time::sleep(RESET_MIN_INTERVAL * 2).await;
-        assert_eq!(hub.written.load(Ordering::Acquire), 1, "a short wait asks nothing");
+        assert_eq!(
+            hub.written.load(Ordering::Acquire),
+            1,
+            "a short wait asks nothing"
+        );
         hub.wait_written(2).await;
         let second = Instant::now();
         assert!(
@@ -1651,7 +1688,10 @@ mod tests {
         assert_eq!(hub.written.load(Ordering::Acquire), written);
         hub.hub.stop();
         let kinds = reader.await.expect("reader");
-        let key_at = kinds.iter().position(|kind| *kind == 1).expect("the key unit");
+        let key_at = kinds
+            .iter()
+            .position(|kind| *kind == 1)
+            .expect("the key unit");
         assert!(
             kinds[..key_at - 1].iter().all(|kind| *kind == 3) && kinds[key_at - 1] == 0,
             "keepalives while it waited, then the config and key: {kinds:?}"
@@ -1848,6 +1888,60 @@ mod tests {
         assert_eq!(watcher.received().await, [("key", 5)]);
     }
 
+    /// A unit of `kind` with `bytes` of payload.
+    fn sized(kind: UnitKind, pts_us: u64, bytes: usize) -> VideoUnit {
+        VideoUnit {
+            kind,
+            pts_us,
+            data: Bytes::from(vec![0_u8; bytes]),
+        }
+    }
+
+    /// The audit's footnote and Codex's PR review: a config always goes out just before its
+    /// key unit, so the "an empty queue takes any unit" rule never applied to a key unit,
+    /// and one over the byte budget overflowed an idle socket every time. Only configs and
+    /// keepalives queued ahead of it now leave the queue counted as empty.
+    #[tokio::test(start_paused = true)]
+    async fn an_idle_socket_takes_its_config_and_a_key_unit_over_the_budget() {
+        let hub = HubFixture::new();
+        let mut watcher = hub.subscribe();
+        // A keepalive joins the empty queue first, and the reader runs only at the end.
+        tokio::time::sleep(KEEPALIVE_INTERVAL + Duration::from_millis(100)).await;
+        hub.feed([config(), sized(UnitKind::Key, 1, SOCKET_QUEUE_BYTES + 1024)])
+            .await;
+        assert_eq!(
+            watcher.received().await,
+            [("keepalive", 0), ("config", 0), ("key", 1)]
+        );
+        hub.feed([delta(2)]).await;
+        assert_eq!(watcher.received().await, [("delta", 2)]);
+    }
+
+    /// The exception covers only configs and keepalives: a socket with a key unit or a
+    /// delta still queued overflows on a key unit that does not fit, and deltas keep the
+    /// byte budget as before.
+    #[tokio::test(start_paused = true)]
+    async fn a_socket_with_media_queued_still_overflows_on_a_key_unit_over_the_budget() {
+        let hub = HubFixture::new();
+        let mut watcher = hub.subscribe();
+        hub.feed([config(), key(1), delta(2)]).await;
+        hub.feed([sized(UnitKind::Key, 3, SOCKET_QUEUE_BYTES)])
+            .await;
+        assert_eq!(
+            received_media(&mut watcher).await,
+            [("config", 0), ("key", 1)],
+            "the key unit overflowed and delta 2 was dropped with it"
+        );
+        // A delta over the budget after a config still overflows a socket that holds a key.
+        hub.feed([config(), key(4)]).await;
+        hub.feed([sized(UnitKind::Delta, 5, SOCKET_QUEUE_BYTES)])
+            .await;
+        assert_eq!(
+            received_media(&mut watcher).await,
+            [("config", 0), ("key", 4)]
+        );
+    }
+
     #[tokio::test]
     async fn late_joiner_gets_the_cached_config_then_waits_for_a_key() {
         let hub = HubFixture::new();
@@ -1964,7 +2058,10 @@ mod tests {
         let mut watcher = hub.subscribe();
         hub.wait_written(1).await;
         hub.feed([config(), key(1)]).await;
-        assert_eq!(received_media(&mut watcher).await, [("config", 0), ("key", 1)]);
+        assert_eq!(
+            received_media(&mut watcher).await,
+            [("config", 0), ("key", 1)]
+        );
         tokio::time::sleep(RESET_MIN_INTERVAL * 3).await;
         assert_eq!(hub.written.load(Ordering::Acquire), 1);
     }
