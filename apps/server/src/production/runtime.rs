@@ -68,7 +68,8 @@ use crate::{
         orchestration_rpc::register_orchestration_rpc_with_delivery_and_availability,
         provider_runtime::{
             NativeProviderDriverFactory, ProviderRuntimeSupervisor, SupervisorOptions,
-            reconcile_abandoned_provider_sessions, rewind_thread_conversation,
+            prepare_thread_rewind, reconcile_abandoned_provider_sessions,
+            rewind_thread_conversation,
         },
         pull_requests_rpc::{PullRequestsRpcServices, register_pull_requests_rpc},
         relay::relay_client_service,
@@ -897,6 +898,18 @@ impl OrchestrationEffectCallbacks for RuntimeEffectCallbacks {
                 rewind_key,
             )
             .await
+        })
+    }
+
+    fn prepare_provider_rewind<'a>(&'a self, thread_id: &'a str) -> BoxEffectFuture<'a, ()> {
+        Box::pin(async move {
+            let _admission = self
+                .admission
+                .acquire_thread(thread_id, std::iter::empty())
+                .await
+                .map_err(workspace_admission_detail)?;
+            prepare_thread_rewind(&self.provider, &self.engine, &self.settings_root, thread_id)
+                .await
         })
     }
 

@@ -848,6 +848,11 @@ async fn fill_available_slots(
     // There is only one candidate per thread, so each session is read once per fill.
     let mut candidates = Vec::new();
     for row in claimable_oldest_per_thread(rows) {
+        // A revert of this thread runs; its end wakes delivery. The task's own reservation is
+        // the exclusion; this only keeps a waiting task from holding a slot.
+        if engine.thread_turns_reserved(&row.thread_id) {
+            continue;
+        }
         if row.mode == TurnDeliveryMode::Start
             && engine
                 .repositories()
@@ -984,7 +989,10 @@ async fn promote_settled_threads(
         if shutdown.is_cancelled() {
             break;
         }
+        // A revert of this thread runs; promotion waits for it rather than showing a turn
+        // that cannot start yet.
         if head.held
+            || engine.thread_turns_reserved(&head.thread_id)
             || !repositories
                 .can_promote_queued_provider_turn(
                     head.thread_id.clone(),
@@ -1128,6 +1136,14 @@ async fn prepare_claim_and_deliver(
         if stop_claiming.is_cancelled() {
             return Err("provider delivery claim cancelled".to_owned());
         }
+        // Held until the provider has the turn, so a revert of this thread waits for it, and a
+        // revert already running finishes before this turn can start.
+        let _reservation = tokio::select! {
+            reservation = engine.reserve_thread_turns(&row.thread_id) => reservation,
+            () = stop_claiming.cancelled() => {
+                return Err("provider delivery claim cancelled".to_owned());
+            }
+        };
         let claimed = engine
             .repositories()
             .claim_provider_turn(row.command_id, now())

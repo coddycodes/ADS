@@ -2058,8 +2058,9 @@ admitted messages. Thread snapshots retain that same order for queued messages;
 clients rendering queue cards preserve it instead of sorting their timestamps.
 
 Automatic promotion requires an unheld head, a ready session, no pending/sending
-delivery, no running projected turn, and no pending approval or user-input
-request. The gate reads approvals and the latest durable user-input activity
+delivery, no running projected turn, no pending approval or user-input
+request, and no [checkpoint revert](#checkpoint-revert) of the thread in
+flight; the delivery worker also claims nothing for such a thread. The gate reads approvals and the latest durable user-input activity
 for each request, rather than the thread summary's input counter. A running
 turn placeholder continues to block the next promotion after provider acceptance
 releases the worker slot, until the provider's running and ready cycle settles
@@ -2269,9 +2270,45 @@ the provider keeps its conversation. It adds an informational
 `checkpoint.revert.files-only` activity that says the conversation was not
 rewound.
 
-The effect also refuses a revert while the thread's session is `running`,
-whichever client asked for it. A running turn would write over the restored
-files, or the rewind would cut it off.
+The effect also refuses a revert while the thread's session holds a turn,
+whichever client asked for it: it is `running` or `starting`, or it still names
+an active turn. This is the same test idle suspension uses for a busy session.
+A running turn would write over the restored files, or the rewind would cut it
+off. The supervisor likewise refuses, before it rewinds or reports files only,
+while the live session still runs background work that keeps idle suspension
+away: a Claude background task, or a subagent or work item Activity shows
+running, reported within the last 30 minutes. The session reads idle then, but
+its process would write over the restored files. Work BiBCode cannot see does
+not block a revert.
+
+A revert and the thread's turn deliveries exclude each other. The revert
+reserves the thread on `OrchestrationEngine` before its busy check and releases
+it once the revert is recorded or has failed; a delivery holds the same
+reservation from just before its claim until the provider has the turn. A
+revert therefore waits for a delivery already in flight, and then usually
+refuses its running turn. No turn starts from its busy check until it ends,
+whichever client sent the message, and also when a session the revert reopened
+reads `ready`. Delivery skips the reserved thread instead of claiming its
+messages or promoting its queue automatically, so a message sent or queued
+meanwhile keeps its place and is delivered after the revert, in queue order;
+the release wakes delivery. A client's **Send now** still moves the queue head
+to pending, where it waits the same way.
+The slow part of a revert does not hold the effects worker, which serves every
+thread. The worker parks the reverting thread, and a waiter does the
+preparation off the worker: it takes the reservation, which can wait for a
+delivery in flight, then runs step 1 and the busy check, which only read the
+checkout. If the provider can rewind, it then reopens a session that was
+suspended while idle, which can be a cold start. Meanwhile the thread's later
+effects, such as a turn baseline, queue behind the revert in event order, and
+other threads' checkpoint work goes on. Once the preparation is done, the
+worker runs the rewind and the restore, then the queued effects. Every effect
+that writes still runs on the worker one at a time, so checkpoint work on a
+checkout that sibling threads share never overlaps. A parked thread holds at
+most 64 events, and at most four threads are parked at once; past either bound
+the worker waits for the revert itself, as it did before parking.
+The reservation is in memory only. That is enough because a revert never
+outlives its process: the effects worker does not replay a revert requested
+before a restart.
 
 Once the provider has rewound, the revert must be recorded, or a retry would
 rewind the provider again. Shutdown therefore waits for step 3 instead of

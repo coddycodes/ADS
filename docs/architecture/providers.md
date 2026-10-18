@@ -33,6 +33,10 @@ provider without it restores only the files. The supervisor checks the same
 capability before it asks a provider to rewind. Every snapshot carries the
 flag, so the revert confirmation can say which outcome to expect. It reads an
 absent flag, from an older server, as unknown and keeps the full warning.
+A revert refuses a session that idle suspension would call busy, or whose
+reported live work still keeps it from idle suspension, and no turn
+of its thread starts while it runs, including on a session it reopened
+([Checkpoint revert](./rpc-and-orchestration.md#checkpoint-revert)).
 
 ## Workspace capability discovery
 
@@ -441,7 +445,15 @@ Idle suspension must never stop work the provider still runs:
   Activity adapter, and Codex or OpenCode with Chat Activity off, can run
   background shells or subagents BiBCode cannot see, so their sessions are not
   idle-suspended; they end with the thread, an explicit stop, or server
-  shutdown.
+  shutdown. Turning Chat Activity back on does not make such a session
+  suspendable at once: its live sets are empty until the driver's
+  reconciliation rediscovers the children that kept running. A session that
+  Chat Activity was turned off for, or that started while it was off, stays
+  unseen until the provider reports its activity scope `live` again, which a
+  successful reconciliation pass does with the children it found, even when
+  that report changes nothing in the projection. A pass that never succeeds
+  keeps the session. A session that always ran with Chat Activity on waits for
+  no rediscovery.
 - **Unsettled driver state.** A driver can report state only its live runtime
   holds (`ProviderDriver::holds_unsettled_work`): an OpenCode 2 checkpoint
   rewind that has not reported success. The deadline re-arms instead of

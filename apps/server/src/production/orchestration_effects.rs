@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap, VecDeque},
     ffi::OsString,
     future::Future,
     path::{Path, PathBuf},
@@ -28,7 +28,8 @@ use crate::{
     orchestration::engine::{
         ActivityInput, BootstrapSetupInput, BootstrapSetupResult, BootstrapWorktree,
         BoxBootstrapFuture, BoxProjectCommandFuture, OrchestrationCommand, OrchestrationEngine,
-        ProjectCommandEffects, ThreadTurnBootstrapEffects, ThreadTurnStartBootstrapPrepareWorktree,
+        ProjectCommandEffects, ThreadTurnBootstrapEffects, ThreadTurnReservation,
+        ThreadTurnStartBootstrapPrepareWorktree,
     },
     persistence::{OrchestrationEvent, PersistenceError},
 };
@@ -80,6 +81,12 @@ pub trait OrchestrationEffectCallbacks: Send + Sync {
         turns: i64,
         rewind_key: &'a str,
     ) -> BoxEffectFuture<'a, ProviderRewind>;
+
+    /// Gets the provider ready for `rollback_provider`, such as reopening a session suspended
+    /// while idle. It runs off the effects worker, so a slow start holds up only its own thread.
+    fn prepare_provider_rewind<'a>(&'a self, _thread_id: &'a str) -> BoxEffectFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
 
     fn stop_provider<'a>(&'a self, thread_id: &'a str) -> BoxEffectFuture<'a, ()>;
 
@@ -610,6 +617,164 @@ fn is_reactor_event(event: &OrchestrationEvent) -> bool {
     )
 }
 
+/// What the worker needs to run an event's side effect.
+struct EffectContext {
+    engine: OrchestrationEngine,
+    repository: Arc<GitRepository>,
+    identity_tasks: TaskTracker,
+    callbacks: Arc<dyn OrchestrationEffectCallbacks>,
+    cancellation: CancellationToken,
+}
+
+impl EffectContext {
+    async fn handle(&self, event: &OrchestrationEvent) {
+        let result = process_event(
+            &self.engine,
+            &self.repository,
+            &self.identity_tasks,
+            self.callbacks.as_ref(),
+            event,
+            &self.cancellation,
+        )
+        .await;
+        self.report(event, result).await;
+    }
+
+    /// Rewinds and restores a planned revert, then releases its thread and wakes delivery.
+    async fn revert(&self, event: &OrchestrationEvent, (reservation, plan): PreparedRevert) {
+        let result = match plan {
+            Ok(plan) => {
+                finish_revert(
+                    &self.engine,
+                    self.callbacks.as_ref(),
+                    plan,
+                    &self.cancellation,
+                )
+                .await
+            }
+            Err(error) => Err(error),
+        };
+        drop(reservation);
+        self.engine.wake_turn_delivery();
+        self.report(event, result).await;
+    }
+
+    async fn report(
+        &self,
+        event: &OrchestrationEvent,
+        result: Result<(), OrchestrationEffectsError>,
+    ) {
+        if let Err(error) = result {
+            tracing::warn!(event_type = %event.event.event_type, sequence = event.sequence, %error, "orchestration side effect failed");
+            append_failure_activity(&self.engine, event, &error.to_string()).await;
+        }
+    }
+}
+
+fn event_thread_id(event: &OrchestrationEvent) -> Option<&str> {
+    event.event.payload.get("threadId").and_then(Value::as_str)
+}
+
+/// A revert whose thread is reserved for it, with its checks done and its provider ready.
+type PreparedRevert = (
+    ThreadTurnReservation,
+    Result<RevertPlan, OrchestrationEffectsError>,
+);
+
+/// How many events a parked thread holds before the worker waits for its revert itself. Each
+/// thread parks for one revert at a time, so this bounds what a reverting thread holds.
+const PARKED_THREAD_EVENT_LIMIT: usize = 64;
+
+/// How many reverts are prepared off the worker at once, each possibly starting a provider.
+const PARKED_THREAD_LIMIT: usize = 4;
+
+/// Threads whose checkpoint revert is being prepared off the worker, which serves every thread:
+/// waiting for the thread's delivery in flight, the revert's checks, and reopening a provider
+/// suspended while idle. The thread's later events wait behind the revert in order. The rewind,
+/// the restore and every other side effect still run on the worker one at a time, so checkpoint
+/// work on a checkout that sibling threads share never overlaps.
+struct ParkedThreads {
+    queues: HashMap<String, VecDeque<OrchestrationEvent>>,
+    ready: mpsc::UnboundedSender<(OrchestrationEvent, Option<PreparedRevert>)>,
+    waiters: TaskTracker,
+}
+
+impl ParkedThreads {
+    /// Runs the event now, or parks its thread while a revert is prepared.
+    async fn run(&mut self, context: &EffectContext, event: OrchestrationEvent) {
+        let revert_thread = (event.event.event_type == "thread.checkpoint-revert-requested")
+            .then(|| event_thread_id(&event))
+            .flatten()
+            .map(str::to_owned);
+        let Some(thread_id) = revert_thread else {
+            return context.handle(&event).await;
+        };
+        if self.queues.len() >= PARKED_THREAD_LIMIT {
+            // Bound the preparations off the worker; past that, the worker prepares this one.
+            let reservation = context.engine.reserve_thread_turns(&thread_id).await;
+            let plan = plan_revert(
+                &context.engine,
+                context.callbacks.as_ref(),
+                &event,
+                &context.cancellation,
+            )
+            .await;
+            return context.revert(&event, (reservation, plan)).await;
+        }
+        self.queues.insert(thread_id.clone(), VecDeque::new());
+        let (engine, callbacks, cancellation, ready) = (
+            context.engine.clone(),
+            context.callbacks.clone(),
+            context.cancellation.clone(),
+            self.ready.clone(),
+        );
+        self.waiters.spawn(async move {
+            let prepared = tokio::select! {
+                prepared = async {
+                    let reservation = engine.reserve_thread_turns(&thread_id).await;
+                    let plan = plan_revert(&engine, callbacks.as_ref(), &event, &cancellation).await;
+                    (reservation, plan)
+                } => Some(prepared),
+                () = cancellation.cancelled() => None,
+            };
+            let _ = ready.send((event, prepared));
+        });
+    }
+
+    /// The parked queue of the event's thread, if that thread is parked.
+    fn queue_of(
+        &mut self,
+        event: &OrchestrationEvent,
+    ) -> Option<&mut VecDeque<OrchestrationEvent>> {
+        event_thread_id(event).and_then(|thread_id| self.queues.get_mut(thread_id))
+    }
+
+    /// Runs a prepared revert's rewind and restore, then the events that waited behind it. At
+    /// shutdown the waiter brings nothing, and the parked events are left like any other
+    /// unhandled event.
+    async fn resume(
+        &mut self,
+        context: &EffectContext,
+        (event, prepared): (OrchestrationEvent, Option<PreparedRevert>),
+    ) {
+        let Some(thread_id) = event_thread_id(&event).map(str::to_owned) else {
+            return;
+        };
+        let queued = self.queues.remove(&thread_id).unwrap_or_default();
+        let Some(prepared) = prepared else {
+            return;
+        };
+        context.revert(&event, prepared).await;
+        for event in queued {
+            // A later revert of the thread parks it again.
+            match self.queue_of(&event) {
+                Some(queue) => queue.push_back(event),
+                None => self.run(context, event).await,
+            }
+        }
+    }
+}
+
 async fn run_worker(
     engine: OrchestrationEngine,
     repository: Arc<GitRepository>,
@@ -618,18 +783,43 @@ async fn run_worker(
     mut receiver: mpsc::Receiver<OrchestrationEvent>,
     cancellation: CancellationToken,
 ) {
+    let context = EffectContext {
+        engine,
+        repository,
+        identity_tasks,
+        callbacks,
+        cancellation,
+    };
+    let (ready, mut waited) = mpsc::unbounded_channel();
+    let mut parked = ParkedThreads {
+        queues: HashMap::new(),
+        ready,
+        waiters: TaskTracker::new(),
+    };
     loop {
         tokio::select! {
-            () = cancellation.cancelled() => return,
+            () = context.cancellation.cancelled() => break,
+            Some(resumed) = waited.recv() => parked.resume(&context, resumed).await,
             event = receiver.recv() => {
-                let Some(event) = event else { return };
-                if let Err(error) = process_event(&engine, &repository, &identity_tasks, callbacks.as_ref(), &event, &cancellation).await {
-                    tracing::warn!(event_type = %event.event.event_type, sequence = event.sequence, %error, "orchestration side effect failed");
-                    append_failure_activity(&engine, &event, &error.to_string()).await;
+                let Some(event) = event else { break };
+                let thread_id = event_thread_id(&event).map(str::to_owned);
+                let Some(queue) = parked.queue_of(&event) else {
+                    parked.run(&context, event).await;
+                    continue;
+                };
+                queue.push_back(event);
+                if queue.len() >= PARKED_THREAD_EVENT_LIMIT {
+                    // Keep the backlog bounded: wait for this thread, as before parking.
+                    while thread_id.as_ref().is_some_and(|id| parked.queues.contains_key(id)) {
+                        let Some(resumed) = waited.recv().await else { break };
+                        parked.resume(&context, resumed).await;
+                    }
                 }
             }
         }
     }
+    parked.waiters.close();
+    parked.waiters.wait().await;
 }
 
 async fn process_event(
@@ -652,8 +842,12 @@ async fn process_event(
         {
             capture_missing_checkpoint(engine, callbacks, event, cancellation).await
         }
+        // Reached only without a thread id: the worker runs a revert with its thread reserved.
         "thread.checkpoint-revert-requested" => {
-            revert_checkpoint(engine, callbacks, event, cancellation).await
+            required_str(&event.event.payload, "threadId")?;
+            Err(OrchestrationEffectsError::Effect(
+                "a checkpoint revert runs only with its thread reserved".to_owned(),
+            ))
         }
         "thread.deleted" => {
             cleanup_deleted_thread(callbacks, event).await;
@@ -873,12 +1067,28 @@ async fn capture_missing_checkpoint(
     Ok(())
 }
 
-async fn revert_checkpoint(
+/// A revert that passed its checks, with what its rewind and restore need. Planned while the
+/// thread is reserved, off the worker; nothing in it writes the checkout.
+struct RevertPlan {
+    thread_id: String,
+    turn_count: i64,
+    cwd: PathBuf,
+    checkpoints: Vec<crate::persistence::ProjectionCheckpoint>,
+    target_ref: String,
+    rolled_back_turns: i64,
+    /// The provider rewind's idempotency key, fixed when the revert is planned.
+    rewind_key: String,
+}
+
+/// Checks the revert under its thread's reservation, then lets the provider prepare its rewind
+/// (reopening a session suspended while idle). Only reads the checkout, so it can run off the
+/// worker. The rewind then finds a live session.
+async fn plan_revert(
     engine: &OrchestrationEngine,
     callbacks: &dyn OrchestrationEffectCallbacks,
     event: &OrchestrationEvent,
     cancellation: &CancellationToken,
-) -> Result<(), OrchestrationEffectsError> {
+) -> Result<RevertPlan, OrchestrationEffectsError> {
     let payload = &event.event.payload;
     let thread_id = required_str(payload, "threadId")?;
     let turn_count = payload
@@ -886,12 +1096,12 @@ async fn revert_checkpoint(
         .and_then(Value::as_i64)
         .ok_or_else(|| OrchestrationEffectsError::Effect("missing turnCount".to_owned()))?;
     // A running turn would write over the restored files or be cut off by the rewind, and the
-    // client's own guard does not cover another client.
+    // client's own guard does not cover another client. Busy is what idle suspension calls busy.
     if engine
         .repositories()
         .get_thread_session(thread_id.to_owned())
         .await?
-        .is_some_and(|session| session.status == "running")
+        .is_some_and(|session| super::provider_runtime::session_holds_a_turn(&session))
     {
         return Err(OrchestrationEffectsError::Effect(
             "Interrupt the current turn before reverting checkpoints.".to_owned(),
@@ -939,11 +1149,6 @@ async fn revert_checkpoint(
     };
     // The provider rewind cannot be undone, so it runs before any file is touched and only once
     // the checkpoint is known to resolve. A refused rewind then changes nothing.
-    let missing_checkpoint = || {
-        OrchestrationEffectsError::Effect(format!(
-            "Filesystem checkpoint is unavailable for turn {turn_count}."
-        ))
-    };
     if checkpoint_revision(
         &cwd,
         Path::new("git"),
@@ -954,7 +1159,7 @@ async fn revert_checkpoint(
     .await?
     .is_none()
     {
-        return Err(missing_checkpoint());
+        return Err(missing_checkpoint(turn_count));
     }
     let rolled_back_turns = current_turn_count.saturating_sub(turn_count);
     // The rewind's idempotency key: the transcript it counts from, named by its newest turn. A
@@ -965,6 +1170,48 @@ async fn revert_checkpoint(
         .max_by_key(|checkpoint| checkpoint.checkpoint_turn_count)
         .map(|checkpoint| format!("{thread_id}/{}", checkpoint.turn_id))
         .unwrap_or_else(|| format!("{thread_id}/{current_turn_count}"));
+    if rolled_back_turns > 0 {
+        callbacks
+            .prepare_provider_rewind(thread_id)
+            .await
+            .map_err(OrchestrationEffectsError::Effect)?;
+    }
+    Ok(RevertPlan {
+        thread_id: thread_id.to_owned(),
+        turn_count,
+        cwd,
+        checkpoints,
+        target_ref,
+        rolled_back_turns,
+        rewind_key,
+    })
+}
+
+fn missing_checkpoint(turn_count: i64) -> OrchestrationEffectsError {
+    OrchestrationEffectsError::Effect(format!(
+        "Filesystem checkpoint is unavailable for turn {turn_count}."
+    ))
+}
+
+/// Rewinds the provider and restores the files, on the worker: checkpoint work on a checkout
+/// that sibling threads share must not overlap.
+async fn finish_revert(
+    engine: &OrchestrationEngine,
+    callbacks: &dyn OrchestrationEffectCallbacks,
+    plan: RevertPlan,
+    cancellation: &CancellationToken,
+) -> Result<(), OrchestrationEffectsError> {
+    let RevertPlan {
+        thread_id,
+        turn_count,
+        cwd,
+        checkpoints,
+        target_ref,
+        rolled_back_turns,
+        rewind_key,
+    } = plan;
+    let thread_id = thread_id.as_str();
+    let missing_checkpoint = || missing_checkpoint(turn_count);
     if rolled_back_turns > 0
         && let ProviderRewind::FilesOnly { provider_label } = callbacks
             .rollback_provider(thread_id, rolled_back_turns, &rewind_key)

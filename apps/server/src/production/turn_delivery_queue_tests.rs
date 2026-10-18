@@ -5,6 +5,7 @@ use crate::{
         canonical_command_digest,
     },
     persistence::{Database, run_migrations},
+    test_support::isolated_git_config::IsolatedGitConfig,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -571,4 +572,486 @@ async fn a_closed_chat_panel_does_not_start_a_prompt_sent_before_it_closed() {
     received(&mut routes, "pending-panel").await;
     service.shutdown().await;
     engine.shutdown().await;
+}
+
+/// The production effects worker reverting thread `t` to turn 1 of 2, with a provider rewind that
+/// waits until the test releases it.
+struct RevertFixture {
+    engine: OrchestrationEngine,
+    effects: crate::production::orchestration_effects::OrchestrationEffects,
+    rewind: Arc<GatedRewind>,
+    events: tokio::sync::broadcast::Receiver<crate::persistence::OrchestrationEvent>,
+    _repository: tempfile::TempDir,
+}
+
+struct GatedRewind {
+    cwd: PathBuf,
+    entered: Notify,
+    release: Notify,
+    rewinds: std::sync::atomic::AtomicUsize,
+    /// The session was suspended while idle, so the rewind first reopens it, slowly: until
+    /// `reopen_release`. Production reopens in `prepare_provider_rewind` and, if the session is
+    /// still gone, in `rollback_provider`.
+    suspended: std::sync::atomic::AtomicBool,
+    reopen_entered: Notify,
+    reopen_release: Notify,
+}
+
+impl GatedRewind {
+    async fn reopen_if_suspended(&self) {
+        if self
+            .suspended
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.reopen_entered.notify_one();
+            self.reopen_release.notified().await;
+        }
+    }
+}
+
+impl crate::production::orchestration_effects::OrchestrationEffectCallbacks for GatedRewind {
+    fn workspace_for_thread<'a>(
+        &'a self,
+        _thread_id: &'a str,
+    ) -> crate::production::orchestration_effects::BoxEffectFuture<'a, Option<PathBuf>> {
+        Box::pin(async move { Ok(Some(self.cwd.clone())) })
+    }
+
+    fn rollback_provider<'a>(
+        &'a self,
+        _thread_id: &'a str,
+        _turns: i64,
+        _rewind_key: &'a str,
+    ) -> crate::production::orchestration_effects::BoxEffectFuture<
+        'a,
+        crate::production::orchestration_effects::ProviderRewind,
+    > {
+        Box::pin(async move {
+            self.reopen_if_suspended().await;
+            self.rewinds
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.entered.notify_one();
+            self.release.notified().await;
+            Ok(crate::production::orchestration_effects::ProviderRewind::Rewound)
+        })
+    }
+
+    fn prepare_provider_rewind<'a>(
+        &'a self,
+        _thread_id: &'a str,
+    ) -> crate::production::orchestration_effects::BoxEffectFuture<'a, ()> {
+        Box::pin(async move {
+            self.reopen_if_suspended().await;
+            Ok(())
+        })
+    }
+
+    fn stop_provider<'a>(
+        &'a self,
+        _thread_id: &'a str,
+    ) -> crate::production::orchestration_effects::BoxEffectFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn close_terminals<'a>(
+        &'a self,
+        _thread_id: &'a str,
+    ) -> crate::production::orchestration_effects::BoxEffectFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn refresh_workspace<'a>(
+        &'a self,
+        _cwd: &'a Path,
+    ) -> crate::production::orchestration_effects::BoxEffectFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+fn git(config: &IsolatedGitConfig, cwd: &Path, args: &[&str]) {
+    let mut command = std::process::Command::new("git");
+    config.apply_to_command(&mut command);
+    let output = command.args(args).current_dir(cwd).output().unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+impl RevertFixture {
+    async fn new() -> Self {
+        use crate::production::orchestration_effects::{
+            EffectsOptions, OrchestrationEffects, capture_checkpoint, checkpoint_ref,
+        };
+        // The checkpoint capture and the revert run production Git, which keeps the inherited
+        // environment. Refuse to run rather than let it restore and clean another checkout.
+        let discovery = [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_COMMON_DIR",
+        ];
+        assert!(
+            discovery
+                .iter()
+                .all(|name| std::env::var_os(name).is_none()),
+            "the revert fixture runs production Git: unset {discovery:?} first"
+        );
+        let repository = tempfile::tempdir().unwrap();
+        let cwd = repository.path().to_path_buf();
+        let config = IsolatedGitConfig::new();
+        for args in [
+            &["init"][..],
+            &["config", "user.name", "BiBCode Test"],
+            &["config", "user.email", "bibcode@example.test"],
+            // The checkpoint commands are production Git, which keeps its inherited settings.
+            &["config", "commit.gpgSign", "false"],
+        ] {
+            git(&config, &cwd, args);
+        }
+        std::fs::write(cwd.join("tracked.txt"), "baseline\n").unwrap();
+        git(&config, &cwd, &["add", "."]);
+        git(&config, &cwd, &["commit", "-m", "baseline"]);
+        let engine = engine().await;
+        for (turn_count, content) in [(0, "baseline\n"), (1, "one\n"), (2, "two\n")] {
+            std::fs::write(cwd.join("tracked.txt"), content).unwrap();
+            capture_checkpoint(&cwd, "t", turn_count).await.unwrap();
+            if turn_count > 0 {
+                engine.dispatch(command(json!({
+                    "type":"thread.turn.diff.complete", "commandId":format!("diff-{turn_count}"),
+                    "threadId":"t", "turnId":format!("turn-{turn_count}"),
+                    "checkpointTurnCount":turn_count, "checkpointRef":checkpoint_ref("t", turn_count),
+                    "status":"ready", "files":[], "assistantMessageId":format!("a-{turn_count}"),
+                    "completedAt":TIME, "createdAt":TIME
+                }))).await.unwrap();
+            }
+        }
+        session(&engine, "ready", "ready").await;
+        let rewind = Arc::new(GatedRewind {
+            cwd,
+            entered: Notify::new(),
+            release: Notify::new(),
+            rewinds: std::sync::atomic::AtomicUsize::new(0),
+            suspended: std::sync::atomic::AtomicBool::new(false),
+            reopen_entered: Notify::new(),
+            reopen_release: Notify::new(),
+        });
+        let effects = OrchestrationEffects::start(
+            engine.clone(),
+            Arc::new(crate::git::GitRepository::default()),
+            rewind.clone(),
+            EffectsOptions::default(),
+        )
+        .await
+        .unwrap();
+        let events = engine.subscribe_events();
+        Self {
+            engine,
+            effects,
+            rewind,
+            events,
+            _repository: repository,
+        }
+    }
+
+    async fn revert(&self) {
+        self.engine.dispatch(command(json!({"type":"thread.checkpoint.revert", "commandId":"revert", "threadId":"t", "turnCount":1, "createdAt":TIME}))).await.unwrap();
+    }
+
+    /// Waits for the first event of `event_type` that `matches`.
+    async fn event(
+        &mut self,
+        event_type: &str,
+        matches: impl Fn(&Value) -> bool,
+    ) -> crate::persistence::OrchestrationEvent {
+        timeout(Duration::from_secs(10), async {
+            loop {
+                let event = self.events.recv().await.unwrap();
+                if event.event.event_type == event_type && matches(&event.event.payload) {
+                    return event;
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("no {event_type} event"))
+    }
+
+    /// Git's answer for `args` in the fixture checkout, when Git succeeds.
+    fn git_output(&self, args: &[&str]) -> Option<String> {
+        let config = IsolatedGitConfig::new();
+        let mut probe = std::process::Command::new("git");
+        config.apply_to_command(&mut probe);
+        let output = probe
+            .args(args)
+            .current_dir(&self.rewind.cwd)
+            .output()
+            .unwrap();
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"))
+    }
+
+    /// Admits a turn on a second thread `b` and reports whether its checkpoint baseline is
+    /// captured within 5 seconds.
+    async fn other_thread_gets_its_baseline(&self) -> bool {
+        self.engine.dispatch(command(json!({"type":"thread.create", "commandId":"thread-b", "threadId":"b", "projectId":"p", "title":"Other", "runtimeMode":"full-access", "modelSelection":{"instanceId":"codex", "model":"gpt-5"}, "createdAt":TIME}))).await.unwrap();
+        enqueue_for(&self.engine, "b", "b-first", false).await;
+        let baseline = crate::production::orchestration_effects::checkpoint_ref("b", 0);
+        timeout(Duration::from_secs(5), async {
+            while self
+                .git_output(&["rev-parse", "--verify", "--quiet", &baseline])
+                .is_none()
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+
+    async fn shutdown(self) {
+        self.effects.shutdown().await;
+        self.engine.shutdown().await;
+    }
+}
+
+/// A revert that must first reopen a session suspended while idle does not hold the effects
+/// worker during that start: another thread's turn still gets its checkpoint baseline.
+#[tokio::test]
+async fn a_revert_reopening_a_suspended_session_does_not_delay_another_threads_checkpoint() {
+    let mut fixture = RevertFixture::new().await;
+    fixture
+        .rewind
+        .suspended
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    fixture.rewind.release.notify_one();
+    fixture.revert().await;
+    fixture.rewind.reopen_entered.notified().await;
+
+    assert!(
+        fixture.other_thread_gets_its_baseline().await,
+        "thread b's checkpoint baseline waited behind thread t's provider reopen"
+    );
+
+    fixture.rewind.reopen_release.notify_one();
+    fixture.event("thread.reverted", |_| true).await;
+    assert_eq!(
+        fixture
+            .rewind
+            .rewinds
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    fixture.shutdown().await;
+}
+
+/// The thread's own effects that arrive while its revert is being prepared wait for it, in
+/// order: a checkpoint captured after the revert sees the restored files.
+#[tokio::test]
+async fn a_reverting_threads_later_effects_run_after_the_revert() {
+    let mut fixture = RevertFixture::new().await;
+    fixture
+        .rewind
+        .suspended
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    fixture.rewind.release.notify_one();
+    fixture.revert().await;
+    fixture.rewind.reopen_entered.notified().await;
+
+    // A turn whose checkpoint is missing: the effect captures the checkout as it is then.
+    fixture
+        .engine
+        .dispatch(command(json!({
+            "type":"thread.turn.diff.complete", "commandId":"diff-late", "threadId":"t",
+            "turnId":"turn-late", "checkpointTurnCount":5,
+            "checkpointRef":crate::production::orchestration_effects::checkpoint_ref("t", 5),
+            "status":"missing", "files":[], "assistantMessageId":"a-late",
+            "completedAt":TIME, "createdAt":TIME
+        })))
+        .await
+        .unwrap();
+    fixture.rewind.reopen_release.notify_one();
+    fixture.event("thread.reverted", |_| true).await;
+    fixture
+        .event("thread.turn-diff-completed", |payload| {
+            payload["turnId"] == "turn-late" && payload["status"] == "ready"
+        })
+        .await;
+    let captured = format!(
+        "{}:tracked.txt",
+        crate::production::orchestration_effects::checkpoint_ref("t", 5)
+    );
+    assert_eq!(
+        fixture.git_output(&["show", &captured]).as_deref(),
+        Some("one\n"),
+        "the late checkpoint was captured before the revert restored the files"
+    );
+    fixture.shutdown().await;
+}
+
+/// A message sent while a revert runs is neither started during it nor lost: it waits, then
+/// delivers once the revert is recorded.
+#[tokio::test]
+async fn a_message_sent_during_a_revert_waits_for_it_then_delivers() {
+    let mut fixture = RevertFixture::new().await;
+    let (service, mut routes) = service(&fixture.engine);
+    fixture.revert().await;
+    fixture.rewind.entered.notified().await;
+
+    enqueue(&fixture.engine, "during", false).await;
+    service.wake();
+    quiet(&mut routes).await;
+    assert_eq!(
+        fixture
+            .engine
+            .repositories()
+            .provider_turn_claims_for_test(),
+        0,
+        "delivery skips the reverting thread instead of claiming its message"
+    );
+
+    fixture.rewind.release.notify_one();
+    fixture.event("thread.reverted", |_| true).await;
+    received(&mut routes, "during").await;
+    service.shutdown().await;
+    assert_eq!(
+        row(&fixture.engine, "during").await.state,
+        TurnDeliveryState::Delivered
+    );
+    fixture.shutdown().await;
+}
+
+/// A revert that reopens a suspended session makes it `starting` and then `ready`. A message
+/// queued meanwhile is not promoted by that `ready` while the revert runs, and is delivered
+/// after it in queue order.
+#[tokio::test]
+async fn a_message_queued_while_a_revert_reopens_the_session_delivers_after_it() {
+    let mut fixture = RevertFixture::new().await;
+    let (service, mut routes) = service(&fixture.engine);
+    fixture.revert().await;
+    fixture.rewind.entered.notified().await;
+
+    session(&fixture.engine, "starting", "reopening").await;
+    enqueue(&fixture.engine, "queued-1", true).await;
+    enqueue(&fixture.engine, "queued-2", true).await;
+    session(&fixture.engine, "ready", "reopened").await;
+    quiet(&mut routes).await;
+    assert_eq!(
+        row(&fixture.engine, "queued-1").await.state,
+        TurnDeliveryState::Queued
+    );
+
+    fixture.rewind.release.notify_one();
+    fixture.event("thread.reverted", |_| true).await;
+    received(&mut routes, "queued-1").await;
+    quiet(&mut routes).await;
+    session(&fixture.engine, "running", "running-1").await;
+    session(&fixture.engine, "ready", "ready-1").await;
+    received(&mut routes, "queued-2").await;
+    service.shutdown().await;
+    fixture.shutdown().await;
+}
+
+/// Delivery whose provider accepts thread `t`'s message `in-flight` only when `accept` is
+/// notified, and then reports the turn running. Returns once that delivery is in flight.
+async fn deliver_in_flight(
+    engine: &OrchestrationEngine,
+) -> (
+    TurnDeliveryService,
+    Arc<Notify>,
+    mpsc::UnboundedReceiver<String>,
+) {
+    enqueue(engine, "in-flight", false).await;
+    let (sender, mut routes) = mpsc::unbounded_channel();
+    let accept = Arc::new(Notify::new());
+    let router: DeliveryRouter = {
+        let engine = engine.clone();
+        let accept = accept.clone();
+        Arc::new(move |command| {
+            let (engine, accept, sender) = (engine.clone(), accept.clone(), sender.clone());
+            Box::pin(async move {
+                sender.send(command.command_id().to_owned()).unwrap();
+                accept.notified().await;
+                session(&engine, "running", "accepted-turn").await;
+                Ok(())
+            })
+        })
+    };
+    let service = TurnDeliveryService::start_with_router(engine.clone(), 1, router);
+    received(&mut routes, "in-flight").await;
+    (service, accept, routes)
+}
+
+/// A revert waiting on thread `t`'s delivery does not hold the effects worker: another thread's
+/// turn still gets its checkpoint baseline meanwhile.
+#[tokio::test]
+async fn a_revert_waiting_for_a_delivery_does_not_delay_another_threads_checkpoint() {
+    let mut fixture = RevertFixture::new().await;
+    let (service, accept, _routes) = deliver_in_flight(&fixture.engine).await;
+    fixture.revert().await;
+
+    assert!(
+        fixture.other_thread_gets_its_baseline().await,
+        "thread b's checkpoint baseline waited behind thread t's revert"
+    );
+    assert_eq!(
+        fixture
+            .rewind
+            .rewinds
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the revert still waits for thread t's delivery"
+    );
+
+    accept.notify_one();
+    fixture
+        .event("thread.activity-appended", |payload| {
+            payload["activity"]["kind"] == "checkpoint.revert.failed"
+        })
+        .await;
+    service.shutdown().await;
+    fixture.shutdown().await;
+}
+
+/// A revert requested while a message is being delivered waits for that delivery instead of
+/// rewinding under it, then refuses because the delivered turn is running.
+#[tokio::test]
+async fn a_revert_waits_for_a_delivery_in_flight_then_refuses_its_running_turn() {
+    let mut fixture = RevertFixture::new().await;
+    let (service, accept, _routes) = deliver_in_flight(&fixture.engine).await;
+
+    fixture.revert().await;
+    assert!(
+        timeout(
+            Duration::from_millis(200),
+            fixture.rewind.entered.notified()
+        )
+        .await
+        .is_err(),
+        "the revert rewound the provider while a message was being delivered"
+    );
+
+    accept.notify_one();
+    let failure = fixture
+        .event("thread.activity-appended", |payload| {
+            payload["activity"]["kind"] == "checkpoint.revert.failed"
+        })
+        .await;
+    assert!(
+        failure.event.payload["activity"]["payload"]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("Interrupt the current turn")),
+        "{failure:?}"
+    );
+    assert_eq!(
+        fixture
+            .rewind
+            .rewinds
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+    service.shutdown().await;
+    fixture.shutdown().await;
 }
