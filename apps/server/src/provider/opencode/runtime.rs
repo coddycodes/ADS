@@ -365,6 +365,12 @@ struct V2State {
     /// Asks OpenCode was waiting on when the session resumed, shown once the event stream is
     /// connected and they are confirmed still pending.
     recovered_asks: Vec<(&'static str, String, Value)>,
+    /// Forms BiBCode cannot show that OpenCode was waiting on when the session resumed (form id,
+    /// session id), cancelled once the event stream is connected, as a live one is.
+    recovered_unanswerable: Vec<(String, String)>,
+    /// Forms BiBCode cannot show that it already cancelled, so a form seen both on resume and
+    /// live is cancelled, and reported, once.
+    cancelled_forms: HashSet<String>,
     /// Root executions started or ended as the event stream reported them, so an off-pump check
     /// for a running execution knows whether the stream overtook it.
     executions_seen: u64,
@@ -875,6 +881,7 @@ impl OpenCodeSessionRuntime {
             v2.forms.clear();
             v2.answering.clear();
             v2.settled_while_answering.clear();
+            v2.cancelled_forms.clear();
         }
         let resumed = payload.get("resumed").is_some();
         let recovered_asks = if resumed && self.is_v2() {
@@ -2682,6 +2689,12 @@ impl OpenCodeSessionRuntime {
             if !asks.is_empty() {
                 self.spawn_v2_show_recovered_asks(asks);
             }
+            let unanswerable =
+                std::mem::take(&mut self.inner.v2.lock().await.recovered_unanswerable);
+            for (form_id, session_id) in unanswerable {
+                self.spawn_v2_cancel_unanswerable_form(form_id, session_id, None)
+                    .await;
+            }
             let adopt = std::mem::take(&mut self.inner.v2.lock().await.adopt_on_connect);
             if adopt && let Ok(session_id) = self.session_id().await {
                 self.spawn_v2_adopt_running_execution(session_id).await;
@@ -2843,7 +2856,8 @@ impl OpenCodeSessionRuntime {
                 } => {
                     // A form BiBCode cannot show (such as a sign-in link) would block the agent;
                     // cancelling it tells the agent nobody answered.
-                    self.spawn_v2_cancel_unanswerable_form(form_id, session_id, turn_id);
+                    self.spawn_v2_cancel_unanswerable_form(form_id, session_id, turn_id)
+                        .await;
                 }
                 V2Output::FormSettled { form_id } => {
                     let pending = {
@@ -3013,38 +3027,53 @@ impl OpenCodeSessionRuntime {
                 .filter_map(|response| response.get("data").and_then(Value::as_array))
                 .flatten()
             {
-                if let (Some(form_id), Some((questions, fields))) = (
-                    form.get("id").and_then(Value::as_str),
-                    v2::form_questions(form),
-                ) {
-                    v2.forms.insert(
-                        form_id.to_owned(),
-                        V2PendingForm {
-                            turn_id: None,
-                            session_id: session_id.clone(),
-                            fields,
-                        },
-                    );
-                    recovered.push((
-                        "user-input.requested",
-                        form_id.to_owned(),
-                        json!({ "questions": questions, "recovered": true }),
-                    ));
-                }
+                let Some(form_id) = form.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                // One BiBCode cannot show is cancelled after the resume, as a live one is.
+                let Some((questions, fields)) = v2::form_questions(form) else {
+                    v2.recovered_unanswerable
+                        .push((form_id.to_owned(), session_id.clone()));
+                    continue;
+                };
+                v2.forms.insert(
+                    form_id.to_owned(),
+                    V2PendingForm {
+                        turn_id: None,
+                        session_id: session_id.clone(),
+                        fields,
+                    },
+                );
+                recovered.push((
+                    "user-input.requested",
+                    form_id.to_owned(),
+                    json!({ "questions": questions, "recovered": true }),
+                ));
             }
         }
         recovered
     }
 
-    /// Cancels a form BiBCode cannot show, off the event pump and bounded, so a cancel that never
-    /// answers does not hold later events (or Stop). A failed cancel is logged and reported in
-    /// the chat, since the agent keeps waiting on the form.
-    fn spawn_v2_cancel_unanswerable_form(
+    /// Cancels a form BiBCode cannot show, live or recovered on resume, once per form: off the
+    /// event pump and bounded, so a cancel that never answers does not hold later events (or
+    /// Stop). The chat is told either way: the agent was told nobody answered, or, when the cancel
+    /// failed, it is still waiting. A form already gone (HTTP 404) was settled elsewhere.
+    async fn spawn_v2_cancel_unanswerable_form(
         &self,
         form_id: String,
         session_id: String,
         turn_id: Option<String>,
     ) {
+        if !self
+            .inner
+            .v2
+            .lock()
+            .await
+            .cancelled_forms
+            .insert(form_id.clone())
+        {
+            return;
+        }
         let request = self
             .v2_url(&["session", &session_id, "form", &form_id], false)
             .map(|url| self.inner.client.delete(url));
@@ -3063,9 +3092,27 @@ impl OpenCodeSessionRuntime {
                 } => cancelled,
             };
             match cancelled {
-                Ok(()) => tracing::warn!(
+                Ok(()) => {
+                    tracing::warn!(
+                        provider = "opencode",
+                        "cancelled an OpenCode form BiBCode cannot show"
+                    );
+                    if let Some(inner) = runtime.upgrade() {
+                        OpenCodeSessionRuntime::internal(inner)
+                            .emit(
+                                "runtime.warning",
+                                turn_id,
+                                None,
+                                json!({
+                                    "message": "OpenCode asked for an answer BiBCode can't show, such as free text or a sign-in link, so it was cancelled and the agent was told nobody answered.",
+                                }),
+                            )
+                            .await;
+                    }
+                }
+                Err(error) if error.starts_with("HTTP 404") => tracing::debug!(
                     provider = "opencode",
-                    "cancelled an OpenCode form BiBCode cannot show"
+                    "an OpenCode form BiBCode cannot show was already settled"
                 ),
                 Err(error) => {
                     tracing::warn!(
