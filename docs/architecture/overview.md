@@ -2066,7 +2066,9 @@ reads the scrcpy v4.1 wire format:
   microseconds;
 - the control socket is used only to send `RESET_VIDEO`.
 
-`MediaHub` fans those units out to at most four sockets per device. A client
+`MediaHub` fans those units out to at most four sockets per device. The first
+socket starts the device's video source, and a socket that joins just as the
+hub closes (its source failed or ended) starts a fresh one. A client
 mints a ticket with `device.createMediaTicket`: random, single use, valid for
 60 s, bound to the session, the device, and the channel it was minted on
 (plain or E2EE). The book holds at most 256 tickets and 8 per session,

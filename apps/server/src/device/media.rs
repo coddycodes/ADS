@@ -1028,37 +1028,37 @@ impl DeviceManager {
         else {
             return Err(MediaAttachError::NotReady);
         };
-        let hub = match &slot.media {
-            Some(hub) if hub.is_open() => hub.clone(),
-            _ => {
-                let hub = MediaHub::new(slot.cancel.child_token());
-                slot.media = Some(hub.clone());
-                let task_hub = hub.clone();
-                let inner = Arc::downgrade(&self.inner);
-                let task_device = device_id.to_owned();
-                // Holds the device only until its source starts; a stop drops `start`. Boxed
-                // here, where the source type is concrete, so the task below stays `Send`.
-                let start = async move { device.video().await };
-                let feed: BoxFuture<'static, ()> = Box::pin(run(task_hub.clone(), start));
-                self.inner.tasks.spawn(async move {
-                    feed.await;
-                    // A hub that ended on its own makes room for a fresh one.
-                    if let Some(inner) = inner.upgrade() {
-                        let mut table = inner.table();
-                        if let Some(slot) = table.slots.get_mut(&task_device)
-                            && slot
-                                .media
-                                .as_ref()
-                                .is_some_and(|media| Arc::ptr_eq(media, &task_hub))
-                        {
-                            slot.media = None;
-                        }
+        let cancel = slot.cancel.clone();
+        let start = || {
+            let hub = MediaHub::new(cancel.child_token());
+            let task_hub = hub.clone();
+            let inner = Arc::downgrade(&self.inner);
+            let task_device = device_id.to_owned();
+            let device = device.clone();
+            // Holds the device only until its source starts; a stop drops `start`. Boxed
+            // here, where the source type is concrete, so the task below stays `Send`.
+            let start = async move { device.video().await };
+            let feed: BoxFuture<'static, ()> = Box::pin(run(task_hub.clone(), start));
+            self.inner.tasks.spawn(async move {
+                feed.await;
+                // A hub that ended on its own makes room for a fresh one.
+                if let Some(inner) = inner.upgrade() {
+                    let mut table = inner.table();
+                    if let Some(slot) = table.slots.get_mut(&task_device)
+                        && slot
+                            .media
+                            .as_ref()
+                            .is_some_and(|media| Arc::ptr_eq(media, &task_hub))
+                    {
+                        slot.media = None;
                     }
-                });
-                hub
-            }
+                }
+            });
+            hub
         };
-        hub.subscribe(SOCKET_QUEUE_FRAMES, Arc::downgrade(&self.inner), device_id)
+        join_hub(&mut slot.media, start, |hub| {
+            hub.subscribe(SOCKET_QUEUE_FRAMES, Arc::downgrade(&self.inner), device_id)
+        })
     }
 
     /// Joins a device's H.264 stream as a media socket would, without a socket. Only for
@@ -1066,6 +1066,33 @@ impl DeviceManager {
     #[doc(hidden)]
     pub fn media_frames_for_tests(&self, device_id: &str) -> Option<MediaFramesForTests> {
         self.attach_media(device_id).ok().map(MediaFramesForTests)
+    }
+}
+
+/// Joins `media`, a device's hub, while it is open, else a fresh one from `start`, which
+/// takes its place. A hub's task closes it without the table lock (its source failed or
+/// ended), so a hub found open can close before the join; it is replaced by a fresh one,
+/// which the join tries once more, since the device is still ready.
+fn join_hub(
+    media: &mut Option<Arc<MediaHub>>,
+    mut start: impl FnMut() -> Arc<MediaHub>,
+    mut join: impl FnMut(&Arc<MediaHub>) -> Result<MediaSubscriber, MediaAttachError>,
+) -> Result<MediaSubscriber, MediaAttachError> {
+    let mut fresh = |media: &mut Option<Arc<MediaHub>>| {
+        let hub = start();
+        *media = Some(hub.clone());
+        hub
+    };
+    let reused = match media {
+        Some(hub) if hub.is_open() => hub.clone(),
+        _ => return join(&fresh(media)),
+    };
+    match join(&reused) {
+        Err(MediaAttachError::NotReady) => {
+            tracing::debug!("a device media hub closed as a socket joined; starting a fresh one");
+            join(&fresh(media))
+        }
+        joined => joined,
     }
 }
 
@@ -2092,6 +2119,58 @@ mod tests {
         tokio::time::sleep(RESET_MIN_INTERVAL * 2).await;
         assert_eq!(hub.resets(), 1);
         assert_eq!(hub.written.load(Ordering::Acquire), 1);
+    }
+
+    /// A fresh hub, counted in `started`, for [`join_hub`]'s tests.
+    fn counted_start(started: &mut Vec<Arc<MediaHub>>) -> impl FnMut() -> Arc<MediaHub> + '_ {
+        || {
+            let hub = MediaHub::new(CancellationToken::new());
+            started.push(hub.clone());
+            hub
+        }
+    }
+
+    fn join(hub: &Arc<MediaHub>) -> Result<MediaSubscriber, MediaAttachError> {
+        hub.subscribe(SOCKET_QUEUE_FRAMES, Weak::new(), "dev")
+    }
+
+    #[tokio::test]
+    async fn joining_reuses_an_open_hub_and_replaces_a_closed_one() {
+        let open = MediaHub::new(CancellationToken::new());
+        let mut media = Some(open.clone());
+        let mut started = Vec::new();
+        let _first = join_hub(&mut media, counted_start(&mut started), join).expect("join");
+        assert!(started.is_empty(), "an open hub is joined as it is");
+        assert!(Arc::ptr_eq(media.as_ref().unwrap(), &open));
+        open.stop();
+        let _second = join_hub(&mut media, counted_start(&mut started), join).expect("join");
+        assert_eq!(started.len(), 1);
+        assert!(Arc::ptr_eq(media.as_ref().unwrap(), &started[0]));
+    }
+
+    /// Audit Minor 5: the hub's task closes it without the table lock, so a hub found open
+    /// can close (its source failed or ended) before the socket subscribes. The socket
+    /// then joins a fresh hub instead of closing as `stopped` on a device that is still
+    /// ready.
+    #[tokio::test]
+    async fn a_hub_that_closes_as_a_socket_joins_is_replaced() {
+        let closing = MediaHub::new(CancellationToken::new());
+        let mut media = Some(closing.clone());
+        let mut started = Vec::new();
+        let mut joins = 0;
+        let joined = join_hub(&mut media, counted_start(&mut started), |hub| {
+            joins += 1;
+            if joins == 1 {
+                // The source fails between the open check and the subscribe.
+                hub.close(true);
+            }
+            join(hub)
+        });
+        assert!(joined.is_ok(), "the socket joined a fresh hub");
+        assert_eq!(joins, 2);
+        assert_eq!(started.len(), 1);
+        assert!(Arc::ptr_eq(media.as_ref().unwrap(), &started[0]));
+        assert!(!Arc::ptr_eq(&started[0], &closing));
     }
 
     #[tokio::test]
