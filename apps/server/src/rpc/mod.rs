@@ -17,7 +17,8 @@ pub(crate) use e2ee::{
     MAX_E2EE_CIPHERTEXT_BYTES, accept_noise_nk, effective_preauth_peer, next_binary_frame,
     run_e2ee_session,
 };
-#[cfg(test)]
+// Only the unix media-socket tests read these.
+#[cfg(all(test, unix))]
 pub(crate) use e2ee::{
     E2EE_HOST_IDENTITY_CLOSE_CODE, E2EE_RECORD_FLAG_CONTINUATION, E2EE_RECORD_FLAG_FINAL,
     MAX_E2EE_CHUNK_BYTES,

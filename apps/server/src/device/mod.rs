@@ -486,8 +486,8 @@ impl DeviceManager {
     }
 
     /// Records the orientation the device reported and the display size in it; never what
-    /// a rotate command asked for.
-    #[cfg(test)]
+    /// a rotate command asked for. Only the unix manager tests set it directly.
+    #[cfg(all(test, unix))]
     pub(crate) fn set_reported_orientation(
         &self,
         device_id: &str,

@@ -56,6 +56,8 @@ pub(crate) struct FakeHandle {
     rotation: watch::Sender<Option<SkinRotation>>,
     screenshot_streams: Arc<AtomicUsize>,
     input_streams: Arc<AtomicUsize>,
+    /// Bumped to break every open input stream; the controller subscribes to it, so it
+    /// stays open on every platform.
     input_resets: watch::Sender<u64>,
     fail_rotation: Arc<AtomicBool>,
     fail_screenshots: Arc<AtomicBool>,
@@ -82,17 +84,20 @@ impl FakeHandle {
 
     /// Reports `rotation` on every served image from now on, with the display's width and
     /// height swapped to match it, and streams one frame.
+    #[cfg(unix)]
     pub(crate) fn report_rotation(&self, rotation: SkinRotation) {
         self.rotation.send_replace(Some(rotation));
     }
 
     /// Open `streamScreenshot` calls.
+    #[cfg(unix)]
     pub(crate) fn active_screenshot_streams(&self) -> usize {
         self.screenshot_streams.load(Ordering::SeqCst)
     }
 
     /// Ends every open input stream with an error, waits until they have ended, and forgets
     /// the inputs they recorded.
+    #[cfg(unix)]
     pub(crate) async fn break_input_stream(&self) {
         self.input_resets.send_modify(|resets| *resets += 1);
         wait_until(|| self.input_streams.load(Ordering::SeqCst) == 0).await;
@@ -100,6 +105,7 @@ impl FakeHandle {
     }
 
     /// Waits up to ten seconds for at least `count` recorded inputs and returns them all.
+    #[cfg(unix)]
     pub(crate) async fn wait_inputs(&self, count: usize) -> Vec<proto::InputEvent> {
         wait_until(|| self.inputs.lock().expect("fake inputs lock").len() >= count).await;
         self.inputs.lock().expect("fake inputs lock").clone()
@@ -168,7 +174,6 @@ impl FakeController {
         let port = listener.local_addr().expect("fake emulator address").port();
         let (frame_tx, frames) = watch::channel(INITIAL_FRAME);
         let (rotation_tx, rotation) = watch::channel(None);
-        let (input_resets_tx, input_resets) = watch::channel(0);
         let handle = FakeHandle {
             port,
             inputs: Arc::default(),
@@ -178,7 +183,7 @@ impl FakeController {
             rotation: rotation_tx,
             screenshot_streams: Arc::default(),
             input_streams: Arc::default(),
-            input_resets: input_resets_tx,
+            input_resets: watch::Sender::new(0),
             fail_rotation: Arc::default(),
             fail_screenshots: Arc::default(),
             skin_follows_sensor: Arc::default(),
@@ -193,7 +198,7 @@ impl FakeController {
                 skin: handle.rotation.clone(),
                 screenshot_streams: handle.screenshot_streams.clone(),
                 input_streams: handle.input_streams.clone(),
-                input_resets,
+                input_resets: handle.input_resets.subscribe(),
                 fail_rotation: handle.fail_rotation.clone(),
                 fail_screenshots: handle.fail_screenshots.clone(),
                 skin_follows_sensor: handle.skin_follows_sensor.clone(),
@@ -1172,6 +1177,7 @@ pub(crate) struct FakeScrcpySource {
 }
 
 /// The display size the fake source's session header reports.
+#[cfg(unix)]
 pub(crate) const FAKE_SCRCPY_SIZE: (u32, u32) = (720, 1280);
 
 #[cfg(unix)]
@@ -1263,6 +1269,7 @@ pub(crate) fn key_unit(pts_us: u64) -> Vec<u8> {
 }
 
 /// A key unit whose Annex-B data is `len` bytes.
+#[cfg(unix)]
 pub(crate) fn key_unit_of(pts_us: u64, len: usize) -> Vec<u8> {
     let mut data = vec![0x88_u8; len.max(5)];
     data[..5].copy_from_slice(&[0, 0, 0, 1, 0x65]);

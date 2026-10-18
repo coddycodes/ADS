@@ -121,7 +121,7 @@ pub(crate) struct InputState {
 }
 
 impl InputState {
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn closed(&self) -> bool {
         self.sink.is_closed()
     }

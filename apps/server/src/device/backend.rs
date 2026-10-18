@@ -129,12 +129,13 @@ pub(crate) trait RunningDevice: Send + Sync + 'static {
     /// [`stop`](Self::stop) for a device someone still holds; the manager uses it only when
     /// an in-flight call keeps the device shared for too long.
     fn stop_shared(&self) -> BoxFuture<'_, ()>;
-    #[cfg(test)]
+    /// The emulator's PID, for the unix manager tests that signal it.
+    #[cfg(all(test, unix))]
     fn pid(&self) -> Option<u32> {
         None
     }
-    /// Whether the device has no open input stream.
-    #[cfg(test)]
+    /// Whether the device has no open input stream; only the unix manager tests ask.
+    #[cfg(all(test, unix))]
     fn input_stream_closed(&self) -> bool {
         true
     }

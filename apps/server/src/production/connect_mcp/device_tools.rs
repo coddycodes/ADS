@@ -39,7 +39,8 @@ impl DeviceTools {
         }
     }
 
-    #[cfg(test)]
+    /// Only the unix device-tool tests, which launch a fake SDK, shorten it.
+    #[cfg(all(test, unix))]
     pub(super) fn with_boot_timeout(mut self, boot_timeout: Duration) -> Self {
         self.boot_timeout = boot_timeout;
         self

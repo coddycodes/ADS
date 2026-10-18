@@ -204,8 +204,8 @@ impl E2eePreauthAdmission {
         }
     }
 
-    /// Global pre-auth slots no connection holds.
-    #[cfg(test)]
+    /// Global pre-auth slots no connection holds; only the unix media-socket tests ask.
+    #[cfg(all(test, unix))]
     pub(crate) fn available_permits(&self) -> usize {
         self.inner.global.available_permits()
     }

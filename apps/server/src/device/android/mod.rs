@@ -162,7 +162,7 @@ struct RunningAndroid {
     client: EmulatorClient,
     serial: String,
     native: (u32, u32),
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pid: u32,
     /// Taken by whichever stop runs first.
     emulator: Mutex<Option<RunningEmulator>>,
@@ -194,7 +194,7 @@ impl RunningAndroid {
             client: running.client.clone(),
             serial: running.serial.clone(),
             native,
-            #[cfg(test)]
+            #[cfg(all(test, unix))]
             pid: running.helper.pid,
             emulator: Mutex::new(Some(running)),
             adb,
@@ -355,12 +355,12 @@ impl RunningDevice for RunningAndroid {
         Box::pin(self.stop_now())
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn pid(&self) -> Option<u32> {
         Some(self.pid)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn input_stream_closed(&self) -> bool {
         self.input
             .try_lock()
