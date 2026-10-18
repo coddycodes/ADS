@@ -257,6 +257,140 @@ describe("DeviceInputQueue", () => {
     expect(flushes).toHaveLength(0);
   });
 
+  /** A queue whose sends fail while `failing` holds, flushing at once on a frame request. */
+  function scriptedQueue(failing: (call: number) => boolean) {
+    const sent: Array<ReadonlyArray<DeviceInputEvent>> = [];
+    const frames: Array<() => void> = [];
+    const queue = new DeviceInputQueue(
+      (events) => {
+        sent.push(events);
+        return failing(sent.length)
+          ? Promise.reject(new Error("the emulator accepted nothing"))
+          : Promise.resolve();
+      },
+      (flush) => frames.push(flush),
+    );
+    const frame = () => frames.shift()?.();
+    return { frame, frames, queue, sent };
+  }
+
+  const keyEvent = (action: "down" | "up"): DeviceInputEvent => ({
+    type: "key",
+    key: "backspace",
+    action,
+  });
+
+  it("re-sends a key release whose batch failed", async () => {
+    const { frame, frames, queue, sent } = scriptedQueue((call) => call === 2);
+    queue.push(keyEvent("down"));
+    frame();
+    await settle();
+    queue.push(keyEvent("up"));
+    frame();
+    await settle();
+    // The release went out once more, at once, without waiting for a frame.
+    expect(sent).toEqual([[keyEvent("down")], [keyEvent("up")], [keyEvent("up")]]);
+    expect(frames).toHaveLength(0);
+    // It was accepted, so nothing is held: a blur sends nothing more.
+    queue.releaseKeys();
+    await settle();
+    expect(sent).toHaveLength(3);
+  });
+
+  it("re-sends a failed release ahead of later input", async () => {
+    let release!: () => void;
+    let calls = 0;
+    const sent: Array<ReadonlyArray<DeviceInputEvent>> = [];
+    const queue = new DeviceInputQueue(
+      (events) => {
+        sent.push(events);
+        calls += 1;
+        if (calls === 2) {
+          return new Promise<void>((_, reject) => {
+            release = () => reject(new Error("refused"));
+          });
+        }
+        return Promise.resolve();
+      },
+      (flush) => flush(),
+    );
+    queue.push(keyEvent("down"));
+    await settle();
+    queue.push(keyEvent("up"));
+    // Pressed again while the release is in flight.
+    queue.push(keyEvent("down"));
+    release();
+    await settle();
+    expect(sent.slice(2)).toEqual([[keyEvent("up"), keyEvent("down")]]);
+    // The new press is still held, so a blur lifts it.
+    queue.releaseKeys();
+    await settle();
+    expect(sent.at(-1)).toEqual([keyEvent("up")]);
+  });
+
+  it("keeps a release that failed twice for the next blur", async () => {
+    const { frame, queue, sent } = scriptedQueue((call) => call === 2 || call === 3);
+    queue.push(keyEvent("down"));
+    frame();
+    await settle();
+    queue.push(keyEvent("up"));
+    frame();
+    await settle();
+    // Re-sent once only.
+    expect(sent).toEqual([[keyEvent("down")], [keyEvent("up")], [keyEvent("up")]]);
+    queue.releaseKeys();
+    await settle();
+    expect(sent.at(-1)).toEqual([keyEvent("up")]);
+    expect(sent).toHaveLength(4);
+  });
+
+  it("cancels a touch whose up was in a failed batch", async () => {
+    const { frame, queue, sent } = scriptedQueue((call) => call === 2);
+    queue.push(touch("down", 0.1, 0.1));
+    frame();
+    await settle();
+    queue.push(touch("move", 0.4, 0.5));
+    queue.push(touch("up", 0.4, 0.5));
+    frame();
+    await settle();
+    expect(sent).toEqual([
+      [touch("down", 0.1, 0.1)],
+      [touch("move", 0.4, 0.5), touch("up", 0.4, 0.5)],
+      [touch("cancel", 0.4, 0.5)],
+    ]);
+    queue.releaseAll();
+    await settle();
+    expect(sent).toHaveLength(3);
+  });
+
+  it("cancels on releaseAll a touch whose cancel also failed", async () => {
+    const { frame, queue, sent } = scriptedQueue((call) => call === 2 || call === 3);
+    queue.push(touch("down", 0.1, 0.1, 2));
+    frame();
+    await settle();
+    queue.push(touch("up", 0.3, 0.3, 2));
+    frame();
+    await settle();
+    expect(sent.at(-1)).toEqual([touch("cancel", 0.3, 0.3, 2)]);
+    queue.releaseAll();
+    await settle();
+    expect(sent.at(-1)).toEqual([touch("cancel", 0.3, 0.3, 2)]);
+    expect(sent).toHaveLength(4);
+  });
+
+  it("re-sends no press of a failed batch", async () => {
+    const { frame, queue, sent } = scriptedQueue((call) => call === 1);
+    queue.push(keyEvent("down"));
+    queue.push(touch("down", 0.2, 0.2));
+    frame();
+    await settle();
+    expect(sent).toHaveLength(1);
+    // The presses stay held, so a blur or unmount still lifts them.
+    queue.releaseAll();
+    await settle();
+    expect(sent.at(-1)).toEqual([keyEvent("up"), touch("cancel", 0.2, 0.2)]);
+  });
+
   it("forgets a touch once it is lifted", () => {
     const sent: Array<ReadonlyArray<DeviceInputEvent>> = [];
     const queue = new DeviceInputQueue(

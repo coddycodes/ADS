@@ -986,6 +986,39 @@ describe("DevicePanel with iOS simulators", () => {
     }
   });
 
+  it("sends a release again when device.input refuses its batch", async () => {
+    h.results.input = {
+      _tag: "Failure",
+      error: { _tag: "DeviceInputError", message: "The emulator accepted no input." },
+    };
+    withCatalog(catalog({ devices: [snapshot()] }));
+    const container = await render();
+    await click(button(container, "Home"));
+    await flushInput();
+    // The lane's send rejected, so the queue sent Home's release once more.
+    expect(
+      h.calls.filter((call) => call.command === "input").map((call) => call.input),
+    ).toEqual([
+      {
+        environmentId: ENVIRONMENT_ID,
+        input: {
+          deviceId: "d-1",
+          events: [
+            { type: "key", key: "home", action: "down" },
+            { type: "key", key: "home", action: "up" },
+          ],
+        },
+      },
+      {
+        environmentId: ENVIRONMENT_ID,
+        input: { deviceId: "d-1", events: [{ type: "key", key: "home", action: "up" }] },
+      },
+    ]);
+    expect(container.querySelector("[role='status'][data-input-error]")?.textContent).toBe(
+      "The emulator accepted no input.",
+    );
+  });
+
   it("shows the server's reason when the simulator refuses input", async () => {
     h.results.input = {
       _tag: "Failure",

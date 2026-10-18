@@ -380,17 +380,23 @@ function DeviceSession({ environmentId }: { readonly environmentId: EnvironmentI
         const next: InputLane = {
           deviceId,
           alive: true,
+          // A refused batch rejects, after its error is shown, so the queue sends its
+          // releases again instead of leaving a key or a touch down on the device.
           queue: new DeviceInputQueue(async (events) => {
             const result = await runInput({ environmentId, input: { deviceId, events } });
-            if (!next.alive) return;
-            showInputError(
-              result._tag === "Failure" && !isAtomCommandInterrupted(result)
-                ? describeDeviceError(
-                    squashAtomCommandFailure(result),
-                    "The device did not accept that input. Try again.",
-                  ).message
-                : null,
-            );
+            if (next.alive) {
+              showInputError(
+                result._tag === "Failure" && !isAtomCommandInterrupted(result)
+                  ? describeDeviceError(
+                      squashAtomCommandFailure(result),
+                      "The device did not accept that input. Try again.",
+                    ).message
+                  : null,
+              );
+            }
+            if (result._tag === "Failure") {
+              throw new Error("device.input failed", { cause: squashAtomCommandFailure(result) });
+            }
           }),
         };
         laneRef.current = next;

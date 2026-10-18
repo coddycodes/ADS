@@ -16,6 +16,10 @@ const nextAnimationFrame = (flush: () => void) => {
  * screen or the queue closes, instead of staying pressed on the device. A key release is
  * accepted only for a key held down: the release of a press that was never forwarded, such as
  * Ctrl+Backspace's, is dropped, so the device never gets a spurious one.
+ *
+ * A batch that `send` rejects may have left a key or a touch down on the device. Its releases
+ * go out once more, at once and ahead of later input, a touch's as a cancel where it was
+ * lifted; one that fails again is held, so the next blur, hide, or unmount lifts it.
  */
 export class DeviceInputQueue {
   private pending: DeviceInputEvent[] = [];
@@ -27,6 +31,8 @@ export class DeviceInputQueue {
   private urgent = false;
   private readonly heldKeys = new Set<DeviceKey>();
   private readonly heldTouches = new Map<number, { readonly x: number; readonly y: number }>();
+  /** Releases sent again after their batch failed; none is sent a third time. */
+  private readonly retries = new WeakSet<DeviceInputEvent>();
 
   constructor(
     private readonly send: (events: ReadonlyArray<DeviceInputEvent>) => Promise<void>,
@@ -144,12 +150,70 @@ export class DeviceInputQueue {
     } catch (error) {
       sent = Promise.reject(error);
     }
-    // A failed batch is dropped: the caller reports it, and later input still goes out.
+    // A failed batch is dropped but for its releases: the caller reports it, and later
+    // input still goes out.
     const settle = () => {
       this.sending = false;
       if (this.closed || this.urgent) this.flush();
       else this.requestFlush();
     };
-    void sent.then(settle, settle);
+    void sent.then(settle, () => {
+      this.recover(batch);
+      settle();
+    });
   }
+
+  /**
+   * Sends again, once and at once, the release of each key or touch that a failed batch
+   * left up last, ahead of what was queued since; one already sent again is held instead,
+   * unless later input for it is queued. Presses are not sent again: they stay held.
+   */
+  private recover(batch: ReadonlyArray<DeviceInputEvent>): void {
+    const last = new Map<string, DeviceInputEvent>();
+    for (const event of batch) {
+      const target = targetOf(event);
+      if (target !== null) last.set(target, event);
+    }
+    const resend: DeviceInputEvent[] = [];
+    for (const [target, event] of last) {
+      const release = releaseOf(event);
+      if (release === null) continue;
+      if (!this.retries.has(event)) {
+        this.retries.add(release);
+        resend.push(release);
+      } else if (!this.pending.some((waiting) => targetOf(waiting) === target)) {
+        this.hold(event);
+      }
+    }
+    if (resend.length === 0) return;
+    this.pending.unshift(...resend);
+    this.urgent = true;
+  }
+
+  /** Tracks a release that never reached the device as held again. */
+  private hold(release: DeviceInputEvent): void {
+    if (release.type === "key") this.heldKeys.add(release.key);
+    else if (release.type === "touch") {
+      this.heldTouches.set(release.pointerId, { x: release.x, y: release.y });
+    }
+  }
+}
+
+/** The key or touch an event presses or releases; `null` for text. */
+function targetOf(event: DeviceInputEvent): string | null {
+  if (event.type === "key") return `key:${event.key}`;
+  if (event.type === "touch") return `touch:${event.pointerId}`;
+  return null;
+}
+
+/**
+ * What lifts again what `event` released: the same key release, or a cancel where a touch was
+ * lifted. `null` for a press or text.
+ */
+function releaseOf(event: DeviceInputEvent): DeviceInputEvent | null {
+  if (event.type === "key") return event.action === "up" ? { ...event } : null;
+  if (event.type === "touch" && (event.action === "up" || event.action === "cancel")) {
+    return { ...event, action: "cancel" };
+  }
+  return null;
 }
