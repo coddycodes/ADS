@@ -168,6 +168,8 @@ pub enum OpenCodeRuntimeError {
 /// How long the lookup before a delivery's send may take; a stalled one would hold the thread's
 /// delivery, so it ends as not sent and the delivery is retried.
 const DELIVERY_LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
+/// How many OpenCode 1 settlements of asks not routed yet are remembered for a recovery read.
+const MAX_TRACKED_SETTLEMENTS: usize = 256;
 /// The bound on a request made for the event stream (a form cancel, a failed message's removal,
 /// a best-effort read). The client sets no request timeout, since the event stream is a single
 /// long-lived response; each other request carries its own bound so a stalled one cannot hold
@@ -200,6 +202,57 @@ async fn bounded_send(request: reqwest::RequestBuilder) -> Result<(), String> {
     } else {
         Err(format!("HTTP {}", response.status()))
     }
+}
+
+/// The questions of an OpenCode 1 question request, as BiBCode shows them.
+fn v1_questions(request: &Value) -> Vec<Value> {
+    request
+        .get("questions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|question| {
+            json!({
+                "id": question.get("header").cloned().unwrap_or(Value::String(String::new())),
+                "header": question.get("header").cloned().unwrap_or(Value::String(String::new())),
+                "question": question.get("question").cloned().unwrap_or(Value::String(String::new())),
+                "options": question.get("options").cloned().unwrap_or(Value::Array(Vec::new())),
+            })
+        })
+        .collect()
+}
+
+/// What an OpenCode 1 permission request asks for, as shown to the user.
+fn v1_permission_detail(request: &Value) -> String {
+    let permission = request
+        .get("permission")
+        .and_then(Value::as_str)
+        .unwrap_or("tool");
+    let patterns = request
+        .get("patterns")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    if patterns.is_empty() {
+        permission.to_owned()
+    } else {
+        format!("{permission}: {patterns}")
+    }
+}
+
+/// The id of an OpenCode 1 permission or question request.
+fn v1_request_id(request: &Value) -> Option<&str> {
+    request
+        .get("id")
+        .or_else(|| request.get("requestID"))
+        .and_then(Value::as_str)
 }
 
 /// A failed HTTP request made before the turn's own request did not send the turn.
@@ -371,6 +424,9 @@ struct V2State {
     /// Forms BiBCode cannot show that it already cancelled, so a form seen both on resume and
     /// live is cancelled, and reported, once.
     cancelled_forms: HashSet<String>,
+    /// OpenCode 1 asks settled on the event stream since the session resumed, so a recovery read
+    /// that still listed them does not show them again.
+    v1_settled: HashSet<String>,
     /// Root executions started or ended as the event stream reported them, so an off-pump check
     /// for a running execution knows whether the stream overtook it.
     executions_seen: u64,
@@ -884,16 +940,16 @@ impl OpenCodeSessionRuntime {
             v2.cancelled_forms.clear();
         }
         let resumed = payload.get("resumed").is_some();
-        let recovered_asks = if resumed && self.is_v2() {
-            self.v2_restore_pending_asks(session_id).await
-        } else {
-            Vec::new()
+        let recovered_asks = match (resumed, self.is_v2()) {
+            (true, true) => self.v2_restore_pending_asks(session_id).await,
+            (true, false) => self.v1_restore_pending_asks(session_id).await,
+            (false, _) => Vec::new(),
         };
         self.reset_activity_root(session_id).await;
         self.emit("session.started", None, None, payload).await;
         self.emit("thread.started", None, None, json!({})).await;
         // OpenCode does not replay asks made while BiBCode was away; they are shown once the
-        // event stream connects (see `v2_show_recovered_asks`).
+        // event stream connects (see `v1_show_recovered_asks` and `v2_show_recovered_asks`).
         self.inner.v2.lock().await.recovered_asks = recovered_asks;
         // A resumed session may still be executing (OpenCode kept working while BiBCode was away).
         if resumed {
@@ -2403,8 +2459,17 @@ impl OpenCodeSessionRuntime {
         received_at_ms: u64,
     ) {
         if event.get("type").and_then(Value::as_str) == Some("server.connected") {
-            let adopt = std::mem::take(&mut self.inner.v2.lock().await.adopt_on_connect);
+            let (asks, adopt) = {
+                let mut v2 = self.inner.v2.lock().await;
+                (
+                    std::mem::take(&mut v2.recovered_asks),
+                    std::mem::take(&mut v2.adopt_on_connect),
+                )
+            };
+            // A resumed session (`adopt_on_connect`) reconciles its pending asks now that it is
+            // subscribed, even when the resume found none.
             if adopt {
+                self.spawn_v1_show_recovered_asks(asks);
                 self.v1_adopt_running_execution(session_id).await;
             }
         }
@@ -2577,33 +2642,27 @@ impl OpenCodeSessionRuntime {
                 self.inner.assistant_text.lock().await.clear();
             }
             "question.asked" => {
-                let request_id = properties
-                    .get("requestID")
-                    .and_then(Value::as_str)
+                let request_id = v1_request_id(&properties)
                     .unwrap_or("question-1")
                     .to_owned();
-                let questions = properties
-                    .get("questions")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|question| {
-                        json!({
-                            "id": question.get("header").cloned().unwrap_or(Value::String(String::new())),
-                            "header": question.get("header").cloned().unwrap_or(Value::String(String::new())),
-                            "question": question.get("question").cloned().unwrap_or(Value::String(String::new())),
-                            "options": question.get("options").cloned().unwrap_or(Value::Array(Vec::new())),
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                self.inner.pending_questions.lock().await.insert(
-                    request_id.clone(),
-                    PendingQuestion {
-                        turn_id: turn_id.clone(),
-                        questions: questions.clone(),
-                    },
-                );
+                let questions = v1_questions(&properties);
+                // One the resume already showed keeps its route and is not shown again.
+                if self
+                    .inner
+                    .pending_questions
+                    .lock()
+                    .await
+                    .insert(
+                        request_id.clone(),
+                        PendingQuestion {
+                            turn_id: turn_id.clone(),
+                            questions: questions.clone(),
+                        },
+                    )
+                    .is_some()
+                {
+                    return;
+                }
                 self.emit(
                     "user-input.requested",
                     turn_id,
@@ -2613,37 +2672,21 @@ impl OpenCodeSessionRuntime {
                 .await;
             }
             "permission.asked" => {
-                let request_id = properties
-                    .get("requestID")
-                    .or_else(|| properties.get("id"))
-                    .and_then(Value::as_str)
+                let request_id = v1_request_id(&properties)
                     .unwrap_or("permission-1")
                     .to_owned();
-                let permission = properties
-                    .get("permission")
-                    .and_then(Value::as_str)
-                    .unwrap_or("tool");
-                let patterns = properties
-                    .get("patterns")
-                    .and_then(Value::as_array)
-                    .map(|values| {
-                        values
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    })
-                    .unwrap_or_default();
-                let detail = if patterns.is_empty() {
-                    permission.to_owned()
-                } else {
-                    format!("{permission}: {patterns}")
-                };
-                self.inner
+                let detail = v1_permission_detail(&properties);
+                // One the resume already showed keeps its route and is not shown again.
+                if self
+                    .inner
                     .pending_permissions
                     .lock()
                     .await
-                    .insert(request_id.clone(), turn_id.clone());
+                    .insert(request_id.clone(), turn_id.clone())
+                    .is_some()
+                {
+                    return;
+                }
                 self.emit(
                     "request.opened",
                     turn_id,
@@ -2654,6 +2697,46 @@ impl OpenCodeSessionRuntime {
                     }),
                 )
                 .await;
+            }
+            // Answered elsewhere, such as in the OpenCode terminal: a shown ask is resolved, and
+            // one not routed yet is remembered so a recovery read does not show it.
+            "permission.replied" | "question.replied" | "question.rejected" => {
+                let Some(request_id) = properties
+                    .get("requestID")
+                    .or_else(|| properties.get("permissionID"))
+                    .or_else(|| properties.get("id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                else {
+                    return;
+                };
+                // Every settlement is remembered under the route's lock, which recovery holds
+                // while it routes, so a recovery read that still lists the ask never shows it.
+                let resolved = if event_type == "permission.replied" {
+                    let mut pending = self.inner.pending_permissions.lock().await;
+                    self.remember_v1_settlement(&request_id).await;
+                    pending.remove(&request_id).map(|turn_id| {
+                        (
+                            "request.resolved",
+                            turn_id,
+                            json!({ "requestType": "exec_command_approval" }),
+                        )
+                    })
+                } else {
+                    let mut pending = self.inner.pending_questions.lock().await;
+                    self.remember_v1_settlement(&request_id).await;
+                    pending.remove(&request_id).map(|question| {
+                        (
+                            "user-input.resolved",
+                            question.turn_id,
+                            json!({ "answers": {} }),
+                        )
+                    })
+                };
+                if let Some((event_type, turn_id, payload)) = resolved {
+                    self.emit(event_type, turn_id, Some(request_id), payload)
+                        .await;
+                }
             }
             unhandled => {
                 // Unknown SSE event types were discarded unlogged, with no
@@ -3052,6 +3135,234 @@ impl OpenCodeSessionRuntime {
             }
         }
         recovered
+    }
+
+    /// Remembers an OpenCode 1 ask settled on the event stream, for a recovery read.
+    async fn remember_v1_settlement(&self, request_id: &str) {
+        let mut v2 = self.inner.v2.lock().await;
+        if v2.v1_settled.len() < MAX_TRACKED_SETTLEMENTS {
+            v2.v1_settled.insert(request_id.to_owned());
+        }
+    }
+
+    /// The permissions and questions an OpenCode 1 session was waiting on when it resumed, read
+    /// from OpenCode's pending lists (they span every session, so only this one's are kept). Each
+    /// gets its reply route now and is shown once the event stream connects. OpenCode 1 asks are
+    /// shown whatever their fields, as live ones are.
+    async fn v1_restore_pending_asks(
+        &self,
+        session_id: &str,
+    ) -> Vec<(&'static str, String, Value)> {
+        self.inner.v2.lock().await.v1_settled.clear();
+        let mut recovered = Vec::new();
+        let permissions = match self.request_url("/permission") {
+            Ok(url) => self.v2_get_json(url).await,
+            Err(_) => None,
+        };
+        let questions = match self.request_url("/question") {
+            Ok(url) => self.v2_get_json(url).await,
+            Err(_) => None,
+        };
+        let of_session = |list: &Option<Value>| {
+            list.iter()
+                .filter_map(Value::as_array)
+                .flatten()
+                .filter(|request| {
+                    request.get("sessionID").and_then(Value::as_str) == Some(session_id)
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        {
+            let mut pending = self.inner.pending_permissions.lock().await;
+            for request in of_session(&permissions) {
+                let Some(request_id) = v1_request_id(&request) else {
+                    continue;
+                };
+                if pending.contains_key(request_id) {
+                    continue;
+                }
+                pending.insert(request_id.to_owned(), None);
+                recovered.push((
+                    "request.opened",
+                    request_id.to_owned(),
+                    json!({
+                        "requestType": "exec_command_approval",
+                        "detail": v1_permission_detail(&request),
+                        "recovered": true,
+                    }),
+                ));
+            }
+        }
+        let mut pending = self.inner.pending_questions.lock().await;
+        for request in of_session(&questions) {
+            let Some(request_id) = v1_request_id(&request) else {
+                continue;
+            };
+            if pending.contains_key(request_id) {
+                continue;
+            }
+            let questions = v1_questions(&request);
+            pending.insert(
+                request_id.to_owned(),
+                PendingQuestion {
+                    turn_id: None,
+                    questions: questions.clone(),
+                },
+            );
+            recovered.push((
+                "user-input.requested",
+                request_id.to_owned(),
+                json!({ "questions": questions, "recovered": true }),
+            ));
+        }
+        recovered
+    }
+
+    /// Shows the asks an OpenCode 1 session recovered on resume, off the event pump, as
+    /// `v2_show_recovered_asks` does: each is checked against a fresh read of its pending list,
+    /// so one answered between the resume's read and the subscription is resolved instead of
+    /// shown. A reply sent meanwhile already took its route, so it is skipped.
+    fn spawn_v1_show_recovered_asks(&self, asks: Vec<(&'static str, String, Value)>) {
+        let runtime = Arc::downgrade(&self.inner);
+        let cancellation = self.inner.reconciliation_cancellation.clone();
+        let owner_cancellation = self.inner.owner_state.cancellation.clone();
+        tokio::spawn(async move {
+            let Some(inner) = runtime.upgrade() else {
+                return;
+            };
+            let runtime = OpenCodeSessionRuntime::internal(inner);
+            tokio::select! {
+                () = cancellation.cancelled() => {}
+                () = owner_cancellation.cancelled() => {}
+                () = runtime.v1_show_recovered_asks(asks) => {}
+            }
+        });
+    }
+
+    async fn v1_show_recovered_asks(&self, asks: Vec<(&'static str, String, Value)>) {
+        let Ok(session_id) = self.session_id().await else {
+            return;
+        };
+        // Each list read afresh, now that the event stream is subscribed; `None` when it could
+        // not be read (or was malformed), and its recovered asks are then shown.
+        let mut fresh: HashMap<&str, Option<Vec<Value>>> = HashMap::new();
+        for path in ["/permission", "/question"] {
+            let requests = match self.request_url(path) {
+                Ok(url) => self.v2_get_json(url).await,
+                Err(_) => None,
+            }
+            .and_then(|list| list.as_array().cloned());
+            fresh.insert(path, requests);
+        }
+        let listed = |path: &str, request_id: &str| match fresh.get(path) {
+            Some(Some(requests)) => requests
+                .iter()
+                .any(|request| v1_request_id(request) == Some(request_id)),
+            _ => true,
+        };
+        for (event_type, request_id, ask) in asks {
+            if event_type == "request.opened" {
+                let mut pending = self.inner.pending_permissions.lock().await;
+                if !pending.contains_key(&request_id) {
+                    continue;
+                }
+                if listed("/permission", &request_id) {
+                    self.emit(event_type, None, Some(request_id), ask).await;
+                } else {
+                    pending.remove(&request_id);
+                    self.emit(
+                        "request.resolved",
+                        None,
+                        Some(request_id),
+                        json!({ "requestType": "exec_command_approval" }),
+                    )
+                    .await;
+                }
+            } else {
+                let mut pending = self.inner.pending_questions.lock().await;
+                if !pending.contains_key(&request_id) {
+                    continue;
+                }
+                if listed("/question", &request_id) {
+                    self.emit(event_type, None, Some(request_id), ask).await;
+                } else {
+                    pending.remove(&request_id);
+                    self.emit(
+                        "user-input.resolved",
+                        None,
+                        Some(request_id),
+                        json!({ "answers": {} }),
+                    )
+                    .await;
+                }
+            }
+        }
+        // An ask created between the resume's read and the subscription is in the fresh lists
+        // only (OpenCode does not replay it); one the event stream already delivered has its
+        // route and is skipped.
+        let of_session = |path: &str| {
+            fresh
+                .get(path)
+                .cloned()
+                .flatten()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|request| {
+                    request.get("sessionID").and_then(Value::as_str) == Some(session_id.as_str())
+                })
+                .collect::<Vec<_>>()
+        };
+        let settled = |request_id: &str| {
+            let request_id = request_id.to_owned();
+            async move { self.inner.v2.lock().await.v1_settled.contains(&request_id) }
+        };
+        for request in of_session("/permission") {
+            let Some(request_id) = v1_request_id(&request).map(str::to_owned) else {
+                continue;
+            };
+            let mut pending = self.inner.pending_permissions.lock().await;
+            if pending.contains_key(&request_id) || settled(&request_id).await {
+                continue;
+            }
+            pending.insert(request_id.clone(), None);
+            self.emit(
+                "request.opened",
+                None,
+                Some(request_id),
+                json!({
+                    "requestType": "exec_command_approval",
+                    "detail": v1_permission_detail(&request),
+                    "recovered": true,
+                }),
+            )
+            .await;
+        }
+        for request in of_session("/question") {
+            let Some(request_id) = v1_request_id(&request).map(str::to_owned) else {
+                continue;
+            };
+            let mut pending = self.inner.pending_questions.lock().await;
+            if pending.contains_key(&request_id) || settled(&request_id).await {
+                continue;
+            }
+            let questions = v1_questions(&request);
+            pending.insert(
+                request_id.clone(),
+                PendingQuestion {
+                    turn_id: None,
+                    questions: questions.clone(),
+                },
+            );
+            self.emit(
+                "user-input.requested",
+                None,
+                Some(request_id),
+                json!({ "questions": questions, "recovered": true }),
+            )
+            .await;
+        }
+        self.inner.v2.lock().await.v1_settled.clear();
     }
 
     /// Cancels a form BiBCode cannot show, live or recovered on resume, once per form: off the
@@ -5621,6 +5932,57 @@ mod tests {
         server.abort();
     }
 
+    /// A recovery read that still lists an ask the event stream already settled, routed or not,
+    /// does not show it again.
+    #[tokio::test]
+    async fn opencode_1_recovery_does_not_show_an_ask_settled_meanwhile() {
+        let app = Router::new()
+            .route(
+                "/permission",
+                get(|| async {
+                    Json(json!([
+                        { "id": "per_routed", "sessionID": "session-1", "permission": "bash" },
+                        { "id": "per_unrouted", "sessionID": "session-1", "permission": "bash" }
+                    ]))
+                }),
+            )
+            .route("/question", get(|| async { Json(json!([])) }));
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+        let runtime = super::OpenCodeSessionRuntime::new(
+            &format!("http://{address}"),
+            "unit-thread",
+            "/tmp/unit",
+            None,
+        );
+        *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
+        runtime
+            .inner
+            .pending_permissions
+            .lock()
+            .await
+            .insert("per_routed".to_owned(), None);
+        for request_id in ["per_routed", "per_unrouted"] {
+            runtime
+                .handle_sse_event(
+                    "session-1",
+                    json!({"type":"permission.replied","properties":{
+                        "sessionID":"session-1","requestID":request_id,"reply":"once"
+                    }}),
+                )
+                .await;
+        }
+        let resolved = runtime.next_event().await.expect("resolution");
+        assert_eq!(resolved.event_type, "request.resolved");
+        runtime.v1_show_recovered_asks(Vec::new()).await;
+        assert_no_queued_event(&runtime).await;
+        assert!(runtime.inner.pending_permissions.lock().await.is_empty());
+        server.abort();
+    }
+
     /// A rate-limited lookup before a send keeps OpenCode's `Retry-After`; nothing is sent.
     #[tokio::test]
     async fn a_rate_limited_lookup_asks_to_retry_later() {
@@ -6892,5 +7254,30 @@ mod tests {
         assert_eq!(events[2].event_type, "user-input.requested");
         assert_eq!(events[3].event_type, "request.opened");
         assert_eq!(events[4].event_type, "turn.completed");
+
+        // An ask answered elsewhere (the OpenCode terminal) is resolved; one not shown yet is
+        // remembered so a recovery read does not show it.
+        runtime.handle_sse_event("session-1", json!({"type":"permission.asked","properties":{"sessionID":"session-1","id":"per_elsewhere","permission":"bash"}})).await;
+        runtime.handle_sse_event("session-1", json!({"type":"permission.replied","properties":{"sessionID":"session-1","requestID":"per_elsewhere","reply":"once"}})).await;
+        runtime.handle_sse_event("session-1", json!({"type":"question.replied","properties":{"sessionID":"session-1","requestID":"que_unrouted"}})).await;
+        // The earlier error outside a turn is still queued ahead of them.
+        let events = runtime
+            .collect_events(3)
+            .await
+            .into_iter()
+            .filter(|event| event.event_type != "runtime.error")
+            .collect::<Vec<_>>();
+        assert_eq!(events[0].event_type, "request.opened");
+        assert_eq!(events[1].event_type, "request.resolved");
+        assert_eq!(events[1].request_id.as_deref(), Some("per_elsewhere"));
+        assert!(
+            runtime
+                .inner
+                .v2
+                .lock()
+                .await
+                .v1_settled
+                .contains("que_unrouted")
+        );
     }
 }

@@ -659,7 +659,11 @@ provider says the old one is gone:
   pending list (one answered meanwhile is resolved, not shown), and one the
   thread already recorded is not added again. A recovered form BiBCode cannot
   show (free text, a conditional field, a sign-in link) is cancelled and the
-  chat told, as a live one is; each form is cancelled and reported once. The
+  chat told, as a live one is; each form is cancelled and reported once. An
+  OpenCode 1 session recovers the same way from OpenCode's pending permission
+  and question lists (only its own), reading them again once subscribed so an
+  ask created or answered meanwhile is caught; its asks are shown whatever
+  their fields, as live ones are, and one answered elsewhere is resolved. The
   check for an execution
   OpenCode kept running runs off the event pump with a 10-second bound, so a
   stalled read never holds events or Stop. Until it answers, or if it cannot,
