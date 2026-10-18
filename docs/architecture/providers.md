@@ -653,7 +653,15 @@ provider says the old one is gone:
   found" or "does not exist"); any other JSON-RPC error and transport failures
   still fail the launch and keep the saved session id for the next attempt.
 - OpenCode creates a new session when `GET /session/{id}` returns 404; any other
-  status still fails the launch and is retried.
+  status still fails the launch and is retried. A resumed OpenCode 2 session
+  shows the asks OpenCode was waiting on, since its event stream does not replay
+  them: once the stream connects, each is checked against a fresh read of its
+  pending list (one answered meanwhile is resolved, not shown), and one the
+  thread already recorded is not added again. The check for an execution
+  OpenCode kept running runs off the event pump with a 10-second bound, so a
+  stalled read never holds events or Stop. Until it answers, or if it cannot,
+  the execution's own output starts its provider-started turn, so the reply and
+  its completion share one turn.
 - Claude passes `--resume` only when the transcript
   `<config dir>/projects/<project>/<sessionId>.jsonl` exists, and otherwise
   launches with a fresh `--session-id`. The config directory resolves as for

@@ -344,6 +344,12 @@ struct V2State {
     /// Asks OpenCode was waiting on when the session resumed, shown once the event stream is
     /// connected and they are confirmed still pending.
     recovered_asks: Vec<(&'static str, String, Value)>,
+    /// Root executions started or ended as the event stream reported them, so an off-pump check
+    /// for a running execution knows whether the stream overtook it.
+    executions_seen: u64,
+    /// The resume's check for a running execution has not answered conclusively, and the stream
+    /// has not reported an execution starting or ending: root output gets a turn of its own.
+    adopt_pending: bool,
     /// The progress of a checkpoint rewind that has not reported success, counted from BiBCode's
     /// unchanged transcript. See `v2_rollback`.
     rewind: V2RewindProgress,
@@ -2614,7 +2620,13 @@ impl OpenCodeSessionRuntime {
         }
     }
 
-    async fn handle_v2_event(&self, event: Value) {
+    /// Whether the resume's check for a running execution is still pending.
+    #[cfg(test)]
+    pub(super) async fn adopt_pending(&self) -> bool {
+        self.inner.v2.lock().await.adopt_pending
+    }
+
+    pub(super) async fn handle_v2_event(&self, event: Value) {
         let normalized = self.inner.v2.lock().await.normalizer.normalize(&event);
         if !normalized.is_empty()
             && let Ok(root_session_id) = self.session_id().await
@@ -2632,14 +2644,42 @@ impl OpenCodeSessionRuntime {
             }
             let adopt = std::mem::take(&mut self.inner.v2.lock().await.adopt_on_connect);
             if adopt && let Ok(session_id) = self.session_id().await {
-                self.v2_adopt_running_execution(&session_id).await;
+                self.spawn_v2_adopt_running_execution(session_id).await;
             }
         }
-        let outputs = match self.inner.v2.lock().await.translator.as_mut() {
-            Some(translator) => translator.handle(&event),
-            None => return,
+        let outputs = {
+            let mut v2 = self.inner.v2.lock().await;
+            let Some(translator) = v2.translator.as_mut() else {
+                return;
+            };
+            let outputs = translator.handle(&event);
+            let executions = outputs
+                .iter()
+                .filter(|output| {
+                    matches!(output, V2Output::ExecutionStarted | V2Output::TurnEnded(_))
+                })
+                .count() as u64;
+            v2.executions_seen = v2.executions_seen.wrapping_add(executions);
+            // The stream reported the execution's lifecycle, so it no longer needs the check.
+            if executions > 0 {
+                v2.adopt_pending = false;
+            }
+            outputs
         };
         for output in outputs {
+            // Output of an execution the resume's check has not confirmed yet shows it running:
+            // it gets its turn before the output is forwarded, so the reply and its completion
+            // share one turn.
+            if matches!(
+                output,
+                V2Output::TextDelta { .. } | V2Output::AssistantCompleted { .. }
+            ) {
+                let v2 = self.inner.v2.lock().await;
+                if v2.adopt_pending && self.inner.active_turn_id.lock().await.is_none() {
+                    self.begin_provider_started_turn().await;
+                }
+                drop(v2);
+            }
             let turn_id = self.inner.active_turn_id.lock().await.clone();
             match output {
                 V2Output::ExecutionStarted => {
@@ -3108,20 +3148,60 @@ impl OpenCodeSessionRuntime {
     }
 
     /// A resumed session may still be executing (OpenCode kept working while BiBCode was away);
-    /// its start is not replayed, so report it as a turn now and let its end complete it.
-    async fn v2_adopt_running_execution(&self, session_id: &str) {
+    /// its start is not replayed, so report it as a turn and let its end complete it. The check
+    /// runs off the event pump, bounded, so a stalled read never holds its events (or Stop). If
+    /// the stream reports an execution starting or ending meanwhile, it already speaks for the
+    /// session and the check's answer is dropped; a check that times out adopts nothing.
+    async fn spawn_v2_adopt_running_execution(&self, session_id: String) {
+        let seen = {
+            let mut v2 = self.inner.v2.lock().await;
+            v2.adopt_pending = true;
+            v2.executions_seen
+        };
+        let runtime = Arc::downgrade(&self.inner);
+        let cancellation = self.inner.reconciliation_cancellation.clone();
+        let owner_cancellation = self.inner.owner_state.cancellation.clone();
+        tokio::spawn(async move {
+            let Some(inner) = runtime.upgrade() else {
+                return;
+            };
+            let runtime = OpenCodeSessionRuntime::internal(inner);
+            tokio::select! {
+                () = cancellation.cancelled() => {}
+                () = owner_cancellation.cancelled() => {}
+                () = runtime.v2_adopt_running_execution(&session_id, seen) => {}
+            }
+        });
+    }
+
+    async fn v2_adopt_running_execution(&self, session_id: &str, seen: u64) {
         let Ok(url) = self.v2_url(&["session", "active"], false) else {
             return;
         };
-        let running = self.v2_get_json(url).await.is_some_and(|active| {
-            active
-                .get("data")
-                .and_then(Value::as_object)
-                .is_some_and(|sessions| sessions.contains_key(session_id))
-        });
-        if running && self.inner.active_turn_id.lock().await.is_none() {
+        // `None` when the read failed or timed out: inconclusive.
+        let running = tokio::time::timeout(DELIVERY_LOOKUP_TIMEOUT, self.v2_get_json(url))
+            .await
+            .ok()
+            .flatten()
+            .and_then(|active| {
+                active
+                    .get("data")
+                    .and_then(Value::as_object)
+                    .map(|sessions| sessions.contains_key(session_id))
+            });
+        // Under the lock the pump takes to translate events, so no execution event slips in
+        // between this check and the turn it starts.
+        let mut v2 = self.inner.v2.lock().await;
+        let Some(running) = running else {
+            // Inconclusive: the stream's own output still establishes the execution's turn.
+            return;
+        };
+        v2.adopt_pending = false;
+        if running && v2.executions_seen == seen && self.inner.active_turn_id.lock().await.is_none()
+        {
             self.begin_provider_started_turn().await;
         }
+        drop(v2);
     }
 
     /// A best-effort OpenCode 2 read; failures are logged and read as absent.
