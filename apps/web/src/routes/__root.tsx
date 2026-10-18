@@ -40,7 +40,16 @@ import { startClientCollector } from "../profiler/startClientCollector";
 import { startPreviewTunnelBroker } from "../browser/previewTunnelBroker";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
-import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
+import { hasSavedEnvironments } from "../connection/savedEnvironments";
+import {
+  hasHostedPairingRequest,
+  isHostedPairingApp,
+  isHostedStaticApp,
+  isServedByThisBackend,
+  isServedSessionStalled,
+  setServedSessionStalled,
+  setServedPrimarySuppressed,
+} from "../hostedPairing";
 import { shellEnvironment } from "../state/shell";
 import { useAtomValue } from "@effect/atom-react";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -61,14 +70,39 @@ import {
   type KeybindingsUpdateToastController,
 } from "../components/KeybindingsUpdateToast.logic";
 
+const SERVED_SESSION_CHECK_DEADLINE_MS = 10_000;
+
+class ServedSessionCheckStalled extends Error {
+  constructor() {
+    super("This server did not answer its session check in time.");
+  }
+}
+
+function withDeadline<A>(promise: Promise<A>, deadlineMs: number): Promise<A> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new ServedSessionCheckStalled()), deadlineMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
     const url = new URL(window.location.href);
     const hostedStatic = isHostedStaticApp(url);
     // The pairing surface retains the token in memory and removes it from the
-    // URL. Keep that route active when the history replacement reloads the gate.
+    // URL. Keep that route active when the history replacement reloads the gate,
+    // wherever this build's host-based pairing links land, a served page included.
     const hostedPairingHost =
-      hostedStatic && url.searchParams.has("host") && !url.searchParams.has("code");
+      isHostedPairingApp(url) && url.searchParams.has("host") && !url.searchParams.has("code");
     if (location.pathname === "/pair" && (hasHostedPairingRequest(url) || hostedPairingHost)) {
       return {
         authGateState: {
@@ -85,7 +119,48 @@ export const Route = createRootRoute({
       };
     }
 
-    const authGateState = await resolveInitialServerAuthGateState();
+    // A page this server served, not paired with it (or unable to reach it) but paired with other
+    // servers through a pairing link, opens as their remote client instead of bouncing back to
+    // this server's pairing. It then does not offer this server, which it cannot connect to,
+    // until it is paired. Its own pairing route keeps this server's session check. A catalog that
+    // did not load may hold a server just paired, so only one known to be empty sends the page to
+    // pair this one.
+    const servedRemoteClient = async (): Promise<boolean> => {
+      if (location.pathname === "/pair" || !isServedByThisBackend(url)) return false;
+      setServedPrimarySuppressed(true);
+      return (await hasSavedEnvironments()) !== false;
+    };
+    const remoteClientState = {
+      authGateState: {
+        status: "hosted-static",
+      } as const,
+    };
+    if (isServedByThisBackend(url)) {
+      // Pairing this server checks its session again; the stalled check is not waited out on
+      // every other navigation.
+      if (location.pathname === "/pair") setServedSessionStalled(false);
+      else if (isServedSessionStalled()) return remoteClientState;
+    }
+    let authGateState: Awaited<ReturnType<typeof resolveInitialServerAuthGateState>>;
+    try {
+      // On a served page, a session check that stalls must not keep the page from the other
+      // servers it is paired with.
+      authGateState = isServedByThisBackend(url)
+        ? await withDeadline(resolveInitialServerAuthGateState(), SERVED_SESSION_CHECK_DEADLINE_MS)
+        : await resolveInitialServerAuthGateState();
+    } catch (error) {
+      if (await servedRemoteClient()) {
+        if (error instanceof ServedSessionCheckStalled) setServedSessionStalled(true);
+        return remoteClientState;
+      }
+      throw error;
+    }
+    if (authGateState.status !== "authenticated" && (await servedRemoteClient())) {
+      return remoteClientState;
+    }
+    if (authGateState.status === "authenticated" || location.pathname !== "/pair") {
+      setServedPrimarySuppressed(false);
+    }
     return {
       authGateState,
     };

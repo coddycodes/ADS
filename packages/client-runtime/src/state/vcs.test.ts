@@ -30,7 +30,7 @@ import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { isAtomCommandInterrupted, runAtomCommand } from "./runtime.ts";
-import { createVcsEnvironmentAtoms } from "./vcs.ts";
+import { createVcsEnvironmentAtoms, projectVcsStatusEvent } from "./vcs.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const decodeGitCommandError = Schema.decodeUnknownSync(GitCommandError);
@@ -144,6 +144,27 @@ function readFellBehindFailure(kind: "live" | "setup"): GitCommandError {
   };
   return decodeGitCommandError(fixture.exit.cause[0].error);
 }
+
+describe("VCS status projection", () => {
+  // Every reconnect resends the snapshot. A new status object re-renders every reader, and each
+  // render's closures pinned another copy of a large workspace's file list (#96 follow-up).
+  it("keeps the status when an event leaves it unchanged", () => {
+    const [first, emitted] = projectVcsStatusEvent(null, legacySnapshot);
+    expect(emitted).toEqual([first]);
+
+    const [resent, resentEmitted] = projectVcsStatusEvent(first, structuredClone(legacySnapshot));
+    expect(resent).toBe(first);
+    expect(resentEmitted).toEqual([]);
+
+    const changed = {
+      ...legacySnapshot,
+      local: { ...legacySnapshot.local, hasWorkingTreeChanges: true },
+    };
+    const [next, nextEmitted] = projectVcsStatusEvent(first, changed);
+    expect(next).not.toBe(first);
+    expect(nextEmitted).toEqual([next]);
+  });
+});
 
 describe("VCS status atoms", () => {
   const fellBehind = readFellBehindFailure("live");

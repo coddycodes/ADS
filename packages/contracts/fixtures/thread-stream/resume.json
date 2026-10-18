@@ -1,0 +1,66 @@
+{
+  "input": {
+    "patches": true,
+    "resume": {
+      "revision": "revision-1",
+      "snapshotSequence": 3
+    },
+    "threadId": "t1"
+  },
+  "items": [
+    {
+      "kind": "snapshot",
+      "revision": "revision-1",
+      "snapshot": {
+        "snapshotSequence": 3,
+        "thread": {
+          "activities": [],
+          "archivedAt": null,
+          "branch": null,
+          "checkpoints": [],
+          "createdAt": "2026-07-10T10:00:00.000Z",
+          "deletedAt": null,
+          "hasActionableProposedPlan": false,
+          "hasPendingApprovals": false,
+          "hasPendingUserInput": false,
+          "id": "t1",
+          "interactionMode": "default",
+          "kind": "workspace",
+          "latestTurn": null,
+          "latestUserMessageAt": null,
+          "messages": [],
+          "modelSelection": {
+            "instanceId": "codex",
+            "model": "gpt-5"
+          },
+          "projectId": "p1",
+          "proposedPlans": [],
+          "runtimeMode": "full-access",
+          "session": null,
+          "title": "Thread",
+          "unresolvedDelivery": null,
+          "updatedAt": "2026-07-10T10:00:00.000Z",
+          "worktreePath": null
+        }
+      }
+    },
+    {
+      "kind": "unchanged",
+      "revision": "revision-1",
+      "snapshotSequence": 3
+    },
+    {
+      "kind": "patch",
+      "patch": {
+        "arrays": {},
+        "set": {
+          "title": "Renamed",
+          "updatedAt": "2026-07-11T00:00:01.000Z"
+        },
+        "unset": []
+      },
+      "revision": "revision-2",
+      "snapshotSequence": 4
+    }
+  ]
+}

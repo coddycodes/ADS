@@ -193,11 +193,19 @@ export function runStream<TTag extends EnvironmentStreamCommandRpcTag>(
   );
 }
 
+/**
+ * A subscription's input, or a function read at every (re)subscribe, so a stream that resumes
+ * from what it already holds can say so each time.
+ */
+export type EnvironmentSubscriptionInput<TTag extends EnvironmentSubscriptionRpcTag> =
+  | EnvironmentRpcInput<TTag>
+  | (() => EnvironmentRpcInput<TTag>);
+
 export function subscribeInSession<TTag extends EnvironmentSubscriptionRpcTag>(
   session: RpcSession,
   environmentId: string,
   tag: TTag,
-  input: EnvironmentRpcInput<TTag>,
+  input: EnvironmentSubscriptionInput<TTag>,
   options?: EnvironmentSubscriptionOptions<TTag>,
 ): Stream.Stream<EnvironmentRpcStreamValue<TTag>, EnvironmentRpcStreamFailure<TTag>> {
   const method = session.client[tag] as (
@@ -218,7 +226,7 @@ export function subscribeInSession<TTag extends EnvironmentSubscriptionRpcTag>(
         Effect.gen(function* () {
           retryRequested = false;
           const subscribedAt = yield* Clock.currentTimeMillis;
-          return method(input).pipe(
+          return method(typeof input === "function" ? input() : input).pipe(
             Stream.catchCause((cause) => {
               const hasOnlyExpectedFailures =
                 cause.reasons.length > 0 && cause.reasons.every((reason) => reason._tag === "Fail");
@@ -299,7 +307,7 @@ export function subscribeInSession<TTag extends EnvironmentSubscriptionRpcTag>(
 
 export function subscribe<TTag extends EnvironmentSubscriptionRpcTag>(
   tag: TTag,
-  input: EnvironmentRpcInput<TTag>,
+  input: EnvironmentSubscriptionInput<TTag>,
   options?: EnvironmentSubscriptionOptions<TTag>,
 ): Stream.Stream<
   EnvironmentRpcStreamValue<TTag>,

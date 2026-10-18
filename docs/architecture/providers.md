@@ -56,6 +56,15 @@ call. Changed provider settings drop every cached catalog; failures and
 catalogs that report discovery issues are never cached, so a retry discovers
 again; and at most 64 catalogs are kept, the oldest leaving first.
 
+The client keys its capability query by a revision of the server config. A
+provider-status or settings update always moves the revision, because settings
+arrive with secrets redacted and an equal payload can still hide a changed
+secret. The snapshot every reconnect resends moves it only when its providers or
+settings differ. A snapshot equal to the config already held leaves the whole
+projection in place, so no reader re-renders with a copy. The new connection
+already re-reads the mounted query, so a reconnect costs one capability read
+rather than one more per reconnect.
+
 The result contains `slashCommands`, `skills`, `agents`, and `issues`. Codex
 initializes an App Server in the requested directory and calls `skills/list`
 without an account/model query, using the session launch's configured Codex
@@ -108,11 +117,18 @@ A durable turn is replayed unchanged, so a launch that fails because the
 selected model or session refuses the turn's own options
 (`ProviderRuntimeError::InvalidOption`) fails that delivery once. So does a
 launch refused because BiBCode cannot drive the configured provider, such as an
-unsupported major version (`ProviderRuntimeError::IncompatibleProvider`): the
-delivery fails with the actionable detail instead of relaunching the provider
-in a retry loop, and a retry after the user fixes the setting launches
-normally. Every other launch failure, such as a spawn error, a port race, or a
-server that is slow to start, stays definitely not sent and is retried.
+unsupported major version (`ProviderRuntimeError::IncompatibleProvider`), and a
+launch whose executable is missing (`ProviderRuntimeError::MissingExecutable`,
+"Claude could not start: claude was not found. Install it there and retry, or
+set its Binary path in Settings → Providers, then dismiss this message and send
+it again."): the delivery fails with the actionable detail instead of
+relaunching the provider in a retry loop. A retry keeps the turn's original
+route, so it launches once the executable exists at that path; a changed
+Binary path takes a new message, sent after dismissing the failed one, which
+holds back the thread's later messages. Every other
+launch failure, such as another spawn error, a port race, or a server that is
+slow to start, stays definitely not sent and is retried with backoff up to 30
+seconds between attempts.
 `InvalidOption` comes from every deterministic option check:
 
 - the shape checks of Claude, Codex and OpenCode: an option without an id, and a

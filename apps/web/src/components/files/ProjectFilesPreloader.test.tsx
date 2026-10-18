@@ -2,19 +2,19 @@ import { EnvironmentId } from "@bibcode/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vite-plus/test";
 
-const { useProjectEntriesQuery } = vi.hoisted(() => ({
-  useProjectEntriesQuery: vi.fn(),
+const { useFileTreeEntries } = vi.hoisted(() => ({
+  useFileTreeEntries: vi.fn(),
 }));
 
-vi.mock("./projectFilesQueryState", () => ({ useProjectEntriesQuery }));
+vi.mock("./projectFilesQueryState", () => ({ useFileTreeEntries }));
 
 import { ProjectFilesPreloader } from "./ProjectFilesPreloader";
 
-it("starts the project entries query without rendering UI", () => {
+it("holds the Files list and its subscription without rendering UI or re-reading", () => {
   const environmentId = EnvironmentId.make("environment-project-files-preloader-test");
 
   expect(
     renderToStaticMarkup(<ProjectFilesPreloader environmentId={environmentId} cwd="X:/demo" />),
   ).toBe("");
-  expect(useProjectEntriesQuery).toHaveBeenCalledWith(environmentId, "X:/demo");
+  expect(useFileTreeEntries).toHaveBeenCalledWith(environmentId, "X:/demo", false);
 });

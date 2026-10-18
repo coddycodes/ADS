@@ -73,6 +73,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     error: Option.none(),
   });
   const lastSequence = yield* SubscriptionRef.make(0);
+  // The server's revision of the thread this state holds, after the last item applied in full.
+  // A resubscribe sends it so the server can answer `unchanged` instead of the whole thread; any
+  // change the server did not describe with a revision clears it.
+  let resumeFrom: { readonly revision: string; readonly snapshotSequence: number } | null = null;
+  const resumeAt = (revision: string | undefined, snapshotSequence: number) => {
+    resumeFrom = revision === undefined ? null : { revision, snapshotSequence };
+  };
   const persistence = yield* Queue.sliding<OrchestrationThread>(1);
 
   const persist = Effect.fn("EnvironmentThreadState.persist")(function* (
@@ -134,6 +141,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   });
 
   const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* () {
+    resumeFrom = null;
     yield* SubscriptionRef.set(state, {
       data: Option.none(),
       status: "deleted",
@@ -158,16 +166,33 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     if (item.kind === "snapshot") {
       yield* SubscriptionRef.set(lastSequence, item.snapshot.snapshotSequence);
       yield* setThread(item.snapshot.thread);
+      resumeAt(item.revision, item.snapshot.snapshotSequence);
       return;
     }
     if (item.kind === "patch") {
       // Computed against the snapshot this subscription holds, so it always applies.
       const current = yield* SubscriptionRef.get(state);
-      if (Option.isNone(current.data)) return;
+      if (Option.isNone(current.data)) {
+        resumeFrom = null;
+        return;
+      }
       yield* SubscriptionRef.set(lastSequence, item.snapshotSequence);
       yield* setThread(applyThreadPatch(current.data.value, item.patch));
+      resumeAt(item.revision, item.snapshotSequence);
       return;
     }
+    if (item.kind === "unchanged") {
+      // The server still has the revision this state holds: keep the thread, it is live again.
+      yield* SubscriptionRef.set(lastSequence, item.snapshotSequence);
+      yield* SubscriptionRef.update(state, (current) =>
+        Option.isNone(current.data)
+          ? current
+          : { ...current, status: "live" as const, error: Option.none() },
+      );
+      resumeAt(item.revision, item.snapshotSequence);
+      return;
+    }
+    resumeFrom = null;
 
     const sequence = yield* SubscriptionRef.get(lastSequence);
     if (item.event.sequence <= sequence) {
@@ -207,8 +232,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   yield* setSynchronizing;
   yield* subscribe(
     ORCHESTRATION_WS_METHODS.subscribeThread,
-    // Updates arrive as patches against the snapshot this subscription holds.
-    { threadId, patches: true },
+    // Updates arrive as patches against the snapshot this subscription holds; a resubscribe
+    // names the revision it holds, so an unchanged thread is not sent again.
+    () =>
+      resumeFrom === null
+        ? { threadId, patches: true }
+        : { threadId, patches: true, resume: resumeFrom },
     {
       onExpectedFailure: setStreamError,
       // A thread can appear just after its view subscribes, so a failure is retried soon. A

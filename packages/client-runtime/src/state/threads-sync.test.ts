@@ -96,6 +96,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const latest = yield* Ref.make<EnvironmentThreadState>(EMPTY_ENVIRONMENT_THREAD_STATE);
   const retryCount = yield* Ref.make(0);
   const subscriptionCount = yield* Ref.make(0);
+  const subscribeInputs = yield* Ref.make<ReadonlyArray<unknown>>([]);
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationThread>>([]);
   const removedThreads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
   const supervisorState = yield* SubscriptionRef.make<SupervisorConnectionState>(
@@ -108,9 +109,10 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       ),
     );
   const client = {
-    [ORCHESTRATION_WS_METHODS.subscribeThread]: () =>
+    [ORCHESTRATION_WS_METHODS.subscribeThread]: (input: unknown) =>
       Stream.unwrap(
-        Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
+        Ref.update(subscribeInputs, (current) => [...current, input]).pipe(
+          Effect.andThen(Ref.updateAndGet(subscriptionCount, (count) => count + 1)),
           Effect.map(() => streamFrom(inputs)),
         ),
       ),
@@ -160,6 +162,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     latest,
     retryCount,
     subscriptionCount,
+    subscribeInputs,
     supervisorState,
     supervisorSession,
     savedThreads,
@@ -168,7 +171,9 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   };
 });
 
-const snapshot = (thread: OrchestrationThread): OrchestrationThreadStreamItem => ({
+const snapshot = (
+  thread: OrchestrationThread,
+): Extract<OrchestrationThreadStreamItem, { kind: "snapshot" }> => ({
   kind: "snapshot",
   snapshot: {
     snapshotSequence: 1,
@@ -427,4 +432,85 @@ describe("EnvironmentThreads", () => {
       expect((yield* Ref.get(harness.latest)).status).toBe("live");
     }),
   );
+
+  describe("resuming", () => {
+    const resubscribe = Effect.fn("TestEnvironmentThreads.resubscribe")(function* (
+      harness: Effect.Success<ReturnType<typeof makeHarness>>,
+    ) {
+      const before = yield* Ref.get(harness.subscriptionCount);
+      yield* harness.replaceSession;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) > before) break;
+        yield* Effect.yieldNow;
+      }
+      return (yield* Ref.get(harness.subscribeInputs)).at(-1);
+    });
+    const live = (title: string) => (value: EnvironmentThreadState) =>
+      value.status === "live" && Option.isSome(value.data) && value.data.value.title === title;
+
+    it.effect("resumes from the revision it applied and keeps its thread when unchanged", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* Queue.offer(harness.inputs, { ...snapshot(BASE_THREAD), revision: "rev-1" });
+        const opened = yield* awaitThreadState(harness.observed, live(BASE_THREAD.title));
+        expect((yield* Ref.get(harness.subscribeInputs))[0]).toEqual({
+          threadId: THREAD_ID,
+          patches: true,
+        });
+
+        expect(yield* resubscribe(harness)).toEqual({
+          threadId: THREAD_ID,
+          patches: true,
+          resume: { revision: "rev-1", snapshotSequence: 1 },
+        });
+        yield* Queue.offer(harness.inputs, {
+          kind: "unchanged",
+          snapshotSequence: 1,
+          revision: "rev-1",
+        });
+        const resumed = yield* awaitThreadState(
+          harness.observed,
+          (value) => value.status === "live",
+        );
+        expect(Option.getOrThrow(resumed.data)).toBe(Option.getOrThrow(opened.data));
+      }),
+    );
+
+    it.effect("resumes from a patch's revision", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* Queue.offer(harness.inputs, { ...snapshot(BASE_THREAD), revision: "rev-1" });
+        yield* Queue.offer(harness.inputs, {
+          kind: "patch",
+          snapshotSequence: 4,
+          patch: { set: { title: "Patched" }, unset: [], arrays: {} },
+          revision: "rev-2",
+        });
+        yield* awaitThreadState(harness.observed, live("Patched"));
+        expect(yield* resubscribe(harness)).toMatchObject({
+          resume: { revision: "rev-2", snapshotSequence: 4 },
+        });
+      }),
+    );
+
+    // Mixed versions: an older server sends no revision, so the client never asks to resume.
+    it.effect("does not resume from a server that sends no revision", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* Queue.offer(harness.inputs, snapshot(BASE_THREAD));
+        yield* awaitThreadState(harness.observed, live(BASE_THREAD.title));
+        expect(yield* resubscribe(harness)).toEqual({ threadId: THREAD_ID, patches: true });
+      }),
+    );
+
+    it.effect("does not resume once a thread changed without a revision", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* Queue.offer(harness.inputs, { ...snapshot(BASE_THREAD), revision: "rev-1" });
+        yield* Queue.offer(harness.inputs, titleUpdated("Evented"));
+        yield* awaitThreadState(harness.observed, live("Evented"));
+        expect(yield* resubscribe(harness)).toEqual({ threadId: THREAD_ID, patches: true });
+      }),
+    );
+  });
 });

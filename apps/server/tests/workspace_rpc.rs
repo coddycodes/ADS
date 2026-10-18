@@ -669,6 +669,84 @@ async fn subscribing_resyncs_a_snapshot_that_predates_the_sweep() {
     );
 }
 
+/// Past the entry limit the index keeps files and evicts directories, so a sweep that stats only
+/// the directories the bounded list still holds goes blind to every nested change (the root stays
+/// watched). The visible list can still change: a new file that sorts before the cut-off enters it.
+#[tokio::test]
+async fn a_truncated_index_still_signals_nested_changes() {
+    assert_truncated_index_signals_nested_changes(false).await;
+}
+
+#[tokio::test]
+async fn a_truncated_git_index_still_signals_nested_changes() {
+    assert_truncated_index_signals_nested_changes(true).await;
+}
+
+async fn assert_truncated_index_signals_nested_changes(git: bool) {
+    let root = TempDir::new().expect("root");
+    if git {
+        init_isolated_git_fixture(root.path());
+    }
+    for relative in ["a/one.txt", "b/two.txt", "c/three.txt", "d/four.txt"] {
+        write(root.path(), relative, b"fixture").await;
+    }
+    let rpc = WorkspaceRpc::new(WorkspaceService::default())
+        .with_watch_timing(Duration::from_millis(25), Duration::from_millis(20))
+        .with_search_limits(SearchLimits {
+            max_entries: 4,
+            ..SearchLimits::default()
+        });
+    let cwd = path_string(root.path());
+    let listed = rpc
+        .handle("projects.listEntries", json!({ "cwd": cwd }))
+        .await
+        .expect("list entries");
+    assert_eq!(listed["truncated"], true, "the fixture exceeds the limit");
+
+    let mut changes = rpc
+        .subscribe_entry_changes(root.path())
+        .await
+        .expect("subscription");
+    write(root.path(), "a/added.txt", b"added").await;
+
+    tokio::time::timeout(Duration::from_secs(5), changes.recv())
+        .await
+        .unwrap_or_else(|_| panic!("a nested change past the limit must still signal (git: {git})"))
+        .expect("change signal");
+    let result = rpc
+        .handle("projects.listEntries", json!({ "cwd": cwd }))
+        .await
+        .expect("list entries");
+    assert!(
+        result["entries"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .any(|entry| entry["path"] == "a/added.txt"),
+        "the signalled list includes the new entry"
+    );
+}
+
+/// A cold subscription stamps its baseline before the index lists any directory. A nested change
+/// made right after subscribing must still surface.
+#[tokio::test]
+async fn a_cold_subscription_signals_a_nested_change_made_right_after_it_starts() {
+    let root = TempDir::new().expect("root");
+    write(root.path(), "nested/deeper/tracked.txt", b"tracked").await;
+    let rpc = WorkspaceRpc::new(WorkspaceService::default())
+        .with_watch_timing(Duration::from_millis(200), Duration::from_millis(400));
+    let mut changes = rpc
+        .subscribe_entry_changes(root.path())
+        .await
+        .expect("subscription");
+    write(root.path(), "nested/deeper/added.txt", b"added").await;
+
+    tokio::time::timeout(Duration::from_secs(5), changes.recv())
+        .await
+        .expect("a nested change right after a cold subscribe must signal")
+        .expect("change signal");
+}
+
 /// A sweep must not outlive its subscribers on a quiet workspace.
 ///
 /// Losing the last receiver is invisible to a loop parked on the watcher, so without an independent

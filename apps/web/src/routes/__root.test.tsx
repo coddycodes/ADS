@@ -38,8 +38,17 @@ const s = vi.hoisted(() => ({
   openInEditorCalls: [] as unknown[],
   preferredEditor: "code" as string | null,
   authGate: { status: "authenticated" } as { status: string },
+  authGateFailure: null as Error | null,
+  authGateStalled: false,
+  servedSessionStalled: false,
   hostedPairing: false,
   hostedStatic: false,
+  /** Where this build's own host-based pairing links land; `null` follows `hostedStatic`. */
+  hostedPairingApp: null as boolean | null,
+  /** The page carries this server's own served-host marker. */
+  servedByThisBackend: false,
+  savedEnvironments: false as boolean | null,
+  servedPrimarySuppressed: false,
   buttonClicks: [] as Array<() => void>,
   showRemoteDeviceControls: true,
   collectorRuns: 0,
@@ -192,12 +201,30 @@ vi.mock("../hooks/useTheme", () => ({
 }));
 
 vi.mock("../environments/primary", () => ({
-  resolveInitialServerAuthGateState: () => Promise.resolve(s.authGate),
+  resolveInitialServerAuthGateState: () =>
+    s.authGateStalled
+      ? new Promise(() => {})
+      : s.authGateFailure === null
+        ? Promise.resolve(s.authGate)
+        : Promise.reject(s.authGateFailure),
 }));
 
 vi.mock("../hostedPairing", () => ({
   hasHostedPairingRequest: () => s.hostedPairing,
   isHostedStaticApp: () => s.hostedStatic,
+  isHostedPairingApp: () => s.hostedPairingApp ?? s.hostedStatic,
+  isServedByThisBackend: () => s.servedByThisBackend,
+  setServedPrimarySuppressed: (value: boolean) => {
+    s.servedPrimarySuppressed = value;
+  },
+  setServedSessionStalled: (value: boolean) => {
+    s.servedSessionStalled = value;
+  },
+  isServedSessionStalled: () => s.servedSessionStalled,
+}));
+
+vi.mock("../connection/savedEnvironments", () => ({
+  hasSavedEnvironments: () => Promise.resolve(s.savedEnvironments),
 }));
 
 vi.mock("../connection/currentEnvironmentPresentation", () => ({
@@ -341,8 +368,15 @@ beforeEach(() => {
   s.openInEditorCalls.length = 0;
   s.preferredEditor = "code";
   s.authGate = { status: "authenticated" };
+  s.authGateFailure = null;
+  s.authGateStalled = false;
+  s.servedSessionStalled = false;
   s.hostedPairing = false;
   s.hostedStatic = false;
+  s.hostedPairingApp = null;
+  s.servedByThisBackend = false;
+  s.savedEnvironments = false;
+  s.servedPrimarySuppressed = false;
   s.buttonClicks.length = 0;
   s.showRemoteDeviceControls = true;
   reloadCalls = 0;
@@ -406,6 +440,150 @@ describe("Route.beforeLoad", () => {
     window.location.href = "https://app.test/pair?host=backend.example.test";
 
     const result = await beforeLoad()({ location: { pathname: "/pair" } });
+
+    expect(result.authGateState.status).toBe("requires-auth");
+  });
+
+  describe("on a page this server served", () => {
+    // Pairing with another server through a link: the confirmation must survive the token's
+    // removal from the URL, or its one-time token is spent for nothing.
+    it("keeps another server's host pairing after token removal", async () => {
+      s.servedByThisBackend = true;
+      s.hostedPairingApp = true;
+      s.authGate = { status: "requires-auth" };
+      window.location.href = "https://box.lan/pair?host=other.example.test";
+
+      const result = await beforeLoad()({ location: { pathname: "/pair" } });
+
+      expect(result.authGateState.status).toBe("hosted-pairing");
+    });
+
+    // Pairing with this server: its own pairing route checks this server's session.
+    it("pairs with this server through the server session", async () => {
+      s.servedByThisBackend = true;
+      s.hostedPairingApp = true;
+      s.savedEnvironments = true;
+      s.authGate = { status: "requires-auth" };
+      window.location.href = "https://box.lan/pair";
+
+      const result = await beforeLoad()({ location: { pathname: "/pair" } });
+
+      expect(result.authGateState.status).toBe("requires-auth");
+    });
+
+    // After pairing another server through a link, the app opens as that server's remote
+    // client instead of bouncing back to this server's pairing.
+    it("opens as a remote client when only other servers are paired", async () => {
+      s.servedByThisBackend = true;
+      s.savedEnvironments = true;
+      s.authGate = { status: "requires-auth" };
+      window.location.href = "https://box.lan/";
+
+      const result = await beforeLoad()({ location: { pathname: "/" } });
+
+      expect(result.authGateState.status).toBe("hosted-static");
+      // This server is not paired, so it is not offered as an environment that cannot connect.
+      expect(s.servedPrimarySuppressed).toBe(true);
+    });
+
+    // A catalog that has not loaded may still hold the server just paired through a link:
+    // bouncing to this server's pairing then would strand that pairing.
+    it("opens as a remote client while the saved environments are unknown", async () => {
+      s.servedByThisBackend = true;
+      s.savedEnvironments = null;
+      s.authGate = { status: "requires-auth" };
+      window.location.href = "https://box.lan/";
+
+      const result = await beforeLoad()({ location: { pathname: "/" } });
+
+      expect(result.authGateState.status).toBe("hosted-static");
+    });
+
+    // This server being unreachable must not block the other servers this page uses.
+    it("opens as a remote client when this server cannot be reached", async () => {
+      s.servedByThisBackend = true;
+      s.savedEnvironments = true;
+      s.authGateFailure = new Error("This server is unreachable.");
+      window.location.href = "https://box.lan/";
+
+      const result = await beforeLoad()({ location: { pathname: "/" } });
+
+      expect(result.authGateState.status).toBe("hosted-static");
+    });
+
+    it("opens as a remote client when this server's session check stalls", async () => {
+      vi.useFakeTimers();
+      try {
+        s.servedByThisBackend = true;
+        s.savedEnvironments = true;
+        s.authGateStalled = true;
+        window.location.href = "https://box.lan/";
+
+        const result = beforeLoad()({ location: { pathname: "/" } });
+        await vi.advanceTimersByTimeAsync(20_000);
+
+        expect((await result).authGateState.status).toBe("hosted-static");
+        // The stalled check is not waited out again on every later navigation.
+        expect(s.servedSessionStalled).toBe(true);
+        const later = await beforeLoad()({ location: { pathname: "/settings" } });
+        expect(later.authGateState.status).toBe("hosted-static");
+
+        // Pairing this server afterwards checks its session again.
+        s.authGateStalled = false;
+        s.authGate = { status: "requires-auth" };
+        window.location.href = "https://box.lan/pair";
+        const pairing = await beforeLoad()({ location: { pathname: "/pair" } });
+        expect(pairing.authGateState.status).toBe("requires-auth");
+        expect(s.servedSessionStalled).toBe(false);
+        s.authGate = { status: "authenticated" };
+        window.location.href = "https://box.lan/";
+        const paired = await beforeLoad()({ location: { pathname: "/" } });
+        expect(paired.authGateState.status).toBe("authenticated");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("still reports an unreachable server when nothing else is paired", async () => {
+      s.servedByThisBackend = true;
+      s.authGateFailure = new Error("This server is unreachable.");
+      window.location.href = "https://box.lan/";
+
+      await expect(beforeLoad()({ location: { pathname: "/" } })).rejects.toThrow(
+        "This server is unreachable.",
+      );
+    });
+
+    it("asks to pair with this server when nothing is paired", async () => {
+      s.servedByThisBackend = true;
+      s.authGate = { status: "requires-auth" };
+      window.location.href = "https://box.lan/";
+
+      const result = await beforeLoad()({ location: { pathname: "/" } });
+
+      expect(result.authGateState.status).toBe("requires-auth");
+      expect(s.servedPrimarySuppressed).toBe(false);
+    });
+
+    it("offers this server again once it is paired", async () => {
+      s.servedByThisBackend = true;
+      s.servedPrimarySuppressed = true;
+      window.location.href = "https://box.lan/";
+
+      const result = await beforeLoad()({ location: { pathname: "/" } });
+
+      expect(result.authGateState.status).toBe("authenticated");
+      expect(s.servedPrimarySuppressed).toBe(false);
+    });
+  });
+
+  // A page without the marker keeps the remote-client fallback, even with saved environments.
+  it("never falls back to a remote client for an unmarked server page", async () => {
+    s.savedEnvironments = true;
+    s.authGate = { status: "requires-auth" };
+    window.location.href = "https://box.lan/";
+
+    const result = await beforeLoad()({ location: { pathname: "/" } });
 
     expect(result.authGateState.status).toBe("requires-auth");
   });

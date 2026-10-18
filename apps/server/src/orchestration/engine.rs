@@ -5128,13 +5128,13 @@ async fn persist_turn_delivery_transition(
             let transaction = connection.transaction()?;
             let current = transaction
                 .query_row(
-                    "SELECT thread_id, message_id, provider_kind, state, attempts, mode, held, provider_instance_id FROM provider_turn_outbox WHERE command_id = ?",
+                    "SELECT thread_id, message_id, provider_kind, state, attempts, mode, held, provider_instance_id, last_error, failure_reason FROM provider_turn_outbox WHERE command_id = ?",
                     [&transition.command_id],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, i64>(4)?, row.get::<_, String>(5)?, row.get::<_, bool>(6)?, row.get::<_, String>(7)?)),
+                    |row| Ok(((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, i64>(4)?, row.get::<_, String>(5)?, row.get::<_, bool>(6)?, row.get::<_, String>(7)?), (row.get::<_, Option<String>>(8)?, row.get::<_, Option<String>>(9)?))),
                 )
                 .optional()?;
-            let Some((thread_id, message_id, provider, state, attempts, mut mode, held, provider_instance_id)) = current else {
-                return Ok(None);
+            let Some(((thread_id, message_id, provider, state, attempts, mut mode, held, provider_instance_id), (last_error, failure_reason))) = current else {
+                return Ok(DeliveryTransitionCommit::Stale);
             };
             if attempts != transition.expected_attempt
                 || !transition
@@ -5142,9 +5142,18 @@ async fn persist_turn_delivery_transition(
                     .iter()
                     .any(|expected| turn_delivery_state_name(*expected) == state)
             {
-                return Ok(None);
+                return Ok(DeliveryTransitionCommit::Stale);
             }
             let next_state = turn_delivery_state_name(transition.next_state);
+            // A claimed delivery that fails again the same way returns to exactly what the thread
+            // already shows (pending, the same detail): claiming emits nothing. Record the
+            // attempt, but announce nothing, or every retry re-sends the thread (a provider that
+            // could not start updated it every second).
+            let unchanged_retry = state == turn_delivery_state_name(TurnDeliveryState::Sending)
+                && transition.next_state == TurnDeliveryState::Pending
+                && transition.detail.is_some()
+                && transition.detail == last_error
+                && failure_reason.is_none();
             let reason = reason.filter(|reason| matches!((transition.next_state, reason),
                 (TurnDeliveryState::Failed, TurnDeliveryFailureReason::ModelSelectionRefused)
                 | (TurnDeliveryState::Delivered, TurnDeliveryFailureReason::StartedNewConversation)))
@@ -5152,7 +5161,7 @@ async fn persist_turn_delivery_transition(
             if transition.next_state == TurnDeliveryState::Queued {
                 let Some(row) = crate::persistence::requeue_provider_turn_on(
                     &transaction, &transition.command_id, transition.expected_attempt, &transition.updated_at,
-                )? else { return Ok(None); };
+                )? else { return Ok(DeliveryTransitionCommit::Stale); };
                 mode = row.mode.as_str().to_owned();
                 transaction.execute("UPDATE provider_turn_outbox SET last_error = ?, failure_reason = NULL WHERE command_id = ?", params![transition.detail, transition.command_id])?;
             } else {
@@ -5160,7 +5169,11 @@ async fn persist_turn_delivery_transition(
                     "UPDATE provider_turn_outbox SET state = ?, last_error = ?, failure_reason = ?, updated_at = ? WHERE command_id = ? AND state = ? AND attempts = ?",
                     params![next_state, transition.detail, reason, transition.updated_at, transition.command_id, state, transition.expected_attempt],
                 )?;
-                if updated == 0 { return Ok(None); }
+                if updated == 0 { return Ok(DeliveryTransitionCommit::Stale); }
+                if unchanged_retry {
+                    transaction.commit()?;
+                    return Ok(DeliveryTransitionCommit::Unannounced);
+                }
             }
             let turn_id = if transition.next_state == TurnDeliveryState::Delivered && mode == "steer" {
                 transition.turn_id.or(crate::persistence::provider_turn_steer_target_on(&transaction, &thread_id, &message_id)?)
@@ -5199,16 +5212,26 @@ async fn persist_turn_delivery_transition(
             }
             rebuild_thread_derived_fields_tx(&transaction, &saved.event.aggregate_id)?;
             transaction.commit()?;
-            Ok(Some(saved))
+            Ok(DeliveryTransitionCommit::Announced(Box::new(saved)))
         })
         .await
         .map_err(wrap_persistence)?;
-    if let Some(event) = committed {
-        let _ = events.send(event);
-        Ok(true)
-    } else {
-        Ok(false)
+    match committed {
+        DeliveryTransitionCommit::Announced(event) => {
+            let _ = events.send(*event);
+            Ok(true)
+        }
+        DeliveryTransitionCommit::Unannounced => Ok(true),
+        DeliveryTransitionCommit::Stale => Ok(false),
     }
+}
+
+/// How a delivery transition was committed: `Stale` when the row had moved on, `Unannounced` when
+/// it changed nothing the thread shows.
+enum DeliveryTransitionCommit {
+    Stale,
+    Unannounced,
+    Announced(Box<OrchestrationEvent>),
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -639,6 +639,17 @@ export const OrchestrationSubscribeThreadInput = Schema.Struct({
   threadId: ThreadId,
   /** The client applies `patch` items; older servers ignore this and send snapshots. */
   patches: Schema.optional(Schema.Boolean),
+  /**
+   * The last revision the client applied, with that item's sequence. The server answers
+   * `unchanged` when the thread still has that revision and sends a snapshot otherwise; older
+   * servers ignore it.
+   */
+  resume: Schema.optional(
+    Schema.Struct({
+      revision: TrimmedNonEmptyString,
+      snapshotSequence: NonNegativeInt,
+    }),
+  ),
 });
 export type OrchestrationSubscribeThreadInput = typeof OrchestrationSubscribeThreadInput.Type;
 
@@ -1474,10 +1485,19 @@ export const OrchestrationThreadPatch = Schema.Struct({
 });
 export type OrchestrationThreadPatch = typeof OrchestrationThreadPatch.Type;
 
+/**
+ * The server's digest of a thread after a stream item. Opaque to the client, which echoes the last
+ * one it applied to resume; it means nothing to another server process.
+ */
+export const OrchestrationThreadRevision = TrimmedNonEmptyString;
+export type OrchestrationThreadRevision = typeof OrchestrationThreadRevision.Type;
+
 export const OrchestrationThreadStreamItem = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("snapshot"),
     snapshot: OrchestrationThreadDetailSnapshot,
+    /** Sent to clients that apply patches; older servers omit it. */
+    revision: Schema.optional(OrchestrationThreadRevision),
   }),
   Schema.Struct({
     kind: Schema.Literal("event"),
@@ -1487,6 +1507,13 @@ export const OrchestrationThreadStreamItem = Schema.Union([
     kind: Schema.Literal("patch"),
     snapshotSequence: NonNegativeInt,
     patch: OrchestrationThreadPatch,
+    revision: Schema.optional(OrchestrationThreadRevision),
+  }),
+  /** Answers a `resume` whose revision is still current: the client keeps the thread it holds. */
+  Schema.Struct({
+    kind: Schema.Literal("unchanged"),
+    snapshotSequence: NonNegativeInt,
+    revision: OrchestrationThreadRevision,
   }),
 ]);
 export type OrchestrationThreadStreamItem = typeof OrchestrationThreadStreamItem.Type;

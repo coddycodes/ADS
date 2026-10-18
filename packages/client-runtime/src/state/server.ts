@@ -6,6 +6,7 @@ import {
   type ServerLifecycleWelcomePayload,
   WS_METHODS,
 } from "@bibcode/contracts";
+import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -33,15 +34,51 @@ export function applyServerConfigProjection(
   current: Option.Option<ServerConfigProjection>,
   event: ServerConfigStreamEvent,
 ): Option.Option<ServerConfigProjection> {
-  const config = applyServerConfigEvent(
-    Option.getOrNull(Option.map(current, (projection) => projection.config)),
-    event,
-  );
-  const previousRevision = Option.getOrNull(current)?.capabilitiesRevision ?? 0;
-  const capabilitiesRevision = previousRevision + (event.type === "keybindingsUpdated" ? 0 : 1);
+  const previous = Option.getOrNull(current);
+  // Every reconnect re-sends the whole config (about 70 KB). Keeping the projection when nothing
+  // changed spares every reader a new copy and the re-render it would cause.
+  if (
+    previous !== null &&
+    event.type === "snapshot" &&
+    Equal.equals(previous.config, event.config)
+  ) {
+    return current;
+  }
+  const config = applyServerConfigEvent(previous?.config ?? null, event);
+  const previousRevision = previous?.capabilitiesRevision ?? 0;
+  const capabilitiesRevision =
+    previousRevision + (capabilitiesMayHaveChanged(previous?.config ?? null, event) ? 1 : 0);
   return config === null
     ? Option.none()
     : Option.some({ config, latestEvent: event, capabilitiesRevision });
+}
+
+/**
+ * Whether `event` can change provider capabilities. Each new revision is a new capabilities key,
+ * so a bump costs every composer a `server.getProviderCapabilities` read (#96).
+ *
+ * An update always counts: settings arrive with secrets redacted, so equal payloads can still
+ * hide a changed secret. Every reconnect re-sends the snapshot, and the new connection already
+ * re-reads the mounted capabilities query, so a snapshot counts only when its providers or
+ * settings differ from the config already projected.
+ */
+function capabilitiesMayHaveChanged(
+  previous: ServerConfig | null,
+  event: ServerConfigStreamEvent,
+): boolean {
+  switch (event.type) {
+    case "keybindingsUpdated":
+      return false;
+    case "snapshot":
+      return (
+        previous === null ||
+        !Equal.equals(previous.providers, event.config.providers) ||
+        !Equal.equals(previous.settings, event.config.settings)
+      );
+    case "providerStatuses":
+    case "settingsUpdated":
+      return true;
+  }
 }
 
 export function projectServerConfig(
