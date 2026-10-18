@@ -45,6 +45,12 @@ the test's bare name. To reproduce, let a sibling test with no subscriber reach
 the callsite after the capture is installed; the expected event goes missing
 every time.
 
+The profiler is process-wide as well: `profiler::is_enabled` reads the handle of
+the server started last in the process. A test that turns the profiler on, or
+that checks a client batch is refused while it is off, therefore runs in its
+own process. Otherwise a sibling's toggle makes the batch accepted, and a
+sibling's server start resets the toggle.
+
 Provider-terminal observer workers share a process-wide admission cap. A test
 in `provider_terminal_supervisor` that starts one runs in its own process
 (`own_process!`), so the binary's concurrent tests cannot hold the slots it
