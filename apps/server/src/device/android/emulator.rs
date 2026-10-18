@@ -13,12 +13,17 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    grpc::{EmulatorClient, proto::image_format::ImgFormat},
+    grpc::{
+        EmulatorClient,
+        proto::{ImageFormat, image_format::ImgFormat},
+    },
+    input::reported_orientation,
+    orientation::is_landscape,
     sdk::{AndroidSdk, SdkEnv},
 };
 use crate::{
     device::{
-        catalog::DeviceState,
+        catalog::{DeviceState, Orientation},
         stderr_tail::{STDERR_DRAIN_GRACE, StderrTail},
     },
     diagnostics::{ProcessAttributionRegistry, profiler::exits},
@@ -165,8 +170,12 @@ pub(crate) struct RunningEmulator {
     /// The adb serial, `emulator-<console port>`.
     pub serial: String,
     pub client: EmulatorClient,
+    /// The panel in its natural orientation (`Portrait`), however the device booted.
     pub width: u32,
     pub height: u32,
+    /// The orientation the first screenshot reported; `Portrait` unless a Quick Boot
+    /// snapshot saved turned was restored.
+    pub boot_orientation: Orientation,
     /// The discovery file that was found; removed on stop, since a killed emulator leaves
     /// it behind.
     pub discovery_file: PathBuf,
@@ -286,13 +295,14 @@ impl EmulatorLauncher {
             },
         };
         let error = match outcome {
-            Ok((client, width, height)) => {
+            Ok((client, (width, height), boot_orientation)) => {
                 return Ok(RunningEmulator {
                     helper,
                     serial,
                     client,
                     width,
                     height,
+                    boot_orientation,
                     discovery_file: discovery_file.expect("a booted emulator was discovered"),
                 });
             }
@@ -319,7 +329,7 @@ impl EmulatorLauncher {
     }
 
     /// Polls until the emulator answers gRPC, Android reports `sys.boot_completed`, and the
-    /// display size is known; ends early when the emulator exits.
+    /// natural panel size and boot orientation are known; ends early when the emulator exits.
     async fn wait_for_boot(
         &self,
         helper: &RegisteredHelper,
@@ -328,7 +338,7 @@ impl EmulatorLauncher {
         discovery_file: &mut Option<PathBuf>,
         on_phase: impl Fn(DeviceState) + Send,
         cancel: &CancellationToken,
-    ) -> Result<(EmulatorClient, u32, u32), BootFailure> {
+    ) -> Result<(EmulatorClient, (u32, u32), Orientation), BootFailure> {
         let mut client: Option<EmulatorClient> = None;
         let mut booting = false;
         loop {
@@ -360,8 +370,8 @@ impl EmulatorLauncher {
                 }
                 if booting && self.boot_completed(serial, cancel).await {
                     let connected = client.take().expect("a booted emulator has a client");
-                    let (width, height) = display_size(helper, &connected).await?;
-                    return Ok((connected, width, height));
+                    let (native, orientation) = display_size(helper, &connected).await?;
+                    return Ok((connected, native, orientation));
                 }
             }
             tokio::time::sleep(POLL_INTERVAL).await;
@@ -447,13 +457,13 @@ fn pick_ports(grpc: Option<u16>) -> Result<EmulatorPorts, String> {
     Ok(EmulatorPorts { console, grpc })
 }
 
-/// The native display size. PNG avoids the `FAILED_PRECONDITION` other formats return
-/// before the guest posts its first frame; any error is still retried while the emulator
-/// runs.
+/// The natural panel size and the orientation booted in, from the first screenshot
+/// ([`natural_display`]). PNG avoids the `FAILED_PRECONDITION` other formats return before
+/// the guest posts its first frame; any error is still retried while the emulator runs.
 async fn display_size(
     helper: &RegisteredHelper,
     client: &EmulatorClient,
-) -> Result<(u32, u32), BootFailure> {
+) -> Result<((u32, u32), Orientation), BootFailure> {
     let mut last_error = String::new();
     for attempt in 0..SIZE_ATTEMPTS {
         if attempt > 0 {
@@ -463,16 +473,36 @@ async fn display_size(
             }
         }
         match client.screenshot(ImgFormat::Png, 0).await {
-            Ok(image) => match image.format {
-                Some(format) if format.width > 0 && format.height > 0 => {
-                    return Ok((format.width, format.height));
-                }
-                _ => last_error = "screenshot without a size".to_owned(),
+            Ok(image) => match image.format.as_ref().and_then(natural_display) {
+                Some(booted) => return Ok(booted),
+                None => last_error = "screenshot without a size".to_owned(),
             },
             Err(error) => last_error = error.to_string(),
         }
     }
     Err(BootFailure::Unresponsive(last_error))
+}
+
+/// The natural panel size and the orientation the device booted in, from the first
+/// screenshot's `format`; `None` without a size. The image is rotated by the skin
+/// (`ImageFormat.rotation`), and an AVD restored from a Quick Boot snapshot saved turned
+/// boots turned, so a landscape rotation has its width and height swapped back. A missing
+/// or unknown rotation is taken as upright.
+fn natural_display(format: &ImageFormat) -> Option<((u32, u32), Orientation)> {
+    if format.width == 0 || format.height == 0 {
+        return None;
+    }
+    let orientation = format
+        .rotation
+        .as_ref()
+        .and_then(|rotation| reported_orientation(rotation.rotation))
+        .unwrap_or(Orientation::Portrait);
+    let native = if is_landscape(orientation) {
+        (format.height, format.width)
+    } else {
+        (format.width, format.height)
+    };
+    Some((native, orientation))
 }
 
 fn remove_discovery_file(path: &Path) {
@@ -494,7 +524,7 @@ mod tests {
 
     use super::*;
     use crate::device::android::{
-        grpc::proto::vm_run_state::RunState,
+        grpc::proto::{self, rotation::SkinRotation, vm_run_state::RunState},
         testing::{FakeController, FakeSdk, LaunchStub, process_alive, wait_until},
     };
 
@@ -526,6 +556,66 @@ mod tests {
         ] {
             assert!(args.iter().any(|arg| arg == expected), "missing {expected}");
         }
+    }
+
+    fn screenshot_format(width: u32, height: u32, rotation: Option<i32>) -> ImageFormat {
+        ImageFormat {
+            width,
+            height,
+            rotation: rotation.map(|rotation| proto::Rotation {
+                rotation,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// The first screenshot is rotated by the skin (`ImageFormat.rotation`), so a turned one
+    /// is turned back to the natural panel, and its rotation is the orientation booted in.
+    #[test]
+    fn a_turned_first_screenshot_is_turned_back_to_the_natural_panel() {
+        let natural = |width, height, rotation: SkinRotation| {
+            natural_display(&screenshot_format(width, height, Some(rotation as i32)))
+        };
+        assert_eq!(
+            natural(2400, 1080, SkinRotation::Landscape),
+            Some(((1080, 2400), Orientation::Landscape))
+        );
+        assert_eq!(
+            natural(2400, 1080, SkinRotation::ReverseLandscape),
+            Some(((1080, 2400), Orientation::ReverseLandscape))
+        );
+        assert_eq!(
+            natural(1080, 2400, SkinRotation::Portrait),
+            Some(((1080, 2400), Orientation::Portrait))
+        );
+        assert_eq!(
+            natural(1080, 2400, SkinRotation::ReversePortrait),
+            Some(((1080, 2400), Orientation::ReversePortrait))
+        );
+        // The swap undoes the turn, whatever the panel's shape: a tablet's natural panel is
+        // landscape.
+        assert_eq!(
+            natural(1600, 2560, SkinRotation::Landscape),
+            Some(((2560, 1600), Orientation::Landscape))
+        );
+        assert_eq!(
+            natural(2560, 1600, SkinRotation::Portrait),
+            Some(((2560, 1600), Orientation::Portrait))
+        );
+    }
+
+    #[test]
+    fn a_first_screenshot_without_a_known_rotation_is_taken_as_upright() {
+        for rotation in [None, Some(42)] {
+            assert_eq!(
+                natural_display(&screenshot_format(2400, 1080, rotation)),
+                Some(((2400, 1080), Orientation::Portrait)),
+                "{rotation:?}"
+            );
+        }
+        assert_eq!(natural_display(&screenshot_format(0, 2400, Some(0))), None);
+        assert_eq!(natural_display(&screenshot_format(1080, 0, Some(0))), None);
     }
 
     #[test]
@@ -561,6 +651,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!((running.width, running.height), (1080, 2400));
+        assert_eq!(running.boot_orientation, Orientation::Portrait);
         assert!(running.serial.starts_with("emulator-"));
         assert_eq!(*phases.lock().unwrap(), [DeviceState::Booting]);
         let pid = running.helper.pid;
@@ -577,6 +668,33 @@ mod tests {
         );
         assert!(!process_alive(pid));
         assert!(!discovery_file.exists());
+    }
+
+    /// An AVD restored from a Quick Boot snapshot saved turned boots with its first
+    /// screenshot already rotated (`ImageFormat.rotation`): 2400x1080, `LANDSCAPE`. The launch
+    /// still reports the natural panel.
+    #[tokio::test]
+    async fn a_turned_first_screenshot_still_gives_the_natural_panel() {
+        let controller = FakeController::spawn().await;
+        controller.report_rotation(SkinRotation::Landscape);
+        let sdk = FakeSdk::new()
+            .avds(&["Pixel"])
+            .launch_stub(LaunchStub::Runs {
+                grpc_port: controller.port,
+                token: "test-token",
+            })
+            .write();
+        let running = sdk
+            .launcher()
+            .launch("Pixel", |_| {}, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!((running.width, running.height), (1080, 2400));
+        assert_eq!(running.boot_orientation, Orientation::Landscape);
+        let pid = running.helper.pid;
+        controller.exit_on_shutdown(pid);
+        stop(running).await;
+        assert!(!process_alive(pid));
     }
 
     #[tokio::test]

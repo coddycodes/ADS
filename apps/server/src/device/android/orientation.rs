@@ -93,15 +93,18 @@ pub(crate) struct OrientationTracker {
 }
 
 impl OrientationTracker {
-    pub(crate) fn new(native: (u32, u32)) -> Arc<Self> {
+    /// A tracker for a `native` panel whose skin reported `boot` at boot: `Portrait`, or
+    /// the orientation a Quick Boot snapshot saved turned restores. It is shown until a
+    /// scrcpy display or a later skin reading says otherwise.
+    pub(crate) fn new(native: (u32, u32), boot: Orientation) -> Arc<Self> {
         Arc::new(Self {
             native,
             state: Mutex::new(State {
-                skin: Orientation::Portrait,
+                skin: boot,
                 display: None,
                 next_session: 0,
             }),
-            derived: watch::Sender::new(Orientation::Portrait),
+            derived: watch::Sender::new(boot),
         })
     }
 
@@ -269,7 +272,7 @@ mod tests {
         );
         // A refused turn keeps what the display shows.
         assert_eq!(tablet(Landscape, TABLET_AT_REST, Portrait), Portrait);
-        let tracker = OrientationTracker::new(TABLET);
+        let tracker = OrientationTracker::new(TABLET, Portrait);
         let display = tracker.start_display();
         assert_eq!(tracker.display_turned(), None);
         display.set(1280, 800);
@@ -284,7 +287,7 @@ mod tests {
 
     #[test]
     fn the_tracker_follows_skin_and_display_and_publishes_changes() {
-        let tracker = OrientationTracker::new(PHONE);
+        let tracker = OrientationTracker::new(PHONE, Portrait);
         let mut changes = tracker.subscribe();
         let display = tracker.start_display();
         display.set(576, 1280);
@@ -303,7 +306,7 @@ mod tests {
 
     #[test]
     fn an_ending_session_never_clears_a_newer_one() {
-        let tracker = OrientationTracker::new(PHONE);
+        let tracker = OrientationTracker::new(PHONE, Portrait);
         let old = tracker.start_display();
         old.set(576, 1280);
         let new = tracker.start_display();

@@ -728,7 +728,10 @@ impl Inner {
         let started = self.started(&device_id);
         let error = match result {
             Ok(running) => {
-                let (width, height) = running.native_size();
+                let native = running.native_size();
+                // A device that boots turned is shown turned from its first `Ready` entry.
+                let orientation = running.orientation();
+                let (width, height) = oriented_size(native.0, native.1, orientation);
                 let can_rotate = running.can_rotate();
                 let orientation_changes = running.orientation_changes();
                 let unwanted = {
@@ -741,6 +744,7 @@ impl Inner {
                             ) =>
                         {
                             slot.snapshot.state = DeviceState::Ready;
+                            slot.snapshot.orientation = orientation;
                             slot.snapshot.width = Some(width);
                             slot.snapshot.height = Some(height);
                             slot.snapshot.can_rotate = can_rotate;
@@ -757,7 +761,7 @@ impl Inner {
                         if let Some(changes) = orientation_changes {
                             self.tasks.spawn(self.clone().follow_orientation(
                                 device_id.clone(),
-                                (width, height),
+                                native,
                                 changes,
                                 cancel.clone(),
                             ));

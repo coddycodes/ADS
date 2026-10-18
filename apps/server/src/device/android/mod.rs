@@ -176,8 +176,9 @@ struct RunningAndroid {
     /// The orientation the guest really shows, derived from the emulator's skin rotation
     /// and the running scrcpy session's display size.
     orientation: Arc<OrientationTracker>,
-    /// The orientation whose vector the sensor was last sent (at rest after boot), locked
-    /// for a whole rotate so the device's rotates run one at a time.
+    /// The orientation whose vector the sensor was last sent (after boot, the orientation
+    /// the first screenshot reported), locked for a whole rotate so the device's rotates run
+    /// one at a time.
     sensor: tokio::sync::Mutex<Orientation>,
     rotation: RotationTiming,
 }
@@ -190,6 +191,8 @@ impl RunningAndroid {
         rotation: RotationTiming,
     ) -> Self {
         let native = (running.width, running.height);
+        // A Quick Boot snapshot saved turned boots turned; the device is not turned back.
+        let boot = running.boot_orientation;
         Self {
             client: running.client.clone(),
             serial: running.serial.clone(),
@@ -201,8 +204,8 @@ impl RunningAndroid {
             registry,
             input: tokio::sync::Mutex::new(None),
             input_tasks: TaskTracker::new(),
-            orientation: OrientationTracker::new(native),
-            sensor: tokio::sync::Mutex::new(Orientation::Portrait),
+            orientation: OrientationTracker::new(native, boot),
+            sensor: tokio::sync::Mutex::new(boot),
             rotation,
         }
     }
@@ -229,6 +232,11 @@ impl RunningDevice for RunningAndroid {
 
     fn can_rotate(&self) -> bool {
         true
+    }
+
+    /// The derived orientation, which starts at the one the device booted in.
+    fn orientation(&self) -> Orientation {
+        self.orientation.current()
     }
 
     fn jpeg_stream(&self, max_width: u32) -> BoxFuture<'_, Result<JpegStream, DeviceError>> {
@@ -505,12 +513,141 @@ pub(crate) fn emulator_failure(operation: &'static str, error: &DeviceError) -> 
 mod tests {
     use std::time::Duration;
 
-    use crate::device::{
-        android::testing::{
-            FakeScrcpySource, ManagerFixture, config_unit, key_unit, session_packet,
+    use tokio_util::sync::CancellationToken;
+
+    use super::RunningAndroid;
+    use crate::{
+        device::{
+            android::{
+                grpc::proto::{self, rotation::SkinRotation},
+                input::to_panel_pixels,
+                testing::{
+                    FAST_ROTATION, FakeController, FakeScrcpySource, FakeSdk, LaunchStub,
+                    ManagerFixture, config_unit, key_unit, session_packet,
+                },
+            },
+            backend::RunningDevice as _,
+            catalog::{DeviceState, Orientation, Platform},
+            input::{DeviceInputEvent, TouchAction},
         },
-        catalog::{DeviceState, Orientation, Platform},
+        diagnostics::ProcessAttributionRegistry,
     };
+
+    /// Codex review P2: an AVD restored from a Quick Boot snapshot saved turned boots with its
+    /// skin, and so its first screenshot, already in landscape (2400x1080, `LANDSCAPE`). The
+    /// panel is still the natural 1080x2400, the tracker and the sensor start in landscape,
+    /// and scrcpy's landscape video stays landscape, so a center tap lands on the panel's
+    /// center rather than at (1200, 540).
+    #[tokio::test]
+    async fn a_device_booted_turned_starts_in_landscape() {
+        let controller = FakeController::spawn().await;
+        controller.report_rotation(SkinRotation::Landscape);
+        let sdk = FakeSdk::new()
+            .avds(&["Pixel"])
+            .launch_stub(LaunchStub::Runs {
+                grpc_port: controller.port,
+                token: "test-token",
+            })
+            .write();
+        let running = sdk
+            .launcher()
+            .launch("Pixel", |_| {}, &CancellationToken::new())
+            .await
+            .unwrap();
+        let device = RunningAndroid::new(
+            running,
+            sdk.adb(),
+            ProcessAttributionRegistry::new(),
+            FAST_ROTATION,
+        );
+        assert_eq!(device.native_size(), (1080, 2400));
+        assert_eq!(device.orientation.current(), Orientation::Landscape);
+        assert_eq!(*device.sensor.lock().await, Orientation::Landscape);
+        // scrcpy's landscape video (`max_size=1280`) is turned from the natural panel.
+        let display = device.orientation.start_display();
+        display.set(1280, 576);
+        let orientation = device.orientation.current();
+        assert_eq!(orientation, Orientation::Landscape);
+        let (width, height) = device.native_size();
+        assert_eq!(
+            to_panel_pixels(0.5, 0.5, width, height, orientation),
+            (539, 1200)
+        );
+        drop(display);
+        controller.exit_on_shutdown(device.pid);
+        device.stop_now().await;
+    }
+
+    /// The same boot through the manager: the first `Ready` entry already says landscape at
+    /// the turned size, a center tap reaches the panel's center, and a refused turn puts the
+    /// sensor back to landscape's vector, where the snapshot left it, not to rest.
+    #[tokio::test]
+    async fn a_device_booted_turned_is_ready_in_landscape() {
+        let fixture = ManagerFixture::ready(&["Pixel"]).await;
+        fixture.controller.report_rotation(SkinRotation::Landscape);
+        let mut catalog = fixture.manager.catalog();
+        let id = fixture
+            .manager
+            .open(Platform::Android, "Pixel")
+            .await
+            .expect("open Pixel");
+        let first_ready = tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                catalog.changed().await.expect("catalog open");
+                let ready = catalog
+                    .borrow_and_update()
+                    .devices
+                    .iter()
+                    .find(|device| device.device_id == id && device.state == DeviceState::Ready)
+                    .cloned();
+                if let Some(ready) = ready {
+                    return ready;
+                }
+            }
+        })
+        .await
+        .expect("the device gets ready");
+        assert_eq!(
+            (
+                first_ready.orientation,
+                first_ready.width,
+                first_ready.height
+            ),
+            (Orientation::Landscape, Some(2400), Some(1080))
+        );
+        fixture.wait_state(&id, DeviceState::Ready).await;
+        fixture
+            .manager
+            .input(
+                &id,
+                vec![DeviceInputEvent::Touch {
+                    action: TouchAction::Down,
+                    pointer_id: 0,
+                    x: 0.5,
+                    y: 0.5,
+                }],
+            )
+            .await
+            .unwrap();
+        let inputs = fixture.controller.wait_inputs(1).await;
+        let touch = match &inputs[0].r#type {
+            Some(proto::input_event::Type::TouchEvent(event)) => &event.touches[0],
+            other => panic!("not a touch: {other:?}"),
+        };
+        assert_eq!((touch.x, touch.y), (539, 1200));
+        // The skin stays landscape, so the guest is seen to refuse portrait.
+        let ended = fixture
+            .manager
+            .rotate(&id, Orientation::Portrait)
+            .await
+            .unwrap();
+        assert_eq!(ended, Orientation::Landscape);
+        assert_eq!(
+            *fixture.controller.rotations.lock().unwrap(),
+            [[0.0, 0.0, 0.0], [0.0, 0.0, 90.0]]
+        );
+        fixture.manager.shutdown().await;
+    }
 
     /// An app turns the screen on its own: only the scrcpy display says so (the skin stays
     /// portrait), and `orientation_changes` carries the turn through the manager's follow

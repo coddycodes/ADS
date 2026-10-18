@@ -591,7 +591,7 @@ mod tests {
         let client = EmulatorClient::connect(fake.port, Some("test-token".into()))
             .await
             .unwrap();
-        let tracker = OrientationTracker::new(PANEL);
+        let tracker = OrientationTracker::new(PANEL, Orientation::Portrait);
         (
             fake,
             client,

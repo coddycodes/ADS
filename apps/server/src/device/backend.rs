@@ -89,6 +89,12 @@ pub(crate) trait RunningDevice: Send + Sync + 'static {
     fn native_size(&self) -> (u32, u32);
     /// Whether the device turns; the catalog reports it once the device is `Ready`.
     fn can_rotate(&self) -> bool;
+    /// The orientation the device shows now. The manager's first `Ready` catalog entry
+    /// carries it, with the display size in it, so a device that boots turned (an Android
+    /// Quick Boot snapshot saved turned) is never first shown upright.
+    fn orientation(&self) -> Orientation {
+        Orientation::Portrait
+    }
     /// A stream of JPEGs at most `max_width` wide, at most one per
     /// [`frames::JPEG_MIN_INTERVAL`](super::frames::JPEG_MIN_INTERVAL); the frame producer
     /// reopens it on end.

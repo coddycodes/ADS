@@ -1988,9 +1988,10 @@ in the catalog so their reason stays visible.
   tries `pid_<pid>.ini` first, then any `pid_*.ini`, and accepts only a file
   whose `grpc.port` is the port it asked for.
 - `booting` starts when gRPC answers; `ready` follows once
-  `adb shell getprop sys.boot_completed` returns `1` and the display size is
-  known, within 180 s. The gRPC client connects only
-  to `127.0.0.1`; adb uses the user's adb server and BiBCode never passes `-a`.
+  `adb shell getprop sys.boot_completed` returns `1` and the first screenshot
+  has given the natural panel size and the boot orientation (see Input), within
+  180 s. The gRPC client connects only to `127.0.0.1`; adb uses the user's adb
+  server and BiBCode never passes `-a`.
 - A stop asks the emulator to shut down over gRPC, kills its process group
   after 10 s, and removes its discovery file. An exit nobody asked for,
   checked every second, fails the device with `exited` and raises
@@ -2041,10 +2042,17 @@ other shape is turned. The skin picks the exact orientation only when its class
 agrees; otherwise the previous orientation stays, or, when that disagrees too,
 `portrait` for the native shape and `landscape` for the other. With no scrcpy
 session (still images) the skin decides, because the gRPC screenshots are
-rotated by it. `rotate` reads the orientation back every 250 ms in a 2.5 s
-window (measured: the display changed 0.67–0.90 s after `setPhysicalModel`);
-the last read starts by about 2.25 s, and one slow read can push the decision
-later. A turn no read has shown by then counts as refused only on positive
+rotated by it. Boot reads the natural panel size and the orientation from the
+first screenshot. BiBCode does not pass `-no-snapshot-load`, so an AVD stopped
+while turned comes back turned from its Quick Boot snapshot, with that
+screenshot already rotated (`ImageFormat.rotation`): a landscape rotation has
+its width and height swapped back to the natural panel. The tracker, the
+orientation whose vector the sensor was last sent, and the first `ready`
+catalog entry (with the turned size) start in the orientation it reported, and
+the device is not turned back. `rotate` reads the orientation back every
+250 ms in a 2.5 s window (measured: the display changed 0.67–0.90 s after
+`setPhysicalModel`); the last read starts by about 2.25 s, and one slow read
+can push the decision later. A turn no read has shown by then counts as refused only on positive
 evidence, a read that succeeded or a scrcpy display still in the other class,
 and the sensor is put back to the vector it held before the press, so it
 matches the screen. A failed read is no such evidence: it falls back to the
