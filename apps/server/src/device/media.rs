@@ -454,11 +454,12 @@ impl MediaHub {
     }
 
     /// Asks the encoder for a fresh config and key unit, at most once per
-    /// [`RESET_MIN_INTERVAL`] per device. A request inside the window is deferred, never
-    /// dropped: when the window ends, the hub's task sends one reset for every request made
-    /// in it, if a socket still waits for a key unit then. A still screen encodes nothing
-    /// unasked (iOS, and the Android emulator's encoder), so a viewer that joins, or a
-    /// decoder that recovers, inside the window would otherwise wait for a key unit forever.
+    /// [`RESET_MIN_INTERVAL`] per device; the window runs from the write, not from the
+    /// request. A request inside the window is deferred, never dropped: when the window
+    /// ends, the hub's task sends one reset for every request made in it, if a socket still
+    /// waits for a key unit then. A still screen encodes nothing unasked (iOS, and the
+    /// Android emulator's encoder), so a viewer that joins, or a decoder that recovers,
+    /// inside the window would otherwise wait for a key unit forever.
     fn maybe_reset(&self, state: &mut HubState) {
         let now = Instant::now();
         if state
@@ -489,6 +490,10 @@ impl MediaHub {
         let mut state = self.lock();
         if state.reset_unsent {
             state.reset_unsent = false;
+            // The window runs from the write: the task may write a reset made while the
+            // source started long after it was asked for, and a deferral must not follow
+            // it at once.
+            state.last_reset = Some(now);
             return ResetStep::Write;
         }
         if !state.reset_deferred {
@@ -973,6 +978,11 @@ mod tests {
 
     impl HubFixture {
         fn new() -> Self {
+            Self::starting_after(Duration::ZERO)
+        }
+
+        /// A hub whose source takes `delay` to start, as scrcpy does.
+        fn starting_after(delay: Duration) -> Self {
             let hub = MediaHub::new(CancellationToken::new());
             let (units, receiver) = mpsc::channel(64);
             let written = Arc::<AtomicUsize>::default();
@@ -982,7 +992,12 @@ mod tests {
                 resets: written.clone(),
                 stopped: stopped.clone(),
             };
-            tokio::spawn(run(hub.clone(), async move { Ok(source) }));
+            tokio::spawn(run(hub.clone(), async move {
+                if !delay.is_zero() {
+                    tokio::time::sleep(delay).await;
+                }
+                Ok(source)
+            }));
             Self {
                 hub,
                 units,
@@ -1398,6 +1413,8 @@ mod tests {
             .map(|_| hub.subscribe())
             .collect();
         assert_eq!(hub.resets(), 1);
+        // The window runs from the write, so the task writes the first reset before it ends.
+        hub.wait_written(1).await;
         held.pop();
         tokio::time::advance(RESET_MIN_INTERVAL).await;
         held.push(hub.subscribe());
@@ -1423,6 +1440,31 @@ mod tests {
         // The encoder answers the reset with a fresh config and key unit.
         hub.feed([config(), key(2)]).await;
         assert_eq!(second.kinds().await, ["config", "config", "key"]);
+    }
+
+    /// Review round 2, Minor 1: a viewer joins while the source still starts, and a second
+    /// one 0.3 s later. The first reset is written only when the source is up, and the
+    /// window runs from that write, so the second viewer's deferred reset waits a whole
+    /// window after it instead of following it at once.
+    #[tokio::test(start_paused = true)]
+    async fn the_window_runs_from_the_write_of_a_reset_made_while_the_source_starts() {
+        let hub = HubFixture::starting_after(Duration::from_millis(1_500));
+        let _first = hub.subscribe();
+        tokio::time::advance(Duration::from_millis(300)).await;
+        let _second = hub.subscribe();
+        assert_eq!(hub.resets(), 1, "the second request is deferred");
+        hub.wait_written(1).await;
+        let written = Instant::now();
+        assert_eq!(
+            hub.written.load(Ordering::Acquire),
+            1,
+            "the deferred reset does not follow the first at once"
+        );
+        // Both sockets still wait for a key unit, so the deferral is sent when the window
+        // that started with the write ends.
+        hub.wait_written(2).await;
+        assert!(Instant::now() - written >= RESET_MIN_INTERVAL - Duration::from_millis(20));
+        assert_eq!(hub.resets(), 2);
     }
 
     #[tokio::test(start_paused = true)]
