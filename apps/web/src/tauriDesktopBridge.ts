@@ -166,17 +166,27 @@ async function tauriInvokeDesktop<T>(command: string, args?: Record<string, unkn
 }
 
 function refreshLocalEnvironmentBootstraps(): Promise<readonly DesktopEnvironmentBootstrap[]> {
-  localEnvironmentBootstrapsRefresh ??= tauriInvoke<DesktopEnvironmentBootstrap[]>(
-    "desktop_bridge_get_local_environment_bootstraps",
-  )
-    .then((bootstraps) => {
-      cachedLocalEnvironmentBootstraps = bootstraps;
-      return bootstraps;
-    })
+  if (localEnvironmentBootstrapsRefresh) return localEnvironmentBootstrapsRefresh;
+  // `desktop:backend-ready` drops this read; its late answer must not restore the old server.
+  const refresh: Promise<readonly DesktopEnvironmentBootstrap[]> = tauriInvoke<
+    DesktopEnvironmentBootstrap[]
+  >("desktop_bridge_get_local_environment_bootstraps")
+    .then(
+      (bootstraps) => {
+        if (localEnvironmentBootstrapsRefresh !== refresh) return cachedLocalEnvironmentBootstraps;
+        cachedLocalEnvironmentBootstraps = bootstraps;
+        return bootstraps;
+      },
+      (error: unknown) => {
+        if (localEnvironmentBootstrapsRefresh !== refresh) return cachedLocalEnvironmentBootstraps;
+        throw error;
+      },
+    )
     .finally(() => {
-      localEnvironmentBootstrapsRefresh = null;
+      if (localEnvironmentBootstrapsRefresh === refresh) localEnvironmentBootstrapsRefresh = null;
     });
-  return localEnvironmentBootstrapsRefresh;
+  localEnvironmentBootstrapsRefresh = refresh;
+  return refresh;
 }
 
 function getCachedLocalEnvironmentBootstraps(): readonly DesktopEnvironmentBootstrap[] {
@@ -195,6 +205,7 @@ function getCachedLocalEnvironmentBootstraps(): readonly DesktopEnvironmentBoots
 function applyBackendReady(payload: TauriDesktopBackendReadyPayload): void {
   cachedLocalEnvironmentBootstraps = payload.bootstraps;
   localEnvironmentBootstrapsRefresh = null;
+  localEnvironmentBootstrapsRefreshedAt = Date.now();
   localEnvironmentBearerToken = null;
 }
 

@@ -301,7 +301,7 @@ flowchart TB
   `git check-ignore`) and nested repositories or linked worktrees (a `.git`
   directory, or a `.git` file whose Git directory is not in this worktree's
   `modules/`), which have their own watches; a submodule keeps notify's
-  recursive watch, as before, because the parent's status shows its changes. A worker thread watches directories created later (one
+  recursive watch, as before, because the parent's status shows its changes. A worker thread watches directories created or renamed into place later (one
   `git check-ignore` per new level, so an anchored rule such as `/build/` does
   not skip `src/build/`), watches a removed and recreated directory again, and
   re-reads the rules when a `.gitignore` or `.git/info/exclude` is written (a
