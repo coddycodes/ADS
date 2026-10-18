@@ -1959,7 +1959,9 @@ or options are refused before delivery. A launch refused because the provider
 itself cannot be driven, such as an unsupported version, fails the delivery
 once without a reason; a retry after the setting is fixed launches normally.
 Other launch failures, such as a spawn error, stay definitely not sent and
-retry with backoff. The delivery
+retry with backoff. A provider that asks to send the message later (OpenCode
+answering 408 or 429) leaves it definitely not sent too; its next attempt waits
+for the backoff and for any `Retry-After` it named, capped at 30 seconds. The delivery
 detail is what the turn shows, so every one is plain text from a single
 formatter that names the provider by its instance label, never by a driver id:
 the refusal itself, such as "Fast Mode is not supported by the selected model.";

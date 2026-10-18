@@ -412,7 +412,10 @@ Idle suspension must never stop work the provider still runs:
   accepted, a 4xx refusal or a connection that never opened, with a `cancelled`
   completion, `stopReason: "not_sent"`, which re-arms the idle deadline. The
   refusal fails the delivery and the unopened connection retries it, so neither
-  waits as uncertain. A request whose answer was lost, or a server or gateway
+  waits as uncertain. A 408 or 429 is no refusal: the delivery is retried, no
+  sooner than OpenCode's `Retry-After`. A prompt that reuses an accepted message
+  id is answered 2xx by OpenCode 1.18, 1.19 and 2, so a retried delivery never
+  reads as refused. A request whose answer was lost, or a server or gateway
   error, keeps its turn for OpenCode's own events to end and leaves the delivery
   uncertain). A turn such a driver did not send, one the
   provider started itself (an OpenCode 2 execution that delivers a background

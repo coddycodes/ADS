@@ -153,6 +153,13 @@ pub enum OpenCodeRuntimeError {
     /// OpenCode answered the turn's own request with a 4xx, so it did not accept the turn.
     #[error("OpenCode refused this message: {0}")]
     RequestRefused(String),
+    /// OpenCode answered the turn's own request with 408 or 429: it did not accept the turn, and
+    /// it may be sent again, after `retry_after` when OpenCode named it.
+    #[error("OpenCode could not take this message yet: {detail}")]
+    RetryLater {
+        detail: String,
+        retry_after: Option<Duration>,
+    },
 }
 
 async fn within_rewind_deadline<T>(
@@ -185,22 +192,52 @@ fn turn_transport_error(error: reqwest::Error) -> OpenCodeRuntimeError {
     }
 }
 
-/// The turn's own request was answered with an error: a refusal (4xx) was not accepted, and a
-/// server or gateway error may have followed acceptance.
-fn turn_status_error(status: reqwest::StatusCode, request: &str) -> OpenCodeRuntimeError {
+/// The turn's own request was answered with an error. A 408 or 429 was not accepted and may be
+/// sent again; any other 4xx is a refusal; a server or gateway error may have followed acceptance.
+fn turn_status_error(response: &reqwest::Response, request: &str) -> OpenCodeRuntimeError {
+    let status = response.status();
     let detail = format!("{request} returned HTTP {status}");
-    if status.is_client_error() {
+    if matches!(
+        status,
+        reqwest::StatusCode::REQUEST_TIMEOUT | reqwest::StatusCode::TOO_MANY_REQUESTS
+    ) {
+        OpenCodeRuntimeError::RetryLater {
+            detail,
+            retry_after: retry_after(response.headers()),
+        }
+    } else if status.is_client_error() {
         OpenCodeRuntimeError::RequestRefused(detail)
     } else {
         OpenCodeRuntimeError::Http(detail)
     }
 }
 
+/// A `Retry-After` header, in seconds or as an HTTP date.
+fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let value = headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim();
+    value
+        .parse::<u64>()
+        .map(Duration::from_secs)
+        .ok()
+        .or_else(|| {
+            httpdate::parse_http_date(value)
+                .ok()?
+                .duration_since(std::time::SystemTime::now())
+                .ok()
+        })
+}
+
 /// Whether OpenCode never accepted the turn's own request.
 fn turn_was_not_accepted(error: &OpenCodeRuntimeError) -> bool {
     matches!(
         error,
-        OpenCodeRuntimeError::NotSent(_) | OpenCodeRuntimeError::RequestRefused(_)
+        OpenCodeRuntimeError::NotSent(_)
+            | OpenCodeRuntimeError::RequestRefused(_)
+            | OpenCodeRuntimeError::RetryLater { .. }
     )
 }
 
@@ -1041,7 +1078,7 @@ impl OpenCodeSessionRuntime {
                     .await
                     .map_err(turn_transport_error)?;
                 if !response.status().is_success() {
-                    return Err(turn_status_error(response.status(), "prompt"));
+                    return Err(turn_status_error(&response, "prompt"));
                 }
                 Ok(())
             }
@@ -1086,7 +1123,7 @@ impl OpenCodeSessionRuntime {
                 .await
                 .map_err(turn_transport_error)?;
             if !response.status().is_success() {
-                return Err(turn_status_error(response.status(), "prompt_async"));
+                return Err(turn_status_error(&response, "prompt_async"));
             }
             Ok(())
         }
@@ -1218,7 +1255,7 @@ impl OpenCodeSessionRuntime {
                     .await
                     .map_err(turn_transport_error)?;
                 if !response.status().is_success() {
-                    return Err(turn_status_error(response.status(), "command"));
+                    return Err(turn_status_error(&response, "command"));
                 }
                 Ok(())
             }
@@ -1260,7 +1297,7 @@ impl OpenCodeSessionRuntime {
                 .await
                 .map_err(turn_transport_error)?;
             if !response.status().is_success() {
-                return Err(turn_status_error(response.status(), "command"));
+                return Err(turn_status_error(&response, "command"));
             }
             Ok(())
         }
@@ -4977,6 +5014,69 @@ mod tests {
             runtime.inner.active_turn_id.lock().await.as_deref(),
             started.turn_id.as_deref()
         );
+        server.abort();
+    }
+
+    /// A 408 or 429 is no refusal: the turn settles as not sent, and the error carries OpenCode's
+    /// `Retry-After` so the delivery is sent again no sooner.
+    #[tokio::test]
+    async fn a_busy_answer_settles_the_turn_and_asks_to_retry_later() {
+        let app = Router::new()
+            .route(
+                "/session/{session_id}/prompt_async",
+                post(|| async {
+                    (StatusCode::TOO_MANY_REQUESTS, [("retry-after", "2")]).into_response()
+                }),
+            )
+            .route(
+                "/session/{session_id}/command",
+                post(|| async { StatusCode::REQUEST_TIMEOUT }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+        let runtime = super::OpenCodeSessionRuntime::new(
+            &format!("http://{address}"),
+            "unit-thread",
+            "/tmp/unit",
+            None,
+        );
+        *runtime.inner.session_id.lock().await = Some("session-1".to_owned());
+
+        let prompt = runtime
+            .send_turn(Some("hello"), Vec::new(), Some("delivery-1"))
+            .await
+            .expect_err("OpenCode is busy");
+        assert!(
+            matches!(
+                prompt,
+                super::OpenCodeRuntimeError::RetryLater { retry_after: Some(delay), .. }
+                    if delay == std::time::Duration::from_secs(2)
+            ),
+            "{prompt:?}"
+        );
+        let command = runtime
+            .send_command("review", "", Some("delivery-2"))
+            .await
+            .expect_err("OpenCode timed out the request");
+        assert!(
+            matches!(
+                command,
+                super::OpenCodeRuntimeError::RetryLater {
+                    retry_after: None,
+                    ..
+                }
+            ),
+            "{command:?}"
+        );
+        for _ in 0..2 {
+            let started = runtime.next_event().await.expect("turn.started");
+            let completed = runtime.next_event().await.expect("turn.completed");
+            assert_eq!(completed.turn_id, started.turn_id);
+            assert_eq!(completed.payload["stopReason"], "not_sent");
+        }
         server.abort();
     }
 

@@ -277,14 +277,31 @@ impl std::fmt::Debug for ProviderActivityControls {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderDeliveryOutcome {
-    Accepted { turn_id: Option<String> },
-    AcceptedInNewConversation { turn_id: Option<String> },
-    DefinitelyNotSent { detail: String },
-    Ambiguous { detail: String },
-    Rejected { detail: String },
+    Accepted {
+        turn_id: Option<String>,
+    },
+    AcceptedInNewConversation {
+        turn_id: Option<String>,
+    },
+    DefinitelyNotSent {
+        detail: String,
+    },
+    /// Not sent, and the provider asked to wait at least `retry_after` before sending it again.
+    NotSentRetryAfter {
+        detail: String,
+        retry_after: Duration,
+    },
+    Ambiguous {
+        detail: String,
+    },
+    Rejected {
+        detail: String,
+    },
     // A deterministic refusal of the turn's own model or options (`InvalidOption`),
     // refused again on every unchanged attempt.
-    Refused { detail: String },
+    Refused {
+        detail: String,
+    },
 }
 
 /// What an undelivered turn shows when restart recovery finds its conversation gone.
@@ -11735,6 +11752,14 @@ impl ProviderDriver for OpenCodeDriver {
                 | Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::NotSent(_)) => {
                     ProviderDeliveryOutcome::DefinitelyNotSent {
                         detail: delivery_detail(&provider_error("opencode")(error), None),
+                    }
+                }
+                // OpenCode could not take the message yet, so it is sent again later.
+                Err(error @ crate::provider::opencode::runtime::OpenCodeRuntimeError::RetryLater { retry_after, .. }) => {
+                    let detail = delivery_detail(&provider_error("opencode")(error), None);
+                    match retry_after {
+                        Some(retry_after) => ProviderDeliveryOutcome::NotSentRetryAfter { detail, retry_after },
+                        None => ProviderDeliveryOutcome::DefinitelyNotSent { detail },
                     }
                 }
                 // OpenCode refused the message, so it was not delivered and is not sent again.

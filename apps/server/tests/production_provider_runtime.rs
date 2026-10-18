@@ -3851,6 +3851,11 @@ struct OptionCase {
 /// Runs `case` until its delivery settles, and asserts it settles once: failed with the refusal,
 /// or delivered, after a single launch.
 async fn assert_option_case_settles_once(case: OptionCase) {
+    assert_option_case_settles_after(case, 1).await;
+}
+
+/// Runs `case` until its delivery settles after `attempts` sends of one launch.
+async fn assert_option_case_settles_after(case: OptionCase, attempts: i64) {
     let temp = TempDir::new().expect("provider fixture directory");
     let (engine, database) = engine_and_database().await;
     let settings = TempDir::new().expect("settings");
@@ -3911,7 +3916,7 @@ async fn assert_option_case_settles_once(case: OptionCase) {
             if matches!(
                 delivery.state,
                 TurnDeliveryState::Failed | TurnDeliveryState::Delivered
-            ) || delivery.attempts >= 3
+            ) || delivery.attempts >= attempts.max(3)
             {
                 break delivery;
             }
@@ -3933,8 +3938,8 @@ async fn assert_option_case_settles_once(case: OptionCase) {
     };
     assert_eq!(
         (settled.state, settled.attempts),
-        (expected, 1),
-        "{}: the turn must settle once instead of retrying: {:?}",
+        (expected, attempts),
+        "{}: the turn must settle after {attempts} attempt(s): {:?}",
         case.provider,
         settled.last_error
     );
@@ -3951,7 +3956,7 @@ async fn assert_option_case_settles_once(case: OptionCase) {
     let later = read_delivery().await;
     assert_eq!(
         (later.state, later.attempts),
-        (expected, 1),
+        (expected, attempts),
         "{}",
         case.provider
     );
@@ -4256,6 +4261,90 @@ async fn opencode_refused_message_fails_the_delivery_once() {
         refusal: Some("OpenCode refused this message: prompt_async returned HTTP 400 Bad Request"),
     })
     .await;
+    server.abort();
+}
+
+/// OpenCode answers HTTP 429 (or 408) when it cannot take a message yet. That is no refusal: the
+/// delivery is sent again, no sooner than its `Retry-After`.
+#[cfg(unix)]
+#[tokio::test]
+async fn opencode_message_asked_to_wait_is_sent_again_after_retry_after() {
+    let sends = Arc::new(StdMutex::new(Vec::<Instant>::new()));
+    let prompt_sends = sends.clone();
+    let app = Router::new()
+        .route(
+            "/session",
+            post(|| async { Json(json!({"id":"opencode-throttled-session"})) }),
+        )
+        .route(
+            "/session/{session_id}",
+            get(|| async { Json(json!({"id":"opencode-throttled-session"})) }),
+        )
+        .route(
+            "/event",
+            get(|| async { Sse::new(stream::pending::<Result<Event, Infallible>>()) }),
+        )
+        .route(
+            "/session/{session_id}/message",
+            get(|| async { Json(json!({"data":[]})) }),
+        )
+        .route(
+            "/session/{session_id}/prompt_async",
+            post(move || {
+                let sends = prompt_sends.clone();
+                async move {
+                    let mut sends = sends.lock().unwrap();
+                    sends.push(Instant::now());
+                    if sends.len() == 1 {
+                        (StatusCode::TOO_MANY_REQUESTS, [("retry-after", "1")]).into_response()
+                    } else {
+                        StatusCode::NO_CONTENT.into_response()
+                    }
+                }
+            }),
+        )
+        .route(
+            "/provider",
+            get(|| async {
+                Json(json!({
+                    "connected": ["openai"],
+                    "all": [{"id":"openai", "models":{"gpt-5":{"variants":{"high":{}}}}}]
+                }))
+            }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("OpenCode fixture bind");
+    let endpoint = format!("http://{}", listener.local_addr().expect("fixture address"));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("OpenCode fixture serve");
+    });
+    assert_option_case_settles_after(
+        OptionCase {
+            provider: "opencode",
+            instance_config: json!({
+                "driver":"opencode", "enabled":true,
+                "config":{"binaryPath":"throttled-opencode-route", "serverUrl":endpoint}
+            }),
+            binary_path: None,
+            endpoint: Some(endpoint.clone()),
+            environment: Vec::new(),
+            model: "openai/gpt-5",
+            option: json!({"id":"variant","value":"high"}),
+            refusal: None,
+        },
+        2,
+    )
+    .await;
+    let sends = sends.lock().unwrap().clone();
+    assert_eq!(sends.len(), 2);
+    assert!(
+        sends[1] - sends[0] >= Duration::from_millis(950),
+        "sent again after {:?}, before its Retry-After",
+        sends[1] - sends[0]
+    );
     server.abort();
 }
 
