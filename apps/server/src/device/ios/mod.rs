@@ -448,6 +448,17 @@ fn sink_error(error: HidError, failed: &str) -> DeviceOpError {
     }
 }
 
+/// What a batch whose `pbcopy` of `chars` characters failed returns. Only the stop cancels
+/// a copy, so a cancelled one is the device stopping, not a failure to report; any other is
+/// logged and the user is told to try again.
+fn paste_failure(error: &SimctlError, chars: usize) -> DeviceOpError {
+    if let SimctlError::Cancelled { .. } = error {
+        return DeviceOpError::NotReady(DeviceState::Stopped);
+    }
+    tracing::warn!(%error, chars, "could not copy text to the simulator");
+    DeviceOpError::Emulator(INPUT_FAILED.to_owned())
+}
+
 /// The simulators BiBCode booted, each with the launch that booted it.
 #[derive(Default)]
 struct Booted {
@@ -748,20 +759,12 @@ impl Shared {
                     if self.stopping.load(Ordering::SeqCst) {
                         return Err(DeviceOpError::NotReady(DeviceState::Stopped));
                     }
-                    match self
+                    if let Err(error) = self
                         .runner
                         .pbcopy(&self.udid, &text, &self.input_stop)
                         .await
                     {
-                        Ok(()) => {}
-                        // The stop cancelled the copy: not a failure to report.
-                        Err(SimctlError::Cancelled { .. }) => {
-                            return Err(DeviceOpError::NotReady(DeviceState::Stopped));
-                        }
-                        Err(error) => {
-                            tracing::warn!(%error, chars = text.chars().count(), "could not copy text to the simulator");
-                            return Err(DeviceOpError::Emulator(INPUT_FAILED.to_owned()));
-                        }
+                        return Err(paste_failure(&error, text.chars().count()));
                     }
                     for key in paste_keys() {
                         self.send_one(sink, key).await?;
@@ -1197,7 +1200,9 @@ pub fn host_manager_for_tests() -> (super::DeviceManager, tokio::sync::watch::Se
 #[cfg(test)]
 mod tests {
     use super::{
-        hid::{HidAction, KEYBOARD_NOT_READY, SimButton, TouchPhase},
+        hid::{HidAction, INPUT_FAILED, KEYBOARD_NOT_READY, SimButton, TouchPhase},
+        paste_failure,
+        simctl::SimctlError,
         testing::{FakeXcrun, RecordingHid, ios_manager, live_fake_ios},
     };
     use crate::device::{
@@ -1206,6 +1211,35 @@ mod tests {
         fake_backend::wait_state,
         input::{DeviceInputEvent, DeviceKey, KeyAction, TouchAction},
     };
+
+    /// Round-11 review M2: only the stop cancels a `pbcopy`, so a batch whose copy it cut
+    /// short ends as the device stopping; every other failure is the generic input error.
+    #[test]
+    fn a_cancelled_pbcopy_is_the_device_stopping() {
+        let command = || "simctl pbcopy".to_owned();
+        assert_eq!(
+            paste_failure(&SimctlError::Cancelled { command: command() }, 3),
+            DeviceOpError::NotReady(DeviceState::Stopped)
+        );
+        for error in [
+            SimctlError::Timeout { command: command() },
+            SimctlError::Spawn {
+                command: command(),
+                message: "not found".to_owned(),
+            },
+            SimctlError::Failed {
+                command: command(),
+                status: "exit status: 1".to_owned(),
+                stderr: None,
+            },
+        ] {
+            assert_eq!(
+                paste_failure(&error, 3),
+                DeviceOpError::Emulator(INPUT_FAILED.to_owned()),
+                "{error}"
+            );
+        }
+    }
 
     fn tap_down(x: f64, y: f64) -> DeviceInputEvent {
         DeviceInputEvent::Touch {
