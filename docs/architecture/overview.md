@@ -2060,7 +2060,11 @@ Each binary message is a 1-byte kind (`0` config, `1` key, `2` delta), an
 keepalive with PTS 0 and no payload (9 bytes): when the source has produced no
 unit for 1 s the hub's task sends one to every socket whose queue is empty
 (queued frames already prove liveness, so a keepalive never grows a queue), and
-again every second while the source stays quiet and open. It passes through
+again every second while the source stays quiet and open. Both platforms need
+it: iOS encodes nothing on a still screen, and on a real Android emulator
+(`c2.android.avc.encoder`, API 35) scrcpy sent no units for 6 s and more on a
+still screen even though scrcpy v4.1 asks the encoder to repeat the previous
+frame after 100 ms. It passes through
 the E2EE record layer like any frame. The client resets its stall clock on it
 and never decodes it; it does not count as a first frame. The client sends
 only `{"type":"keyframe"}` after a decoder error.
