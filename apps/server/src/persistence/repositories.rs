@@ -952,6 +952,26 @@ impl Repositories {
             .await
     }
 
+    /// Whether the thread already recorded `request_id`, asked or resolved.
+    pub(crate) async fn request_is_recorded(
+        &self,
+        thread_id: String,
+        request_id: String,
+    ) -> Result<bool> {
+        self.database
+            .call(move |connection| {
+                Ok(connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM projection_thread_activities
+                       WHERE thread_id = ? AND json_extract(payload_json, '$.requestId') = ?
+                         AND kind IN ('approval.requested', 'approval.resolved',
+                                      'user-input.requested', 'user-input.resolved'))",
+                    params![thread_id, request_id],
+                    |row| row.get(0),
+                )?)
+            })
+            .await
+    }
+
     pub async fn list_queued_provider_turn_heads(&self) -> Result<Vec<ProviderTurnDelivery>> {
         self.database.call(|connection| {
             // Rank identifiers once, then load only each thread's head payload.

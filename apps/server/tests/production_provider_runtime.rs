@@ -11298,6 +11298,98 @@ async fn interaction_mode_provider_failure_preserves_the_live_launch_state() {
     supervisor.shutdown().await.unwrap();
 }
 
+/// OpenCode lists its pending asks on resume (`recovered`): one BiBCode already recorded, asked or
+/// answered, is not added again, so the thread and its approval gate agree. An ask reported again
+/// without the mark (another provider reusing an id after its own restart) is a new request.
+#[tokio::test]
+async fn an_ask_reported_again_while_open_is_recorded_once() {
+    let engine = engine().await;
+    let state = Arc::new(StdMutex::new(DriverState::default()));
+    let (events_tx, events_rx) = mpsc::channel(8);
+    let factory = Arc::new(FakeFactory {
+        state,
+        events: StdMutex::new(VecDeque::from([events_rx])),
+    });
+    let supervisor = ProviderRuntimeSupervisor::start(
+        engine.clone(),
+        factory,
+        activity_projection(&engine),
+        SupervisorOptions::default(),
+    );
+    supervisor.launch(launch()).await.unwrap();
+    let event = |event_type: &str, request_id: &str, payload: Value| ProviderEvent {
+        native_event_id: None,
+        event_type: event_type.to_owned(),
+        thread_id: "t1".to_owned(),
+        turn_id: None,
+        item_id: None,
+        request_id: Some(request_id.to_owned()),
+        payload,
+        activity: Vec::new(),
+        activity_controls: Default::default(),
+    };
+    let approval = json!({"requestType":"exec_command_approval","detail":"shell: ls"});
+    let questions = json!({"questions":[{"id":"q0","question":"Which?","options":[]}]});
+    let recovered = |mut payload: Value| {
+        payload["recovered"] = json!(true);
+        payload
+    };
+    for sent in [
+        event("request.opened", "approval-1", approval.clone()),
+        event("request.opened", "approval-1", recovered(approval.clone())),
+        event("user-input.requested", "input-1", questions.clone()),
+        event(
+            "user-input.requested",
+            "input-1",
+            recovered(questions.clone()),
+        ),
+        event("request.opened", "approval-2", approval.clone()),
+        event(
+            "request.resolved",
+            "approval-2",
+            json!({"requestType":"exec_command_approval"}),
+        ),
+        event("request.opened", "approval-2", recovered(approval.clone())),
+        event("request.opened", "approval-3", approval.clone()),
+        event("request.opened", "approval-3", approval.clone()),
+        // Marks the end of the batch.
+        event("request.opened", "approval-last", approval.clone()),
+    ] {
+        events_tx.send(sent).await.unwrap();
+    }
+    let count = |activities: &[(String, Value)], kind: &str, request_id: &str| {
+        activities
+            .iter()
+            .filter(|(activity_kind, payload)| {
+                activity_kind == kind && payload["requestId"] == request_id
+            })
+            .count()
+    };
+    let activities = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let snapshot = load_snapshot(&engine.repositories()).await.unwrap();
+            let activities = snapshot
+                .activities
+                .into_iter()
+                .filter(|activity| activity.thread_id == "t1")
+                .map(|activity| (activity.kind, activity.payload))
+                .collect::<Vec<_>>();
+            if count(&activities, "approval.requested", "approval-last") == 1 {
+                break activities;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the asks are projected");
+    assert_eq!(count(&activities, "approval.requested", "approval-1"), 1);
+    assert_eq!(count(&activities, "user-input.requested", "input-1"), 1);
+    assert_eq!(count(&activities, "approval.requested", "approval-2"), 1);
+    assert_eq!(count(&activities, "approval.requested", "approval-3"), 2);
+    supervisor.shutdown().await.unwrap();
+    engine.shutdown().await;
+}
+
 #[tokio::test]
 async fn projects_event_aliases_user_input_and_proposed_plans_with_request_context() {
     let engine = engine().await;

@@ -105,6 +105,11 @@ struct Replay {
     apply_lost_finished_record: AtomicBool,
     /// A revert was committed: message lists answer the scenario's last capture, not its first.
     reverted: AtomicBool,
+    /// Pending asks are answered right after their first listing, as in an OpenCode terminal
+    /// while BiBCode resumes: later listings are empty.
+    answer_asks_after_first_list: AtomicBool,
+    /// `/api/session/active` never answers.
+    stall_active: AtomicBool,
 }
 
 impl Replay {
@@ -291,6 +296,12 @@ async fn captured_list(State(replay): State<Arc<Replay>>, uri: OriginalUri) -> J
         .lock()
         .unwrap()
         .push(("GET".to_owned(), uri.0.to_string(), Value::Null));
+    if replay.answer_asks_after_first_list.load(Ordering::SeqCst)
+        && (path.ends_with("/permission") || path.ends_with("/form"))
+        && replay.requests_to(&path).len() > 1
+    {
+        return Json(json!({ "data": [] }));
+    }
     // The last capture of the same query (such as one parent's children), else of the same path;
     // the last capture is the settled state.
     let parent = uri
@@ -450,6 +461,8 @@ async fn serve(scenario: &'static str) -> (String, Arc<Replay>) {
         fail_next_finished_record: AtomicBool::new(false),
         apply_lost_finished_record: AtomicBool::new(false),
         reverted: AtomicBool::new(false),
+        answer_asks_after_first_list: AtomicBool::new(false),
+        stall_active: AtomicBool::new(false),
     });
     let app = Router::new()
         .route("/api/session", post(record).get(captured_list))
@@ -460,6 +473,9 @@ async fn serve(scenario: &'static str) -> (String, Arc<Replay>) {
             "/api/session/active",
             get(
                 |State(replay): State<Arc<Replay>>, uri: OriginalUri| async move {
+                    if replay.stall_active.load(Ordering::SeqCst) {
+                        std::future::pending::<()>().await;
+                    }
                     if replay.active.load(Ordering::SeqCst) {
                         Json(json!({ "data": { replay.root.clone(): { "type": "running" } } }))
                     } else {
@@ -1137,6 +1153,80 @@ async fn a_resumed_session_can_answer_the_asks_it_was_waiting_on() {
     }
 }
 
+/// An ask OpenCode created while BiBCode was away is shown after a resume, once, though the event
+/// stream does not replay it, and it can be answered.
+#[tokio::test]
+async fn a_resumed_session_shows_the_asks_it_was_waiting_on() {
+    for (scenario, reply, event_type) in [
+        ("shell", "permission", "request.opened"),
+        ("question", "form", "user-input.requested"),
+    ] {
+        let (endpoint, replay) = serve(scenario).await;
+        let runtime = v2_runtime(&endpoint);
+        runtime.resume(&replay.root).await.expect("resumes");
+        let pending = exchange(scenario, "GET", &format!("/{reply}")).1;
+        let ask = pending["data"][0]["id"]
+            .as_str()
+            .expect("pending ask")
+            .to_owned();
+        let events = drain(&runtime).await;
+        let shown = of_type(&events, event_type)
+            .into_iter()
+            .filter(|event| event.request_id.as_deref() == Some(ask.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(shown.len(), 1, "{scenario}: {events:#?}");
+        if reply == "permission" {
+            assert!(
+                shown[0].payload["detail"]
+                    .as_str()
+                    .is_some_and(|detail| !detail.is_empty()),
+                "{:?}",
+                shown[0].payload
+            );
+            runtime
+                .respond_to_permission(&ask, "accept")
+                .await
+                .expect("the shown ask can be answered");
+        } else {
+            assert!(
+                shown[0].payload["questions"]
+                    .as_array()
+                    .is_some_and(|questions| !questions.is_empty()),
+                "{:?}",
+                shown[0].payload
+            );
+            runtime
+                .respond_to_user_input(&ask, json!({ "q0": ["Red"] }))
+                .await
+                .expect("the shown form can be answered");
+        }
+        runtime.stop().await.expect("stop");
+    }
+}
+
+/// An ask answered elsewhere between the resume's read and the event subscription is not shown:
+/// its settlement would never arrive, leaving a request nobody can answer.
+#[tokio::test]
+async fn an_ask_answered_while_resuming_is_not_shown() {
+    for (scenario, event_type) in [
+        ("shell", "request.opened"),
+        ("question", "user-input.requested"),
+    ] {
+        let (endpoint, replay) = serve(scenario).await;
+        replay
+            .answer_asks_after_first_list
+            .store(true, Ordering::SeqCst);
+        let runtime = v2_runtime(&endpoint);
+        runtime.resume(&replay.root).await.expect("resumes");
+        let events = drain(&runtime).await;
+        assert!(
+            of_type(&events, event_type).is_empty(),
+            "{scenario}: {events:#?}"
+        );
+        runtime.stop().await.expect("stop");
+    }
+}
+
 /// A session OpenCode kept executing while BiBCode was away is reported as a running turn on
 /// resume, so its completion is not lost.
 #[tokio::test]
@@ -1147,6 +1237,73 @@ async fn a_resumed_session_that_is_still_executing_gets_a_turn() {
     runtime.resume(&replay.root).await.expect("resumes");
     let started = wait_for(&runtime, "turn.started").await;
     assert!(started.turn_id.is_some());
+}
+
+/// A resumed execution's output that arrives while the running-execution check is still pending
+/// gets its turn first, so its reply and the reply's completion share that turn.
+#[tokio::test]
+async fn output_of_a_resumed_execution_gets_its_turn_before_the_check_answers() {
+    let (endpoint, replay) = serve("hello").await;
+    replay.stall_active.store(true, Ordering::SeqCst);
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+    // The check is pending (its read never answers); OpenCode streams the execution's reply.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !runtime.adopt_pending().await {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the check is pending");
+    for event in [
+        json!({ "type": "session.text.delta", "data": {
+            "sessionID": replay.root, "assistantMessageID": "msg_reply", "delta": "Hi"
+        }}),
+        json!({ "type": "session.step.ended", "data": {
+            "sessionID": replay.root, "assistantMessageID": "msg_reply"
+        }}),
+    ] {
+        runtime.handle_v2_event(event).await;
+    }
+    let events = drain(&runtime).await;
+    let started = of_type(&events, "turn.started");
+    assert_eq!(started.len(), 1, "{events:#?}");
+    assert_eq!(started[0].payload["providerStarted"], true);
+    let delta = of_type(&events, "content.delta");
+    assert_eq!(delta.len(), 1, "{events:#?}");
+    assert_eq!(delta[0].turn_id, started[0].turn_id);
+    runtime.stop().await.expect("stop");
+}
+
+/// A resumed session whose running-execution check never answers still handles its events: the
+/// check runs off the event pump, so a prompt's turn completes and Stop ends one.
+#[tokio::test]
+async fn a_stalled_execution_check_does_not_hold_the_event_stream() {
+    let (endpoint, replay) = serve("hello").await;
+    replay.stall_active.store(true, Ordering::SeqCst);
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+    runtime
+        .send_turn(Some("SAY_HELLO please"), Vec::new(), None)
+        .await
+        .expect("prompt is accepted");
+    let events = until_turns_complete(&runtime, 1).await;
+    assert_eq!(of_type(&events, "turn.completed").len(), 1);
+    runtime.stop().await.expect("stop");
+
+    let (endpoint, replay) = serve("interrupt").await;
+    replay.stall_active.store(true, Ordering::SeqCst);
+    let runtime = v2_runtime(&endpoint);
+    runtime.resume(&replay.root).await.expect("resumes");
+    runtime
+        .send_turn(Some("SLOW please"), Vec::new(), None)
+        .await
+        .expect("prompt is accepted");
+    wait_for(&runtime, "content.delta").await;
+    runtime.interrupt_turn().await.expect("interrupt is sent");
+    let events = until_turns_complete(&runtime, 1).await;
+    assert_eq!(of_type(&events, "turn.completed").len(), 1);
+    runtime.stop().await.expect("stop");
 }
 
 /// A background subagent on OpenCode 2 is reported as activity: reconciliation reads the session

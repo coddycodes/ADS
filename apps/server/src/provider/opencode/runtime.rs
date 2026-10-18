@@ -341,6 +341,15 @@ struct V2State {
     /// A resumed session checks for a running execution once its event stream is connected, so
     /// the execution's end cannot slip between the check and the subscription.
     adopt_on_connect: bool,
+    /// Asks OpenCode was waiting on when the session resumed, shown once the event stream is
+    /// connected and they are confirmed still pending.
+    recovered_asks: Vec<(&'static str, String, Value)>,
+    /// Root executions started or ended as the event stream reported them, so an off-pump check
+    /// for a running execution knows whether the stream overtook it.
+    executions_seen: u64,
+    /// The resume's check for a running execution has not answered conclusively, and the stream
+    /// has not reported an execution starting or ending: root output gets a turn of its own.
+    adopt_pending: bool,
     /// The progress of a checkpoint rewind that has not reported success, counted from BiBCode's
     /// unchanged transcript. See `v2_rollback`.
     rewind: V2RewindProgress,
@@ -847,12 +856,17 @@ impl OpenCodeSessionRuntime {
             v2.settled_while_answering.clear();
         }
         let resumed = payload.get("resumed").is_some();
-        if resumed && self.is_v2() {
-            self.v2_restore_pending_asks(session_id).await;
-        }
+        let recovered_asks = if resumed && self.is_v2() {
+            self.v2_restore_pending_asks(session_id).await
+        } else {
+            Vec::new()
+        };
         self.reset_activity_root(session_id).await;
         self.emit("session.started", None, None, payload).await;
         self.emit("thread.started", None, None, json!({})).await;
+        // OpenCode does not replay asks made while BiBCode was away; they are shown once the
+        // event stream connects (see `v2_show_recovered_asks`).
+        self.inner.v2.lock().await.recovered_asks = recovered_asks;
         // A resumed session may still be executing (OpenCode kept working while BiBCode was away).
         if resumed {
             self.inner.v2.lock().await.adopt_on_connect = true;
@@ -2606,7 +2620,13 @@ impl OpenCodeSessionRuntime {
         }
     }
 
-    async fn handle_v2_event(&self, event: Value) {
+    /// Whether the resume's check for a running execution is still pending.
+    #[cfg(test)]
+    pub(super) async fn adopt_pending(&self) -> bool {
+        self.inner.v2.lock().await.adopt_pending
+    }
+
+    pub(super) async fn handle_v2_event(&self, event: Value) {
         let normalized = self.inner.v2.lock().await.normalizer.normalize(&event);
         if !normalized.is_empty()
             && let Ok(root_session_id) = self.session_id().await
@@ -2618,16 +2638,48 @@ impl OpenCodeSessionRuntime {
             }
         }
         if event.get("type").and_then(Value::as_str) == Some("server.connected") {
+            let asks = std::mem::take(&mut self.inner.v2.lock().await.recovered_asks);
+            if !asks.is_empty() {
+                self.spawn_v2_show_recovered_asks(asks);
+            }
             let adopt = std::mem::take(&mut self.inner.v2.lock().await.adopt_on_connect);
             if adopt && let Ok(session_id) = self.session_id().await {
-                self.v2_adopt_running_execution(&session_id).await;
+                self.spawn_v2_adopt_running_execution(session_id).await;
             }
         }
-        let outputs = match self.inner.v2.lock().await.translator.as_mut() {
-            Some(translator) => translator.handle(&event),
-            None => return,
+        let outputs = {
+            let mut v2 = self.inner.v2.lock().await;
+            let Some(translator) = v2.translator.as_mut() else {
+                return;
+            };
+            let outputs = translator.handle(&event);
+            let executions = outputs
+                .iter()
+                .filter(|output| {
+                    matches!(output, V2Output::ExecutionStarted | V2Output::TurnEnded(_))
+                })
+                .count() as u64;
+            v2.executions_seen = v2.executions_seen.wrapping_add(executions);
+            // The stream reported the execution's lifecycle, so it no longer needs the check.
+            if executions > 0 {
+                v2.adopt_pending = false;
+            }
+            outputs
         };
         for output in outputs {
+            // Output of an execution the resume's check has not confirmed yet shows it running:
+            // it gets its turn before the output is forwarded, so the reply and its completion
+            // share one turn.
+            if matches!(
+                output,
+                V2Output::TextDelta { .. } | V2Output::AssistantCompleted { .. }
+            ) {
+                let v2 = self.inner.v2.lock().await;
+                if v2.adopt_pending && self.inner.active_turn_id.lock().await.is_none() {
+                    self.begin_provider_started_turn().await;
+                }
+                drop(v2);
+            }
             let turn_id = self.inner.active_turn_id.lock().await.clone();
             match output {
                 V2Output::ExecutionStarted => {
@@ -2877,7 +2929,11 @@ impl OpenCodeSessionRuntime {
     /// Routes replies to the permission requests and forms a resumed session and its descendants
     /// are still waiting on: OpenCode's event stream does not replay asks made before BiBCode
     /// connected. The asks are not shown again; BiBCode already recorded those it saw.
-    async fn v2_restore_pending_asks(&self, root_session_id: &str) {
+    async fn v2_restore_pending_asks(
+        &self,
+        root_session_id: &str,
+    ) -> Vec<(&'static str, String, Value)> {
+        let mut recovered = Vec::new();
         let mut sessions = vec![root_session_id.to_owned()];
         let mut queue = VecDeque::from([(root_session_id.to_owned(), 0_usize)]);
         while let Some((parent, depth)) = queue.pop_front() {
@@ -2923,21 +2979,32 @@ impl OpenCodeSessionRuntime {
             if let Some(translator) = v2.translator.as_mut() {
                 translator.track_descendant(session_id);
             }
-            for request_id in permissions
+            for request in permissions
                 .iter()
                 .filter_map(|response| response.get("data").and_then(Value::as_array))
                 .flatten()
-                .filter_map(|request| request.get("id").and_then(Value::as_str))
             {
+                let Some(request_id) = request.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
                 v2.permissions
                     .insert(request_id.to_owned(), (None, session_id.clone()));
+                recovered.push((
+                    "request.opened",
+                    request_id.to_owned(),
+                    json!({
+                        "requestType": "exec_command_approval",
+                        "detail": v2::permission_detail(request),
+                        "recovered": true,
+                    }),
+                ));
             }
             for form in forms
                 .iter()
                 .filter_map(|response| response.get("data").and_then(Value::as_array))
                 .flatten()
             {
-                if let (Some(form_id), Some((_, fields))) = (
+                if let (Some(form_id), Some((questions, fields))) = (
                     form.get("id").and_then(Value::as_str),
                     v2::form_questions(form),
                 ) {
@@ -2949,7 +3016,117 @@ impl OpenCodeSessionRuntime {
                             fields,
                         },
                     );
+                    recovered.push((
+                        "user-input.requested",
+                        form_id.to_owned(),
+                        json!({ "questions": questions, "recovered": true }),
+                    ));
                 }
+            }
+        }
+        recovered
+    }
+
+    /// Shows the asks recovered on resume, off the event pump so its events keep flowing. The
+    /// event stream is connected by now, so an ask answered later arrives as its settlement; one
+    /// answered between the resume's read and the subscription is caught by reading the pending
+    /// asks again, and resolved instead of shown (its settlement never arrives). An ask is shown
+    /// only while its routing entry still stands, under the lock its settlement takes, so a
+    /// settlement is never shown before its ask; a reply in flight keeps its entry.
+    fn spawn_v2_show_recovered_asks(&self, asks: Vec<(&'static str, String, Value)>) {
+        let runtime = Arc::downgrade(&self.inner);
+        let cancellation = self.inner.reconciliation_cancellation.clone();
+        let owner_cancellation = self.inner.owner_state.cancellation.clone();
+        tokio::spawn(async move {
+            let Some(inner) = runtime.upgrade() else {
+                return;
+            };
+            let runtime = OpenCodeSessionRuntime::internal(inner);
+            // A stopped runtime, or one whose owner dropped it, releases it at once.
+            tokio::select! {
+                () = cancellation.cancelled() => {}
+                () = owner_cancellation.cancelled() => {}
+                () = runtime.v2_show_recovered_asks(asks) => {}
+            }
+        });
+    }
+
+    async fn v2_show_recovered_asks(&self, asks: Vec<(&'static str, String, Value)>) {
+        // Where each ask is listed: its session and kind of list.
+        let listed_in = |v2: &V2State, request_id: &str| -> Option<(String, &'static str)> {
+            v2.permissions
+                .get(request_id)
+                .map(|(_, session_id)| (session_id.clone(), "permission"))
+                .or_else(|| {
+                    v2.forms
+                        .get(request_id)
+                        .map(|form| (form.session_id.clone(), "form"))
+                })
+        };
+        let lists = {
+            let v2 = self.inner.v2.lock().await;
+            let mut lists = asks
+                .iter()
+                .filter_map(|(_, request_id, _)| listed_in(&v2, request_id))
+                .collect::<Vec<_>>();
+            lists.sort();
+            lists.dedup();
+            lists
+        };
+        // Each list read afresh; one that cannot be read leaves its asks shown.
+        let mut pending = HashMap::new();
+        for (session_id, kind) in lists {
+            let read = match self.v2_url(&["session", &session_id, kind], false) {
+                Ok(url) => tokio::time::timeout(DELIVERY_LOOKUP_TIMEOUT, self.v2_get_json(url))
+                    .await
+                    .ok()
+                    .flatten(),
+                Err(_) => None,
+            };
+            // Only a well-formed list is authoritative; anything else counts as unread.
+            let ids = read.and_then(|list| {
+                list.get("data").and_then(Value::as_array).map(|asks| {
+                    asks.iter()
+                        .filter_map(|ask| ask.get("id").and_then(Value::as_str))
+                        .map(str::to_owned)
+                        .collect::<HashSet<_>>()
+                })
+            });
+            pending.insert((session_id, kind), ids);
+        }
+        for (event_type, request_id, ask) in asks {
+            let mut v2 = self.inner.v2.lock().await;
+            // A reply in flight owns its entry and reports its settlement.
+            if v2.answering.contains(&request_id) {
+                continue;
+            }
+            let Some(list) = listed_in(&v2, &request_id) else {
+                continue;
+            };
+            let still_pending = match pending.get(&list) {
+                Some(Some(ids)) => ids.contains(&request_id),
+                _ => true,
+            };
+            if still_pending {
+                self.emit(event_type, None, Some(request_id), ask).await;
+            } else if v2.permissions.remove(&request_id).is_some() {
+                // Settled before the subscription, so its settlement never arrives: one BiBCode
+                // already showed is resolved here.
+                self.emit(
+                    "request.resolved",
+                    None,
+                    Some(request_id),
+                    json!({ "requestType": "exec_command_approval" }),
+                )
+                .await;
+            } else if v2.forms.remove(&request_id).is_some() {
+                self.emit(
+                    "user-input.resolved",
+                    None,
+                    Some(request_id),
+                    json!({ "answers": {} }),
+                )
+                .await;
             }
         }
     }
@@ -2971,20 +3148,60 @@ impl OpenCodeSessionRuntime {
     }
 
     /// A resumed session may still be executing (OpenCode kept working while BiBCode was away);
-    /// its start is not replayed, so report it as a turn now and let its end complete it.
-    async fn v2_adopt_running_execution(&self, session_id: &str) {
+    /// its start is not replayed, so report it as a turn and let its end complete it. The check
+    /// runs off the event pump, bounded, so a stalled read never holds its events (or Stop). If
+    /// the stream reports an execution starting or ending meanwhile, it already speaks for the
+    /// session and the check's answer is dropped; a check that times out adopts nothing.
+    async fn spawn_v2_adopt_running_execution(&self, session_id: String) {
+        let seen = {
+            let mut v2 = self.inner.v2.lock().await;
+            v2.adopt_pending = true;
+            v2.executions_seen
+        };
+        let runtime = Arc::downgrade(&self.inner);
+        let cancellation = self.inner.reconciliation_cancellation.clone();
+        let owner_cancellation = self.inner.owner_state.cancellation.clone();
+        tokio::spawn(async move {
+            let Some(inner) = runtime.upgrade() else {
+                return;
+            };
+            let runtime = OpenCodeSessionRuntime::internal(inner);
+            tokio::select! {
+                () = cancellation.cancelled() => {}
+                () = owner_cancellation.cancelled() => {}
+                () = runtime.v2_adopt_running_execution(&session_id, seen) => {}
+            }
+        });
+    }
+
+    async fn v2_adopt_running_execution(&self, session_id: &str, seen: u64) {
         let Ok(url) = self.v2_url(&["session", "active"], false) else {
             return;
         };
-        let running = self.v2_get_json(url).await.is_some_and(|active| {
-            active
-                .get("data")
-                .and_then(Value::as_object)
-                .is_some_and(|sessions| sessions.contains_key(session_id))
-        });
-        if running && self.inner.active_turn_id.lock().await.is_none() {
+        // `None` when the read failed or timed out: inconclusive.
+        let running = tokio::time::timeout(DELIVERY_LOOKUP_TIMEOUT, self.v2_get_json(url))
+            .await
+            .ok()
+            .flatten()
+            .and_then(|active| {
+                active
+                    .get("data")
+                    .and_then(Value::as_object)
+                    .map(|sessions| sessions.contains_key(session_id))
+            });
+        // Under the lock the pump takes to translate events, so no execution event slips in
+        // between this check and the turn it starts.
+        let mut v2 = self.inner.v2.lock().await;
+        let Some(running) = running else {
+            // Inconclusive: the stream's own output still establishes the execution's turn.
+            return;
+        };
+        v2.adopt_pending = false;
+        if running && v2.executions_seen == seen && self.inner.active_turn_id.lock().await.is_none()
+        {
             self.begin_provider_started_turn().await;
         }
+        drop(v2);
     }
 
     /// A best-effort OpenCode 2 read; failures are logged and read as absent.
