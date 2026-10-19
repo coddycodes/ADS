@@ -531,11 +531,33 @@ fn request_termination(child: &mut dyn ChildWrapper, report: &mut ProcessCleanup
                 return;
             }
         }
+        Err(error) if only_exited_members_refused(child, &error) => {
+            report.record_success();
+            return;
+        }
         Err(error) => report.record_failure(format!("kill ownership unit: {error}")),
     }
     match child.inner_mut().start_kill() {
         Ok(()) => report.record_success(),
         Err(error) => report.record_failure(format!("kill root child: {error}")),
+    }
+}
+
+/// Whether a refused group kill means the group has nothing left to stop. macOS refuses
+/// (`EPERM`) a `killpg` whose members have all exited but are not yet reaped, where Linux
+/// signals them; a root that exited on its own and is still unreaped leaves its group just
+/// so. `EPERM` means no member could be signalled, so with the root exited there is nothing
+/// a kill could still stop, and the root itself must not be killed by PID. Read without
+/// reaping, so the owner still reads the root's status.
+fn only_exited_members_refused(child: &dyn ChildWrapper, error: &io::Error) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        error.raw_os_error() == Some(libc::EPERM) && crate::process::exited_status(child).is_some()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (child, error);
+        false
     }
 }
 
