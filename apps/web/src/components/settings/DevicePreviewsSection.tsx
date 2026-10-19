@@ -8,7 +8,7 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { deviceEnvironment } from "../../state/device";
-import { useEnvironment } from "../../state/environments";
+import { useEnvironment, useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { useDevicePreviewsAvailability } from "../device/deviceAvailability";
 import {
@@ -27,7 +27,7 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 
 const TOGGLE_TITLE = "Device previews";
 
@@ -50,15 +50,39 @@ function runningNames(catalog: DeviceCatalog | null | undefined): ReadonlyArray<
 const joinNames = (names: ReadonlyArray<string>) =>
   names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 
+/** Settings → Mobile emulators: the device-preview toggle of every connected environment. */
+export function MobileSettingsPanel() {
+  const { environments } = useEnvironments();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const connected = environments.filter((candidate) => candidate.connection.phase === "connected");
+  // Until an environment connects, the primary one shows why its toggle can't be used yet.
+  const shown =
+    connected.length > 0 ? connected : primaryEnvironment === null ? [] : [primaryEnvironment];
+  return (
+    <SettingsPageContainer>
+      {shown.map((environment) => (
+        <DevicePreviewsSection
+          key={environment.environmentId}
+          environmentId={environment.environmentId}
+          title={shown.length > 1 ? `Device previews · ${environment.label}` : undefined}
+        />
+      ))}
+    </SettingsPageContainer>
+  );
+}
+
 /** The `enableDevicePreviews` toggle for one environment's server. */
 export function DevicePreviewsSection({
   environmentId,
+  title = "Device previews",
 }: {
   readonly environmentId: EnvironmentId | null;
+  /** Names the environment when the page lists several. */
+  readonly title?: string | undefined;
 }) {
   if (environmentId === null) return null;
   return (
-    <SettingsSection title="Device previews" id={DEVICE_PREVIEWS_SETTINGS_ANCHOR}>
+    <SettingsSection title={title} id={`${DEVICE_PREVIEWS_SETTINGS_ANCHOR}-${environmentId}`}>
       <DevicePreviewsToggle key={environmentId} environmentId={environmentId} />
     </SettingsSection>
   );

@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.10.1] - 2026-10-19
+
+BiBCode v0.10.1 gives device previews their own place in Settings, so they are easy to find.
+
+### Settings
+
+- Device previews moved from **Settings → Diagnostics** to a new **Settings → Mobile emulators** page. It lists a **Device previews** switch for every connected environment, named by environment when there is more than one, and the Device panel's **Open settings** goes straight to that environment's switch.
+- **Settings → About** no longer repeats a **View diagnostics** link; **Diagnostics** stays in the Settings sidebar.
+
 ## [v0.10.0] - 2026-10-18
 
 BiBCode v0.10.0 adds device previews: an Android emulator, or an iOS simulator on a macOS server, running beside the chat and streamed live to the browser and desktop. It also adds OpenCode 2 support, makes remote environments over slow links feel faster (terminal echo, compression on plain connections, fewer connect round trips, and resuming a thread instead of resending it), hardens **Revert to this message** against running and queued work, keeps Source Control responsive with thousands of changes, recovers long Codex threads in pages, and never sends an OpenCode message twice. This release includes the changes since v0.9.4; v0.9.5 was prepared but not published, and its changes are part of this release.

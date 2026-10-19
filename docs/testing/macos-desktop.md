@@ -571,7 +571,7 @@ xcrun simctl list devices | grep <udid>   # Shutdown
 pgrep -fl <udid>                          # no process BiBCode started
 ```
 
-1. **Setting.** Turn on **Settings → Diagnostics → Device previews**. With a
+1. **Setting.** Turn on **Settings → Mobile emulators → Device previews**. With a
    thread open, open **Device** from the right panel's `+` menu or run **Open
    device preview** from the command palette; neither is offered without an
    active thread. The picker lists the simulator

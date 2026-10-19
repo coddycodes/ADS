@@ -34,7 +34,6 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { DevicePreviewsSection } from "./DevicePreviewsSection";
 import { ProfilerSection } from "./ProfilerSection";
 import { ResourceDiagnosticsSections } from "./ResourceDiagnosticsSections";
 import { useOpenDirectoryInEditor } from "./useOpenDirectoryInEditor";
@@ -340,7 +339,7 @@ export function DiagnosticsSettingsPanel({
   profilerEnvironmentId = null,
   onProfilerEnvironmentChange = NO_OP,
 }: {
-  /** The environment the Profiler and Device previews sections show; the primary one when absent. */
+  /** The environment the Profiler section shows; the primary one when absent. */
   readonly profilerEnvironmentId?: EnvironmentId | null;
   readonly onProfilerEnvironmentChange?: (environmentId: EnvironmentId | null) => void;
 }) {
@@ -467,8 +466,6 @@ export function DiagnosticsSettingsPanel({
         selectedEnvironmentId={profilerEnvironmentId}
         onSelectEnvironment={onProfilerEnvironmentChange}
       />
-
-      <DevicePreviewsSection environmentId={profilerEnvironmentId ?? environmentId} />
 
       <ResourceDiagnosticsSections
         processData={processData}

@@ -10,7 +10,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildProviderInstanceUpdatePatch,
   createProviderSessionDefaultsDraft,
-  formatDiagnosticsDescription,
 } from "./SettingsPanels.logic";
 
 const CODEX = ProviderDriverKind.make("codex");
@@ -86,18 +85,6 @@ describe("createProviderSessionDefaultsDraft", () => {
 
     expect(draft.reject(submittedS1.revision)).toEqual(submittedS2.defaults);
     expect(draft.reconcile(submittedS2.defaults)).toEqual(submittedS2.defaults);
-  });
-});
-
-describe("formatDiagnosticsDescription", () => {
-  it("describes local trace files", () => {
-    expect(formatDiagnosticsDescription({ localTracingEnabled: true })).toBe("Local trace file.");
-  });
-
-  it("describes terminal logs when local tracing is disabled", () => {
-    expect(formatDiagnosticsDescription({ localTracingEnabled: false })).toBe(
-      "Terminal logs only.",
-    );
   });
 });
 

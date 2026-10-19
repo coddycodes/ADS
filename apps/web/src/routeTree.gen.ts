@@ -22,6 +22,7 @@ import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagn
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
 import { Route as SettingsLocalEnvironmentRouteImport } from './routes/settings.local-environment'
+import { Route as SettingsMobileRouteImport } from './routes/settings.mobile'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as SettingsRemoteServersRouteImport } from './routes/settings.remote-servers'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
@@ -98,6 +99,11 @@ const SettingsLocalEnvironmentRoute =
     path: '/local-environment',
     getParentRoute: () => SettingsRoute,
   } as any)
+const SettingsMobileRoute = SettingsMobileRouteImport.update({
+  id: '/mobile',
+  path: '/mobile',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
@@ -166,6 +172,7 @@ export interface FileRoutesByFullPath {
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/local-environment': typeof SettingsLocalEnvironmentRoute
+  '/settings/mobile': typeof SettingsMobileRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/remote-servers': typeof SettingsRemoteServersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
@@ -189,6 +196,7 @@ export interface FileRoutesByTo {
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/local-environment': typeof SettingsLocalEnvironmentRoute
+  '/settings/mobile': typeof SettingsMobileRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/remote-servers': typeof SettingsRemoteServersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
@@ -215,6 +223,7 @@ export interface FileRoutesById {
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/local-environment': typeof SettingsLocalEnvironmentRoute
+  '/settings/mobile': typeof SettingsMobileRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/remote-servers': typeof SettingsRemoteServersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
@@ -242,6 +251,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/keybindings'
     | '/settings/local-environment'
+    | '/settings/mobile'
     | '/settings/providers'
     | '/settings/remote-servers'
     | '/settings/source-control'
@@ -265,6 +275,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/keybindings'
     | '/settings/local-environment'
+    | '/settings/mobile'
     | '/settings/providers'
     | '/settings/remote-servers'
     | '/settings/source-control'
@@ -290,6 +301,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/keybindings'
     | '/settings/local-environment'
+    | '/settings/mobile'
     | '/settings/providers'
     | '/settings/remote-servers'
     | '/settings/source-control'
@@ -401,6 +413,13 @@ declare module '@tanstack/react-router' {
       path: '/local-environment'
       fullPath: '/settings/local-environment'
       preLoaderRoute: typeof SettingsLocalEnvironmentRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/mobile': {
+      id: '/settings/mobile'
+      path: '/mobile'
+      fullPath: '/settings/mobile'
+      preLoaderRoute: typeof SettingsMobileRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/providers': {
@@ -520,6 +539,7 @@ interface SettingsRouteChildren {
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsLocalEnvironmentRoute: typeof SettingsLocalEnvironmentRoute
+  SettingsMobileRoute: typeof SettingsMobileRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
   SettingsRemoteServersRoute: typeof SettingsRemoteServersRoute
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
@@ -536,6 +556,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsLocalEnvironmentRoute: SettingsLocalEnvironmentRoute,
+  SettingsMobileRoute: SettingsMobileRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsRemoteServersRoute: SettingsRemoteServersRoute,
   SettingsSourceControlRoute: SettingsSourceControlRoute,

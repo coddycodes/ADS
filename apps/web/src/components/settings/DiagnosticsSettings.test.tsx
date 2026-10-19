@@ -266,15 +266,6 @@ vi.mock("./ProfilerSection", () => ({
   ),
 }));
 
-vi.mock("./DevicePreviewsSection", () => ({
-  DevicePreviewsSection: (props: AnyProps) => (
-    <section
-      data-section-title="Device previews"
-      data-environment={(props.environmentId as string | null) ?? ""}
-    />
-  ),
-}));
-
 vi.mock("../ui/scroll-area", () => ({
   ScrollArea: (props: AnyProps) => <div data-scroll-area>{props.children as ReactNode}</div>,
 }));
@@ -1062,14 +1053,9 @@ describe("DiagnosticsSettingsPanel profiler section", () => {
     expect(markup).toContain('data-reports-selection="true"');
   });
 
-  it("follows the Profiler's environment in the Device previews section", () => {
+  it("leaves Device previews to Settings → Mobile emulators", () => {
     seedAll();
-    expect(
-      renderToStaticMarkup(
-        <DiagnosticsSettingsPanel profilerEnvironmentId={EnvironmentId.make("luna")} />,
-      ),
-    ).toMatch(/data-section-title="Device previews" data-environment="luna"/);
-    expect(render()).toMatch(/data-section-title="Device previews" data-environment="[^"]+"/);
+    expect(render()).not.toContain("Device previews");
   });
 });
 

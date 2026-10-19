@@ -1,12 +1,12 @@
 import type { DeviceAvailabilityKind, DevicePlatform, DeviceSnapshot } from "@bibcode/contracts";
 import { isQueryTransportCutoff } from "@bibcode/client-runtime/state/runtime";
 
-/** The Settings section the pane's "Open settings" lands on. */
+/** The Settings → Mobile emulators section the pane's "Open settings" lands on, suffixed by environment. */
 export const DEVICE_PREVIEWS_SETTINGS_ANCHOR = "device-previews";
 
 /** Shown wherever device previews are off, with a way to Settings next to it. */
 export const DEVICE_PREVIEWS_OFF_MESSAGE =
-  "Device previews are off. Turn them on in Settings → Diagnostics → Device previews.";
+  "Device previews are off. Turn them on in Settings → Mobile emulators.";
 
 export const DEVICE_PREVIEWS_UNSUPPORTED_MESSAGE =
   "This server's BiBCode version has no device previews. Update the server to use them.";
