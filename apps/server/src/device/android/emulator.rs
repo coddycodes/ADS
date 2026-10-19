@@ -9,7 +9,7 @@ use std::{
 };
 
 use process_wrap::tokio::CommandWrap;
-use tokio::time::Instant;
+use tokio::{task::JoinHandle, time::Instant};
 use tokio_util::sync::CancellationToken;
 
 use super::{
@@ -26,7 +26,10 @@ use crate::{
         catalog::{DeviceState, Orientation},
         stderr_tail::{STDERR_DRAIN_GRACE, StderrTail},
     },
-    diagnostics::{ProcessAttributionRegistry, profiler::exits},
+    diagnostics::{
+        ProcessAttributionRegistry,
+        profiler::{exits, redact::redact_message},
+    },
     process::{
         HelperSpawnError, RegisteredHelper, configure_supervised_background_command_wrap,
         spawn_registered_helper,
@@ -179,6 +182,11 @@ pub(crate) struct RunningEmulator {
     /// The discovery file that was found; removed on stop, since a killed emulator leaves
     /// it behind.
     pub discovery_file: PathBuf,
+    /// The end of the emulator's stderr, kept for as long as it runs so an exit nobody asked
+    /// for can say what the emulator last wrote.
+    pub stderr: StderrTail,
+    /// The task reading the stderr pipe into [`stderr`](Self::stderr).
+    pub stderr_drain: Option<JoinHandle<()>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -304,6 +312,8 @@ impl EmulatorLauncher {
                     height,
                     boot_orientation,
                     discovery_file: discovery_file.expect("a booted emulator was discovered"),
+                    stderr,
+                    stderr_drain: drain,
                 });
             }
             Err(Some(BootFailure::Exited(status))) => {
@@ -413,13 +423,21 @@ impl EmulatorLauncher {
 
 /// Stops an emulator: asks the VM to shut down, waits up to [`STOP_TIMEOUT`] for it to
 /// exit, then kills its process group.
-pub(crate) async fn stop(running: RunningEmulator) {
+///
+/// An emulator that had already exited on its own has its stderr read to the end (for at
+/// most [`STDERR_DRAIN_GRACE`]) and logged, redacted; that tail is returned. A stop of a
+/// running emulator returns `None`.
+pub(crate) async fn stop(running: RunningEmulator) -> Option<String> {
     let RunningEmulator {
         helper,
         client,
         discovery_file,
+        stderr,
+        stderr_drain,
         ..
     } = running;
+    // Read before the stop is noted: only an exit that came first is unrequested.
+    let unrequested = helper.exited();
     exits::note_stop_requested(helper.pid);
     let deadline = Instant::now() + STOP_TIMEOUT;
     match tokio::time::timeout_at(deadline, client.shutdown_vm()).await {
@@ -430,8 +448,22 @@ pub(crate) async fn stop(running: RunningEmulator) {
     while helper.exited().is_none() && Instant::now() < deadline {
         tokio::time::sleep(POLL_INTERVAL).await;
     }
+    let pid = helper.pid;
     helper.terminate().await;
     remove_discovery_file(&discovery_file);
+    let status = unrequested?;
+    // The pipe ends once the whole process group is gone, which `terminate` waited for.
+    if let Some(drain) = stderr_drain {
+        let _ = tokio::time::timeout(STDERR_DRAIN_GRACE, drain).await;
+    }
+    let tail = stderr.text().map(|text| redact_message(&text));
+    tracing::warn!(
+        %status,
+        pid,
+        stderr = tail.as_deref().unwrap_or_default(),
+        "android emulator exited after booting"
+    );
+    tail
 }
 
 /// The first even console port whose adb neighbour is also free on loopback, and `grpc`
@@ -660,7 +692,8 @@ mod tests {
         // The VM shutdown ends the stub, so stop never needs its kill.
         controller.exit_on_shutdown(pid);
         let started = Instant::now();
-        stop(running).await;
+        // A requested stop has no exit to explain.
+        assert_eq!(stop(running).await, None);
         assert!(started.elapsed() < STOP_TIMEOUT);
         assert_eq!(
             *controller.vm_state.lock().unwrap(),
@@ -715,6 +748,32 @@ mod tests {
             "{error:?}"
         );
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// An emulator that crashes after reaching Ready still has its stderr: the stop that
+    /// follows reads it to the end and returns it.
+    #[tokio::test]
+    async fn a_crash_after_boot_keeps_the_emulator_stderr() {
+        let controller = FakeController::spawn().await;
+        let sdk = FakeSdk::new()
+            .avds(&["Pixel"])
+            .launch_stub(LaunchStub::CrashesWhenTold {
+                grpc_port: controller.port,
+                token: "test-token",
+                message: "FATAL: qemu main_loop fault",
+            })
+            .write();
+        let running = sdk
+            .launcher()
+            .launch("Pixel", |_| {}, &CancellationToken::new())
+            .await
+            .unwrap();
+        let pid = running.helper.pid;
+        sdk.end_emulator();
+        wait_until(|| running.helper.exited().is_some()).await;
+        let tail = stop(running).await;
+        assert_eq!(tail.as_deref(), Some("FATAL: qemu main_loop fault"));
+        assert!(!process_alive(pid));
     }
 
     #[tokio::test]
