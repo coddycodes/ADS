@@ -167,12 +167,6 @@ export function createProviderSessionDefaultsDraft(
   };
 }
 
-export function formatDiagnosticsDescription(input: {
-  readonly localTracingEnabled: boolean;
-}): string {
-  return input.localTracingEnabled ? "Local trace file." : "Terminal logs only.";
-}
-
 export function buildProviderInstanceUpdatePatch(input: {
   readonly settings: Pick<ServerSettings, "providers" | "providerInstances">;
   readonly instanceId: ProviderInstanceId;

@@ -17,6 +17,12 @@ const h = vi.hoisted(() => ({
   updates: [] as Array<{ environmentId: string; patch: unknown }>,
   updateResult: null as unknown,
   updateGate: null as Promise<void> | null,
+  environments: [] as Array<{
+    environmentId: string;
+    label: string;
+    connection: { phase: string };
+  }>,
+  primaryEnvironment: null as { environmentId: string; label: string } | null,
 }));
 
 vi.mock("../device/deviceAvailability", () => ({
@@ -25,6 +31,8 @@ vi.mock("../device/deviceAvailability", () => ({
 
 vi.mock("../../state/environments", () => ({
   useEnvironment: (environmentId: string) => ({ environmentId, label: "Work Server" }),
+  useEnvironments: () => ({ environments: h.environments }),
+  usePrimaryEnvironment: () => h.primaryEnvironment,
 }));
 
 vi.mock("../../state/device", () => ({
@@ -73,7 +81,7 @@ vi.mock("../ui/alert-dialog", () => ({
   ),
 }));
 
-import { DevicePreviewsSection } from "./DevicePreviewsSection";
+import { DevicePreviewsSection, MobileSettingsPanel } from "./DevicePreviewsSection";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-work");
 
@@ -99,16 +107,21 @@ const runningCatalog: DeviceCatalog = {
 
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
 
-async function render(): Promise<HTMLDivElement> {
+async function render(
+  element: ReactNode = <DevicePreviewsSection environmentId={ENVIRONMENT_ID} />,
+): Promise<HTMLDivElement> {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
   mounted.push({ root, container });
   await act(async () => {
-    root.render(<DevicePreviewsSection environmentId={ENVIRONMENT_ID} />);
+    root.render(element);
   });
   return container;
 }
+
+const headings = (container: HTMLElement) =>
+  [...container.querySelectorAll("h2")].map((heading) => heading.textContent);
 
 async function click(element: Element | null | undefined) {
   if (!(element instanceof HTMLElement)) throw new Error("Nothing to click");
@@ -127,6 +140,8 @@ beforeEach(() => {
   h.updates.length = 0;
   h.updateResult = null;
   h.updateGate = null;
+  h.environments = [];
+  h.primaryEnvironment = null;
 });
 
 afterEach(async () => {
@@ -234,5 +249,43 @@ describe("DevicePreviewsSection", () => {
     expect(container.textContent).toContain(
       "This server's BiBCode version has no device previews. Update the server to use them.",
     );
+  });
+});
+
+describe("MobileSettingsPanel", () => {
+  const environment = (environmentId: string, label: string, phase = "connected") => ({
+    environmentId,
+    label,
+    connection: { phase },
+  });
+
+  it("shows one Device previews toggle for a single connected environment", async () => {
+    h.environments = [environment("environment-work", "Work Server")];
+    const container = await render(<MobileSettingsPanel />);
+    expect(headings(container)).toEqual(["Device previews"]);
+    expect(container.querySelectorAll("[role='switch']")).toHaveLength(1);
+  });
+
+  it("names each connected environment and leaves out the disconnected ones", async () => {
+    h.environments = [
+      environment("environment-work", "Work Server"),
+      environment("environment-mac", "Mac mini"),
+      environment("environment-off", "Old box", "disconnected"),
+    ];
+    const container = await render(<MobileSettingsPanel />);
+    expect(headings(container)).toEqual([
+      "Device previews · Work Server",
+      "Device previews · Mac mini",
+    ]);
+    expect(container.querySelector("#device-previews-environment-mac")).not.toBeNull();
+  });
+
+  it("shows the primary environment while nothing has connected yet", async () => {
+    h.availability = { known: false, supported: false, enabled: false };
+    h.environments = [environment("environment-work", "Work Server", "connecting")];
+    h.primaryEnvironment = { environmentId: "environment-work", label: "Work Server" };
+    const container = await render(<MobileSettingsPanel />);
+    expect(headings(container)).toEqual(["Device previews"]);
+    expect(container.textContent).toContain("Connecting to Work Server…");
   });
 });

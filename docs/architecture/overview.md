@@ -1939,8 +1939,8 @@ bounded memory, and works while the server is stopped.
 `apps/server/src/device/` runs Android emulators and, on a macOS server, iOS
 simulators, at most one running device per platform per environment, and shows
 them in a right-panel `device` surface. Everything is off until the environment's
-`enableDevicePreviews` setting (default `false`, toggled at **Settings →
-Diagnostics → Device previews**) is on; servers that support it advertise the
+`enableDevicePreviews` setting (default `false`, toggled per environment at
+**Settings → Mobile emulators**) is on; servers that support it advertise the
 `devicePreviews` capability, and older servers get no device RPC. While the
 setting is off, every `device.*` method fails with
 `DevicePreviewsDisabledError` (a stream fails at subscribe), media sockets close

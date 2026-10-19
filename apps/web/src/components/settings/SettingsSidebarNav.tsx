@@ -11,6 +11,7 @@ import {
   PanelBottomIcon,
   ServerIcon,
   Settings2Icon,
+  SmartphoneIcon,
   TerminalIcon,
 } from "lucide-react";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
@@ -42,6 +43,7 @@ export type SettingsSectionPath =
   | "/settings/keybindings"
   | "/settings/providers"
   | "/settings/source-control"
+  | "/settings/mobile"
   | "/settings/archived"
   | "/settings/diagnostics"
   | "/settings/about";
@@ -61,6 +63,7 @@ export const BASE_SETTINGS_NAV_ITEMS: ReadonlyArray<SettingsNavItem> = [
   { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
   { label: "Providers", to: "/settings/providers", icon: BotIcon },
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
+  { label: "Mobile emulators", to: "/settings/mobile", icon: SmartphoneIcon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
   { label: "Diagnostics", to: "/settings/diagnostics", icon: ActivityIcon },
   { label: "About", to: "/settings/about", icon: InfoIcon },

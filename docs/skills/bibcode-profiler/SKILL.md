@@ -100,7 +100,7 @@ Modes chain: monitor, then diagnose what appeared, then report it.
 ## Monitor
 
 1. Run `P status --json`. When `enabled` is `false`, ask the user to turn it on:
-   **Settings → About → View diagnostics → Profiler → Record profiling data**,
+   **Settings → Diagnostics → Profiler → Record profiling data**,
    choosing the environment first when several are connected. The switch
    applies live. Turning it on is the user's call, because it records on their
    machine and adds a small CPU and disk cost (an idle headless server measured

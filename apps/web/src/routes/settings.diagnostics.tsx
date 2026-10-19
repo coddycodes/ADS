@@ -5,10 +5,7 @@ import { useCallback } from "react";
 import { DiagnosticsSettingsPanel } from "../components/settings/DiagnosticsSettings";
 
 export interface DiagnosticsSearch {
-  /**
-   * The environment whose profiler and device previews the page shows, such as the one the
-   * status bar or a device pane named.
-   */
+  /** The environment whose profiler the page shows, such as the one the status bar named. */
   readonly environment?: string;
 }
 

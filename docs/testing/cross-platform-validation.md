@@ -2673,7 +2673,7 @@ sizes. Cover relevant:
   between light and dark while the app shows the home screen and again while it
   shows a thread: the window follows each switch without a reload; with
   **Light** or **Dark** selected, the app ignores the switch;
-- **Settings → About → View diagnostics → Profiler** in light and dark: the environment
+- **Settings → Diagnostics → Profiler** in light and dark: the environment
   selector with a remote environment connected; the switch off (**Off. Turn on
   to start recording. Crash checks for the previous run still happen.**),
   **Starting...**, and recording (**Recording since … · … MB · … events**, plus
@@ -2984,7 +2984,7 @@ platform's renderer isolation. The profiler directory is then
 `$BIBCODE_HOME/userdata/profiler`. Run `profiler` commands with the same
 executable and the same `BIBCODE_HOME`: `<executable> profiler status --json`.
 
-1. **Enable.** Launch the app, open **Settings → About → View diagnostics →
+1. **Enable.** Launch the app, open **Settings → Diagnostics →
    Profiler**, keep
    the local environment selected, and turn on **Record profiling data**. The
    status line moves from **Starting...** to **Recording since …**.
@@ -3087,7 +3087,7 @@ Record each client's OS, app or browser version, and profile type.
 
 1. **Off by default.** Before turning anything on, the right panel's `+` menu
    has no **Device** item and the command palette has no **Open device
-   preview**. Turn on **Settings → Diagnostics → Device previews** for the
+   preview**. Turn on **Settings → Mobile emulators → Device previews** for the
    environment; both appear.
 2. **Availability.** Open the Device panel: it lists the AVDs. On a host
    without the SDK, without platform-tools, without AVDs, or without

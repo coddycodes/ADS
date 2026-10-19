@@ -184,9 +184,8 @@ function OpenSettingsButton({ environmentId }: { readonly environmentId: Environ
       variant="outline"
       onClick={() => {
         void navigate({
-          to: "/settings/diagnostics",
-          search: { environment: environmentId },
-          hash: DEVICE_PREVIEWS_SETTINGS_ANCHOR,
+          to: "/settings/mobile",
+          hash: `${DEVICE_PREVIEWS_SETTINGS_ANCHOR}-${environmentId}`,
         });
       }}
     >

@@ -1,5 +1,5 @@
 import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -66,11 +66,7 @@ import {
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { canPreviewAnyUrlInRuntime } from "../../previewStateStore";
-import {
-  primaryServerObservabilityAtom,
-  primaryServerProvidersAtom,
-  serverEnvironment,
-} from "../../state/server";
+import { primaryServerProvidersAtom, serverEnvironment } from "../../state/server";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { useProjects, useServerConfigs } from "../../state/entities";
@@ -102,7 +98,6 @@ import {
   buildProviderInstanceUpdatePatch,
   createSettingsMapDraft,
   createProviderSessionDefaultsDraft,
-  formatDiagnosticsDescription,
 } from "./SettingsPanels.logic";
 import {
   SettingResetButton,
@@ -1339,11 +1334,6 @@ export function TerminalSettingsPanel() {
 }
 
 export function AboutSettingsPanel() {
-  const observability = useAtomValue(primaryServerObservabilityAtom);
-  const diagnosticsDescription = formatDiagnosticsDescription({
-    localTracingEnabled: observability?.localTracingEnabled ?? false,
-  });
-
   return (
     <SettingsPageContainer>
       <SettingsSection title="About">
@@ -1355,15 +1345,6 @@ export function AboutSettingsPanel() {
             description="Current version of the application."
           />
         )}
-        <SettingsRow
-          title="Diagnostics"
-          description={diagnosticsDescription}
-          control={
-            <Button render={<Link to="/settings/diagnostics" />} size="xs" variant="outline">
-              View diagnostics
-            </Button>
-          }
-        />
       </SettingsSection>
     </SettingsPageContainer>
   );

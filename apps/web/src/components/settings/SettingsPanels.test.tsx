@@ -1052,13 +1052,10 @@ describe("AgentsSettingsPanel", () => {
 });
 
 describe("AboutSettingsPanel", () => {
-  it("renders diagnostics with its tracing description", () => {
-    h.observability = { localTracingEnabled: true };
-
+  it("has no Diagnostics row; Diagnostics has its own Settings page", () => {
     const markup = render(<AboutSettingsPanel />);
 
-    expect(markup).toContain("Local trace file.");
-    expect(markup).toContain("View diagnostics");
+    expect(markup).not.toContain("View diagnostics");
   });
 
   it("changes the hosted update track", () => {

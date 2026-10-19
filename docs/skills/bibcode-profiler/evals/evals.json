@@ -8,7 +8,7 @@
       "files": [],
       "expectations": [
         "Runs `profiler status --json` through the desktop AppImage, located via the APPIMAGE entry of the running bibcode-desktop process or by asking, instead of assuming `bibcode` is on PATH",
-        "If `enabled` is false, asks the user to turn on Settings → About → View diagnostics → Profiler → Record profiling data and waits, without editing settings.json",
+        "If `enabled` is false, asks the user to turn on Settings → Diagnostics → Profiler → Record profiling data and waits, without editing settings.json",
         "Watches with `profiler findings --follow --duration <time> --json` in bounded rounds of at most 10 minutes, with a shell timeout longer than the duration",
         "Summarizes new or changed findings by severity after each round",
         "After each round, also lists findings with `--since` set shortly before the previous round ended and merges them by id, so findings that changed between rounds are reported",
@@ -86,7 +86,7 @@
       "expectations": [
         "Gives `ssh devbox bibcode profiler status --json` and the findings and events commands as the way to read the remote data",
         "Notes that `bibcode` must be on the PATH of a non-interactive ssh shell, and `--base-dir` or BIBCODE_HOME for a non-default data root",
-        "Says to enable the profiler for the devbox environment in Settings → About → View diagnostics → Profiler, choosing it in the Environment selector, without editing settings.json",
+        "Says to enable the profiler for the devbox environment in Settings → Diagnostics → Profiler, choosing it in the Environment selector, without editing settings.json",
         "Explains that request records live on the environment that served the request and how slowPart (server, network, render, unknown) separates the delays",
         "Offers MCP as optional, for example `claude mcp add bibcode-profiler -- ssh devbox bibcode profiler mcp`"
       ]

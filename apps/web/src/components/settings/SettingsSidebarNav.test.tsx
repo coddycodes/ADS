@@ -52,6 +52,7 @@ describe("settings navigation", () => {
       ["Keybindings", "/settings/keybindings"],
       ["Providers", "/settings/providers"],
       ["Source Control", "/settings/source-control"],
+      ["Mobile emulators", "/settings/mobile"],
       ["Archive", "/settings/archived"],
       ["Diagnostics", "/settings/diagnostics"],
       ["About", "/settings/about"],

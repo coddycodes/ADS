@@ -1205,7 +1205,7 @@ The Device surface runs an Android emulator (AVD), or on a macOS server an iOS
 simulator, on the server of the active thread's environment and shows its
 screen beside the chat. It is off by default.
 
-**Turn it on.** Open **Settings → Diagnostics → Device previews** and turn on
+**Turn it on.** Open **Settings → Mobile emulators** and turn on
 **Device previews** ("Android emulators and, on macOS servers, iOS
 simulators.") for that environment. Turning the setting off while a device runs
 asks first, naming the running devices, then stops them. A server too old for
