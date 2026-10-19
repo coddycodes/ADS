@@ -295,8 +295,13 @@ when a browser client and a development or standalone server are available on
 this platform; otherwise record it as unavailable evidence.
 
 Use Codex Computer Use to operate the packaged executable. Confirm the
-executable path and PID before using any frame as evidence. At normal and
-minimum sizes verify:
+executable path and PID before using any frame as evidence. Keep the session
+unlocked and the window visible for every timing or rendering measurement:
+with the screen locked or the window hidden, WebKit reports the page as
+`hidden`, fires no animation frames and composites nothing, so paint and frame
+timings and compositor stacks in `sample` cannot be taken. Record such steps
+as not verified, with the lock evidence (`ioreg -n Root -d1` shows
+`CGSSessionScreenIsLocked`). At normal and minimum sizes verify:
 
 - when only the local Mac environment is configured, the rail shows Local and
   Add Project has no remote target; saved remote environments appear as separate
@@ -526,6 +531,102 @@ ones:
 
   The release server job runs the same `codesign --verify`, so a failure here
   predicts a failed release; record it.
+
+## Android device previews
+
+Run the shared [Android device previews](./cross-platform-validation.md#android-device-previews)
+procedure with this machine as the server host, and record these platform
+values:
+
+- **Acceleration.** `emulator -accel-check` (the Hypervisor framework) and the
+  AVD's ABI, which must match the host (`arm64-v8a` on Apple silicon).
+- **Discovery directories.** `~/Library/Caches/TemporaryItems/avd/running`,
+  then `${ANDROID_EMULATOR_HOME:-$HOME/.android}/avd/running`.
+- **Process check.** `pgrep -fl 'emulator|qemu-system'` prints nothing after
+  stop, after the setting is turned off, and after server shutdown.
+- **WebView.** The desktop client's macOS version (WKWebView), and whether it
+  showed video or still images with the "Video isn't available" reason.
+
+## iOS Simulator previews
+
+Run this on a Mac with Xcode set up and at least one `Shutdown` iPhone
+simulator, after the shared
+[iOS simulator previews](./cross-platform-validation.md#ios-simulator-previews)
+focused and opt-in tests:
+
+```sh
+BIBCODE_IOS_SIM_TESTS=1 cargo test -p bibcode-server --test ios_simulator -- --nocapture
+```
+
+Record `xcodebuild -version`, `xcode-select -p`, the simulator's name, UDID,
+and runtime (`xcrun simctl list devices available`), and every simulator that
+is already `Booted` before the run; BiBCode must leave those alone. Use the
+packaged app from [Application and DMG build inspection](#application-and-dmg-build-inspection)
+with its local environment and a fresh `BIBCODE_HOME`, and turn on the
+[Profiler](../architecture/overview.md#profiler). After each numbered step
+that ends a device, run:
+
+```sh
+xcrun simctl list devices | grep <udid>   # Shutdown
+pgrep -fl <udid>                          # no process BiBCode started
+```
+
+1. **Setting.** Turn on **Settings → Diagnostics → Device previews**. With a
+   thread open, open **Device** from the right panel's `+` menu or run **Open
+   device preview** from the command palette; neither is offered without an
+   active thread. The picker lists the simulator
+   under **iOS**, named like `iPhone 17 Pro · iOS 26.5`; a simulator already
+   booted outside BiBCode is listed disabled with "— Running outside
+   BiBCode". If the iOS group says view only, record its message and run the
+   view-only checks in step 7 instead of steps 3–5.
+2. **Open.** Pick the simulator and **Start**. The pill reaches **Ready**;
+   record the boot time. The screen shows video with no **Still images**
+   badge within 5 s, and it moves (the clock, an animation). Leave the home
+   screen still for at least 10 s: "The screen stopped updating." does not
+   appear.
+3. **Touch and Home.** Tap **Settings** on the home screen: it opens. Drag a
+   list and release outside the panel: nothing stays pressed. Press **Home**:
+   the home screen returns. Press **Lock**, then **Home** to wake it.
+4. **Keys and paste.** Open Safari and click its address bar. Type a URL and
+   use Backspace, the arrow keys, and Enter: the text and the page follow.
+   Type a long all-ASCII string (about 200 characters) without pasting: every
+   character arrives in order. Copy text with an accent or emoji (`café 😀`)
+   on the Mac, focus the screen, and choose the toolbar's **Paste**: in the
+   packaged app this reads the clipboard inside WKWebView; record whether
+   macOS asks for permission. iOS may show **Allow Paste**; allow it and
+   confirm the text arrives and the panel shows its one-time note. Repeat
+   with ⌘V on the focused screen.
+5. **Rotate.** Use **Rotate left**, then **Rotate right** twice, then
+   **Rotate left**, in an app that rotates (Safari), pressing each once both
+   Rotate buttons are enabled again (their tooltip reads "Rotating…" while a
+   turn is in flight). Record the catalog's
+   orientation and the video's size after each: **Rotate left** from portrait
+   gives `landscape`, with the status bar at the screen's top and the
+   simulator's home indicator at the bottom, and the video keeps playing at
+   the new size. Tap a link in landscape: the tap lands where you clicked.
+6. **Close.** **Stop** the device: within 30 s the pill shows **Stopped**, and
+   the checks above pass.
+7. **View only** (when Xcode's interfaces are unsupported, or after switching
+   Xcode with `xcode-select` while the server runs). The iOS group shows the
+   reason; a started simulator shows **Still images** with "Video is off: …",
+   and every input control is disabled with "This simulator is view only".
+8. **Setting off.** Start the simulator again, wait for **Ready**, and turn
+   the setting off: the confirmation names the simulator, and after it the
+   checks pass.
+9. **Quit.** Start it once more, wait for **Ready**, and quit the app with
+   ⌘Q: after it exits the checks pass.
+10. **Profiler.** Run
+    `profiler events --kind device.lifecycle --json`: each start has
+    `platform` `ios` and the phases `start`, `ready`, `stop`, with no
+    simulator name or UDID. Optionally start the device and run
+    `xcrun simctl shutdown <udid>` from a shell: the pill shows **Failed:
+    Shutdown outside BiBCode** within about 3 s, and
+    `profiler findings --kind subprocess.crash --json` lists one labelled
+    `ios-simulator` with outcome `exit 1`.
+
+A simulator BiBCode booted that stays `Booted`, a simulator booted before the
+run that BiBCode shut down, a stuck touch, or a blank screen without a
+fallback fails the run.
 
 ## Process-group cleanup
 

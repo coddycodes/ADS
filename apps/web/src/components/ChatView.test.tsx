@@ -219,6 +219,10 @@ vi.mock("../state/shell", () => ({
   },
 }));
 
+vi.mock("./device/deviceAvailability", () => ({
+  useDevicePreviewsAvailability: () => ({ known: true, supported: true, enabled: false }),
+}));
+
 vi.mock("../state/server", () => ({
   serverEnvironment: {
     upsertKeybinding: { key: "server.upsertKeybinding" },

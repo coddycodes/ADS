@@ -10,12 +10,14 @@ rust-version = "1.98.0"
 axum = { version = "0.8.9", features = ["form", "http1", "json", "tokio", "ws"] }
 backtrace = "0.3.76"
 base64 = "0.22.1"
-block2 = "0.6"
+block2 = "=0.6.2"
 breakpad-symbols = "=0.27.0"
+bytes = "1.12.1"
 cairo-rs = { version = "0.18", features = ["png"] }
 clap = { version = "4.6.6", features = ["derive", "env"] }
 crash-handler = ">=0.8.1, <0.9"
 dirs = "6.0.0"
+dispatch2 = { version = "=0.3.1", default-features = false }
 ed25519-dalek = { version = "3.0.0", features = ["pem", "pkcs8"] }
 futures-util = { version = "0.3.34", features = ["sink"] }
 getrandom = "0.4.3"
@@ -26,6 +28,7 @@ httpdate = "1.0.3"
 hyper = { version = "1.11.1", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }
 if-addrs = "0.15.0"
+jpeg-encoder = "0.6.1"
 junction = "2.0.0"
 libc = "0.2"
 mime_guess = "2.0.5"
@@ -42,21 +45,29 @@ object = { version = "0.37.3", default-features = false, features = [
   "read_core",
   "std",
 ] }
-objc2 = "0.6"
+objc2 = "=0.6.4"
 objc2-app-kit = { version = "0.3", features = ["NSImage", "NSBitmapImageRep", "NSGraphics"] }
-objc2-foundation = "0.3"
+objc2-foundation = "=0.3.2"
 objc2-web-kit = { version = "0.3", features = [
   "WKWebView",
   "WKWebViewConfiguration",
   "WKWebsiteDataStore",
   "WKBackForwardList",
 ] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false }
+objc2-core-media = { version = "=0.3.2", default-features = false }
+objc2-core-video = { version = "=0.3.2", default-features = false }
+objc2-io-surface = { version = "=0.3.2", default-features = false }
+objc2-video-toolbox = { version = "=0.3.2", default-features = false }
 open = "5.4.3"
 percent-encoding = "2.3.2"
 p256 = { version = "0.14.0", features = ["ecdsa"] }
+png = "=0.18.1"
 portpicker = "0.1.1"
 portable-pty = "0.9.0"
 process-wrap = { version = "9.1.0", features = ["tokio1"] }
+prost = "0.14.4"
+protox = "0.9.1"
 reqwest = { version = "0.13.4", default-features = false, features = [
   "form",
   "json",
@@ -97,9 +108,17 @@ tokio = { version = "1.53.1", features = [
   "sync",
   "time",
 ] }
+tokio-stream = { version = "0.1.19", features = ["net", "sync"] }
 tokio-util = { version = "0.7.19", features = ["io", "io-util", "rt"] }
 tokio-tungstenite = "0.30.0"
 toml = "1.1.5"
+tonic = { version = "0.14.6", default-features = false, features = [
+  "router",
+  "transport",
+  "codegen",
+] }
+tonic-prost = "0.14.6"
+tonic-prost-build = "0.14.6"
 tower-http = { version = "0.7.1", features = ["cors"] }
 tower = { version = "0.5.3", features = ["util"] }
 tracing = "0.1"

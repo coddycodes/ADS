@@ -46,6 +46,34 @@
       "mode": "stream"
     },
     {
+      "name": "device.close",
+      "mode": "unary"
+    },
+    {
+      "name": "device.createMediaTicket",
+      "mode": "unary"
+    },
+    {
+      "name": "device.input",
+      "mode": "unary"
+    },
+    {
+      "name": "device.open",
+      "mode": "unary"
+    },
+    {
+      "name": "device.rotate",
+      "mode": "unary"
+    },
+    {
+      "name": "device.subscribeCatalog",
+      "mode": "stream"
+    },
+    {
+      "name": "device.subscribeFrames",
+      "mode": "stream"
+    },
+    {
       "name": "filesystem.browse",
       "mode": "unary"
     },
@@ -606,12 +634,14 @@
       "mode": "unary"
     }
   ],
-  "streamMethodCount": 22,
-  "expectedTopLevelStreamShapes": 77,
+  "streamMethodCount": 24,
+  "expectedTopLevelStreamShapes": 79,
   "expectedOrchestrationEventShapes": 24,
   "streamShapeFixtures": [
     "stream-shapes/cloud__installRelayClient-00.json",
     "stream-shapes/cloud__installRelayClient-01.json",
+    "stream-shapes/device__subscribeCatalog-00.json",
+    "stream-shapes/device__subscribeFrames-00.json",
     "stream-shapes/git__runStackedAction-00.json",
     "stream-shapes/git__runStackedAction-01.json",
     "stream-shapes/git__runStackedAction-02.json",
@@ -710,6 +740,16 @@
     "typed-failures/auth__confirmPairing-00.json",
     "typed-failures/cloud__getRelayClientStatus-00.json",
     "typed-failures/cloud__getRelayClientStatus-01.json",
+    "typed-failures/device__close-00.json",
+    "typed-failures/device__close-01.json",
+    "typed-failures/device__createMediaTicket-00.json",
+    "typed-failures/device__createMediaTicket-01.json",
+    "typed-failures/device__input-00.json",
+    "typed-failures/device__input-01.json",
+    "typed-failures/device__open-00.json",
+    "typed-failures/device__open-01.json",
+    "typed-failures/device__rotate-00.json",
+    "typed-failures/device__rotate-01.json",
     "typed-failures/filesystem__browse-00.json",
     "typed-failures/filesystem__browse-01.json",
     "typed-failures/filesystem__browse-02.json",
@@ -1039,6 +1079,18 @@
     "typed-failures/cloud__getRelayClientStatus-01.json": "67fe28f9afa4f2e8a20948477a9e72996dd013c6e33b3a768d31eb3a49061509",
     "stream-shapes/cloud__installRelayClient-00.json": "d72984e6ed66012583831425f7858d43663cca51511d232cca4cf9b38e69dab0",
     "stream-shapes/cloud__installRelayClient-01.json": "2eecaf787815a8b34e25922d2645c0f8418e5586da295614f657084176cc1c24",
+    "typed-failures/device__close-00.json": "af2e6f6fc75064fb3975ef3e0e5145342748c3260d1801d16a675a91c5e31660",
+    "typed-failures/device__close-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
+    "typed-failures/device__createMediaTicket-00.json": "af2e6f6fc75064fb3975ef3e0e5145342748c3260d1801d16a675a91c5e31660",
+    "typed-failures/device__createMediaTicket-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
+    "typed-failures/device__input-00.json": "af2e6f6fc75064fb3975ef3e0e5145342748c3260d1801d16a675a91c5e31660",
+    "typed-failures/device__input-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
+    "typed-failures/device__open-00.json": "af2e6f6fc75064fb3975ef3e0e5145342748c3260d1801d16a675a91c5e31660",
+    "typed-failures/device__open-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
+    "typed-failures/device__rotate-00.json": "af2e6f6fc75064fb3975ef3e0e5145342748c3260d1801d16a675a91c5e31660",
+    "typed-failures/device__rotate-01.json": "ab08a5a9459dd717e1ee0d5bea28eb9092c8b860c22cb291e86bb70075bf559e",
+    "stream-shapes/device__subscribeCatalog-00.json": "186e120c3e713485b864fb4e47be3136d43c9b41fce6e5a28ff0f3688e7df445",
+    "stream-shapes/device__subscribeFrames-00.json": "d3123bc3db4e3f4cd3dca236e547d840a18fd397c297ae3e0dc4d21334d76888",
     "typed-failures/filesystem__browse-00.json": "cf92d3187235fcd3f7b9dd2c85f9b6124fea971d61ea9e4bb74d0085d3bc22ae",
     "typed-failures/filesystem__browse-01.json": "d30145df2096df3675ffde7a840acb67a4f2e26cb8d9a607b828688560d2ca82",
     "typed-failures/filesystem__browse-02.json": "b2fbde91e8a8ad7b3e8fce9b4d378041efef24ffd25156a058c7cb69f6fd91e9",
@@ -1252,12 +1304,12 @@
     "stream-shapes/subscribePreviewEvents-04.json": "f501cfce13136cfa7ae7bad4febe03c8c2f251deb39b95d89a955a1c39b449aa",
     "stream-shapes/subscribePreviewEvents-05.json": "89668c3852d503a2fe4466c71e7b0b6285ef3d74616c8779b8c4af43bfaafb5a",
     "stream-shapes/subscribeProjectEntries-00.json": "16f4733b371dc6218161dd4edea9bdd75720b67a9e18533b6bdf20d00e120db5",
-    "stream-shapes/subscribeServerConfig-00.json": "4913fec567cad3267231eb7c7cc410370b0b1e826df7638222f364adff8fea0c",
+    "stream-shapes/subscribeServerConfig-00.json": "211c2af0b9db51738eaf5fa27607f1ceafbbfe0aa5abdc825a5058de86e2080e",
     "stream-shapes/subscribeServerConfig-01.json": "a1736b568373952030c3383ae56ebc777ff487d1732c6adfface416574e1dbf3",
     "stream-shapes/subscribeServerConfig-02.json": "36b0b9a31ce8df621280f5016f3e2532006044a3c437aa00f6e7f76e4789569c",
-    "stream-shapes/subscribeServerConfig-03.json": "1ab542bf5091262b9d30979b98fa35bb211313a2db751da2b1baeb53166b188b",
-    "stream-shapes/subscribeServerLifecycle-00.json": "947c8d48bb9dd4dc158aaccb3918d55e7d6d190074648c689ed495ca5d96b660",
-    "stream-shapes/subscribeServerLifecycle-01.json": "1f1920d9c9cf7af4755bbc5a731058b2f9b12a14b3df7519a2b90e9557418083",
+    "stream-shapes/subscribeServerConfig-03.json": "ba916623a2172db0bf1e2edefc0941bac7e0c0d8225321ac20b7144377506593",
+    "stream-shapes/subscribeServerLifecycle-00.json": "86ce81f64474961203dfa10e6953a8c30d33793dc0c14969599d5b6c6a7d0208",
+    "stream-shapes/subscribeServerLifecycle-01.json": "4083378cf26cbd961959c204ce997148d39869247a6bf4ed6ece61fdecef32ad",
     "stream-shapes/subscribeTerminalEvents-00.json": "cbd00577e4b1aee3d7026ea6efc0c135670a5af101a6ea0610ca7ecaa1385832",
     "stream-shapes/subscribeTerminalEvents-01.json": "8910c9265e5eb8ab0cdd98289a899d28b720c08decad2ec7d2967346570eaee6",
     "stream-shapes/subscribeTerminalEvents-02.json": "218d03fab79954845f38c1ed752082aab5340619a28c684920da1af6a7360fa8",
@@ -1459,6 +1511,8 @@
     "request.json",
     "stream-shapes/cloud__installRelayClient-00.json",
     "stream-shapes/cloud__installRelayClient-01.json",
+    "stream-shapes/device__subscribeCatalog-00.json",
+    "stream-shapes/device__subscribeFrames-00.json",
     "stream-shapes/gitManager__runOperation-00.json",
     "stream-shapes/gitManager__runOperation-01.json",
     "stream-shapes/gitManager__runOperation-02.json",
@@ -1555,6 +1609,16 @@
     "typed-failures/auth__confirmPairing-00.json",
     "typed-failures/cloud__getRelayClientStatus-00.json",
     "typed-failures/cloud__getRelayClientStatus-01.json",
+    "typed-failures/device__close-00.json",
+    "typed-failures/device__close-01.json",
+    "typed-failures/device__createMediaTicket-00.json",
+    "typed-failures/device__createMediaTicket-01.json",
+    "typed-failures/device__input-00.json",
+    "typed-failures/device__input-01.json",
+    "typed-failures/device__open-00.json",
+    "typed-failures/device__open-01.json",
+    "typed-failures/device__rotate-00.json",
+    "typed-failures/device__rotate-01.json",
     "typed-failures/filesystem__browse-00.json",
     "typed-failures/filesystem__browse-01.json",
     "typed-failures/filesystem__browse-02.json",

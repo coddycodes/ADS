@@ -20,6 +20,10 @@ use super::http_routes::{
 };
 use crate::preview::{OpenRequestError, PreviewManager};
 
+mod device_tools;
+pub use device_tools::DeviceTools;
+use device_tools::device_tool_descriptors;
+
 const RELAY_LINK_PROOF_TYP: &str = "bibcode-env-link+jwt";
 const RELAY_MINT_REQUEST_TYP: &str = "bibcode-cloud-mint+jwt";
 const RELAY_HEALTH_REQUEST_TYP: &str = "bibcode-cloud-health+jwt";
@@ -296,6 +300,7 @@ pub struct ConnectMcpService {
     endpoint: EndpointRuntime,
     pairing: PairingIssuer,
     preview: PreviewInvoker,
+    devices: Option<DeviceTools>,
     mcp: Arc<Mutex<McpState>>,
     /// Serializes changes to the stored link and its managed endpoint (link, unlink, and the
     /// startup restore), so a restore never reapplies a config a newer change replaced.
@@ -344,6 +349,7 @@ impl ConnectMcpService {
         endpoint: EndpointRuntime,
         pairing: PairingIssuer,
         preview: PreviewInvoker,
+        devices: Option<DeviceTools>,
     ) -> Result<Self, ConnectMcpError> {
         let database_path = database_path.as_ref().to_path_buf();
         let initialize_path = database_path.clone();
@@ -358,6 +364,7 @@ impl ConnectMcpService {
             endpoint,
             pairing,
             preview,
+            devices,
             mcp: Arc::new(Mutex::new(McpState::default())),
             link_mutation: Arc::default(),
         })
@@ -1005,7 +1012,9 @@ impl ConnectMcpService {
                 "serverInfo":{"name":"BiBCode","version":env!("CARGO_PKG_VERSION")}
             }),
             "ping" => json!({}),
-            "tools/list" => json!({"tools": tool_descriptors()}),
+            "tools/list" => {
+                json!({"tools": tool_descriptors(self.devices.as_ref().is_some_and(DeviceTools::enabled))})
+            }
             "tools/call" => {
                 self.call_tool(request.get("params"), scope, context.cancellation)
                     .await
@@ -1062,6 +1071,22 @@ impl ConnectMcpService {
             .and_then(|value| value.get("name"))
             .and_then(Value::as_str)
             .unwrap_or_default();
+        if let Some(operation) = name.strip_prefix("device_") {
+            let arguments = params
+                .and_then(|value| value.get("arguments"))
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            // A valid MCP credential is the operate grant here, as for `preview_*`: see
+            // `DeviceTools`.
+            return match &self.devices {
+                Some(devices) => {
+                    devices
+                        .call(&scope, operation, arguments, cancellation)
+                        .await
+                }
+                None => tool_failure("McpUnknownToolError", "Unknown tool."),
+            };
+        }
         let Some(operation) = name.strip_prefix("preview_") else {
             return tool_failure("McpUnknownToolError", "Unknown preview tool.");
         };
@@ -1639,7 +1664,15 @@ fn operation_wire_name(operation: &str) -> &str {
     }
 }
 
-fn tool_descriptors() -> Vec<Value> {
+fn tool_descriptors(devices_enabled: bool) -> Vec<Value> {
+    let mut tools = preview_tool_descriptors();
+    if devices_enabled {
+        tools.extend(device_tool_descriptors());
+    }
+    tools
+}
+
+fn preview_tool_descriptors() -> Vec<Value> {
     TOOL_OPERATIONS
         .iter()
         .map(|operation| {

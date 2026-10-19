@@ -940,6 +940,9 @@ Plan surfaces can also appear when the active provider/session supplies them.
 - **Diff** reviews branch or worktree changes.
 - **Activity** shows structured provider activity when available.
 - **Plan** displays the active agent plan when available.
+- **Device** shows an Android emulator or, on a macOS server, an iOS simulator
+  running on the environment's server (see [Device previews](#device-previews)).
+  It is in the `+` menu only while device previews are on.
 - **Pull request** shows one pull or merge request beside the thread (see
   [Pull and merge requests in the panel](#pull-and-merge-requests-in-the-panel)).
   It has no entry in the `+` menu; it opens from the places listed there.
@@ -1196,6 +1199,108 @@ printing. It also prints when the command can't reach BiBCode, for example
 inside a sandbox without network access. See
 [Provider architecture](../architecture/providers.md) for the mechanism.
 
+### Device previews
+
+The Device surface runs an Android emulator (AVD), or on a macOS server an iOS
+simulator, on the server of the active thread's environment and shows its
+screen beside the chat. It is off by default.
+
+**Turn it on.** Open **Settings → Diagnostics → Device previews** and turn on
+**Device previews** ("Android emulators and, on macOS servers, iOS
+simulators.") for that environment. Turning the setting off while a device runs
+asks first, naming the running devices, then stops them. A server too old for
+device previews shows the switch disabled with "This server's BiBCode version
+has no device previews. Update the server to use them."
+
+- **Android** needs the Android SDK on the server, with `emulator` and
+  `platform-tools`, at least one virtual device created in Android Studio's
+  Device Manager, and hardware acceleration (KVM on Linux). The server finds
+  the SDK through `ANDROID_HOME` or `ANDROID_SDK_ROOT`, or in the platform's
+  default location. If **Back**, **Home**, **Recents**, or the volume buttons
+  do nothing, set `hw.keyboard=yes` in the virtual device's `config.ini`
+  (under `~/.android/avd/<name>.avd/`) and start it again: devices created
+  with `avdmanager` default to `no`, and the emulator then ignores those keys.
+- **iOS** needs a macOS server with Xcode installed and set up (open it once,
+  or run `sudo xcodebuild -runFirstLaunch`) and at least one iPhone or iPad
+  simulator, created in Xcode under **Window → Devices and Simulators**.
+  BiBCode uses the Xcode that `xcode-select` points to.
+
+**Open it.** Choose **Device** from the right panel's `+` menu, or run **Open
+device preview** from the command palette. The device list groups devices
+under **Android** and **iOS**. When a platform cannot run a device, its group
+says why (for example Android SDK not found, no virtual devices, Xcode not
+found, or no simulators) and what to do; the other platform still works. A
+simulator already running outside BiBCode, for example in Xcode's Simulator
+app, is listed as "— Running outside BiBCode" and cannot be picked: shut it
+down there first.
+
+**Use it.** Pick a device and choose **Start**. The state pill moves through
+**Starting…** and **Booting…** to **Ready**; a first boot can take a few
+minutes. Then:
+
+- click or drag on the screen to touch it. An iOS simulator takes one finger:
+  there is no pinch or other multi-touch;
+- with the screen focused, type to send text, and use Backspace, Delete,
+  Enter, Tab, and the arrow keys; shortcuts with Ctrl, Cmd, or Alt stay with
+  BiBCode, and Shift+Tab leaves the screen;
+- paste into the focused screen with Ctrl+V or ⌘V, or choose **Paste** in the
+  toolbar, to send the clipboard's text. If the browser will not hand the
+  clipboard to the button, the panel says so; click the screen and use the
+  keyboard shortcut instead;
+- use the toolbar's **Rotate left**, **Rotate right**, and **Home**, plus
+  **Back**, **Recents**, **Power**, **Volume down**, and **Volume up** on
+  Android, or **Lock**, **Volume down**, and **Volume up** on iOS. An Android
+  screen turns only when the device's auto-rotate is on and the app allows
+  it; an iOS screen turns when the app on screen supports that orientation.
+  **Rotate left** from portrait gives landscape on both. The two Rotate
+  buttons wait, with the tooltip "Rotating…", until the device has turned (or
+  refused), so the next press starts from where the last one left the device.
+  When an Android screen keeps its orientation, the panel says the device
+  didn't rotate for a few seconds, and that the app on screen may lock its
+  orientation or the device's auto-rotate may be off.
+
+On iOS, text that a US keyboard can type is typed key by key. Other text, such
+as accented letters or emoji, is pasted into the simulator instead, and iOS
+may ask to **Allow Paste**. Answer it before typing more: keys typed while the
+prompt is up can arrive before the pasted text. The panel reminds you once.
+
+On Android, text is typed as plain ASCII. Typing or pasting other characters,
+such as accented letters or emoji, sends nothing, and the panel says so for a
+few seconds. The characters typed or pasted with them are not sent either, so
+typing `café au lait` quickly can lose more than the `é`. A paste of more than
+100 characters sends nothing either, and the panel asks you to paste it in parts.
+
+A disabled control says why when you point at it. **Stop** shuts the device
+down. One device runs per platform: an Android emulator and an iOS simulator
+can run side by side, but to start another device of the same platform, stop
+the running one first. A device that fails shows **Failed:** with the reason,
+for example a boot that did not finish within 180 s, or a simulator shut down
+outside BiBCode. BiBCode only shuts down simulators it started.
+
+**View only.** An iOS simulator opens view only when BiBCode cannot use this
+Xcode's simulator interfaces: an Xcode release that changed them ("Xcode
+version not supported"), or a change of Xcode while the server was running
+(restart the server). The iOS group and the screen say so before and after you
+start it. A view-only simulator shows still screenshots about twice a second,
+with no video, touch, keys, rotation, or toolbar buttons. Rarely, one
+simulator opens view only because BiBCode could not attach to its screen, or
+takes no input because it could not connect to its input; the **Still
+images** badge or the error after a touch says why. Stop it and start it
+again.
+
+**Video or still images.** The desktop app, and a browser on HTTPS or
+`localhost`, show the screen as video. A browser on plain HTTP to another
+address, such as `http://192.168.1.20:3773`, cannot decode video and shows
+**Still images** instead (at most 15 per second), as does any client of a
+server started with `--unsafe-no-auth` and any view-only simulator; the
+badge's tooltip says why and what to do. If video stops arriving, **Reconnect
+screen** starts it again.
+
+**Agents.** While device previews are on, coding agents on that environment can
+use the `device_list`, `device_open`, `device_screenshot`, and `device_close`
+tools on the same devices you see. They disappear from an agent's tool list
+once the setting is off.
+
 ### Activity and targeted Stop
 
 Activity combines provider-attributed observation with capability-gated
@@ -1389,6 +1494,11 @@ The Files surface is a full file manager for the active workspace:
   actions visible but disabled.
 
 ## Current limitations
+
+- Device previews run one Android emulator and one iOS simulator at a time per
+  environment, and iOS simulators only on macOS servers. iOS takes a single
+  touch, and BiBCode cannot install apps or create simulators. Two people
+  watching the same device both control it.
 
 - Staged-row diff viewing in the right-panel Source Control surface does not yet
   use a true `git diff --cached` source. Git Manager diffs are a separate path.

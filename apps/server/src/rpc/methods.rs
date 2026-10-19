@@ -65,6 +65,13 @@ pub const ACTIVE_RPC_METHODS: &[RpcMethodSpec] = &[
     mutation_unary("auth.confirmPairing"),
     read_unary("cloud.getRelayClientStatus"),
     mutation_stream("cloud.installRelayClient"),
+    mutation_unary("device.close"),
+    read_unary("device.createMediaTicket"),
+    mutation_unary("device.input"),
+    mutation_unary("device.open"),
+    mutation_unary("device.rotate"),
+    read_stream("device.subscribeCatalog"),
+    read_stream("device.subscribeFrames"),
     read_unary("filesystem.browse"),
     mutation_unary("git.preparePullRequestThread"),
     mutation_unary("git.resolvePullRequest"),
@@ -244,6 +251,22 @@ mod tests {
         for name in ["pullRequests.runAction", "pullRequests.checkout"] {
             assert!(ACTIVE_RPC_METHODS.contains(&mutation_unary(name)), "{name}");
         }
+    }
+
+    #[test]
+    fn device_methods_have_their_modes() {
+        for name in ["device.subscribeCatalog", "device.subscribeFrames"] {
+            assert!(ACTIVE_RPC_METHODS.contains(&read_stream(name)), "{name}");
+        }
+        for name in [
+            "device.open",
+            "device.close",
+            "device.input",
+            "device.rotate",
+        ] {
+            assert!(ACTIVE_RPC_METHODS.contains(&mutation_unary(name)), "{name}");
+        }
+        assert!(ACTIVE_RPC_METHODS.contains(&read_unary("device.createMediaTicket")));
     }
 
     #[test]

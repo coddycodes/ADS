@@ -32,6 +32,7 @@ use super::{
 };
 use crate::{
     auth::{AuthService, ClientMetadata, Principal, authorization_error, required_scope},
+    device::media::MediaChannel,
     diagnostics::{
         TraceDiagnosticsStore,
         profiler::{
@@ -286,6 +287,8 @@ pub(crate) struct RpcSessionContext {
     connection: Arc<RpcConnectionLifetime>,
     /// How this connection reached the server; `None` without a socket (tests).
     reach: Option<ClientReach>,
+    /// The transport this connection runs on, which media tickets are bound to.
+    channel: MediaChannel,
 }
 
 struct RpcConnectionLifetime {
@@ -316,6 +319,9 @@ impl PairingConfirmationLatch {
     }
 }
 
+// Every constructor starts on `MediaChannel::Plain`, so media tickets minted on the
+// connection redeem only on the plain media route. A transport that is not a plaintext
+// WebSocket must call `with_channel` (`rpc/e2ee.rs` sets `MediaChannel::E2ee`).
 impl RpcSessionContext {
     #[must_use]
     pub(crate) fn unauthenticated() -> Self {
@@ -331,6 +337,7 @@ impl RpcSessionContext {
             pairing_confirmation: None,
             connection: Arc::default(),
             reach: None,
+            channel: MediaChannel::Plain,
         }
     }
 
@@ -347,6 +354,7 @@ impl RpcSessionContext {
             pairing_confirmation: Some(pairing_confirmation),
             connection: Arc::default(),
             reach: None,
+            channel: MediaChannel::Plain,
         }
     }
 
@@ -354,6 +362,18 @@ impl RpcSessionContext {
     pub(crate) fn with_reach(mut self, reach: Option<ClientReach>) -> Self {
         self.reach = reach;
         self
+    }
+
+    #[must_use]
+    pub(crate) fn with_channel(mut self, channel: MediaChannel) -> Self {
+        self.channel = channel;
+        self
+    }
+
+    /// The transport this connection runs on: plain WebSocket or Noise E2EE.
+    #[must_use]
+    pub(crate) fn channel(&self) -> MediaChannel {
+        self.channel
     }
 
     /// How this connection reached the server: its socket's local address and `Host`.

@@ -163,6 +163,8 @@ const testState = vi.hoisted(() => ({
   environments: [] as unknown[],
   activeEnvironmentId: null as EnvironmentId | null,
   activeThread: null as unknown,
+  deviceAvailability: { known: true, supported: true, enabled: false },
+  deviceAvailabilityFor: [] as unknown[],
   activeDraftThread: null as unknown,
   defaultProjectRef: null as unknown,
   handleNewThread: vi.fn(),
@@ -258,6 +260,13 @@ vi.mock("../terminalSurfaceState", () => ({
   useThreadHasTerminalSurface: () => testState.terminalSurfaceOpen,
 }));
 
+vi.mock("./device/deviceAvailability", () => ({
+  useDevicePreviewsAvailability: (environmentId: unknown) => {
+    testState.deviceAvailabilityFor.push(environmentId);
+    return testState.deviceAvailability;
+  },
+}));
+
 vi.mock("../state/server", () => ({
   primaryServerKeybindingsAtom: "atom:keybindings",
 }));
@@ -339,6 +348,8 @@ vi.mock("./ui/toast", () => ({
 }));
 
 import { CommandPalette, reduceCommandPaletteUiState } from "./CommandPalette";
+import { scopeThreadRef } from "@bibcode/client-runtime/environment";
+import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixtures
@@ -599,6 +610,8 @@ beforeEach(() => {
   ];
   testState.activeEnvironmentId = null;
   testState.activeThread = makeThread("thread-1");
+  testState.deviceAvailability = { known: true, supported: true, enabled: false };
+  testState.deviceAvailabilityFor = [];
   testState.activeDraftThread = null;
   testState.defaultProjectRef = null;
   testState.clientSettings = DEFAULT_CLIENT_SETTINGS;
@@ -762,6 +775,25 @@ describe("root actions", () => {
     expect(values).not.toContain("action:new-thread");
     expect(values).not.toContain("action:new-thread-in");
     expect(values).toContain("action:add-project");
+  });
+
+  it("offers the device preview only while device previews are on", async () => {
+    openPalette();
+    expect(allItems().map((item) => item.value)).not.toContain("action:open-device-preview");
+
+    testState.deviceAvailability = { known: true, supported: true, enabled: true };
+    rerender();
+    expect(allItems().map((item) => item.value)).toContain("action:open-device-preview");
+    executeValue("action:open-device-preview");
+    await flushPromises();
+    const thread = testState.activeThread as { environmentId: string; id: string };
+    expect(testState.deviceAvailabilityFor).toContain(thread.environmentId);
+    expect(
+      selectActiveRightPanel(
+        useRightPanelStore.getState().byThreadKey,
+        scopeThreadRef(thread.environmentId as EnvironmentId, thread.id as ThreadId),
+      ),
+    ).toBe("device");
   });
 
   it("navigates to settings and closes the palette", async () => {

@@ -70,6 +70,7 @@ fn connect_environment_descriptor(config: &ServerConfig) -> serde_json::Value {
             "vcsCloneReattach": true,
             "attachmentStaging": true,
             "profiler": true,
+            "devicePreviews": true,
             "previewTunnels": true,
         },
     })
@@ -386,6 +387,9 @@ impl ServerRuntime {
                         endpoint.endpoint(),
                         pairing,
                         preview,
+                        Some(crate::production::connect_mcp::DeviceTools::new(
+                            runtime.device_manager(),
+                        )),
                     )
                     .await
                     .map_err(|error| ServerError::ProductionInitialize(format!("{error:?}")))?,
@@ -570,6 +574,9 @@ fn core_http_routes(
     runtime: Arc<ProductionRuntime>,
     connect: Arc<ConnectMcpService>,
 ) -> HttpRoutesState {
+    // Its own pre-auth pool, so media sockets cannot starve E2EE handshakes.
+    let device_media =
+        crate::device::media_socket::MediaSocketState::new(runtime.device_manager(), auth.clone());
     let authorize = authorize_handler(auth);
     let json_runtime = runtime.clone();
     let json_connect = connect.clone();
@@ -629,6 +636,7 @@ fn core_http_routes(
         Box::pin(async move { connect.open_url_http(&preview, body, context).await })
             as crate::production::http_routes::BoxFuture<_>
     });
+    routes.device_media = Some(device_media);
     routes
 }
 
@@ -1194,6 +1202,7 @@ mod tests {
         assert_eq!(descriptor["capabilities"]["vcsCloneReattach"], true);
         assert_eq!(descriptor["capabilities"]["attachmentStaging"], true);
         assert_eq!(descriptor["capabilities"]["profiler"], true);
+        assert_eq!(descriptor["capabilities"]["devicePreviews"], true);
         assert_eq!(
             descriptor["remoteUpdateSupport"],
             serde_json::json!({

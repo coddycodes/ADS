@@ -104,6 +104,7 @@ async fn setup_service(
         endpoint,
         pairing,
         preview,
+        None,
     )
     .await
     .expect("connect service");
@@ -216,6 +217,7 @@ async fn setup_service_with_failures(
         endpoint,
         pairing,
         preview,
+        None,
     )
     .await
     .expect("connect service")

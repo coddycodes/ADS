@@ -819,6 +819,23 @@ ones:
   `subprocess.crash` finding: compare `profiler findings --json` before and
   after each stop.
 
+## Android device previews
+
+Run the shared [Android device previews](./cross-platform-validation.md#android-device-previews)
+procedure with this machine as the server host, and record these platform
+values:
+
+- **Acceleration.** `ls -l /dev/kvm` and the user's membership of its group
+  (`id -nG`), and `emulator -accel-check`. A server with neither `DISPLAY` nor
+  `WAYLAND_DISPLAY` launches the emulator with `-gpu swiftshader_indirect`;
+  record whether it did (`ps -o args= -p <emulator pid>`).
+- **Discovery directories.** `$XDG_RUNTIME_DIR/avd/running` (only when
+  `XDG_RUNTIME_DIR` is set), then `${ANDROID_EMULATOR_HOME:-$HOME/.android}/avd/running`.
+- **Process check.** `pgrep -a 'emulator|qemu-system'` prints nothing after
+  stop, after the setting is turned off, and after server shutdown.
+- **WebView.** The desktop client's WebKitGTK version, and whether it showed
+  video or still images with the "Video isn't available" reason.
+
 ## Process-group cleanup
 
 Capture PID, PPID, process group, start time, executable, and command line for

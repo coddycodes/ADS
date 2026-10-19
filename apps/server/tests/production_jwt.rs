@@ -189,6 +189,7 @@ async fn persistent_callbacks_sign_link_proofs_and_verify_health_requests_end_to
         endpoint,
         pairing,
         preview,
+        None,
     )
     .await
     .expect("connect service");

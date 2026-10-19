@@ -69,6 +69,7 @@ async fn setup_service(temp: &TempDir) -> ConnectMcpService {
         endpoint,
         pairing,
         preview,
+        None,
     )
     .await
     .expect("connect service")

@@ -951,6 +951,26 @@ must also reassemble a fragmented request and reject a bad pairing token.
 Without `BIBCODE_E2EE_SERVER_BIN`, the same file intentionally reports skipped
 so ordinary `vp test` does not depend on a prebuilt binary.
 
+When the device media socket routes, their Noise prologue, or the client in
+`packages/client-runtime/src/device/` change, run the media suite with the same
+binary from `packages/client-runtime`:
+
+```sh
+BIBCODE_E2EE_SERVER_BIN="$(git rev-parse --show-toplevel)/target/debug/bibcode" vp test run src/device/mediaSocketInterop.test.ts
+```
+
+The suite starts the server with `enableDevicePreviews` on, because both media
+routes answer `503` before the upgrade while previews are off. No device runs
+there, so the suite proves the boundary without streaming:
+
+- a bogus ticket closes `expired` well inside the server's ticket wait, on the
+  plain route and after a media-prologue handshake on the E2EE route;
+- a wrong pinned key closes `host-identity`;
+- a handshake without the media prologue closes 4403.
+
+Video streaming is covered by the native device run. Without the variable,
+this suite also reports skipped.
+
 ### Cross-container remote-server gate
 
 When remote authentication, pairing, E2EE, share-state derivation, revocation,
@@ -3013,6 +3033,236 @@ executable and the same `BIBCODE_HOME`: `<executable> profiler status --json`.
 Record each value in the execution report's profiler section. A dump without a
 `crashId` finding, a duplicate crash finding, or a monitor that outlives the
 app fails the smoke.
+
+## Android device previews
+
+Run this when a change touches `apps/server/src/device/`, the `device.*`
+contracts, the device media routes, `packages/client-runtime/src/device/`,
+`apps/web/src/components/device/`, or the Device previews setting, and for
+release qualification. The design is in
+[Device previews](../architecture/overview.md#device-previews) and
+[Device media sockets](../architecture/remote.md#device-media-sockets); the
+user flow is in the
+[user guide](../user/workspace-ui.md#device-previews). iOS simulators have
+their own section, [iOS simulator previews](#ios-simulator-previews).
+
+Run the focused coverage first. Root runs leave the component tests
+uncompiled, so also run the `apps/web` paths from `apps/web` with
+`vp test run --project unit` and the paths without the `apps/web/` prefix, as
+for the other
+[compiler-sensitive](./README.md#web-unit-tests-and-the-react-compiler) files:
+
+```sh
+cargo test -p bibcode-server --lib device:: -j 2
+cargo test -p bibcode-server --lib connect_mcp -j 2
+cargo test -p bibcode-server --test device_rpc --test device_media_socket --test e2ee_ws --test production_connect_mcp -j 2
+vp test run packages/contracts/src/device.test.ts packages/client-runtime/src/device apps/web/src/components/device apps/web/src/components/settings/DevicePreviewsSection.test.tsx
+```
+
+The fakes stand in for `emulator`, `adb`, the emulator gRPC service, and
+scrcpy-server, so these tests prove BiBCode's side of each boundary but not the
+real tools.
+
+Run the
+[media interop suite](#direct-e2ee-interop-gate) when the media routes or
+their client change. Everything below needs a real Android SDK.
+
+**Host.** Use a server host with the Android SDK (`emulator` and
+`platform-tools`), at least one AVD, and hardware acceleration: KVM on Linux
+(`emulator -accel-check` succeeds), the Hypervisor framework on macOS, or
+WHPX/AEHD on Windows. Record the SDK path, `emulator -version`, `adb version`,
+the AVD's name, API level, and ABI, and the platform page's acceleration
+check. The AVD needs `hw.keyboard=yes` in its `config.ini`: without it, Back,
+Home, Recents, and volume silently do nothing, and avdmanager-created AVDs
+default to `no`. On macOS, `-no-window` falls back to a software GPU
+(lavapipe), which wedged or crashed the guest in the first native run; record
+it if the guest stops answering. Start the server with `ANDROID_HOME` set in
+its own environment (a service manager does not read a login shell), on an
+address a second machine reaches. Use a fresh `BIBCODE_HOME` and enable the
+[Profiler](../architecture/overview.md#profiler) so `device.lifecycle` and any
+`subprocess.crash` are recorded. Clients: the desktop app on another machine
+with a pinned (E2EE) profile, and a browser on that machine opening
+`http://<server lan ip>:<port>` (not `localhost`, which is a secure context).
+Record each client's OS, app or browser version, and profile type.
+
+1. **Off by default.** Before turning anything on, the right panel's `+` menu
+   has no **Device** item and the command palette has no **Open device
+   preview**. Turn on **Settings → Diagnostics → Device previews** for the
+   environment; both appear.
+2. **Availability.** Open the Device panel: it lists the AVDs. On a host
+   without the SDK, without platform-tools, without AVDs, or without
+   acceleration (one at a time, where you can arrange it), the panel names
+   the problem and the fix. Record each message.
+3. **Start and discovery (native item 1).** Choose an AVD and **Start**. The
+   pill moves through **Starting…** and **Booting…** to **Ready** within
+   180 s. Record the boot time. While it runs, list `pid_*.ini` in each
+   directory of `emulator::default_discovery_dirs` (the platform page names
+   them) and record which one held the file, its name, and whether its
+   `pid_<pid>` matches the `emulator` process or a child. Record that it has
+   `grpc.port=` (equal to the `-grpc` argument on the emulator's command line)
+   and `grpc.token=` lines; never record the token's value. Record whether
+   the emulator printed any warning about `-grpc-use-token`. Confirm that the
+   console and gRPC ports listen on loopback only (`ss -ltnp`,
+   `lsof -nP -iTCP -sTCP:LISTEN`, or `Get-NetTCPConnection -State Listen`).
+4. **Video.** The desktop client shows video with no **Still images** badge
+   within 5 s of **Ready**. Record each desktop WebView's result (WKWebView,
+   WebView2, WebKitGTK); a WebView without `VideoDecoder` must show **Still
+   images** with the "Video isn't available" reason instead, never a blank
+   screen. The browser on `http://<lan ip>` shows **Still images** with the
+   same reason. A browser in a secure context (HTTPS, for example through the
+   relay) shows video. Record any decoder error from the developer tools
+   console of the window or the device worker.
+5. **Touch, keys, and paste (native item 3).** Turn on the device's pointer
+   location (`adb -s <serial> shell settings put system pointer_location 1`).
+   Tap the four corners and the centre of the screen and record the reported
+   coordinates against the display size (`adb -s <serial> shell wm size`).
+   Swipe down from the top to open the notification shade, and start a drag
+   on the screen that ends outside the panel: the touch ends and nothing stays
+   pressed. In a text field, type, use Backspace, Enter, and the arrow keys,
+   and paste ASCII text into the focused screen, then copy other ASCII text and
+   choose the toolbar's **Paste**: both arrive. In Chrome's address bar, the
+   slowest field measured, also paste with **Paste** ` PASTED-ok`,
+   ` CCCCCCCCCC`, and a mixed-case string of exactly 100 characters: each
+   arrives exactly, with no character lost or reordered (the guest once dropped
+   such text whole, and the tail of longer pastes, without an error). Then paste
+   one of 101 or more characters: it is refused, the panel shows "This device
+   can paste up to 100 characters at a time. Paste longer text in parts.", and
+   nothing reaches the field. Android sends only printable
+   ASCII, Return, and Tab, and the emulator promises only printable ASCII: in a
+   multi-line field (a notes app or a message being written), paste text with
+   a line break and a tab between words, and record whether the line break and
+   the tab each arrive. If either does not, narrow only Android's own check in
+   `android::input::send_batch` (or send Return and Tab as `Enter` and `Tab`
+   key events); leave the shared `is_us_typeable` and the web's `isUsTypeable`
+   as they are, because iOS types that set as keys. Type `é` on the focused
+   screen, and paste `café 😀` with ⌘V or Ctrl+V and with **Paste**: each is
+   refused, the panel shows "This device can type only plain ASCII text.
+   Accented letters, emoji, and other characters can't be sent from here
+   yet.", and nothing reaches the field. Type `a` right after the refused `é`:
+   it arrives, and the message stays up for about 5 s. Use **Back**, **Home**,
+   **Recents**, **Power**, and both volume buttons.
+6. **Rotation (native items 2, 3, and 4).** Turn on auto-rotate
+   (`adb -s <serial> shell settings put system accelerometer_rotation 1`) and
+   open an app that rotates. Use **Rotate right** and **Rotate left** through
+   all four orientations, pressing each once both Rotate buttons are enabled
+   again (their tooltip reads "Rotating…" while a turn is in flight). For
+   each, record the orientation the catalog shows,
+   `adb -s <serial> shell dumpsys input | grep -i SurfaceOrientation`, the
+   video's and the still images' width and height (landscape is wider than
+   tall), and the pointer location of a corner tap. **Rotate left** from
+   portrait in Chrome must give `mCurrentRotation=ROTATION_90`
+   (`adb -s <serial> shell dumpsys window displays | grep mCurrentRotation`)
+   with the camera cutout's band on the picture's **left**, and a landscape
+   tap on the address bar must focus it. The video must keep
+   playing at the new size without a fallback, which proves scrcpy's new
+   session and config packets were read. With auto-rotate off, a rotate
+   command leaves the screen and the catalog in portrait. Refusals: on the home
+   screen (the Pixel launcher refuses landscape), **Rotate left** leaves the
+   catalog in portrait, the sensor goes back within about 2.5 s (a later app
+   does not turn on its own), the panel shows "<device> didn't rotate. The app
+   on screen may lock its orientation, or auto-rotate may be off on the
+   device." for a few seconds, and a tap on an app icon opens it. From
+   landscape in Chrome, **Rotate left** again asks for 180°, which phones
+   refuse: the catalog stays on what the guest shows
+   (`mCurrentRotation`), the same note shows, and a tap lands where the picture
+   shows it. A turn that lands shows no note. Then a restart from landscape:
+   leave the device in landscape in an app that rotates, **Stop** it, and
+   start it again. The emulator may restore the turned display from its Quick
+   Boot snapshot. Either way, the first catalog entry that shows **Ready** must
+   agree with the guest (`mCurrentRotation`) in orientation and size. Record
+   that label and size, the native size (`adb -s <serial> shell wm size`,
+   the portrait panel in both cases), the video's and the still images' width
+   and height, and the pointer location of one centre tap, which must land at
+   the panel's centre.
+7. **scrcpy session (native item 4).** After the first video session, record
+   `adb -s <serial> shell sha256sum /data/local/tmp/bibcode-scrcpy-server-v4.1.jar`
+   (it equals `SCRCPY_SERVER_SHA256` in `device/android/scrcpy.rs`) and
+   `adb -s <serial> shell stat -c %Y` of the same file. Close every Device
+   panel showing the device and wait 5 s: `adb forward --list` has no
+   `localabstract:scrcpy_` entry and
+   `adb -s <serial> shell 'ps -A -o PID,ARGS | grep -c com.genymobile.scrcpy'`
+   counts no server (the `grep` itself may count once). Open the panel again:
+   video returns, and the jar's `stat` time is unchanged, which shows the push
+   was skipped.
+8. **Two clients.** With the desktop and the browser both showing the device,
+   both see each other's input. Where five desktop windows can show the
+   device, the fifth video socket is refused with `limit`; that window retries
+   three times within a few seconds and then shows still images. Close one of
+   the other four and reopen the fifth window's Device panel: it shows video.
+9. **Agents.** In a thread on the environment, ask the agent to list devices,
+   take a screenshot, and close the device. `device_screenshot` returns a PNG
+   no wider than 1080 px. Turn the setting off: the agent's next `device_*`
+   call fails with the "Device previews are off" error.
+10. **Stop and cleanup.** **Stop** the device. Within 10 s the pill shows
+    **Stopped**, the platform page's process check finds no `emulator` or
+    `qemu-system` process, its discovery file is gone, and
+    `adb forward --list` is empty (BiBCode leaves a stopping device's
+    scrcpy forward to adb, which drops it with the device, so this checks
+    that adb does). Start the device again, then turn the
+    setting off: the confirmation names the running device, and after it
+    the same checks pass and the panel shows how to turn previews on. Start
+    it once more and stop the server (or quit the desktop that hosts it):
+    the same checks pass after shutdown.
+11. **Crash.** Start a device and kill the `emulator` process
+    (or its `qemu-system` child) from a shell. Within a few seconds the pill
+    shows **Failed:** with the reason, and with the profiler on
+    `profiler findings --kind subprocess.crash --json` lists a finding
+    labelled `android-emulator`. Record
+    `profiler events --kind device.lifecycle --json` across the run: `start`,
+    `ready`, `stop`, and `fail` with `failureKind` `exited`.
+
+Record the results in the execution report's device previews section and mark
+each native verification item confirmed or corrected. A correction is a code
+change in the named function with its test updated, never only a runbook
+edit. A surviving `emulator` or `qemu-system` process, a stuck touch, or a
+blank screen without a fallback fails the run.
+
+## iOS simulator previews
+
+Run this when a change touches `apps/server/src/device/ios/`, the
+platform-neutral manager in `apps/server/src/device/`, the iOS parts of the
+`device.*` contracts, or the iOS paths of `apps/web/src/components/device/`,
+and for release qualification of a macOS server or desktop. iOS simulators
+run only on a macOS server with Xcode, so the Linux and Windows runbooks have
+no iOS entry; a Linux or Windows client connected to a macOS server sees the
+same devices and can repeat the client steps. The design is in
+[iOS simulators](../architecture/overview.md#ios-simulators).
+
+Run the [focused coverage](#android-device-previews) first; the fake-backend
+manager tests and the iOS planning, parsing, and orientation tests run on every
+platform. On a Mac with Xcode and a `Shutdown` iPhone simulator, also run the
+opt-in real-simulator tests. They boot it through CoreSimulator and check live
+frames and the H.264 stream (a config unit whose SPS has the screen's size and
+a level of at least 5.1, then a key unit), and that a settled home screen
+keeps its media socket alive with keepalives, at least 4 in 5 s with no
+silence of 1.5 s or more. They tap
+Settings open, type into
+Safari's address bar, and rotate Safari to each orientation, checking the
+reported orientation and size, and that `landscape` matches `simctl`'s own
+upright screenshot. They shut the simulator down from outside and expect the
+device `failed` within 5 s and the media stream closed with `stopped`. Each
+test shuts its simulator down again (`BIBCODE_IOS_SIM_UDID` picks the
+simulator; `BIBCODE_IOS_SIM_FRAMES_DIR` keeps the frames and screenshots):
+
+```sh
+BIBCODE_IOS_SIM_TESTS=1 cargo test -p bibcode-server --test ios_simulator -- --nocapture
+xcrun simctl list devices | grep Booted   # nothing the test booted is left running
+```
+
+The tests are not in CI. Never run them while the same simulator is open in
+BiBCode or Simulator: they find it busy. They fail at once with "Xcode's first
+launch is pending" when `xcodebuild -checkFirstLaunchStatus` exits non-zero,
+as after an Xcode update whose CoreSimulator is not installed yet; open Xcode
+once or run `sudo xcodebuild -runFirstLaunch`, then run them again.
+
+Then run the packaged-app procedure in
+[macOS iOS Simulator previews](./macos-desktop.md#ios-simulator-previews).
+Record the Xcode version (`xcodebuild -version`), the simulator's device type
+and runtime, whether simulators opened live or view-only (and the reason), and
+the results in the execution report's device previews section. A simulator
+BiBCode booted that is still `Booted` after a stop, a setting change, or a
+quit, a simulator BiBCode did not boot that it shut down, a stuck touch, or a
+blank screen without a fallback fails the run.
 
 ## Non-native compatibility audit
 

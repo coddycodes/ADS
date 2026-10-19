@@ -63,10 +63,10 @@
       "verificationDate": "2026-09-04",
       "status": "partial",
       "ledgerClosure": {
-        "rows": 232,
+        "rows": 247,
         "statuses": {
-          "green": 113,
-          "current": 73,
+          "green": 131,
+          "current": 70,
           "blocked": 42,
           "removed": 4
         }
@@ -310,7 +310,7 @@
   "inventorySummary": {
     "javascriptDirect": 81,
     "javascriptLedger": 83,
-    "rustRegistry": 123,
+    "rustRegistry": 138,
     "rustPath": 3,
     "rustGit": 1,
     "actions": 9,
@@ -1669,13 +1669,14 @@
     {
       "key": "rust:workspace:block2",
       "name": "block2",
-      "current": "0.6",
-      "target": "0.6",
+      "current": "=0.6.2",
+      "target": "0.6.2",
       "channel": "stable",
       "source": "https://crates.io/crates/block2",
       "cohort": "embedded-browser-preview",
       "platforms": ["macos"],
-      "status": "current"
+      "status": "green",
+      "notes": "Objective-C blocks for the CoreSimulator SimScreen callbacks, built with explicit block signatures because CoreSimulator sends them over XPC. Exact pin, released 2025-10-04 (at least 14 days before 2026-10-15); declared in [workspace.dependencies], consumed by the macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
     },
     {
       "key": "rust:workspace:breakpad-symbols",
@@ -1716,13 +1717,14 @@
     {
       "key": "rust:workspace:objc2",
       "name": "objc2",
-      "current": "0.6",
-      "target": "0.6",
+      "current": "=0.6.4",
+      "target": "0.6.4",
       "channel": "stable",
       "source": "https://crates.io/crates/objc2",
       "cohort": "embedded-browser-preview",
       "platforms": ["macos"],
-      "status": "current"
+      "status": "green",
+      "notes": "Objective-C runtime access for the in-process CoreSimulator loader; the exception feature catches every Objective-C exception before it reaches Rust. 0.6.5 (2026-10-05) is younger than the 14-day rule allows. Exact pin, released 2026-02-26 (at least 14 days before 2026-10-15); declared in [workspace.dependencies], consumed by the macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
     },
     {
       "key": "rust:workspace:objc2-app-kit",
@@ -1738,13 +1740,14 @@
     {
       "key": "rust:workspace:objc2-foundation",
       "name": "objc2-foundation",
-      "current": "0.3",
-      "target": "0.3",
+      "current": "=0.3.2",
+      "target": "0.3.2",
       "channel": "stable",
       "source": "https://crates.io/crates/objc2-foundation",
       "cohort": "embedded-browser-preview",
       "platforms": ["macos"],
-      "status": "current"
+      "status": "green",
+      "notes": "NSString, NSUUID and NSError for the CoreSimulator device lookup and callback registration. Exact pin, released 2025-10-04 (at least 14 days before 2026-10-15); declared in [workspace.dependencies], consumed by the macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
     },
     {
       "key": "rust:workspace:objc2-web-kit",
@@ -2987,6 +2990,186 @@
       "platforms": ["linux", "macos", "windows"],
       "status": "blocked",
       "notes": "Owned by third_party/portable-pty/Cargo.toml; update only with the vendored portable-pty release by following third_party/portable-pty/UPSTREAM.md."
+    },
+    {
+      "key": "rust:workspace:bytes",
+      "name": "bytes",
+      "current": "1.12.1",
+      "target": "1.12.1",
+      "channel": "stable",
+      "source": "https://crates.io/crates/bytes",
+      "cohort": "rust-device-previews",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "Already in the graph through hyper and tonic; a direct dependency for the zero-copy H.264 units the device media hub fans out to media sockets. Covered by the device::scrcpy and device::media tests."
+    },
+    {
+      "key": "rust:workspace:dispatch2",
+      "name": "dispatch2",
+      "current": "=0.3.1",
+      "target": "0.3.1",
+      "channel": "stable",
+      "source": "https://crates.io/crates/dispatch2",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "The private serial dispatch queue the SimScreen callbacks run on. Exact pin, released 2026-02-26 (at least 14 days before 2026-10-15); declared in [workspace.dependencies], consumed by the macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
+    },
+    {
+      "key": "rust:workspace:jpeg-encoder",
+      "name": "jpeg-encoder",
+      "current": "0.6.1",
+      "target": "0.6.1",
+      "channel": "stable",
+      "source": "https://crates.io/crates/jpeg-encoder",
+      "cohort": "rust-device-previews",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "Pure-Rust JPEG encoder for the device preview still-image stream (at most 720 px wide, quality 70); covered by the device::frames tests. Local encoding only."
+    },
+    {
+      "key": "rust:workspace:objc2-core-foundation",
+      "name": "objc2-core-foundation",
+      "current": "=0.3.2",
+      "target": "0.3.2",
+      "channel": "stable",
+      "source": "https://crates.io/crates/objc2-core-foundation",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "CFRetained ownership and type checks for the simulator framebuffer IOSurface. Exact pin, released 2025-10-04 (at least 14 days before 2026-10-15); declared in [workspace.dependencies], consumed by the macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
+    },
+    {
+      "key": "rust:workspace:objc2-core-media",
+      "name": "objc2-core-media",
+      "current": "=0.3.2",
+      "target": "0.3.2",
+      "channel": "stable",
+      "source": "https://crates.io/crates/objc2-core-media",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "Reads the H.264 sample buffers, block buffers, presentation times and SPS/PPS parameter sets that VideoToolbox returns for iOS simulator video. Exact pin, released 2025-10-04 (at least 14 days before 2026-10-15); declared in [workspace.dependencies], consumed by the macOS-only target table in apps/server; covered by the device::ios::encoder tests and the opt-in tests/ios_simulator.rs."
+    },
+    {
+      "key": "rust:workspace:objc2-core-video",
+      "name": "objc2-core-video",
+      "current": "=0.3.2",
+      "target": "0.3.2",
+      "channel": "stable",
+      "source": "https://crates.io/crates/objc2-core-video",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "Wraps the simulator framebuffer IOSurface in a CVPixelBuffer and pools the rotated buffers the H.264 encoder reads for iOS simulator video. Exact pin, released 2025-10-04 (at least 14 days before 2026-10-15); declared in [workspace.dependencies], consumed by the macOS-only target table in apps/server; covered by the device::ios::encoder tests and the opt-in tests/ios_simulator.rs."
+    },
+    {
+      "key": "rust:workspace:objc2-io-surface",
+      "name": "objc2-io-surface",
+      "current": "=0.3.2",
+      "target": "0.3.2",
+      "channel": "stable",
+      "source": "https://crates.io/crates/objc2-io-surface",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "Locks and reads the simulator framebuffer IOSurface (BGRA, padded rows) for live JPEG and PNG frames. Exact pin, released 2025-10-04 (at least 14 days before 2026-10-15); declared in [workspace.dependencies], consumed by the macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
+    },
+    {
+      "key": "rust:workspace:objc2-video-toolbox",
+      "name": "objc2-video-toolbox",
+      "current": "=0.3.2",
+      "target": "0.3.2",
+      "channel": "stable",
+      "source": "https://crates.io/crates/objc2-video-toolbox",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "Encodes iOS simulator screens as real-time H.264 (VTCompressionSession) and turns frames into the UI orientation (VTPixelRotationSession). Exact pin, released 2025-10-04 (at least 14 days before 2026-10-15); declared in [workspace.dependencies], consumed by the macOS-only target table in apps/server; covered by the device::ios::encoder tests and the opt-in tests/ios_simulator.rs."
+    },
+    {
+      "key": "rust:workspace:png",
+      "name": "png",
+      "current": "=0.18.1",
+      "target": "0.18.1",
+      "channel": "stable",
+      "source": "https://crates.io/crates/png",
+      "cohort": "ios-simulator-previews",
+      "platforms": ["macos"],
+      "status": "green",
+      "notes": "PNG encoding of live iOS simulator screenshots for the MCP screenshot tool; already in Cargo.lock through other dependencies. Exact pin, released 2026-02-14 (at least 14 days before 2026-10-15); declared in [workspace.dependencies], consumed by the macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
+    },
+    {
+      "key": "rust:workspace:prost",
+      "name": "prost",
+      "current": "0.14.4",
+      "target": "0.14.4",
+      "channel": "stable",
+      "source": "https://crates.io/crates/prost",
+      "cohort": "rust-device-previews",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "Protobuf messages for the Android emulator's loopback gRPC control API; already in the graph. Covered by the device::grpc tests against the fake emulator service."
+    },
+    {
+      "key": "rust:workspace:protox",
+      "name": "protox",
+      "current": "0.9.1",
+      "target": "0.9.1",
+      "channel": "stable",
+      "source": "https://crates.io/crates/protox",
+      "cohort": "rust-device-previews",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "Build dependency: compiles the vendored emulator_controller.proto in pure Rust so the build needs no protoc."
+    },
+    {
+      "key": "rust:workspace:tokio-stream",
+      "name": "tokio-stream",
+      "current": "0.1.19",
+      "target": "0.1.19",
+      "channel": "stable",
+      "source": "https://crates.io/crates/tokio-stream",
+      "cohort": "rust-device-previews",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "Stream adapters for the emulator gRPC screenshot and input streams; covered by the device::grpc, device::frames, and device::input tests."
+    },
+    {
+      "key": "rust:workspace:tonic",
+      "name": "tonic",
+      "current": "0.14.6",
+      "target": "0.14.6",
+      "channel": "stable",
+      "source": "https://crates.io/crates/tonic",
+      "cohort": "rust-device-previews",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "gRPC client (default features off; router, transport, codegen) for the Android emulator control API on 127.0.0.1 only; the fake server in device::testing uses the router. No network beyond loopback and no telemetry."
+    },
+    {
+      "key": "rust:workspace:tonic-prost",
+      "name": "tonic-prost",
+      "current": "0.14.6",
+      "target": "0.14.6",
+      "channel": "stable",
+      "source": "https://crates.io/crates/tonic-prost",
+      "cohort": "rust-device-previews",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "Prost codec for tonic; generated emulator client code depends on it."
+    },
+    {
+      "key": "rust:workspace:tonic-prost-build",
+      "name": "tonic-prost-build",
+      "current": "0.14.6",
+      "target": "0.14.6",
+      "channel": "stable",
+      "source": "https://crates.io/crates/tonic-prost-build",
+      "cohort": "rust-device-previews",
+      "platforms": ["linux", "macos", "windows"],
+      "status": "green",
+      "notes": "Build dependency: generates the emulator gRPC client from the protox-compiled descriptor set in apps/server/build.rs."
     }
   ]
 }

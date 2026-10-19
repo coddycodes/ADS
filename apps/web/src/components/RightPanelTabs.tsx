@@ -10,6 +10,7 @@ import {
   GitPullRequestArrow,
   Globe2,
   Plus,
+  Smartphone,
   TerminalSquare,
   X,
 } from "lucide-react";
@@ -57,6 +58,8 @@ interface RightPanelTabsProps {
   onAddDiff: () => void;
   onAddFiles: () => void;
   onAddSourceControl: () => void;
+  /** Opens the device pane; omitted while device previews are off or unsupported. */
+  onAddDevice?: (() => void) | undefined;
   browserAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
@@ -107,11 +110,27 @@ function RightPanelEmptyState(props: {
   onAddDiff: () => void;
   onAddFiles: () => void;
   onAddSourceControl: () => void;
+  /** Opens the device pane; omitted while device previews are off or unsupported. */
+  onAddDevice?: (() => void) | undefined;
   browserAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   sourceControlAvailable: boolean;
 }) {
+  // Hidden, not disabled, while device previews are off: the setting is the way in.
+  const deviceActions =
+    props.onAddDevice === undefined
+      ? []
+      : ([
+          {
+            label: "Device",
+            description: "Run an Android emulator.",
+            icon: Smartphone,
+            available: true,
+            disabledReason: null,
+            onClick: props.onAddDevice,
+          },
+        ] as const);
   const actions = [
     {
       label: "Browser",
@@ -153,6 +172,7 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_DISABLED_REASONS.sourceControl,
       onClick: props.onAddSourceControl,
     },
+    ...deviceActions,
   ] as const;
 
   return (
@@ -235,6 +255,8 @@ function surfaceTitle(
       );
     case "plan":
       return "Plan";
+    case "device":
+      return "Device";
     case "pullRequest":
       return formatChangeRequestNumber(surface.provider, surface.number);
     case "preview": {
@@ -282,6 +304,8 @@ function SurfaceIcon({ surface, theme }: { surface: RightPanelSurface; theme: "l
       return <TerminalSquare className="size-3.5 shrink-0" />;
     case "plan":
       return <ClipboardList className="size-3.5 shrink-0" />;
+    case "device":
+      return <Smartphone className="size-3.5 shrink-0" />;
     case "pullRequest":
       return <GitPullRequest className="size-3.5 shrink-0" />;
   }
@@ -500,6 +524,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     <GitPullRequestArrow />
                     Source Control
                   </SurfaceMenuItem>
+                  {props.onAddDevice === undefined ? null : (
+                    <SurfaceMenuItem available onClick={props.onAddDevice}>
+                      <Smartphone />
+                      Device
+                    </SurfaceMenuItem>
+                  )}
                 </MenuPopup>
               </Menu>
             ) : null}
@@ -515,6 +545,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
             onAddSourceControl={props.onAddSourceControl}
+            onAddDevice={props.onAddDevice}
             browserAvailable={props.browserAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}

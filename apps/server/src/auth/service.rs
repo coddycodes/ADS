@@ -1979,6 +1979,15 @@ impl AuthService {
             .expect("new authenticated connection guard is armed"))
     }
 
+    /// Moves `session_id`'s expiry to `expires_at_ms`, as if it had been issued so; only the
+    /// device media socket's tests use it.
+    #[cfg(all(test, unix))]
+    pub(crate) async fn set_session_expiry_for_test(&self, session_id: &str, expires_at_ms: i64) {
+        if let Some(session) = self.state.lock().await.sessions.get_mut(session_id) {
+            session.expires_at_ms = expires_at_ms;
+        }
+    }
+
     #[cfg(test)]
     pub(crate) async fn live_connection_count_for_test(&self, session_id: &str) -> usize {
         self.state

@@ -34,6 +34,7 @@ use tower_http::cors::{AllowCredentials, AllowOrigin, Any, CorsLayer};
 use crate::{
     auth,
     config::{ServerConfig, ServerMode},
+    device::media::MediaChannel,
     maintenance::{
         DESKTOP_MAINTENANCE_TOKEN_HEADER, MAINTENANCE_UPDATE_CANCEL_PATH,
         MAINTENANCE_UPDATE_COMMIT_PATH, MAINTENANCE_UPDATE_PREPARE_PATH,
@@ -41,7 +42,7 @@ use crate::{
         http_mutability,
     },
     preview::gateway::registry::{ClientReach, PreviewGateway},
-    production::http_routes::{self, HttpRoutesState},
+    production::http_routes::{self, DEVICE_MEDIA_E2EE_PATH, DEVICE_MEDIA_PATH, HttpRoutesState},
     remote_update::RemoteUpdateSupport,
     rpc::{
         E2eePreauthAdmission, MAX_E2EE_CIPHERTEXT_BYTES, RpcRegistry, RpcSessionContext,
@@ -122,6 +123,8 @@ pub const ROUTE_INVENTORY: &[RouteSpec] = &[
     route(RouteMethod::Get, "/api/assets/*"),
     route(RouteMethod::Post, "/api/preview/open-url"),
     route(RouteMethod::Get, "/api/transfers/*"),
+    route(RouteMethod::Get, DEVICE_MEDIA_PATH),
+    route(RouteMethod::Get, DEVICE_MEDIA_E2EE_PATH),
     route(RouteMethod::Post, "/api/transfers/*"),
     route(RouteMethod::Post, DESKTOP_SHUTDOWN_PATH),
     route(RouteMethod::Post, MAINTENANCE_UPDATE_PREPARE_PATH),
@@ -150,7 +153,7 @@ impl Connected<IncomingStream<'_, tokio::net::TcpListener>> for ConnectionAddrs 
     }
 }
 
-type ConnectionInfo = Result<ConnectInfo<ConnectionAddrs>, ExtensionRejection>;
+pub(crate) type ConnectionInfo = Result<ConnectInfo<ConnectionAddrs>, ExtensionRejection>;
 
 /// How a WebSocket client reached this server, for `preview.gatewayOpen`.
 fn client_reach(connection: ConnectionInfo, headers: &HeaderMap) -> Option<ClientReach> {
@@ -365,7 +368,9 @@ async fn websocket(
                 run_session(
                     socket,
                     state.rpc_registry,
-                    RpcSessionContext::unauthenticated().with_reach(reach),
+                    RpcSessionContext::unauthenticated()
+                        .with_reach(reach)
+                        .with_channel(MediaChannel::Plain),
                     session_shutdown,
                 )
             })
@@ -376,8 +381,9 @@ async fn websocket(
             let auth = state.auth.clone();
             let session_id = principal.session_id.clone();
             let expires_at_ms = principal.expires_at_ms;
-            let rpc_context =
-                RpcSessionContext::authenticated(principal, auth.clone()).with_reach(reach);
+            let rpc_context = RpcSessionContext::authenticated(principal, auth.clone())
+                .with_reach(reach)
+                .with_channel(MediaChannel::Plain);
             upgrade
                 .protocols(
                     plain_subprotocols(remote_compression_enabled())

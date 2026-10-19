@@ -285,6 +285,7 @@ pub struct NativeServerControl {
     settings: Arc<RwLock<Value>>,
     automatic_git_fetch_interval: watch::Sender<Duration>,
     profiler_enabled: watch::Sender<bool>,
+    device_previews_enabled: watch::Sender<bool>,
     settings_update_lock: Arc<Mutex<()>>,
     settings_generation: Arc<AtomicU64>,
     agent_activity_handler: AgentActivityHandlerSlot,
@@ -380,6 +381,7 @@ impl NativeServerControl {
         let (automatic_git_fetch_interval, _) =
             watch::channel(automatic_git_fetch_interval(&settings));
         let (profiler_enabled, _) = watch::channel(enabled_setting(&settings));
+        let (device_previews_enabled, _) = watch::channel(device_previews_setting(&settings));
         let loaded_keybindings = keybindings::load(&keybindings_path).await;
         let cwd = std::env::current_dir().unwrap_or_else(|_| config.base_dir.clone());
         let provider_maintenance = ProviderMaintenance::new();
@@ -398,6 +400,7 @@ impl NativeServerControl {
             settings: Arc::new(RwLock::new(settings.clone())),
             automatic_git_fetch_interval,
             profiler_enabled,
+            device_previews_enabled,
             settings_update_lock: Arc::new(Mutex::new(())),
             settings_generation: Arc::new(AtomicU64::new(0)),
             agent_activity_handler: AgentActivityHandlerSlot::default(),
@@ -481,6 +484,11 @@ impl NativeServerControl {
     /// The committed `enableProfiler` setting; changes as soon as a settings update commits.
     pub fn profiler_enabled_signal(&self) -> watch::Receiver<bool> {
         self.profiler_enabled.subscribe()
+    }
+
+    /// The committed `enableDevicePreviews`; changes as soon as a settings update commits.
+    pub fn device_previews_enabled_signal(&self) -> watch::Receiver<bool> {
+        self.device_previews_enabled.subscribe()
     }
 
     /// The provider inventory this control publishes, for a launch to read a model's capabilities.
@@ -618,6 +626,14 @@ impl NativeServerControl {
                 *current = next_profiler_enabled;
                 changed
             });
+            let next_device_previews = device_previews_setting(&next);
+            commit_control
+                .device_previews_enabled
+                .send_if_modified(|current| {
+                    let changed = *current != next_device_previews;
+                    *current = next_device_previews;
+                    changed
+                });
             commit_control.publish(json!({
                 "version": 1,
                 "type": "settingsUpdated",
@@ -1966,6 +1982,7 @@ fn validate_settings_document(settings: &Value) -> Result<(), String> {
     validate_optional_bool(object, "enableChatAgentActivity")?;
     validate_optional_bool(object, "enableTerminalAgentActivity")?;
     validate_optional_bool(object, "enableProfiler")?;
+    validate_optional_bool(object, "enableDevicePreviews")?;
     validate_optional_bool(object, "newWorktreesStartFromOrigin")?;
     validate_optional_string(object, "worktreeBaseDirectory")?;
     validate_optional_string(object, "addProjectBaseDirectory")?;
@@ -2002,6 +2019,13 @@ fn validate_settings_document(settings: &Value) -> Result<(), String> {
         validate_optional_bool(terminal, "webglEnabled")?;
     }
     Ok(())
+}
+
+fn device_previews_setting(settings: &Value) -> bool {
+    settings
+        .get("enableDevicePreviews")
+        .and_then(Value::as_bool)
+        == Some(true)
 }
 
 fn automatic_git_fetch_interval(settings: &Value) -> Duration {
@@ -2580,6 +2604,7 @@ fn environment_descriptor(config: &ServerConfig, activity_protocol_registered: b
             "vcsCloneReattach": true,
             "attachmentStaging": true,
             "profiler": true,
+            "devicePreviews": true,
             "previewTunnels": true,
         },
     })
@@ -4907,6 +4932,28 @@ mod tests {
     }
 
     #[test]
+    fn validates_enable_device_previews_as_bool() {
+        assert!(validate_settings_document(&json!({"enableDevicePreviews": true})).is_ok());
+        assert!(validate_settings_document(&json!({"enableDevicePreviews": "yes"})).is_err());
+    }
+
+    #[tokio::test]
+    async fn device_previews_signal_follows_committed_setting() {
+        let temp = tempfile::tempdir().expect("control root");
+        let config = ServerConfig::new(temp.path());
+        hermetic_providers::write_hermetic_settings(&config.state_dir(), json!({}));
+        let control = NativeServerControl::new(config, json!({"policy":"test"})).await;
+        let mut signal = control.device_previews_enabled_signal();
+        assert!(!*signal.borrow());
+        control
+            .update_settings(json!({"patch":{"enableDevicePreviews":true}}))
+            .await
+            .expect("enable device previews");
+        signal.changed().await.expect("signal changes");
+        assert!(*signal.borrow());
+    }
+
+    #[test]
     fn profiler_setting_must_be_a_boolean() {
         assert!(validate_settings_document(&json!({"enableProfiler": true})).is_ok());
         assert!(validate_settings_document(&json!({})).is_ok());
@@ -6602,6 +6649,8 @@ mod tests {
         }
         // Clients send the profiler RPCs only to servers that advertise them.
         assert_eq!(descriptor["capabilities"]["profiler"], true);
+        // Clients show the Device previews setting and pane only on servers that advertise it.
+        assert_eq!(descriptor["capabilities"]["devicePreviews"], true);
     }
 
     #[test]

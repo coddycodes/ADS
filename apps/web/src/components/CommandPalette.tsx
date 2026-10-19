@@ -12,6 +12,7 @@ import {
   FolderPlusIcon,
   MessageSquareIcon,
   SettingsIcon,
+  SmartphoneIcon,
   SquarePenIcon,
 } from "lucide-react";
 import {
@@ -62,6 +63,8 @@ import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand } from "../keybindings";
+import { useRightPanelStore } from "../rightPanelStore";
+import { useDevicePreviewsAvailability } from "./device/deviceAvailability";
 import {
   Command,
   CommandDialog,
@@ -238,6 +241,7 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const activeThreadId = activeThread?.id;
+  const deviceAvailability = useDevicePreviewsAvailability(activeThread?.environmentId ?? null);
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
 
   const openProjectFromSearch = useMemo(
@@ -425,6 +429,20 @@ function OpenCommandPaletteDialog(props: {
       openAddProjectDialog();
     },
   });
+
+  if (activeThread && deviceAvailability.enabled) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:open-device-preview",
+      searchTerms: ["device", "android", "emulator", "phone", "preview", "mobile"],
+      title: "Open device preview",
+      icon: <SmartphoneIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useRightPanelStore.getState().open(threadRef, "device");
+      },
+    });
+  }
 
   actionItems.push({
     kind: "action",

@@ -241,7 +241,7 @@ impl ManagedEndpointRuntime {
         let previous = self.take_active();
         if let Some(mut active) = previous {
             if active.key == key {
-                match connector_is_live(&mut *active.child) {
+                match crate::process::helper_is_live(&*active.child) {
                     Ok(true) => {
                         // Same connector: keep it running and only republish the hostnames.
                         active.config = config;
@@ -300,7 +300,7 @@ impl ManagedEndpointRuntime {
             terminate_unregistered_connector(&mut *child).await;
             return Err("spawned managed endpoint has no stable process identity".to_owned());
         };
-        match connector_is_live(&mut *child) {
+        match crate::process::helper_is_live(&*child) {
             Ok(true) => {}
             Ok(false) => {
                 terminate_unregistered_connector(&mut *child).await;
@@ -435,37 +435,6 @@ fn report_connector_exit(active: &ActiveConnector, status: &std::process::ExitSt
             false,
         );
     }
-}
-
-fn connector_is_live(child: &mut dyn ChildWrapper) -> Result<bool, String> {
-    #[cfg(unix)]
-    {
-        let process_id = child
-            .id()
-            .ok_or_else(|| "managed endpoint PID is unavailable".to_owned())?;
-        let mut information = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
-        // SAFETY: the writable siginfo is valid and WNOWAIT preserves the
-        // leader identity/PGID authority while observing liveness.
-        let result = unsafe {
-            libc::waitid(
-                libc::P_PID,
-                process_id as libc::id_t,
-                information.as_mut_ptr(),
-                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-            )
-        };
-        if result != 0 {
-            return Err(std::io::Error::last_os_error().to_string());
-        }
-        // SAFETY: successful waitid initialized siginfo.
-        let information = unsafe { information.assume_init() };
-        // SAFETY: si_pid reads initialized siginfo.
-        Ok(unsafe { information.si_pid() } == 0)
-    }
-    // Never `try_wait`: it consumes the process handle, and `retire` must still read the
-    // status of a connector that died on its own to report it.
-    #[cfg(not(unix))]
-    Ok(crate::process::exited_status(child).is_none())
 }
 
 async fn terminate_connector(mut active: ActiveConnector) {

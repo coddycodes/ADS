@@ -836,6 +836,24 @@ ones:
   and start it again from its shortcut: it uses the default data root and
   port, not the update's.
 
+## Android device previews
+
+Run the shared [Android device previews](./cross-platform-validation.md#android-device-previews)
+procedure with this machine as the server host, and record these platform
+values:
+
+- **Acceleration.** `emulator -accel-check` (WHPX or AEHD) and whether
+  Hyper-V or Windows Hypervisor Platform is on.
+- **Discovery directories.** `%LOCALAPPDATA%\Temp\avd\running`, then
+  `%ANDROID_EMULATOR_HOME%\avd\running` or `%USERPROFILE%\.android\avd\running`.
+- **Process check.**
+  `Get-Process | Where-Object { $_.ProcessName -match '^(emulator|qemu-system)' }`
+  returns nothing after stop, after the setting is turned off, and after
+  server shutdown. The emulator runs in its own Job object, so record any
+  survivor's parent (`Get-CimInstance Win32_Process`).
+- **WebView.** The desktop client's WebView2 runtime version, and whether it
+  showed video or still images with the "Video isn't available" reason.
+
 ## Process and Job cleanup
 
 Capture PID, parent PID, executable, creation time, and command line for scoped

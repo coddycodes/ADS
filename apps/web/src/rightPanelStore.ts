@@ -31,6 +31,7 @@ export const RIGHT_PANEL_KINDS = [
   "preview",
   "terminal",
   "activity",
+  "device",
   "pullRequest",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
@@ -74,11 +75,12 @@ export type RightPanelSurface =
       revealRequestId: number;
     }
   | { id: "plan"; kind: "plan" }
+  | { id: "device"; kind: "device" }
   | ActivityRightPanelSurface
   | PullRequestRightPanelSurface;
 
 const RIGHT_PANEL_STORAGE_KEY = "bibcode:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 9;
+const RIGHT_PANEL_STORAGE_VERSION = 10;
 
 export interface ThreadRightPanelState {
   isOpen: boolean;
@@ -156,6 +158,8 @@ const singletonSurface = (kind: Exclude<GenericRightPanelKind, "preview">): Righ
       return { id: "files", kind };
     case "plan":
       return { id: "plan", kind };
+    case "device":
+      return { id: "device", kind };
   }
 };
 
@@ -335,6 +339,8 @@ function normalizePersistedSurface(value: unknown): RightPanelSurface | null {
       return value.id === "files" ? { id: "files", kind: "files" } : null;
     case "plan":
       return value.id === "plan" ? { id: "plan", kind: "plan" } : null;
+    case "device":
+      return value.id === "device" ? { id: "device", kind: "device" } : null;
     case "preview": {
       if (value.id === "browser:new" && value.resourceId === null) {
         return { id: "browser:new", kind: "preview", resourceId: null };

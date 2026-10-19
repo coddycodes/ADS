@@ -1,8 +1,14 @@
 # Changelog
 
-## [v0.9.5] - 2026-10-18
+## [v0.10.0] - 2026-10-18
 
-BiBCode v0.9.5 adds OpenCode 2 support, makes remote environments over slow links feel faster (terminal echo, compression on plain connections, fewer connect round trips, and resuming a thread instead of resending it), hardens **Revert to this message** against running and queued work, keeps Source Control responsive with thousands of changes, recovers long Codex threads in pages, and never sends an OpenCode message twice. This release includes the changes since v0.9.4.
+BiBCode v0.10.0 adds device previews: an Android emulator, or an iOS simulator on a macOS server, running beside the chat and streamed live to the browser and desktop. It also adds OpenCode 2 support, makes remote environments over slow links feel faster (terminal echo, compression on plain connections, fewer connect round trips, and resuming a thread instead of resending it), hardens **Revert to this message** against running and queued work, keeps Source Control responsive with thousands of changes, recovers long Codex threads in pages, and never sends an OpenCode message twice. This release includes the changes since v0.9.4; v0.9.5 was prepared but not published, and its changes are part of this release.
+
+### Device previews (#70)
+
+- A **Device** panel shows an Android emulator running on the environment's server beside the chat, and you can touch it, type into it, paste into it, rotate it, and use its buttons. Turn it on per environment at **Settings → Diagnostics → Device previews**; the server needs the Android SDK with at least one virtual device. The screen is H.264 video, end-to-end encrypted on connections that pin the server's key, and falls back to still images, with the reason, where video can't play, such as a browser on plain HTTP. Coding agents can list, open, screenshot and close the same device. (#70)
+- On a macOS server with Xcode, the same panel runs iOS simulators, next to an Android emulator if you like. The simulator's screen is live video, takes a single touch, keys and text (text a US keyboard can't type is pasted, so iOS may ask to **Allow Paste**), and rotates. When BiBCode can't use the installed Xcode's simulator interfaces, simulators open view only, as still screenshots without touch, and the panel says why. BiBCode shuts down only the simulators it started. (#70)
+- Pasting into an Android emulator types the text a character at a time, paced so Android keeps every key; text over 100 characters is refused with a message instead of being cut short.
 
 ### OpenCode 2 support (#115)
 
@@ -52,6 +58,13 @@ BiBCode v0.9.5 adds OpenCode 2 support, makes remote environments over slow link
 ### Release reliability
 
 - Server tests that capture logs, start terminal observers, or depend on the profiler setting run in a process of their own, and the worktree lifecycle test reads every event of a combined update; several tests that failed under load no longer do.
+
+### Known limitations
+
+- On an iOS simulator, a touch whose release fails, and whose cleanup then also fails, can leave a finger held down on the simulator.
+- Two simulators with the same name show as identical rows in the Device picker.
+- When two chats share one checkout, reverts in both can finish in the order their providers reopen rather than the order you asked, so the earlier revert can overwrite the later one's files.
+- The Source Control speedup for thousands of changes and the reconnect memory fix were measured on Linux; their macOS measurements are still to be done.
 
 ## [v0.9.4] - 2026-10-15
 

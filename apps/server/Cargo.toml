@@ -1,6 +1,6 @@
 [package]
 name = "bibcode-server"
-version = "0.9.5"
+version = "0.10.0"
 description = "BiBCode Rust server runtime"
 default-run = "bibcode"
 edition.workspace = true
@@ -27,6 +27,7 @@ axum.workspace = true
 backtrace.workspace = true
 base64.workspace = true
 breakpad-symbols.workspace = true
+bytes.workspace = true
 clap.workspace = true
 crash-handler.workspace = true
 dirs.workspace = true
@@ -38,6 +39,7 @@ http-body-util.workspace = true
 httpdate.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
+jpeg-encoder.workspace = true
 mime_guess.workspace = true
 minidump.workspace = true
 minidump-processor.workspace = true
@@ -49,6 +51,7 @@ percent-encoding.workspace = true
 p256.workspace = true
 portable-pty.workspace = true
 process-wrap.workspace = true
+prost.workspace = true
 reqwest.workspace = true
 rusqlite.workspace = true
 semver.workspace = true
@@ -61,8 +64,11 @@ sysinfo.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
+tokio-stream.workspace = true
 tokio-util.workspace = true
 tokio-tungstenite.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -70,6 +76,10 @@ url.workspace = true
 uuid.workspace = true
 zip.workspace = true
 flate2.workspace = true
+
+[build-dependencies]
+protox.workspace = true
+tonic-prost-build.workspace = true
 
 [dev-dependencies]
 bibcode-server = { workspace = true, features = ["hermetic-test-guard"] }
@@ -80,6 +90,57 @@ tower.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
+
+# The iOS simulator backend loads CoreSimulator in-process; exact pins, see the dependency ledger.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace = true
+dispatch2 = { workspace = true, features = ["std", "objc2"] }
+objc2 = { workspace = true, features = ["exception"] }
+objc2-core-foundation = { workspace = true, features = [
+  "std",
+  "CFDictionary",
+  "CFNumber",
+  "CFString",
+] }
+objc2-core-media = { workspace = true, features = [
+  "std",
+  "CMBlockBuffer",
+  "CMFormatDescription",
+  "CMSampleBuffer",
+  "CMTime",
+] }
+objc2-core-video = { workspace = true, features = [
+  "std",
+  "CVBase",
+  "CVBuffer",
+  "CVImageBuffer",
+  "CVPixelBuffer",
+  "CVPixelBufferIOSurface",
+  "CVPixelBufferPool",
+  "CVReturn",
+  "objc2-io-surface",
+] }
+objc2-foundation = { workspace = true, features = ["std", "NSError", "NSString", "NSUUID"] }
+objc2-io-surface = { workspace = true, features = [
+  "std",
+  "IOSurfaceRef",
+  "IOSurfaceTypes",
+  "libc",
+  "objc2",
+  "objc2-core-foundation",
+] }
+objc2-video-toolbox = { workspace = true, features = [
+  "std",
+  "VTCompressionProperties",
+  "VTCompressionSession",
+  "VTErrors",
+  "VTPixelRotationProperties",
+  "VTPixelRotationSession",
+  "VTSession",
+  "objc2-core-media",
+  "objc2-core-video",
+] }
+png.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 junction.workspace = true

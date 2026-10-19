@@ -22989,6 +22989,7 @@ done
                 PreviewInvoker::new(|_scope, _operation, _input, _tab, _cancellation| async {
                     Ok(json!({}))
                 }),
+                None,
             )
             .await
             .expect("connect service"),

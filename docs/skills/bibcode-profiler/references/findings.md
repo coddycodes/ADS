@@ -241,6 +241,17 @@ A panic that ended the process also leaves a `crash.unclean-exit` or
     executable, such as `bibcode-connect`): signals and non-zero exits, noticed
     within 5 s; its relay preview hostnames are withdrawn until the next link
     or restart.
+  - Android device preview helpers (`command`): the emulator, labelled
+    `android-emulator`, noticed within 1 s and failing the device with
+    `exited`; and the scrcpy-server `adb shell`, labelled `android-scrcpy`,
+    noticed when its video session stops. Signals and non-zero exits other
+    than 129, 130 and 143 count; a stop BiBCode requested does not.
+  - iOS device preview simulators (`command`, labelled `ios-simulator`, macOS
+    only): a simulator BiBCode booted that is shut down or deleted outside
+    BiBCode, noticed within about 3 s and failing the device with that reason. A
+    simulator has no exit status of its own, so the outcome is always
+    `exit 1` (`warn`); `pid` is its `launchd_sim`, or `0` when BiBCode never
+    found that process after boot.
 - **Fingerprint:** `processKind`, `label` and `outcome`.
 - **Evidence:**
   - `pid`, `outcome`, `uptimeMs`;

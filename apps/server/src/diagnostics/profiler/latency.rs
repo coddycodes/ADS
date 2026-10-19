@@ -146,6 +146,16 @@ pub fn is_long_running(method: &str) -> bool {
             // included.
             | "worktree.remove"
             | "agentSessions.import"
+            // Waits on discovery and `simctl`: `check_available` lists simulators (up to
+            // 15 s), and a rediscovery runs the Xcode probes.
+            | "device.open"
+            // Wait on the emulator: stopping it (up to 10 s), a stalled input stream (up to
+            // 5 s), typing a paste on Android (at most 100 characters, 5 ms apart: under
+            // 1 s), and reading back a rotation (a 2.5 s window on Android, longer when a
+            // read is slow or another rotate of the device runs first; 1.2 s on iOS).
+            | "device.close"
+            | "device.input"
+            | "device.rotate"
     )
 }
 
@@ -1111,6 +1121,10 @@ mod tests {
             "pullRequests.list",
             "gitManager.commit",
             "worktree.remove",
+            "device.open",
+            "device.close",
+            "device.input",
+            "device.rotate",
             "server.getProviderCapabilities",
         ] {
             book.observe(method, "success", 1_500.0, 0.0, None);

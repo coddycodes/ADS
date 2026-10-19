@@ -227,6 +227,7 @@ import { closePreviewSession } from "./preview/closePreviewSession";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { RightPanelTabs } from "./RightPanelTabs";
+import { useDevicePreviewsAvailability } from "./device/deviceAvailability";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
@@ -378,6 +379,9 @@ const PreviewPanel = lazy(() =>
 const DiffPanel = lazy(() => import("./DiffPanel"));
 const SourceControlPanel = lazy(() => import("./SourceControlPanel"));
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+const DevicePanel = lazy(() =>
+  import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
+);
 const PullRequestPanelSurface = lazy(() =>
   import("./pullRequests/PullRequestPanelSurface").then((module) => ({
     default: module.PullRequestPanelSurface,
@@ -3472,6 +3476,13 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
+  const deviceAvailability = useDevicePreviewsAvailability(activeThreadRef?.environmentId ?? null);
+  const addDeviceSurface = useCallback(() => {
+    if (!activeThreadRef) return;
+    useRightPanelStore.getState().open(activeThreadRef, "device");
+  }, [activeThreadRef]);
+  // Hidden, not disabled, while the setting is off: Settings is the way in.
+  const onAddDevice = deviceAvailability.enabled ? addDeviceSurface : undefined;
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -6706,6 +6717,10 @@ function ChatViewContent(props: ChatViewProps) {
           workspaceUnavailable={workspaceUnavailable}
         />
       </Suspense>
+    ) : activeRightPanelSurface?.kind === "device" ? (
+      <Suspense fallback={null}>
+        <DevicePanel environmentId={activeThreadRef.environmentId} />
+      </Suspense>
     ) : activeRightPanelSurface?.kind === "pullRequest" ? (
       <Suspense fallback={null}>
         <PullRequestPanelSurface
@@ -7109,6 +7124,7 @@ function ChatViewContent(props: ChatViewProps) {
           onAddDiff={addDiffSurface}
           onAddSourceControl={addSourceControlSurface}
           onAddFiles={addFilesSurface}
+          onAddDevice={onAddDevice}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={gitRightPanelAvailable}
           sourceControlAvailable={gitRightPanelAvailable}
@@ -7144,6 +7160,7 @@ function ChatViewContent(props: ChatViewProps) {
             onAddDiff={addDiffSurface}
             onAddSourceControl={addSourceControlSurface}
             onAddFiles={addFilesSurface}
+            onAddDevice={onAddDevice}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={gitRightPanelAvailable}
             sourceControlAvailable={gitRightPanelAvailable}

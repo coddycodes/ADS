@@ -188,6 +188,7 @@ async fn harness(max_credentials: usize, max_sessions: usize) -> Harness {
         endpoint,
         pairing,
         preview,
+        None,
     )
     .await
     .expect("connect service");
@@ -463,7 +464,7 @@ fn origin_snapshot_and_tool_metadata_cover_wire_variants() {
     assert_eq!(operation_wire_name("recording_start"), "recordingStart");
     assert_eq!(operation_wire_name("recording_stop"), "recordingStop");
     assert_eq!(operation_wire_name("click"), "click");
-    let tools = tool_descriptors();
+    let tools = tool_descriptors(false);
     assert_eq!(tools.len(), TOOL_OPERATIONS.len());
     let status = tools
         .iter()
@@ -1479,6 +1480,7 @@ async fn persistence_failures_are_reported_without_partial_success() {
         EndpointRuntime::new(|_| async { Ok(json!({"status":"disabled"})) }),
         PairingIssuer::new(|_| async { Err("unused".into()) }),
         PreviewInvoker::new(|_, _, _, _, _| async { Err("unused".into()) }),
+        None,
     )
     .await;
     assert_eq!(error(open).status, StatusCode::INTERNAL_SERVER_ERROR);
@@ -2023,4 +2025,444 @@ async fn a_background_relink_never_undoes_a_changed_link() {
         )
         .await
         .expect("a refresh of the current link applies");
+}
+
+#[test]
+fn device_tools_are_listed_only_when_enabled() {
+    let names = |enabled| {
+        tool_descriptors(enabled)
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert!(!names(false).iter().any(|name| name.starts_with("device_")));
+    for tool in [
+        "device_list",
+        "device_open",
+        "device_screenshot",
+        "device_close",
+    ] {
+        assert!(names(true).contains(&tool.to_owned()), "{tool}");
+    }
+    assert!(names(false).contains(&"preview_snapshot".to_owned()));
+}
+
+#[test]
+fn device_screenshot_describes_both_image_formats() {
+    let tools = tool_descriptors(true);
+    let screenshot = tools
+        .iter()
+        .find(|tool| tool["name"] == "device_screenshot")
+        .expect("device_screenshot is listed");
+    let description = screenshot["description"].as_str().unwrap();
+    assert!(
+        description.contains("a PNG at most 1080 px wide"),
+        "{description}"
+    );
+    assert!(
+        description.contains("a full-size JPEG for a view-only iOS simulator"),
+        "{description}"
+    );
+}
+
+#[test]
+fn device_open_takes_a_platform_and_an_image() {
+    let tools = tool_descriptors(true);
+    let open = tools
+        .iter()
+        .find(|tool| tool["name"] == "device_open")
+        .expect("device_open is listed");
+    let properties = &open["inputSchema"]["properties"];
+    assert_eq!(
+        properties["platform"]["enum"],
+        serde_json::json!(["android", "ios"])
+    );
+    assert_eq!(properties["platform"]["default"], "android");
+    assert_eq!(properties["imageId"]["type"], "string");
+    assert!(properties.get("avdName").is_none());
+    for tool in tools
+        .iter()
+        .filter(|tool| tool["name"].as_str().unwrap().starts_with("device_"))
+    {
+        assert!(
+            tool["description"]
+                .as_str()
+                .unwrap()
+                .contains("Android emulators and iOS simulators (macOS servers)"),
+            "{tool}"
+        );
+    }
+}
+
+#[cfg(unix)]
+mod device_tools {
+    use std::time::Duration;
+
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use serde_json::json;
+
+    use tokio_util::sync::CancellationToken;
+
+    use super::{DeviceTools, PreviewScope};
+    use crate::device::android::testing::{LaunchStub, ManagerFixture, process_alive, wait_until};
+
+    fn scope() -> PreviewScope {
+        PreviewScope {
+            environment_id: "environment".into(),
+            thread_id: "thread".into(),
+            provider_session_id: "provider-session".into(),
+            provider_instance_id: "provider-instance".into(),
+        }
+    }
+
+    struct DeviceToolsFixture {
+        tools: DeviceTools,
+        fixture: ManagerFixture,
+    }
+
+    impl DeviceToolsFixture {
+        fn new(fixture: ManagerFixture) -> Self {
+            Self {
+                tools: DeviceTools::new(fixture.manager.clone()),
+                fixture,
+            }
+        }
+
+        async fn ready_device() -> Self {
+            let fixture = Self::ready_sdk(&["Pixel"]).await;
+            let result = fixture
+                .tools
+                .call(&scope(), "open", json!({}), CancellationToken::new())
+                .await;
+            assert_eq!(result["isError"], false, "{result}");
+            fixture
+        }
+
+        async fn ready_sdk(avds: &[&str]) -> Self {
+            Self::new(ManagerFixture::ready(avds).await)
+        }
+
+        async fn slow_boot() -> Self {
+            Self::new(ManagerFixture::with_sdk(|sdk| sdk.avds(&["Pixel"]).never_boots()).await)
+        }
+
+        async fn disabled() -> Self {
+            let fixture = Self::ready_sdk(&["Pixel"]).await;
+            fixture.fixture.enabled.send(false).unwrap();
+            fixture
+        }
+    }
+
+    #[tokio::test]
+    async fn device_screenshot_returns_an_image_block() {
+        let fixture = DeviceToolsFixture::ready_device().await;
+        let result = fixture
+            .tools
+            .call(&scope(), "screenshot", json!({}), CancellationToken::new())
+            .await;
+        assert_eq!(result["isError"], false, "{result}");
+        let image = result["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|block| block["type"] == "image")
+            .unwrap();
+        assert_eq!(image["mimeType"], "image/png");
+        let bytes = STANDARD.decode(image["data"].as_str().unwrap()).unwrap();
+        assert!(bytes.starts_with(b"\x89PNG"));
+        assert_eq!(result["structuredContent"]["screenshot"]["width"], 1080);
+        assert_eq!(result["structuredContent"]["platform"], "android");
+    }
+
+    #[tokio::test]
+    async fn device_list_reports_the_catalog() {
+        let fixture = DeviceToolsFixture::ready_device().await;
+        let result = fixture
+            .tools
+            .call(&scope(), "list", json!({}), CancellationToken::new())
+            .await;
+        assert_eq!(result["isError"], false);
+        assert_eq!(
+            result["structuredContent"]["platforms"][0]["images"][0]["id"],
+            "Pixel"
+        );
+        assert_eq!(result["structuredContent"]["devices"][0]["state"], "ready");
+        assert_eq!(
+            result["structuredContent"]["platforms"][0]["platform"],
+            "android"
+        );
+        assert_eq!(
+            result["structuredContent"]["devices"][0]["platform"],
+            "android"
+        );
+    }
+
+    #[tokio::test]
+    async fn device_close_stops_the_device() {
+        let fixture = DeviceToolsFixture::ready_device().await;
+        let id = fixture.fixture.manager.catalog().borrow().devices[0]
+            .device_id
+            .clone();
+        let missing = fixture
+            .tools
+            .call(&scope(), "close", json!({}), CancellationToken::new())
+            .await;
+        assert_eq!(
+            missing["structuredContent"]["error"]["_tag"],
+            "DeviceInputError"
+        );
+        let closed = fixture
+            .tools
+            .call(
+                &scope(),
+                "close",
+                json!({"deviceId": id}),
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(closed["isError"], false, "{closed}");
+        assert_eq!(closed["structuredContent"]["platform"], "android");
+        let after = fixture
+            .tools
+            .call(&scope(), "screenshot", json!({}), CancellationToken::new())
+            .await;
+        assert_eq!(
+            after["structuredContent"]["error"]["_tag"],
+            "DeviceNotFoundError"
+        );
+    }
+
+    #[tokio::test]
+    async fn device_open_fails_when_disabled_mid_boot() {
+        let fixture = DeviceToolsFixture::slow_boot().await;
+        let call = tokio::spawn({
+            let tools = fixture.tools.clone();
+            async move {
+                tools
+                    .call(
+                        &scope(),
+                        "open",
+                        json!({"platform": "android", "imageId": "Pixel"}),
+                        CancellationToken::new(),
+                    )
+                    .await
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        fixture.fixture.enabled.send(false).unwrap();
+        let result = call.await.unwrap();
+        assert_eq!(result["isError"], true);
+        assert_eq!(
+            result["structuredContent"]["error"]["_tag"],
+            "DevicePreviewsDisabledError"
+        );
+        assert!(
+            result["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("off")
+        );
+        wait_until(|| {
+            fixture
+                .fixture
+                .sdk
+                .launched_pids()
+                .iter()
+                .all(|pid| !process_alive(*pid))
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn device_call_when_disabled_is_a_tool_error() {
+        let fixture = DeviceToolsFixture::disabled().await;
+        let result = fixture
+            .tools
+            .call(&scope(), "list", json!({}), CancellationToken::new())
+            .await;
+        assert_eq!(
+            result["structuredContent"]["error"]["_tag"],
+            "DevicePreviewsDisabledError"
+        );
+    }
+
+    #[tokio::test]
+    async fn device_open_without_name_uses_the_only_avd_and_lists_choices_otherwise() {
+        let one = DeviceToolsFixture::ready_sdk(&["Pixel"]).await;
+        assert_eq!(
+            one.tools
+                .call(&scope(), "open", json!({}), CancellationToken::new())
+                .await["isError"],
+            false
+        );
+        let two = DeviceToolsFixture::ready_sdk(&["Pixel", "Tablet"]).await;
+        let result = two
+            .tools
+            .call(&scope(), "open", json!({}), CancellationToken::new())
+            .await;
+        assert_eq!(result["isError"], true);
+        assert!(
+            result["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Pass imageId as one of: Pixel, Tablet")
+        );
+    }
+
+    #[tokio::test]
+    async fn device_open_defaults_to_android() {
+        let fixture = DeviceToolsFixture::ready_sdk(&["Pixel", "Tablet"]).await;
+        let result = fixture
+            .tools
+            .call(
+                &scope(),
+                "open",
+                json!({"imageId": "Tablet"}),
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(result["isError"], false, "{result}");
+        assert_eq!(result["structuredContent"]["device"]["platform"], "android");
+        assert_eq!(result["structuredContent"]["device"]["imageId"], "Tablet");
+    }
+
+    #[tokio::test]
+    async fn device_open_rejects_an_unknown_platform_and_the_old_argument() {
+        let fixture = DeviceToolsFixture::ready_sdk(&["Pixel"]).await;
+        let unknown = fixture
+            .tools
+            .call(
+                &scope(),
+                "open",
+                json!({"platform": "windows", "imageId": "Pixel"}),
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(
+            unknown["structuredContent"]["error"]["_tag"], "DeviceInputError",
+            "{unknown}"
+        );
+        assert!(text(&unknown).contains("android or ios"), "{unknown}");
+        // No iOS backend runs here, so naming iOS says so instead of starting anything.
+        let ios = fixture
+            .tools
+            .call(
+                &scope(),
+                "open",
+                json!({"platform": "ios"}),
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(ios["isError"], true, "{ios}");
+        assert!(text(&ios).contains("iOS simulators"), "{ios}");
+        let old = fixture
+            .tools
+            .call(
+                &scope(),
+                "open",
+                json!({"avdName": "Pixel"}),
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(
+            old["structuredContent"]["error"]["_tag"], "DeviceInputError",
+            "{old}"
+        );
+        assert!(
+            fixture
+                .fixture
+                .manager
+                .catalog()
+                .borrow()
+                .devices
+                .is_empty()
+        );
+    }
+
+    fn text(result: &serde_json::Value) -> &str {
+        result["content"][0]["text"].as_str().unwrap()
+    }
+
+    #[tokio::test]
+    async fn device_open_reports_why_the_emulator_failed() {
+        let fixture = DeviceToolsFixture::new(
+            ManagerFixture::with_sdk(|sdk| {
+                sdk.avds(&["Pixel"])
+                    .launch_stub(LaunchStub::ExitsWith(1, "no acceleration"))
+            })
+            .await,
+        );
+        let result = fixture
+            .tools
+            .call(&scope(), "open", json!({}), CancellationToken::new())
+            .await;
+        assert_eq!(result["isError"], true);
+        assert!(
+            text(&result).starts_with("The device failed to start: "),
+            "{result}"
+        );
+        assert!(text(&result).contains("exited"), "{result}");
+    }
+
+    #[tokio::test]
+    async fn device_open_says_when_the_device_is_still_booting() {
+        let fixture = DeviceToolsFixture::slow_boot().await;
+        let tools = fixture
+            .tools
+            .clone()
+            .with_boot_timeout(Duration::from_millis(300));
+        let result = tools
+            .call(&scope(), "open", json!({}), CancellationToken::new())
+            .await;
+        assert_eq!(result["isError"], true);
+        assert!(text(&result).contains("still booting"), "{result}");
+        assert!(text(&result).contains("device_list"), "{result}");
+    }
+
+    #[tokio::test]
+    async fn device_open_returns_promptly_when_cancelled() {
+        let fixture = DeviceToolsFixture::slow_boot().await;
+        let cancellation = CancellationToken::new();
+        let call = tokio::spawn({
+            let (tools, cancellation) = (fixture.tools.clone(), cancellation.clone());
+            async move { tools.call(&scope(), "open", json!({}), cancellation).await }
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        cancellation.cancel();
+        let result = tokio::time::timeout(Duration::from_secs(2), call)
+            .await
+            .expect("returns promptly")
+            .unwrap();
+        assert_eq!(result["isError"], true);
+        assert!(text(&result).contains("cancelled"), "{result}");
+    }
+
+    #[tokio::test]
+    async fn non_string_arguments_are_invalid_input() {
+        let fixture = DeviceToolsFixture::ready_sdk(&["Pixel"]).await;
+        for (operation, arguments) in [
+            ("open", json!({"imageId": 7})),
+            ("open", json!({"platform": 7})),
+            ("screenshot", json!({"deviceId": ["x"]})),
+            ("close", json!({"deviceId": 1})),
+        ] {
+            let result = fixture
+                .tools
+                .call(&scope(), operation, arguments, CancellationToken::new())
+                .await;
+            assert_eq!(
+                result["structuredContent"]["error"]["_tag"], "DeviceInputError",
+                "{operation}: {result}"
+            );
+        }
+        assert!(
+            fixture
+                .fixture
+                .manager
+                .catalog()
+                .borrow()
+                .devices
+                .is_empty()
+        );
+    }
 }

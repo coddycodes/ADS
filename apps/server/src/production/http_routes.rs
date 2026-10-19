@@ -16,6 +16,11 @@ pub const MAX_DIAGNOSTIC_BODY_BYTES: usize = 512 * 1024;
 pub const MAX_MCP_BODY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OPEN_URL_BODY_BYTES: usize = 16 * 1024;
 
+/// The plain H.264 media socket (spec §4.2); it authenticates with a ticket, never a cookie.
+pub const DEVICE_MEDIA_PATH: &str = "/api/device-media";
+/// The same socket inside a Noise_NK channel, for profiles that pin the host key.
+pub const DEVICE_MEDIA_E2EE_PATH: &str = "/api/device-media-e2ee";
+
 const NO_STORE: &str = "no-store";
 const OPERATE_SCOPE: &str = "orchestration:operate";
 
@@ -114,6 +119,9 @@ pub struct HttpRoutesState {
     pub transfer_upload: TransferUploadHandler,
     /// Answers `503` until the production runtime replaces it.
     pub open_url: OpenUrlHandler,
+    /// The media socket's devices and sessions; `None` (answering `503`) without the
+    /// production runtime.
+    pub(crate) device_media: Option<crate::device::media_socket::MediaSocketState>,
 }
 
 impl HttpRoutesState {
@@ -135,6 +143,7 @@ impl HttpRoutesState {
             mcp,
             transfer_download,
             transfer_upload,
+            device_media: None,
             open_url: Arc::new(|_body, _context| {
                 Box::pin(async {
                     Err(HttpRouteError::new(
@@ -322,7 +331,74 @@ where
             get(transfer_download).post(transfer_upload),
         )
         .route("/api/preview/open-url", post(preview_open_url))
+        .route(DEVICE_MEDIA_PATH, get(device_media))
+        .route(DEVICE_MEDIA_E2EE_PATH, get(device_media_e2ee))
         .route("/mcp", post(mcp_post).delete(mcp_delete))
+}
+
+async fn device_media(
+    State(state): State<HttpRoutesState>,
+    connection: crate::http::ConnectionInfo,
+    headers: HeaderMap,
+    upgrade: axum::extract::ws::WebSocketUpgrade,
+) -> Response {
+    device_media_upgrade(
+        state,
+        connection,
+        &headers,
+        upgrade,
+        crate::device::media_socket::upgrade_plain,
+    )
+}
+
+async fn device_media_e2ee(
+    State(state): State<HttpRoutesState>,
+    connection: crate::http::ConnectionInfo,
+    headers: HeaderMap,
+    upgrade: axum::extract::ws::WebSocketUpgrade,
+) -> Response {
+    device_media_upgrade(
+        state,
+        connection,
+        &headers,
+        upgrade,
+        crate::device::media_socket::upgrade_e2ee,
+    )
+}
+
+fn device_media_upgrade(
+    state: HttpRoutesState,
+    connection: crate::http::ConnectionInfo,
+    headers: &HeaderMap,
+    upgrade: axum::extract::ws::WebSocketUpgrade,
+    upgrade_route: fn(
+        crate::device::media_socket::MediaSocketState,
+        std::net::IpAddr,
+        axum::extract::ws::WebSocketUpgrade,
+    ) -> Response,
+) -> Response {
+    // The same peer `/ws-e2ee` admits: a loopback forwarder's last `X-Forwarded-For` hop.
+    let socket_peer = connection.map_or(
+        std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+        |axum::extract::ConnectInfo(addrs)| addrs.peer.ip(),
+    );
+    let peer_ip = crate::rpc::effective_preauth_peer(
+        socket_peer,
+        headers
+            .get("x-forwarded-for")
+            .and_then(|value| value.to_str().ok()),
+    );
+    match state.device_media {
+        Some(media) => upgrade_route(media, peer_ip, upgrade),
+        None => json_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            BTreeMap::new(),
+            json!({
+                "_tag": "NativeRuntimeUnavailableError",
+                "message": "The native production runtime is unavailable."
+            }),
+        ),
+    }
 }
 
 async fn orchestration_snapshot(

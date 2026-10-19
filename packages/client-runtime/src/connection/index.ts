@@ -10,6 +10,7 @@ export {
 export * from "./errors.ts";
 export * as Connection from "./layer.ts";
 export * from "./model.ts";
+export { isSessionTransportLoss } from "./nextSession.ts";
 export * from "./pairingAdd.ts";
 export {
   type BearerConnectionUpdateInput,

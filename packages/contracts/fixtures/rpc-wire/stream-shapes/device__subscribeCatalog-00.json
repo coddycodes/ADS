@@ -1,0 +1,72 @@
+{
+  "_tag": "Chunk",
+  "requestId": "900719925474099312345",
+  "values": [
+    {
+      "platforms": [],
+      "devices": [
+        {
+          "deviceId": "ref",
+          "platform": "android",
+          "imageId": "R1S(c':Li!",
+          "state": "starting",
+          "failure": "}ho",
+          "width": -3.402820018375656e38,
+          "orientation": "portrait",
+          "canRotate": false
+        },
+        {
+          "deviceId": "B(!5",
+          "platform": "ios",
+          "imageId": "#isPrototy",
+          "state": "failed",
+          "width": -3.4028230607370965e38,
+          "height": -8.407790785948902e-45,
+          "orientation": "landscape",
+          "canRotate": false
+        },
+        {
+          "deviceId": "V",
+          "platform": "ios",
+          "imageId": "  ",
+          "state": "failed",
+          "failure": "u{p|%x!}|",
+          "width": 4.1546918628978385e-14,
+          "height": 8.407790785948902e-45,
+          "orientation": "portrait",
+          "canRotate": true
+        },
+        {
+          "deviceId": "",
+          "platform": "android",
+          "imageId": "",
+          "state": "ready",
+          "failure": "v",
+          "width": 5.3952952809620605e-14,
+          "height": -1.0729633776317012e-28,
+          "orientation": "reversePortrait",
+          "canRotate": false
+        },
+        {
+          "deviceId": "",
+          "platform": "ios",
+          "imageId": "",
+          "state": "failed",
+          "failure": "(",
+          "height": -31808829440,
+          "orientation": "portrait",
+          "canRotate": false
+        },
+        {
+          "deviceId": "4Y\"2')8J",
+          "platform": "ios",
+          "imageId": "9*gSu]8/x,",
+          "state": "starting",
+          "failure": "ZU3He'!jy",
+          "orientation": "portrait",
+          "canRotate": false
+        }
+      ]
+    }
+  ]
+}

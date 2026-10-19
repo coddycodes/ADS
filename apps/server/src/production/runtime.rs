@@ -114,6 +114,7 @@ pub struct ProductionRuntime {
     pub preview_automation: PreviewAutomationBroker,
     pub preview: PreviewManager,
     preview_gateway: PreviewGateway,
+    device_manager: crate::device::DeviceManager,
     preview_tunnels: PreviewTunnels,
     asset_access: AssetAccess,
     transfer_access: TransferAccess,
@@ -167,6 +168,10 @@ impl ProductionRuntime {
     #[must_use]
     pub fn preview_gateway(&self) -> PreviewGateway {
         self.preview_gateway.clone()
+    }
+
+    pub fn device_manager(&self) -> crate::device::DeviceManager {
+        self.device_manager.clone()
     }
 
     pub fn preview_tunnels(&self) -> &PreviewTunnels {
@@ -246,6 +251,29 @@ impl ProductionRuntime {
         let provider_update_checks = control.start_provider_update_checks();
         // Built before the profiler, whose sampler reads it; it has no dependencies.
         let process_attribution = ProcessAttributionRegistry::new();
+        let device_env = crate::device::android::sdk::SdkEnv::from_process();
+        let android_devices = crate::device::android::AndroidBackend::new(
+            crate::device::android::AndroidBackendConfig {
+                discovery_dirs: crate::device::android::emulator::default_discovery_dirs(
+                    &device_env,
+                ),
+                env: device_env,
+                registry: process_attribution.clone(),
+                grpc_port: None,
+            },
+        );
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+        let mut device_backends: Vec<Arc<dyn crate::device::backend::DeviceBackend>> =
+            vec![Arc::new(android_devices)];
+        #[cfg(target_os = "macos")]
+        device_backends.push(Arc::new(crate::device::ios::IosBackend::new(
+            crate::device::ios::IosBackendConfig::from_process(process_attribution.clone()),
+        )));
+        let device_manager =
+            crate::device::DeviceManager::start(crate::device::DeviceManagerConfig {
+                backends: device_backends,
+                enabled: control.device_previews_enabled_signal(),
+            });
         // Starting replays and compacts the findings file, so it runs off the async workers.
         let profiler_state_dir = config.state_dir();
         let profiler_enabled = control.profiler_enabled_signal();
@@ -590,6 +618,7 @@ impl ProductionRuntime {
             config.state_dir(),
         );
         register_workspace_preview_rpc(&mut registry, workspace_preview);
+        crate::production::device_rpc::register_device_rpc(&mut registry, device_manager.clone());
         let git_manager = GitManagerRpcServices::with_dependencies(
             git_repository.clone(),
             status_broadcaster.clone(),
@@ -634,6 +663,7 @@ impl ProductionRuntime {
             preview_automation,
             preview,
             preview_gateway,
+            device_manager,
             preview_tunnels,
             asset_access,
             transfer_access,
@@ -788,6 +818,8 @@ impl ProductionRuntime {
         self.process_monitor.shutdown().await;
         self.server_control.shutdown_capability_discovery().await;
         self.preview_gateway.shutdown().await;
+        // Stops emulators gracefully before ownership teardown, which would only kill them.
+        self.device_manager.shutdown().await;
         self.preview_tunnels.shutdown();
         let process_ownership = self.terminal_services.freeze_process_ownership().await;
         self.managed_endpoint.shutdown().await;

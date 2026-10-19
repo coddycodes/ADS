@@ -787,6 +787,19 @@ the same executable, relaunched only while the profiler is on. A Windows update
 also starts a detached `cmd.exe` restart waiter, which is not a BiBCode
 executable.
 
+While [device previews](#device-previews) are on, the server also runs tools
+from the user's own Android SDK: the `emulator` (registered helper label
+`android-emulator`), `adb`, and, through `adb shell`, the pinned scrcpy-server
+on the device (registered helper label `android-scrcpy`). BiBCode ships no
+Android binary on the host; the scrcpy-server jar is embedded in the server and
+pushed to the emulator. On a macOS server it also runs `xcrun simctl` from the
+user's Xcode (`list`, `boot`, `bootstatus`, `shutdown`, `io screenshot`,
+`pbcopy`) as supervised children with timeouts, and loads Xcode's private
+CoreSimulator and SimulatorKit frameworks into the server process itself, where
+they stay until it exits. A booted simulator is not a BiBCode child: its
+`launchd_sim` belongs to CoreSimulator's launchd service, and BiBCode only
+registers its identity (`ios-simulator`) for the profiler's sampler.
+
 The server can also open preview gateway listeners. Each one reverse-proxies
 one loopback dev server for one thread to a client that is not on the server's
 host. A listener binds an ephemeral port on the local address the caller's RPC
@@ -1436,6 +1449,16 @@ are listed in the
   `rpc/session.rs` only while the profiler is on.
   The exit watches are not detectors: their call sites check `is_enabled()`
   before building a report.
+  The device manager (`apps/server/src/device/`) likewise emits
+  `device.lifecycle` (`start`, `ready`, `fail`, `stop`, with `platform`
+  `android` or `ios`, and a `failureKind` that includes `busy` for a simulator
+  found running outside BiBCode as its launch began) only while the profiler
+  is on. It reports an emulator that exits on its own as `subprocess.crash`
+  labelled `android-emulator`, and a simulator shut down or deleted outside
+  BiBCode as one labelled `ios-simulator`. A simulator has no exit status, so
+  that report always says `exit 1`, with the `launchd_sim` pid, or pid `0` when
+  that process was not found after boot. The sampler attributes a booted
+  simulator's `launchd_sim` to BiBCode as a `helper`.
 - `ProductionRuntime::start` starts the runtime on a blocking thread, because it
   replays `findings.ndjson`, before the orchestration engine starts.
 - **Global handle.** Hot paths reach the runtime through a process-global
@@ -1789,7 +1812,8 @@ lock and replays `findings.ndjson`.
 
 ### Diagnostics page and status bar
 
-**Settings → About → View diagnostics**, in its **Profiler** section, controls
+**Settings → Diagnostics** (also reached from **Settings → About → View
+diagnostics**), in its **Profiler** section, controls
 any connected environment through an environment selector that defaults to the
 primary. Its switch reads and writes that environment's `enableProfiler`, not
 `status.enabled`, so a degraded runtime keeps the switch on and explains itself
@@ -1910,6 +1934,492 @@ bounded memory, and works while the server is stopped.
   server and crash monitor do not count. The passive installer's preinstall
   hook ends every same-user `bibcode-desktop.exe`, an MCP server included.
 
+## Device previews
+
+`apps/server/src/device/` runs Android emulators and, on a macOS server, iOS
+simulators, at most one running device per platform per environment, and shows
+them in a right-panel `device` surface. Everything is off until the environment's
+`enableDevicePreviews` setting (default `false`, toggled at **Settings →
+Diagnostics → Device previews**) is on; servers that support it advertise the
+`devicePreviews` capability, and older servers get no device RPC. While the
+setting is off, every `device.*` method fails with
+`DevicePreviewsDisabledError` (a stream fails at subscribe), media sockets close
+with `disabled`, and turning it off stops every running device.
+
+The manager in `device/mod.rs` names no platform type: it drives a
+`DeviceBackend` (`device/backend.rs`) that discovers images and launches a
+`RunningDevice`, which supplies JPEG frames, an H.264 source, input, rotation,
+its unrequested exit, and its stop. The Android backend (SDK, emulator, gRPC
+controller, input mapping, and scrcpy) lives in `device/android/`; the iOS
+backend (`simctl`, the private-API guard, CoreSimulator, VideoToolbox, and HID
+input) lives in `device/ios/`, is compiled only for macOS, and is described in
+[iOS simulators](#ios-simulators) below. A backend may also refuse an image in
+`check_available` before the manager creates a slot. A slot is
+the only lasting owner of its running device; frame, input, and media tasks
+hold it for one call, and a stop waits up to 5 s for those calls to let go.
+
+**Discovery (Android).** The server looks for the SDK in `ANDROID_HOME`, then
+`ANDROID_SDK_ROOT`, then the platform default (`~/Library/Android/sdk`,
+`%LOCALAPPDATA%\Android\Sdk`, or `~/Android/Sdk`), and needs both
+`emulator/emulator` and `platform-tools/adb`. It lists AVDs with
+`emulator -list-avds` and checks acceleration with `emulator -accel-check`.
+Each failure becomes the `availability` of the catalog's Android entry
+(`sdkMissing`, `adbMissing`, `noAvds`, or `accelerationUnavailable`) with an
+actionable message. The catalog lists one entry per platform, each with its
+own `availability` and `images` (`{ id, displayName, inUseElsewhere? }`), and
+every device as
+`{ deviceId, platform, imageId, state, orientation, canRotate }`. A discovery
+result serves for 30 s; the MCP `device_list` tool always reruns it.
+
+**Lifecycle.** `DeviceManager` owns the catalog (`device.subscribeCatalog`) and
+allows one running device per platform; a second `device.open` on that
+platform fails with `DeviceLimitError` naming the running device's display
+name, and an image already running outside BiBCode fails with
+`DeviceBusyError`. A device moves `starting → booting → ready →
+stopping → stopped`, or to `failed` with a reason (`exited`, `bootTimeout`,
+`spawn`, `unresponsive`, or `busy`). The four most recent ended devices stay
+in the catalog so their reason stays visible.
+
+- The emulator starts with `-avd <name>`, `-no-window`, `-no-audio`,
+  `-no-boot-anim`, `-port <even console port 5554–5682>`,
+  `-grpc <loopback port>`, and `-grpc-use-token`, plus
+  `-gpu swiftshader_indirect` on a Linux server with neither `DISPLAY` nor
+  `WAYLAND_DISPLAY`. The AVD name is one argument and never meets a shell. It
+  is a registered helper (`android-emulator`) in its own process group or Job.
+- BiBCode never sets `ANDROID_EMULATOR_HOME`, because that also redirects AVD
+  lookup. It reads the gRPC port and token from the emulator's discovery file,
+  searching `emulator::default_discovery_dirs` in order: the OS runtime
+  directory (`$XDG_RUNTIME_DIR/avd/running` on Linux,
+  `~/Library/Caches/TemporaryItems/avd/running` on macOS,
+  `%LOCALAPPDATA%\Temp\avd\running` on Windows), then
+  `<ANDROID_EMULATOR_HOME or ~/.android>/avd/running`. In each directory it
+  tries `pid_<pid>.ini` first, then any `pid_*.ini`, and accepts only a file
+  whose `grpc.port` is the port it asked for.
+- `booting` starts when gRPC answers; `ready` follows once
+  `adb shell getprop sys.boot_completed` returns `1` and the first screenshot
+  has given the natural panel size and the boot orientation (see Input), within
+  180 s. The gRPC client connects only to `127.0.0.1`; adb uses the user's adb
+  server and BiBCode never passes `-a`.
+- A stop asks the emulator to shut down over gRPC, kills its process group
+  after 10 s, and removes its discovery file. An exit nobody asked for,
+  checked every second, fails the device with `exited` and raises
+  `subprocess.crash`.
+
+**JPEG frames.** `device.subscribeFrames` streams the emulator's
+`streamScreenshot` as base64 JPEG, at most 720 px wide, quality 70, and at
+most 15 fps. One producer runs per device while anyone subscribes, and a slow
+subscriber sees only the latest frame. Width, height, and orientation come
+from what the emulator reports, never from a rotate command.
+
+**Input.** `device.input` takes batches of at most 64 touch, key, and text
+events (text at most 1,000 characters) and the client keeps one batch in flight.
+The client tracks the keys and touches it holds down: it lifts the keys when the
+screen or the window loses focus, and everything when the page is hidden or the
+screen closes. When a batch is refused, its key releases and its touch releases
+(as cancels where the touch was lifted) go out once more at once, ahead of later
+input and in a batch of their own, so text queued since that the server refuses
+cannot refuse them again; one refused again stays held for the next of those.
+The panel shows a refusal's reason for 5 s after the latest refusal: input
+accepted meanwhile does not clear it, and a newer refusal replaces it. The
+emulator's proto promises only printable ASCII (`[32, 127)`) in
+`KeyboardEvent.text` and ignores most other characters while the call still
+succeeds, so Android refuses what it cannot type instead of sending it:
+`android::input::send_batch` fails a batch with any text event outside
+`device::input::is_us_typeable` (printable ASCII, Return, and Tab: the set
+`isUsTypeable` in `deviceKeyMap.ts` calls US-typeable, which iOS types as keys)
+with a `DeviceInputError` that says "This device can type only plain ASCII text.
+Accented letters, emoji, and other characters can't be sent from here yet.",
+before it sends anything. Return and Tab are sent as text although the proto
+does not promise them, and they are not yet confirmed on a real AVD; the
+[device preview
+runbook](../testing/cross-platform-validation.md#android-device-previews)
+records whether each arrives. If either does not, only Android's check narrows:
+the shared set stays, because iOS types it as keys. The refusal is all or
+nothing, so a touch, key, or other text in the same batch is not sent either,
+and the client sends the releases of any press in it once more, as above. iOS
+still pastes such text.
+Two guest limits drop typed text without an error, both measured on a live
+Pixel_8 AVD (API 35, emulator 37.2.12.0). First, the emulator types a
+`KeyboardEvent.text` as one burst of key events, a sync after each, and the
+guest's keyboard buffer holds 64 events: ` PASTED-ok`, 32 key events with its
+Shift presses, was dropped whole (`SYN_DROPPED` in the guest), while 22 to 24
+key events arrived. Back-to-back sends make one burst too, so ten
+one-character sends of it were dropped the same way. Text is therefore typed
+one character per send (`android::input::TEXT_CHARS_PER_SEND`), at most four
+key events, with `TEXT_SEND_INTERVAL` (5 ms, about 7.5 ms between sends as the
+timer rounds up) between the batch's text sends, all under the device's input
+lock, so no other event lands between them. With the pause the guest dropped
+nothing over 1,000 characters. Second, Android drops a key queued for more than
+10 s ("Dropped event because it is stale"), and the focused app takes keys one
+at a time: Chrome's address bar, with Gboard, took roughly 7 to 12 characters a
+second, so 300 pasted characters lost their tail whatever the pause (104
+arrived at 1 ms, 265 at 50 ms; all 300 only at 100 ms, which took 36 s), and a
+lost Shift release garbled what followed. Settings search took 300 at 5 ms but
+lost the tail of 1,000. So `send_batch` also refuses, after the ASCII check and
+in the same all-or-nothing way, a batch whose text events total more than
+`MAX_ANDROID_TEXT_PER_BATCH` (100) characters, with a `DeviceInputError` that
+says "This device can paste up to 100 characters at a time. Paste longer text
+in parts." 100 characters arrived exactly in Chrome's address bar, the slowest
+field measured, in both runs. Typing is never refused: a batch holds at most 64 events, and
+typed text is one character per event. A follow-up would paste longer and
+Unicode text through the emulator's clipboard (`setClipboard` plus Ctrl+V), as
+the proto recommends for large text; it is not implemented. Touch points are normalized `0..1` of the upright
+picture. The emulator's `Touch.x`/`y` is the physical location on the unrotated
+panel, so `android::input::to_panel_pixels` turns each point into panel pixels
+in the natural orientation, for the orientation the guest reported (measured on
+a real AVD: before this mapping, a landscape tap at (109, 66) of the 2400×1080
+picture arrived as panel (109, 66)). A pointer still down when the device's
+input stream is reopened or the device stops is released where it was, in panel
+pixels. `device.rotate` tilts the virtual sensor with `setPhysicalModel` and
+then follows what the guest shows; the screen turns only when auto-rotate is on
+and the foreground app allows it. The emulator's `SkinRotation` follows the
+sensor, not the guest, so it cannot tell a refused turn (the Pixel launcher
+refuses landscape, phones refuse 180°) from a real one. `android::orientation`
+derives the orientation instead: while a scrcpy session runs, its display size
+(codec header, then each session packet) decides the class against the native
+panel, not by "tall" or "wide": a display with the native panel's shape is in
+the portrait class (`portrait` is the device's natural orientation, so a tablet
+whose panel is naturally landscape is `portrait` at rest), and one with the
+other shape is turned. The skin picks the exact orientation only when its class
+agrees; otherwise the previous orientation stays, or, when that disagrees too,
+`portrait` for the native shape and `landscape` for the other. With no scrcpy
+session (still images) the skin decides, because the gRPC screenshots are
+rotated by it. Boot reads the natural panel size and the orientation from the
+first screenshot. BiBCode does not pass `-no-snapshot-load`, so an AVD stopped
+while turned comes back turned from its Quick Boot snapshot, with that
+screenshot already rotated (`ImageFormat.rotation`): a landscape rotation has
+its width and height swapped back to the natural panel. The tracker, the
+orientation whose vector the sensor was last sent, and the first `ready` catalog
+entry (with the turned size) start in the orientation it reported, and the
+device is not turned back. `rotate` reads the orientation back every 250 ms in a
+2.5 s window (measured: the display changed 0.67–0.90 s after
+`setPhysicalModel`); the last read starts by about 2.25 s, and one slow read can
+push the decision later. A turn no read has shown by then counts as refused only
+on positive evidence, a read that succeeded or a scrcpy display still in the
+other class, and the sensor is put back to the vector it held before the press,
+so it matches the screen. A failed read is no such evidence: it falls back to
+the derived orientation (which follows the scrcpy display). The skin follows the
+sensor, so it is recorded at the requested orientation as soon as the sensor is
+sent, unless the scrcpy display is already in that class (a 180° turn is not
+claimed before the guest takes it): a display that turns while every read fails
+then derives the request, not the shape fallback, which would mirror every tap
+after Rotate right until the window ends. With no evidence at all the turn is
+taken as asked: the sensor stays where it was sent, the skin is recorded at the
+requested orientation, and
+`device.rotate` returns the request, so its result, the catalog, and the touch
+mapping agree. One device's rotates run one at a time, so an older one never
+undoes a newer one. `device.rotate` returns `{ orientation }`, the orientation
+the device ended in, and the client says when it differs from the request
+("Pixel 8 didn't rotate. The app on screen may lock its orientation, or
+auto-rotate may be off on the device."). The catalog, touch mapping, JPEG
+frames, PNG screenshots, and `orientation_changes` (which follows turns the
+guest makes on its own) all read that derived orientation. Android's `rotate`
+writes nothing to the catalog: the derived orientation reaches it through
+`orientation_changes` and, while still images run, through each published frame,
+which carries the value derived just before it is published.
+
+**H.264 video.** Device video is the only application traffic outside typed
+RPC. On the first media subscriber, `device/android/scrcpy.rs` pushes the embedded
+scrcpy-server v4.1 jar to `/data/local/tmp/bibcode-scrcpy-server-v4.1.jar`
+unless `sha256sum` on the device already matches, runs it through
+`adb shell` as a registered helper (`android-scrcpy`) with
+`max_size=1280 video_bit_rate=4000000 max_fps=30` and `cleanup=false` (scrcpy's
+cleanup helper would delete the jar as it starts, defeating the hash check, and
+restores only options BiBCode never sets), forwards a loopback port to it, and
+reads the scrcpy v4.1 wire format:
+
+- the video socket starts with one dummy byte (forward tunnel), a 4-byte
+  big-endian codec id (`h264`), and a 12-byte session packet;
+- every later 12-byte header is a 64-bit flags word and a 4-byte length.
+  Bit 63 marks a session packet with no payload whose bytes 4–8 and 8–12 are
+  the new width and height (sent after a rotation); otherwise bit 62 marks a
+  config packet, bit 61 a key frame, and the low 61 bits are the PTS in
+  microseconds;
+- the control socket is used only to send `RESET_VIDEO`.
+
+`MediaHub` fans those units out to at most four sockets per device. The first
+socket starts the device's video source, and a socket that joins just as the
+hub closes (its source failed or ended) starts a fresh one. A client
+mints a ticket with `device.createMediaTicket`: random, single use, valid for
+60 s, bound to the session, the device, and the channel it was minted on
+(plain or E2EE). The book holds at most 256 tickets and 8 per session,
+dropping the oldest. The client opens `GET /api/device-media` (plain) or
+`GET /api/device-media-e2ee` (Noise_NK with the pinned host key and the
+prologue `bibcode-device-media/1`) on the main listener and sends the ticket
+as the first message, never in the URL; the routes accept no cookie or bearer.
+Each binary message is a 1-byte kind (`0` config, `1` key, `2` delta), an
+8-byte big-endian PTS in microseconds, and the Annex-B payload. Kind `3` is a
+keepalive with PTS 0 and no payload (9 bytes): when the source has produced no
+unit for 1 s the hub's task sends one to every socket whose queue is empty
+(queued frames already prove liveness, so a keepalive never grows a queue), and
+again every second while the source stays quiet and open. Both platforms need
+it: iOS encodes nothing on a still screen, and on a real Android emulator
+(`c2.android.avc.encoder`, API 35) scrcpy sent no units for 6 s and more on a
+still screen even though scrcpy v4.1 asks the encoder to repeat the previous
+frame after 100 ms. It passes through
+the E2EE record layer like any frame. The client resets its stall clock on it
+and never decodes it; it does not count as a first frame. The client sends
+only `{"type":"keyframe"}`, after a decoder error or when its decoder falls
+behind, and the latter at most once per second. A request that falls inside that
+second is held until it ends and sent then if no key frame has arrived, because
+a still screen produces no frame to retry on; a key frame, a reconfigure, or
+stopping drops it.
+
+Each socket has a 2 MiB, 256-frame queue. A unit larger than the byte budget
+still reaches a socket with nothing queued; for a key unit, a queue that holds
+only configs and keepalives counts as empty, so a key unit and the config sent
+just before it arrive together. On overflow the hub drops that
+socket's queued deltas, forwards nothing until the next key unit, and sends
+`RESET_VIDEO` at most once per second per device. The second runs from the
+write, which for a reset asked for while the source still starts is when the
+source is up. A reset asked for inside that second (a socket joining,
+overflowing, reporting a decoder error, or draining after it missed its key
+unit) is deferred, not dropped: when the second ends the hub's task sends one
+reset for every request made in it, if a socket still waits for a key unit,
+because a still screen encodes nothing unasked. A `RESET_VIDEO` write that
+fails or takes longer than 200 ms is deferred the same way, until three writes
+in a row have failed: each retry that stalls holds up every viewer's units, so
+the hub then logs a warning and stops deferring failures until a write
+succeeds. Later requests are still written, once each. Only a socket that
+newly falls behind asks at overflow. One already waiting that also loses the config or key
+unit (often the answer to its own reset, arriving while its queue is still
+full) asks once more when its reader drains the queue, under the same limit,
+unless a key unit has reached it since; a socket that never drains asks
+nothing more. A socket that reads what it is sent but still waits for a key
+unit with nothing queued, more than 2 s after its wait started or the last
+reset was written, asks again from the keepalive tick, under the same limit:
+its key unit was lost on the way, and the keepalives it gets would otherwise
+hide that from its client. A blocked socket always has frames queued, so it
+never asks this way. The client decodes each key frame with the last config it
+received, so a socket that drops a config (a rotation's, say) gets the hub's
+newest config again immediately before its next key unit. A config that does
+not fit holds the key unit back with it; one that fits is queued and not sent
+again. The wait ends only when the key unit is queued, and a socket that misses
+either asks again when it drains, as above. A socket that lost no config gets
+no extra one. A socket that accepts no frame for 10 s closes as `slow`, and so
+does one that answers nothing, not even the Ping the
+[shared heartbeat](./rpc-and-orchestration.md#wire-protocol) sends every 15 s,
+for 45 s.
+Rejections close with code 4400 and one of `expired`, `reused`, `wrongChannel`,
+`wrongDevice`, `limit`, `disabled`, `stopped`, `failed`, `unauthorized`, or
+`slow`; a wrong pinned key or prologue closes with 4403 `host-identity`. A 4400
+close finishes the WebSocket closing handshake: the server reads, and discards,
+what the client still sends until the client answers the close, for at most 1 s
+including the close frame, and only then drops the connection. A client that
+stopped reading has Pings queued and writes a Pong for each before it reads the
+close; on a connection already dropped, Linux resets those writes and the
+reason is lost. The socket's device slot is freed before the close starts.
+Pre-auth admission, deadlines, and the 503 refusal are in
+[Remote architecture](./remote.md#device-media-sockets).
+
+### iOS simulators
+
+The iOS backend runs only on a macOS server with Xcode; elsewhere the catalog
+has no iOS entry. It never creates or deletes simulators.
+
+**Discovery and availability.** A refresh runs `xcode-select -p`. After a
+`ready` result it runs nothing more until the developer directory or its
+Xcode's `version.plist` changes; otherwise it runs
+`xcrun xcodebuild -checkFirstLaunchStatus`, then `xcrun simctl help` and
+`xcrun xcodebuild -version`. A pending first launch (as after an Xcode update
+whose CoreSimulator is not installed yet) makes the check exit 69, which is
+`xcodeSetupIncomplete` without running `simctl`, whose wrapper would start
+`xcodebuild -runFirstLaunch` and wait for an administrator; a `simctl help`
+that times out is also `xcodeSetupIncomplete`. Any other check failure (`xcrun`
+exits 72 when only the Command Line Tools are selected) leaves the answer to
+`simctl help`, so a Mac without Xcode is `xcodeMissing`. It lists the available
+simulators of iOS runtimes with `simctl list devices available -j`, newest
+runtime first, named like `iPhone 17 Pro · iOS 26.5`. A simulator that is not
+`Shutdown` and that BiBCode did not boot is listed with `inUseElsewhere`, and
+`check_available` refuses it with `DeviceBusyError` before any slot exists; one
+found running when the launch begins fails the device with `busy`. The iOS
+entry's `availability` is `xcodeMissing`, `xcodeSetupIncomplete`,
+`noSimulators`, `xcodeUnsupported`, `viewOnlyHeadless` (reserved; nothing
+reports it yet), or `ready`, each with an actionable message.
+
+**The private-API guard.** Live simulators depend on private CoreSimulator,
+SimulatorKit, and HID names. `guard::GuardCache` checks every class, protocol,
+selector (with its type encoding), and C symbol the live path calls, on a
+blocking thread, once per developer directory and Xcode version. When all are
+present it keeps those frameworks loaded and simulators run live. When any is
+missing or changed, simulators open **view-only** and the platform's
+availability is `xcodeUnsupported` with the reason. The frameworks cannot be
+unloaded and a second SimulatorKit would duplicate its classes, so after the
+active Xcode changes, simulators stay view-only, with "Xcode changed while the
+server was running", until the server restarts. Every message send to a
+CoreSimulator proxy goes through one wrapper that checks
+`respondsToSelector:` first and catches an Objective-C exception before it
+reaches a Rust frame; FFI failures log at `warn` with the selector or symbol,
+never screen content or typed text.
+
+**Lifecycle.** `simctl boot` and `simctl bootstatus -b` together have 180 s.
+The device is `booting` from the boot until the screen is attached, then
+`ready`. BiBCode shuts down only simulators it booted (`IosBackend::booted`):
+a failed `simctl boot` leaves the simulator alone, since it may be someone
+else's, and a simulator that was shut down outside BiBCode is not shut down
+again, since someone may have booted it since. A stop releases input, detaches
+the screen, unregisters `launchd_sim`, and runs `simctl shutdown`. The
+simulator's state is polled every 2 s; one shut down or deleted outside
+BiBCode fails the device with `Shutdown outside BiBCode` or
+`Deleted outside BiBCode` and raises `subprocess.crash` (see
+[Profiler](#profiler)). Simulators left booted by a server that crashed are
+not reaped: the next start lists them as running outside BiBCode.
+
+**Live screen.** After boot, the backend attaches to the simulator's main
+display through SimulatorKit's screen (`SimDeviceIOClient` ports, the
+`registerScreenCallbacksWithUUID:…` callbacks) and reads its BGRA framebuffer
+`IOSurface`. The surface always stays portrait while the guest draws rotated
+content into it, so the server turns every frame upright for the UI's
+orientation (`pixels.rs`), and the catalog's orientation follows the
+simulator's `uiOrientation` as it changes. `device.subscribeFrames` sends a
+JPEG on each change, at most 720 px wide and 15 fps, repeating the last frame
+after 1 s without one. Video is H.264 from VideoToolbox (`encoder.rs`): one
+thread per stream wraps the current surface in a `CVPixelBuffer`, turns it
+with `VTPixelRotationSession` when the UI is not portrait, and encodes the
+screen at full size, Main profile at an automatic level (5.1 or above for a
+full-size screen), at most 60 fps, 6 bits per pixel per second clamped to
+2–12 Mbit/s, with key frames no more than 120 frames or 2 s apart. SimScreen
+signals only when the screen changes, so an unchanged screen encodes nothing;
+its sockets get the hub's once-a-second keepalive instead (below), which keeps
+the client's 5 s stall check from firing on a still picture. A reset forces
+the next frame to be a key frame, encoded at once even on an unchanged screen,
+and if VideoToolbox drops that frame the encoder forces another; other drops
+ask for nothing. A new output size (a rotation) builds a new session, whose
+config and key units go out first. The units feed the same
+`MediaHub`, tickets, and sockets as Android.
+
+**Input.** A live simulator takes input in-process. Touches, keys, and
+buttons go to the simulator's DTUHID service over XPC
+(`com.apple.coredevice.feature.remote.hid.digitizer`) once a liveness
+handshake answers; until then, or if it never does, touches and buttons use
+the legacy Indigo client (`SimDeviceLegacyHIDClient`) and keys and text are
+refused with "not accepting keyboard input yet". One gesture never splits
+between the two paths. iOS takes a single touch: touches from any pointer but
+the first one down are dropped, and a held touch is lifted when a send fails,
+the input stream reopens, or the device stops. Home, Lock, and the volume
+buttons are HID consumer-page buttons; Back and Recents are refused. A text
+event that is all US-keyboard characters is typed as keys; any other text
+event is pasted whole: `simctl pbcopy` of the full text, then Cmd+V. One
+pasteboard write per event means a later paste never replaces text iOS has
+not read yet, but while iOS shows its **Allow Paste** prompt, keys typed
+afterwards can arrive before the pasted text. The server tracks every key and
+button the simulator may hold down, the Shift and Cmd it adds for typing and
+pasting included. When a step of a batch fails (a send, or the `pbcopy` of a
+paste), it lifts the touch and then releases them all, modifiers last: buttons
+at once, keys only while the keyboard is ready. A failed DTUHID send marks its
+connection dead, so after one the key releases are not tried but wait for the
+keyboard to reconnect. A release that fails or waits goes out first in the next
+`device.input` call, once the keyboard is ready again, and the call fails if it
+fails again. A second key up, from the client's own release, is harmless. Once
+a batch is admitted (planned, checked, and holding the device's input lock), it
+runs on a task of its own, which keeps the lock until the batch and that
+recovery are done. A request cancelled or a connection lost meanwhile therefore
+never cuts it off between a press and its release, and the next batch goes out
+after it. A stop first releases the input connections, which refuse the rest of
+the batch, and cancels a `pbcopy` still running, whose child is killed and
+reaped within 2 s; the batch then ends with `NotReady`, not a copy failure. The
+stop waits for that task: at most the step in flight, a HID send's 2 s or the
+2 s it takes to reap the cancelled `pbcopy`, so a hanging copy no longer holds
+`simctl shutdown` back for its 15 s timeout.
+
+**Rotation and orientation.** `device.rotate` sends the target orientation to
+the simulator's `PurpleWorkspacePort` and then reads back the reported
+orientation for about 1.2 s; it returns the requested orientation, because that
+readback is no evidence of a refusal. `canRotate` is true for live simulators
+with input. One convention covers both platforms, with iOS as the reference:
+`landscape` is the phone turned left (counter-clockwise), the client's
+**Rotate left** from portrait, with the UI's top along the device's right
+edge, so a cutout or Dynamic Island shows on the picture's left. That is
+Android's `Surface.ROTATION_90`, reached with rotation vector `[0, 0, 90]`
+(a real Pixel_8 AVD turned to `ROTATION_270` for `-90`), and `reverseLandscape`
+is `ROTATION_270` with `[0, 0, -90]`. On iOS `landscape` is `uiOrientation` 4,
+sent as Purple value 3 (`reverseLandscape` is 3 and Purple 4,
+`reversePortrait` Purple 2, `portrait` Purple 1).
+
+**View-only.** A view-only simulator shows `simctl io screenshot` JPEGs
+about every 500 ms at full size, has no video (a media ticket is refused with
+"Video is off: …", so the client shows **Still images** with that reason),
+cannot rotate, and refuses input with "Touch input is off: …". There are
+three causes, each with its own reason: the guard's verdict for this Xcode
+(unsupported names, or Xcode changed since the frameworks loaded), which the
+platform's availability carries so the client marks the platform view-only
+before a start; a screen that would not attach at launch, which makes that
+one device view-only; and a live screen whose input would not connect, which
+keeps live frames and video but takes no input or rotation.
+
+### Client, agents, and shutdown
+
+**Client.** The device worker in `apps/web/src/components/device/` decodes
+H.264 with WebCodecs when `VideoDecoder` exists and accepts the stream's codec,
+and draws the transferred `VideoFrame`s on the main thread. It falls back to
+the JPEG stream (shown as **Still images** with the reason) when WebCodecs is
+missing (any insecure context, such as `http://<lan-ip>`), when no frame
+arrives within 5 s, or on a decoder error. Close reasons fall into three
+groups:
+
+- **Still images at once:** `host-identity`, `disabled`, `unauthorized`,
+  `wrongDevice`, and `wrongChannel`, which a new ticket cannot fix, and a
+  `DeviceMediaUnavailableError` from `device.createMediaTicket` (a server
+  running with `--unsafe-no-auth` has no session to bind a ticket to).
+- **Stop without still images:** `stopped`. The catalog already shows the
+  device's state, and video starts again with the next ready device.
+- **Retried:** `expired`, `reused`, `failed`, `slow`, `limit` (one of the
+  device's viewers may be a client that vanished, which the server reaps within
+  50 s), and a connection that is
+  refused or drops without a close frame (`network`, such as 1006 or the
+  pre-upgrade 503), with a new ticket each time, at most 3 times in 60 s with
+  backoff, before falling back to still images. A ticket that cannot be minted
+  because the connection to the server is down (it is reconnecting, or signing
+  in again after its session expired) is asked for again every second without
+  spending one of those retries; a screen that has not shown a frame yet still
+  falls back after 5 s.
+
+**Agents.** Coding agents reach the same device through four MCP tools on the
+provider MCP endpoint: `device_list`, `device_open` (takes `platform`, which
+defaults to `android`, and `imageId`; waits up to 180 s for `ready`),
+`device_screenshot` (a PNG at most 1080 px wide; a view-only simulator's is
+its full-size `simctl` JPEG), and `device_close`.
+They are listed and callable only while `DeviceManager::enabled()` is true;
+with the setting off the tools disappear from `tools/list` and a call fails
+with `DevicePreviewsDisabledError`. There is no per-call scope check, by
+invariant: a valid provider MCP credential is issued only by `provider_runtime`
+when it launches a thread's provider, so holding it is the operate grant, as
+for the `preview_*` tools. If MCP credentials are ever issued to
+lower-privileged principals, both tool families need a real scope check.
+`DeviceTools::call` receives the calling thread's `PreviewScope` and logs its
+environment and thread ids with the operation at `debug`, never the
+arguments.
+
+**Ownership and shutdown.** `ProductionRuntime` calls
+`DeviceManager::shutdown` after the preview gateway and before process
+ownership is frozen, so emulators and simulators stop gracefully rather than
+being killed by ownership teardown; the profiler's teardown runs later. A close
+hands the stop to the manager's task tracker and waits for the device to be
+gone (the emulator process reaped, or `simctl shutdown` returned),
+so a dropped `device.close` or `device_close` request still stops the device,
+and closing a device that just failed waits for its process to be reaped. The
+manager emits
+`device.lifecycle` while the profiler is on (see [Profiler](#profiler)), and
+`device.open`, `device.close`, `device.input`, and `device.rotate` are in
+`is_long_running` because they wait on discovery, the emulator, or the
+simulator.
+
+**Native verification items.** Each of these behaviors lives in one function
+and was checked on a real Pixel_8 AVD (API 35, macOS host): the discovery file
+and `-grpc-use-token` (`emulator::default_discovery_dirs`,
+`EMULATOR_GRPC_FLAGS`), the rotation vectors (`input::rotation_vector`), that
+frame sizes arrive oriented while touches use unrotated panel pixels
+(`input::oriented_size`, `android::input::to_panel_pixels`, and the client's
+`displaySize`), and the scrcpy v4.1 stream after a rotation
+(`device::scrcpy`). One row was not seen live: the phone image refuses 180°,
+so `reversePortrait`'s vector `[0, 0, 180]` was never seen to give
+`ROTATION_180`, and that vector and its touch mapping rest on unit tests. The
+[device preview runbook](../testing/cross-platform-validation.md#android-device-previews)
+checks each one. The iOS live path was checked on Xcode 27 with the iOS 26.5
+runtime only; the
+[iOS simulator runbook](../testing/macos-desktop.md#ios-simulator-previews)
+repeats it on each Xcode or runtime a release supports.
+
 ## Request and event flow
 
 1. The client runtime resolves a connection target and obtains any required
@@ -2021,7 +2531,11 @@ See [RPC and orchestration](./rpc-and-orchestration.md) and
   backups. Protected and bypassed attempts both stop the captured running set
   before invoking the installer and restart that exact set on failure.
   In-process backend shutdown preserves desktop-owned WebView descendants.
-- Normal application traffic uses HTTP and WebSocket RPC in every host.
+- Normal application traffic uses HTTP and WebSocket RPC in every host. The
+  one exception is device H.264 video on `/api/device-media` and
+  `/api/device-media-e2ee`: it is admitted by a single-use ticket from the
+  typed `device.createMediaTicket` RPC and Noise-encrypted on profiles that pin
+  the host key (see [Device previews](#device-previews)).
 - `packages/contracts` remains schema-only.
 - Rust owns all production backend behavior. TypeScript is limited to clients,
   contracts, shared utilities, relay infrastructure, and development tooling.

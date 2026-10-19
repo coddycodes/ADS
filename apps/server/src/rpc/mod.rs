@@ -13,8 +13,15 @@ pub use methods::{ACTIVE_RPC_METHODS, MethodMode, RpcMethodSpec};
 pub use session::{RpcRegistry, RpcResult, RpcStreamChunk};
 
 pub(crate) use e2ee::{
-    E2eePreauthAdmission, MAX_E2EE_CIPHERTEXT_BYTES, effective_preauth_peer,
-    remote_compression_enabled, run_e2ee_session,
+    E2EE_HANDSHAKE_TIMEOUT, E2eeChannel, E2eePreauthAdmission, E2eePreauthLease, E2eeSessionError,
+    MAX_E2EE_CIPHERTEXT_BYTES, accept_noise_nk, effective_preauth_peer, remote_compression_enabled,
+    run_e2ee_session,
+};
+// Only the unix media-socket tests read these.
+#[cfg(all(test, unix))]
+pub(crate) use e2ee::{
+    E2EE_HOST_IDENTITY_CLOSE_CODE, E2EE_RECORD_FLAG_CONTINUATION, E2EE_RECORD_FLAG_FINAL,
+    MAX_E2EE_CHUNK_BYTES,
 };
 pub(crate) use methods::{MethodMutability, method_mutability};
 #[cfg(test)]
@@ -23,4 +30,7 @@ pub(crate) use session::{
     PreparedRpcResponse, RpcResponseEnqueueGuard, RpcResponseEnqueuePermit, RpcSessionContext,
     RpcUnaryResult, encoded_server_message_len, response_too_large_failure, run_session,
 };
-pub(crate) use transport::{MAX_RECORDED_MESSAGE_BYTES, plain_subprotocols};
+pub(crate) use transport::{
+    ConnectionLiveness, HeartbeatTiming, MAX_RECORDED_MESSAGE_BYTES, plain_subprotocols,
+    watch_heartbeat,
+};

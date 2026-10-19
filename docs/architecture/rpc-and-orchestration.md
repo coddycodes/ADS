@@ -175,7 +175,9 @@ A check that fires more than 10 seconds late, because the process was suspended
 or starved, restarts the silence clock and Ping schedule with one immediate Ping
 instead of reaping or sending catch-up Pings.
 How a session ended, and the info log line an abnormal end writes, are described
-in [Connection ends](#connection-ends).
+in [Connection ends](#connection-ends). Device media sockets apply the same rule
+once their ticket is redeemed and close as `slow` when it reaps them; see
+[Device media sockets](./remote.md#device-media-sockets).
 Inbound activity counts per complete frame, so a single plain request that
 takes longer than 45 s to arrive on an otherwise idle connection is reaped (and
 the client's own 30 s monitor ends it first); E2EE requests travel in records.
@@ -2973,6 +2975,34 @@ process, it writes `rpc.reconnect` with the gap between them. The last 256
 disconnected clients are remembered. The fields are in the
 [events reference](../skills/bibcode-profiler/references/events.md#rpcdisconnect).
 
+## Device previews flow
+
+[Device previews](./overview.md#device-previews) add seven methods, registered
+in `production/device_rpc.rs` through the session wrappers. Each first checks
+`DeviceManager::enabled()` and fails with `DevicePreviewsDisabledError` while
+`enableDevicePreviews` is off; a stream fails at subscribe. Other failures are
+the typed `DeviceRpcError` union in `packages/contracts/src/device.ts`.
+
+| Method                     | Kind   | Scope                   | Payload and result                                                                                       |
+| -------------------------- | ------ | ----------------------- | -------------------------------------------------------------------------------------------------------- |
+| `device.subscribeCatalog`  | stream | `orchestration:read`    | The current catalog (per platform: availability and images; devices), then every change.                 |
+| `device.open`              | unary  | `orchestration:operate` | `{ platform, imageId }` → `{ deviceId }` at `starting`; boot progress arrives in the catalog.            |
+| `device.close`             | unary  | `orchestration:operate` | `{ deviceId }`; returns once the device has ended (up to the 10 s stop timeout).                         |
+| `device.input`             | unary  | `orchestration:operate` | `{ deviceId, events }`: 1 to 64 touch, key, or text events. The client keeps one batch in flight.        |
+| `device.rotate`            | unary  | `orchestration:operate` | `{ deviceId, orientation }` → `{ orientation }` the device ended in; the catalog shows what it reports.  |
+| `device.subscribeFrames`   | stream | `orchestration:read`    | `{ deviceId }` → JPEG frames `{ seq, width, height, orientation, jpegBase64 }`, conflated to the latest. |
+| `device.createMediaTicket` | unary  | `orchestration:read`    | `{ deviceId }` → `{ ticket, expiresAtMs }` for one H.264 media socket on this connection's channel.      |
+
+`device.close`, `device.input`, and `device.rotate` are in the profiler's
+`is_long_running` list, because they wait on the emulator: a stop (up to 10 s),
+a stalled input stream (up to 5 s), and reading back a rotation (about 2.5 s
+on Android, 1.2 s on iOS).
+
+H.264 video does not travel over RPC. The ticket from
+`device.createMediaTicket` opens `/api/device-media` or
+`/api/device-media-e2ee`, as described in
+[Device media sockets](./remote.md#device-media-sockets).
+
 ## Invariants
 
 - The server owns one durable FIFO per thread. Reloads, disconnects, and server
@@ -2998,6 +3028,9 @@ disconnected clients are remembered. The fields are in the
   retry sockets independently.
 - Authorization is checked at each HTTP route or RPC method, not inferred from
   successful authentication alone.
+- Device H.264 media is the only application traffic outside typed RPC. It is
+  admitted by a single-use ticket minted over typed RPC and bound to that
+  session, device, and channel, and it is Noise-encrypted on pinned profiles.
 - `GET`/`POST /api/transfers/{token}` authenticate with a five-minute HMAC
   token minted by `projects.createDownloadUrl` (read scope) or
   `projects.createUploadUrl` (operate scope) while those RPCs hold the

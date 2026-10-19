@@ -360,6 +360,66 @@ See [Preview gateway](./cross-platform-validation.md#preview-gateway).
 - Pending native checks (Windows console attach, Codex environment and
   `workspace-write` sandbox, 8-hour credential fallback): result or unavailable:
 
+## Device previews evidence
+
+See [Android device previews](./cross-platform-validation.md#android-device-previews)
+and [iOS simulator previews](./cross-platform-validation.md#ios-simulator-previews).
+
+- Server host OS, acceleration check, SDK path, `emulator -version`, and
+  `adb version`:
+- AVD name, API level, and ABI:
+- Clients (desktop WebView engine and version, browser and version, profile
+  type, and URL scheme):
+
+| Scenario                                  | Result | Screenshot, command, or log evidence | Exact message or finding |
+| ----------------------------------------- | ------ | ------------------------------------ | ------------------------ |
+| Off by default, then on                   |        |                                      |                          |
+| Availability messages                     |        |                                      |                          |
+| Start to Ready (boot time)                |        |                                      |                          |
+| Desktop video                             |        |                                      |                          |
+| Browser still images on `http://<lan ip>` |        |                                      |                          |
+| Touch, keys, paste, toolbar keys          |        |                                      |                          |
+| Pasted line break and tab arrive          |        |                                      |                          |
+| Rotation through four orientations        |        |                                      |                          |
+| Restart from landscape (label, size, tap) |        |                                      |                          |
+| scrcpy stop and push skip                 |        |                                      |                          |
+| Two clients                               |        |                                      |                          |
+| Agent `device_*` tools                    |        |                                      |                          |
+| Stop, setting off, server shutdown        |        |                                      |                          |
+| Emulator crash finding                    |        |                                      |                          |
+
+iOS simulators (macOS server only; otherwise "not applicable"):
+
+- Xcode version, `xcode-select -p`, simulator name, UDID, and runtime:
+- Simulators already booted before the run (left alone: yes | no):
+- Live or view-only, with the reason:
+- iOS sim tests (`BIBCODE_IOS_SIM_TESTS=1`): pass | fail | not run, with the
+  test counts:
+
+| Scenario                                    | Result | Screenshot, command, or log evidence | Exact message or finding |
+| ------------------------------------------- | ------ | ------------------------------------ | ------------------------ |
+| Grouped picker and "Running outside" item   |        |                                      |                          |
+| Start to Ready (boot time) and live video   |        |                                      |                          |
+| Tap, drag, Home, Lock                       |        |                                      |                          |
+| Keys, long typed text, Paste button and ⌘V  |        |                                      |                          |
+| Rotation (orientation and size)             |        |                                      |                          |
+| View-only notice and disabled controls      |        |                                      |                          |
+| Stop, setting off, quit: `Shutdown`, no pid |        |                                      |                          |
+| `device.lifecycle` `platform` and crash     |        |                                      |                          |
+
+| Native verification item                                       | Confirmed or corrected | Evidence |
+| -------------------------------------------------------------- | ---------------------- | -------- |
+| 1. Discovery directory, file name, `grpc.*` lines, token flag  |                        |          |
+| 2. Rotation vectors turn the screen                            |                        |          |
+| 3. Oriented frame sizes and touch pixels                       |                        |          |
+| 4. scrcpy v4.1 header, session and config packets on rotation  |                        |          |
+| scrcpy-server exits when its sockets close                     |                        |          |
+| Push skipped when the jar's SHA-256 matches                    |                        |          |
+| WebCodecs decode of the real stream (codec string, SPS/PPS)    |                        |          |
+| `VideoFrame` transfer in each desktop WebView                  |                        |          |
+| Pointer capture on drags that leave the panel, and paste       |                        |          |
+| No `emulator` or `qemu-system` process after stop and shutdown |                        |          |
+
 ## Process and temporary-root cleanup
 
 - Before snapshot:
