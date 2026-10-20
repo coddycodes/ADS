@@ -1973,7 +1973,7 @@ every device as
 result serves for 30 s; the MCP `device_list` tool always reruns it. Display
 names are unique within a platform: where two images would share one, as two
 simulators of the same name and OS or AVDs whose names differ only by `_`, each
-gets ` · ` and a tag, the AVD's name or the last four characters of the
+gets `·` and a tag, the AVD's name or the last four characters of the
 simulator's UDID (the whole UDID if those also match).
 
 **Lifecycle.** `DeviceManager` owns the catalog (`device.subscribeCatalog`) and
