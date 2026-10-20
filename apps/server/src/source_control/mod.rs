@@ -1,6 +1,7 @@
 pub mod checks;
 mod discovery;
 mod hosts;
+mod open_pull_request_lookups;
 mod pull_request;
 pub mod repository_identity;
 
@@ -29,7 +30,7 @@ pub use pull_request::{
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProviderKind {
     Github,

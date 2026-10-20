@@ -134,7 +134,11 @@ flowchart TB
   prevent work admitted before or during a mutation from publishing afterward;
   post-fetch remote reads and pull-request enrichment carry that same epoch
   through their final internal publication or delivery check without changing
-  public status schemas. Cached remote state additionally carries its producing
+  public status schemas. Stream and unary pull-request enrichment share one
+  coalesced open-request lookup per worktree, provider, and branch, reused for
+  10 seconds after success and never after failure, and forgotten when a
+  mutation finishes, a local change is reported, or BiBCode creates a request.
+  Cached remote state additionally carries its producing
   ref identity; an external ref change clears it and resets branch-specific
   client remote fields before reconciliation;
   the final idle transition across a queued mutation burst requests one

@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 use crate::git::{OutputPolicy, ProcessFailureFacts, ProcessRequest, ProcessRunner};
 
 use super::ProviderKind;
+use super::open_pull_request_lookups::{LookupKey, OpenPullRequestLookups};
 
 const BITBUCKET_MAX_PAGES: usize = 100;
 const BITBUCKET_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -400,6 +401,9 @@ pub struct PullRequestService {
     gitlab_command: ProviderCommandSpec,
     azure_command: ProviderCommandSpec,
     gitlab_create_transport: Option<Arc<dyn GitLabCreateTransport>>,
+    /// Shared by every clone, so status reads and stream enrichment in one
+    /// server reuse and coalesce the same open pull-request lookups.
+    open_lookups: Arc<OpenPullRequestLookups>,
 }
 
 impl Default for PullRequestService {
@@ -414,6 +418,7 @@ impl Default for PullRequestService {
             gitlab_command: ProviderCommandSpec::plain("glab"),
             azure_command: ProviderCommandSpec::plain("az"),
             gitlab_create_transport: None,
+            open_lookups: Arc::default(),
         }
     }
 }
@@ -465,6 +470,11 @@ impl PullRequestService {
         self.git_command = git_command;
         self.git_environment = git_environment;
         self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_open_lookup_ttl_for_test(&self, ttl: Duration) {
+        self.open_lookups.set_ttl_for_test(ttl);
     }
 
     #[cfg(test)]
@@ -592,6 +602,57 @@ impl PullRequestService {
         })
     }
 
+    /// [`Self::resolve_current_optional`] for VCS status enrichment: a
+    /// successful answer (including no open pull request) is reused for a few
+    /// seconds per (worktree, provider, branch), concurrent callers share one
+    /// provider run, and failures are never reused. Callers that must see the
+    /// hosting service's current answer, such as the existence check before
+    /// creating a pull request, use the uncached method.
+    pub async fn resolve_current_optional_shared(
+        &self,
+        input: ResolvePullRequestInput,
+        cancellation: &CancellationToken,
+    ) -> Result<Option<ResolvedPullRequest>, SourceControlProviderError> {
+        if input.provider == ProviderKind::Unknown {
+            return Ok(None);
+        }
+        let canonical_cwd = tokio::fs::canonicalize(&input.cwd)
+            .await
+            .unwrap_or_else(|_| input.cwd.clone());
+        let key = LookupKey {
+            cwd: input.cwd.clone(),
+            provider: input.provider,
+            reference: input.reference.clone(),
+        };
+        let service = self.clone();
+        let lookup = input.clone();
+        let outcome = self
+            .open_lookups
+            .resolve(key, canonical_cwd, cancellation, move |flight| async move {
+                service.resolve_current_optional(lookup, &flight).await
+            })
+            .await;
+        outcome.unwrap_or_else(|| {
+            Err(operation_error(
+                input.provider,
+                &input.cwd,
+                "resolveCurrentPullRequest",
+                self.current_provider_command(input.provider)
+                    .map(ProviderCommandSpec::label),
+                Some(&input.reference),
+                "The pull-request lookup was cancelled.",
+            ))
+        })
+    }
+
+    /// Forgets the shared open pull-request lookups for the worktree at or
+    /// below `path`, after something that can change the hosting service's
+    /// answer: a push, a created pull request, a finished Git mutation, or a
+    /// reported local change such as a terminal command exiting.
+    pub fn invalidate_open_pull_request_lookups(&self, path: &std::path::Path) {
+        self.open_lookups.invalidate(path);
+    }
+
     pub(crate) fn current_provider_command(
         &self,
         provider: ProviderKind,
@@ -632,7 +693,23 @@ impl PullRequestService {
 
     /// Creates the request with its reviewed options. Requests without options keep the plain
     /// provider commands; GitLab options travel as one JSON body so the request is complete.
+    /// Whatever the outcome, the worktree's shared open-request lookups are forgotten: a
+    /// failure can still have created the request (`gh` applies options after creating it).
     pub async fn create_with_options(
+        &self,
+        input: CreatePullRequestInput,
+        options: &CreatePullRequestOptions,
+        cancellation: &CancellationToken,
+    ) -> Result<CreatedPullRequest, SourceControlProviderError> {
+        let cwd = input.cwd.clone();
+        let created = self
+            .create_with_options_once(input, options, cancellation)
+            .await;
+        self.invalidate_open_pull_request_lookups(&cwd);
+        created
+    }
+
+    async fn create_with_options_once(
         &self,
         input: CreatePullRequestInput,
         options: &CreatePullRequestOptions,
