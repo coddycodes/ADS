@@ -1969,7 +1969,11 @@ actionable message. The catalog lists one entry per platform, each with its
 own `availability` and `images` (`{ id, displayName, inUseElsewhere? }`), and
 every device as
 `{ deviceId, platform, imageId, state, orientation, canRotate }`. A discovery
-result serves for 30 s; the MCP `device_list` tool always reruns it.
+result serves for 30 s; the MCP `device_list` tool always reruns it. Display
+names are unique within a platform: where two images would share one, as two
+simulators of the same name and OS or AVDs whose names differ only by `_`, each
+gets ` · ` and a tag, the AVD's name or the last four characters of the
+simulator's UDID (the whole UDID if those also match).
 
 **Lifecycle.** `DeviceManager` owns the catalog (`device.subscribeCatalog`) and
 allows one running device per platform; a second `device.open` on that

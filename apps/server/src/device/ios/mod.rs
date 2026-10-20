@@ -2185,6 +2185,41 @@ mod tests {
         assert!(sim.calls().iter().all(|c| !c.starts_with("boot")));
     }
 
+    /// Issue #131: two simulators with the same name and OS are told apart in the catalog the
+    /// Device picker shows, by the end of each UDID; a name of its own stays as it was.
+    #[tokio::test]
+    async fn simulators_of_the_same_name_are_told_apart_in_the_catalog() {
+        let sim = FakeXcrun::new()
+            .device(
+                "6F1C0D2E-9B3A-4C55-8E21-0A7D44B13F2A",
+                "iPhone 17",
+                "iOS 27.0",
+            )
+            .device(
+                "A0B1C2D3-E4F5-4A6B-9C8D-7E6F5A4B9C01",
+                "iPhone 17",
+                "iOS 27.0",
+            )
+            .device("UDID-3", "iPhone 17 Pro", "iOS 27.0")
+            .write();
+        let (manager, _enabled) = ios_manager(&sim);
+        manager.refresh_now().await;
+        let names: Vec<String> = manager.catalog().borrow().platforms[0]
+            .images
+            .iter()
+            .map(|image| image.display_name.clone())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "iPhone 17 · iOS 27.0 · 3F2A",
+                "iPhone 17 · iOS 27.0 · 9C01",
+                "iPhone 17 Pro · iOS 27.0",
+            ]
+        );
+        manager.shutdown().await;
+    }
+
     #[tokio::test]
     async fn close_shuts_down_only_what_bibcode_booted() {
         let sim = FakeXcrun::new()
