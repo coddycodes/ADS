@@ -1496,6 +1496,36 @@ if (browserRuntime) {
       container.remove();
     });
 
+    it("creates the edited Name from an occupied branch instead of a suffixed copy (#136)", async () => {
+      testState.refs = [{ name: "master", isRemote: false, current: true }];
+      const { container, root } = await mountDialog();
+
+      await React.act(async () => requiredButton(container, "Branch").click());
+      await React.act(async () => requiredButton(container, "master").click());
+      await setInputValue(
+        requiredElement<HTMLInputElement>(container, "input[placeholder='Worktree name']"),
+        "my-feature",
+      );
+      expect(container.textContent).toContain(
+        'A new branch ("my-feature" or the next available name) will be created from it.',
+      );
+      await React.act(async () => requiredButton(container, "Create worktree").click());
+      await React.act(async () => flushPromises());
+      expect(testState.createWorktree).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            title: "my-feature",
+            refName: "master",
+            newRefName: "my-feature",
+            baseRefName: "master",
+          }),
+        }),
+      );
+
+      await React.act(async () => root.unmount());
+      container.remove();
+    });
+
     it("advances an untouched name when opting out of branch reuse", async () => {
       testState.refs = [
         { name: "feature/login", isRemote: false },
