@@ -3,17 +3,18 @@
 **Result:** FAIL
 
 - **#119 passes with residual risk.** Every step was measured on an unlocked session with the window visible, and the Web Inspector Layers tab counts 81 layers. No sustained jank. Each scroll pass has one long frame, and opening the panel or restoring the right panel causes one 58–80 ms frame.
-- **#96 fails.** The copies of each message are not fixed: they grow by about 3 per changed reconnect.
-  - Heap snapshots (JSC runs a full GC before each one) went from 2,985 strings of about 60 KB (30 copies of each prompt) to 4,800 (48 copies) after 8 reconnects. The heap grew from 220.17 MB to 335.67 MB.
-  - Most of the growth is the Timeline minimap: each derivation makes a full-length copy of every user message, and those arrays accumulate (see #96).
-  - The footprint in that run rose steadily with it, from 332.5 MB to 458.8 MB.
+- **#96 fails, and is improved by a fix made during this run.**
+  - Before the fix (run 4), each changed reconnect added about 3 copies of each message. Heap snapshots (JSC runs a full GC before each one) went from 2,985 strings of about 60 KB (30 copies of each prompt) to 4,800 (48 copies) after 8 reconnects, and the heap from 220.17 MB to 335.67 MB. Most of it was the Timeline minimap: each derivation made a full-length copy of every user message, and those arrays accumulated.
+  - Commit `1b3e1df8` bounds the minimap preview and keeps the callbacks handed to the list stable. After it (run 6), the same 8 reconnects went from 3,008 to 3,474 strings (+466, against +1,815), and the heap from 222.01 MB to 255.44 MB (+33 MB, against +115 MB). The minimap holds no copies at all.
+  - Growth remains: about 0.66 copies of each message per changed reconnect, all in message `text`. The footprint still rose about 31 MB per changed reconnect in run 6, so a follow-up bug is needed.
 
 Follow-up to `docs/testing/reports/2026-10-18-v095-macos-device-previews-and-scm.md`, which was blocked by a locked screen. Covers issue #134.
 
 ## Tested revision
 
 - **Repository:** `mubeda/BibCode`, branch `claude/ios-macos-android-emulator-9b9e63` (PR #146).
-- **App built from:** `b82a616a` (v0.10.1 plus the PR #146 fixes). Commit `8046ec42`, made during this run, changes only test helpers.
+- **App built from:** `b82a616a` (v0.10.1 plus the PR #146 fixes) for runs 1 to 4 and #119. Commit `8046ec42`, made during this run, changes only test helpers.
+- **Run 6 built from:** `1b3e1df8`, the minimap fix, with the same build command.
 - **Dirty state:** clean before and after; the specs and fixtures live outside the repository.
 
 ## Native environment
@@ -53,7 +54,7 @@ Fixture: 312 staged, 50 conflicted (`UU`, merge in progress), and about 3,488 un
 - **Heap snapshots:**
   - Taken with `console.takeHeapSnapshot` in Safari Web Inspector, with the JavaScript Allocations timeline recording only around each snapshot. Recording all the time makes the Inspector snapshot the page every 10 s, which stalled WebDriver in runs 1 and 3.
   - Each snapshot was exported and parsed offline (`analyze.py`). The parser's totals match the Inspector's own.
-- **Runs used:** run 4 for the copy counts and run 3 for the midpoint.
+- **Runs used:** run 4 for the copy counts before the fix, run 3 for the midpoint, and run 6 after the fix.
 
 | Expectation                                       | Result | Measured                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -72,6 +73,19 @@ Fixture: 312 staged, 50 conflicted (`UU`, merge in progress), and about 3,488 un
   - The minified names (`ge`, `he`) can't be mapped to source without source maps.
 - The `text` growth (+458, about 4.6 copies) runs through closure-held arrays of message parts. It wasn't attributed further.
 
+### After the minimap fix (run 6)
+
+Same thread and reconnect sequence, built from `1b3e1df8`, with the Inspector recording only around the two snapshots.
+
+| Expectation                                       | Result | Measured                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An unchanged reconnect does not resend the thread | PASS   | Both unchanged reconnects answered `unchanged`; 62 KB inbound                                                                                                                                                                                                                                                                                        |
+| No growth of about 7 MB per reconnect             | FAIL   | <ul><li>Footprint: 387.6 MB at the idle control, 405.5 and 393.9 MB after the unchanged reconnects, then 420.3, 449.8, 473.5, 507.4, 539.5 and 574.9 MB after the changed ones. That's about 31 MB per changed reconnect.</li><li>After the run it settled to 496.7 MB, and stayed there 120 s later.</li></ul>                                      |
+| About 0.4 MB per reconnect                        | FAIL   | JS heap 222.01 MB at baseline, 255.44 MB after 8 reconnects: about +5.6 MB per changed reconnect, against about +19 MB before the fix                                                                                                                                                                                                                |
+| A fixed number of copies of each message          | FAIL   | <ul><li>Strings of about 60 KB: 3,008 at baseline (30 copies), 3,474 after 8 reconnects (34.7 copies).</li><li>`userText` (the minimap): 0 at baseline and after, against 303 then 1,503 before the fix.</li><li>`text`: 3,007, then 3,404. Lexical `__text` and `__cachedText`: 99, then 100 each, so the composer holds one steady copy.</li></ul> |
+
+**Where the remaining copies are held.** The 466 new strings are all message `text`. The shortest paths from a root run through the thread store's subscriber list (`subscribe` … `messages`), through React fiber state (`memoizedState` … `messages`), and through `<root>.Internal`. Some paths also run through `onPaste` closures reached from WebDriver's `__wd_el_*` element references on `window`; those are a test artifact and not present in normal use.
+
 ## Deviations
 
 - **Inspector handling:**
@@ -82,6 +96,7 @@ Fixture: 312 staged, 50 conflicted (`UU`, merge in progress), and about 3,488 un
   - Run 2: its last two points were distorted by an extra Console snapshot.
   - Run 3: WebDriver stalled after reconnect 4 under the Inspector's 10 s snapshots.
 - **Run 4** recorded only around its two snapshots and finished cleanly (exit 0).
+- **Run 5** stalled at a snapshot gate after a Safari menu click hung its AppleEvents, and was stopped. **Run 6** replaced it and finished cleanly (exit 0, 2,474 s).
 - **The Inspector may have added to the heap,** since it was attached for all of run 4. The growth is in app closures, not Inspector objects, and the footprint grew with it, but a run without an attached Inspector would confirm it.
 - **System state changed by the automation.**
   - **Do Not Disturb:** keystrokes into the Inspector Console turned it off.
@@ -92,22 +107,22 @@ Fixture: 312 staged, 50 conflicted (`UU`, merge in progress), and about 3,488 un
 
 - **Processes:** no test app, WebDriver or `caffeinate` from this run remains.
 - **Left in place:**
-  - The temporary install `/private/tmp/bibcode-m134-install.*`.
+  - The temporary installs `/private/tmp/bibcode-m134-install.*` and `/private/tmp/bibcode-m134-install2.*`.
   - Heap exports in `/private/tmp/m134-heap/`.
   - The E2E WebKit profile `~/Library/WebKit/com.bibcode.desktop.e2e.m134` (7 MB, a new identifier used only for this run).
 - **Untouched:** the user's production `com.bibcode.desktop` profile.
 
 ## Commands not run
 
-| Item                              | Reason                                  | Follow-up                                                           |
-| --------------------------------- | --------------------------------------- | ------------------------------------------------------------------- |
-| #96 without an attached Inspector | The copy count needs the Inspector      | A footprint-only run 5, to confirm the growth without the Inspector |
-| VoiceOver reading order           | Needs an interactive screen reader pass | Manual pass                                                         |
+| Item                              | Reason                                  | Follow-up                                                                   |
+| --------------------------------- | --------------------------------------- | --------------------------------------------------------------------------- |
+| #96 without an attached Inspector | The copy count needs the Inspector      | A footprint-only run, to confirm the remaining growth without the Inspector |
+| VoiceOver reading order           | Needs an interactive screen reader pass | Manual pass                                                                 |
 
 ## Residual risks
 
 - **#119:** a single long frame occurs per scroll pass (130–191 ms), and one 58–80 ms frame on panel open or right-panel restore. These are isolated hitches, not sustained jank, but they break the strict "no frame over 50 ms" wording.
-- **#96 regression:** thread memory grows by about 3 copies of the thread per changed reconnect. Most of it is the minimap's full-length `userText` copies held by accumulating closures. A bug should be filed, and the fix should bound the preview (slice before normalizing) and release the stale item arrays.
+- **#96 regression:** before `1b3e1df8`, thread memory grew by about 3 copies of the thread per changed reconnect, mostly the minimap's full-length `userText` copies. That fix removes them. About 0.66 copies per changed reconnect remain, held through the thread store's subscribers and React fiber state, and the footprint still rises about 31 MB per changed reconnect. A bug should be filed for the remaining growth.
 
 ## Runbook review
 
