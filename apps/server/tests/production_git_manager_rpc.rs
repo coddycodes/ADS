@@ -1867,6 +1867,221 @@ async fn remote_branch_checkout_requires_an_explicit_choice_to_bring_local_chang
     }
 }
 
+/// The two requests the Git Manager's **Leave my changes** sends, in order.
+async fn leave_my_changes(fixture: &Fixture, target: &str) -> (Vec<Value>, Option<Vec<Value>>) {
+    let cwd = &fixture.repository_path;
+    let stashed = collect_events(fixture.operation(
+        "50",
+        json!({
+            "_tag": "stash-push", "cwd": cwd, "projectId": "project-1",
+            "message": "WIP before switching to origin/develop", "paths": [],
+            "includeUntracked": true
+        }),
+    ))
+    .await;
+    if stashed.last().unwrap()["_tag"] != "finished" {
+        return (stashed, None);
+    }
+    let switched = collect_events(fixture.operation(
+        "51",
+        json!({
+            "_tag": "branch-checkout", "cwd": cwd, "projectId": "project-1",
+            "name": target, "strategy": null
+        }),
+    ))
+    .await;
+    (stashed, Some(switched))
+}
+
+async fn stash_files(fixture: &Fixture) -> Vec<Vec<String>> {
+    let stashes = fixture
+        .read(
+            "52",
+            "gitManager.getStashes",
+            json!({ "cwd": fixture.repository_path }),
+        )
+        .await
+        .expect("stash list");
+    stashes
+        .as_array()
+        .expect("stash array")
+        .iter()
+        .map(|stash| {
+            stash["files"]
+                .as_array()
+                .expect("stash files")
+                .iter()
+                .map(|file| file["path"].as_str().unwrap().to_owned())
+                .collect()
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn leave_my_changes_stashes_untracked_files_then_switches_to_a_remote_only_branch() {
+    for with_tracked_edit in [false, true] {
+        let fixture = Fixture::new().await;
+        let cwd = &fixture.repository_path;
+        fs::write(cwd.join(".gitignore"), "*.log\n").unwrap();
+        git(cwd, &["add", ".gitignore"]);
+        git(cwd, &["commit", "-q", "-m", "ignore logs"]);
+        git(cwd, &["push", "-q", "origin", "HEAD:refs/heads/develop"]);
+        assert!(
+            !git_output(cwd, &["show-ref", "--verify", "refs/heads/develop"])
+                .status
+                .success()
+        );
+        fs::create_dir(cwd.join("docs")).unwrap();
+        fs::write(cwd.join("docs/notes.md"), "my notes\n").unwrap();
+        fs::write(cwd.join("build.log"), "ignored output\n").unwrap();
+        if with_tracked_edit {
+            fs::write(cwd.join("tracked.txt"), "my unfinished work\n").unwrap();
+        }
+
+        let (stashed, switched) = leave_my_changes(&fixture, "refs/remotes/origin/develop").await;
+
+        assert_eq!(stashed.last().unwrap()["_tag"], "finished", "{stashed:?}");
+        let switched = switched.expect("checkout follows a successful stash");
+        assert_eq!(switched.last().unwrap()["_tag"], "finished", "{switched:?}");
+        assert_eq!(git_stdout(cwd, &["branch", "--show-current"]), "develop");
+        assert!(!cwd.join("docs/notes.md").exists());
+        assert_eq!(
+            fs::read_to_string(cwd.join("tracked.txt")).unwrap(),
+            "base\n"
+        );
+        // Ignored files are not the user's pending work and stay where they are.
+        assert_eq!(
+            fs::read_to_string(cwd.join("build.log")).unwrap(),
+            "ignored output\n"
+        );
+        let mut expected = vec!["docs/notes.md".to_owned()];
+        if with_tracked_edit {
+            expected.push("tracked.txt".to_owned());
+        }
+        let mut listed = stash_files(&fixture).await;
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        listed[0].sort();
+        assert_eq!(listed[0], expected);
+
+        let applied = collect_events(fixture.operation(
+            "53",
+            json!({
+                "_tag": "stash-apply", "cwd": cwd, "projectId": "project-1", "index": 0
+            }),
+        ))
+        .await;
+        assert_eq!(applied.last().unwrap()["_tag"], "finished", "{applied:?}");
+        assert_eq!(
+            fs::read_to_string(cwd.join("docs/notes.md")).unwrap(),
+            "my notes\n"
+        );
+        if with_tracked_edit {
+            assert_eq!(
+                fs::read_to_string(cwd.join("tracked.txt")).unwrap(),
+                "my unfinished work\n"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn leave_my_changes_keeps_an_untracked_file_that_collides_with_the_target_in_the_stash() {
+    let fixture = Fixture::new().await;
+    let cwd = &fixture.repository_path;
+    git(cwd, &["switch", "-q", "-c", "remote-source"]);
+    fs::create_dir(cwd.join("docs")).unwrap();
+    fs::write(cwd.join("docs/notes.md"), "develop notes\n").unwrap();
+    git(cwd, &["add", "docs/notes.md"]);
+    git(cwd, &["commit", "-q", "-m", "track notes"]);
+    git(cwd, &["push", "-q", "origin", "HEAD:refs/heads/develop"]);
+    git(cwd, &["switch", "-q", "main"]);
+    git(cwd, &["branch", "-q", "-D", "remote-source"]);
+    fs::create_dir_all(cwd.join("docs")).unwrap();
+    fs::write(cwd.join("docs/notes.md"), "my notes\n").unwrap();
+
+    let (stashed, switched) = leave_my_changes(&fixture, "refs/remotes/origin/develop").await;
+
+    assert_eq!(stashed.last().unwrap()["_tag"], "finished", "{stashed:?}");
+    let switched = switched.expect("checkout follows a successful stash");
+    assert_eq!(switched.last().unwrap()["_tag"], "finished", "{switched:?}");
+    assert_eq!(git_stdout(cwd, &["branch", "--show-current"]), "develop");
+    assert_eq!(
+        fs::read_to_string(cwd.join("docs/notes.md")).unwrap(),
+        "develop notes\n"
+    );
+
+    let popped = collect_events(fixture.operation(
+        "54",
+        json!({
+            "_tag": "stash-pop", "cwd": cwd, "projectId": "project-1", "index": 0
+        }),
+    ))
+    .await;
+    let failed = popped.last().unwrap();
+    assert_eq!(failed["_tag"], "failed", "{popped:?}");
+    assert_eq!(failed["code"], "stash-untracked-collision", "{popped:?}");
+    assert!(
+        failed["message"]
+            .as_str()
+            .unwrap()
+            .contains("The stash was kept"),
+        "{popped:?}"
+    );
+    // Git refuses to overwrite the tracked file and keeps the stash entry intact.
+    assert_eq!(
+        fs::read_to_string(cwd.join("docs/notes.md")).unwrap(),
+        "develop notes\n"
+    );
+    assert_eq!(stash_files(&fixture).await, vec![vec!["docs/notes.md"]]);
+    assert_eq!(
+        git_stdout(cwd, &["show", "stash@{0}^3:docs/notes.md"]),
+        "my notes"
+    );
+}
+
+#[tokio::test]
+async fn leave_my_changes_fails_before_switching_when_git_cannot_stash_the_dirty_state() {
+    let fixture = Fixture::new().await;
+    let cwd = &fixture.repository_path;
+    let submodule = fixture._root.path().join("submodule-source");
+    fs::create_dir(&submodule).unwrap();
+    git(&submodule, &["init", "-q", "-b", "main"]);
+    configure_identity(&submodule);
+    fs::write(submodule.join("module.txt"), "module\n").unwrap();
+    git(&submodule, &["add", "module.txt"]);
+    git(&submodule, &["commit", "-q", "-m", "module"]);
+    git(
+        cwd,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            path(&submodule),
+            "module",
+        ],
+    );
+    git(cwd, &["commit", "-q", "-m", "add submodule"]);
+    git(cwd, &["push", "-q", "origin", "HEAD:refs/heads/develop"]);
+    // Untracked content inside a submodule makes the checkout dirty, but no
+    // stash can hold it.
+    fs::write(cwd.join("module/inside.txt"), "inside\n").unwrap();
+
+    let (stashed, switched) = leave_my_changes(&fixture, "refs/remotes/origin/develop").await;
+
+    let failed = stashed.last().unwrap();
+    assert_eq!(failed["_tag"], "failed", "{stashed:?}");
+    assert_eq!(failed["code"], "nothing-to-stash", "{stashed:?}");
+    assert!(switched.is_none());
+    assert_eq!(git_stdout(cwd, &["branch", "--show-current"]), "main");
+    assert_eq!(
+        fs::read_to_string(cwd.join("module/inside.txt")).unwrap(),
+        "inside\n"
+    );
+    assert!(stash_files(&fixture).await.is_empty());
+}
+
 #[tokio::test]
 async fn remote_branch_checkout_bring_preserves_overwrite_and_operation_guards() {
     let fixture = Fixture::new().await;

@@ -355,7 +355,8 @@ flowchart TB
   uses a never-reused key, and the watcher's echo of a repository-triggered
   read is absorbed, so one change never causes two reads. The absorption relies
   on the server advancing a signal from generation 0 at its first computed
-  signature. The stash list (a reflog read plus one `git stash show` per entry)
+  signature. The stash list (a reflog read plus one
+  `git stash show --include-untracked` per entry)
   is read only while the Stashes panel is open: once on opening, and on each
   signal change or in-app operation while open. Closing the panel drops the
   query, so a closed panel reads nothing (not even on reconnect) and shows no

@@ -566,7 +566,16 @@ different branch or replaces local history. Local branch names and unambiguous
 short remote names remain accepted by the operation. The explicit `bring`
 checkout strategy skips only the dirty-worktree guard: Git still rejects
 overwrites, and operation-in-progress and worktree-occupancy guards still apply.
-The `stash` UI choice completes the existing stash operation before checkout.
+The `stash` UI choice completes the existing `stash-push` operation, with
+`includeUntracked` set, before checkout. That flag adds `--include-untracked`
+(never `--all`, so ignored files stay in place) and turns Git's exit-0 "No
+local changes to save" into a `nothing-to-stash` failure, so the client never
+switches believing the work was saved. Without the flag `stash-push` keeps its
+plain `git stash push` behavior. Stash listings and stash diffs read
+`git stash show --include-untracked`, so a stash's untracked files appear as
+added files; that flag needs Git 2.32 or later, below which stash listing and
+stash diffs fail instead of omitting those files. Applying or popping a stash whose untracked file now exists in the
+working tree fails with `stash-untracked-collision`; Git keeps the entry.
 Checkout failures remain visible inside an open dirty-changes dialog.
 
 History preserves pinned pages, ordering, selection, and scroll context while

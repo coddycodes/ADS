@@ -224,6 +224,18 @@ describe("Git Manager wire schemas", () => {
     ]);
   });
 
+  it("decodes a stash push that also saves untracked files, and one from an older client", () => {
+    const decode = decodeGitManagerOperationRequest;
+    const base = { cwd: "/repo", projectId: "project-1", _tag: "stash-push", message: "WIP" };
+    expect(decode({ ...base, paths: [], includeUntracked: true })).toEqual({
+      ...base,
+      paths: [],
+      includeUntracked: true,
+    });
+    expect(decode({ ...base, paths: [] })).toEqual({ ...base, paths: [] });
+    expect(() => decode({ ...base, paths: [], includeUntracked: "yes" })).toThrow();
+  });
+
   it("decodes a merge preview input with and without a target", () => {
     const decode = decodeGitManagerPreviewMergeInput;
     expect(decode({ cwd: "/repo", source: "topic" })).toEqual({ cwd: "/repo", source: "topic" });

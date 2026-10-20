@@ -682,8 +682,16 @@ also offer cherry-pick, squash, and reorder. History actions use the panel's
 mounted confirmation and multi-commit dialogs.
 
 Above the tabs, **Stashes** opens the full native stash list with per-entry diff
-and apply, pop, and drop actions. Choosing **Leave my changes** while switching
-branches creates a normal visible stash. **Merge…** loads a server preview and
+and apply, pop, and drop actions; untracked files a stash saved are listed as
+added files. Choosing **Leave my changes** while switching branches saves every
+change, untracked files included, in a normal visible stash named
+`WIP before switching to <branch>`, then switches. Ignored files stay where they
+are. If Git cannot stash anything (for example, the only changes are inside a
+submodule), or changes remain after the stash, the dialog stays open, says so,
+and the branch is not switched. If a stashed untracked file collides with a
+file the target branch tracks, the switch still succeeds; applying the stash
+later fails with an explanation and Git keeps the entry, so move the file aside
+and apply again. **Merge…** loads a server preview and
 starts a merge-commit or squash merge. **Merge commit** never fast-forwards:
 whenever the source has commits the current branch lacks, it records a merge
 commit. Both modes override repository merge settings such as `merge.ff` or

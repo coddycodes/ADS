@@ -279,15 +279,18 @@ fn filter_patch_for_path(patch: &str, path: &str) -> String {
         .join("")
 }
 
+/// Saves the working tree in a new stash entry. `include_untracked` adds
+/// untracked files (`--include-untracked`); ignored files are never stashed.
 pub async fn push(
     repository: &GitRepository,
     cwd: &Path,
     message: &str,
     paths: &[String],
+    include_untracked: bool,
     cancellation: &CancellationToken,
 ) -> Result<Vec<ProcessOutput>, GitCommandError> {
     repository
-        .git_manager_stash_push(cwd, message, paths, cancellation)
+        .git_manager_stash_push(cwd, message, paths, include_untracked, cancellation)
         .await
 }
 
@@ -411,6 +414,105 @@ mod tests {
             resolve_stash_selector(&entries, "dropped"),
             Err(GitManagerStashError::NotFound)
         ));
+    }
+
+    fn committed_fixture() -> tempfile::TempDir {
+        let fixture = tempfile::tempdir().expect("temporary repository");
+        git(fixture.path(), &["init", "-q", "-b", "main"]);
+        git(fixture.path(), &["config", "user.name", "Git Manager Test"]);
+        git(
+            fixture.path(),
+            &["config", "user.email", "git-manager@example.test"],
+        );
+        fs::write(fixture.path().join("tracked.txt"), "base\n").expect("base file");
+        git(fixture.path(), &["add", "tracked.txt"]);
+        git(fixture.path(), &["commit", "-q", "-m", "base"]);
+        fixture
+    }
+
+    #[tokio::test]
+    async fn listing_and_diff_show_the_untracked_files_a_stash_saved() {
+        let fixture = committed_fixture();
+        fs::write(fixture.path().join("notes.md"), "my notes\n").expect("untracked file");
+        git(
+            fixture.path(),
+            &["stash", "push", "-q", "--include-untracked", "-m", "saved"],
+        );
+
+        let repository = GitRepository::default();
+        let cancellation = CancellationToken::new();
+        let entries = list_stashes(&repository, fixture.path(), &cancellation)
+            .await
+            .expect("stash list");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].files,
+            vec![GitManagerChangedFile {
+                path: "notes.md".into(),
+                status: GitManagerChangedFileStatus::Added,
+                insertions: 1,
+                deletions: 0,
+            }]
+        );
+        let patch = diff(
+            &repository,
+            fixture.path(),
+            &entries[0].sha,
+            "notes.md",
+            &cancellation,
+        )
+        .await
+        .expect("stash diff");
+        assert!(patch.stdout.contains("+my notes"), "{}", patch.stdout);
+    }
+
+    #[tokio::test]
+    async fn push_saves_untracked_files_only_when_asked_and_never_ignored_ones() {
+        let repository = GitRepository::default();
+        let cancellation = CancellationToken::new();
+        for include_untracked in [false, true] {
+            let fixture = committed_fixture();
+            fs::write(fixture.path().join(".gitignore"), "*.log\n").expect("ignore rules");
+            git(fixture.path(), &["add", ".gitignore"]);
+            git(fixture.path(), &["commit", "-q", "-m", "ignore logs"]);
+            fs::write(fixture.path().join("tracked.txt"), "edited\n").expect("tracked edit");
+            fs::write(fixture.path().join("notes.md"), "my notes\n").expect("untracked file");
+            fs::write(fixture.path().join("build.log"), "ignored\n").expect("ignored file");
+
+            let outputs = push(
+                &repository,
+                fixture.path(),
+                "saved",
+                &[],
+                include_untracked,
+                &cancellation,
+            )
+            .await
+            .expect("stash push");
+
+            assert_eq!(outputs.last().expect("stash output").exit_code, 0);
+            assert_eq!(
+                fs::read_to_string(fixture.path().join("tracked.txt")).expect("tracked file"),
+                "base\n"
+            );
+            assert_eq!(fixture.path().join("notes.md").exists(), !include_untracked);
+            assert!(fixture.path().join("build.log").exists());
+            let entries = list_stashes(&repository, fixture.path(), &cancellation)
+                .await
+                .expect("stash list");
+            let mut paths = entries[0]
+                .files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>();
+            paths.sort_unstable();
+            if include_untracked {
+                assert_eq!(paths, ["notes.md", "tracked.txt"]);
+            } else {
+                assert_eq!(paths, ["tracked.txt"]);
+            }
+        }
     }
 
     #[tokio::test]

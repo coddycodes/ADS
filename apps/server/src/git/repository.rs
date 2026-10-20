@@ -1392,6 +1392,8 @@ impl GitRepository {
             &[
                 "stash".into(),
                 "show".into(),
+                // Untracked files a stash saved (Git 2.32+) are part of its contents.
+                "--include-untracked".into(),
                 selector.into(),
                 "--raw".into(),
                 "--numstat".into(),
@@ -1420,6 +1422,7 @@ impl GitRepository {
                 "stash".into(),
                 "show".into(),
                 "-p".into(),
+                "--include-untracked".into(),
                 selector.into(),
                 "--no-color".into(),
             ],
@@ -4473,6 +4476,7 @@ impl GitRepository {
         cwd: &Path,
         message: &str,
         paths: &[String],
+        include_untracked: bool,
         cancellation: &CancellationToken,
     ) -> Result<Vec<ProcessOutput>, GitCommandError> {
         let mut outputs = Vec::new();
@@ -4487,15 +4491,15 @@ impl GitRepository {
                 return Ok(outputs);
             }
         }
+        let mut args = strings(&["stash", "push"]);
+        if include_untracked {
+            // Untracked files only; `--all` would also sweep ignored files.
+            args.push("--include-untracked".into());
+        }
+        args.extend(["-m".into(), message.into()]);
         outputs.push(
-            self.execute(
-                "GitManager.stashPush",
-                cwd,
-                &["stash".into(), "push".into(), "-m".into(), message.into()],
-                true,
-                cancellation,
-            )
-            .await?,
+            self.execute("GitManager.stashPush", cwd, &args, true, cancellation)
+                .await?,
         );
         Ok(outputs)
     }
