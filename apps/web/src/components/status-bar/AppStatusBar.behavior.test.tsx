@@ -5,6 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const harness = vi.hoisted(() => ({
   selectedEnvironment: null as null | { environmentId: string },
   primaryLocalEnvironment: null as null | { environmentId: string },
+  environmentPresentations: new Map<
+    string,
+    { label: string; connection: { phase: string; error: string | null; traceId: null } }
+  >(),
   primaryLocalSelectionInput: null as unknown,
   refSeeds: {} as Record<number, unknown>,
   refs: [] as Array<{ current: unknown }>,
@@ -68,6 +72,8 @@ vi.mock("../../state/entities", () => ({
   useActiveEnvironmentId: () => harness.selectedEnvironment?.environmentId ?? null,
 }));
 vi.mock("../../state/environments", () => ({
+  useEnvironment: (environmentId: string | null) =>
+    environmentId === null ? null : (harness.environmentPresentations.get(environmentId) ?? null),
   usePrimaryLocalEnvironmentForSelected: (selectedEnvironmentId: unknown) => {
     harness.primaryLocalSelectionInput = selectedEnvironmentId;
     return harness.primaryLocalEnvironment;
@@ -180,6 +186,7 @@ beforeEach(() => {
   harness.selectedEnvironment = null;
   harness.primaryLocalEnvironment = null;
   harness.primaryLocalSelectionInput = null;
+  harness.environmentPresentations.clear();
   harness.refSeeds = {};
   harness.iconOnly = false;
   harness.setIconOnly.mockReset();
@@ -261,6 +268,74 @@ describe("status bar refresh guards", () => {
 });
 
 describe("AppStatusBar", () => {
+  function presentEnvironment(environmentId: string, label: string, phase: string): void {
+    harness.environmentPresentations.set(environmentId, {
+      label,
+      connection: {
+        phase,
+        error: phase === "connected" ? null : "Host unreachable",
+        traceId: null,
+      },
+    });
+  }
+
+  it("shows the connected local environment's readout beside a disconnected saved remote", () => {
+    const localId = EnvironmentId.make("environment-local");
+    presentEnvironment(localId, "Local", "connected");
+    presentEnvironment("environment-macbook-16", "macBook-16", "reconnecting");
+    harness.selectedEnvironment = { environmentId: localId };
+    const diagnostics = { totals: "local-sample" };
+    harness.queries = [query({ providers: [{ provider: "claude" }] }), query(diagnostics), query()];
+
+    renderStatusBar();
+
+    expect(harness.diagnostics).toHaveBeenCalledWith({ environmentId: localId, input: {} });
+    expect(harness.resourceSegments[0]).toMatchObject({
+      diagnostics: { diagnostics, queryError: null },
+    });
+    expect(harness.providerControls).toHaveLength(1);
+  });
+
+  it("says the selected saved remote is not connected instead of a silent empty readout", () => {
+    const remoteId = EnvironmentId.make("environment-macbook-16");
+    presentEnvironment("environment-local", "Local", "connected");
+    presentEnvironment(remoteId, "macBook-16", "reconnecting");
+    harness.selectedEnvironment = { environmentId: remoteId };
+    harness.queries = [query(null, true), query(null, true), query()];
+
+    renderStatusBar();
+
+    expect(harness.resourceSegments[0]).toMatchObject({
+      diagnostics: { diagnostics: null, queryError: "macBook-16 is not connected." },
+    });
+    expect(harness.providerControls).toHaveLength(0);
+  });
+
+  it("keeps a still-connecting environment's readout free of a not-connected warning", () => {
+    const localId = EnvironmentId.make("environment-local");
+    presentEnvironment(localId, "Local", "connecting");
+    harness.selectedEnvironment = { environmentId: localId };
+    harness.queries = [query(null, true), query(null, true), query()];
+
+    renderStatusBar();
+
+    expect(harness.resourceSegments[0]).toMatchObject({
+      diagnostics: { diagnostics: null, queryError: null },
+    });
+  });
+
+  it("names no unavailable environment when nothing is selected", () => {
+    presentEnvironment("environment-macbook-16", "macBook-16", "reconnecting");
+    harness.selectedEnvironment = null;
+
+    renderStatusBar();
+
+    expect(harness.resourceSegments[0]).toMatchObject({
+      diagnostics: { diagnostics: null, queryError: null },
+    });
+    expect(harness.providerControls).toHaveLength(0);
+  });
+
   it("keeps the provider query warm while hidden and re-enables from cached data", () => {
     const environmentId = EnvironmentId.make("environment-warm");
     const cachedUsage = { providers: [{ provider: "claude" }, { provider: "codex" }] };

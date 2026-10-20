@@ -1,3 +1,4 @@
+import type { EnvironmentConnectionPresentation } from "@bibcode/client-runtime/connection";
 import type {
   ServerProcessDiagnosticsEntry,
   ServerProcessDiagnosticsResult,
@@ -83,6 +84,23 @@ function presentTotals(
     processCountLabel: String(totals.processCount),
     coverageLabel: coverage === null ? null : coverageLabel(coverage),
   };
+}
+
+/**
+ * Why the selected environment's readouts are empty: its connection is down. A first
+ * attempt still in progress is not a failure, so it names no reason.
+ */
+export function environmentNotConnectedReason(
+  environment: {
+    readonly label: string;
+    readonly connection: EnvironmentConnectionPresentation;
+  } | null,
+): string | null {
+  if (environment === null) return null;
+  const { phase } = environment.connection;
+  if (phase === "connected" || phase === "connecting") return null;
+  const label = environment.label.trim();
+  return `${label.length > 0 ? label : "The selected server"} is not connected.`;
 }
 
 function compareText(left: string, right: string): number {

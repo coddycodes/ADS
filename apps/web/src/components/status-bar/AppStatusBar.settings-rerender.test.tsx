@@ -31,6 +31,7 @@ vi.mock("../../state/entities", () => ({
 }));
 
 vi.mock("../../state/environments", () => ({
+  useEnvironment: () => null,
   usePrimaryLocalEnvironmentForSelected: () => null,
 }));
 

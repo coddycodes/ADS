@@ -6,7 +6,10 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildResourceSummaryViewModel } from "./statusBarPresentation";
+import {
+  buildResourceSummaryViewModel,
+  environmentNotConnectedReason,
+} from "./statusBarPresentation";
 
 const updatedAt = DateTime.makeUnsafe("2026-07-07T18:00:00.000Z");
 
@@ -408,5 +411,45 @@ describe("statusBarPresentation", () => {
         }),
       ),
     ).toThrow(/reconcile/i);
+  });
+});
+
+describe("environmentNotConnectedReason", () => {
+  const environment = (label: string, phase: string) =>
+    ({
+      label,
+      connection: { phase, error: null, traceId: null },
+    }) as Parameters<typeof environmentNotConnectedReason>[0];
+
+  it.each(["available", "offline", "reconnecting", "error"])(
+    "names the selected environment when its connection is %s",
+    (phase) => {
+      expect(environmentNotConnectedReason(environment("macBook-16", phase))).toBe(
+        "macBook-16 is not connected.",
+      );
+    },
+  );
+
+  it.each(["connected", "connecting"])("names no reason while %s", (phase) => {
+    expect(environmentNotConnectedReason(environment("Local", phase))).toBeNull();
+  });
+
+  it("names no reason without a selected environment and falls back for a blank label", () => {
+    expect(environmentNotConnectedReason(null)).toBeNull();
+    expect(environmentNotConnectedReason(environment("  ", "offline"))).toBe(
+      "The selected server is not connected.",
+    );
+  });
+
+  it("turns the reason into an unavailable warning instead of a silent empty headline", () => {
+    const presentation = buildResourceSummaryViewModel({
+      selected: { diagnostics: null, queryError: "macBook-16 is not connected." },
+      local: null,
+    });
+    expect(presentation.headline).toBeNull();
+    expect(presentation.warning).toEqual({
+      message: "macBook-16 is not connected.",
+      statusLabel: "Resource data unavailable",
+    });
   });
 });

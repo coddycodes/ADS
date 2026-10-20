@@ -34,6 +34,7 @@ const harness = vi.hoisted(() => ({
 vi.mock("./ProfilerRecordingSegment", () => ({ ProfilerRecordingSegment: () => null }));
 
 vi.mock("../../state/environments", () => ({
+  useEnvironment: () => null,
   usePrimaryEnvironment: () =>
     harness.primaryEnvironmentId === null ? null : { environmentId: harness.primaryEnvironmentId },
   usePrimaryLocalEnvironmentForSelected: () =>

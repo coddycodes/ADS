@@ -694,7 +694,10 @@ Settings already exposes.
 The status bar also reads that selected identity for provider usage, refresh,
 usage-reset actions, process diagnostics, and terminal counts. Its usage query
 and reset overlay remain keyed by environment; the primary connection is not a
-fallback for an unselected or unavailable server. Desktop resource presentation
+fallback for an unselected or unavailable server. When the selected server's
+connection is down (any phase but connected or a first connecting attempt), the
+resource readout raises its unavailable warning with "<label> is not
+connected." instead of leaving empty values unexplained. Desktop resource presentation
 can additionally query the primary local host through its separate diagnostic
 source.
 Exception: the Agents view (opened from the Agents nav row, whose unread badge

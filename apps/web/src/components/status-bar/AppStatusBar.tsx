@@ -23,7 +23,7 @@ import {
 import { useClientSettings } from "../../hooks/useSettings";
 import { useHasSlowRpcAckRequests } from "../../rpc/requestLatencyState";
 import { useActiveEnvironmentId } from "../../state/entities";
-import { usePrimaryLocalEnvironmentForSelected } from "../../state/environments";
+import { useEnvironment, usePrimaryLocalEnvironmentForSelected } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useKnownTerminalSessions } from "../../state/terminalSessions";
@@ -32,7 +32,10 @@ import { ProviderUsageControl } from "./ProviderUsageControl";
 import { ProfilerRecordingSegment } from "./ProfilerRecordingSegment";
 import { ResourceUsageSegment } from "./ResourceUsageSegment";
 import { SlowRequestsIndicator } from "./SlowRequestsIndicator";
-import { type ResourceDiagnosticsQueryState } from "./statusBarPresentation";
+import {
+  environmentNotConnectedReason,
+  type ResourceDiagnosticsQueryState,
+} from "./statusBarPresentation";
 import {
   buildProviderUsageViewModels,
   providerUsageRelativeLabelKey,
@@ -357,6 +360,9 @@ export function AppStatusBar() {
   const atomRegistry = useContext(RegistryContext);
   const navigate = useNavigate();
   const environmentId = useActiveEnvironmentId();
+  // The bar reads only the selected environment; when that one is down, say so rather
+  // than leave its readout silently empty.
+  const notConnectedReason = environmentNotConnectedReason(useEnvironment(environmentId));
   const primaryLocalEnvironment = usePrimaryLocalEnvironmentForSelected(environmentId);
   const primaryLocalEnvironmentId = primaryLocalEnvironment?.environmentId ?? null;
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -590,7 +596,10 @@ export function AppStatusBar() {
     <div ref={containerRef}>
       <AppStatusBarView
         usage={visibleProviderUsage(usage.data, usage.emission, resetUsage)}
-        diagnostics={{ diagnostics: diagnostics.data, queryError: diagnostics.error }}
+        diagnostics={{
+          diagnostics: diagnostics.data,
+          queryError: notConnectedReason ?? diagnostics.error,
+        }}
         localDiagnostics={
           primaryLocalEnvironmentId === null
             ? null
