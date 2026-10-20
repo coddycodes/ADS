@@ -378,7 +378,13 @@ struct RuntimeInner {
     events_tx: mpsc::UnboundedSender<OpenCodeRuntimeEvent>,
     events_rx: Mutex<mpsc::UnboundedReceiver<OpenCodeRuntimeEvent>>,
     event_stream_ended: CancellationToken,
+    /// Numbers the events; held while one is sent, so the order they are numbered in is the
+    /// order they are received in.
     event_counter: Mutex<u64>,
+    /// Set, under `event_counter`, once `session.exited` was sent: nothing is sent after it.
+    /// A reconciliation still running when the event stream ends would otherwise publish a
+    /// snapshot calling the exited session live.
+    events_sealed: AtomicBool,
     pending_questions: Mutex<HashMap<String, PendingQuestion>>,
     pending_permissions: Mutex<HashMap<String, Option<String>>>,
     event_pump: Mutex<Option<JoinHandle<()>>>,
@@ -836,6 +842,7 @@ impl OpenCodeSessionRuntime {
                 events_rx: Mutex::new(events_rx),
                 event_stream_ended: CancellationToken::new(),
                 event_counter: Mutex::new(0),
+                events_sealed: AtomicBool::new(false),
                 pending_questions: Mutex::new(HashMap::new()),
                 pending_permissions: Mutex::new(HashMap::new()),
                 event_pump: Mutex::new(None),
@@ -4370,6 +4377,12 @@ impl OpenCodeSessionRuntime {
         payload: Value,
     ) {
         let mut counter = self.inner.event_counter.lock().await;
+        if self.inner.events_sealed.load(Ordering::SeqCst) {
+            return;
+        }
+        if event_type == "session.exited" {
+            self.inner.events_sealed.store(true, Ordering::SeqCst);
+        }
         *counter += 1;
         let _ = self.inner.events_tx.send(OpenCodeRuntimeEvent {
             event_id: format!("evt-{}", *counter),
@@ -5227,6 +5240,9 @@ impl OpenCodeSessionRuntime {
             reconciliation_occurrence,
             &activity,
         );
+        if self.inner.events_sealed.load(Ordering::SeqCst) {
+            return;
+        }
         *counter += 1;
         let _ = self.inner.events_tx.send(OpenCodeRuntimeEvent {
             event_id: format!("evt-{}", *counter),
@@ -6674,6 +6690,43 @@ mod tests {
                 return event;
             }
         }
+    }
+
+    /// `session.exited` is the runtime's last event. A reconciliation still running when the
+    /// event stream ends (as a crashed opencode server's does) must not publish after it: its
+    /// snapshot would call the exited session live.
+    #[tokio::test(start_paused = true)]
+    async fn no_activity_follows_session_exited() {
+        let runtime = runtime_with_verified_child(super::EndpointSupport::Unsupported).await;
+        while runtime.inner.events_rx.lock().await.try_recv().is_ok() {}
+        let generation = runtime.inner.activity.lock().await.generation;
+        runtime
+            .emit(
+                "session.exited",
+                None,
+                None,
+                json!({ "reason": "OpenCode closed its event stream." }),
+            )
+            .await;
+        runtime
+            .emit_reconciliation_activity(
+                vec![super::ProviderActivityMutation::SetSectionHealth {
+                    section: super::ActivitySection::BackgroundTasks,
+                    health: super::ActivitySectionHealth::unsupported(),
+                }],
+                generation,
+            )
+            .await;
+        runtime.emit("runtime.error", None, None, json!({})).await;
+        let exited = runtime
+            .inner
+            .events_rx
+            .lock()
+            .await
+            .try_recv()
+            .expect("session exited event");
+        assert_eq!(exited.event_type, "session.exited");
+        assert_no_queued_event(&runtime).await;
     }
 
     #[tokio::test(start_paused = true)]

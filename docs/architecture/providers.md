@@ -409,8 +409,10 @@ When a provider reports a fatal `session.exited` or its event stream ends, the
 supervisor preserves that event and any already-projected turn failure, and
 settles an abandoned active turn only if one remains. Native runtimes can keep
 their event senders alive after process loss; recovery does not wait for channel
-closure. OpenCode's explicit-stop notice (`Session stopped.`) is excluded from
-the fatal-exit trigger, and intentional stop/idle suspension cancels and joins
+closure. OpenCode's `session.exited` is its runtime's last event: an activity
+reconciliation still running when the event stream ends is dropped rather than
+published after it. OpenCode's explicit-stop notice (`Session stopped.`) is
+excluded from the fatal-exit trigger, and intentional stop/idle suspension cancels and joins
 the supervisor event pump before shutting down any driver. Each completion reserves
 an idle deadline generation before `ready` is published; successful projection of a
 non-failed completion arms it. When a current deadline finds a busy session (an
