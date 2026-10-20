@@ -18,6 +18,7 @@ import {
   use,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -310,34 +311,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [listRef],
   );
 
-  // An in-session interrupt leaves its turn expanded so the user keeps their
-  // place; the next turn (or a reload, since this is local state) folds it.
-  const previousLatestTurnRef = useRef(latestTurn);
-  useEffect(() => {
-    const previous = previousLatestTurnRef.current;
-    previousLatestTurnRef.current = latestTurn;
-    if (!latestTurn || previous?.turnId === undefined) {
-      return;
-    }
-    if (latestTurn.turnId === previous.turnId) {
-      if (previous.state === "running" && latestTurn.state === "interrupted") {
-        setExpandedTurnIds((existing) => {
-          const next = new Set(existing);
-          next.add(latestTurn.turnId);
-          return next;
-        });
-      }
-      return;
-    }
-    setExpandedTurnIds((existing) => {
-      if (!existing.has(previous.turnId)) {
-        return existing;
-      }
-      const next = new Set(existing);
-      next.delete(previous.turnId);
-      return next;
-    });
-  }, [latestTurn]);
+  useFoldPreviousTurnOnNewTurn(latestTurn, setExpandedTurnIds);
 
   const rawRows = useMemo(
     () =>
@@ -374,21 +348,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     null,
   );
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
-  const handleAnchorReady = useCallback(
-    (info: { anchorIndex: number | undefined }) => {
-      if (anchorMessageId !== null && info.anchorIndex !== undefined) {
-        onAnchorReady(anchorMessageId, info.anchorIndex);
-      }
-    },
-    [anchorMessageId, onAnchorReady],
-  );
-  const handleAnchorSizeChanged = useCallback(
-    (size: number) => {
-      if (anchorMessageId !== null) {
-        onAnchorSizeChanged(anchorMessageId, size);
-      }
-    },
-    [anchorMessageId, onAnchorSizeChanged],
+  const { handleAnchorReady, handleAnchorSizeChanged } = useStableAnchorCallbacks(
+    anchorMessageId,
+    onAnchorReady,
+    onAnchorSizeChanged,
   );
   const anchoredEndSpace = useMemo(() => {
     const config = resolveChatListAnchoredEndSpace(rows, anchorMessageId, (row) =>
@@ -602,6 +565,76 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
 });
 
+/**
+ * An in-session interrupt leaves its turn expanded so the user keeps their place; the next
+ * turn (or a reload, since this is local state) folds it.
+ *
+ * Kept out of `MessagesTimeline`'s own scope on purpose: every closure a component creates
+ * shares one scope, so a memoized callback recreated on a different change than another
+ * keeps the other's older scope (and its rows and minimap items) alive, render after render.
+ */
+function useFoldPreviousTurnOnNewTurn(
+  latestTurn: TimelineLatestTurn | null,
+  setExpandedTurnIds: (update: (existing: ReadonlySet<TurnId>) => ReadonlySet<TurnId>) => void,
+) {
+  const previousLatestTurnRef = useRef(latestTurn);
+  useEffect(() => {
+    const previous = previousLatestTurnRef.current;
+    previousLatestTurnRef.current = latestTurn;
+    if (!latestTurn || previous?.turnId === undefined) {
+      return;
+    }
+    if (latestTurn.turnId === previous.turnId) {
+      if (previous.state === "running" && latestTurn.state === "interrupted") {
+        setExpandedTurnIds((existing) => {
+          const next = new Set(existing);
+          next.add(latestTurn.turnId);
+          return next;
+        });
+      }
+      return;
+    }
+    setExpandedTurnIds((existing) => {
+      if (!existing.has(previous.turnId)) {
+        return existing;
+      }
+      const next = new Set(existing);
+      next.delete(previous.turnId);
+      return next;
+    });
+  }, [latestTurn, setExpandedTurnIds]);
+}
+
+/**
+ * The anchored end space's callbacks, created once so the list holds the same functions for
+ * the life of the timeline. They read the anchor and the parent's handlers from refs; one
+ * recreated on every anchor change linked each render's scope to the one before (see
+ * `useFoldPreviousTurnOnNewTurn`).
+ */
+function useStableAnchorCallbacks(
+  anchorMessageId: MessageId | null,
+  onAnchorReady: (messageId: MessageId, anchorIndex: number) => void,
+  onAnchorSizeChanged: (messageId: MessageId, size: number) => void,
+) {
+  const latest = useRef({ anchorMessageId, onAnchorReady, onAnchorSizeChanged });
+  useLayoutEffect(() => {
+    latest.current = { anchorMessageId, onAnchorReady, onAnchorSizeChanged };
+  }, [anchorMessageId, onAnchorReady, onAnchorSizeChanged]);
+  const handleAnchorReady = useCallback((info: { anchorIndex: number | undefined }) => {
+    const { anchorMessageId: messageId, onAnchorReady: onReady } = latest.current;
+    if (messageId !== null && info.anchorIndex !== undefined) {
+      onReady(messageId, info.anchorIndex);
+    }
+  }, []);
+  const handleAnchorSizeChanged = useCallback((size: number) => {
+    const { anchorMessageId: messageId, onAnchorSizeChanged: onSizeChanged } = latest.current;
+    if (messageId !== null) {
+      onSizeChanged(messageId, size);
+    }
+  }, []);
+  return { handleAnchorReady, handleAnchorSizeChanged };
+}
+
 function keyExtractor(item: MessagesTimelineRow) {
   return item.id;
 }
@@ -665,9 +698,36 @@ function resolveFinalAssistantTextForTurn(
   return finalAssistantText;
 }
 
+/** The most characters a minimap preview shows; its tooltip line is truncated anyway. */
+const MINIMAP_PREVIEW_MAX_CHARS = 200;
+
+/**
+ * A short one-line preview of `text`. Only its beginning is normalized: normalizing the whole
+ * message allocated a full-length copy of every user message on each derivation, and a long
+ * thread kept many of them (#134).
+ */
 function compactMinimapPreview(text: string | null | undefined) {
-  const compact = text?.replace(/\s+/g, " ").trim() ?? "";
-  return compact.length > 0 ? compact : null;
+  if (!text) {
+    return null;
+  }
+  // Collapsing whitespace only shortens, so a few times the limit is always enough.
+  const compact = text
+    .slice(0, MINIMAP_PREVIEW_MAX_CHARS * 4)
+    .replace(/\s+/g, " ")
+    .trim();
+  if (compact.length === 0) {
+    return null;
+  }
+  if (compact.length <= MINIMAP_PREVIEW_MAX_CHARS && text.length <= MINIMAP_PREVIEW_MAX_CHARS * 4) {
+    return compact;
+  }
+  let end = Math.min(compact.length, MINIMAP_PREVIEW_MAX_CHARS);
+  // Never split a surrogate pair.
+  const last = compact.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) {
+    end -= 1;
+  }
+  return `${compact.slice(0, end).trimEnd()}…`;
 }
 
 function resolveTimelineRowTop(state: TimelinePositionState, rowIndex: number) {
