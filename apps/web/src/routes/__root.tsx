@@ -225,7 +225,10 @@ function RootRouteView() {
         {presentation.showRemoteDeviceControls ? <RelayClientInstallDialog /> : null}
         {presentation.showRemoteDeviceControls ? <SshPasswordPromptDialog /> : null}
         <DesktopDeepLinkRouter />
-        <HostedStaticEnvironmentBootstrap />
+        {/* Only a page with no primary of its own falls back to a saved environment. On the
+            desktop and an authenticated served page the primary registers later than the saved
+            environments, which would otherwise win the first, unselected render. */}
+        {authGateState.status === "hosted-static" ? <HostedStaticEnvironmentBootstrap /> : null}
         <ProfilerClientCollector />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {/* Reads the primary's Connect link state, so only once the primary authenticated. */}

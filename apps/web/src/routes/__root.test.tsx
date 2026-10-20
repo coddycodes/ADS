@@ -1106,6 +1106,37 @@ describe("bootstrap effects", () => {
     expect(s.activeEnvironmentId).toBe("env-remote");
   });
 
+  it("selects the desktop primary, not a saved remote listed before the primary registers", () => {
+    // Desktop launch: the catalog lists the persisted remote synchronously, while the
+    // primary registers only after its descriptor fetch, so the first catalog emission
+    // holds the remote alone.
+    s.routeContext = { authGateState: { status: "authenticated" } };
+    s.activeEnvironmentId = null;
+    const savedRemote = {
+      environmentId: "env-remote",
+      entry: { target: { _tag: "BearerConnectionTarget" } },
+    };
+    s.environments = [savedRemote];
+    renderComponent();
+    runEffects();
+
+    s.environments = [
+      savedRemote,
+      { environmentId: "env-1", entry: { target: { _tag: "PrimaryConnectionTarget" } } },
+    ];
+    s.atomValues.set("config", {
+      environment: { environmentId: "env-1", serverVersion: "1.0.0" },
+      cwd: "X:/repo",
+      availableEditors: ["code"],
+      keybindingsConfigPath: "X:/repo/.keybindings.json",
+    });
+    renderComponent(true);
+    runEffects();
+
+    expect(s.activeEnvironmentId).toBe("env-1");
+    expect(s.setActiveCalls).not.toContain("env-remote");
+  });
+
   it("does not override the active environment when a primary target exists", () => {
     s.routeContext = { authGateState: { status: "hosted-static" } };
     s.activeEnvironmentId = null;

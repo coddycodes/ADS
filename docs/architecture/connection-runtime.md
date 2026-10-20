@@ -674,7 +674,13 @@ keep-alive atom, so it survives an authentication-gate remount without being
 persisted across app reloads. The root reconciles that identity when its primary
 config identity changes. On first load it selects the primary only if nothing
 is selected; on an identity change it follows the new
-primary only if nothing or the old primary is selected. This also runs on
+primary only if nothing or the old primary is selected. Only a page with no
+primary of its own (the hosted app, or a served page opened as a remote client)
+falls back to the first saved environment while nothing is selected. The
+desktop and an authenticated served page never take that fallback: the registry
+lists persisted saved environments before the primary registers, so the
+fallback would otherwise select a saved remote that the primary identity then
+keeps. This also runs on
 `/agents` and with the mobile rail closed. Routine config emissions and repeated
 welcomes preserve any other selection. Startup defaults read the current entity
 atom when they run, and welcome navigation requires that the primary is still
