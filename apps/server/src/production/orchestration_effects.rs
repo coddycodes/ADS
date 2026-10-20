@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use thiserror::Error;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::{
-    sync::{broadcast, mpsc},
+    sync::{Semaphore, broadcast, mpsc, oneshot},
     task::JoinHandle,
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -685,78 +685,151 @@ type PreparedRevert = (
 /// thread parks for one revert at a time, so this bounds what a reverting thread holds.
 const PARKED_THREAD_EVENT_LIMIT: usize = 64;
 
-/// How many reverts are prepared off the worker at once, each possibly starting a provider.
-const PARKED_THREAD_LIMIT: usize = 4;
+/// How many reverts are prepared off the worker at once, each possibly starting a provider. A
+/// revert past that waits its turn already holding its thread, so no turn starts ahead of it.
+const REVERT_PREPARATION_LIMIT: usize = 4;
+
+/// A revert's thread and its place among the reverts of its checkout, fixed when the worker
+/// receives it, which is the order the reverts were requested in.
+struct OrderedRevert {
+    thread_id: String,
+    /// Closes once the checkout's revert requested just before this one has restored.
+    previous: Option<oneshot::Receiver<()>>,
+    /// Dropped once this revert has restored, which lets the checkout's next revert restore.
+    done: oneshot::Sender<()>,
+}
+
+/// What a revert's waiter hands back to the worker: the event, its preparation (none at
+/// shutdown), and the `done` of its [`OrderedRevert`].
+type ReadyRevert = (
+    OrchestrationEvent,
+    Option<PreparedRevert>,
+    oneshot::Sender<()>,
+);
+
+/// An event waiting behind its thread's revert. A revert keeps the place it was given on arrival.
+type ParkedEvent = (OrchestrationEvent, Option<OrderedRevert>);
 
 /// Threads whose checkpoint revert is being prepared off the worker, which serves every thread:
 /// waiting for the thread's delivery in flight, the revert's checks, and reopening a provider
 /// suspended while idle. The thread's later events wait behind the revert in order. The rewind,
 /// the restore and every other side effect still run on the worker one at a time, so checkpoint
-/// work on a checkout that sibling threads share never overlaps.
+/// work on a checkout that sibling threads share never overlaps. Reverts of one checkout also
+/// restore in the order they were requested: each is handed back only once the one requested
+/// before it has restored, so a slow preparation is not overtaken by a later, faster one.
 struct ParkedThreads {
-    queues: HashMap<String, VecDeque<OrchestrationEvent>>,
-    ready: mpsc::UnboundedSender<(OrchestrationEvent, Option<PreparedRevert>)>,
+    queues: HashMap<String, VecDeque<ParkedEvent>>,
+    /// Per checkout, the `done` of its latest revert, which the next one waits for.
+    tails: HashMap<PathBuf, oneshot::Receiver<()>>,
+    /// [`REVERT_PREPARATION_LIMIT`] permits, one per revert being prepared.
+    preparations: Arc<Semaphore>,
+    ready: mpsc::UnboundedSender<ReadyRevert>,
     waiters: TaskTracker,
 }
 
 impl ParkedThreads {
-    /// Runs the event now, or parks its thread while a revert is prepared.
-    async fn run(&mut self, context: &EffectContext, event: OrchestrationEvent) {
-        let revert_thread = (event.event.event_type == "thread.checkpoint-revert-requested")
-            .then(|| event_thread_id(&event))
+    /// Takes the worker's next event, in the order it was committed: queues it behind its
+    /// thread's revert, parks its thread for a revert, or runs it now. Returns the length of the
+    /// queue it joined, if it joined one.
+    async fn receive(
+        &mut self,
+        context: &EffectContext,
+        event: OrchestrationEvent,
+    ) -> Option<usize> {
+        // A revert's place is fixed here, even behind its own thread's earlier revert: its
+        // predecessor is then always a revert the worker has already received.
+        let order = self.order(context, &event).await;
+        if let Some(queue) = self.queue_of(&event) {
+            queue.push_back((event, order));
+            return Some(queue.len());
+        }
+        self.run(context, event, order).await;
+        None
+    }
+
+    /// Places a revert after the earlier reverts of its checkout. A revert whose checkout cannot
+    /// be resolved here waits for nobody; its preparation resolves the checkout again.
+    async fn order(
+        &mut self,
+        context: &EffectContext,
+        event: &OrchestrationEvent,
+    ) -> Option<OrderedRevert> {
+        if event.event.event_type != "thread.checkpoint-revert-requested" {
+            return None;
+        }
+        let thread_id = event_thread_id(event)?.to_owned();
+        let checkout = resolve_workspace(&context.engine, context.callbacks.as_ref(), &thread_id)
+            .await
+            .ok()
             .flatten()
-            .map(str::to_owned);
-        let Some(thread_id) = revert_thread else {
+            .map(|cwd| normalize_host_path_lexically(&cwd));
+        // Forget checkouts whose latest revert has restored.
+        self.tails.retain(|_, tail| {
+            !matches!(tail.try_recv(), Err(oneshot::error::TryRecvError::Closed))
+        });
+        let (done, tail) = oneshot::channel();
+        let previous = checkout.and_then(|checkout| self.tails.insert(checkout, tail));
+        Some(OrderedRevert {
+            thread_id,
+            previous,
+            done,
+        })
+    }
+
+    /// Runs the event now, or parks its thread while its revert is prepared.
+    async fn run(
+        &mut self,
+        context: &EffectContext,
+        event: OrchestrationEvent,
+        order: Option<OrderedRevert>,
+    ) {
+        let Some(OrderedRevert {
+            thread_id,
+            previous,
+            done,
+        }) = order
+        else {
             return context.handle(&event).await;
         };
-        if self.queues.len() >= PARKED_THREAD_LIMIT {
-            // Bound the preparations off the worker; past that, the worker prepares this one.
-            let reservation = context.engine.reserve_thread_turns(&thread_id).await;
-            let plan = plan_revert(
-                &context.engine,
-                context.callbacks.as_ref(),
-                &event,
-                &context.cancellation,
-            )
-            .await;
-            return context.revert(&event, (reservation, plan)).await;
-        }
         self.queues.insert(thread_id.clone(), VecDeque::new());
-        let (engine, callbacks, cancellation, ready) = (
+        let (engine, callbacks, cancellation, preparations, ready) = (
             context.engine.clone(),
             context.callbacks.clone(),
             context.cancellation.clone(),
+            self.preparations.clone(),
             self.ready.clone(),
         );
         self.waiters.spawn(async move {
             let prepared = tokio::select! {
                 prepared = async {
+                    // Taken before waiting for a preparation slot, so a turn sent after the
+                    // revert does not start ahead of it.
                     let reservation = engine.reserve_thread_turns(&thread_id).await;
-                    let plan = plan_revert(&engine, callbacks.as_ref(), &event, &cancellation).await;
+                    let plan = {
+                        // The semaphore is never closed.
+                        let _permit = preparations.acquire().await.ok();
+                        plan_revert(&engine, callbacks.as_ref(), &event, &cancellation).await
+                    };
+                    if let Some(previous) = previous {
+                        let _ = previous.await;
+                    }
                     (reservation, plan)
                 } => Some(prepared),
                 () = cancellation.cancelled() => None,
             };
-            let _ = ready.send((event, prepared));
+            let _ = ready.send((event, prepared, done));
         });
     }
 
     /// The parked queue of the event's thread, if that thread is parked.
-    fn queue_of(
-        &mut self,
-        event: &OrchestrationEvent,
-    ) -> Option<&mut VecDeque<OrchestrationEvent>> {
+    fn queue_of(&mut self, event: &OrchestrationEvent) -> Option<&mut VecDeque<ParkedEvent>> {
         event_thread_id(event).and_then(|thread_id| self.queues.get_mut(thread_id))
     }
 
     /// Runs a prepared revert's rewind and restore, then the events that waited behind it. At
     /// shutdown the waiter brings nothing, and the parked events are left like any other
     /// unhandled event.
-    async fn resume(
-        &mut self,
-        context: &EffectContext,
-        (event, prepared): (OrchestrationEvent, Option<PreparedRevert>),
-    ) {
+    async fn resume(&mut self, context: &EffectContext, (event, prepared, done): ReadyRevert) {
         let Some(thread_id) = event_thread_id(&event).map(str::to_owned) else {
             return;
         };
@@ -765,11 +838,13 @@ impl ParkedThreads {
             return;
         };
         context.revert(&event, prepared).await;
-        for event in queued {
-            // A later revert of the thread parks it again.
+        // The checkout's next revert may restore now.
+        drop(done);
+        for (event, order) in queued {
+            // A later revert of the thread parks it again, in the place it was given on arrival.
             match self.queue_of(&event) {
-                Some(queue) => queue.push_back(event),
-                None => self.run(context, event).await,
+                Some(queue) => queue.push_back((event, order)),
+                None => self.run(context, event, order).await,
             }
         }
     }
@@ -793,6 +868,8 @@ async fn run_worker(
     let (ready, mut waited) = mpsc::unbounded_channel();
     let mut parked = ParkedThreads {
         queues: HashMap::new(),
+        tails: HashMap::new(),
+        preparations: Arc::new(Semaphore::new(REVERT_PREPARATION_LIMIT)),
         ready,
         waiters: TaskTracker::new(),
     };
@@ -803,12 +880,8 @@ async fn run_worker(
             event = receiver.recv() => {
                 let Some(event) = event else { break };
                 let thread_id = event_thread_id(&event).map(str::to_owned);
-                let Some(queue) = parked.queue_of(&event) else {
-                    parked.run(&context, event).await;
-                    continue;
-                };
-                queue.push_back(event);
-                if queue.len() >= PARKED_THREAD_EVENT_LIMIT {
+                let queued = parked.receive(&context, event).await;
+                if queued.is_some_and(|length| length >= PARKED_THREAD_EVENT_LIMIT) {
                     // Keep the backlog bounded: wait for this thread, as before parking.
                     while thread_id.as_ref().is_some_and(|id| parked.queues.contains_key(id)) {
                         let Some(resumed) = waited.recv().await else { break };
@@ -818,6 +891,11 @@ async fn run_worker(
             }
         }
     }
+    // Nothing restores a parked revert any more. Dropping the reverts handed back or queued
+    // releases the waiters ordered behind them, which the producer closing its channel without a
+    // cancellation would otherwise leave waiting.
+    drop(waited);
+    parked.queues.clear();
     parked.waiters.close();
     parked.waiters.wait().await;
 }

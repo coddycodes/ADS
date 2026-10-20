@@ -2365,9 +2365,19 @@ effects, such as a turn baseline, queue behind the revert in event order, and
 other threads' checkpoint work goes on. Once the preparation is done, the
 worker runs the rewind and the restore, then the queued effects. Every effect
 that writes still runs on the worker one at a time, so checkpoint work on a
-checkout that sibling threads share never overlaps. A parked thread holds at
-most 64 events, and at most four threads are parked at once; past either bound
-the worker waits for the revert itself, as it did before parking.
+checkout that sibling threads share never overlaps. Reverts of one checkout
+(chats without a worktree of their own share the project's) also restore in
+the order they were requested. The worker fixes each revert's place when it
+receives the request, before any preparation, and that includes a revert that
+queues behind the same thread's earlier revert. A waiter hands its preparation
+back only once the checkout's previous revert has restored, so a later revert
+prepared sooner cannot restore first and then be undone by the earlier one's
+restore and clean. Reverts of different checkouts do not wait for each other.
+At most four reverts are prepared at once. A revert past that bound still
+parks: its waiter takes the thread's reservation first and only then waits for
+a free slot, so a message sent after the revert is not delivered ahead of it.
+The worker never prepares a revert itself. A parked thread holds at most 64 events; past that the worker
+waits for the thread's revert, as it did before parking.
 The reservation is in memory only. That is enough because a revert never
 outlives its process: the effects worker does not replay a revert requested
 before a restart.
