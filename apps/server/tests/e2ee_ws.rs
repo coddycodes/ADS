@@ -204,6 +204,28 @@ async fn send_encrypted_continuations(
     }
 }
 
+/// Waits until the server has read every frame sent on `socket` before this call. The server
+/// reads a socket's frames in order and takes each record's inbound budget before it reads the
+/// next, so the pong to a ping sent now proves the earlier records hold their budget.
+async fn wait_for_server_intake(socket: &mut TestSocket) {
+    const PROBE: &[u8] = b"intake probe";
+    socket
+        .send(Message::Ping(PROBE.to_vec().into()))
+        .await
+        .expect("send intake probe");
+    timeout(Duration::from_secs(10), async {
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Pong(payload))) if payload.as_ref() == PROBE => return,
+                Some(Ok(_)) => {}
+                other => panic!("socket ended before the intake probe's pong: {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("the server reads the earlier frames");
+}
+
 async fn recv_encrypted(socket: &mut TestSocket, transport: &mut TransportState) -> Vec<u8> {
     let mut assembled = Vec::new();
     loop {
@@ -1226,10 +1248,7 @@ async fn inbound_plaintext_capacity_backpressures_by_principal_and_releases_on_c
     let host_key = read_host_public_key(temp.path());
     let (mut first_partial, mut first_transport, first_reply) =
         open_authenticated_bearer_socket(&handle, &host_key, &credentials[0]).await;
-    let (mut waiting, mut waiting_transport, waiting_reply) =
-        open_authenticated_bearer_socket(&handle, &host_key, &credentials[0]).await;
     assert_eq!(first_reply, json!({ "type": "e2ee_authenticated" }));
-    assert_eq!(waiting_reply, json!({ "type": "e2ee_authenticated" }));
 
     send_encrypted_continuations(
         &mut first_partial,
@@ -1237,6 +1256,13 @@ async fn inbound_plaintext_capacity_backpressures_by_principal_and_releases_on_c
         E2EE_INBOUND_BUFFER_BUDGET_BYTES_PER_PRINCIPAL,
     )
     .await;
+    // Under load the request below could otherwise be served before the budget is used up.
+    wait_for_server_intake(&mut first_partial).await;
+    // Opened only now: a socket that stays silent while the budget is filled, which takes
+    // over a minute on a loaded runner, outlives the server's heartbeat silence limit.
+    let (mut waiting, mut waiting_transport, waiting_reply) =
+        open_authenticated_bearer_socket(&handle, &host_key, &credentials[0]).await;
+    assert_eq!(waiting_reply, json!({ "type": "e2ee_authenticated" }));
 
     send_encrypted(
         &mut waiting,
