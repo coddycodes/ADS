@@ -435,6 +435,15 @@ enum Control {
     },
 }
 
+/// A touch's up at `(x, y)`, in portrait ratios.
+fn touch_up(x: f64, y: f64) -> HidAction {
+    HidAction::Touch {
+        phase: TouchPhase::Up,
+        x,
+        y,
+    }
+}
+
 /// What a sink error means to the caller; `failed` is the copy for a send the simulator did
 /// not take, which is logged without content.
 fn sink_error(error: HidError, failed: &str) -> DeviceOpError {
@@ -537,6 +546,9 @@ struct Shared {
     /// Where a touch the guest may still hold was last sent, in portrait ratios: set
     /// before a down or move goes out, cleared once its up was sent.
     held: Mutex<Option<(f64, f64)>>,
+    /// Where a touch was left down when its lift failed after a failed send: lifted first
+    /// in the next call, before anything else, until a lift goes out.
+    owed_lift: Mutex<Option<(f64, f64)>>,
     /// The keys and buttons the guest may still hold, and the releases still owed.
     presses: Mutex<Presses>,
     /// One input batch at a time, so batches arrive in order. An admitted batch's task
@@ -578,6 +590,7 @@ impl RunningSimulator {
             control,
             pointer: Mutex::new(PointerState::default()),
             held: Mutex::new(None),
+            owed_lift: Mutex::new(None),
             presses: Mutex::new(Presses::default()),
             input_lock: Arc::default(),
             input_tasks: TaskTracker::new(),
@@ -652,6 +665,7 @@ impl Shared {
         self.input_tasks.wait().await;
         *lock(&self.pointer) = PointerState::default();
         lock(&self.held).take();
+        lock(&self.owed_lift).take();
         *lock(&self.presses) = Presses::default();
         // The poll ends first, so this shutdown is never taken for an external one.
         self.poll.cancel();
@@ -725,16 +739,20 @@ impl Shared {
         })
     }
 
-    /// Sends an admitted batch. Releases owed since a failed send go out first, once the
-    /// keyboard is ready for the keys among them. A call with a send that fails, theirs
-    /// included, then lifts the touch the guest may hold and releases every key and button
-    /// it may hold, best effort.
+    /// Sends an admitted batch. A touch lift owed since a failed send goes out first, then
+    /// the key and button releases owed, once the keyboard is ready for the keys among
+    /// them. A call with a send that fails, theirs included, then lifts the touch the guest
+    /// may hold and releases every key and button it may hold, best effort.
     async fn send_admitted(
         &self,
         sink: &dyn HidSink,
         plan: Vec<HidAction>,
     ) -> Result<(), DeviceOpError> {
-        let result = match self.release_presses(sink, Releasing::Owed).await {
+        let owed = match self.lift_owed_touch(sink).await {
+            Ok(()) => self.release_presses(sink, Releasing::Owed).await,
+            Err(error) => Err(error),
+        };
+        let result = match owed {
             Ok(()) => self.send_plan(sink, plan).await,
             Err(error) => Err(sink_error(error, INPUT_FAILED)),
         };
@@ -862,20 +880,28 @@ impl Shared {
         result
     }
 
+    /// Sends the touch lift owed since a failed send, if any, and forgets it once it went
+    /// out. The pointer is already idle, so a client's own up or cancel for that touch
+    /// plans nothing: this lift is what releases the guest's finger.
+    async fn lift_owed_touch(&self, sink: &dyn HidSink) -> Result<(), HidError> {
+        let owed = *lock(&self.owed_lift);
+        if let Some((x, y)) = owed {
+            sink.send(touch_up(x, y)).await?;
+            lock(&self.owed_lift).take();
+        }
+        Ok(())
+    }
+
     /// After a failed send: lifts a touch the guest may still hold, best effort, at its
     /// last known position (the sink sends it on the path its down took), and leaves the
-    /// pointer idle.
+    /// pointer idle. A lift that fails is owed, and the next call sends it first.
     async fn lift_held_touch(&self, sink: &dyn HidSink) {
         let held = lock(&self.held).take();
-        if let Some((x, y)) = held {
-            let up = HidAction::Touch {
-                phase: TouchPhase::Up,
-                x,
-                y,
-            };
-            if let Err(error) = sink.send(up).await {
-                tracing::debug!(?error, "could not lift a held touch after a failed send");
-            }
+        if let Some((x, y)) = held
+            && let Err(error) = sink.send(touch_up(x, y)).await
+        {
+            tracing::debug!(?error, "could not lift a held touch after a failed send");
+            *lock(&self.owed_lift) = Some((x, y));
         }
         *lock(&self.pointer) = PointerState::default();
     }
@@ -1510,6 +1536,125 @@ mod tests {
         manager.shutdown().await;
     }
 
+    /// A drag held at (0.2, 0.2) whose up fails, and whose best-effort lift fails too
+    /// (issue #130). Nothing reached the guest, so its finger is still down.
+    async fn a_drag_whose_up_and_lift_both_failed(
+        hid: &std::sync::Arc<RecordingHid>,
+        manager: &crate::device::DeviceManager,
+        id: &str,
+    ) {
+        manager.input(id, vec![tap_down(0.1, 0.2)]).await.unwrap();
+        manager
+            .input(id, vec![touch(TouchAction::Move, 0.2, 0.2)])
+            .await
+            .unwrap();
+        hid.sent();
+        hid.fail_times(2, |action| {
+            matches!(
+                action,
+                HidAction::Touch {
+                    phase: TouchPhase::Up,
+                    ..
+                }
+            )
+        });
+        let failed = manager
+            .input(id, vec![touch(TouchAction::Up, 0.25, 0.2)])
+            .await;
+        assert!(
+            matches!(failed, Err(DeviceOpError::Emulator(_))),
+            "{failed:?}"
+        );
+        assert!(hid.sent().is_empty());
+    }
+
+    /// Once sends work again, the owed lift goes out before the next touch, and only once.
+    #[tokio::test]
+    async fn a_lift_that_failed_twice_goes_out_before_the_next_touch() {
+        let sim = one_device();
+        let hid = RecordingHid::new();
+        let (manager, _enabled, id) = ready_live_fake(&sim, &hid).await;
+        a_drag_whose_up_and_lift_both_failed(&hid, &manager, &id).await;
+        manager.input(&id, vec![tap_down(0.5, 0.6)]).await.unwrap();
+        assert_eq!(
+            hid.sent(),
+            [
+                sent_touch(TouchPhase::Up, 0.2, 0.2),
+                sent_touch(TouchPhase::Down, 0.5, 0.6),
+            ]
+        );
+        manager
+            .input(&id, vec![touch(TouchAction::Up, 0.5, 0.6)])
+            .await
+            .unwrap();
+        assert_eq!(hid.sent(), [sent_touch(TouchPhase::Up, 0.5, 0.6)]);
+        manager.shutdown().await;
+    }
+
+    /// The input queue retries a failed up as a cancel. The pointer is already idle, so the
+    /// cancel plans nothing, but the call still sends the owed lift.
+    #[tokio::test]
+    async fn a_cancel_retry_after_a_lift_failed_twice_lifts_the_touch() {
+        let sim = one_device();
+        let hid = RecordingHid::new();
+        let (manager, _enabled, id) = ready_live_fake(&sim, &hid).await;
+        a_drag_whose_up_and_lift_both_failed(&hid, &manager, &id).await;
+        manager
+            .input(&id, vec![touch(TouchAction::Cancel, 0.25, 0.2)])
+            .await
+            .unwrap();
+        assert_eq!(hid.sent(), [sent_touch(TouchPhase::Up, 0.2, 0.2)]);
+        // Lifted once: the next touch sends only itself.
+        manager.input(&id, vec![tap_down(0.5, 0.6)]).await.unwrap();
+        assert_eq!(hid.sent(), [sent_touch(TouchPhase::Down, 0.5, 0.6)]);
+        manager.shutdown().await;
+    }
+
+    /// Keyboard input after a lift failed twice also lifts the touch first.
+    #[tokio::test]
+    async fn keys_after_a_lift_failed_twice_lift_the_touch_first() {
+        let sim = one_device();
+        let hid = RecordingHid::new();
+        let (manager, _enabled, id) = ready_live_fake(&sim, &hid).await;
+        a_drag_whose_up_and_lift_both_failed(&hid, &manager, &id).await;
+        manager.input(&id, vec![text("b")]).await.unwrap();
+        assert_eq!(
+            hid.sent(),
+            [
+                sent_touch(TouchPhase::Up, 0.2, 0.2),
+                key(0x05, true),
+                key(0x05, false),
+            ]
+        );
+        manager.shutdown().await;
+    }
+
+    /// A call whose owed lift fails again fails, sends nothing of its own, and keeps the
+    /// lift owed.
+    #[tokio::test]
+    async fn an_owed_lift_that_fails_again_stays_owed() {
+        let sim = one_device();
+        let hid = RecordingHid::new();
+        let (manager, _enabled, id) = ready_live_fake(&sim, &hid).await;
+        a_drag_whose_up_and_lift_both_failed(&hid, &manager, &id).await;
+        hid.fail_next(|action| *action == sent_touch(TouchPhase::Up, 0.2, 0.2));
+        let failed = manager.input(&id, vec![tap_down(0.5, 0.6)]).await;
+        assert!(
+            matches!(failed, Err(DeviceOpError::Emulator(_))),
+            "{failed:?}"
+        );
+        assert!(hid.sent().is_empty());
+        manager.input(&id, vec![tap_down(0.5, 0.6)]).await.unwrap();
+        assert_eq!(
+            hid.sent(),
+            [
+                sent_touch(TouchPhase::Up, 0.2, 0.2),
+                sent_touch(TouchPhase::Down, 0.5, 0.6),
+            ]
+        );
+        manager.shutdown().await;
+    }
+
     #[tokio::test]
     async fn a_failed_key_after_a_held_down_lifts_the_touch() {
         let sim = one_device();
@@ -2038,6 +2183,41 @@ mod tests {
             Err(DeviceOpError::Busy { .. })
         ));
         assert!(sim.calls().iter().all(|c| !c.starts_with("boot")));
+    }
+
+    /// Issue #131: two simulators with the same name and OS are told apart in the catalog the
+    /// Device picker shows, by the end of each UDID; a name of its own stays as it was.
+    #[tokio::test]
+    async fn simulators_of_the_same_name_are_told_apart_in_the_catalog() {
+        let sim = FakeXcrun::new()
+            .device(
+                "6F1C0D2E-9B3A-4C55-8E21-0A7D44B13F2A",
+                "iPhone 17",
+                "iOS 27.0",
+            )
+            .device(
+                "A0B1C2D3-E4F5-4A6B-9C8D-7E6F5A4B9C01",
+                "iPhone 17",
+                "iOS 27.0",
+            )
+            .device("UDID-3", "iPhone 17 Pro", "iOS 27.0")
+            .write();
+        let (manager, _enabled) = ios_manager(&sim);
+        manager.refresh_now().await;
+        let names: Vec<String> = manager.catalog().borrow().platforms[0]
+            .images
+            .iter()
+            .map(|image| image.display_name.clone())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "iPhone 17 · iOS 27.0 · 3F2A",
+                "iPhone 17 · iOS 27.0 · 9C01",
+                "iPhone 17 Pro · iOS 27.0",
+            ]
+        );
+        manager.shutdown().await;
     }
 
     #[tokio::test]

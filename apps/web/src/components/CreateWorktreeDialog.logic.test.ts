@@ -140,6 +140,15 @@ describe("reuseBranchHint", () => {
     );
   });
 
+  it("names the branch an edited Name creates from an occupied branch", () => {
+    expect(reuseBranchHint({ name: "master", current: true }, "my-feature")).toBe(
+      '"master" is already checked out. A new branch ("my-feature" or the next available name) will be created from it.',
+    );
+    expect(reuseBranchHint({ name: "master", current: true }, "master")).toBe(
+      '"master" is already checked out. A new branch ("master-2" or the next available name) will be created from it.',
+    );
+  });
+
   it("explains that a branch checked out in another worktree is occupied", () => {
     expect(
       reuseBranchHint({ name: "wip", isRemote: false, current: false, worktreePath: "/repo/wip" }),
@@ -300,6 +309,35 @@ describe("resolveWorktreeCreateInput", () => {
       newRefName: null,
       baseRefName: null,
     });
+  });
+
+  it("creates the edited Name as a new branch from an occupied branch (#136)", () => {
+    const result = resolveWorktreeCreateInput({
+      ...base,
+      mode: "branch",
+      nameText: "my-feature",
+      selectedBranchRefName: "master",
+      selectedBranchRef: { name: "master", current: true },
+    });
+    expect(result).toEqual({
+      kind: "new-branch",
+      title: "my-feature",
+      branchName: "my-feature",
+      refName: "master",
+      newRefName: "my-feature",
+      baseRefName: "master",
+    });
+  });
+
+  it("leaves an occupied branch's own name to the server's next-available suffix", () => {
+    const result = resolveWorktreeCreateInput({
+      ...base,
+      mode: "branch",
+      nameText: "wip",
+      selectedBranchRefName: "wip",
+      selectedBranchRef: { name: "wip", worktreePath: "/repo/wip" },
+    });
+    expect(result).toMatchObject({ kind: "existing-ref", refName: "wip", newRefName: null });
   });
 
   it("creates a named branch from a selected reusable branch when reuse is off", () => {

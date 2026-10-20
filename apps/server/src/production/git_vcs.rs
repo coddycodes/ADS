@@ -169,6 +169,36 @@ mod worktree_removal_task_tracker_tests {
     }
 }
 
+/// Runs after a finished Git Manager or VCS mutation and after a reported local
+/// change (a terminal command exiting) for a worktree.
+///
+/// It forgets that worktree's shared open pull-request lookups first: a push,
+/// a created request, or a command such as `gh pr create` can change the
+/// hosting service's answer, and the status publication that follows must ask
+/// again rather than reuse an answer from before the change.
+///
+/// It then starts a fresh passive summary cycle instead of waiting for the
+/// 30-second deadline, because passive summaries feed labels such as the
+/// sidebar branch. Both are user-paced, so restarting an in-flight cycle is
+/// cheap. The observer only schedules the nudge; it never blocks the caller.
+fn observe_local_changes(
+    broadcaster: &StatusBroadcaster,
+    summary: &GitStatusSummaryService,
+    pull_requests: &PullRequestService,
+) {
+    let summary = summary.clone();
+    let pull_requests = pull_requests.clone();
+    broadcaster.set_local_change_observer(move |cwd| {
+        pull_requests.invalidate_open_pull_request_lookups(cwd);
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let summary = summary.clone();
+        let cwd = cwd.to_path_buf();
+        handle.spawn(async move { summary.notify_local_change(&cwd).await });
+    });
+}
+
 pub const GIT_VCS_UNARY_METHODS: &[&str] = &[
     "shell.openInEditor",
     "vcs.pull",
@@ -355,21 +385,7 @@ impl GitVcsRpcServices {
             STREAM_CAPACITY,
         );
         let summary = GitStatusSummaryService::new(Arc::clone(&repository), pull_requests.clone());
-        // Passive summaries feed labels such as the sidebar branch. A finished
-        // Git Manager or VCS mutation and a reported local change (a terminal
-        // command exiting) start a fresh summary cycle instead of waiting for
-        // the 30-second deadline. Both are user-paced, so restarting an
-        // in-flight cycle is cheap. The observer only schedules the nudge; it
-        // never blocks the caller.
-        let observed_summary = summary.clone();
-        broadcaster.set_local_change_observer(move |cwd| {
-            let Ok(handle) = tokio::runtime::Handle::try_current() else {
-                return;
-            };
-            let summary = observed_summary.clone();
-            let cwd = cwd.to_path_buf();
-            handle.spawn(async move { summary.notify_local_change(&cwd).await });
-        });
+        observe_local_changes(&broadcaster, &summary, &pull_requests);
         let clone_operations = CloneRuntime::new(Arc::clone(&repository));
         Self {
             trace_diagnostics: None,
@@ -410,15 +426,7 @@ impl GitVcsRpcServices {
         );
         self.summary =
             GitStatusSummaryService::new(Arc::clone(&self.repository), self.pull_requests.clone());
-        let observed_summary = self.summary.clone();
-        self.broadcaster.set_local_change_observer(move |cwd| {
-            let Ok(handle) = tokio::runtime::Handle::try_current() else {
-                return;
-            };
-            let summary = observed_summary.clone();
-            let cwd = cwd.to_path_buf();
-            handle.spawn(async move { summary.notify_local_change(&cwd).await });
-        });
+        observe_local_changes(&self.broadcaster, &self.summary, &self.pull_requests);
         self
     }
 
@@ -2960,14 +2968,25 @@ async fn enrich_remote_pull_request(
     let Some(reference) = local.ref_name.as_deref() else {
         return;
     };
-    let Some(pull_request) = resolve_open_pull_request(
-        pull_requests,
-        cwd,
-        local_provider_kind(local),
-        reference,
-        cancellation,
-    )
-    .await
+    let provider = local_provider_kind(local);
+    if provider == ProviderKind::Unknown {
+        return;
+    }
+    // Shared with the status stream and other refreshes for a few seconds;
+    // see `PullRequestService::resolve_current_optional_shared`.
+    let Some(pull_request) = pull_requests
+        .resolve_current_optional_shared(
+            ResolvePullRequestInput {
+                cwd: cwd.to_path_buf(),
+                provider,
+                reference: reference.to_owned(),
+            },
+            cancellation,
+        )
+        .await
+        .ok()
+        .flatten()
+        .filter(|pull_request| pull_request.state == ChangeRequestState::Open)
     else {
         return;
     };
@@ -6855,6 +6874,368 @@ esac
             .unwrap_err();
         assert_eq!(error["_tag"], "ExternalLauncherEditorSpawnError");
         assert_eq!(error["command"], "code");
+    }
+}
+
+/// `vcs.refreshStatus` and the status stream share one short-lived open
+/// pull-request lookup per (worktree, provider, branch). These tests drive the
+/// real RPC handlers against a fake `gh` that records each `pr list` call.
+#[cfg(all(test, unix))]
+mod open_pull_request_lookup_tests {
+    use super::*;
+    use crate::RequestId;
+    use crate::test_support::TestSandbox;
+
+    /// Records the `--head` branch of every `pr list`, then answers from
+    /// marker files: `fail` exits 1, `slow` sleeps its contents in seconds,
+    /// and `open` returns one open PR for the requested branch.
+    const FAKE_GH: &str = r#"#!/bin/sh
+case "$1:$2" in
+  pr:list)
+    printf '%s\n' "$4" >> 'CALLS'
+    if [ -f 'STATE/fail' ]; then echo 'forge unavailable' >&2; exit 1; fi
+    if [ -f 'STATE/slow' ]; then sleep "$(cat 'STATE/slow')"; fi
+    if [ -f 'STATE/open' ]; then
+      printf '[{"number":42,"title":"PR for %s","url":"https://github.com/acme/repo/pull/42","baseRefName":"main","headRefName":"%s","state":"OPEN"}]\n' "$4" "$4"
+    else
+      printf '[]\n'
+    fi ;;
+  pr:create) : > 'STATE/open'; printf 'https://github.com/acme/repo/pull/42\n' ;;
+  *) exit 64 ;;
+esac
+"#;
+
+    struct Fixture {
+        _sandbox: TestSandbox,
+        repository: PathBuf,
+        state: PathBuf,
+        calls: PathBuf,
+        services: GitVcsRpcServices,
+    }
+
+    impl Fixture {
+        fn new(label: &str) -> Self {
+            let sandbox = TestSandbox::new(label);
+            let repository = sandbox.path("repo");
+            let bin = sandbox.path("bin");
+            let state = sandbox.path("state");
+            for directory in [&repository, &bin, &state] {
+                std::fs::create_dir(directory).expect("fixture directory");
+            }
+            git(&repository, &["init", "-q", "-b", "main"]);
+            git(
+                &repository,
+                &["commit", "-q", "--allow-empty", "-m", "base"],
+            );
+            git(
+                &repository,
+                &[
+                    "remote",
+                    "add",
+                    "origin",
+                    "https://github.com/acme/repo.git",
+                ],
+            );
+            let calls = sandbox.path("gh-calls");
+            TestSandbox::write_executable(
+                &bin.join("gh"),
+                &FAKE_GH
+                    .replace("CALLS", &calls.to_string_lossy())
+                    .replace("STATE", &state.to_string_lossy()),
+            );
+            let hosts = Arc::new(ProviderHosts::default());
+            let services = GitVcsRpcServices::with_repository(
+                Arc::new(GitRepository::default().with_provider_hosts(hosts.clone())),
+                hosts,
+            )
+            .with_hosting_executable_dir_for_integration_test(bin);
+            Self {
+                _sandbox: sandbox,
+                repository,
+                state,
+                calls,
+                services,
+            }
+        }
+
+        fn set(&self, marker: &str, contents: &str) {
+            std::fs::write(self.state.join(marker), contents).expect("fixture marker");
+        }
+
+        fn clear(&self, marker: &str) {
+            std::fs::remove_file(self.state.join(marker)).expect("fixture marker removal");
+        }
+
+        /// The `--head` branch of every `gh pr list` so far.
+        fn lookups(&self) -> Vec<String> {
+            std::fs::read_to_string(&self.calls)
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        }
+
+        async fn unary(&self, tag: &str, payload: Value) -> Value {
+            self.services
+                .handle_unary_with_context(
+                    RpcRequest {
+                        id: RequestId::try_from("1").expect("request id"),
+                        tag: tag.to_owned(),
+                        payload,
+                        headers: Vec::new(),
+                        trace_id: None,
+                        span_id: None,
+                        sampled: None,
+                    },
+                    RpcSessionContext::unauthenticated(),
+                    CancellationToken::new(),
+                )
+                .await
+                .unwrap_or_else(|error| panic!("{tag} failed: {error}"))
+        }
+
+        async fn refresh(&self) -> Value {
+            self.unary("vcs.refreshStatus", json!({ "cwd": self.repository }))
+                .await
+        }
+    }
+
+    fn git(cwd: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .args(["-c", "user.name=BiBCode Test"])
+            .args(["-c", "user.email=bibcode@example.test"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .expect("git runs");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[tokio::test]
+    async fn repeated_refresh_within_the_ttl_neither_reruns_nor_waits_on_the_forge() {
+        let fixture = Fixture::new("pr-lookup-repeat");
+        fixture.set("open", "");
+        let first = fixture.refresh().await;
+        assert_eq!(first["pr"]["number"], 42, "{first}");
+        assert_eq!(fixture.lookups(), ["main"]);
+
+        // A forge that now takes five seconds must not be on the reply path.
+        fixture.set("slow", "5");
+        let second = tokio::time::timeout(Duration::from_secs(2), fixture.refresh())
+            .await
+            .expect("a refresh inside the TTL must not wait on the forge CLI");
+        assert_eq!(second["pr"]["number"], 42, "{second}");
+        assert_eq!(
+            fixture.lookups(),
+            ["main"],
+            "a refresh inside the TTL must not run the forge CLI again"
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_refreshes_share_one_forge_lookup() {
+        let fixture = Fixture::new("pr-lookup-coalesce");
+        fixture.set("open", "");
+        fixture.set("slow", "1");
+        let (first, second, third) =
+            tokio::join!(fixture.refresh(), fixture.refresh(), fixture.refresh());
+        for status in [first, second, third] {
+            assert_eq!(status["pr"]["number"], 42, "{status}");
+        }
+        assert_eq!(
+            fixture.lookups(),
+            ["main"],
+            "concurrent refreshes must join one forge CLI run"
+        );
+    }
+
+    #[tokio::test]
+    async fn status_stream_and_refresh_share_one_forge_lookup() {
+        let fixture = Fixture::new("pr-lookup-stream");
+        fixture.set("open", "");
+        let cancellation = CancellationToken::new();
+        let mut stream = fixture.services.status_stream(
+            RpcRequest {
+                id: RequestId::try_from("2").expect("request id"),
+                tag: "subscribeVcsStatus".to_owned(),
+                payload: json!({ "cwd": fixture.repository }),
+                headers: Vec::new(),
+                trace_id: None,
+                span_id: None,
+                sampled: None,
+            },
+            cancellation.clone(),
+        );
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let chunk = stream
+                    .recv()
+                    .await
+                    .expect("status stream stays open")
+                    .expect("status stream event");
+                if chunk[0]["remote"]["pr"]["number"] == 42 {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("the stream must enrich its snapshot with the open PR");
+
+        let status = fixture.refresh().await;
+        assert_eq!(status["pr"]["number"], 42, "{status}");
+        // Let the stream enrich the refresh's publication too.
+        let _ = tokio::time::timeout(Duration::from_millis(500), async {
+            while stream.recv().await.is_some() {}
+        })
+        .await;
+        assert_eq!(
+            fixture.lookups(),
+            ["main"],
+            "the unary reply and the stream must share one forge lookup"
+        );
+        cancellation.cancel();
+    }
+
+    #[tokio::test]
+    async fn a_branch_change_runs_a_fresh_lookup_for_the_new_branch() {
+        let fixture = Fixture::new("pr-lookup-branch");
+        fixture.set("open", "");
+        fixture.refresh().await;
+        fixture.refresh().await;
+        assert_eq!(fixture.lookups(), ["main"]);
+
+        git(&fixture.repository, &["switch", "-q", "-c", "feature"]);
+        let status = fixture.refresh().await;
+        assert_eq!(status["pr"]["headRef"], "feature", "{status}");
+        assert_eq!(fixture.lookups(), ["main", "feature"]);
+    }
+
+    #[tokio::test]
+    async fn a_pull_request_created_through_bibcode_is_visible_on_the_next_refresh() {
+        let fixture = Fixture::new("pr-lookup-create");
+        git(&fixture.repository, &["switch", "-q", "-c", "feature"]);
+        let before = fixture.refresh().await;
+        assert!(before["pr"].is_null(), "{before}");
+        fixture.refresh().await;
+        assert_eq!(fixture.lookups(), ["feature"]);
+
+        fixture
+            .services
+            .pull_requests
+            .create(
+                CreatePullRequestInput {
+                    cwd: fixture.repository.clone(),
+                    provider: ProviderKind::Github,
+                    base_branch: "main".to_owned(),
+                    head_branch: "feature".to_owned(),
+                    title: "Feature".to_owned(),
+                    body: String::new(),
+                },
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("the fake forge creates the PR");
+        let after = fixture.refresh().await;
+        assert_eq!(after["pr"]["number"], 42, "{after}");
+        assert_eq!(fixture.lookups(), ["feature", "feature"]);
+    }
+
+    #[tokio::test]
+    async fn a_finished_git_mutation_runs_a_fresh_lookup() {
+        let fixture = Fixture::new("pr-lookup-mutation");
+        fixture.set("open", "");
+        fixture.refresh().await;
+        fixture.refresh().await;
+        assert_eq!(fixture.lookups(), ["main"]);
+
+        // Any finished BiBCode Git mutation (a push from the Git Manager
+        // included) may have changed what the forge reports for this branch.
+        std::fs::write(fixture.repository.join("added.txt"), "added\n").expect("fixture file");
+        fixture
+            .unary(
+                "vcs.stageFiles",
+                json!({ "cwd": fixture.repository, "filePaths": ["added.txt"] }),
+            )
+            .await;
+        fixture.refresh().await;
+        fixture.refresh().await;
+        assert_eq!(fixture.lookups(), ["main", "main"]);
+    }
+
+    #[tokio::test]
+    async fn a_reported_local_change_runs_a_fresh_lookup() {
+        let fixture = Fixture::new("pr-lookup-local-change");
+        let cancellation = CancellationToken::new();
+        // A terminal exit reaches the observer only for a watched worktree.
+        let mut stream = fixture.services.status_stream(
+            RpcRequest {
+                id: RequestId::try_from("3").expect("request id"),
+                tag: "subscribeVcsStatus".to_owned(),
+                payload: json!({ "cwd": fixture.repository }),
+                headers: Vec::new(),
+                trace_id: None,
+                span_id: None,
+                sampled: None,
+            },
+            cancellation.clone(),
+        );
+        stream
+            .recv()
+            .await
+            .expect("status stream stays open")
+            .expect("status snapshot");
+        let before = fixture.refresh().await;
+        assert!(before["pr"].is_null(), "{before}");
+        assert_eq!(fixture.lookups(), ["main"]);
+
+        // `gh pr create` in a BiBCode terminal, then the command exits.
+        fixture.set("open", "");
+        fixture
+            .services
+            .broadcaster
+            .notify_local_change(&fixture.repository)
+            .await;
+        let after = fixture.refresh().await;
+        assert_eq!(after["pr"]["number"], 42, "{after}");
+        cancellation.cancel();
+    }
+
+    #[tokio::test]
+    async fn an_expired_lookup_asks_the_forge_again() {
+        let fixture = Fixture::new("pr-lookup-expiry");
+        fixture
+            .services
+            .pull_requests
+            .set_open_lookup_ttl_for_test(Duration::from_secs(2));
+        fixture.set("open", "");
+        fixture.refresh().await;
+        fixture.refresh().await;
+        assert_eq!(fixture.lookups(), ["main"]);
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+        fixture.refresh().await;
+        assert_eq!(fixture.lookups(), ["main", "main"]);
+    }
+
+    #[tokio::test]
+    async fn a_failed_lookup_is_not_remembered_as_no_pull_request() {
+        let fixture = Fixture::new("pr-lookup-failure");
+        fixture.set("fail", "");
+        let failed = fixture.refresh().await;
+        assert!(failed["pr"].is_null(), "{failed}");
+        assert_eq!(fixture.lookups(), ["main"]);
+
+        fixture.clear("fail");
+        fixture.set("open", "");
+        let recovered = fixture.refresh().await;
+        assert_eq!(recovered["pr"]["number"], 42, "{recovered}");
+        assert_eq!(fixture.lookups(), ["main", "main"]);
     }
 }
 

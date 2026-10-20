@@ -377,6 +377,28 @@ requests current-branch reconciliation, and makes the shared stream reducer
 reset upstream, ahead/behind, default-delta, and pull-request fields while
 same-ref local invalidation preserves them.
 
+Stream and unary pull-request enrichment ask the hosting service for the
+branch's open request through one shared, short-lived lookup
+([`open_pull_request_lookups`](../../apps/server/src/source_control/open_pull_request_lookups.rs)),
+because the forge CLI (`gh pr list`, `glab mr list`, `az repos pr list`) or
+Bitbucket request takes hundreds of milliseconds to seconds while local status
+takes tens. Entries are keyed by worktree path, provider, and branch, so a
+branch change or another repository never reads them. A successful answer,
+including no open request, is reused for 10 seconds; a failed or cancelled
+lookup is never reused. Concurrent callers for one key, such as a unary refresh
+and the stream enrichment of the publication it causes, share one provider run
+that holds a lease per waiting caller: a stream replacing its enrichment does
+not cancel a waiting refresh, and the last caller leaving cancels the run.
+Creating a request through the service, every finished Git Manager or VCS
+mutation (pushes included), and every reported local change such as a terminal
+command exiting forget that worktree's entries; a run in flight across such an
+invalidation still answers its waiters but is not stored. At most 64 entries
+are held. `vcs.refreshStatus` keeps its contract and still waits for the
+lookup when nothing current is held, so a refresh more than 10 seconds after
+the last lookup pays one provider round trip. The passive summary, the
+pre-creation existence check in `git.runStackedAction`, and
+`gitManager.listPullRequests` keep asking the hosting service directly.
+
 A physical observation starts with one
 `git -c core.quotePath=false status --porcelain=2 --branch --untracked-files=all`.
 Its headers supply branch, upstream, and ahead/behind state. Staged and
@@ -566,7 +588,16 @@ different branch or replaces local history. Local branch names and unambiguous
 short remote names remain accepted by the operation. The explicit `bring`
 checkout strategy skips only the dirty-worktree guard: Git still rejects
 overwrites, and operation-in-progress and worktree-occupancy guards still apply.
-The `stash` UI choice completes the existing stash operation before checkout.
+The `stash` UI choice completes the existing `stash-push` operation, with
+`includeUntracked` set, before checkout. That flag adds `--include-untracked`
+(never `--all`, so ignored files stay in place) and turns Git's exit-0 "No
+local changes to save" into a `nothing-to-stash` failure, so the client never
+switches believing the work was saved. Without the flag `stash-push` keeps its
+plain `git stash push` behavior. Stash listings and stash diffs read
+`git stash show --include-untracked`, so a stash's untracked files appear as
+added files; that flag needs Git 2.32 or later, below which stash listing and
+stash diffs fail instead of omitting those files. Applying or popping a stash whose untracked file now exists in the
+working tree fails with `stash-untracked-collision`; Git keeps the entry.
 Checkout failures remain visible inside an open dirty-changes dialog.
 
 History preserves pinned pages, ordering, selection, and scroll context while
@@ -2356,9 +2387,19 @@ effects, such as a turn baseline, queue behind the revert in event order, and
 other threads' checkpoint work goes on. Once the preparation is done, the
 worker runs the rewind and the restore, then the queued effects. Every effect
 that writes still runs on the worker one at a time, so checkpoint work on a
-checkout that sibling threads share never overlaps. A parked thread holds at
-most 64 events, and at most four threads are parked at once; past either bound
-the worker waits for the revert itself, as it did before parking.
+checkout that sibling threads share never overlaps. Reverts of one checkout
+(chats without a worktree of their own share the project's) also restore in
+the order they were requested. The worker fixes each revert's place when it
+receives the request, before any preparation, and that includes a revert that
+queues behind the same thread's earlier revert. A waiter hands its preparation
+back only once the checkout's previous revert has restored, so a later revert
+prepared sooner cannot restore first and then be undone by the earlier one's
+restore and clean. Reverts of different checkouts do not wait for each other.
+At most four reverts are prepared at once. A revert past that bound still
+parks: its waiter takes the thread's reservation first and only then waits for
+a free slot, so a message sent after the revert is not delivered ahead of it.
+The worker never prepares a revert itself. A parked thread holds at most 64 events; past that the worker
+waits for the thread's revert, as it did before parking.
 The reservation is in memory only. That is enough because a revert never
 outlives its process: the effects worker does not replay a revert requested
 before a restart.

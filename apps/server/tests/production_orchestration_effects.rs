@@ -19,7 +19,7 @@ use orchestration_effects::{
 };
 use serde_json::json;
 use tempfile::TempDir;
-use tokio::sync::broadcast;
+use tokio::sync::{Notify, broadcast};
 
 const NOW: &str = "2026-07-10T10:00:00.000Z";
 const ORCHESTRATION_EFFECTS_INTEGRATION_DEADLINE: Duration = Duration::from_secs(30);
@@ -45,6 +45,12 @@ struct CallbackState {
     refresh_error: Mutex<Option<String>>,
     setup_scripts: Mutex<Vec<SetupScriptLaunch>>,
     setup_error: Mutex<Option<String>>,
+    /// Threads whose provider rewind preparation started, in order.
+    prepared: Mutex<Vec<String>>,
+    /// A thread whose next preparation waits for `release_prepare`, like a cold provider reopen.
+    /// Only that one preparation waits; the thread's later ones do not.
+    held_prepare: Mutex<Option<String>>,
+    release_prepare: Notify,
 }
 
 impl OrchestrationEffectCallbacks for CallbackState {
@@ -53,6 +59,24 @@ impl OrchestrationEffectCallbacks for CallbackState {
         _thread_id: &'a str,
     ) -> BoxEffectFuture<'a, Option<PathBuf>> {
         Box::pin(async move { Ok(self.cwd.lock().unwrap().clone()) })
+    }
+
+    fn prepare_provider_rewind<'a>(&'a self, thread_id: &'a str) -> BoxEffectFuture<'a, ()> {
+        Box::pin(async move {
+            self.prepared.lock().unwrap().push(thread_id.to_owned());
+            let held = {
+                let mut held = self.held_prepare.lock().unwrap();
+                let matches = held.as_deref() == Some(thread_id);
+                if matches {
+                    *held = None;
+                }
+                matches
+            };
+            if held {
+                self.release_prepare.notified().await;
+            }
+            Ok(())
+        })
     }
 
     fn rollback_provider<'a>(
@@ -790,6 +814,201 @@ async fn reverts_workspace_provider_history_and_stale_checkpoint_refs() {
             &orchestration_effects::checkpoint_ref("t1", 2)
         ],
     ));
+
+    effects.shutdown().await;
+    engine.shutdown().await;
+}
+
+/// Creates thread `thread_id` in project `p1`, without a worktree of its own, so it shares the
+/// project's checkout with `t1`.
+async fn create_sibling_thread(engine: &OrchestrationEngine, thread_id: &str) {
+    dispatch(
+        engine,
+        json!({
+            "type":"thread.create", "commandId":format!("thread-{thread_id}"), "threadId":thread_id,
+            "projectId":"p1", "title":"Sibling", "modelSelection":{"instanceId":"codex","model":"gpt-5"},
+            "runtimeMode":"full-access", "branch":null, "worktreePath":null, "createdAt":NOW
+        }),
+    )
+    .await;
+}
+
+/// Records each turn's checkpoint in order: the checkout is first written with `contents`, if
+/// any, and turns past 0 are recorded as completed in the read model.
+async fn record_turns(
+    engine: &OrchestrationEngine,
+    checkout: &Path,
+    turns: &[(&str, i64, Option<&str>)],
+) {
+    for &(thread_id, turn_count, contents) in turns {
+        if let Some(contents) = contents {
+            std::fs::write(checkout.join("tracked.txt"), contents).unwrap();
+        }
+        orchestration_effects::capture_checkpoint(checkout, thread_id, turn_count)
+            .await
+            .unwrap();
+        if turn_count == 0 {
+            continue;
+        }
+        dispatch(
+            engine,
+            json!({
+                "type":"thread.turn.diff.complete",
+                "commandId":format!("diff-{thread_id}-{turn_count}"),
+                "threadId":thread_id, "turnId":format!("{thread_id}-turn-{turn_count}"),
+                "checkpointTurnCount":turn_count,
+                "checkpointRef":orchestration_effects::checkpoint_ref(thread_id, turn_count),
+                "status":"ready", "files":[], "assistantMessageId":format!("a-{thread_id}-{turn_count}"),
+                "completedAt":NOW, "createdAt":NOW
+            }),
+        )
+        .await;
+    }
+}
+
+/// Asks for each revert in order, each its own command.
+async fn request_reverts(engine: &OrchestrationEngine, reverts: &[(&str, i64)]) {
+    for (index, &(thread_id, turn_count)) in reverts.iter().enumerate() {
+        dispatch(
+            engine,
+            json!({
+                "type":"thread.checkpoint.revert", "commandId":format!("revert-{index}-{thread_id}"),
+                "threadId":thread_id, "turnCount":turn_count, "createdAt":NOW
+            }),
+        )
+        .await;
+    }
+}
+
+/// Two chats sharing one checkout restore in the order their reverts were asked for. The first
+/// revert's provider reopen is slow, so the second is prepared first; it still restores after
+/// the first, or the first's `git restore` and `git clean` would undo it.
+#[tokio::test]
+async fn reverts_of_a_shared_checkout_restore_in_request_order() {
+    let repository = initialize_repository().await;
+    let engine = engine(repository.path()).await;
+    create_sibling_thread(&engine, "t2").await;
+    let callbacks = Arc::new(CallbackState::default());
+    *callbacks.cwd.lock().unwrap() = Some(repository.path().to_path_buf());
+    *callbacks.held_prepare.lock().unwrap() = Some("t1".to_owned());
+    let effects = OrchestrationEffects::start(
+        engine.clone(),
+        Arc::new(GitRepository::default()),
+        callbacks.clone(),
+        EffectsOptions::default(),
+    )
+    .await
+    .unwrap();
+    record_turns(
+        &engine,
+        repository.path(),
+        &[
+            ("t1", 0, None),
+            ("t2", 0, None),
+            ("t1", 1, Some("one\n")),
+            ("t1", 2, Some("two\n")),
+            ("t2", 1, Some("three\n")),
+        ],
+    )
+    .await;
+
+    // t1 reverts to "one" (its turn 1 of 2); t2 reverts to the baseline (its turn 0 of 1).
+    let mut events = engine.subscribe_events();
+    request_reverts(&engine, &[("t1", 1), ("t2", 0)]).await;
+    wait_until(|| callbacks.prepared.lock().unwrap().len() == 2).await;
+    // Room for a t2 that does not wait to rewind and restore while t1 is still reopening.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    callbacks.release_prepare.notify_one();
+    for _ in 0..2 {
+        wait_for_event(&mut events, "thread.reverted", |_| true).await;
+    }
+
+    assert_eq!(
+        callbacks.rollbacks.lock().unwrap().clone(),
+        [("t1".to_owned(), 1), ("t2".to_owned(), 1)],
+        "the reverts rewound out of request order"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("tracked.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "baseline\n",
+        "the later revert's files were overwritten by the earlier one"
+    );
+
+    effects.shutdown().await;
+    engine.shutdown().await;
+}
+
+/// A revert asked for while the same chat's earlier revert is still being prepared keeps its
+/// place: A1, A2 and then B1 restore in that order, not A1, B1, A2.
+#[tokio::test]
+async fn a_revert_behind_its_own_threads_revert_keeps_its_place_in_request_order() {
+    let repository = initialize_repository().await;
+    let engine = engine(repository.path()).await;
+    create_sibling_thread(&engine, "t2").await;
+    let callbacks = Arc::new(CallbackState::default());
+    *callbacks.cwd.lock().unwrap() = Some(repository.path().to_path_buf());
+    *callbacks.held_prepare.lock().unwrap() = Some("t1".to_owned());
+    let effects = OrchestrationEffects::start(
+        engine.clone(),
+        Arc::new(GitRepository::default()),
+        callbacks.clone(),
+        EffectsOptions::default(),
+    )
+    .await
+    .unwrap();
+    record_turns(
+        &engine,
+        repository.path(),
+        &[
+            ("t1", 0, None),
+            ("t2", 0, None),
+            ("t1", 1, Some("one\n")),
+            ("t1", 2, Some("two\n")),
+            ("t1", 3, Some("three\n")),
+            ("t2", 1, Some("four\n")),
+            ("t2", 2, Some("five\n")),
+        ],
+    )
+    .await;
+
+    // A1: t1 back one turn, to "two". A2: t1 back two more, to its baseline. B1: t2 back one
+    // turn, to "four". A1's provider reopen is slow; B1's is not.
+    let mut events = engine.subscribe_events();
+    request_reverts(&engine, &[("t1", 2), ("t1", 0), ("t2", 1)]).await;
+    wait_until(|| {
+        callbacks
+            .prepared
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|id| id == "t2")
+    })
+    .await;
+    // Room for a B1 that does not wait to rewind and restore while A1 is still reopening.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    callbacks.release_prepare.notify_one();
+    for _ in 0..3 {
+        wait_for_event(&mut events, "thread.reverted", |_| true).await;
+    }
+
+    assert_eq!(
+        callbacks.rollbacks.lock().unwrap().clone(),
+        [
+            ("t1".to_owned(), 1),
+            ("t1".to_owned(), 2),
+            ("t2".to_owned(), 1)
+        ],
+        "the reverts rewound out of request order"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repository.path().join("tracked.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "four\n",
+        "the last revert asked for did not restore last"
+    );
 
     effects.shutdown().await;
     engine.shutdown().await;

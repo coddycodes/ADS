@@ -1701,6 +1701,80 @@ describe("MessagesTimeline minimap", () => {
     expect(markup).toContain("min(8px, calc(100vh - 18rem))");
   });
 
+  it("previews a long message without copying all of it (#134)", async () => {
+    // A 60,000-character prompt: the preview must stay short, or every minimap derivation
+    // allocates a full-length copy of every user message.
+    const longText = `  First\n\n question ${"word ".repeat(12_000)}`;
+    const secondUser = {
+      ...buildUserTimelineEntry("Second question"),
+      id: "entry-user-2",
+      message: {
+        ...buildUserTimelineEntry("Second question").message,
+        id: MessageId.make("message-user-2"),
+      },
+    };
+    const container = await mountTimeline({
+      timelineEntries: [buildUserTimelineEntry(longText), secondUser],
+    });
+    const minimap = container.querySelector<HTMLButtonElement>(
+      'button[aria-label^="Jump to message:"]',
+    );
+    await act(async () => minimap!.focus());
+
+    const label = minimap!.getAttribute("aria-label")!;
+    const preview = label.slice("Jump to message: ".length);
+    expect(preview.startsWith("First question word word")).toBe(true);
+    expect(preview.endsWith("…")).toBe(true);
+    expect(preview.length).toBeLessThanOrEqual(201);
+  });
+
+  it("keeps the anchor callbacks handed to the list stable across thread updates (#134)", async () => {
+    const first = buildUserTimelineEntry("First question");
+    const second = {
+      ...buildUserTimelineEntry("Second question"),
+      id: "entry-user-2",
+      message: {
+        ...buildUserTimelineEntry("Second question").message,
+        id: MessageId.make("message-user-2"),
+      },
+    };
+    const onAnchorSizeChanged = vi.fn();
+    const MessagesTimeline = await loadMessagesTimeline();
+    const container = await mountTimeline({
+      anchorMessageId: first.message.id,
+      onAnchorSizeChanged,
+      timelineEntries: [first, second],
+    });
+    const anchorCallbacks = () =>
+      h.legendListProps?.anchoredEndSpace as
+        | { onReady?: unknown; onSizeChanged?: unknown }
+        | undefined;
+    const before = anchorCallbacks();
+    expect(before?.onSizeChanged).toBeTypeOf("function");
+
+    const mounted = mountedTrees.at(-1)!;
+    await act(async () =>
+      mounted.root.render(
+        <MessagesTimeline
+          {...buildProps()}
+          anchorMessageId={second.message.id}
+          onAnchorSizeChanged={onAnchorSizeChanged}
+          timelineEntries={[first, { ...second, message: { ...second.message, text: "Edited" } }]}
+        />,
+      ),
+    );
+    const after = anchorCallbacks();
+    // A callback recreated on each anchor change keeps every earlier render's scope alive
+    // through the closures it shares a scope with; stable ones break that chain.
+    expect(after?.onSizeChanged).toBe(before?.onSizeChanged);
+    expect(after?.onReady).toBe(before?.onReady);
+    // The list measures after commit; by then the stable callback reports the new anchor.
+    const onSizeChanged = after!.onSizeChanged as (size: number) => void;
+    await act(async () => onSizeChanged(300));
+    expect(onAnchorSizeChanged).toHaveBeenLastCalledWith(second.message.id, 300);
+    expect(container).toBeDefined();
+  });
+
   it("does not render the minimap below the item threshold", async () => {
     const markup = await renderTimeline({
       timelineEntries: [buildUserTimelineEntry("Only question")],

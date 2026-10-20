@@ -775,40 +775,47 @@ fn git(config: &IsolatedGitConfig, cwd: &Path, args: &[&str]) {
     );
 }
 
+/// A Git checkout with `tracked.txt` committed as `baseline`, for reverts run by production Git.
+fn revert_checkout() -> tempfile::TempDir {
+    // The checkpoint capture and the revert run production Git, which keeps the inherited
+    // environment. Refuse to run rather than let it restore and clean another checkout.
+    let discovery = [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+    ];
+    assert!(
+        discovery
+            .iter()
+            .all(|name| std::env::var_os(name).is_none()),
+        "the revert fixture runs production Git: unset {discovery:?} first"
+    );
+    let repository = tempfile::tempdir().unwrap();
+    let cwd = repository.path();
+    let config = IsolatedGitConfig::new();
+    for args in [
+        &["init"][..],
+        &["config", "user.name", "BiBCode Test"],
+        &["config", "user.email", "bibcode@example.test"],
+        // The checkpoint commands are production Git, which keeps its inherited settings.
+        &["config", "commit.gpgSign", "false"],
+    ] {
+        git(&config, cwd, args);
+    }
+    std::fs::write(cwd.join("tracked.txt"), "baseline\n").unwrap();
+    git(&config, cwd, &["add", "."]);
+    git(&config, cwd, &["commit", "-m", "baseline"]);
+    repository
+}
+
 impl RevertFixture {
     async fn new() -> Self {
         use crate::production::orchestration_effects::{
             EffectsOptions, OrchestrationEffects, capture_checkpoint, checkpoint_ref,
         };
-        // The checkpoint capture and the revert run production Git, which keeps the inherited
-        // environment. Refuse to run rather than let it restore and clean another checkout.
-        let discovery = [
-            "GIT_DIR",
-            "GIT_WORK_TREE",
-            "GIT_INDEX_FILE",
-            "GIT_COMMON_DIR",
-        ];
-        assert!(
-            discovery
-                .iter()
-                .all(|name| std::env::var_os(name).is_none()),
-            "the revert fixture runs production Git: unset {discovery:?} first"
-        );
-        let repository = tempfile::tempdir().unwrap();
+        let repository = revert_checkout();
         let cwd = repository.path().to_path_buf();
-        let config = IsolatedGitConfig::new();
-        for args in [
-            &["init"][..],
-            &["config", "user.name", "BiBCode Test"],
-            &["config", "user.email", "bibcode@example.test"],
-            // The checkpoint commands are production Git, which keeps its inherited settings.
-            &["config", "commit.gpgSign", "false"],
-        ] {
-            git(&config, &cwd, args);
-        }
-        std::fs::write(cwd.join("tracked.txt"), "baseline\n").unwrap();
-        git(&config, &cwd, &["add", "."]);
-        git(&config, &cwd, &["commit", "-m", "baseline"]);
         let engine = engine().await;
         for (turn_count, content) in [(0, "baseline\n"), (1, "one\n"), (2, "two\n")] {
             std::fs::write(cwd.join("tracked.txt"), content).unwrap();
@@ -1048,6 +1055,186 @@ async fn a_message_queued_while_a_revert_reopens_the_session_delivers_after_it()
     received(&mut routes, "queued-2").await;
     service.shutdown().await;
     fixture.shutdown().await;
+}
+
+/// Effects callbacks for chats that all share one checkout, whose rewind preparations (provider
+/// reopens) wait until `release` gets a permit. `log` records the rewinds and, from the test's
+/// router, the deliveries, in the order they happen.
+struct SharedCheckoutReverts {
+    cwd: PathBuf,
+    prepared: std::sync::Mutex<Vec<String>>,
+    release: tokio::sync::Semaphore,
+    log: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl crate::production::orchestration_effects::OrchestrationEffectCallbacks
+    for SharedCheckoutReverts
+{
+    fn workspace_for_thread<'a>(
+        &'a self,
+        _thread_id: &'a str,
+    ) -> crate::production::orchestration_effects::BoxEffectFuture<'a, Option<PathBuf>> {
+        Box::pin(async move { Ok(Some(self.cwd.clone())) })
+    }
+
+    fn prepare_provider_rewind<'a>(
+        &'a self,
+        thread_id: &'a str,
+    ) -> crate::production::orchestration_effects::BoxEffectFuture<'a, ()> {
+        Box::pin(async move {
+            self.prepared.lock().unwrap().push(thread_id.to_owned());
+            // The permit goes back at once, so every preparation passes once one is added.
+            drop(self.release.acquire().await.unwrap());
+            Ok(())
+        })
+    }
+
+    fn rollback_provider<'a>(
+        &'a self,
+        thread_id: &'a str,
+        _turns: i64,
+        _rewind_key: &'a str,
+    ) -> crate::production::orchestration_effects::BoxEffectFuture<
+        'a,
+        crate::production::orchestration_effects::ProviderRewind,
+    > {
+        Box::pin(async move {
+            self.log.lock().unwrap().push(format!("rewind {thread_id}"));
+            Ok(crate::production::orchestration_effects::ProviderRewind::Rewound)
+        })
+    }
+
+    fn stop_provider<'a>(
+        &'a self,
+        _thread_id: &'a str,
+    ) -> crate::production::orchestration_effects::BoxEffectFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn close_terminals<'a>(
+        &'a self,
+        _thread_id: &'a str,
+    ) -> crate::production::orchestration_effects::BoxEffectFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn refresh_workspace<'a>(
+        &'a self,
+        _cwd: &'a Path,
+    ) -> crate::production::orchestration_effects::BoxEffectFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// Five chats sharing one checkout revert, one more than are prepared at once, while every
+/// provider reopen is slow. They still restore in the order they were asked for, and a message
+/// sent to the fifth chat after its revert is delivered only once that revert is done.
+#[tokio::test]
+async fn reverts_past_the_preparation_bound_restore_in_request_order_before_later_messages() {
+    use crate::production::orchestration_effects::{
+        EffectsOptions, OrchestrationEffects, capture_checkpoint, checkpoint_ref,
+    };
+    const THREADS: [&str; 5] = ["t", "b", "c", "d", "e"];
+    let repository = revert_checkout();
+    let cwd = repository.path().to_path_buf();
+    let engine = engine().await;
+    for thread in &THREADS[1..] {
+        engine.dispatch(command(json!({"type":"thread.create", "commandId":format!("thread-{thread}"), "threadId":thread, "projectId":"p", "title":"Sibling", "runtimeMode":"full-access", "modelSelection":{"instanceId":"codex", "model":"gpt-5"}, "createdAt":TIME}))).await.unwrap();
+    }
+    for thread in THREADS {
+        for turn_count in 0..=2 {
+            std::fs::write(cwd.join("tracked.txt"), format!("{thread} {turn_count}\n")).unwrap();
+            capture_checkpoint(&cwd, thread, turn_count).await.unwrap();
+            if turn_count > 0 {
+                engine.dispatch(command(json!({
+                    "type":"thread.turn.diff.complete", "commandId":format!("diff-{thread}-{turn_count}"),
+                    "threadId":thread, "turnId":format!("{thread}-turn-{turn_count}"),
+                    "checkpointTurnCount":turn_count, "checkpointRef":checkpoint_ref(thread, turn_count),
+                    "status":"ready", "files":[], "assistantMessageId":format!("a-{thread}-{turn_count}"),
+                    "completedAt":TIME, "createdAt":TIME
+                }))).await.unwrap();
+            }
+        }
+    }
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let callbacks = Arc::new(SharedCheckoutReverts {
+        cwd: cwd.clone(),
+        prepared: std::sync::Mutex::new(Vec::new()),
+        release: tokio::sync::Semaphore::new(0),
+        log: log.clone(),
+    });
+    let effects = OrchestrationEffects::start(
+        engine.clone(),
+        Arc::new(crate::git::GitRepository::default()),
+        callbacks.clone(),
+        EffectsOptions::default(),
+    )
+    .await
+    .unwrap();
+    let (sender, mut routes) = mpsc::unbounded_channel();
+    let router: DeliveryRouter = {
+        let log = log.clone();
+        Arc::new(move |command| {
+            let id = command.command_id().to_owned();
+            log.lock().unwrap().push(format!("deliver {id}"));
+            sender.send(id).unwrap();
+            Box::pin(async { Ok(()) })
+        })
+    };
+    let service = TurnDeliveryService::start_with_router(engine.clone(), 1, router);
+    let mut events = engine.subscribe_events();
+
+    for thread in THREADS {
+        engine.dispatch(command(json!({"type":"thread.checkpoint.revert", "commandId":format!("revert-{thread}"), "threadId":thread, "turnCount":1, "createdAt":TIME}))).await.unwrap();
+    }
+    // Four reverts are being prepared, and the fifth already holds its chat.
+    timeout(Duration::from_secs(10), async {
+        while callbacks.prepared.lock().unwrap().len() < 4 || !engine.thread_turns_reserved("e") {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("four reverts are prepared and the fifth holds its chat");
+    enqueue_for(&engine, "e", "e-after", false).await;
+    service.wake();
+    quiet(&mut routes).await;
+
+    callbacks.release.add_permits(1);
+    timeout(Duration::from_secs(10), async {
+        let mut reverted = 0;
+        while reverted < THREADS.len() {
+            let event = events.recv().await.unwrap();
+            if event.event.event_type == "thread.reverted" {
+                reverted += 1;
+            }
+        }
+    })
+    .await
+    .expect("every revert is recorded");
+    received(&mut routes, "e-after").await;
+
+    assert_eq!(
+        log.lock().unwrap().as_slice(),
+        [
+            "rewind t",
+            "rewind b",
+            "rewind c",
+            "rewind d",
+            "rewind e",
+            "deliver e-after"
+        ],
+        "the reverts restored out of request order, or the later message went first"
+    );
+    assert_eq!(
+        std::fs::read_to_string(cwd.join("tracked.txt"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "e 1\n",
+        "the last revert asked for did not restore last"
+    );
+    service.shutdown().await;
+    effects.shutdown().await;
+    engine.shutdown().await;
 }
 
 /// Delivery whose provider accepts thread `t`'s message `in-flight` only when `accept` is

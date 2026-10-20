@@ -153,6 +153,8 @@ pub enum GitManagerFailureCode {
     Conflicts,
     ConflictsEncountered,
     OutstandingFilesNotStaged,
+    NothingToStash,
+    StashUntrackedCollision,
     NoUpstream,
     Cancelled,
     TimedOut,
@@ -173,6 +175,8 @@ impl GitManagerFailureCode {
             Self::Conflicts => "conflicts",
             Self::ConflictsEncountered => "conflicts-encountered",
             Self::OutstandingFilesNotStaged => "outstanding-files-not-staged",
+            Self::NothingToStash => "nothing-to-stash",
+            Self::StashUntrackedCollision => "stash-untracked-collision",
             Self::NoUpstream => "no-upstream",
             Self::Cancelled => "cancelled",
             Self::TimedOut => "timed-out",
@@ -215,6 +219,8 @@ pub fn classify_operation_failure(exit_code: i32, stderr: &str) -> GitManagerFai
     } else if stderr.contains("needs merge") || stderr.contains("you must edit all merge conflicts")
     {
         GitManagerFailureCode::OutstandingFilesNotStaged
+    } else if stderr.contains("could not restore untracked files from stash") {
+        GitManagerFailureCode::StashUntrackedCollision
     } else if stderr.contains("could not apply") {
         GitManagerFailureCode::ConflictsEncountered
     } else if stderr.contains("conflict (") || stderr.contains("automatic merge failed") {
@@ -346,6 +352,8 @@ pub enum GitManagerOperationRequest {
         project_id: String,
         message: String,
         paths: Vec<String>,
+        #[serde(default)]
+        include_untracked: bool,
     },
     StashApply {
         cwd: PathBuf,
@@ -1307,6 +1315,7 @@ async fn execute_branch_or_sync_operation(
             cwd,
             message,
             paths,
+            include_untracked,
             ..
         } => {
             if message.is_empty() || message.trim() != message {
@@ -1323,10 +1332,22 @@ async fn execute_branch_or_sync_operation(
                     "A requested stash path is invalid.",
                 )
             })?;
-            let outputs = stash::push(repository, cwd, message, paths, cancellation)
-                .await
-                .map_err(|error| git_command_error(operation, error, Vec::new()))?;
-            require_last_success(operation, outputs)?
+            let outputs = stash::push(
+                repository,
+                cwd,
+                message,
+                paths,
+                *include_untracked,
+                cancellation,
+            )
+            .await
+            .map_err(|error| git_command_error(operation, error, Vec::new()))?;
+            let outputs = require_last_success(operation, outputs)?;
+            if *include_untracked {
+                require_stash_entry(operation, outputs)?
+            } else {
+                outputs
+            }
         }
         GitManagerOperationRequest::StashApply { cwd, index, .. } => one_output(
             operation,
@@ -1849,6 +1870,30 @@ fn require_last_success(
     })
 }
 
+/// `git stash push` exits 0 with "No local changes to save" when it creates no
+/// entry. A caller that relies on the entry (Leave my changes, before a branch
+/// switch) must stop there rather than continue as if the work were saved.
+fn require_stash_entry(
+    operation: &str,
+    outputs: Vec<ProcessOutput>,
+) -> Result<Vec<ProcessOutput>, GitManagerOperationError> {
+    let saved_nothing = outputs.last().is_some_and(|output| {
+        output.stdout.contains("No local changes to save")
+            || output.stderr.contains("No local changes to save")
+    });
+    if !saved_nothing {
+        return Ok(outputs);
+    }
+    let code = GitManagerFailureCode::NothingToStash;
+    Err(GitManagerOperationError {
+        operation: operation.to_owned(),
+        code: code.as_str().to_owned(),
+        message: failure_message(code).to_owned(),
+        blocked: None,
+        outputs,
+    })
+}
+
 fn git_command_error(
     operation: &str,
     error: GitCommandError,
@@ -1931,6 +1976,14 @@ const fn failure_message(code: GitManagerFailureCode) -> &'static str {
         }
         GitManagerFailureCode::OutstandingFilesNotStaged => {
             "Git cannot continue until every conflict is resolved and staged."
+        }
+        GitManagerFailureCode::NothingToStash => {
+            "Git found no changes it can stash, so nothing was saved. Changes inside a submodule \
+             can't be stashed; commit them in the submodule first."
+        }
+        GitManagerFailureCode::StashUntrackedCollision => {
+            "The stash was kept: a new file in it already exists here, so Git did not restore \
+             it. Move that file aside, then apply the stash again."
         }
         GitManagerFailureCode::NoUpstream => "The current branch has no configured upstream.",
         GitManagerFailureCode::Cancelled => "The Git Manager operation was cancelled.",
@@ -2583,6 +2636,45 @@ mod tests {
     }
 
     #[test]
+    fn stash_outcomes_that_save_or_restore_nothing_are_reported() {
+        let output = |exit_code: i32, stdout: &str, stderr: &str| ProcessOutput {
+            exit_code,
+            stdout: stdout.into(),
+            stderr: stderr.into(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+        };
+        let collision = require_last_success(
+            "stash-pop",
+            vec![output(
+                1,
+                "docs/notes.md already exists, no checkout\n",
+                "error: could not restore untracked files from stash\n",
+            )],
+        )
+        .expect_err("colliding untracked restore fails");
+        assert_eq!(collision.code, "stash-untracked-collision");
+
+        let nothing = require_stash_entry(
+            "stash-push",
+            vec![output(0, "No local changes to save\n", "")],
+        )
+        .expect_err("an empty stash push is not a saved stash");
+        assert_eq!(nothing.code, "nothing-to-stash");
+        assert_eq!(nothing.outputs.len(), 1);
+
+        let saved = vec![output(
+            0,
+            "Saved working directory and index state On main: WIP\n",
+            "",
+        )];
+        assert_eq!(
+            require_stash_entry("stash-push", saved.clone()).expect("saved stash"),
+            saved
+        );
+    }
+
+    #[test]
     fn phase_09_operation_requests_decode_the_contract_fields() {
         let stash: GitManagerOperationRequest = serde_json::from_value(serde_json::json!({
             "_tag": "stash-push",
@@ -2594,8 +2686,22 @@ mod tests {
         .expect("stash request");
         assert!(matches!(
             stash,
-            GitManagerOperationRequest::StashPush { message, paths, .. }
-                if message == "save all work" && paths == ["untracked.txt"]
+            GitManagerOperationRequest::StashPush { message, paths, include_untracked, .. }
+                if message == "save all work" && paths == ["untracked.txt"] && !include_untracked
+        ));
+        let leave_changes: GitManagerOperationRequest = serde_json::from_value(serde_json::json!({
+            "_tag": "stash-push",
+            "cwd": "/repo",
+            "projectId": "project-1",
+            "message": "WIP before switching to develop",
+            "paths": [],
+            "includeUntracked": true
+        }))
+        .expect("stash request with untracked files");
+        assert!(matches!(
+            leave_changes,
+            GitManagerOperationRequest::StashPush { paths, include_untracked, .. }
+                if paths.is_empty() && include_untracked
         ));
 
         let merge: GitManagerOperationRequest = serde_json::from_value(serde_json::json!({

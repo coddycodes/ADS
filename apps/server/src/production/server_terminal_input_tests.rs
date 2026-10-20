@@ -150,6 +150,8 @@ impl ProductionServerControl for NullControl {
 
 struct Fixture {
     _temp: tempfile::TempDir,
+    /// The temporary directory's physical path, under which every workspace is made.
+    root: PathBuf,
     project_root: PathBuf,
     worktree: PathBuf,
     repositories: Repositories,
@@ -164,8 +166,14 @@ struct Fixture {
 impl Fixture {
     async fn start() -> Self {
         let temp = tempfile::tempdir().expect("temporary directory");
-        let project_root = temp.path().join("project");
-        let worktree = temp.path().join("worktree");
+        // Physical paths, as the availability registry keys its admissions: on macOS the
+        // temporary directory sits under the `/var` -> `/private/var` symlink.
+        let root = temp
+            .path()
+            .canonicalize()
+            .expect("physical temporary directory");
+        let project_root = root.join("project");
+        let worktree = root.join("worktree");
         std::fs::create_dir_all(&project_root).expect("project root");
         std::fs::create_dir_all(&worktree).expect("worktree");
         let database = Database::open_in_memory().await.expect("database");
@@ -207,6 +215,7 @@ impl Fixture {
             .0;
         let mut fixture = Self {
             _temp: temp,
+            root,
             project_root,
             worktree,
             repositories,
@@ -866,7 +875,7 @@ async fn a_moved_project_root_leaves_other_projects_and_own_worktrees_alone() {
     let mut fixture = Fixture::start().await;
     let (events, receiver) = broadcast::channel(16);
     fixture.services.watch_workspace_changes(receiver);
-    let other_root = fixture._temp.path().join("other-project");
+    let other_root = fixture.root.join("other-project");
     std::fs::create_dir_all(&other_root).expect("other project root");
     let worktree = fixture.worktree.clone();
     fixture
@@ -893,7 +902,7 @@ async fn a_moved_project_root_leaves_other_projects_and_own_worktrees_alone() {
 
     // Re-admitting either session would wait for this busy worker.
     let parked = park_database(&fixture.repositories, Duration::from_millis(800)).await;
-    let moved_root = fixture._temp.path().join("moved-project");
+    let moved_root = fixture.root.join("moved-project");
     events
         .send(project_moved("project-input", &moved_root))
         .expect("event delivered");
@@ -926,7 +935,7 @@ async fn a_moved_project_root_readmits_the_threads_that_inherit_it() {
     let (events, receiver) = broadcast::channel(16);
     fixture.services.watch_workspace_changes(receiver);
     let input = fixture.begin_input(0).await;
-    let moved_root = fixture._temp.path().join("moved-project");
+    let moved_root = fixture.root.join("moved-project");
     std::fs::create_dir_all(&moved_root).expect("moved root");
     fixture
         .repositories

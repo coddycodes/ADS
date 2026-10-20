@@ -25,6 +25,8 @@ const h = vi.hoisted(() => ({
   signalAtom: vi.fn(() => ({ kind: "signal" })),
   runOperation: vi.fn(),
   failureMessage: null as string | null,
+  /** Failures for one operation tag only; `failureMessage` fails every operation. */
+  failures: {} as Record<string, { readonly code: string; readonly message: string }>,
 }));
 
 vi.mock("../../state/gitManager", () => ({
@@ -219,9 +221,13 @@ beforeEach(() => {
   h.signalAtom.mockClear();
   h.runOperation.mockReset();
   h.failureMessage = null;
+  h.failures = {};
   h.runOperation.mockImplementation((_registry, { input }, onEvent) => {
+    const failure =
+      h.failures[input._tag] ??
+      (h.failureMessage === null ? null : { code: "branch-exists", message: h.failureMessage });
     const event: GitManagerOperationEvent =
-      h.failureMessage === null
+      failure === null
         ? {
             _tag: "finished",
             operation: input._tag,
@@ -230,8 +236,8 @@ beforeEach(() => {
         : {
             _tag: "failed",
             operation: input._tag,
-            code: "branch-exists",
-            message: h.failureMessage,
+            code: failure.code,
+            message: failure.message,
             blocked: null,
           };
     onEvent(event);
@@ -308,6 +314,17 @@ describe("GitManagerToolbar", () => {
         expect(targets.map((target) => target.input._tag)).toEqual(
           strategy === "stash" ? ["stash-push", "branch-checkout"] : ["branch-checkout"],
         );
+        if (strategy === "stash") {
+          // Leave my changes must save untracked files too, or the switch stays blocked.
+          expect(targets[0]?.input).toEqual({
+            _tag: "stash-push",
+            cwd: "/opaque/main",
+            projectId: "project-current",
+            message: "WIP before switching to origin/develop",
+            paths: [],
+            includeUntracked: true,
+          });
+        }
         expect(h.refreshRefs).toHaveBeenCalled();
         if (fails) {
           expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toBe(
@@ -323,6 +340,83 @@ describe("GitManagerToolbar", () => {
         expect(useGitManagerStore.getState().selectViewState(currentProject).selectedRef).toBe(
           isRemote ? "develop" : branchName,
         );
+      } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+      }
+    },
+  );
+
+  it.each([
+    [
+      "the stash saves nothing",
+      "stash-push",
+      "nothing-to-stash",
+      "Git found no changes it can stash, so nothing was saved.",
+      ["stash-push"],
+      "Git found no changes it can stash, so nothing was saved.",
+    ],
+    [
+      "changes Git can't stash remain",
+      "branch-checkout",
+      "dirty-working-tree",
+      "Checkout is blocked: the working tree has uncommitted changes.",
+      ["stash-push", "branch-checkout"],
+      "Your changes are saved in the stash “WIP before switching to origin/develop”, but some changes are still here (Git can't stash changes inside a submodule), so the branch was not switched.",
+    ],
+    [
+      "the switch fails for another reason",
+      "branch-checkout",
+      "branch-exists",
+      "A local branch named 'develop' already exists.",
+      ["stash-push", "branch-checkout"],
+      "Your changes are saved in the stash “WIP before switching to origin/develop”. A local branch named 'develop' already exists.",
+    ],
+  ] as const)(
+    "keeps Leave my changes open and explains when %s",
+    async (_case, failingTag, code, message, expectedTags, expectedAlert) => {
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+      h.snapshot = { ...refsSnapshot(), isDirty: true, remoteBranches: [ref("origin/develop")] };
+      h.failures = { [failingTag]: { code, message } };
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      try {
+        await act(async () =>
+          root.render(
+            <GitManagerToolbar
+              projectRef={currentProject}
+              mainCheckoutCwd="/opaque/main"
+              selectedWorktreeCwd="/opaque/main"
+              worktrees={worktrees}
+              catalogPending={false}
+              catalogError={null}
+              repositoryUnavailable={null}
+              branchSyncDisabledReason={null}
+              stashMergeDisabledReason={null}
+              tagDisabledReason={null}
+              onSelectedWorktreeChange={() => undefined}
+            />,
+          ),
+        );
+        const click = async (text: string) => {
+          const button = [...document.querySelectorAll("button")].find(
+            (entry) => entry.textContent === text,
+          );
+          expect(button).toBeDefined();
+          await act(async () => button!.click());
+        };
+        await click("origin/develop");
+        await click("Leave my changes");
+
+        expect(h.runOperation.mock.calls.map((call) => call[1].input._tag)).toEqual(expectedTags);
+        expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toBe(
+          expectedAlert,
+        );
+        expect(
+          useGitManagerStore.getState().selectViewState(currentProject).selectedRef,
+        ).toBeNull();
       } finally {
         await act(async () => root.unmount());
         container.remove();

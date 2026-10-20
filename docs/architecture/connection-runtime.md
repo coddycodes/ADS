@@ -674,7 +674,13 @@ keep-alive atom, so it survives an authentication-gate remount without being
 persisted across app reloads. The root reconciles that identity when its primary
 config identity changes. On first load it selects the primary only if nothing
 is selected; on an identity change it follows the new
-primary only if nothing or the old primary is selected. This also runs on
+primary only if nothing or the old primary is selected. Only a page with no
+primary of its own (the hosted app, or a served page opened as a remote client)
+falls back to the first saved environment while nothing is selected. The
+desktop and an authenticated served page never take that fallback: the registry
+lists persisted saved environments before the primary registers, so the
+fallback would otherwise select a saved remote that the primary identity then
+keeps. This also runs on
 `/agents` and with the mobile rail closed. Routine config emissions and repeated
 welcomes preserve any other selection. Startup defaults read the current entity
 atom when they run, and welcome navigation requires that the primary is still
@@ -688,7 +694,10 @@ Settings already exposes.
 The status bar also reads that selected identity for provider usage, refresh,
 usage-reset actions, process diagnostics, and terminal counts. Its usage query
 and reset overlay remain keyed by environment; the primary connection is not a
-fallback for an unselected or unavailable server. Desktop resource presentation
+fallback for an unselected or unavailable server. When the selected server's
+connection is down (any phase but connected or a first connecting attempt), the
+resource readout raises its unavailable warning with "<label> is not
+connected." instead of leaving empty values unexplained. Desktop resource presentation
 can additionally query the primary local host through its separate diagnostic
 source.
 Exception: the Agents view (opened from the Agents nav row, whose unread badge

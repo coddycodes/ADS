@@ -253,6 +253,12 @@ export const GitManagerOperationRequest = Schema.Union([
     ...GitManagerOperationBase.fields,
     message: TrimmedNonEmptyStringSchema,
     paths: Schema.Array(TrimmedNonEmptyStringSchema),
+    /**
+     * Also stash untracked files (`--include-untracked`); ignored files are never
+     * stashed. When set, a push that saves nothing fails with `nothing-to-stash`
+     * instead of finishing. Older clients omit it.
+     */
+    includeUntracked: Schema.optional(Schema.Boolean),
   }),
   Schema.TaggedStruct("stash-apply", GitManagerStashSelectionBase),
   Schema.TaggedStruct("stash-pop", GitManagerStashSelectionBase),

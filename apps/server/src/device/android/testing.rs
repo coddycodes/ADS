@@ -671,6 +671,13 @@ pub(crate) enum LaunchStub {
     /// exec'ing it, and publishes the discovery file under the child's PID, as an `emulator`
     /// launcher running qemu as a child does.
     ForksChild { grpc_port: u16, token: &'static str },
+    /// Like `Runs` until [`FakeSdk::end_emulator`], then prints the message to stderr and
+    /// exits with code 3, as an emulator that crashes after booting does.
+    CrashesWhenTold {
+        grpc_port: u16,
+        token: &'static str,
+        message: &'static str,
+    },
     /// Prints the message to stderr and exits with the code.
     ExitsWith(i32, &'static str),
 }
@@ -789,6 +796,15 @@ impl FakeSdk {
         self.dir.path().join("scrcpy-end")
     }
 
+    fn emulator_end_file(&self) -> PathBuf {
+        self.dir.path().join("emulator-end")
+    }
+
+    /// Makes a [`LaunchStub::CrashesWhenTold`] emulator crash.
+    pub(crate) fn end_emulator(&self) {
+        std::fs::write(self.emulator_end_file(), "").expect("write emulator end file");
+    }
+
     /// Makes an [`ScrcpyStub::ExitsWhenTold`] server exit.
     pub(crate) fn end_scrcpy_server(&self) {
         std::fs::write(self.scrcpy_end_file(), "").expect("write scrcpy end file");
@@ -841,7 +857,10 @@ impl FakeSdk {
             Some(
                 LaunchStub::Runs { grpc_port, token }
                 | LaunchStub::IgnoresShutdown { grpc_port, token }
-                | LaunchStub::ForksChild { grpc_port, token },
+                | LaunchStub::ForksChild { grpc_port, token }
+                | LaunchStub::CrashesWhenTold {
+                    grpc_port, token, ..
+                },
             ) => (grpc_port, token),
         };
         // Written whole, then renamed, so a reader never sees half a file.
@@ -864,6 +883,14 @@ impl FakeSdk {
                     )
                     + &publish("$child")
                     + "wait\n"
+            }
+            Some(LaunchStub::CrashesWhenTold { message, .. }) => {
+                script
+                    + &publish("$$")
+                    + &format!(
+                        "while [ ! -e \"{}\" ]; do sleep 0.05; done\necho '{message}' >&2\nexit 3\n",
+                        self.emulator_end_file().display()
+                    )
             }
             _ => script + &publish("$$") + "exec sleep 600\n",
         }
@@ -961,7 +988,8 @@ impl FakeSdk {
             Some(
                 LaunchStub::Runs { grpc_port, .. }
                 | LaunchStub::IgnoresShutdown { grpc_port, .. }
-                | LaunchStub::ForksChild { grpc_port, .. },
+                | LaunchStub::ForksChild { grpc_port, .. }
+                | LaunchStub::CrashesWhenTold { grpc_port, .. },
             ) => Some(grpc_port),
             _ => None,
         };

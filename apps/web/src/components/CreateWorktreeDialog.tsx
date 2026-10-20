@@ -678,7 +678,10 @@ export function CreateWorktreeDialog({
                   Reuse branch
                 </label>
                 <p className="text-muted-foreground pl-6 text-xs" role="status">
-                  {reuseBranchHint(selectedBranchRef)}
+                  {reuseBranchHint(
+                    selectedBranchRef,
+                    resolution?.kind === "new-branch" ? resolution.newRefName : null,
+                  )}
                 </p>
               </div>
             ) : null}

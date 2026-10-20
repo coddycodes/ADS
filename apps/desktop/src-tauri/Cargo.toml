@@ -1,6 +1,6 @@
 [package]
 name = "bibcode-desktop"
-version = "0.10.1"
+version = "0.10.2"
 description = "BiBCode Tauri desktop shell"
 authors = ["BiBCode"]
 edition.workspace = true

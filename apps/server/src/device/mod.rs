@@ -659,8 +659,9 @@ impl Inner {
         {
             return discovery.clone();
         }
-        let found = entry.backend.discover().await;
+        let mut found = entry.backend.discover().await;
         let platform = entry.backend.platform();
+        catalog::distinguish_display_names(platform, &mut found.images);
         self.catalog.send_if_modified(|catalog| {
             let Some(listed) = catalog
                 .platforms

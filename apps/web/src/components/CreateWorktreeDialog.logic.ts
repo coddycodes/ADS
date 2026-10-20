@@ -71,15 +71,20 @@ export function canReuseBranch(ref: RefLike | null): boolean {
   return ref !== null && ref.isRemote !== true && ref.current !== true && ref.worktreePath == null;
 }
 
-/** Explains why the Reuse branch control is enabled or disabled for the selected ref. */
-export function reuseBranchHint(ref: RefLike): string {
+/**
+ * Explains why the Reuse branch control is enabled or disabled for the selected ref.
+ * `newBranchName` is the branch Name would create; an occupied branch names it when it is
+ * not the occupied branch itself, which the server suffixes instead.
+ */
+export function reuseBranchHint(ref: RefLike, newBranchName?: string | null): string {
   if (canReuseBranch(ref)) {
     return "Check out the existing branch instead of creating a new one from it.";
   }
   if (ref.isRemote === true) {
     return `"${ref.name}" is a remote branch. A local branch will be created from it.`;
   }
-  return `"${ref.name}" is already checked out. A new branch ("${ref.name}-2" or the next available name) will be created from it.`;
+  const created = newBranchName && newBranchName !== ref.name ? newBranchName : `${ref.name}-2`;
+  return `"${ref.name}" is already checked out. A new branch ("${created}" or the next available name) will be created from it.`;
 }
 
 function isOccupiedLocalBranch(ref: RefLike): boolean {
@@ -238,6 +243,16 @@ export function resolveWorktreeCreateInput(input: {
   const selectedBranch = (): WorktreeCreateResolution | null => {
     if (!input.selectedBranchRefName) return null;
     if (input.selectedBranchRef === null) return null;
+    // An occupied branch can't be checked out again: a Name of its own becomes the new
+    // branch. Its own name is left to the server, which picks the next free suffix.
+    if (
+      input.selectedBranchRef &&
+      isOccupiedLocalBranch(input.selectedBranchRef) &&
+      namedBranch.length > 0 &&
+      namedBranch !== input.selectedBranchRefName
+    ) {
+      return newBranch(namedBranch, input.selectedBranchRefName);
+    }
     if (
       input.selectedBranchRef &&
       !isOccupiedLocalBranch(input.selectedBranchRef) &&

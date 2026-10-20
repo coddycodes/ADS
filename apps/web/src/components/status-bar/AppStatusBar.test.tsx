@@ -274,6 +274,26 @@ describe("AppStatusBarView", () => {
     );
   });
 
+  it("marks a not-connected selected server as unavailable and names it", () => {
+    const markup = renderToStaticMarkup(
+      <AppStatusBarView
+        usage={null}
+        diagnostics={{ diagnostics: null, queryError: "macBook-16 is not connected." }}
+        localDiagnostics={null}
+        terminalCount={0}
+        onRefresh={() => {}}
+      />,
+    );
+
+    expect(markup).toContain(
+      'aria-label="Combined monitored resources unavailable; 0 terminals; Resource data unavailable"',
+    );
+    expect(markup).toContain(
+      'title="Combined monitored resources unavailable · Resource data unavailable"',
+    );
+    expect(markup).toContain("macBook-16 is not connected.");
+  });
+
   it("keeps local-only warning copy out of the selected trigger", () => {
     const markup = renderToStaticMarkup(
       <AppStatusBarView

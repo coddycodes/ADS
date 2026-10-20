@@ -46,8 +46,9 @@ export const GitManagerSwitchWithChangesDialog = memo(function GitManagerSwitchW
         </DialogHeader>
         <div className="space-y-3 px-6 pb-4 text-sm">
           <p>
-            <strong>Leave my changes</strong> creates an ordinary, visible stash entry, then
-            switches branches. The stash appears in the repository&apos;s normal stash list.
+            <strong>Leave my changes</strong> saves them, new files included, in an ordinary,
+            visible stash entry, then switches branches. The stash appears in the repository&apos;s
+            normal stash list.
           </p>
           <p>
             <strong>Bring my changes</strong> switches branches while carrying the current

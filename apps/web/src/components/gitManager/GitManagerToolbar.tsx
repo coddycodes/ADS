@@ -113,6 +113,22 @@ const TagActionMenuItem = memo(function TagActionMenuItem({
   );
 });
 
+/**
+ * Leave my changes already stashed the work when the switch fails, so the
+ * error says where it went before why the branch stayed put.
+ */
+function leaveChangesSwitchFailure(
+  stashMessage: string,
+  failureCode: string | null,
+  failure: string | null,
+): string {
+  const saved = `Your changes are saved in the stash “${stashMessage}”`;
+  if (failureCode === "dirty-working-tree") {
+    return `${saved}, but some changes are still here (Git can't stash changes inside a submodule), so the branch was not switched.`;
+  }
+  return failure === null ? `${saved}.` : `${saved}. ${failure}`;
+}
+
 const EMPTY_BRANCHES: ReadonlyArray<GitManagerRefEntry> = Object.freeze([]);
 const EMPTY_TAG_NAMES: ReadonlyArray<string> = Object.freeze([]);
 const LOADING_SYNC_STATE: SyncState = Object.freeze({
@@ -310,6 +326,8 @@ export const GitManagerToolbar = memo(function GitManagerToolbar({
   const [operationEvent, setOperationEvent] = useState<GitManagerOperationEvent | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
   const activeOperationRef = useRef<GitManagerOperationHandle | null>(null);
+  /** Failure code of the most recent operation, read right after it settles. */
+  const lastFailureCodeRef = useRef<string | null>(null);
   useEffect(
     () => () => {
       activeOperationRef.current?.cancel();
@@ -319,13 +337,17 @@ export const GitManagerToolbar = memo(function GitManagerToolbar({
 
   const executeOperation = useCallback(
     async (input: GitManagerOperationRequest): Promise<boolean> => {
+      lastFailureCodeRef.current = null;
       if (activeOperationRef.current !== null) return false;
       setOperationError(null);
       setIsOperationRunning(true);
       setOperationEvent({ _tag: "started", operation: input._tag });
       const handle = runGitManagerOperation(registry, { environmentId, input }, (event) => {
         setOperationEvent(event);
-        if (event._tag === "failed") setOperationError(event.blocked?.message ?? event.message);
+        if (event._tag === "failed") {
+          lastFailureCodeRef.current = event.code;
+          setOperationError(event.blocked?.message ?? event.message);
+        }
       });
       activeOperationRef.current = handle;
       const result = await handle.result;
@@ -375,13 +397,17 @@ export const GitManagerToolbar = memo(function GitManagerToolbar({
         setOperationError(stashMergeDisabledReason);
         return false;
       }
+      const stashMessage = `WIP before switching to ${branch.name}`;
       if (strategy === "stash") {
+        // New files are part of the user's changes; a stash without them leaves
+        // the tree dirty and the switch blocked. Ignored files stay in place.
         const stashed = await executeOperation({
           _tag: "stash-push",
           cwd: selectedWorktreeCwd,
           projectId,
-          message: `WIP before switching to ${branch.name}`,
+          message: stashMessage,
           paths: [],
+          includeUntracked: true,
         });
         if (!stashed) return false;
       }
@@ -396,6 +422,11 @@ export const GitManagerToolbar = memo(function GitManagerToolbar({
         setSelectedRef(
           stableProjectRef,
           isRemote ? branch.name.slice(branch.name.indexOf("/") + 1) : branch.name,
+        );
+      } else if (strategy === "stash") {
+        const failureCode = lastFailureCodeRef.current;
+        setOperationError((failure) =>
+          leaveChangesSwitchFailure(stashMessage, failureCode, failure),
         );
       }
       return success;

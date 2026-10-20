@@ -517,8 +517,10 @@ async fn terminate_and_wait_owned(
 /// so it counts as stopped, not as a failure. Its leader, the root, has
 /// normally exited with it and may already be reaped, so the root is killed
 /// only if it still runs, having left its group: a kill by the PID of a
-/// reaped root could reach an unrelated process. Windows needs no
-/// counterpart: terminating an empty job succeeds.
+/// reaped root could reach an unrelated process. On macOS a group whose
+/// members have all exited unreaped refuses the kill (`EPERM`); with the
+/// root exited it too counts as stopped (`only_exited_members_refused`).
+/// Windows needs no counterpart: terminating an empty job succeeds.
 fn request_termination(child: &mut dyn ChildWrapper, report: &mut ProcessCleanupReport) {
     match child.start_kill() {
         Ok(()) => {
@@ -531,11 +533,33 @@ fn request_termination(child: &mut dyn ChildWrapper, report: &mut ProcessCleanup
                 return;
             }
         }
+        Err(error) if only_exited_members_refused(child, &error) => {
+            report.record_success();
+            return;
+        }
         Err(error) => report.record_failure(format!("kill ownership unit: {error}")),
     }
     match child.inner_mut().start_kill() {
         Ok(()) => report.record_success(),
         Err(error) => report.record_failure(format!("kill root child: {error}")),
+    }
+}
+
+/// Whether a refused group kill means the group has nothing left to stop. macOS refuses
+/// (`EPERM`) a `killpg` whose members have all exited but are not yet reaped, where Linux
+/// signals them; a root that exited on its own and is still unreaped leaves its group just
+/// so. `EPERM` means no member could be signalled, so with the root exited there is nothing
+/// a kill could still stop, and the root itself must not be killed by PID. Read without
+/// reaping, so the owner still reads the root's status.
+fn only_exited_members_refused(child: &dyn ChildWrapper, error: &io::Error) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        error.raw_os_error() == Some(libc::EPERM) && crate::process::exited_status(child).is_some()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (child, error);
+        false
     }
 }
 
@@ -1324,8 +1348,9 @@ mod tests {
         isolated.complete();
     }
 
-    /// Only a target that no longer exists is exempt: any other kill error is
-    /// still a cleanup failure, and the root is still killed directly.
+    /// Only a target that no longer exists is exempt (or, on macOS, a refused
+    /// group whose root has exited): any other kill error is still a cleanup
+    /// failure, and the root is still killed directly.
     #[cfg(unix)]
     #[tokio::test]
     async fn a_refused_ownership_unit_kill_is_still_a_cleanup_failure() {

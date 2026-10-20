@@ -366,6 +366,7 @@ mod telemetry {
                 cwd,
                 "saved work",
                 &["tracked.txt".to_owned()],
+                false,
                 &cancellation,
             )
             .await

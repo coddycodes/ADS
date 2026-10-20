@@ -1,5 +1,40 @@
 # Changelog
 
+## [v0.10.2] - 2026-10-20
+
+BiBCode v0.10.2 fixes device previews on iOS simulators and Android emulators, a status bar that went blank on Macs with a saved remote server, and a long thread that kept many extra copies of its messages each time it reconnected. It also fixes several Git and checkpoint bugs. This release includes the changes since v0.10.1.
+
+### Device previews
+
+- On an iOS simulator, a finger is no longer left held down when a touch release fails twice. The release is retried before the next input. (#130)
+- Two simulators with the same name and OS can now be told apart in the Device picker by the end of their identifier, and AVDs whose names differ only by `_` are now distinct too. (#131)
+- When an Android emulator crashes after booting, the server log now keeps the emulator's last error output. (#145)
+
+### Desktop and status bar
+
+- On a Mac with a saved remote server, the status bar showed "--" for memory and CPU, and no AI usage, because BiBCode selected the remote before the local server finished starting. It now selects this computer, and a selected server that is not connected is named in the status bar. Introduced in v0.7.0.
+
+### Memory
+
+- A long thread keeps far fewer copies of its messages after reconnecting. The Timeline minimap copied every user message in full on each update, and those copies stayed reachable. In a 200-message test, 8 reconnects grew the JS heap by 115 MB before this fix and by 33 MB after it. (#96, #134)
+
+### Git, worktrees and checkpoints
+
+- **Leave my changes** now saves new, untracked files in its stash and switches branches, instead of being blocked. Restoring that stash over a file with the same name keeps the stash and explains why. (#137)
+- **Create Worktree** from a branch that is already checked out now creates the branch you named, instead of a numbered copy of the source branch. (#136)
+- Reverts in two chats that share one checkout now restore in the order you asked for them. (#129)
+- Refreshing Source Control no longer waits on the hosting service each time: the open pull request lookup is shared and reused for 10 seconds. (#138)
+
+### Reliability
+
+- An OpenCode session sends nothing after it reports that it exited.
+- On macOS, stopping a process that had already exited no longer logs a false cleanup failure. (#133)
+
+### Known limitations
+
+- Restoring a "Leave my changes" stash needs Git 2.32 or later.
+- Each reconnect that resends a long thread still keeps part of an extra copy of its messages, so memory still grows across many reconnects. This is tracked as a follow-up.
+
 ## [v0.10.1] - 2026-10-19
 
 BiBCode v0.10.1 gives device previews their own place in Settings, so they are easy to find.

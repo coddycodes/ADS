@@ -2086,8 +2086,12 @@ starts.
    the local `remote-checkout` row still checks out normally, then return to
    `main`. Repeat a remote-only checkout with pending changes: Cancel leaves
    them untouched, **Bring my changes** carries non-conflicting edits, and
-   **Leave my changes** saves an ordinary stash before switching. A conflicting
-   edit must be preserved when Git refuses the switch.
+   **Leave my changes** saves an ordinary stash before switching. Repeat
+   **Leave my changes** with only a new untracked file (tracked files clean):
+   the switch must complete, the file must leave the working tree, and
+   **Stashes** must list `WIP before switching to …` with that file; applying
+   the stash restores it. A conflicting edit must be preserved when Git refuses
+   the switch.
 
 6. On `main`, choose **Fetch origin** and confirm the remote-only main commit is
    discovered; choose **Pull origin** and confirm it arrives locally. Check out

@@ -1,6 +1,6 @@
 {
   "name": "@bibcode/contracts",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "private": true,
   "files": [
     "dist"

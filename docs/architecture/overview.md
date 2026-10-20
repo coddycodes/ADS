@@ -134,7 +134,11 @@ flowchart TB
   prevent work admitted before or during a mutation from publishing afterward;
   post-fetch remote reads and pull-request enrichment carry that same epoch
   through their final internal publication or delivery check without changing
-  public status schemas. Cached remote state additionally carries its producing
+  public status schemas. Stream and unary pull-request enrichment share one
+  coalesced open-request lookup per worktree, provider, and branch, reused for
+  10 seconds after success and never after failure, and forgotten when a
+  mutation finishes, a local change is reported, or BiBCode creates a request.
+  Cached remote state additionally carries its producing
   ref identity; an external ref change clears it and resets branch-specific
   client remote fields before reconciliation;
   the final idle transition across a queued mutation burst requests one
@@ -355,7 +359,8 @@ flowchart TB
   uses a never-reused key, and the watcher's echo of a repository-triggered
   read is absorbed, so one change never causes two reads. The absorption relies
   on the server advancing a signal from generation 0 at its first computed
-  signature. The stash list (a reflog read plus one `git stash show` per entry)
+  signature. The stash list (a reflog read plus one
+  `git stash show --include-untracked` per entry)
   is read only while the Stashes panel is open: once on opening, and on each
   signal change or in-app operation while open. Closing the panel drops the
   query, so a closed panel reads nothing (not even on reconnect) and shows no
@@ -1969,7 +1974,11 @@ actionable message. The catalog lists one entry per platform, each with its
 own `availability` and `images` (`{ id, displayName, inUseElsewhere? }`), and
 every device as
 `{ deviceId, platform, imageId, state, orientation, canRotate }`. A discovery
-result serves for 30 s; the MCP `device_list` tool always reruns it.
+result serves for 30 s; the MCP `device_list` tool always reruns it. Display
+names are unique within a platform: where two images would share one, as two
+simulators of the same name and OS or AVDs whose names differ only by `_`, each
+gets `·` and a tag, the AVD's name or the last four characters of the
+simulator's UDID (the whole UDID if those also match).
 
 **Lifecycle.** `DeviceManager` owns the catalog (`device.subscribeCatalog`) and
 allows one running device per platform; a second `device.open` on that
