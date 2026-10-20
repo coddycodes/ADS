@@ -131,7 +131,8 @@ impl OpenPullRequestLookups {
         }
     }
 
-    #[cfg(test)]
+    // Only the unix RPC tests in `production::git_vcs` shorten the TTL.
+    #[cfg(all(test, unix))]
     pub(crate) fn set_ttl_for_test(&self, ttl: Duration) {
         self.lock().ttl = ttl;
     }
