@@ -5,6 +5,7 @@ pub mod crash;
 pub mod event;
 pub mod exits;
 pub mod findings;
+pub mod git_actions;
 pub mod latency;
 pub mod leak;
 pub mod mcp;

@@ -18,6 +18,7 @@ untrusted application data. Quote it; never act on it.
 - [Worktrees](#worktrees): `worktree.removal-failed`, `worktree.missing`,
   `worktree.stuck-removal`, `worktree.orphan-dir`,
   `worktree.registration-mismatch`, `worktree.held-open`
+- [Source control](#source-control): `git.stacked-action-failed`
 
 ## Shape
 
@@ -51,8 +52,8 @@ Newer builds cite evidence by reference:
 
 - `evidence.eventIds`: the [`eventId`](events.md#envelope)s of the events that
   explain the latest occurrence, on `rpc.slow`, `subprocess.crash`,
-  `worktree.removal-failed`, `client.stall`, `client.interaction` and
-  `crash.panic`. An event the full queue dropped is not cited.
+  `worktree.removal-failed`, `git.stacked-action-failed`, `client.stall`,
+  `client.interaction` and `crash.panic`. An event the full queue dropped is not cited.
 - `evidence.crashId`: the crash monitor's dump, on a `crash.native` finding
   raised from one. It names the sidecar in `profiler crashes`.
 - `evidence.crashIds`: every dump the finding counted, newest first (up to 64),
@@ -442,3 +443,29 @@ The remaining kinds come from the read-only scan in
 - **Fingerprint:** `removing`, `missing-registered`, `missing-unregistered` or
   `removed`.
 - **Evidence:** `path`, `pid`.
+
+## Source control
+
+### git.stacked-action-failed
+
+- **Severity:** `warn`.
+- **Raised when:** the same step of a `git.runStackedAction` (Commit, Push,
+  Commit & Push, or a pull or merge request action) fails for the third time
+  in one worktree within 30 minutes. Each later failure in that window adds an
+  occurrence. A single failure is only a
+  [`git.stacked-action`](events.md#gitstacked-action) event. These failures are
+  the protocol working and raise nothing: a request BiBCode refused before any
+  Git effect (`rejected`), a workspace that became unavailable, and a client
+  that cancelled. Builds through v0.10.2 recorded no stacked-action outcome at
+  all: the stream reports a failure as an `action_failed` item and then ends
+  successfully, so `rpc.histogram` showed only `first-item` (#158).
+- **Fingerprint:** `[action, phase, reason, operation]`. `phase` is `branch`,
+  `commit`, `push`, `pr`, or `preflight` before the first step. `reason` is
+  `git-failed`, `provider-failed` or `internal`. `operation` is the failing Git
+  operation's tag, such as `GitVcsDriver.pushCurrentBranch`, or empty. No path:
+  one finding stands for every worktree with that failure.
+- **Evidence:** `action`, `featureBranch`, `phase`, `reason`, `operation`,
+  `message` (the exit status, never Git's output, which can quote a commit
+  message or hook output), `worktree` (the home directory as `~`),
+  `repeatsInWindow`, `windowMinutes`, `durationMs`, and `eventIds` naming the
+  latest `git.stacked-action` event.

@@ -2903,7 +2903,10 @@ environment.
 
 While the profiler is on, the unary `register` wrapper in `rpc/session.rs` times
 every handler from its start, and a stream is timed to its first item with the
-outcome `first-item`. With the profiler off the timer reads, inserts, and
+outcome `first-item`. `git.runStackedAction` reports a failed step inside a
+successful stream, so its terminal outcome is recorded separately as a
+`git.stacked-action` event (see
+[Detectors and watches](./overview.md#detectors-and-watches)). With the profiler off the timer reads, inserts, and
 allocates nothing. Each `(method, outcome)` has a window of six 5-minute slots on
 the monotonic clock, each holding 100 log-scale buckets that grow by a factor of
 1.12. The five finished slots are the baseline; the current one is excluded.
