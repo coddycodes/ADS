@@ -17916,15 +17916,16 @@ done
             "Claude stop-task readiness FIFO is created"
         );
         use std::os::unix::fs::OpenOptionsExt;
-        let ready = tokio::io::unix::AsyncFd::new(
-            std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .custom_flags(libc::O_NONBLOCK)
-                .open(&ready_fifo)
-                .expect("open Claude stop-task readiness FIFO without blocking"),
-        )
-        .expect("register Claude stop-task readiness FIFO");
+        let ready_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&ready_fifo)
+            .expect("open Claude stop-task readiness FIFO without blocking");
+        // SAFETY: the AsyncFd owns this File, so its descriptor stays open and unchanged
+        // until the AsyncFd is dropped.
+        let ready = unsafe { tokio::io::unix::AsyncFd::register(ready_file) }
+            .expect("register Claude stop-task readiness FIFO");
         let factory = probe_context.driver_factory(temp.path().join("attachments"));
         let mut request = native_launch(temp, "claudeAgent");
         request.binary_path = executable.to_string_lossy().into_owned();
@@ -19122,7 +19123,9 @@ done
                     .expect("open Claude delivery FIFO without blocking")
             };
             (
-                tokio::io::unix::AsyncFd::new(open_fifo(&request_ready_path))
+                // SAFETY: the AsyncFd owns this File, so its descriptor stays open and
+                // unchanged until the AsyncFd is dropped.
+                unsafe { tokio::io::unix::AsyncFd::register(open_fifo(&request_ready_path)) }
                     .expect("register Claude delivery readiness FIFO"),
                 open_fifo(&acknowledgement_gate),
             )

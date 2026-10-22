@@ -312,7 +312,7 @@
     "javascriptLedger": 83,
     "rustRegistry": 138,
     "rustPath": 3,
-    "rustGit": 1,
+    "rustGit": 0,
     "actions": 9,
     "toolchains": 9
   },
@@ -1408,13 +1408,13 @@
       "key": "rust:patch:tao",
       "name": "tao",
       "current": "git:https://github.com/tauri-apps/tao#c704261c519c58cfdd0bc2d58ba24e06a0b71c92",
-      "target": "c704261c519c58cfdd0bc2d58ba24e06a0b71c92",
+      "target": "removed",
       "channel": "git",
       "source": "https://github.com/tauri-apps/tao",
       "cohort": "retained-rust-boundaries",
       "platforms": ["linux", "macos", "windows"],
-      "status": "blocked",
-      "notes": "Retain until Tauri consumes an upstream equivalent to the Windows reentrant keyboard/IME fix."
+      "status": "removed",
+      "notes": "Removed with Tauri 2.12: its Windows reentrant keyboard/IME fix (c704261c) ships in tao 0.36.0+, and tauri-runtime-wry 2.12 requires tao ^0.37."
     },
     {
       "key": "rust:third_party/portable-pty:anyhow",
@@ -1611,26 +1611,26 @@
     {
       "key": "rust:workspace:tauri-plugin-wdio-webdriver",
       "name": "tauri-plugin-wdio-webdriver",
-      "current": "=1.2.0",
-      "target": "1.3.0",
+      "current": "=1.5.0",
+      "target": "1.5.0",
       "channel": "stable",
       "source": "https://crates.io/crates/tauri-plugin-wdio-webdriver",
       "cohort": "packaged-desktop-ui-testing",
       "platforms": ["linux", "macos", "windows"],
-      "status": "blocked",
-      "notes": "Optional Cargo feature; excluded from production bundles. Retain exact 1.2.0 with the JavaScript Tauri Wdio cohort until an upstream @wdio/tauri-service release fixes afterSession teardown ordering and aligns @wdio/globals/expect-webdriverio with the selected direct WebdriverIO cohort."
+      "status": "green",
+      "notes": "Optional Cargo feature; excluded from production bundles. 1.5.0 is the first release on webview2-com 0.39 / windows 0.62, required by Tauri 2.12; moves with the @wdio/tauri-service 1.5.0 cohort, to be re-proven by the packaged desktop UI smoke."
     },
     {
       "key": "rust:workspace:tauri-plugin-wdio",
       "name": "tauri-plugin-wdio",
-      "current": "=1.2.0",
-      "target": "1.3.0",
+      "current": "=1.5.0",
+      "target": "1.5.0",
       "channel": "stable",
       "source": "https://crates.io/crates/tauri-plugin-wdio",
       "cohort": "packaged-desktop-ui-testing",
       "platforms": ["linux", "macos", "windows"],
-      "status": "blocked",
-      "notes": "Optional Cargo feature; excluded from production bundles. Retain exact 1.2.0 with the JavaScript Tauri Wdio cohort until an upstream @wdio/tauri-service release fixes afterSession teardown ordering and aligns @wdio/globals/expect-webdriverio with the selected direct WebdriverIO cohort."
+      "status": "green",
+      "notes": "Optional Cargo feature; excluded from production bundles. Forced by Tauri 2.12: the 1.2-1.4 webdriver crates bind webview2-com 0.38 / windows 0.61 and cannot take Tauri 2.12's WebView2 types. Moves with the @wdio/tauri-service 1.5.0 cohort; the former afterSession teardown-ordering blocker must be re-proven by the packaged desktop UI smoke."
     },
     {
       "key": "rust:workspace:axum",
@@ -1718,14 +1718,14 @@
     {
       "key": "rust:workspace:objc2",
       "name": "objc2",
-      "current": "=0.6.4",
-      "target": "0.6.4",
+      "current": "=0.6.5",
+      "target": "0.6.5",
       "channel": "stable",
       "source": "https://crates.io/crates/objc2",
       "cohort": "embedded-browser-preview",
       "platforms": ["macos"],
       "status": "green",
-      "notes": "Objective-C runtime access for the in-process CoreSimulator loader; the exception feature catches every Objective-C exception before it reaches Rust. 0.6.5 (2026-10-05) is younger than the 14-day rule allows. Exact pin, released 2026-02-26 (at least 14 days before 2026-10-15); declared in [workspace.dependencies], consumed by the macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
+      "notes": "Objective-C runtime access for the in-process CoreSimulator loader; the exception feature catches every Objective-C exception before it reaches Rust. Exact pin 0.6.5, released 2026-10-05 (at least 14 days before 2026-10-22); declared in [workspace.dependencies], consumed by the macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
     },
     {
       "key": "rust:workspace:objc2-app-kit",
@@ -1776,14 +1776,14 @@
     {
       "key": "rust:workspace:webview2-com",
       "name": "webview2-com",
-      "current": "0.38",
-      "target": "0.38",
+      "current": "0.39",
+      "target": "0.39",
       "channel": "stable",
       "source": "https://crates.io/crates/webview2-com",
       "cohort": "embedded-browser-preview",
       "platforms": ["windows"],
-      "status": "blocked",
-      "notes": "0.39 is a pre-1.0 Windows FFI migration."
+      "status": "green",
+      "notes": "Must match the WebView2 interface types Tauri 2.12 hands to webview_exit.rs and the preview platform layer."
     },
     {
       "key": "rust:workspace:clap",
@@ -1811,13 +1811,14 @@
     {
       "key": "rust:workspace:dirs",
       "name": "dirs",
-      "current": "6.0.0",
-      "target": "6.0.0",
+      "current": "7.0.0",
+      "target": "7.0.0",
       "channel": "stable",
       "source": "https://crates.io/crates/dirs",
       "cohort": "rust-current",
       "platforms": ["linux", "macos", "windows"],
-      "status": "current"
+      "status": "green",
+      "notes": "Required by Tauri 2.12 (dirs ^7); keeping one major avoids a duplicate. 7.0 only changes Windows preference_dir, which the server does not call."
     },
     {
       "key": "rust:workspace:ed25519-dalek",
@@ -2231,101 +2232,110 @@
     {
       "key": "rust:workspace:tauri",
       "name": "tauri",
-      "current": "2.11.5",
-      "target": "2.11.5",
+      "current": "2.12.1",
+      "target": "2.12.1",
       "channel": "stable",
       "source": "https://crates.io/crates/tauri",
       "cohort": "rust-current",
       "platforms": ["linux", "macos", "windows"],
-      "status": "current"
+      "status": "green",
+      "notes": "Tauri 2.12 cohort: newest release at least 14 days old on 2026-10-22; 2.12.0+ fixes GHSA-w28w-mhc8-qvjv (High) in tauri <= 2.11.5. The desktop's webview2-com/windows pins, the tao patch removal and @tauri-apps/api/cli 2.12 move with it."
     },
     {
       "key": "rust:workspace:tauri-build",
       "name": "tauri-build",
-      "current": "2.6.3",
-      "target": "2.6.3",
+      "current": "2.7.1",
+      "target": "2.7.1",
       "channel": "stable",
       "source": "https://crates.io/crates/tauri-build",
       "cohort": "rust-current",
       "platforms": ["linux", "macos", "windows"],
-      "status": "current"
+      "status": "green",
+      "notes": "Tauri 2.12 cohort: newest release at least 14 days old on 2026-10-22; 2.12.0+ fixes GHSA-w28w-mhc8-qvjv (High) in tauri <= 2.11.5."
     },
     {
       "key": "rust:workspace:tauri-plugin-deep-link",
       "name": "tauri-plugin-deep-link",
-      "current": "2.4.10",
-      "target": "2.4.10",
+      "current": "2.6.1",
+      "target": "2.6.1",
       "channel": "stable",
       "source": "https://crates.io/crates/tauri-plugin-deep-link",
       "cohort": "rust-current",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Tauri 2.12 cohort: newest release at least 14 days old on 2026-10-22; 2.12.0+ fixes GHSA-w28w-mhc8-qvjv (High) in tauri <= 2.11.5."
     },
     {
       "key": "rust:workspace:tauri-plugin-dialog",
       "name": "tauri-plugin-dialog",
-      "current": "2.7.3",
-      "target": "2.7.3",
+      "current": "2.8.1",
+      "target": "2.8.1",
       "channel": "stable",
       "source": "https://crates.io/crates/tauri-plugin-dialog",
       "cohort": "final-rust-patches",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Tauri 2.12 cohort: newest release at least 14 days old on 2026-10-22; 2.12.0+ fixes GHSA-w28w-mhc8-qvjv (High) in tauri <= 2.11.5."
     },
     {
       "key": "rust:workspace:tauri-plugin-opener",
       "name": "tauri-plugin-opener",
-      "current": "2.5.5",
-      "target": "2.5.5",
+      "current": "2.7.0",
+      "target": "2.7.0",
       "channel": "stable",
       "source": "https://crates.io/crates/tauri-plugin-opener",
       "cohort": "rust-current",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Tauri 2.12 cohort: newest release at least 14 days old on 2026-10-22; 2.12.0+ fixes GHSA-w28w-mhc8-qvjv (High) in tauri <= 2.11.5."
     },
     {
       "key": "rust:workspace:tauri-plugin-shell",
       "name": "tauri-plugin-shell",
-      "current": "2.3.6",
-      "target": "2.3.6",
+      "current": "2.4.1",
+      "target": "2.4.1",
       "channel": "stable",
       "source": "https://crates.io/crates/tauri-plugin-shell",
       "cohort": "rust-current",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Tauri 2.12 cohort: newest release at least 14 days old on 2026-10-22; 2.12.0+ fixes GHSA-w28w-mhc8-qvjv (High) in tauri <= 2.11.5."
     },
     {
       "key": "rust:workspace:tauri-plugin-single-instance",
       "name": "tauri-plugin-single-instance",
-      "current": "2.4.4",
-      "target": "2.4.4",
+      "current": "2.5.2",
+      "target": "2.5.2",
       "channel": "stable",
       "source": "https://crates.io/crates/tauri-plugin-single-instance",
       "cohort": "rust-current",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Tauri 2.12 cohort: newest release at least 14 days old on 2026-10-22; 2.12.0+ fixes GHSA-w28w-mhc8-qvjv (High) in tauri <= 2.11.5."
     },
     {
       "key": "rust:workspace:tauri-plugin-store",
       "name": "tauri-plugin-store",
-      "current": "2.4.4",
-      "target": "2.4.4",
+      "current": "2.5.0",
+      "target": "2.5.0",
       "channel": "stable",
       "source": "https://crates.io/crates/tauri-plugin-store",
       "cohort": "final-rust-patches",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Tauri 2.12 cohort: newest release at least 14 days old on 2026-10-22; 2.12.0+ fixes GHSA-w28w-mhc8-qvjv (High) in tauri <= 2.11.5."
     },
     {
       "key": "rust:workspace:tauri-plugin-updater",
       "name": "tauri-plugin-updater",
-      "current": "2.11.0",
-      "target": "2.11.0",
+      "current": "2.13.2",
+      "target": "2.13.2",
       "channel": "stable",
       "source": "https://crates.io/crates/tauri-plugin-updater",
       "cohort": "rust-current",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Tauri 2.12 cohort: newest release at least 14 days old on 2026-10-22; 2.12.0+ fixes GHSA-w28w-mhc8-qvjv (High) in tauri <= 2.11.5. 2.13.x still uses minisign-verify ^0.2 and zip ^4 on Windows, so the updater-verifier stays on minisign-verify 0.2.5 and RUSTSEC-2026-0367/0368/0369 remain on the updater's zip 4 until upstream moves."
     },
     {
       "key": "rust:workspace:tempfile",
@@ -2474,14 +2484,14 @@
     {
       "key": "rust:workspace:windows",
       "name": "windows",
-      "current": "0.61",
-      "target": "0.61",
+      "current": "0.62",
+      "target": "0.62",
       "channel": "stable",
       "source": "https://crates.io/crates/windows",
       "cohort": "rust-current",
       "platforms": ["windows"],
-      "status": "blocked",
-      "notes": "0.x FFI line changes require Tauri/WebView compatibility and native Windows validation."
+      "status": "green",
+      "notes": "Must match Tauri 2.12 / webview2-com 0.39; validated by the Windows CI jobs."
     },
     {
       "key": "rust:workspace:windows-sys",
@@ -2498,14 +2508,14 @@
     {
       "key": "rust:workspace:zip",
       "name": "zip",
-      "current": "8.6.0",
-      "target": "8.6.0",
+      "current": "9.0.0",
+      "target": "9.0.0",
       "channel": "stable",
       "source": "https://crates.io/crates/zip",
       "cohort": "rust-archive",
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
-      "notes": "Exact entry ordering, Zip 4 reader compatibility, redaction and placeholders, traversal rejection, and native archive-tool listing are covered."
+      "notes": "9.x is the only line patched for RUSTSEC-2026-0367/0368/0369 (extract path handling; the server never calls extract()). Security exception: 9.0.0 (2026-10-09) is one day short of the 14-day rule. Exact entry ordering, Zip 4 reader compatibility, redaction and placeholders, traversal rejection, and native archive-tool listing are covered."
     },
     {
       "key": "toolchain:devcontainer:bun",
@@ -3119,14 +3129,14 @@
     {
       "key": "rust:workspace:protox",
       "name": "protox",
-      "current": "0.9.1",
-      "target": "0.9.1",
+      "current": "0.10.0",
+      "target": "0.10.0",
       "channel": "stable",
       "source": "https://crates.io/crates/protox",
       "cohort": "rust-device-previews",
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
-      "notes": "Build dependency: compiles the vendored emulator_controller.proto in pure Rust so the build needs no protoc."
+      "notes": "Build dependency: compiles the vendored emulator_controller.proto in pure Rust so the build needs no protoc. 0.10.0 fixes a stack overflow on deeply nested protos and drops the duplicate logos 0.15."
     },
     {
       "key": "rust:workspace:tokio-stream",

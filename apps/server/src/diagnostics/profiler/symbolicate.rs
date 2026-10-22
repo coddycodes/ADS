@@ -503,8 +503,12 @@ fn unpack(archive: &Path, into: &Path, max_bytes: u64) -> Result<(), Symbolicate
         let mut entry = zip
             .by_index(index)
             .map_err(|error| refused(error.to_string()))?;
-        let Some(relative) = archive_path(entry.name()).filter(|_| !entry.is_symlink()) else {
-            return Err(refused(format!("unsafe entry {:?}", entry.name())));
+        let name = entry
+            .name()
+            .map_err(|error| refused(error.to_string()))?
+            .into_owned();
+        let Some(relative) = archive_path(&name).filter(|_| !entry.is_symlink()) else {
+            return Err(refused(format!("unsafe entry {name:?}")));
         };
         if entry.is_dir() {
             continue;
