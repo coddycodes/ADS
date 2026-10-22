@@ -699,7 +699,10 @@ connection is down (any phase but connected or a first connecting attempt), the
 resource readout raises its unavailable warning with "<label> is not
 connected." instead of leaving empty values unexplained. Desktop resource presentation
 can additionally query the primary local host through its separate diagnostic
-source.
+source. The bar refreshes provider usage every 30 s and process diagnostics every
+2 s only while its window is visible and focused: it reads once when it mounts,
+pauses on blur or when the page is hidden, and refreshes once when the window is
+used again (#168).
 Exception: the Agents view (opened from the Agents nav row, whose unread badge
 also aggregates across environments) is the single cross-environment surface;
 it ignores rail selection by design, and its jump-to-workspace action re-points

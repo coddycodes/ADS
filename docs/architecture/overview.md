@@ -823,6 +823,11 @@ web client carries each connection over the environment's own RPC connection
 (`preview.tunnelOpen`, `preview.tunnelWrite`, `preview.tunnelClose`). See
 [Preview tunnels](remote.md#preview-tunnels).
 
+The preview panel's local-server suggestions come from
+`subscribeDiscoveredLocalServers`. Each subscriber's task scans the host's
+listening ports every second, but it sends the list only on subscribe and when
+the servers change; `scannedAt` is the time of the scan that was sent (#168).
+
 When WSL-only mode is selected, that intent is authoritative even if an older
 persisted document has a stale disabled-backend flag. WSL planning and primary
 startup fail closed as a tagged `wsl-primary-unavailable` desktop state. The
@@ -2664,7 +2669,10 @@ exception: before the first sample completes, a read waits for it for at most
 1 second, then returns the error `Measuring resource usage.` instead of empty
 totals that would read as an idle host. The first diagnostics read starts the
 task, and the task stops after three intervals without a read, so a server with
-no diagnostics reader enumerates nothing; the next read answers from the
+no diagnostics reader enumerates nothing. The status bar, the usual reader,
+stops polling while its window is hidden or unfocused, so an idle window's
+server stops sampling too (see
+[Connection runtime](./connection-runtime.md)); the next read answers from the
 retained sample, with its original timestamp, and restarts the task. Runtime
 shutdown stops the task early in the quiesce sequence, before process ownership
 is frozen and long before the Profiler's teardown. Each sample logs its stage
