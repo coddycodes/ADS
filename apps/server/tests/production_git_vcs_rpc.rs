@@ -1442,16 +1442,39 @@ fn renamed_upstream_fixture(root: &Path) -> (PathBuf, PathBuf, String) {
 /// and leaves the upstream it was made from untouched.
 #[tokio::test]
 async fn stacked_push_publishes_a_branch_whose_upstream_has_another_name() {
-    let parallelism_permit = acquire_git_rpc_fixture().await;
-    if relaunch_with_isolated_git_config(
+    assert_push_publishes_a_renamed_upstream_branch(
         "stacked_push_publishes_a_branch_whose_upstream_has_another_name",
-    ) {
+        None,
+    )
+    .await;
+}
+
+/// #157: `push.default=simple` set explicitly, as old Git warnings told users to, is the
+/// default spelled out and refuses the same bare push, so Push publishes the same way.
+#[tokio::test]
+async fn stacked_push_treats_an_explicit_simple_push_default_as_the_default() {
+    assert_push_publishes_a_renamed_upstream_branch(
+        "stacked_push_treats_an_explicit_simple_push_default_as_the_default",
+        Some("simple"),
+    )
+    .await;
+}
+
+async fn assert_push_publishes_a_renamed_upstream_branch(
+    test_name: &str,
+    push_default: Option<&str>,
+) {
+    let parallelism_permit = acquire_git_rpc_fixture().await;
+    if relaunch_with_isolated_git_config(test_name) {
         return;
     }
 
     let temp = TempDir::new().expect("temporary server directory");
     let root = TempDir::new().expect("temporary fixture root");
     let (remote, consumer, develop) = renamed_upstream_fixture(root.path());
+    if let Some(mode) = push_default {
+        run_git_in(&consumer, &["config", "push.default", mode]);
+    }
     let head = git_stdout_in(&consumer, &["rev-parse", "HEAD"]);
 
     let mut server = GitServerHarness::start(&temp, parallelism_permit).await;

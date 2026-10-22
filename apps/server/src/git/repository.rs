@@ -5719,9 +5719,9 @@ impl GitRepository {
 
     /// The remote to publish `branch` to when its upstream has another name (#157), such as a
     /// branch made with `git checkout -b feature-x origin/develop`. Git's default
-    /// `push.default=simple` refuses a bare `git push` there. `None` keeps the bare push: the
-    /// upstream has the branch's own name, or the user configured `push.default` or a push
-    /// remote, which Git then honours as configured. A local upstream (`.`) publishes to
+    /// `push.default=simple` refuses a bare `git push` there, whether it is unset or set to
+    /// `simple`. `None` keeps the bare push: the upstream has the branch's own name, or the
+    /// user configured another `push.default` or a push remote, which Git then honours. A local upstream (`.`) publishes to
     /// `origin`.
     async fn renamed_upstream_remote(
         &self,
@@ -5748,8 +5748,15 @@ impl GitRepository {
         if merge.is_none_or(|merge| merge == format!("refs/heads/{branch}")) {
             return Ok(None);
         }
+        // An explicit `simple` is Git's default spelled out (often left by old Git warnings):
+        // it chooses no other target, so it refuses the same push.
+        if config("push.default".to_owned())
+            .await?
+            .is_some_and(|mode| !mode.eq_ignore_ascii_case("simple"))
+        {
+            return Ok(None);
+        }
         for key in [
-            "push.default".to_owned(),
             "remote.pushDefault".to_owned(),
             format!("branch.{branch}.pushRemote"),
         ] {
