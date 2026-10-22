@@ -4048,3 +4048,112 @@ fn claude_runtime_owes_no_answer_for_a_task_finished_during_a_turn() {
     );
     assert_eq!(finished.background_tasks, Some(0));
 }
+
+/// #165: a background task finishes while a slow turn (`/compact`) runs, and Claude replays its
+/// notification just before that turn's `result`. The answer Claude then runs by itself gets a
+/// turn of its own, opened with that `result`, so the idle deadline the `result` arms cannot
+/// stop Claude mid-answer. Its output and `result` belong to the new turn.
+#[test]
+fn claude_runtime_opens_a_follow_up_replayed_before_the_previous_result() {
+    let mut runtime = ClaudeProviderRuntime::new("thread-1".to_owned(), "session-root".to_owned());
+    runtime.start_turn(TurnInput {
+        turn_id: "compact".to_owned(),
+        input: "/compact".to_owned(),
+    });
+    for frame in [
+        claude_task_started("bash", "local_bash", json!({"is_backgrounded": true})),
+        claude_system(
+            "task_notification",
+            json!({"task_id": "bash", "status": "completed", "output_file": "/tmp/bash", "summary": "Done."}),
+        ),
+    ] {
+        runtime.handle_raw_value(&frame, 1_000);
+    }
+    let replay = runtime.handle_raw_value(&claude_task_notification_turn(), 2_000);
+    assert!(
+        replay
+            .events
+            .iter()
+            .all(|event| event.event_type != "turn.started"),
+        "the open turn stays current until its result"
+    );
+
+    let closed = runtime.handle_raw_value(&claude_result_frame(None), 3_000);
+    let kinds = closed
+        .events
+        .iter()
+        .map(|event| (event.event_type.as_str(), event.turn_id.as_deref()))
+        .collect::<Vec<_>>();
+    assert_eq!(kinds.len(), 2, "{kinds:?}");
+    assert_eq!(kinds[0], ("turn.completed", Some("compact")));
+    assert_eq!(kinds[1].0, "turn.started", "{kinds:?}");
+    let follow_up_turn = kinds[1].1.expect("a turn id").to_owned();
+    assert_ne!(follow_up_turn, "compact");
+
+    let answer = runtime.handle_raw_value(
+        &json!({
+            "type": "stream_event",
+            "session_id": "session-root",
+            "uuid": "follow-up-delta",
+            "parent_tool_use_id": null,
+            "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Done."}}
+        }),
+        4_000,
+    );
+    assert!(
+        answer
+            .events
+            .iter()
+            .all(|event| event.turn_id.as_deref() == Some(&follow_up_turn)),
+        "the answer streams under its own turn"
+    );
+    let ended = runtime.handle_raw_value(&claude_result_frame(Some("task-notification")), 5_000);
+    let kinds = ended
+        .events
+        .iter()
+        .map(|event| (event.event_type.as_str(), event.turn_id.as_deref()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        kinds,
+        vec![("turn.completed", Some(follow_up_turn.as_str()))],
+        "the answer's result ends its turn and opens no other"
+    );
+}
+
+/// Two tasks finish during one turn: each answer opens as the turn before it ends. An interrupted
+/// turn opens none, since the user stopped Claude.
+#[test]
+fn claude_runtime_opens_each_follow_up_in_order_and_none_after_an_interrupt() {
+    let mut runtime = ClaudeProviderRuntime::new("thread-1".to_owned(), "session-root".to_owned());
+    runtime.start_turn(TurnInput {
+        turn_id: "delivered".to_owned(),
+        input: "start".to_owned(),
+    });
+    runtime.handle_raw_value(&claude_task_notification_turn(), 1_000);
+    runtime.handle_raw_value(&claude_task_notification_turn(), 1_000);
+    let started = |output: &claude::runtime::ClaudeRuntimeOutput| {
+        output
+            .events
+            .iter()
+            .filter(|event| event.event_type == "turn.started")
+            .count()
+    };
+    let first = runtime.handle_raw_value(&claude_result_frame(None), 2_000);
+    assert_eq!(started(&first), 1);
+    let second = runtime.handle_raw_value(&claude_result_frame(Some("task-notification")), 3_000);
+    assert_eq!(started(&second), 1, "the second answer follows the first");
+    let last = runtime.handle_raw_value(&claude_result_frame(Some("task-notification")), 4_000);
+    assert_eq!(started(&last), 0);
+
+    runtime.start_turn(TurnInput {
+        turn_id: "stopped".to_owned(),
+        input: "work".to_owned(),
+    });
+    runtime.handle_raw_value(&claude_task_notification_turn(), 5_000);
+    let mut interrupted = claude_result_frame(None);
+    interrupted["subtype"] = json!("error_during_execution");
+    interrupted["is_error"] = json!(true);
+    interrupted["stop_reason"] = json!("interrupted");
+    let stopped = runtime.handle_raw_value(&interrupted, 6_000);
+    assert_eq!(started(&stopped), 0, "an interrupted turn opens no answer");
+}

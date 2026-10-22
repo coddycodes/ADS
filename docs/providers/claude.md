@@ -237,7 +237,11 @@ When a background task finishes, Claude answers it in a turn it starts itself:
 a `user` message and a `result` whose `origin.kind` is `task-notification`.
 BiBCode gives that answer a turn of its own, so the thread reads running and
 idle suspension waits for its result. Between the finished task and that turn
-the session stays busy.
+the session stays busy. When the task finishes during another turn, Claude can
+replay its notification just before that turn's `result`; BiBCode then starts
+the answer's turn as that `result` ends the first one, so the idle deadline the
+`result` arms cannot stop Claude while it answers. An interrupted turn starts no
+answer.
 
 If a session was stopped while background work ran (for example by an earlier
 version of BiBCode), resuming it makes Claude deliver the stopped tasks'

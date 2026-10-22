@@ -1450,7 +1450,8 @@ struct ClaudeBackgroundTasks {
     /// Background tasks that finished while no turn ran and whose answer Claude has not yet given:
     /// each completion produces its own `result` with `origin.kind` `task-notification`. Bridges
     /// the moment between a task leaving the live set and the turn that answers it. A task that
-    /// finishes during a turn needs no bridge: that turn's completion arms a fresh idle deadline.
+    /// finishes during a turn needs no bridge: that turn's completion arms a fresh idle deadline,
+    /// and a notification Claude replayed before that completion opens the answer's turn with it.
     follow_ups_owed: usize,
 }
 
@@ -1565,6 +1566,10 @@ pub struct ClaudeProviderRuntime {
     /// The write whose replay begins the current turn, until Claude replays it or its
     /// wait ends.
     turn_input_awaiting_replay: Option<u64>,
+    /// Follow-up turns Claude began for a finished background task while another turn was still
+    /// open: it can replay the task notification just before that turn's `result` (#165). Each
+    /// opens when the turn before it ends, so idle suspension waits for its own `result`.
+    follow_ups_after_turn: usize,
     turn_input_cancellation: CancellationToken,
     delivery_acknowledgement_cancellation: CancellationToken,
     active_assistant_item_id: Option<String>,
@@ -1608,6 +1613,7 @@ impl ClaudeProviderRuntime {
             current_turn_id: None,
             turn_open: false,
             turn_input_awaiting_replay: None,
+            follow_ups_after_turn: 0,
             turn_input_cancellation: CancellationToken::new(),
             delivery_acknowledgement_cancellation: CancellationToken::new(),
             active_assistant_item_id: None,
@@ -1676,6 +1682,7 @@ impl ClaudeProviderRuntime {
     ) -> Vec<CanonicalEvent> {
         self.stop_turn_input();
         self.reset_delivery_acknowledgements();
+        self.follow_ups_after_turn = 0;
         self.runtime_mode = Some(runtime_mode);
         vec![
             self.event(
@@ -1824,14 +1831,23 @@ impl ClaudeProviderRuntime {
     /// Claude answers a finished background task with a turn it starts itself. BiBCode did not
     /// deliver it, so it gets a turn of its own: the thread reads running and the turn's output and
     /// `result` belong to it. Not while a delivered message awaits its replay: on resume Claude
-    /// can run that turn before it reads the message, and its `result` is ignored instead.
+    /// can run that turn before it reads the message, and its `result` is ignored instead. A
+    /// replay that arrives while another turn is still open starts its turn when that one ends.
     fn start_provider_turn(&mut self, value: &Value) -> Vec<CanonicalEvent> {
         let follow_up = value.get("type").and_then(Value::as_str) == Some("user")
             && value.pointer("/origin/kind").and_then(Value::as_str) == Some("task-notification")
             && value.get("parent_tool_use_id").is_none_or(Value::is_null);
-        if !follow_up || self.turn_open || self.turn_input_awaiting_replay.is_some() {
+        if !follow_up || self.turn_input_awaiting_replay.is_some() {
             return Vec::new();
         }
+        if self.turn_open {
+            self.follow_ups_after_turn = self.follow_ups_after_turn.saturating_add(1);
+            return Vec::new();
+        }
+        self.start_follow_up_turn()
+    }
+
+    fn start_follow_up_turn(&mut self) -> Vec<CanonicalEvent> {
         self.start_turn(TurnInput {
             turn_id: uuid::Uuid::new_v4().to_string(),
             input: String::new(),
@@ -2391,6 +2407,7 @@ impl ClaudeProviderRuntime {
     pub fn handle_stream_failure(&mut self, error: &str) -> Vec<CanonicalEvent> {
         self.stop_turn_input();
         self.delivery_acknowledgement_cancellation.cancel();
+        self.follow_ups_after_turn = 0;
         let error_message = if is_interrupted_error(error) {
             "Claude runtime interrupted.".to_owned()
         } else {
@@ -2443,6 +2460,7 @@ impl ClaudeProviderRuntime {
         self.thread_id = snapshot.thread_id;
         self.current_turn_id = snapshot.turn_id;
         self.turn_open = self.current_turn_id.is_some();
+        self.follow_ups_after_turn = 0;
         self.runtime_mode = Some(snapshot.runtime_mode);
         self.pending_approvals = snapshot
             .pending_approvals
@@ -2692,6 +2710,15 @@ impl ClaudeProviderRuntime {
             None,
             payload,
         ));
+        // Claude dequeued a task notification during the turn that just ended and answers it
+        // now: the answer gets its turn before the idle deadline this result arms can expire.
+        // An interrupted turn is the user stopping Claude, so no answer is assumed to follow.
+        if interrupted {
+            self.follow_ups_after_turn = 0;
+        } else if self.follow_ups_after_turn > 0 {
+            self.follow_ups_after_turn -= 1;
+            events.extend(self.start_follow_up_turn());
+        }
         events
     }
 
