@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::activity::{ClaudeActivityInputSource, ClaudeActivityTracker, canonical_actor_id};
 use super::canonical::CanonicalEvent;
+use super::failure::{ClaudeAssistantError, describe_failed_turn};
 use super::protocol::{
     AssistantContent, AssistantMessage, ClaudeMessage, ClaudeTaskNotificationMessage,
     ClaudeTaskStartedMessage, ContentBlock, ContentBlockDelta, ResultMessage, StreamEvent,
@@ -1587,6 +1588,12 @@ pub struct ClaudeProviderRuntime {
     /// without this the only evidence of an upstream fault is discarded and the
     /// turn reads as an unexplained failure.
     last_api_error: Option<String>,
+    /// The failure a synthetic assistant message reported during the active turn
+    /// (`SDKAssistantMessage.error`), whose text is Claude's own description of it.
+    last_assistant_error: Option<ClaudeAssistantError>,
+    /// The item showing a compaction Claude reported with `status: "compacting"`, until a
+    /// later status (or the turn's result) ends it.
+    compaction_item_id: Option<String>,
 }
 
 impl ClaudeProviderRuntime {
@@ -1625,6 +1632,8 @@ impl ClaudeProviderRuntime {
             token_usage: ClaudeTokenUsageState::default(),
             last_mcp_status: None,
             last_api_error: None,
+            last_assistant_error: None,
+            compaction_item_id: None,
         }
     }
 
@@ -1716,6 +1725,7 @@ impl ClaudeProviderRuntime {
         // Scoped to the turn: a retry observed two turns ago must not be
         // reported as the cause of this one's failure.
         self.last_api_error = None;
+        self.last_assistant_error = None;
         self.current_turn_id = Some(input.turn_id.clone());
         self.turn_open = true;
         self.turn_input_awaiting_replay = None;
@@ -1952,6 +1962,7 @@ impl ClaudeProviderRuntime {
                     .into_iter()
                     .collect(),
                 Some("api_retry") => self.api_retry_event(value).into_iter().collect(),
+                Some("status") => self.compaction_status_event(value).into_iter().collect(),
                 _ => Vec::new(),
             };
             return ClaudeRuntimeOutput {
@@ -2255,6 +2266,13 @@ impl ClaudeProviderRuntime {
     }
 
     pub fn handle_assistant_message(&mut self, message: AssistantMessage) -> Vec<CanonicalEvent> {
+        // A subagent's failed request is reported to its parent as a tool result, not as this
+        // turn's failure.
+        if message.parent_tool_use_id.is_none()
+            && let Some(error) = ClaudeAssistantError::from_message(&message)
+        {
+            self.last_assistant_error = Some(error);
+        }
         let mut events = Vec::new();
         for content in message.message.content {
             if let AssistantContent::ToolUse { id, name, input } = content
@@ -2635,9 +2653,10 @@ impl ClaudeProviderRuntime {
         self.stop_turn_input();
         self.turn_open = false;
         let mut events = self.flush_incomplete_tools();
+        events.extend(self.end_compaction(None));
         let interrupted = is_interrupted_result(&message);
         let failed = message.is_error && !interrupted;
-        let stop_reason = message.stop_reason.unwrap_or_else(|| {
+        let stop_reason = message.stop_reason.clone().unwrap_or_else(|| {
             if interrupted {
                 "interrupted".to_owned()
             } else if failed {
@@ -2650,40 +2669,30 @@ impl ClaudeProviderRuntime {
             "state": if interrupted { "interrupted" } else if failed { "failed" } else { "completed" },
             "stopReason": stop_reason,
         });
-        if interrupted || failed {
+        if failed {
+            // Everything here came off Claude's wire, so Claude reported it.
+            let failure = describe_failed_turn(
+                &message,
+                self.last_assistant_error.as_ref(),
+                self.last_api_error.as_deref(),
+            );
+            crate::diagnostics::profiler::provider_turns::record_turn_failure(
+                "claude",
+                message.terminal_reason.as_deref(),
+                failure.error_class,
+            );
+            payload["errorMessage"] = json!(failure.message);
+            payload["errorClass"] = json!(failure.error_class);
+        } else if interrupted {
+            // An interrupted turn carries a description but is not a failure, so it is
+            // deliberately left unclassified rather than labelled `unknown`.
             let error_message = message.errors.first().cloned().unwrap_or_else(|| {
-                // With no `errors`, the only descriptions Claude gives are its
-                // `subtype`, its `terminal_reason`, and any upstream API failure
-                // it reported while retrying. Prefer the upstream error: it is
-                // the one that tells the user this was not BiBCode.
-                if let Some(api_error) = self.last_api_error.as_deref() {
-                    return format!("{api_error}.");
-                }
-                let reason = if interrupted {
-                    "Claude runtime interrupted"
-                } else {
-                    "Claude turn failed"
-                };
-                let detail = message
-                    .terminal_reason
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|reason| !reason.is_empty())
-                    .unwrap_or(message.subtype.trim());
-                if detail.is_empty() {
-                    format!("{reason}.")
-                } else {
-                    format!("{reason} ({detail}).")
+                match self.last_api_error.as_deref() {
+                    Some(api_error) => format!("{api_error}."),
+                    None => super::failure::named_failure("Claude runtime interrupted", &message),
                 }
             });
             payload["errorMessage"] = json!(error_message);
-            if failed {
-                // Everything here came off Claude's wire, so Claude reported
-                // it. An interrupted turn carries a description but is not a
-                // failure, so it is deliberately left unclassified rather than
-                // labelled `unknown`.
-                payload["errorClass"] = json!("provider_error");
-            }
         }
         events.push(self.event(
             "turn.completed",
@@ -2860,6 +2869,65 @@ impl ClaudeProviderRuntime {
             self.current_turn_id.clone(),
             None,
             None,
+            payload,
+        ))
+    }
+
+    /// Claude reports a compaction with `system`/`status` frames: `status: "compacting"` while
+    /// it runs (repeated for an automatic one's progress), then a different status, carrying
+    /// `compact_result` and `compact_error`, once it ends. BiBCode shows it as an item, so a
+    /// long compaction does not look like a stalled turn.
+    fn compaction_status_event(&mut self, value: &Value) -> Option<CanonicalEvent> {
+        if value.get("status").and_then(Value::as_str) != Some("compacting") {
+            return self.end_compaction(Some(value));
+        }
+        if self.compaction_item_id.is_some() {
+            return None;
+        }
+        let item_id = format!(
+            "compaction:{}",
+            value
+                .get("uuid")
+                .and_then(Value::as_str)
+                .filter(|uuid| !uuid.is_empty())
+                .map_or_else(|| uuid::Uuid::new_v4().to_string(), str::to_owned)
+        );
+        self.compaction_item_id = Some(item_id.clone());
+        Some(self.event(
+            "item.started",
+            self.current_turn_id.clone(),
+            None,
+            Some(json!({ "providerItemId": item_id })),
+            json!({
+                "itemType": "context_compaction",
+                "status": "inProgress",
+                "title": "Conversation compaction",
+            }),
+        ))
+    }
+
+    /// Ends the open compaction item, from the status frame that ended it when there is one.
+    fn end_compaction(&mut self, status: Option<&Value>) -> Option<CanonicalEvent> {
+        let item_id = self.compaction_item_id.take()?;
+        let failed =
+            status.and_then(|value| value.get("compact_result")?.as_str()) == Some("failed");
+        let mut payload = json!({
+            "itemType": "context_compaction",
+            "status": if failed { "failed" } else { "completed" },
+            "title": "Conversation compaction",
+        });
+        if let Some(detail) = status
+            .and_then(|value| value.get("compact_error")?.as_str())
+            .map(str::trim)
+            .filter(|detail| failed && !detail.is_empty())
+        {
+            payload["detail"] = json!(detail);
+        }
+        Some(self.event(
+            "item.completed",
+            self.current_turn_id.clone(),
+            None,
+            Some(json!({ "providerItemId": item_id })),
             payload,
         ))
     }

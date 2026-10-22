@@ -348,9 +348,11 @@ rejection cannot auto-start the interrupted input.
 A failed turn carries both a message and a class. `turn.completed` uses the
 contract-canonical `errorMessage`, and `errorClass` — a `RuntimeErrorClass` of
 `provider_error`, `transport_error`, `session_stopped`, `permission_error`,
-`validation_error` or `unknown` — records **who reported** the failure or that
-BiBCode deliberately stopped the session. Both are projected onto the
-thread session as `lastError` and `lastErrorClass`.
+`validation_error`, `context_limit` or `unknown` — records **who reported** the
+failure or that BiBCode deliberately stopped the session. Both are projected
+onto the thread session as `lastError` and `lastErrorClass`. `context_limit` is
+provider-reported too: the conversation no longer fits the provider's context
+window, and the thread offers to compact it.
 
 Decoders accept a newer, unrecognized provider class as `unknown` so a newer
 server cannot make an older client reject the entire live event or persisted

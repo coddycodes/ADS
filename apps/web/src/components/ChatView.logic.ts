@@ -832,6 +832,8 @@ export function threadErrorAttribution(input: {
       return `${agent} rejected the credentials`;
     case "validation_error":
       return `${agent} rejected the request`;
+    case "context_limit":
+      return `${agent} ran out of context`;
     default:
       // "unknown", absent, or a class from a newer server: say nothing rather
       // than guess. An unattributed banner is better than a wrong attribution.

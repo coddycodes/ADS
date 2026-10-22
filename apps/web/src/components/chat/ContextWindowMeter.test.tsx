@@ -189,6 +189,20 @@ describe("ContextWindowMeter", () => {
     ).not.toContain("automatically compacts");
   });
 
+  it("names the automatic compaction threshold when the provider reports one", () => {
+    const markup = render({
+      contextWindowUsage: usage({ compactsAutomatically: true, autoCompactTokens: 967_000 }),
+      providerDisplayName: "Claude",
+    });
+    expect(markup).toContain("Claude automatically compacts its context at about 967k tokens.");
+    expect(
+      render({
+        contextWindowUsage: usage({ compactsAutomatically: true }),
+        providerDisplayName: "Claude",
+      }),
+    ).toContain("Claude automatically compacts its context when needed.");
+  });
+
   it("omits progress details when no maximum is known", () => {
     const markup = render({
       contextWindowUsage: usage({ maxTokens: null, usedPercentage: null, usedTokens: 1_250 }),

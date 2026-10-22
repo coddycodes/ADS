@@ -9290,6 +9290,16 @@ fn context_window_activity_payload(payload: &Value) -> Option<Value> {
     {
         sanitized_object.insert("maxTokens".to_owned(), Value::from(max_tokens));
     }
+    if let Some(auto_compact_tokens) = usage
+        .get("autoCompactTokens")
+        .and_then(Value::as_u64)
+        .filter(|tokens| *tokens > 0)
+    {
+        sanitized_object.insert(
+            "autoCompactTokens".to_owned(),
+            Value::from(auto_compact_tokens),
+        );
+    }
     if let Some(compacts_automatically) =
         usage.get("compactsAutomatically").and_then(Value::as_bool)
     {
@@ -9381,7 +9391,7 @@ fn provider_completion_error_class(payload: &Value) -> String {
         .unwrap_or("provider_error")
     {
         class @ ("provider_error" | "transport_error" | "permission_error" | "validation_error"
-        | "unknown") => class.to_owned(),
+        | "context_limit" | "unknown") => class.to_owned(),
         _ => "unknown".to_owned(),
     }
 }
@@ -13274,6 +13284,10 @@ mod claude_context_query_tests {
         assert_eq!(
             provider_completion_error_class(&json!({ "errorClass": "transport_error" })),
             "transport_error"
+        );
+        assert_eq!(
+            provider_completion_error_class(&json!({ "errorClass": "context_limit" })),
+            "context_limit"
         );
     }
 
@@ -27250,7 +27264,8 @@ done
                         "toolUses": 4,
                         "durationMs": 900,
                         "nativeUsageDetail": "must be dropped",
-                        "compactsAutomatically": true
+                        "compactsAutomatically": true,
+                        "autoCompactTokens": 245_000
                     }
                 }),
                 activity: Vec::new(),
@@ -27286,7 +27301,8 @@ done
                 "lastReasoningOutputTokens": 25,
                 "toolUses": 4,
                 "durationMs": 900,
-                "compactsAutomatically": true
+                "compactsAutomatically": true,
+                "autoCompactTokens": 245_000
             })
         );
 

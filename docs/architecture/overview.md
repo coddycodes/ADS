@@ -1550,8 +1550,10 @@ it.
   these pairs only: `rpc.slow` cites `rpc.timing` (the slowest call) or, from a
   client, `client.request`; `subprocess.crash` cites `subprocess.exit`;
   `worktree.removal-failed` cites `worktree.removal`; `client.stall` and
-  `client.interaction` cite `client.batch`; and `crash.panic` cites `panic`. An
-  event dropped by a full channel is never cited.
+  `client.interaction` cite `client.batch`; `crash.panic` cites `panic`; and
+  `provider.turn-failed` (a failed Claude turn, by provider, terminal reason and
+  error class, never its text) cites its own event. An event dropped by a full
+  channel is never cited.
 - `server.getProfilerStatus` returns the 20 newest findings without evidence;
   the CLI and MCP readers return the evidence too.
 - **Versions (#98).** Every event line names the build that wrote it

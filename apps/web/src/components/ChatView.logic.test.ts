@@ -1463,6 +1463,16 @@ describe("threadErrorAttribution", () => {
     ).toBe("OpenCode rejected the credentials");
   });
 
+  it("says when the conversation no longer fits the provider's context window", () => {
+    expect(
+      threadErrorAttribution({
+        isBiBCodeAction: false,
+        errorClass: "context_limit",
+        providerName: "claudeAgent",
+      }),
+    ).toBe("Claude ran out of context");
+  });
+
   it("says nothing rather than guessing when the class is absent or unknown", () => {
     for (const errorClass of [null, undefined, "unknown", "a_class_from_a_newer_server"]) {
       expect(
