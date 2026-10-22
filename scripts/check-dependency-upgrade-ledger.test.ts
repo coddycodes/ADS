@@ -502,9 +502,9 @@ describe("dependency upgrade ledger validation", () => {
       NodeFS.readFileSync(NodePath.join(repositoryRoot, "pnpm-workspace.yaml"), "utf8"),
     ) as { patchedDependencies: Record<string, string> };
 
-    expect(entry("toolchain:node").target).toBe("26.8.1");
+    expect(entry("toolchain:node").target).toBe("26.12.1");
     expect(entry("toolchain:pnpm").target).toBe("11.25.0");
-    expect(entry("toolchain:rust").target).toBe("1.98.0");
+    expect(entry("toolchain:rust").target).toBe("1.98.1");
     expect(entry("toolchain:vite-core").target).toBe("npm:@voidzero-dev/vite-plus-core@0.3.0");
     expect(entry("toolchain:vite-plus").target).toBe("0.3.0");
     expect(entry("js:catalog:effect").target).toBe("4.0.0-beta.107");

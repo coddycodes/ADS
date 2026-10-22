@@ -84,14 +84,14 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@1b32467adbe183473499fd9d5d372c3ed9641754 # v1.18.0
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
         with:
           node-version-file: package.json
           cache: true
           run-install: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@62ae3a85dbdd2bedbb5819da8ce45635129289a1 # 1.98.0
+        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1
 
       - name: Cache Rust build output
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -201,7 +201,7 @@ jobs:
 
       - name: Upload bounded seeded-upgrade evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: seeded-upgrade-${{ matrix.platform }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/bibcode-seeded-upgrade/evidence/*
@@ -210,7 +210,7 @@ jobs:
 
       - name: Upload Windows crash dumps
         if: always() && matrix.platform == 'win'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: seeded-upgrade-crash-dumps-${{ matrix.arch }}
           path: ${{ runner.temp }}/bibcode-crash-dumps/*
@@ -255,7 +255,7 @@ jobs:
 
       - name: Setup Vite+
         if: steps.wsl.outputs.available == 'true'
-        uses: voidzero-dev/setup-vp@1b32467adbe183473499fd9d5d372c3ed9641754 # v1.18.0
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
         with:
           node-version-file: package.json
           cache: true
@@ -263,7 +263,7 @@ jobs:
 
       - name: Setup Rust
         if: steps.wsl.outputs.available == 'true'
-        uses: dtolnay/rust-toolchain@62ae3a85dbdd2bedbb5819da8ce45635129289a1 # 1.98.0
+        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1
 
       - name: Install frozen dependencies
         if: steps.wsl.outputs.available == 'true'
@@ -279,7 +279,7 @@ jobs:
           }
           wsl bash -lc "set -euo pipefail; s''udo apt-get update; s''udo apt-get install -y build-essential clang cmake curl pkg-config libssl-dev"
           if ($LASTEXITCODE -ne 0) { throw "WSL build prerequisites failed" }
-          wsl bash -lc "set -euo pipefail; if ! command -v cargo >/dev/null; then curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.98.0; fi"
+          wsl bash -lc "set -euo pipefail; if ! command -v cargo >/dev/null; then curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.98.1; fi"
           if ($LASTEXITCODE -ne 0) { throw "WSL Rust setup failed" }
           $build = "set -euo pipefail; cd '$workspaceWsl'; export PATH=`"`$HOME/.cargo/bin:`$PATH`"; CARGO_TARGET_DIR='$workspaceWsl/target/x86_64-unknown-linux-gnu' cargo build -p bibcode-server --bin bibcode --release"
           wsl bash -lc $build
@@ -345,7 +345,7 @@ jobs:
 
       - name: Upload bounded WSL seeded-upgrade evidence
         if: always() && steps.wsl.outputs.available == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: seeded-upgrade-windows-wsl
           path: ${{ runner.temp }}/bibcode-seeded-wsl-upgrade/evidence/*

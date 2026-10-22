@@ -96,7 +96,7 @@ describe("visual qualification dispatch registration", () => {
       const evidence = steps.filter((step) => step.name?.startsWith("Retain explicit"));
       expect(evidence).toHaveLength(3);
       for (const step of evidence) {
-        expect(step.uses).toBe("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
+        expect(step.uses).toBe("actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9");
         expect(step.with?.["if-no-files-found"]).toBe("error");
       }
     }

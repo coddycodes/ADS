@@ -3,8 +3,8 @@
 Run JavaScript/TypeScript workspace commands through Vite+ (`vp`). Run commands
 from the repository root unless noted otherwise.
 
-The declared development toolchain is Node.js 26.8.1, pnpm 11.25.0, Rust
-1.98.0, and Vite+ 0.3.0. The root workspace and application packages use
+The declared development toolchain is Node.js 26.12.1, pnpm 11.25.0, Rust
+1.98.1, and Vite+ 0.3.0. The root workspace and application packages use
 TypeScript 7.0.2. `apps/marketing` remains a TypeScript 6.0.3 compatibility
 island until Astro's checker supports TypeScript 7 through its public API.
 

@@ -341,7 +341,7 @@ describe("cross-platform release contract", () => {
     expect(setupRustIndex).toBeGreaterThan(-1);
     expect(typecheckIndex).toBeGreaterThan(setupRustIndex);
     expect(steps[setupRustIndex]?.uses).toBe(
-      "dtolnay/rust-toolchain@62ae3a85dbdd2bedbb5819da8ce45635129289a1",
+      "dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7",
     );
   });
 
@@ -925,9 +925,9 @@ describe("release symbols and crash smoke contract", () => {
 
     expect(job.strategy?.["fail-fast"]).toBe(false);
     expect((job.strategy?.matrix as { os?: unknown } | undefined)?.os).toEqual([
-      "ubuntu-latest",
-      "windows-latest",
-      "macos-latest",
+      "ubuntu-24.04",
+      "windows-2025",
+      "macos-26",
     ]);
     expect(stepIndex(job, "Install pinned symbol tools")).toBeLessThan(
       stepIndex(job, "Crash the smoke binary"),

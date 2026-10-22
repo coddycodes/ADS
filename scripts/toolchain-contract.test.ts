@@ -53,7 +53,7 @@ describe("repository toolchain contract", () => {
     const workspace = readText("pnpm-workspace.yaml");
     const workspaceConfiguration = parseYaml(workspace) as Record<string, unknown>;
 
-    expect(rootPackage.engines).toEqual({ node: "26.8.1" });
+    expect(rootPackage.engines).toEqual({ node: "26.12.1" });
     expect(rootPackage.packageManager).toBe("pnpm@11.25.0");
     expect(workspace).toMatch(/^  "@types\/node": 26\.4\.1$/m);
     expect(workspace).toMatch(/^  vite: npm:@voidzero-dev\/vite-plus-core@0\.3\.0$/m);
@@ -126,10 +126,10 @@ describe("repository toolchain contract", () => {
     const workspace = cargo.workspace as Record<string, unknown>;
     const workspacePackage = workspace.package as Record<string, unknown>;
 
-    expect(toolchain.channel).toBe("1.98.0");
+    expect(toolchain.channel).toBe("1.98.1");
     expect(toolchain.profile).toBe("minimal");
     expect(toolchain.components).toEqual(["rustfmt", "clippy"]);
-    expect(workspacePackage["rust-version"]).toBe("1.98.0");
+    expect(workspacePackage["rust-version"]).toBe("1.98.1");
 
     for (const workflowPath of [
       ".github/workflows/ci.yml",
@@ -138,7 +138,7 @@ describe("repository toolchain contract", () => {
     ]) {
       const workflow = readText(workflowPath);
       expect(workflow).not.toMatch(/dtolnay\/rust-toolchain@(stable|1\.88(?:\.0)?)/);
-      expect(workflow).toMatch(/dtolnay\/rust-toolchain@[0-9a-f]{40} # 1\.98\.0/);
+      expect(workflow).toMatch(/dtolnay\/rust-toolchain@[0-9a-f]{40} # 1\.98\.1/);
     }
   });
 
@@ -156,7 +156,7 @@ describe("repository toolchain contract", () => {
     ]);
     expect(Object.keys(features).some((feature) => /(?:^|\/)bun:/.test(feature))).toBe(false);
     expect(features["ghcr.io/devcontainers/features/node:2.1.0"]).toEqual({
-      version: "26.8.1",
+      version: "26.12.1",
     });
     expect(devcontainer.postCreateCommand).toEqual({
       install:

@@ -84,7 +84,7 @@ describe("controlled remote UI dispatch registration", () => {
       const evidence = named("Retain explicit safe evidence");
       expect(evidence.if).toBe("always()");
       expect(evidence.uses).toBe(
-        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
       );
       expect(evidence.with.name).toBe(
         "issue16-ui-${{ inputs.matrix || 'core' }}-${{ github.run_id }}-${{ github.run_attempt }}",

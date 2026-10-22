@@ -83,8 +83,8 @@ workflow as idle.
   spaces, dollar signs, backticks, and typographic quotes. Every Git/home
   configuration input is fixture-owned. Other platforms skip that native case;
   their string assertions remain compatibility evidence.
-- **Crash smoke** runs on `ubuntu-latest`, `windows-latest`, and
-  `macos-latest`. It builds with the release symbol profile from
+- **Crash smoke** runs on `ubuntu-24.04`, `windows-2025`, and
+  `macos-26`. It builds with the release symbol profile from
   [Symbol assets](./release.md#symbol-assets) and runs
   `cargo test -p bibcode-server --test crash_smoke --release` with
   `CRASH_SMOKE_OUT` set to `${{ runner.temp }}/crash-smoke`, so the minidump that
@@ -110,14 +110,14 @@ native toolchain. Node.js and Vite+ are development/build dependencies; release
 artifacts contain the Tauri/Rust application and built web assets, not a Node
 runtime or TypeScript server.
 
-All workflows use the repository's declared Node.js 26.8.1, pnpm 11.25.0,
-Vite+ 0.3.0, and Rust 1.98.0 toolchains. External setup actions are immutable
+All workflows use the repository's declared Node.js 26.12.1, pnpm 11.25.0,
+Vite+ 0.3.0, and Rust 1.98.1 toolchains. External setup actions are immutable
 SHA-pinned with audited tag comments: Checkout 7.0.1
 (`3d3c42e5aac5ba805825da76410c181273ba90b1`), Rust Cache 2.9.2
-(`6323deb102c322ba6fcbdcafc7e3dddab59af2b6`), setup-vp 1.18.0
-(`1b32467adbe183473499fd9d5d372c3ed9641754`), action-gh-release 3.0.3
-(`efb35369e0ad2afab669f228072c1b0d510eae64`), and Rust toolchain 1.98.0
-(`62ae3a85dbdd2bedbb5819da8ce45635129289a1`). Reverify a tag before changing
+(`6323deb102c322ba6fcbdcafc7e3dddab59af2b6`), setup-vp 1.21.2
+(`68f39c78aaf39be468cabd2afb09c162574c84af`), action-gh-release 3.0.3
+(`efb35369e0ad2afab669f228072c1b0d510eae64`), and Rust toolchain 1.98.1
+(`18f0487477426dce244608110aa2660c2893deb7`). Reverify a tag before changing
 its immutable SHA.
 
 Check, Test, Native desktop, and Crash smoke restore the Swatinem Rust cache on every run
