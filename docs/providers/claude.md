@@ -219,6 +219,10 @@ same input text, including when that replay arrives after the current reply's
 `result`. Image blocks alongside the text do not prevent acknowledgement;
 image-only messages are acknowledged too. A replay containing any tool-result
 block, or different text, is not an acknowledgement.
+A local command such as `/compact` is not replayed; Claude reports it with a
+`result` naming the command (`local_command`), which marks it delivered and ends
+its turn. While Claude compacts the conversation, before reading a message or
+for `/compact`, the 60-second confirmation wait is paused and then restarts.
 The acknowledgement remains pending for the lifetime of that process, even
 across turn completion. The message is attributed to the BiBCode runtime turn
 current when the echo arrives, without allocating a new turn for the steer.

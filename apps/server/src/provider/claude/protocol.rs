@@ -129,6 +129,10 @@ pub struct ResultMessage {
     /// HTTP status of the API error that ended the run, when one did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_error_status: Option<i64>,
+    /// The local slash command (such as `compact`) this result reports. Claude runs a local
+    /// command without replaying its input, so this result is the only sign it read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_command: Option<String>,
     pub stop_reason: Option<String>,
     pub session_id: String,
     pub uuid: String,

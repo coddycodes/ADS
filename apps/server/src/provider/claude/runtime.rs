@@ -7,6 +7,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use super::activity::{ClaudeActivityInputSource, ClaudeActivityTracker, canonical_actor_id};
@@ -1594,6 +1595,9 @@ pub struct ClaudeProviderRuntime {
     /// The item showing a compaction Claude reported with `status: "compacting"`, until a
     /// later status (or the turn's result) ends it.
     compaction_item_id: Option<String>,
+    /// Whether Claude is compacting the conversation. Claude replays a message only after a
+    /// compaction it runs first, so acknowledgement deadlines do not run meanwhile.
+    compacting: watch::Sender<bool>,
 }
 
 impl ClaudeProviderRuntime {
@@ -1634,6 +1638,7 @@ impl ClaudeProviderRuntime {
             last_api_error: None,
             last_assistant_error: None,
             compaction_item_id: None,
+            compacting: watch::channel(false).0,
         }
     }
 
@@ -1773,6 +1778,11 @@ impl ClaudeProviderRuntime {
     // replayed by Claude after that result. Its receipt belongs to the session.
     pub(crate) fn delivery_acknowledgement_cancellation(&self) -> CancellationToken {
         self.delivery_acknowledgement_cancellation.clone()
+    }
+
+    /// `true` while Claude reports that it is compacting the conversation.
+    pub(crate) fn compaction_watch(&self) -> watch::Receiver<bool> {
+        self.compacting.subscribe()
     }
 
     fn reset_delivery_acknowledgements(&mut self) {
@@ -2893,6 +2903,7 @@ impl ClaudeProviderRuntime {
                 .map_or_else(|| uuid::Uuid::new_v4().to_string(), str::to_owned)
         );
         self.compaction_item_id = Some(item_id.clone());
+        self.compacting.send_replace(true);
         Some(self.event(
             "item.started",
             self.current_turn_id.clone(),
@@ -2909,6 +2920,7 @@ impl ClaudeProviderRuntime {
     /// Ends the open compaction item, from the status frame that ended it when there is one.
     fn end_compaction(&mut self, status: Option<&Value>) -> Option<CanonicalEvent> {
         let item_id = self.compaction_item_id.take()?;
+        self.compacting.send_replace(false);
         let failed =
             status.and_then(|value| value.get("compact_result")?.as_str()) == Some("failed");
         let mut payload = json!({
