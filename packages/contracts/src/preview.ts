@@ -336,8 +336,10 @@ export const DiscoveredLocalServer = Schema.Struct({
 });
 export type DiscoveredLocalServer = typeof DiscoveredLocalServer.Type;
 
+/** Sent on subscribe and then only when `servers` changes. */
 export const DiscoveredLocalServerList = Schema.Struct({
   servers: Schema.Array(DiscoveredLocalServer),
+  /** When the scan that found `servers` ran, not when the stream last checked. */
   scannedAt: Schema.String,
 });
 export type DiscoveredLocalServerList = typeof DiscoveredLocalServerList.Type;

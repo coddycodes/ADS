@@ -164,18 +164,70 @@ function runStatusBarUsageRefresh(refresh: StatusBarUsageRefresh): void {
   });
 }
 
+/** The page whose focus and visibility gate the status bar's polling. */
+export interface StatusBarWindowActivity {
+  readonly window: Pick<EventTarget, "addEventListener" | "removeEventListener">;
+  readonly document: Pick<EventTarget, "addEventListener" | "removeEventListener"> &
+    Pick<Document, "visibilityState" | "hasFocus">;
+}
+
+function pageWindowActivity(): StatusBarWindowActivity | null {
+  return typeof window === "undefined" || typeof document === "undefined"
+    ? null
+    : { window, document };
+}
+
+/**
+ * Refreshes now and then every `intervalMs` while the window is visible and focused. A
+ * hidden or unfocused window polls nothing (#168); it refreshes once when it is used again.
+ */
 export function startStatusBarUsageAutoRefresh({
   refresh,
   intervalMs = STATUS_BAR_USAGE_REFRESH_INTERVAL_MS,
+  activity = pageWindowActivity(),
 }: {
   readonly refresh: StatusBarUsageRefresh;
   readonly intervalMs?: number;
+  /** `null` polls regardless, where there is no page to watch. */
+  readonly activity?: StatusBarWindowActivity | null;
 }): () => void {
+  const isActive = () =>
+    activity === null ||
+    (activity.document.visibilityState === "visible" && activity.document.hasFocus());
+  let intervalId: ReturnType<typeof globalThis.setInterval> | null = null;
+  const poll = () => {
+    if (intervalId !== null) return;
+    intervalId = globalThis.setInterval(() => {
+      runStatusBarUsageRefresh(refresh);
+    }, intervalMs);
+  };
+  const pause = () => {
+    if (intervalId === null) return;
+    globalThis.clearInterval(intervalId);
+    intervalId = null;
+  };
+  // Every event rechecks both conditions: focus can return while the page is hidden.
+  const follow = () => {
+    if (!isActive()) {
+      pause();
+    } else if (intervalId === null) {
+      runStatusBarUsageRefresh(refresh);
+      poll();
+    }
+  };
+
+  // One read even in a background window, so the bar is not empty when it is first seen.
   runStatusBarUsageRefresh(refresh);
-  const intervalId = globalThis.setInterval(() => {
-    runStatusBarUsageRefresh(refresh);
-  }, intervalMs);
-  return () => globalThis.clearInterval(intervalId);
+  if (isActive()) poll();
+  activity?.window.addEventListener("focus", follow);
+  activity?.window.addEventListener("blur", follow);
+  activity?.document.addEventListener("visibilitychange", follow);
+  return () => {
+    activity?.window.removeEventListener("focus", follow);
+    activity?.window.removeEventListener("blur", follow);
+    activity?.document.removeEventListener("visibilitychange", follow);
+    pause();
+  };
 }
 
 export function createStatusBarRefreshHandler(input: {

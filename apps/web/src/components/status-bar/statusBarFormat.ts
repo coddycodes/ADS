@@ -62,6 +62,13 @@ export function providerUsageBarColorClass(usedPercent: number): string {
   return "bg-red-500";
 }
 
+/**
+ * What a process's memory figure (`rssBytes`) measures, which the server's OS decides
+ * (#159). Shown wherever Resource Manager reports memory.
+ */
+export const PROCESS_MEMORY_METRIC_NOTE =
+  "Memory is the physical footprint on macOS, as in Activity Monitor, and resident memory on Linux and Windows.";
+
 export function formatMemoryBytes(bytes: number): string {
   const safeBytes = Math.max(0, bytes);
   if (safeBytes >= 1024 ** 3) {

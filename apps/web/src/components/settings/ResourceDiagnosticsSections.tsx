@@ -6,6 +6,7 @@ import type {
 } from "@bibcode/contracts";
 
 import { cn } from "../../lib/utils";
+import { PROCESS_MEMORY_METRIC_NOTE } from "../status-bar/statusBarFormat";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -706,6 +707,7 @@ export function ResourceDiagnosticsSections({
             </ResourceSummaryPair>
             <div className="border-t border-border/60 px-4 py-2 text-xs text-muted-foreground sm:px-5">
               Server PID <span className="font-mono tabular-nums">{processData?.serverPid}</span>
+              <p className="mt-1">{PROCESS_MEMORY_METRIC_NOTE}</p>
             </div>
           </>
         ) : (

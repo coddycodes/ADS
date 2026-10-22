@@ -823,6 +823,11 @@ web client carries each connection over the environment's own RPC connection
 (`preview.tunnelOpen`, `preview.tunnelWrite`, `preview.tunnelClose`). See
 [Preview tunnels](remote.md#preview-tunnels).
 
+The preview panel's local-server suggestions come from
+`subscribeDiscoveredLocalServers`. Each subscriber's task scans the host's
+listening ports every second, but it sends the list only on subscribe and when
+the servers change; `scannedAt` is the time of the scan that was sent (#168).
+
 When WSL-only mode is selected, that intent is authoritative even if an older
 persisted document has a stale disabled-backend flag. WSL planning and primary
 startup fail closed as a tagged `wsl-primary-unavailable` desktop state. The
@@ -1729,7 +1734,9 @@ it.
   processes registered in `ProcessAttributionRegistry` (providers, terminals,
   the desktop webview, helpers), and up to 128 descendants rediscovered every
   60 s. Leak rules read private memory (Linux `RssAnon + VmSwap`, Windows
-  `PrivateUsage`, macOS `phys_footprint`) and fall back to RSS. Samples become
+  `PrivateUsage`, macOS `phys_footprint`) and fall back to RSS. On macOS
+  Resource Manager reports the same footprint, through the same reader
+  (`diagnostics::physical_footprint`). Samples become
   1-minute medians that feed the rules in memory. Each process has a kind:
   `server`, or `desktop-host` for a server inside the desktop app;
   `provider:<driver>` for a registered provider; `terminal`; `webview`;
@@ -2662,7 +2669,12 @@ or non-empty process-ownership cleanup refreshes the host process table on the
 blocking pool. Full discovery remains necessary to identify previously unknown
 descendants for attribution and cleanup; direct PID identity checks use the native
 targeted lookup independently of that table. CPU observations establish their
-baseline on the first sample and retain it for subsequent samples.
+baseline on the first sample and retain it for subsequent samples. Each row's
+memory (`rssBytes`) is the physical footprint on macOS, falling back to the
+resident size for a process the server may not inspect, and the resident size
+on Linux and Windows (see
+[Observability](../operations/observability.md#process-diagnostics)); Resource Manager
+says so under its totals.
 
 `DiagnosticsMonitor` takes diagnostics samples in one background task, every
 2 seconds in production, and `server.getProcessDiagnostics` and
@@ -2672,7 +2684,10 @@ exception: before the first sample completes, a read waits for it for at most
 1 second, then returns the error `Measuring resource usage.` instead of empty
 totals that would read as an idle host. The first diagnostics read starts the
 task, and the task stops after three intervals without a read, so a server with
-no diagnostics reader enumerates nothing; the next read answers from the
+no diagnostics reader enumerates nothing. The status bar, the usual reader,
+stops polling while its window is hidden or unfocused, so an idle window's
+server stops sampling too (see
+[Connection runtime](./connection-runtime.md)); the next read answers from the
 retained sample, with its original timestamp, and restarts the task. Runtime
 shutdown stops the task early in the quiesce sequence, before process ownership
 is frozen and long before the Profiler's teardown. Each sample logs its stage
