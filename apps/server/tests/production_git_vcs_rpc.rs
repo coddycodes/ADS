@@ -1397,6 +1397,142 @@ async fn stacked_feature_branch_rejects_a_clean_worktree_without_creating_a_bran
     handle.join().await.expect("server joins");
 }
 
+/// A bare remote with `main` and `develop`, and a clone whose `feature-x` was made the way a
+/// terminal makes it, `git checkout -b feature-x origin/develop`, so it tracks
+/// `origin/develop`, with one commit on top. Returns the remote, the clone, and the commit
+/// `develop` points at.
+fn renamed_upstream_fixture(root: &Path) -> (PathBuf, PathBuf, String) {
+    let remote = root.join("remote.git");
+    fs::create_dir(&remote).expect("create bare remote directory");
+    run_git_in(&remote, &["init", "--bare", "--initial-branch=main"]);
+    let remote_url = local_file_url(&remote);
+
+    let publisher = root.join("publisher");
+    fs::create_dir(&publisher).expect("create publisher directory");
+    initialize_repository_in(&publisher);
+    commit_file(&publisher, "tracked.txt", "base\n", "initial");
+    run_git_in(&publisher, &["remote", "add", "origin", &remote_url]);
+    run_git_in(
+        &publisher,
+        &["push", "--quiet", "origin", "main", "main:develop"],
+    );
+    let develop = git_stdout_in(&remote, &["rev-parse", "refs/heads/develop"]);
+
+    let consumer = root.join("consumer");
+    run_git_in(
+        root,
+        &["clone", "--quiet", &remote_url, &consumer.to_string_lossy()],
+    );
+    initialize_repository_identity(&consumer);
+    // Git's default auto-tracking: the new branch tracks the remote branch it starts from.
+    run_git_in(
+        &consumer,
+        &["checkout", "--quiet", "-b", "feature-x", "origin/develop"],
+    );
+    assert_eq!(
+        git_stdout_in(&consumer, &["config", "branch.feature-x.merge"]).trim(),
+        "refs/heads/develop"
+    );
+    commit_file(&consumer, "feature.txt", "feature\n", "feature work");
+    (remote, consumer, develop)
+}
+
+/// #157: under Git's default `push.default=simple`, a bare `git push` refuses a branch whose
+/// upstream has another name. Push publishes it under its own name and tracks that branch,
+/// and leaves the upstream it was made from untouched.
+#[tokio::test]
+async fn stacked_push_publishes_a_branch_whose_upstream_has_another_name() {
+    let parallelism_permit = acquire_git_rpc_fixture().await;
+    if relaunch_with_isolated_git_config(
+        "stacked_push_publishes_a_branch_whose_upstream_has_another_name",
+    ) {
+        return;
+    }
+
+    let temp = TempDir::new().expect("temporary server directory");
+    let root = TempDir::new().expect("temporary fixture root");
+    let (remote, consumer, develop) = renamed_upstream_fixture(root.path());
+    let head = git_stdout_in(&consumer, &["rev-parse", "HEAD"]);
+
+    let mut server = GitServerHarness::start(&temp, parallelism_permit).await;
+    let outcome = run_stacked_action(
+        server.socket(),
+        "157",
+        json!({
+            "actionId": "push-renamed-upstream",
+            "cwd": consumer.to_string_lossy(),
+            "action": "push",
+        }),
+    )
+    .await;
+    assert_eq!(outcome["kind"], "action_finished", "{outcome}");
+    assert_eq!(outcome["result"]["push"]["status"], "pushed");
+    assert_eq!(outcome["result"]["push"]["branch"], "feature-x");
+
+    assert_eq!(
+        git_stdout_in(&remote, &["rev-parse", "refs/heads/feature-x"]),
+        head,
+        "the branch is published under its own name"
+    );
+    assert_eq!(
+        git_stdout_in(&remote, &["rev-parse", "refs/heads/develop"]),
+        develop,
+        "the upstream the branch was made from is unchanged"
+    );
+    assert_eq!(
+        git_stdout_in(&consumer, &["rev-parse", "--abbrev-ref", "@{upstream}"]).trim(),
+        "origin/feature-x",
+        "the branch now tracks what was pushed, so status counts against it"
+    );
+    assert_eq!(
+        git_stdout_in(&consumer, &["rev-list", "--count", "@{upstream}..HEAD"]).trim(),
+        "0"
+    );
+    server.shutdown().await;
+}
+
+/// #157: an explicitly configured `push.default` is the user's choice, so Push stays a bare
+/// `git push` and Git applies it: `upstream` pushes to the differently named upstream.
+#[tokio::test]
+async fn stacked_push_honours_an_explicit_push_default() {
+    let parallelism_permit = acquire_git_rpc_fixture().await;
+    if relaunch_with_isolated_git_config("stacked_push_honours_an_explicit_push_default") {
+        return;
+    }
+
+    let temp = TempDir::new().expect("temporary server directory");
+    let root = TempDir::new().expect("temporary fixture root");
+    let (remote, consumer, _) = renamed_upstream_fixture(root.path());
+    run_git_in(&consumer, &["config", "push.default", "upstream"]);
+    let head = git_stdout_in(&consumer, &["rev-parse", "HEAD"]);
+
+    let mut server = GitServerHarness::start(&temp, parallelism_permit).await;
+    let outcome = run_stacked_action(
+        server.socket(),
+        "157",
+        json!({
+            "actionId": "push-explicit-default",
+            "cwd": consumer.to_string_lossy(),
+            "action": "push",
+        }),
+    )
+    .await;
+    assert_eq!(outcome["kind"], "action_finished", "{outcome}");
+    assert_eq!(
+        git_stdout_in(&remote, &["rev-parse", "refs/heads/develop"]),
+        head
+    );
+    assert_eq!(
+        git_stdout_in(&remote, &["for-each-ref", "refs/heads/feature-x"]),
+        ""
+    );
+    assert_eq!(
+        git_stdout_in(&consumer, &["config", "branch.feature-x.merge"]).trim(),
+        "refs/heads/develop"
+    );
+    server.shutdown().await;
+}
+
 #[tokio::test]
 async fn stacked_create_pr_rejects_missing_targets_and_dirty_worktree_before_mutations() {
     let parallelism_permit = acquire_git_rpc_fixture().await;

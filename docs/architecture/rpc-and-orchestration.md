@@ -672,6 +672,22 @@ fields and derive nouns and number prefixes from the provider kind through
 `@bibcode/shared/sourceControl`; the remaining vocabulary fields still describe
 host-specific controls.
 
+A stacked push of the current branch (`push`, `commit_push`, and the publish
+step of a request action without an explicit source) runs a bare `git push`,
+which follows the user's Git configuration, with two exceptions. A branch
+without an upstream publishes with `push --set-upstream origin <branch>`. A
+branch whose upstream has another name, such as one made with
+`git checkout -b feature-x origin/develop`, publishes
+`refs/heads/<branch>:refs/heads/<branch>` with `--set-upstream` to the
+upstream's remote (`origin` for a local `.` upstream) (#157). Git's default
+`push.default=simple` refuses a bare push there. This exception applies only
+while neither `push.default` nor a push remote (`remote.pushDefault`,
+`branch.<name>.pushRemote`) is configured. The branch then tracks
+`<remote>/<branch>`, so ahead/behind counts against what was pushed. The
+upstream it started from is never written, and nothing is forced. An
+`action_failed` event's `message` carries Git's own error, which the Source
+Control toasts show; the settled client error keeps only the action and phase.
+
 ### Pull Requests flow
 
 `git.runStackedAction` carries the explicitly reviewed `pullRequestBaseBranch`
