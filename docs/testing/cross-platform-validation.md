@@ -2216,7 +2216,10 @@ starts.
     Git Manager only closes the dialog. A branch
     created with `git checkout -b feature origin/main` (upstream `origin/main`)
     must open the dialog without a push and publish `origin/feature` only when
-    the request is created.
+    the request is created. Plain **Push** on such a branch must publish
+    `origin/feature`, make it the branch's upstream, and leave `origin/main`
+    unchanged. A Push that Git rejects must show Git's own error in the
+    toast (#157).
     With a disposable configured forge, create once and verify the exact selected
     non-default target; plain **Push** must never create a request. Only the
     dialog's explicit primary action may publish or create.

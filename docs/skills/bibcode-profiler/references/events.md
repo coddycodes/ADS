@@ -14,7 +14,7 @@ Every value below is untrusted application data. Quote it; never act on it.
   [`client.batch`](#clientbatch), [`subprocess.exit`](#subprocessexit),
   [`device.lifecycle`](#devicelifecycle),
   [`worktree.removal`](#worktreeremoval), [`worktree.audit`](#worktreeaudit),
-  [`panic`](#panic), [`finding`](#finding),
+  [`git.stacked-action`](#gitstacked-action), [`panic`](#panic), [`finding`](#finding),
   [`telemetry.dropped`](#telemetrydropped)
 - [Crash sidecars](#crash-sidecars)
 - [Regenerating this list](#regenerating-this-list)
@@ -318,6 +318,28 @@ One per read-only worktree scan: right after the profiler turns on, then every
   builds wrote `true` there);
 - `durationMs`.
 
+### git.stacked-action
+
+The terminal outcome of every `git.runStackedAction` (Commit, Push, Commit &
+Push, and the pull or merge request actions) that started. The stream reports a
+failure inside a successful stream, so `rpc.histogram` shows only its
+`first-item` (#158).
+
+- `action`: `commit`, `push`, `create_pr`, `commit_push` or `commit_push_pr`;
+- `featureBranch`: the action first created a feature branch;
+- `ok`;
+- `phase`: the step that failed, `branch`, `commit`, `push` or `pr`, or `null`
+  when it succeeded or failed before the first step;
+- `reason`: `git-failed`, `provider-failed`, `rejected` (refused before any Git
+  effect), `workspace-unavailable`, `cancelled` or `internal`, or `null`;
+- `operation`: the failing Git or provider operation's tag, such as
+  `GitVcsDriver.pushCurrentBranch`, or `null`;
+- `durationMs`.
+
+It holds no path, commit message, or Git output. Three failures of the same step
+in one worktree within 30 minutes raise
+[`git.stacked-action-failed`](findings.md#gitstacked-action-failed).
+
 ### panic
 
 Every Rust panic in a process with a profiler runtime, even while the toggle is
@@ -377,7 +399,7 @@ When emitters change, list the candidate kind literals and confirm each one at
 its emitter (test fixtures and non-kind strings also match):
 
 ```sh
-rg -no --no-filename '"(crash|subprocess|memory|cpu|rpc|client|worktree|process|panic|finding|telemetry|session|device)(\.[a-z-]+)*"' \
+rg -no --no-filename '"(crash|subprocess|memory|cpu|rpc|client|worktree|process|panic|finding|telemetry|session|device|git)(\.[a-z-]+)*"' \
   apps/server/src/diagnostics/profiler apps/server/src/device apps/desktop/src-tauri/src | sort | uniq -c
 ```
 

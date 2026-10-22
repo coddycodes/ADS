@@ -5688,20 +5688,87 @@ impl GitRepository {
                 cancellation,
             )
             .await?;
-        let args = if upstream.exit_code == 0 {
-            strings(&["push"])
-        } else {
+        let args = if upstream.exit_code != 0 {
             vec![
                 "push".into(),
                 "--set-upstream".into(),
                 "origin".into(),
                 branch.clone(),
             ]
+        } else if let Some(remote) = self
+            .renamed_upstream_remote(cwd, &branch, cancellation)
+            .await?
+        {
+            // Publish under the local name and track it, so status compares with the branch
+            // that was pushed. A non-fast-forward is still refused: nothing forces.
+            vec![
+                "push".into(),
+                "--set-upstream".into(),
+                "--".into(),
+                remote,
+                format!("refs/heads/{branch}:refs/heads/{branch}"),
+            ]
+        } else {
+            strings(&["push"])
         };
         self.for_bounded_transfer()
             .run("GitVcsDriver.pushCurrentBranch", cwd, &args, cancellation)
             .await?;
         Ok(branch)
+    }
+
+    /// The remote to publish `branch` to when its upstream has another name (#157), such as a
+    /// branch made with `git checkout -b feature-x origin/develop`. Git's default
+    /// `push.default=simple` refuses a bare `git push` there, whether it is unset or set to
+    /// `simple`. `None` keeps the bare push: the upstream has the branch's own name, or the
+    /// user configured another `push.default` or a push remote, which Git then honours. A local upstream (`.`) publishes to
+    /// `origin`.
+    async fn renamed_upstream_remote(
+        &self,
+        cwd: &Path,
+        branch: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Option<String>, GitCommandError> {
+        let config = |key: String| async move {
+            self.execute_read(
+                "GitVcsDriver.pushCurrentBranch.config",
+                cwd,
+                &["config".into(), "--get".into(), key],
+                true,
+                cancellation,
+            )
+            .await
+            .map(|output| {
+                (output.exit_code == 0)
+                    .then(|| output.stdout.trim().to_owned())
+                    .filter(|value| !value.is_empty())
+            })
+        };
+        let merge = config(format!("branch.{branch}.merge")).await?;
+        if merge.is_none_or(|merge| merge == format!("refs/heads/{branch}")) {
+            return Ok(None);
+        }
+        // An explicit `simple` is Git's default spelled out (often left by old Git warnings):
+        // it chooses no other target, so it refuses the same push.
+        if config("push.default".to_owned())
+            .await?
+            .is_some_and(|mode| !mode.eq_ignore_ascii_case("simple"))
+        {
+            return Ok(None);
+        }
+        for key in [
+            "remote.pushDefault".to_owned(),
+            format!("branch.{branch}.pushRemote"),
+        ] {
+            if config(key).await?.is_some() {
+                return Ok(None);
+            }
+        }
+        let remote = config(format!("branch.{branch}.remote"))
+            .await?
+            .filter(|remote| remote != ".")
+            .unwrap_or_else(|| "origin".to_owned());
+        Ok(Some(remote))
     }
 
     pub async fn push_current_branch_to_remote(

@@ -1400,6 +1400,30 @@ staticDescribe("stacked action results", () => {
     );
   });
 
+  it("shows what Git said when the server reports the failure (#157)", async () => {
+    const gitError =
+      "fatal: The upstream branch of your current branch does not match the name of your current branch.";
+    testState.stackedAction.run.mockImplementation(
+      async (input: { actionId: string; onProgress: (event: GitActionProgressEvent) => void }) => {
+        input.onProgress({
+          actionId: input.actionId,
+          cwd: "/repo",
+          action: "push",
+          kind: "action_failed",
+          phase: null,
+          message: gitError,
+        } as GitActionProgressEvent);
+        // The settled error names only the action and phase, never the remote text.
+        return failure("Source control action 'push' failed during execution.");
+      },
+    );
+    await runPush();
+    expect(testState.toast.update).toHaveBeenLastCalledWith(
+      "toast-1",
+      expect.objectContaining({ type: "error", title: "Action failed", description: gitError }),
+    );
+  });
+
   it("closes the toast quietly when interrupted", async () => {
     testState.stackedAction.run.mockResolvedValue(interrupted());
     await runPush();

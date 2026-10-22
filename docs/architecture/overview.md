@@ -1549,7 +1549,8 @@ it.
 - `evidence.eventIds` lists the `eventId` of the event behind a finding, for
   these pairs only: `rpc.slow` cites `rpc.timing` (the slowest call) or, from a
   client, `client.request`; `subprocess.crash` cites `subprocess.exit`;
-  `worktree.removal-failed` cites `worktree.removal`; `client.stall` and
+  `worktree.removal-failed` cites `worktree.removal`;
+  `git.stacked-action-failed` cites `git.stacked-action`; `client.stall` and
   `client.interaction` cite `client.batch`; and `crash.panic` cites `panic`. An
   event dropped by a full channel is never cited.
 - `server.getProfilerStatus` returns the 20 newest findings without evidence;
@@ -1802,6 +1803,20 @@ it.
   Nothing is reported once BiBCode is terminating.
 
 - **Worktree audit.** See [Worktree catalog: Audit](./worktree-catalog.md#audit).
+- **Git stacked actions (#158).** `git.runStackedAction` reports a failed
+  commit, push, or request step as an `action_failed` item inside a stream that
+  then ends successfully, so stream timing alone records only `first-item`.
+  Each action that started therefore writes a `git.stacked-action` event with
+  its action, outcome, failing step, error class (`git-failed`,
+  `provider-failed`, `rejected`, `workspace-unavailable`, `cancelled`, or
+  `internal`), the failing operation's tag, and its duration. The wire detail,
+  which can quote a commit message or hook output, is never recorded, and the
+  event holds no path. The third failure of the same step in one worktree within 30
+  minutes raises `git.stacked-action-failed` (warn), and every later one in
+  that window repeats it. The fingerprint is the action, step, class, and
+  operation tag, never the path. The per-worktree repeat window lives only in
+  memory, and the evidence carries the worktree with the home directory as
+  `~`. A refused request, a lost workspace, and a cancellation raise nothing.
 
 ### Profiler off
 
