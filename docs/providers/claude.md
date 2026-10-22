@@ -92,7 +92,11 @@ When a conversation no longer fits, Claude ends the turn with a context-limit
 · automatic compaction failed: <cause>`). BiBCode fails that turn with the
 `context_limit` error class and the message "Claude's context window is full.
 Compact the conversation, then send your message again.", followed by Claude's
-text. BiBCode does not compact or resend on its own.
+text. The thread's error, titled "Claude ran out of context", offers **Compact
+conversation**, which sends `/compact` to the same session as an ordinary
+message; it is disabled while the thread is working, which includes a
+compaction already running. Send your message again once the compaction
+finishes. BiBCode does not compact or resend on its own.
 
 Other failed turns prefer, in order: the result's `errors`, the text of
 Claude's synthetic error message (an `authentication_failed`,
