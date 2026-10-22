@@ -42,6 +42,8 @@ export function ManualUpdateStepsDialog({
   return (
     <Dialog
       open
+      // Read-only steps: nothing is lost, so an outside press may close it.
+      disablePointerDismissal={false}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}

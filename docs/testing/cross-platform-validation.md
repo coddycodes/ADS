@@ -2196,7 +2196,9 @@ starts.
     option is selected; typing alone must not enable it. Choose a non-default
     target (for example `release/next`) and confirm a status refresh preserves
     the choice, clearing it disables creation again, and reopening starts
-    unselected. Repeat from the chat Git action; combined commit/push/request
+    unselected. With a target chosen and a description typed, click the dimmed
+    backdrop: the dialog stays open with every field intact; Cancel, **×**, and
+    Escape still close it. Repeat from the chat Git action; combined commit/push/request
     actions must also require target review before any mutation. No push,
     provider mutation, or pull request may run just by opening the dialog from
     these entry points; on servers with `pullRequestCreateOptions`, opening it
