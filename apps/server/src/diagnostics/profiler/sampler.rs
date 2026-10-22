@@ -798,15 +798,10 @@ fn parse_private_bytes(status: &str) -> Option<u64> {
     Some((anon + kib("VmSwap:").unwrap_or(0)) * 1024)
 }
 
+/// The physical footprint, the figure Resource Manager also reports on macOS.
 #[cfg(target_os = "macos")]
 fn private_bytes(pid: u32) -> Option<u64> {
-    let pid = i32::try_from(pid).ok()?;
-    let mut info = std::mem::MaybeUninit::<libc::rusage_info_v2>::uninit();
-    // SAFETY: `info` is writable storage of the size the `RUSAGE_INFO_V2` flavor fills.
-    let result =
-        unsafe { libc::proc_pid_rusage(pid, libc::RUSAGE_INFO_V2, info.as_mut_ptr().cast()) };
-    // SAFETY: a zero result means the call filled `info`.
-    (result == 0).then(|| unsafe { info.assume_init() }.ri_phys_footprint)
+    crate::diagnostics::physical_footprint(pid)
 }
 
 #[cfg(windows)]
@@ -999,6 +994,15 @@ mod tests {
         assert_eq!(parse_private_bytes(status), Some(320 * 1024));
         assert_eq!(parse_private_bytes("Name:\tkthreadd\n"), None);
         assert!(private_bytes(std::process::id()).is_some_and(|bytes| bytes > 0));
+    }
+
+    /// The Profiler and Resource Manager read one figure on macOS, the physical footprint.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn private_memory_is_the_physical_footprint() {
+        let footprint = private_bytes(std::process::id()).expect("read this process");
+        assert!(footprint > 0);
+        assert_eq!(private_bytes(u32::MAX), None, "no process has that pid");
     }
 
     /// Children that idle for about 30 s, killed and reaped on drop.

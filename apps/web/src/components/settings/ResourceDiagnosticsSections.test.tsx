@@ -302,6 +302,9 @@ describe("ResourceDiagnosticsSections", () => {
     expect(markup).toContain("BiBCode Core");
     expect(markup).toContain("External Tooling");
     expect(markup).toContain("Server PID");
+    // #159: the memory figure says what it measures on each server OS.
+    expect(markup).toContain("physical footprint on macOS, as in Activity Monitor");
+    expect(markup).toContain("resident memory on Linux and Windows");
   });
 
   it("renders memory-first rows and applies deterministic Name sorting after interaction", () => {

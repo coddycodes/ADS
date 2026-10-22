@@ -1728,7 +1728,9 @@ it.
   processes registered in `ProcessAttributionRegistry` (providers, terminals,
   the desktop webview, helpers), and up to 128 descendants rediscovered every
   60 s. Leak rules read private memory (Linux `RssAnon + VmSwap`, Windows
-  `PrivateUsage`, macOS `phys_footprint`) and fall back to RSS. Samples become
+  `PrivateUsage`, macOS `phys_footprint`) and fall back to RSS. On macOS
+  Resource Manager reports the same footprint, through the same reader
+  (`diagnostics::physical_footprint`). Samples become
   1-minute medians that feed the rules in memory. Each process has a kind:
   `server`, or `desktop-host` for a server inside the desktop app;
   `provider:<driver>` for a registered provider; `terminal`; `webview`;
@@ -2647,7 +2649,12 @@ or non-empty process-ownership cleanup refreshes the host process table on the
 blocking pool. Full discovery remains necessary to identify previously unknown
 descendants for attribution and cleanup; direct PID identity checks use the native
 targeted lookup independently of that table. CPU observations establish their
-baseline on the first sample and retain it for subsequent samples.
+baseline on the first sample and retain it for subsequent samples. Each row's
+memory (`rssBytes`) is the physical footprint on macOS, falling back to the
+resident size for a process the server may not inspect, and the resident size
+on Linux and Windows (see
+[Observability](../operations/observability.md#process-diagnostics)); Resource Manager
+says so under its totals.
 
 `DiagnosticsMonitor` takes diagnostics samples in one background task, every
 2 seconds in production, and `server.getProcessDiagnostics` and

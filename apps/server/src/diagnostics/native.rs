@@ -335,7 +335,7 @@ fn collect_rows(system: &Arc<Mutex<System>>) -> Result<Vec<ProcessRow>, Sampling
                     raw_cpu
                 },
                 cpu_core_percent: Some(raw_cpu),
-                rss_bytes: process.memory(),
+                rss_bytes: process_memory_bytes(pid, process.memory()),
                 elapsed: format_elapsed(process.run_time()),
                 command: command_string(process.cmd(), process.name()),
             };
@@ -345,6 +345,37 @@ fn collect_rows(system: &Arc<Mutex<System>>) -> Result<Vec<ProcessRow>, Sampling
         .collect::<Vec<_>>();
     rows.sort_by_key(|row| row.pid);
     Ok(rows)
+}
+
+/// The memory a diagnostics row reports, from the process's `resident` size.
+///
+/// On macOS this is the physical footprint, which Activity Monitor and the Profiler show
+/// (#159): a WebKit process keeps freed allocator memory resident, so its resident size
+/// can be several times what the system charges it. A process this one may not inspect,
+/// such as another user's, keeps its resident size; attribution shows only BiBCode's own
+/// processes. Elsewhere this is the resident size (Linux RSS, the Windows working set).
+#[cfg(target_os = "macos")]
+fn process_memory_bytes(pid: u32, resident: u64) -> u64 {
+    physical_footprint(pid).unwrap_or(resident)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn process_memory_bytes(_pid: u32, resident: u64) -> u64 {
+    resident
+}
+
+/// The physical footprint (`ri_phys_footprint`) of `pid`: its dirty, compressed and
+/// IOKit-mapped memory, without clean file-backed pages or reclaimable allocator memory.
+/// `None` when the process has exited or may not be inspected.
+#[cfg(target_os = "macos")]
+pub(crate) fn physical_footprint(pid: u32) -> Option<u64> {
+    let pid = i32::try_from(pid).ok()?;
+    let mut info = std::mem::MaybeUninit::<libc::rusage_info_v2>::uninit();
+    // SAFETY: `info` is writable storage of the size the `RUSAGE_INFO_V2` flavor fills.
+    let result =
+        unsafe { libc::proc_pid_rusage(pid, libc::RUSAGE_INFO_V2, info.as_mut_ptr().cast()) };
+    // SAFETY: a zero result means the call filled `info`.
+    (result == 0).then(|| unsafe { info.assume_init() }.ri_phys_footprint)
 }
 
 #[cfg(target_os = "linux")]
@@ -1021,6 +1052,96 @@ mod tests {
             pid: child_pid,
             started_at: descendant.started_at,
         }));
+    }
+
+    /// The test's own oracle for `ri_phys_footprint`, independent of the sampler.
+    #[cfg(target_os = "macos")]
+    fn footprint_of_this_process() -> u64 {
+        let mut info = std::mem::MaybeUninit::<libc::rusage_info_v2>::uninit();
+        // SAFETY: `info` is writable storage of the size the `RUSAGE_INFO_V2` flavor fills.
+        let result = unsafe {
+            libc::proc_pid_rusage(
+                i32::try_from(std::process::id()).expect("pid fits"),
+                libc::RUSAGE_INFO_V2,
+                info.as_mut_ptr().cast(),
+            )
+        };
+        assert_eq!(result, 0, "proc_pid_rusage reads this process");
+        // SAFETY: a zero result means the call filled `info`.
+        unsafe { info.assume_init() }.ri_phys_footprint
+    }
+
+    /// #159: Resource Manager and the status bar read the physical footprint on macOS, as
+    /// Activity Monitor and the Profiler do, not the resident size, which also counts
+    /// reclaimable and clean file-backed pages.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn macos_rows_report_the_physical_footprint_not_the_resident_size() {
+        use std::{io::Write, os::fd::AsRawFd};
+
+        const MAPPED: usize = 128 << 20;
+        const TOLERANCE: u64 = 48 << 20;
+        // Clean file-backed pages count toward the resident size but not the footprint, so
+        // touching a mapped file makes the two diverge by about its size.
+        let mut file = tempfile::tempfile().expect("create the mapped file");
+        let chunk = vec![1_u8; 1 << 20];
+        for _ in 0..MAPPED / chunk.len() {
+            file.write_all(&chunk).expect("fill the mapped file");
+        }
+        file.flush().expect("flush the mapped file");
+        // SAFETY: a fresh read-only shared mapping of a file this test owns, unmapped below.
+        let mapping = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                MAPPED,
+                libc::PROT_READ,
+                libc::MAP_SHARED,
+                file.as_raw_fd(),
+                0,
+            )
+        };
+        assert_ne!(mapping, libc::MAP_FAILED, "map the file");
+        let page = 16 << 10;
+        let mut checksum = 0_u64;
+        for offset in (0..MAPPED).step_by(page) {
+            // SAFETY: `offset` lies inside the mapping, which stays mapped until below.
+            checksum +=
+                u64::from(unsafe { std::ptr::read_volatile(mapping.cast::<u8>().add(offset)) });
+        }
+        assert!(checksum > 0);
+
+        let sampler = NativeProcessSampler::default();
+        let before = footprint_of_this_process();
+        let rows = sampler.sample().await.expect("processes should sample");
+        let after = footprint_of_this_process();
+        let resident = {
+            let mut system = System::new();
+            let pid = sysinfo::Pid::from_u32(std::process::id());
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&[pid]),
+                true,
+                ProcessRefreshKind::nothing().with_memory(),
+            );
+            system.process(pid).expect("this process").memory()
+        };
+        // SAFETY: `mapping` came from the `mmap` above and is unmapped once.
+        unsafe { libc::munmap(mapping, MAPPED) };
+
+        let current = rows
+            .iter()
+            .find(|row| row.pid == std::process::id())
+            .expect("current test process should remain visible");
+        assert!(
+            current.rss_bytes + TOLERANCE >= before.min(after)
+                && current.rss_bytes <= before.max(after) + TOLERANCE,
+            "row memory {} should be the footprint ({before}..{after}), not the resident size {resident}",
+            current.rss_bytes,
+        );
+        assert!(
+            current.rss_bytes + (MAPPED as u64) / 2 <= resident,
+            "row memory {} should leave out the {MAPPED} mapped file bytes in the resident size {resident}",
+            current.rss_bytes,
+        );
     }
 
     #[tokio::test]

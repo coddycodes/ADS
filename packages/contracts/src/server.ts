@@ -406,6 +406,11 @@ export const ServerProcessDiagnosticsEntry = Schema.Struct({
   pgid: Schema.Option(Schema.Int),
   status: TrimmedNonEmptyString,
   cpuPercent: Schema.Finite,
+  /**
+   * The process's memory, despite the name: its physical footprint on a macOS server, as
+   * Activity Monitor shows, and its resident size on Linux and Windows. Totals and
+   * history sum this figure.
+   */
   rssBytes: NonNegativeInt,
   elapsed: TrimmedNonEmptyString,
   command: TrimmedNonEmptyString,
