@@ -894,6 +894,7 @@ describe("ComposerPromptEditor inline token nodes", () => {
     document.body.append(outside, container);
     const root = createRoot(container);
     const editorRef = createRef<ComposerPromptEditorHandle>();
+    const spies: Array<{ mockRestore: () => void }> = [];
     const source = "use $refactor now";
     const cursor = "use ".length;
     const renderWithSkills = (nextSkills: ReadonlyArray<ServerProviderSkill>) => (
@@ -932,6 +933,74 @@ describe("ComposerPromptEditor inline token nodes", () => {
       expect(domSelection.rangeCount).toBe(0);
       expect(editorRef.current?.readSnapshot()).toMatchObject({ value: source, cursor });
       expect(document.activeElement).toBe(outside);
+
+      // Focusing the composer again, as a Tab back in does, puts the saved caret back: the
+      // browser would otherwise place it at the start.
+      const caret = () => ({
+        inEditor: domSelection.rangeCount > 0 && editorRoot.contains(domSelection.anchorNode),
+        text: domSelection.anchorNode?.textContent,
+        offset: domSelection.anchorOffset,
+      });
+      (editorRoot as HTMLElement).focus();
+      expect(caret()).toEqual({ inEditor: true, text: "use ", offset: cursor });
+
+      // Only once: a later focus is the browser's and the user's to place.
+      outside.focus();
+      const placeSelection = vi.spyOn(domSelection, "setBaseAndExtent");
+      spies.push(placeSelection);
+      (editorRoot as HTMLElement).focus();
+      expect(placeSelection).not.toHaveBeenCalled();
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+      await act(async () => root.unmount());
+      container.remove();
+      outside.remove();
+      harness.useRealEffects = false;
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+    }
+  });
+
+  it("places focusAt's caret, not the saved one, while a restore is pending", async () => {
+    harness.useRealEffects = true;
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    const outside = document.createElement("button");
+    document.body.append(outside, container);
+    const root = createRoot(container);
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    const source = "use $refactor now";
+    const renderWithSkills = (nextSkills: ReadonlyArray<ServerProviderSkill>) => (
+      <ComposerPromptEditor
+        value={source}
+        cursor={"use ".length}
+        terminalContexts={[]}
+        skills={nextSkills}
+        agents={[]}
+        disabled={false}
+        placeholder="Ask anything"
+        onRemoveTerminalContext={vi.fn()}
+        onChange={vi.fn()}
+        onPaste={vi.fn()}
+        editorRef={editorRef}
+      />
+    );
+
+    try {
+      await act(async () => root.render(renderWithSkills([])));
+      const editorRoot = container.querySelector('[contenteditable="true"]');
+      const text = editorRoot?.querySelector("span")?.firstChild;
+      const domSelection = window.getSelection();
+      if (!editorRoot || !text || !domSelection) throw new Error("The composer did not render.");
+      domSelection.setBaseAndExtent(text, 2, text, 2);
+      outside.focus();
+      // The refresh removes the leftover range and arms the restore.
+      await act(async () => root.render(renderWithSkills(skills)));
+      expect(domSelection.rangeCount).toBe(0);
+
+      await act(async () => editorRef.current?.focusAt(1));
+
+      expect(editorRef.current?.readSnapshot().cursor).toBe(1);
+      expect(domSelection.anchorOffset).toBe(1);
     } finally {
       await act(async () => root.unmount());
       container.remove();
