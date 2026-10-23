@@ -22,7 +22,7 @@ import {
   type LexicalEditor,
   type LexicalNode,
 } from "lexical";
-import { act, createRef } from "react";
+import { act, createRef, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -1001,6 +1001,68 @@ describe("ComposerPromptEditor inline token nodes", () => {
 
       expect(editorRef.current?.readSnapshot().cursor).toBe(1);
       expect(domSelection.anchorOffset).toBe(1);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      outside.remove();
+      harness.useRealEffects = false;
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+    }
+  });
+
+  it("restores the reconciled caret when the parent reads the snapshot during a refresh", async () => {
+    harness.useRealEffects = true;
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    const outside = document.createElement("button");
+    document.body.append(outside, container);
+    const root = createRoot(container);
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    const source = "use $refactor now";
+    // Before the skill is known its token is plain text, so the caret before "now" is 14.
+    const expandedCursor = "use $refactor ".length;
+    // ChatComposer re-detects its trigger in a layout effect when the capabilities change,
+    // which runs after the editor's own layout effect has queued the rebuild.
+    function Composer({ nextSkills }: { nextSkills: ReadonlyArray<ServerProviderSkill> }) {
+      useLayoutEffect(() => {
+        editorRef.current?.readSnapshot();
+      }, [nextSkills]);
+      return (
+        <ComposerPromptEditor
+          value={source}
+          cursor={expandedCursor}
+          terminalContexts={[]}
+          skills={nextSkills}
+          agents={[]}
+          disabled={false}
+          placeholder="Ask anything"
+          onRemoveTerminalContext={vi.fn()}
+          onChange={vi.fn()}
+          onPaste={vi.fn()}
+          editorRef={editorRef}
+        />
+      );
+    }
+
+    try {
+      await act(async () => root.render(<Composer nextSkills={[]} />));
+      const editorRoot = container.querySelector('[contenteditable="true"]');
+      const text = editorRoot?.querySelector("span")?.firstChild;
+      const domSelection = window.getSelection();
+      if (!editorRoot || !text || !domSelection) throw new Error("The composer did not render.");
+      domSelection.setBaseAndExtent(text, expandedCursor, text, expandedCursor);
+      outside.focus();
+
+      await act(async () => root.render(<Composer nextSkills={skills} />));
+      (editorRoot as HTMLElement).focus();
+
+      // The token now counts as one position: "use " + token + " " puts the caret at 6,
+      // still before "now".
+      expect(editorRef.current?.readSnapshot()).toMatchObject({
+        value: source,
+        cursor: "use ".length + 2,
+        expandedCursor,
+      });
     } finally {
       await act(async () => root.unmount());
       container.remove();

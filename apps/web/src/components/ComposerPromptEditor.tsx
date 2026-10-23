@@ -1844,6 +1844,10 @@ function ComposerPromptEditorInner({
     expandedCursor: number;
     terminalContextIds: string[];
   } => {
+    // A controlled update queued in this commit has not reached the editor state yet. The
+    // snapshot already holds what it writes; reading the old state here (ChatComposer does
+    // in a layout effect) would put the pre-update caret back and undo it.
+    if (isApplyingControlledUpdateRef.current) return snapshotRef.current;
     let snapshot = snapshotRef.current;
     editor.getEditorState().read(() => {
       const nextValue = $getRoot().getTextContent();
