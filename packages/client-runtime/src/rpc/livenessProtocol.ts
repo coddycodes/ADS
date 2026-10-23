@@ -14,6 +14,12 @@
  * response's delivery starts in arrival order without waiting for the previous
  * one, as it did before Effect 4.0 made sockets pull-based.
  *
+ * Because it never reconnects, a write after the socket's reader is released
+ * waits forever for a reopen. Effect 4.0.2's `RpcClient` sends Interrupt
+ * uninterruptibly after a chunk fails to decode, so that wait blocked the
+ * teardown and the disconnect was never reported; `patches/effect@4.0.2.patch`
+ * makes that send interruptible.
+ *
  * It uses only public Effect exports. Re-check it against upstream on every
  * Effect upgrade, and delete it once upstream exposes a configurable pinger
  * (connection-liveness design, item 1).

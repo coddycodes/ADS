@@ -975,6 +975,37 @@ describe("RpcSessionFactory", () => {
       }),
     ).pipe(withFixedRandom),
   );
+  // Effect 4.0.2 answers a chunk it cannot decode by sending Interrupt for that request
+  // uninterruptibly. When the socket closes before that chunk is handled, the send waited for
+  // a reopen this protocol never makes, and the session never reported its disconnect, so the
+  // supervisor never retried (patches/effect@4.0.2.patch). Without the patch this test hangs,
+  // hence the real-time limit.
+  it.effect(
+    "reports the disconnect when the socket closes while an undecodable chunk is handled",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { factory, sockets } = yield* makeFactory();
+          const session = yield* factory.connect(PREPARED);
+          const ready = yield* Effect.forkChild(session.ready);
+          const socket = yield* awaitSocket(sockets);
+          socket.open();
+          const configRequest = yield* completeInitialConfig(socket);
+          yield* Fiber.join(ready);
+
+          // One synchronous turn: the reply is queued, then the socket goes away.
+          socket.serverMessage(
+            encodeJson({ _tag: "Chunk", requestId: configRequest.id, values: [null] }),
+          );
+          socket.close(1012, "service restart");
+
+          const error = yield* Effect.flip(session.closed);
+          expect(error).toBeInstanceOf(ConnectionTransientError);
+        }),
+      ).pipe(withFixedRandom),
+    5_000,
+  );
+
   it.effect("offers the chunked subprotocols, compression first, on plain sockets only", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();

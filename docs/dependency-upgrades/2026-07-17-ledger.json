@@ -1272,7 +1272,7 @@
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
-      "notes": "Effect 4 stable (4.0.0 replaced the beta/RC series). 4.0.2 (2026-10-07) is the newest release satisfying the 14-day age rule for the v0.11.0 upgrade; all Effect packages share this exact version. Migration: effect/unstable/* paths dropped the unstable segment, Schema.toArbitrary became the native effect/Arbitrary runner, and parseOptions annotations no longer affect parsing."
+      "notes": "Effect 4 stable (4.0.0 replaced the beta/RC series). 4.0.2 (2026-10-07) is the newest release satisfying the 14-day age rule for the v0.11.0 upgrade; all Effect packages share this exact version. Migration: effect/unstable/* paths dropped the unstable segment, Schema.toArbitrary became the native effect/Arbitrary runner, and parseOptions annotations no longer affect parsing. patches/effect@4.0.2.patch makes the Interrupt that RpcClient sends after a chunk fails to decode interruptible: 4.0.2 sends it uninterruptibly, and when the socket had already closed it waited for a reopen the client protocol never makes, so the session never reported its disconnect and never reconnected. Drop the patch once upstream makes that send interruptible."
     },
     {
       "key": "js:catalog:jose",

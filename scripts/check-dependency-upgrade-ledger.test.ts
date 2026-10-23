@@ -630,6 +630,7 @@ describe("dependency upgrade ledger validation", () => {
       "@effect/vitest@4.0.2",
       "@pierre/trees@1.0.0-beta.6",
       "@wdio/tauri-plugin@1.2.0",
+      "effect@4.0.2",
     ]);
   });
 
