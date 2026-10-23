@@ -251,9 +251,16 @@ pub struct ReconnectSnapshot {
 #[derive(Debug, Clone)]
 struct InFlightTool {
     index: u64,
+    /// The subagent tool call whose stream carries this block; `None` for the root stream. Block
+    /// indexes restart in every message, so a block is found by its stream and index.
+    parent_tool_use_id: Option<String>,
     tool_use_id: String,
     tool_name: String,
     input: Value,
+    /// The `input_json_delta` fragments received so far. Claude streams a tool's input as
+    /// fragments of a JSON document, so it is parsed and reported once, when its block stops
+    /// (#167).
+    streamed_input: String,
     result: Option<Value>,
     stopped: bool,
     completed: bool,
@@ -1779,7 +1786,9 @@ impl ClaudeProviderRuntime {
 
     pub fn handle_message(&mut self, message: ClaudeMessage) -> Vec<CanonicalEvent> {
         match message {
-            ClaudeMessage::StreamEvent(message) => self.handle_stream_event(message.event),
+            ClaudeMessage::StreamEvent(message) => {
+                self.handle_stream_event(message.parent_tool_use_id, message.event)
+            }
             ClaudeMessage::User(message) => self.handle_user_message(message.message.content),
             ClaudeMessage::Assistant(message) => self.handle_assistant_message(message),
             ClaudeMessage::Result(message) => self.handle_result_message(message),
@@ -2497,7 +2506,11 @@ impl ClaudeProviderRuntime {
             .collect();
     }
 
-    fn handle_stream_event(&mut self, event: StreamEvent) -> Vec<CanonicalEvent> {
+    fn handle_stream_event(
+        &mut self,
+        parent_tool_use_id: Option<String>,
+        event: StreamEvent,
+    ) -> Vec<CanonicalEvent> {
         match event {
             StreamEvent::MessageStart { message } => {
                 self.active_assistant_item_id = Some(message.id.clone());
@@ -2517,9 +2530,11 @@ impl ClaudeProviderRuntime {
                     id.clone(),
                     InFlightTool {
                         index,
+                        parent_tool_use_id,
                         tool_use_id: id.clone(),
                         tool_name: name.clone(),
                         input: input.clone(),
+                        streamed_input: String::new(),
                         result: None,
                         stopped: false,
                         completed: false,
@@ -2567,14 +2582,36 @@ impl ClaudeProviderRuntime {
                 }),
                 self.active_assistant_item_id.clone(),
             )],
+            // A fragment of the tool's input is not a step of its own: recording each one as an
+            // update made them most of a thread's activity (#167). The input is reported once,
+            // complete, when its block stops.
             StreamEvent::ContentBlockDelta {
                 index,
                 delta: ContentBlockDelta::InputJsonDelta { partial_json },
             } => {
-                let Some((tool_use_id, tool_name, parsed_input, plan)) =
-                    self.update_tool_input(index, &partial_json)
+                if let Some(tool) =
+                    self.find_streaming_tool_mut(parent_tool_use_id.as_deref(), index)
+                {
+                    tool.streamed_input.push_str(&partial_json);
+                }
+                Vec::new()
+            }
+            StreamEvent::ContentBlockStop { index } => {
+                let Some(tool) = self.find_streaming_tool_mut(parent_tool_use_id.as_deref(), index)
                 else {
                     return Vec::new();
+                };
+                tool.stopped = true;
+                if !take_streamed_input(tool) {
+                    return Vec::new();
+                }
+                let tool_use_id = tool.tool_use_id.clone();
+                let tool_name = tool.tool_name.clone();
+                let input = tool.input.clone();
+                let plan = if is_todo_tool(&tool_name) {
+                    extract_plan_steps(&input)
+                } else {
+                    None
                 };
                 let mut events = vec![self.event(
                     "item.updated",
@@ -2584,7 +2621,7 @@ impl ClaudeProviderRuntime {
                     json!({
                         "data": {
                             "toolName": tool_name,
-                            "input": parsed_input,
+                            "input": input,
                         },
                     }),
                 )];
@@ -2598,12 +2635,6 @@ impl ClaudeProviderRuntime {
                     ));
                 }
                 events
-            }
-            StreamEvent::ContentBlockStop { index } => {
-                if let Some(tool) = self.find_tool_by_index_mut(index) {
-                    tool.stopped = true;
-                }
-                Vec::new()
             }
         }
     }
@@ -2739,6 +2770,8 @@ impl ClaudeProviderRuntime {
         let (provider_item_id, data) = {
             let tool = self.in_flight_tools.get_mut(tool_id)?;
             tool.completed = true;
+            // A block that never stopped completes with the input that streamed.
+            take_streamed_input(tool);
             let mut data = json!({
                 "toolName": tool.tool_name,
                 "input": tool.input,
@@ -2754,31 +2787,6 @@ impl ClaudeProviderRuntime {
             None,
             Some(json!({ "providerItemId": provider_item_id })),
             json!({ "data": data }),
-        ))
-    }
-
-    fn update_tool_input(
-        &mut self,
-        index: u64,
-        partial_json: &str,
-    ) -> Option<(String, String, Value, Option<Vec<Value>>)> {
-        let parsed_input = serde_json::from_str::<Value>(partial_json).unwrap_or_else(|_| {
-            json!({
-                "raw": partial_json,
-            })
-        });
-        let tool = self.find_tool_by_index_mut(index)?;
-        tool.input = parsed_input.clone();
-        let plan = if is_todo_tool(&tool.tool_name) {
-            extract_plan_steps(&tool.input)
-        } else {
-            None
-        };
-        Some((
-            tool.tool_use_id.clone(),
-            tool.tool_name.clone(),
-            parsed_input,
-            plan,
         ))
     }
 
@@ -2800,10 +2808,18 @@ impl ClaudeProviderRuntime {
         ))
     }
 
-    fn find_tool_by_index_mut(&mut self, index: u64) -> Option<&mut InFlightTool> {
-        self.in_flight_tools
-            .values_mut()
-            .find(|tool| tool.index == index)
+    /// The tool block still streaming at `index` on the stream of `parent_tool_use_id`.
+    fn find_streaming_tool_mut(
+        &mut self,
+        parent_tool_use_id: Option<&str>,
+        index: u64,
+    ) -> Option<&mut InFlightTool> {
+        self.in_flight_tools.values_mut().find(|tool| {
+            tool.index == index
+                && !tool.stopped
+                && !tool.completed
+                && tool.parent_tool_use_id.as_deref() == parent_tool_use_id
+        })
     }
 
     fn event(
@@ -3479,6 +3495,18 @@ fn normalize_questions(input: &Value) -> Vec<Value> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Parses the input fragments a tool block streamed into its input; whether there were any. Input
+/// that is not a JSON document is kept as `raw` text.
+fn take_streamed_input(tool: &mut InFlightTool) -> bool {
+    if tool.streamed_input.is_empty() {
+        return false;
+    }
+    let streamed = std::mem::take(&mut tool.streamed_input);
+    tool.input =
+        serde_json::from_str::<Value>(&streamed).unwrap_or_else(|_| json!({ "raw": streamed }));
+    true
 }
 
 fn is_interrupted_result(message: &ResultMessage) -> bool {

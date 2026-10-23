@@ -25064,6 +25064,120 @@ done
         engine.shutdown().await;
     }
 
+    /// #167: a Claude whose turn runs one Bash call whose input streams in eight fragments, as
+    /// Claude Code streams `input_json_delta` with partial messages.
+    #[cfg(unix)]
+    const CLAUDE_FRAGMENTED_TOOL_INPUT_FIXTURE: &str = r#"#!/bin/sh
+case "$1" in
+  --version) printf '%s\n' '2.1.308 (Claude Code)'; exit 0;;
+  --help) printf '%s\n' 'Usage: claude [options]'; exit 0;;
+esac
+delta() {
+  printf '{"type":"stream_event","session_id":"fixture-session","uuid":"delta-%s","parent_tool_use_id":null,"event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"%s"}}}\n' "$1" "$2"
+}
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"user"'*)
+      printf '%s\n' "$line"
+      printf '%s\n' '{"type":"stream_event","session_id":"fixture-session","uuid":"message-start","parent_tool_use_id":null,"event":{"type":"message_start","message":{"id":"msg-1"}}}'
+      printf '%s\n' '{"type":"stream_event","session_id":"fixture-session","uuid":"block-start","parent_tool_use_id":null,"event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool-bash-1","name":"Bash","input":{}}}}'
+      delta 1 '{\"co'
+      delta 2 'mmand\":'
+      delta 3 '\"cargo'
+      delta 4 ' test'
+      delta 5 ' --all\",'
+      delta 6 '\"descr'
+      delta 7 'iption\":\"Run'
+      delta 8 ' the tests\"}'
+      printf '%s\n' '{"type":"stream_event","session_id":"fixture-session","uuid":"block-stop","parent_tool_use_id":null,"event":{"type":"content_block_stop","index":1}}'
+      printf '%s\n' '{"type":"user","session_id":"fixture-session","uuid":"tool-result","parent_tool_use_id":null,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-bash-1","content":"test result: ok"}]}}'
+      printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"fixture-session","uuid":"result-1"}'
+      ;;
+  esac
+done
+"#;
+
+    /// #167, end to end: the thread records one update for a Claude tool call whose input
+    /// streamed in fragments, carrying the complete input, instead of one activity per fragment.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_fragmented_tool_input_is_one_thread_activity() {
+        let temp = TempDir::new().unwrap();
+        let executable = executable_fixture(
+            &temp,
+            "claude-fragmented-tool-input",
+            CLAUDE_FRAGMENTED_TOOL_INPUT_FIXTURE,
+        );
+        let engine = supervisor_engine().await;
+        let activity = super::ActivityProjection::new(ActivityRepository::new(
+            engine.repositories().database().clone(),
+        ));
+        let supervisor = super::ProviderRuntimeSupervisor::start(
+            engine.clone(),
+            Arc::new(super::NativeProviderDriverFactory::new(
+                temp.path().join("attachments"),
+            )),
+            activity,
+            super::SupervisorOptions::default(),
+        );
+        let mut request = native_launch(&temp, "claudeAgent");
+        request.thread_id = "t1".to_owned();
+        request.binary_path = executable.to_string_lossy().into_owned();
+        supervisor.launch(request).await.unwrap();
+        let handle = supervisor
+            .deliver_turn(
+                IdleDeadlineFixture::turn_command("run-tests"),
+                "run-tests".to_owned(),
+            )
+            .await
+            .expect("turn admitted");
+        assert!(matches!(
+            timeout(Duration::from_secs(10), handle.completion())
+                .await
+                .expect("Claude replays the turn"),
+            super::ProviderDeliveryOutcome::Accepted { .. }
+        ));
+        let snapshot = timeout(Duration::from_secs(10), async {
+            loop {
+                let snapshot = load_snapshot(&engine.repositories()).await.unwrap();
+                if snapshot
+                    .activities
+                    .iter()
+                    .any(|activity| activity.summary == "Turn completed")
+                {
+                    return snapshot;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the turn completes");
+        let summaries = snapshot
+            .activities
+            .iter()
+            .map(|activity| activity.summary.as_str())
+            .collect::<Vec<_>>();
+        let input_updates = snapshot
+            .activities
+            .iter()
+            .filter(|activity| activity.summary == "Bash updated")
+            .collect::<Vec<_>>();
+        assert_eq!(input_updates.len(), 1, "{summaries:?}");
+        let complete_input = json!({
+            "command": "cargo test --all",
+            "description": "Run the tests",
+        });
+        assert_eq!(input_updates[0].payload["data"]["input"], complete_input);
+        let completed = snapshot
+            .activities
+            .iter()
+            .find(|activity| activity.summary == "Bash completed")
+            .expect("the tool call completes");
+        assert_eq!(completed.payload["data"]["input"], complete_input);
+        supervisor.shutdown().await.unwrap();
+        engine.shutdown().await;
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn idle_deadline_natural_race_probe() {
         let mut fixture = IdleDeadlineFixture::new(Duration::from_secs(1)).await;

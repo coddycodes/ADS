@@ -1,0 +1,418 @@
+{
+  "threadId": "provider-thread-1",
+  "turnId": "turn-1",
+  "startup": {
+    "sessionId": "sdk-session-tool-input-fragments",
+    "runtimeMode": "full-access"
+  },
+  "messages": [
+    {
+      "type": "stream_event",
+      "session_id": "sdk-session-tool-input-fragments",
+      "uuid": "stream-message-1",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "message_start",
+        "message": {
+          "id": "msg-1"
+        }
+      }
+    },
+    {
+      "type": "stream_event",
+      "session_id": "sdk-session-tool-input-fragments",
+      "uuid": "stream-bash-start",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "content_block_start",
+        "index": 1,
+        "content_block": {
+          "type": "tool_use",
+          "id": "tool-bash-1",
+          "name": "Bash",
+          "input": {}
+        }
+      }
+    },
+    {
+      "type": "stream_event",
+      "session_id": "sdk-session-tool-input-fragments",
+      "uuid": "stream-bash-input-1",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "content_block_delta",
+        "index": 1,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": ""
+        }
+      }
+    },
+    {
+      "type": "stream_event",
+      "session_id": "sdk-session-tool-input-fragments",
+      "uuid": "stream-bash-input-2",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "content_block_delta",
+        "index": 1,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "{\"comm"
+        }
+      }
+    },
+    {
+      "type": "stream_event",
+      "session_id": "sdk-session-tool-input-fragments",
+      "uuid": "stream-bash-input-3",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "content_block_delta",
+        "index": 1,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "and\":\"cargo te"
+        }
+      }
+    },
+    {
+      "type": "stream_event",
+      "session_id": "sdk-session-tool-input-fragments",
+      "uuid": "stream-bash-input-4",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "content_block_delta",
+        "index": 1,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "st\",\"description\":"
+        }
+      }
+    },
+    {
+      "type": "stream_event",
+      "session_id": "sdk-session-tool-input-fragments",
+      "uuid": "stream-bash-input-5",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "content_block_delta",
+        "index": 1,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "\"Run the tests\"}"
+        }
+      }
+    },
+    {
+      "type": "stream_event",
+      "session_id": "sdk-session-tool-input-fragments",
+      "uuid": "stream-bash-stop",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "content_block_stop",
+        "index": 1
+      }
+    },
+    {
+      "type": "user",
+      "session_id": "sdk-session-tool-input-fragments",
+      "uuid": "user-bash-result",
+      "parent_tool_use_id": null,
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "tool-bash-1",
+            "content": "test result: ok"
+          }
+        ]
+      }
+    },
+    {
+      "type": "stream_event",
+      "session_id": "sdk-session-tool-input-fragments",
+      "uuid": "stream-message-2",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "message_start",
+        "message": {
+          "id": "msg-2"
+        }
+      }
+    },
+    {
+      "type": "stream_event",
+      "session_id": "sdk-session-tool-input-fragments",
+      "uuid": "stream-read-start",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "content_block_start",
+        "index": 1,
+        "content_block": {
+          "type": "tool_use",
+          "id": "tool-read-2",
+          "name": "Read",
+          "input": {}
+        }
+      }
+    },
+    {
+      "type": "stream_event",
+      "session_id": "sdk-session-tool-input-fragments",
+      "uuid": "stream-read-input-1",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "content_block_delta",
+        "index": 1,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "{\"file_path\":"
+        }
+      }
+    },
+    {
+      "type": "stream_event",
+      "session_id": "sdk-session-tool-input-fragments",
+      "uuid": "stream-read-input-2",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "content_block_delta",
+        "index": 1,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "\"src/lib.rs\"}"
+        }
+      }
+    },
+    {
+      "type": "stream_event",
+      "session_id": "sdk-session-tool-input-fragments",
+      "uuid": "stream-read-stop",
+      "parent_tool_use_id": null,
+      "event": {
+        "type": "content_block_stop",
+        "index": 1
+      }
+    },
+    {
+      "type": "user",
+      "session_id": "sdk-session-tool-input-fragments",
+      "uuid": "user-read-result",
+      "parent_tool_use_id": null,
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "tool-read-2",
+            "content": "pub fn lib() {}"
+          }
+        ]
+      }
+    },
+    {
+      "type": "result",
+      "subtype": "success",
+      "is_error": false,
+      "errors": [],
+      "session_id": "sdk-session-tool-input-fragments",
+      "uuid": "result-tool-input-fragments"
+    }
+  ],
+  "expectedEvents": [
+    {
+      "type": "session.started",
+      "threadId": "provider-thread-1",
+      "payload": {
+        "message": "Claude session started.",
+        "resume": {
+          "sessionId": "sdk-session-tool-input-fragments"
+        }
+      }
+    },
+    {
+      "type": "session.configured",
+      "threadId": "provider-thread-1",
+      "payload": {
+        "permissionMode": "bypassPermissions",
+        "cwd": null
+      }
+    },
+    {
+      "type": "session.state.changed",
+      "threadId": "provider-thread-1",
+      "payload": {
+        "state": "ready"
+      }
+    },
+    {
+      "type": "turn.started",
+      "threadId": "provider-thread-1",
+      "turnId": "turn-1",
+      "payload": {
+        "input": "run the tests"
+      }
+    },
+    {
+      "type": "thread.started",
+      "threadId": "provider-thread-1",
+      "turnId": "turn-1",
+      "payload": {
+        "providerThreadId": "msg-1"
+      }
+    },
+    {
+      "type": "item.started",
+      "threadId": "provider-thread-1",
+      "turnId": "turn-1",
+      "providerRefs": {
+        "providerItemId": "tool-bash-1"
+      },
+      "payload": {
+        "itemType": "dynamic_tool_call",
+        "title": "Tool call",
+        "data": {
+          "toolName": "Bash",
+          "input": {}
+        }
+      }
+    },
+    {
+      "type": "item.updated",
+      "threadId": "provider-thread-1",
+      "turnId": "turn-1",
+      "providerRefs": {
+        "providerItemId": "tool-bash-1"
+      },
+      "payload": {
+        "data": {
+          "toolName": "Bash",
+          "input": {
+            "command": "cargo test",
+            "description": "Run the tests"
+          }
+        }
+      }
+    },
+    {
+      "type": "item.updated",
+      "threadId": "provider-thread-1",
+      "turnId": "turn-1",
+      "providerRefs": {
+        "providerItemId": "tool-bash-1"
+      },
+      "payload": {
+        "data": {
+          "tool_use_id": "tool-bash-1",
+          "content": "test result: ok"
+        }
+      }
+    },
+    {
+      "type": "item.completed",
+      "threadId": "provider-thread-1",
+      "turnId": "turn-1",
+      "providerRefs": {
+        "providerItemId": "tool-bash-1"
+      },
+      "payload": {
+        "data": {
+          "toolName": "Bash",
+          "input": {
+            "command": "cargo test",
+            "description": "Run the tests"
+          },
+          "result": {
+            "tool_use_id": "tool-bash-1",
+            "content": "test result: ok"
+          }
+        }
+      }
+    },
+    {
+      "type": "thread.started",
+      "threadId": "provider-thread-1",
+      "turnId": "turn-1",
+      "payload": {
+        "providerThreadId": "msg-2"
+      }
+    },
+    {
+      "type": "item.started",
+      "threadId": "provider-thread-1",
+      "turnId": "turn-1",
+      "providerRefs": {
+        "providerItemId": "tool-read-2"
+      },
+      "payload": {
+        "itemType": "dynamic_tool_call",
+        "title": "Tool call",
+        "data": {
+          "toolName": "Read",
+          "input": {}
+        }
+      }
+    },
+    {
+      "type": "item.updated",
+      "threadId": "provider-thread-1",
+      "turnId": "turn-1",
+      "providerRefs": {
+        "providerItemId": "tool-read-2"
+      },
+      "payload": {
+        "data": {
+          "toolName": "Read",
+          "input": {
+            "file_path": "src/lib.rs"
+          }
+        }
+      }
+    },
+    {
+      "type": "item.updated",
+      "threadId": "provider-thread-1",
+      "turnId": "turn-1",
+      "providerRefs": {
+        "providerItemId": "tool-read-2"
+      },
+      "payload": {
+        "data": {
+          "tool_use_id": "tool-read-2",
+          "content": "pub fn lib() {}"
+        }
+      }
+    },
+    {
+      "type": "item.completed",
+      "threadId": "provider-thread-1",
+      "turnId": "turn-1",
+      "providerRefs": {
+        "providerItemId": "tool-read-2"
+      },
+      "payload": {
+        "data": {
+          "toolName": "Read",
+          "input": {
+            "file_path": "src/lib.rs"
+          },
+          "result": {
+            "tool_use_id": "tool-read-2",
+            "content": "pub fn lib() {}"
+          }
+        }
+      }
+    },
+    {
+      "type": "turn.completed",
+      "threadId": "provider-thread-1",
+      "turnId": "turn-1",
+      "payload": {
+        "state": "completed",
+        "stopReason": "success"
+      }
+    }
+  ]
+}

@@ -2297,6 +2297,40 @@ fn fixture_tool_streams_decode_to_canonical_events() {
     assert_trace_eq(&events, &fixture.expected_events);
 }
 
+/// #167: Claude streams a tool's input as fragments of a JSON document. The fragments are one
+/// update, with the complete input, when the tool's block stops, not one recorded activity
+/// each; and the block index a later message reuses names that message's tool.
+#[test]
+fn fixture_tool_input_fragments_report_the_complete_input_once() {
+    let fixture: TraceFixture = load_fixture("trace-tool-input-fragments.json");
+    let mut runtime = ClaudeProviderRuntime::new(
+        fixture.thread_id.clone(),
+        fixture.startup.session_id.clone(),
+    );
+    let mut events = runtime.start_session(fixture.startup.runtime_mode, None);
+    events.extend(runtime.start_turn(TurnInput {
+        turn_id: fixture.turn_id.clone(),
+        input: "run the tests".to_owned(),
+    }));
+    for message in &fixture.messages {
+        events.extend(runtime.handle_message(message.clone()));
+    }
+    assert_trace_eq(&events, &fixture.expected_events);
+
+    // The driver reads raw frames.
+    let mut runtime = ClaudeProviderRuntime::new(fixture.thread_id, fixture.startup.session_id);
+    let mut events = runtime.start_session(fixture.startup.runtime_mode, None);
+    events.extend(runtime.start_turn(TurnInput {
+        turn_id: fixture.turn_id,
+        input: "run the tests".to_owned(),
+    }));
+    for message in fixture.messages {
+        let value = serde_json::to_value(message).expect("a Claude frame");
+        events.extend(runtime.handle_raw_value(&value, 1_000).events);
+    }
+    assert_trace_eq(&events, &fixture.expected_events);
+}
+
 #[test]
 fn todo_write_streams_emit_plan_updates() {
     let fixture: TraceFixture = load_fixture("trace-todo-plan.json");
@@ -4156,4 +4190,58 @@ fn claude_runtime_opens_each_follow_up_in_order_and_none_after_an_interrupt() {
     interrupted["stop_reason"] = json!("interrupted");
     let stopped = runtime.handle_raw_value(&interrupted, 6_000);
     assert_eq!(started(&stopped), 0, "an interrupted turn opens no answer");
+}
+
+/// #167: two subagents stream tool blocks at the same index at once. Each block's fragments
+/// build its own input.
+#[test]
+fn concurrent_subagent_tool_inputs_stream_into_their_own_blocks() {
+    let mut runtime = ClaudeProviderRuntime::new("thread-1".to_owned(), "session-root".to_owned());
+    runtime.start_turn(TurnInput {
+        turn_id: "turn-1".to_owned(),
+        input: "delegate".to_owned(),
+    });
+    let frame = |parent: &str, event: Value| -> ClaudeMessage {
+        serde_json::from_value(json!({
+            "type": "stream_event",
+            "session_id": "session-root",
+            "uuid": "stream",
+            "parent_tool_use_id": parent,
+            "event": event,
+        }))
+        .expect("a stream frame")
+    };
+    let start = |id: &str, name: &str| json!({"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": id, "name": name, "input": {}}});
+    let delta = |fragment: &str| json!({"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": fragment}});
+    let stop = json!({"type": "content_block_stop", "index": 1});
+    let mut events = Vec::new();
+    for message in [
+        frame("agent-a", start("tool-a", "Bash")),
+        frame("agent-b", start("tool-b", "Read")),
+        frame("agent-a", delta("{\"command\":")),
+        frame("agent-b", delta("{\"file_path\":")),
+        frame("agent-a", delta("\"ls\"}")),
+        frame("agent-b", delta("\"README.md\"}")),
+        frame("agent-b", stop.clone()),
+        frame("agent-a", stop),
+    ] {
+        events.extend(runtime.handle_message(message));
+    }
+    let updates = events
+        .iter()
+        .filter(|event| event.event_type == "item.updated")
+        .map(|event| {
+            (
+                event.provider_refs.as_ref().unwrap()["providerItemId"].clone(),
+                event.payload["data"]["input"].clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        updates,
+        vec![
+            (json!("tool-b"), json!({"file_path": "README.md"})),
+            (json!("tool-a"), json!({"command": "ls"})),
+        ]
+    );
 }

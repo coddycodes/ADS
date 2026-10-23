@@ -217,6 +217,16 @@ starts the thread's session again after it was suspended or stopped, and is
 discarded when BiBCode quits. To retire a token that may have been exposed, quit
 and restart BiBCode, or stop the thread's session and send it a new message.
 
+## Tool calls in the thread
+
+BiBCode runs Claude with partial messages, so Claude streams each tool call's
+input as fragments of a JSON document (`input_json_delta`). BiBCode collects the
+fragments of each tool block, by its subagent stream and block index, and
+records the complete input once, when the block ends: the thread gets one
+update with the tool's input, not one per fragment, and the tool's completion
+carries the same complete input. Versions before 0.11.0 recorded an update for
+every fragment; threads keep those activities and still load them.
+
 ## Background work and idle suspension
 
 BiBCode suspends an idle chat session 60 seconds after its turn ends and
