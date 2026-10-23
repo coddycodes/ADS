@@ -452,13 +452,23 @@ describe("generated provider shims", () => {
       ["codex", "codex-cli 99.0.0"],
       ["claudeAgent", "2.1.200 (Claude Code)"],
       ["cursor", "cursor-agent 99.0.0-fixture"],
-      ["opencode", "opencode 99.0.0-fixture"],
+      ["opencode", "opencode 1.99.0-fixture"],
       ["grok", "grok-cli 99.0.0-fixture"],
     ] as const) {
       const result = spawnConfiguredLauncherSync(fixture, provider, ["--version"]);
       expect(result.status, `${provider}: ${result.stderr}`).toBe(0);
       expect(result.stdout.trim()).toBe(expectedVersion);
     }
+  });
+
+  it("reports an OpenCode 1.x version, matching the V1 HTTP API the fixture serves", () => {
+    // The server drives OpenCode by major version and reports 3.x and later as unsupported,
+    // which leaves OpenCode unavailable and its New panel entry disabled in packaged UI tests.
+    const fixture = prepareProviderFixture();
+    const result = spawnConfiguredLauncherSync(fixture, "opencode", ["--version"]);
+    expect(result.status, result.stderr).toBe(0);
+    const major = /\bv?(\d+)\./.exec(result.stdout)?.[1];
+    expect(major).toBe("1");
   });
 
   it("answers Codex capability probes without starting the Node fixture runtime", () => {

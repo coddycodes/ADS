@@ -772,8 +772,10 @@ const opencodeFixtureSource = String.raw`
 import * as NodeHTTP from "node:http";
 import { appendProviderInput, promptTextFromParts } from "./provider-input-log-fixture.mjs";
 
+// The fixture serves OpenCode 1's HTTP API, so it reports a 1.x version: the server drives
+// OpenCode by major version and treats 3.x and later as unsupported.
 if (process.argv.includes("--version")) {
-  process.stdout.write("opencode 99.0.0-fixture\n");
+  process.stdout.write("opencode 1.99.0-fixture\n");
   process.exit(0);
 }
 
