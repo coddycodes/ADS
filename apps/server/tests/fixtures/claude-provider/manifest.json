@@ -22,6 +22,7 @@
     "trace-targeted-task-cancellation.json",
     "trace-task-tool.json",
     "trace-todo-plan.json",
+    "trace-tool-input-fragments.json",
     "trace-tool-streams.json",
     "trace-unsupported-hook-flags.json",
     "user-input-flow.json"

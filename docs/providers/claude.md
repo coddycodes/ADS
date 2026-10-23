@@ -217,6 +217,16 @@ starts the thread's session again after it was suspended or stopped, and is
 discarded when BiBCode quits. To retire a token that may have been exposed, quit
 and restart BiBCode, or stop the thread's session and send it a new message.
 
+## Tool calls in the thread
+
+BiBCode runs Claude with partial messages, so Claude streams each tool call's
+input as fragments of a JSON document (`input_json_delta`). BiBCode collects the
+fragments of each tool block, by its subagent stream and block index, and
+records the complete input once, when the block ends: the thread gets one
+update with the tool's input, not one per fragment, and the tool's completion
+carries the same complete input. Versions before 0.11.0 recorded an update for
+every fragment; threads keep those activities and still load them.
+
 ## Background work and idle suspension
 
 BiBCode suspends an idle chat session 60 seconds after its turn ends and
@@ -237,7 +247,11 @@ When a background task finishes, Claude answers it in a turn it starts itself:
 a `user` message and a `result` whose `origin.kind` is `task-notification`.
 BiBCode gives that answer a turn of its own, so the thread reads running and
 idle suspension waits for its result. Between the finished task and that turn
-the session stays busy.
+the session stays busy. When the task finishes during another turn, Claude can
+replay its notification just before that turn's `result`; BiBCode then starts
+the answer's turn as that `result` ends the first one, so the idle deadline the
+`result` arms cannot stop Claude while it answers. An interrupted turn starts no
+answer.
 
 If a session was stopped while background work ran (for example by an earlier
 version of BiBCode), resuming it makes Claude deliver the stopped tasks'

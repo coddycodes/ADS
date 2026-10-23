@@ -251,9 +251,16 @@ pub struct ReconnectSnapshot {
 #[derive(Debug, Clone)]
 struct InFlightTool {
     index: u64,
+    /// The subagent tool call whose stream carries this block; `None` for the root stream. Block
+    /// indexes restart in every message, so a block is found by its stream and index.
+    parent_tool_use_id: Option<String>,
     tool_use_id: String,
     tool_name: String,
     input: Value,
+    /// The `input_json_delta` fragments received so far. Claude streams a tool's input as
+    /// fragments of a JSON document, so it is parsed and reported once, when its block stops
+    /// (#167).
+    streamed_input: String,
     result: Option<Value>,
     stopped: bool,
     completed: bool,
@@ -1450,7 +1457,8 @@ struct ClaudeBackgroundTasks {
     /// Background tasks that finished while no turn ran and whose answer Claude has not yet given:
     /// each completion produces its own `result` with `origin.kind` `task-notification`. Bridges
     /// the moment between a task leaving the live set and the turn that answers it. A task that
-    /// finishes during a turn needs no bridge: that turn's completion arms a fresh idle deadline.
+    /// finishes during a turn needs no bridge: that turn's completion arms a fresh idle deadline,
+    /// and a notification Claude replayed before that completion opens the answer's turn with it.
     follow_ups_owed: usize,
 }
 
@@ -1565,6 +1573,10 @@ pub struct ClaudeProviderRuntime {
     /// The write whose replay begins the current turn, until Claude replays it or its
     /// wait ends.
     turn_input_awaiting_replay: Option<u64>,
+    /// Follow-up turns Claude began for a finished background task while another turn was still
+    /// open: it can replay the task notification just before that turn's `result` (#165). Each
+    /// opens when the turn before it ends, so idle suspension waits for its own `result`.
+    follow_ups_after_turn: usize,
     turn_input_cancellation: CancellationToken,
     delivery_acknowledgement_cancellation: CancellationToken,
     active_assistant_item_id: Option<String>,
@@ -1608,6 +1620,7 @@ impl ClaudeProviderRuntime {
             current_turn_id: None,
             turn_open: false,
             turn_input_awaiting_replay: None,
+            follow_ups_after_turn: 0,
             turn_input_cancellation: CancellationToken::new(),
             delivery_acknowledgement_cancellation: CancellationToken::new(),
             active_assistant_item_id: None,
@@ -1676,6 +1689,7 @@ impl ClaudeProviderRuntime {
     ) -> Vec<CanonicalEvent> {
         self.stop_turn_input();
         self.reset_delivery_acknowledgements();
+        self.follow_ups_after_turn = 0;
         self.runtime_mode = Some(runtime_mode);
         vec![
             self.event(
@@ -1772,7 +1786,9 @@ impl ClaudeProviderRuntime {
 
     pub fn handle_message(&mut self, message: ClaudeMessage) -> Vec<CanonicalEvent> {
         match message {
-            ClaudeMessage::StreamEvent(message) => self.handle_stream_event(message.event),
+            ClaudeMessage::StreamEvent(message) => {
+                self.handle_stream_event(message.parent_tool_use_id, message.event)
+            }
             ClaudeMessage::User(message) => self.handle_user_message(message.message.content),
             ClaudeMessage::Assistant(message) => self.handle_assistant_message(message),
             ClaudeMessage::Result(message) => self.handle_result_message(message),
@@ -1824,14 +1840,23 @@ impl ClaudeProviderRuntime {
     /// Claude answers a finished background task with a turn it starts itself. BiBCode did not
     /// deliver it, so it gets a turn of its own: the thread reads running and the turn's output and
     /// `result` belong to it. Not while a delivered message awaits its replay: on resume Claude
-    /// can run that turn before it reads the message, and its `result` is ignored instead.
+    /// can run that turn before it reads the message, and its `result` is ignored instead. A
+    /// replay that arrives while another turn is still open starts its turn when that one ends.
     fn start_provider_turn(&mut self, value: &Value) -> Vec<CanonicalEvent> {
         let follow_up = value.get("type").and_then(Value::as_str) == Some("user")
             && value.pointer("/origin/kind").and_then(Value::as_str) == Some("task-notification")
             && value.get("parent_tool_use_id").is_none_or(Value::is_null);
-        if !follow_up || self.turn_open || self.turn_input_awaiting_replay.is_some() {
+        if !follow_up || self.turn_input_awaiting_replay.is_some() {
             return Vec::new();
         }
+        if self.turn_open {
+            self.follow_ups_after_turn = self.follow_ups_after_turn.saturating_add(1);
+            return Vec::new();
+        }
+        self.start_follow_up_turn()
+    }
+
+    fn start_follow_up_turn(&mut self) -> Vec<CanonicalEvent> {
         self.start_turn(TurnInput {
             turn_id: uuid::Uuid::new_v4().to_string(),
             input: String::new(),
@@ -2391,6 +2416,7 @@ impl ClaudeProviderRuntime {
     pub fn handle_stream_failure(&mut self, error: &str) -> Vec<CanonicalEvent> {
         self.stop_turn_input();
         self.delivery_acknowledgement_cancellation.cancel();
+        self.follow_ups_after_turn = 0;
         let error_message = if is_interrupted_error(error) {
             "Claude runtime interrupted.".to_owned()
         } else {
@@ -2443,6 +2469,7 @@ impl ClaudeProviderRuntime {
         self.thread_id = snapshot.thread_id;
         self.current_turn_id = snapshot.turn_id;
         self.turn_open = self.current_turn_id.is_some();
+        self.follow_ups_after_turn = 0;
         self.runtime_mode = Some(snapshot.runtime_mode);
         self.pending_approvals = snapshot
             .pending_approvals
@@ -2479,7 +2506,11 @@ impl ClaudeProviderRuntime {
             .collect();
     }
 
-    fn handle_stream_event(&mut self, event: StreamEvent) -> Vec<CanonicalEvent> {
+    fn handle_stream_event(
+        &mut self,
+        parent_tool_use_id: Option<String>,
+        event: StreamEvent,
+    ) -> Vec<CanonicalEvent> {
         match event {
             StreamEvent::MessageStart { message } => {
                 self.active_assistant_item_id = Some(message.id.clone());
@@ -2499,9 +2530,11 @@ impl ClaudeProviderRuntime {
                     id.clone(),
                     InFlightTool {
                         index,
+                        parent_tool_use_id,
                         tool_use_id: id.clone(),
                         tool_name: name.clone(),
                         input: input.clone(),
+                        streamed_input: String::new(),
                         result: None,
                         stopped: false,
                         completed: false,
@@ -2549,14 +2582,36 @@ impl ClaudeProviderRuntime {
                 }),
                 self.active_assistant_item_id.clone(),
             )],
+            // A fragment of the tool's input is not a step of its own: recording each one as an
+            // update made them most of a thread's activity (#167). The input is reported once,
+            // complete, when its block stops.
             StreamEvent::ContentBlockDelta {
                 index,
                 delta: ContentBlockDelta::InputJsonDelta { partial_json },
             } => {
-                let Some((tool_use_id, tool_name, parsed_input, plan)) =
-                    self.update_tool_input(index, &partial_json)
+                if let Some(tool) =
+                    self.find_streaming_tool_mut(parent_tool_use_id.as_deref(), index)
+                {
+                    tool.streamed_input.push_str(&partial_json);
+                }
+                Vec::new()
+            }
+            StreamEvent::ContentBlockStop { index } => {
+                let Some(tool) = self.find_streaming_tool_mut(parent_tool_use_id.as_deref(), index)
                 else {
                     return Vec::new();
+                };
+                tool.stopped = true;
+                if !take_streamed_input(tool) {
+                    return Vec::new();
+                }
+                let tool_use_id = tool.tool_use_id.clone();
+                let tool_name = tool.tool_name.clone();
+                let input = tool.input.clone();
+                let plan = if is_todo_tool(&tool_name) {
+                    extract_plan_steps(&input)
+                } else {
+                    None
                 };
                 let mut events = vec![self.event(
                     "item.updated",
@@ -2566,7 +2621,7 @@ impl ClaudeProviderRuntime {
                     json!({
                         "data": {
                             "toolName": tool_name,
-                            "input": parsed_input,
+                            "input": input,
                         },
                     }),
                 )];
@@ -2580,12 +2635,6 @@ impl ClaudeProviderRuntime {
                     ));
                 }
                 events
-            }
-            StreamEvent::ContentBlockStop { index } => {
-                if let Some(tool) = self.find_tool_by_index_mut(index) {
-                    tool.stopped = true;
-                }
-                Vec::new()
             }
         }
     }
@@ -2692,6 +2741,15 @@ impl ClaudeProviderRuntime {
             None,
             payload,
         ));
+        // Claude dequeued a task notification during the turn that just ended and answers it
+        // now: the answer gets its turn before the idle deadline this result arms can expire.
+        // An interrupted turn is the user stopping Claude, so no answer is assumed to follow.
+        if interrupted {
+            self.follow_ups_after_turn = 0;
+        } else if self.follow_ups_after_turn > 0 {
+            self.follow_ups_after_turn -= 1;
+            events.extend(self.start_follow_up_turn());
+        }
         events
     }
 
@@ -2712,6 +2770,8 @@ impl ClaudeProviderRuntime {
         let (provider_item_id, data) = {
             let tool = self.in_flight_tools.get_mut(tool_id)?;
             tool.completed = true;
+            // A block that never stopped completes with the input that streamed.
+            take_streamed_input(tool);
             let mut data = json!({
                 "toolName": tool.tool_name,
                 "input": tool.input,
@@ -2727,31 +2787,6 @@ impl ClaudeProviderRuntime {
             None,
             Some(json!({ "providerItemId": provider_item_id })),
             json!({ "data": data }),
-        ))
-    }
-
-    fn update_tool_input(
-        &mut self,
-        index: u64,
-        partial_json: &str,
-    ) -> Option<(String, String, Value, Option<Vec<Value>>)> {
-        let parsed_input = serde_json::from_str::<Value>(partial_json).unwrap_or_else(|_| {
-            json!({
-                "raw": partial_json,
-            })
-        });
-        let tool = self.find_tool_by_index_mut(index)?;
-        tool.input = parsed_input.clone();
-        let plan = if is_todo_tool(&tool.tool_name) {
-            extract_plan_steps(&tool.input)
-        } else {
-            None
-        };
-        Some((
-            tool.tool_use_id.clone(),
-            tool.tool_name.clone(),
-            parsed_input,
-            plan,
         ))
     }
 
@@ -2773,10 +2808,18 @@ impl ClaudeProviderRuntime {
         ))
     }
 
-    fn find_tool_by_index_mut(&mut self, index: u64) -> Option<&mut InFlightTool> {
-        self.in_flight_tools
-            .values_mut()
-            .find(|tool| tool.index == index)
+    /// The tool block still streaming at `index` on the stream of `parent_tool_use_id`.
+    fn find_streaming_tool_mut(
+        &mut self,
+        parent_tool_use_id: Option<&str>,
+        index: u64,
+    ) -> Option<&mut InFlightTool> {
+        self.in_flight_tools.values_mut().find(|tool| {
+            tool.index == index
+                && !tool.stopped
+                && !tool.completed
+                && tool.parent_tool_use_id.as_deref() == parent_tool_use_id
+        })
     }
 
     fn event(
@@ -3452,6 +3495,18 @@ fn normalize_questions(input: &Value) -> Vec<Value> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Parses the input fragments a tool block streamed into its input; whether there were any. Input
+/// that is not a JSON document is kept as `raw` text.
+fn take_streamed_input(tool: &mut InFlightTool) -> bool {
+    if tool.streamed_input.is_empty() {
+        return false;
+    }
+    let streamed = std::mem::take(&mut tool.streamed_input);
+    tool.input =
+        serde_json::from_str::<Value>(&streamed).unwrap_or_else(|_| json!({ "raw": streamed }));
+    true
 }
 
 fn is_interrupted_result(message: &ResultMessage) -> bool {
