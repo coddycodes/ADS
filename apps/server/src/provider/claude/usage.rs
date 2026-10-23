@@ -23,6 +23,9 @@ pub(crate) struct ClaudeTokenUsageSnapshot {
     pub duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compacts_automatically: Option<bool>,
+    /// The context size at which Claude compacts automatically (`autoCompactThreshold`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_compact_tokens: Option<u64>,
 }
 
 #[derive(Debug, Default)]
@@ -30,6 +33,7 @@ pub(crate) struct ClaudeTokenUsageState {
     last_good: Option<ClaudeTokenUsageSnapshot>,
     total_processed_tokens: Option<u64>,
     max_tokens: Option<u64>,
+    auto_compact_tokens: Option<u64>,
     last_emitted: Option<ClaudeTokenUsageSnapshot>,
     active_observed_this_turn: bool,
 }
@@ -60,6 +64,8 @@ impl ClaudeTokenUsageState {
         if let Some(max_tokens) = positive_integer(value.get("maxTokens")) {
             self.max_tokens = Some(max_tokens);
         }
+        // Absent when Claude does not compact automatically, so its absence clears it.
+        self.auto_compact_tokens = positive_integer(value.get("autoCompactThreshold"));
         let compacts_automatically = value
             .get("isAutoCompactEnabled")
             .and_then(Value::as_bool)
@@ -193,6 +199,7 @@ impl ClaudeTokenUsageState {
             tool_uses: active.tool_uses,
             duration_ms: active.duration_ms,
             compacts_automatically,
+            auto_compact_tokens: self.auto_compact_tokens,
         };
         self.last_good = Some(snapshot.clone());
         self.active_observed_this_turn = true;
@@ -205,6 +212,7 @@ impl ClaudeTokenUsageState {
             snapshot.used_tokens = snapshot.used_tokens.min(max_tokens);
             snapshot.max_tokens = Some(max_tokens);
         }
+        snapshot.auto_compact_tokens = self.auto_compact_tokens;
         snapshot.total_processed_tokens = self
             .total_processed_tokens
             .filter(|total| *total > snapshot.used_tokens);
@@ -345,4 +353,43 @@ fn result_active_usage(usage: &Map<String, Value>) -> Option<ActiveUsage> {
         duration_ms: None,
         compacts_automatically: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn the_context_response_auto_compact_threshold_reaches_the_usage_snapshot() {
+        let mut state = ClaudeTokenUsageState::default();
+        let usage = state
+            .observe_context_response(&json!({
+                "totalTokens": 961_230, "maxTokens": 1_000_000,
+                "autoCompactThreshold": 967_000, "isAutoCompactEnabled": true
+            }))
+            .expect("usage");
+        assert_eq!(usage.auto_compact_tokens, Some(967_000));
+        let serialized = serde_json::to_value(&usage).expect("snapshot");
+        assert_eq!(serialized["autoCompactTokens"], 967_000);
+
+        // Later stream usage keeps the threshold, like the window size.
+        state.start_turn();
+        let streamed = state
+            .observe_stream_value(&json!({
+                "type": "stream_event", "parent_tool_use_id": null,
+                "event": { "type": "message_delta", "usage": { "input_tokens": 962_000, "output_tokens": 10 } }
+            }))
+            .expect("usage");
+        assert_eq!(streamed.auto_compact_tokens, Some(967_000));
+
+        // A response without one (automatic compaction off) drops it.
+        let off = state
+            .observe_context_response(&json!({
+                "totalTokens": 962_010, "maxTokens": 1_000_000, "isAutoCompactEnabled": false
+            }))
+            .expect("usage");
+        assert_eq!(off.auto_compact_tokens, None);
+    }
 }

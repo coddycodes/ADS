@@ -194,7 +194,10 @@ export function ContextWindowMeter(props: {
           ) : null}
           {usage.compactsAutomatically ? (
             <div className="mt-1 text-pretty text-xs font-medium text-muted-foreground">
-              {providerDisplayName ?? "It"} automatically compacts its context when needed.
+              {providerDisplayName ?? "It"} automatically compacts its context
+              {usage.autoCompactTokens != null
+                ? ` at about ${formatContextWindowTokens(usage.autoCompactTokens)} tokens.`
+                : " when needed."}
             </div>
           ) : null}
         </div>

@@ -92,6 +92,7 @@ export function deriveLatestContextWindowSnapshot(
       toolUses: asNonNegativeFiniteNumber(payload?.toolUses),
       durationMs: asNonNegativeFiniteNumber(payload?.durationMs),
       compactsAutomatically: asBoolean(payload?.compactsAutomatically) ?? false,
+      autoCompactTokens: asPositiveFiniteNumber(payload?.autoCompactTokens),
       updatedAt: activity.createdAt,
     };
   }

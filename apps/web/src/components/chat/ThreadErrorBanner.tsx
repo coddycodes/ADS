@@ -4,9 +4,18 @@ import { Button } from "../ui/button";
 import { CircleAlertIcon, XIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+/** A recovery the banner offers, such as compacting a conversation that filled the context. */
+export interface ThreadErrorAction {
+  readonly label: string;
+  readonly onClick: () => void;
+  /** Why the action cannot run yet; the button is disabled and says so on hover. */
+  readonly disabledReason: string | null;
+}
+
 export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
   attribution,
+  action,
   onDismiss,
 }: {
   error: string | null;
@@ -16,6 +25,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
    * alone rather than guessing at provenance.
    */
   attribution?: string | null;
+  action?: ThreadErrorAction | null;
   onDismiss?: () => void;
 }) {
   if (!error) return null;
@@ -37,13 +47,28 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
             </TooltipPopup>
           </Tooltip>
         </AlertDescription>
-        {onDismiss && (
+        {action || onDismiss ? (
           <AlertAction>
-            <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
-              <XIcon className="text-destructive" />
-            </Button>
+            {action ? (
+              // A disabled button receives no pointer events, so its reason sits on a wrapper.
+              <span title={action.disabledReason ?? undefined}>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  disabled={action.disabledReason !== null}
+                  onClick={action.onClick}
+                >
+                  {action.label}
+                </Button>
+              </span>
+            ) : null}
+            {onDismiss ? (
+              <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
+                <XIcon className="text-destructive" />
+              </Button>
+            ) : null}
           </AlertAction>
-        )}
+        ) : null}
       </Alert>
     </div>
   );

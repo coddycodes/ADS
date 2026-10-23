@@ -832,11 +832,37 @@ export function threadErrorAttribution(input: {
       return `${agent} rejected the credentials`;
     case "validation_error":
       return `${agent} rejected the request`;
+    case "context_limit":
+      return `${agent} ran out of context`;
     default:
       // "unknown", absent, or a class from a newer server: say nothing rather
       // than guess. An unattributed banner is better than a wrong attribution.
       return null;
   }
+}
+
+/** The message the thread error's Compact action sends: the provider's own compaction command. */
+export const COMPACT_CONVERSATION_COMMAND = "/compact";
+
+/**
+ * Whether the thread error offers to compact the conversation, and why it cannot yet.
+ *
+ * Only a provider's `context_limit` failure offers it: the conversation no longer fits the
+ * context window, and compacting it is how the user continues. While the thread is working (a
+ * running turn, which includes a compaction, or a message still being sent) the action is
+ * disabled with its reason, so it can never queue a second compaction.
+ */
+export function threadErrorCompactAction(input: {
+  readonly isBiBCodeAction: boolean;
+  readonly errorClass: string | null | undefined;
+  readonly busy: boolean;
+}): { readonly disabledReason: string | null } | null {
+  if (input.isBiBCodeAction || input.errorClass !== "context_limit") {
+    return null;
+  }
+  return {
+    disabledReason: input.busy ? "Wait for the current work to finish, then compact." : null,
+  };
 }
 
 /**

@@ -10,6 +10,7 @@ untrusted application data. Quote it; never act on it.
   `crash.system`, `crash.webview`, `crash.panic`, and
   [`shutdown.incomplete`](#shutdownincomplete), which is not a crash
 - [Subprocesses](#subprocesscrash): `subprocess.crash`
+- [Provider turns](#providerturn-failed): `provider.turn-failed`
 - [Memory and CPU](#memory-and-cpu): `memory.leak-suspect`,
   `memory.leak-likely`, `cpu.sustained`
 - [Requests](#requests): `rpc.slow`, `rpc.hang`, `rpc.saturation`
@@ -53,7 +54,8 @@ Newer builds cite evidence by reference:
 - `evidence.eventIds`: the [`eventId`](events.md#envelope)s of the events that
   explain the latest occurrence, on `rpc.slow`, `subprocess.crash`,
   `worktree.removal-failed`, `git.stacked-action-failed`, `client.stall`,
-  `client.interaction` and `crash.panic`. An event the full queue dropped is not cited.
+  `client.interaction`, `crash.panic` and `provider.turn-failed`. An event the
+  full queue dropped is not cited.
 - `evidence.crashId`: the crash monitor's dump, on a `crash.native` finding
   raised from one. It names the sidecar in `profiler crashes`.
 - `evidence.crashIds`: every dump the finding counted, newest first (up to 64),
@@ -266,6 +268,18 @@ A panic that ended the process also leaves a `crash.unclean-exit` or
 
 A [`subprocess.exit`](events.md#subprocessexit) event accompanies each
 occurrence.
+
+## provider.turn-failed
+
+- **Severity:** `warn` for `context_limit` (the conversation filled the
+  provider's context window), `info` for every other class.
+- **Raised when:** a provider turn ends as failed (not interrupted). Claude
+  turns only, today. A high `count` on a `context_limit` finding means threads
+  keep stopping at the context limit instead of compacting.
+- **Fingerprint:** `provider`, `terminalReason` and `errorClass`.
+- **Evidence:** `provider`, `terminalReason`, `errorClass`, and `eventIds`
+  naming the [`provider.turn-failed`](events.md#providerturn-failed) event. No
+  message, prompt or error text is recorded.
 
 ## Memory and CPU
 

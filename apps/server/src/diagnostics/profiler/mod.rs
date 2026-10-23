@@ -11,6 +11,7 @@ pub mod leak;
 pub mod mcp;
 pub mod os_records;
 pub mod panic_hook;
+pub mod provider_turns;
 pub mod reader;
 pub mod redact;
 pub mod runtime;

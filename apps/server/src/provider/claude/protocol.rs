@@ -88,6 +88,11 @@ pub struct AssistantMessage {
     pub uuid: String,
     pub parent_tool_use_id: Option<String>,
     pub message: AssistantPayload,
+    /// Set on the synthetic message Claude writes when a request fails (`SDKAssistantMessage.error`:
+    /// `invalid_request`, `rate_limit`, `billing_error`, ...). The message's text is then Claude's
+    /// own description of the failure, such as `Prompt is too long`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -121,6 +126,13 @@ pub struct ResultMessage {
     /// of the failure.
     #[serde(default)]
     pub terminal_reason: Option<String>,
+    /// HTTP status of the API error that ended the run, when one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_error_status: Option<i64>,
+    /// The local slash command (such as `compact`) this result reports. Claude runs a local
+    /// command without replaying its input, so this result is the only sign it read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_command: Option<String>,
     pub stop_reason: Option<String>,
     pub session_id: String,
     pub uuid: String,

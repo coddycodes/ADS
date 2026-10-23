@@ -62,9 +62,11 @@ turn result, BiBCode sends the official response-correlated
 `get_context_usage` control query and bounds the whole write-and-response
 operation to two seconds. A successful response supplies `totalTokens` as the
 active context usage, `maxTokens` as its maximum, and
-`isAutoCompactEnabled` as the automatic-compaction indicator. It is applied
-only while the completed turn is still current; late responses for an earlier
-turn are rejected.
+`isAutoCompactEnabled` as the automatic-compaction indicator, and
+`autoCompactThreshold`, when present, as `autoCompactTokens`: the context size at
+which Claude compacts automatically (about 967K on native 1M-token models). The
+context meter names it. The response is applied only while the completed turn
+is still current; late responses for an earlier turn are rejected.
 
 Unsupported, malformed, timed-out, cancelled, EOF, or write-failed control
 queries are nonfatal. They leave the last good stream/result-derived context
@@ -72,6 +74,38 @@ usage in place and release completion without waiting longer. Pending control
 response waiters are removed on timeout and shutdown. Accumulated totals in
 Claude result messages are lifetime processed metadata only; they never replace
 active context-window usage.
+
+## Compaction and the context limit
+
+Claude reports a compaction, automatic or from `/compact`, with `system`
+`status` messages: `status: "compacting"` while it runs, then another status
+(`null` or `requesting`) with `compact_result` (`success` or `failed`) and, on
+failure, `compact_error`. BiBCode shows it in the turn as a **Conversation
+compaction** step, failed with Claude's reason when compaction fails, so a
+compaction near a full 1M-token window (often over a minute) does not look like
+a stalled turn.
+
+When a conversation no longer fits, Claude ends the turn with a context-limit
+`terminal_reason` (`blocking_limit`, `prompt_too_long` or
+`rapid_refill_breaker`) after a synthetic assistant message whose `error` is
+`invalid_request` and whose text is `Prompt is too long` (or `Prompt is too long
+· automatic compaction failed: <cause>`). BiBCode fails that turn with the
+`context_limit` error class and the message "Claude's context window is full.
+Compact the conversation, then send your message again.", followed by Claude's
+text. The thread's error, titled "Claude ran out of context", offers **Compact
+conversation**, which sends `/compact` to the same session as an ordinary
+message; it is disabled while the thread is working, which includes a
+compaction already running. Send your message again once the compaction
+finishes. BiBCode does not compact or resend on its own.
+
+Other failed turns prefer, in order: the result's `errors`, the text of
+Claude's synthetic error message (an `authentication_failed`,
+`oauth_org_not_allowed`, `verification_required` or `cloud_credential_error`
+error is classed `permission_error`), the upstream API error Claude was
+retrying, and finally `Claude turn failed (<terminal_reason>, HTTP
+<api_error_status>).`. Every documented `terminal_reason` is listed in one
+table in `apps/server/src/provider/claude/failure.rs`; a reason missing from it
+is shown by name. These shapes were checked against Claude Code 2.1.306.
 
 ## Updates and version advisories
 
@@ -189,6 +223,10 @@ same input text, including when that replay arrives after the current reply's
 `result`. Image blocks alongside the text do not prevent acknowledgement;
 image-only messages are acknowledged too. A replay containing any tool-result
 block, or different text, is not an acknowledgement.
+A local command such as `/compact` is not replayed; Claude reports it with a
+`result` naming the command (`local_command`), which marks it delivered and ends
+its turn. While Claude compacts the conversation, before reading a message or
+for `/compact`, the 60-second confirmation wait is paused and then restarts.
 The acknowledgement remains pending for the lifetime of that process, even
 across turn completion. The message is attributed to the BiBCode runtime turn
 current when the echo arrives, without allocating a new turn for the steer.

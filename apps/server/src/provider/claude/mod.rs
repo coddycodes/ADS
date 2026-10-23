@@ -1,5 +1,6 @@
 pub(crate) mod activity;
 pub mod canonical;
+pub(crate) mod failure;
 pub(crate) mod hook_sink;
 pub mod model;
 pub mod protocol;
