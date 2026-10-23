@@ -1500,6 +1500,10 @@ The Files surface is a full file manager for the active workspace:
   panel saves pending edits in the background. Undo and Redo use independent
   native history for each open source file. Read-only views keep unavailable
   actions visible but disabled.
+- The rendered Markdown view shows source edits that are not saved yet, and
+  ticking a task there changes that text, so the edits are kept. Once they are
+  saved, it shows the file as last read from disk, so a task toggle also keeps
+  changes made to the file outside BiBCode.
 
 ## Current limitations
 

@@ -988,6 +988,87 @@ describe("markdown preview", () => {
     await flushPromises();
   });
 
+  describe("after source edits", () => {
+    type TaskListChange = (input: { markerOffset: number; checked: boolean }) => void;
+
+    /**
+     * Types in the source view, then switches to the rendered view on the same
+     * session, optionally after the file changed on disk.
+     */
+    function editSourceThenRender(
+      edited: string,
+      options: { unsaved: boolean; changedOnDisk?: string },
+    ) {
+      harness.seedState(
+        (initial) =>
+          typeof initial === "object" &&
+          initial !== null &&
+          "path" in initial &&
+          "revealRequestId" in initial,
+        { path: "README.md", revealRequestId: 1 },
+      );
+      renderPanel(baseProps({ relativePath: "README.md" }));
+      const session = testState.session!;
+      testState.pendingWork = options.unsaved;
+      testState.editors.at(-1)!.options.onChange({ contents: edited });
+      if (options.changedOnDisk !== undefined) setFileData(options.changedOnDisk);
+
+      renderPanel(baseProps({ relativePath: "README.md" }));
+      expect(testState.session).toBe(session);
+      const chatMarkdown = ui.find("ChatMarkdown");
+      return {
+        session,
+        text: chatMarkdown.text,
+        toggleTask: chatMarkdown.onTaskListChange as TaskListChange,
+      };
+    }
+
+    it("renders and toggles unsaved source edits instead of the file read before them", () => {
+      // The file is active, so the edit stays pending and the query keeps the text read before it.
+      setFileData("- [ ] first\n");
+      const { session, text, toggleTask } = editSourceThenRender("- [ ] first\n- [ ] typed\n", {
+        unsaved: true,
+      });
+      expect(text).toBe("- [ ] first\n- [ ] typed\n");
+
+      toggleTask({ markerOffset: 2, checked: true });
+      expect(session.changeOutsideEditor).toHaveBeenCalledWith("- [x] first\n- [ ] typed\n");
+      expect(testState.setProjectFileQueryData).toHaveBeenCalledWith(
+        environmentId,
+        "/workspace/demo",
+        "README.md",
+        "- [x] first\n- [ ] typed\n",
+      );
+    });
+
+    it("keeps unsaved source edits over a file changed on disk", () => {
+      setFileData("- [ ] first\n");
+      const { session, text, toggleTask } = editSourceThenRender("- [ ] first\n- [ ] typed\n", {
+        unsaved: true,
+        changedOnDisk: "- [ ] first\n- [ ] agent\n",
+      });
+      expect(text).toBe("- [ ] first\n- [ ] typed\n");
+
+      toggleTask({ markerOffset: 2, checked: true });
+      expect(session.changeOutsideEditor).toHaveBeenCalledWith("- [x] first\n- [ ] typed\n");
+    });
+
+    it("renders and toggles the file on disk once the source edits are saved", () => {
+      // An agent changes the file after the save; the query now holds its text.
+      setFileData("- [ ] first\n");
+      const { session, text, toggleTask } = editSourceThenRender("- [ ] first\n- [ ] typed\n", {
+        unsaved: false,
+        changedOnDisk: "- [ ] first\n- [ ] typed\n- [ ] agent\n",
+      });
+      expect(text).toBe("- [ ] first\n- [ ] typed\n- [ ] agent\n");
+
+      toggleTask({ markerOffset: 2, checked: true });
+      expect(session.changeOutsideEditor).toHaveBeenCalledWith(
+        "- [x] first\n- [ ] typed\n- [ ] agent\n",
+      );
+    });
+  });
+
   it("keeps the source view when a reveal targets a different request", () => {
     setFileData("# Title\n");
     harness.seedState(

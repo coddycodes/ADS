@@ -117,6 +117,41 @@ describe("FileEditingSession", () => {
     expect(session.retainedContents).toBeNull();
   });
 
+  it("exposes its contents as unsaved until a save of them is confirmed", async () => {
+    const save = deferredResult<AtomCommandResult<void, string>>();
+    const persist = vi
+      .fn<(relativePath: string, contents: string) => Promise<AtomCommandResult<void, string>>>()
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail("disk full")))
+      .mockReturnValueOnce(save.promise);
+    const session = new FileEditingSession({
+      cwd: "/repo",
+      relativePath: "README.md",
+      debounceMs: 500,
+      persist,
+      onPendingChange: vi.fn(),
+      onConfirmed: vi.fn(),
+    });
+    session.setAutosaveEnabled(false);
+    expect(session.unsavedContents).toBeNull();
+
+    const editor = session.editor as unknown as InstanceType<typeof pierre.Editor>;
+    (editor.options["onChange"] as (file: { contents: string }) => void)({
+      contents: "- [ ] typed\n",
+    });
+    expect(session.unsavedContents).toBe("- [ ] typed\n");
+
+    await expect(session.flush()).resolves.toBe("failed");
+    expect(session.unsavedContents).toBe("- [ ] typed\n");
+
+    const flushed = session.flush();
+    await vi.waitFor(() => expect(persist).toHaveBeenCalledTimes(2));
+    expect(session.unsavedContents).toBe("- [ ] typed\n");
+    save.resolve(AsyncResult.success(undefined));
+    await expect(flushed).resolves.toBe("saved");
+    expect(session.unsavedContents).toBeNull();
+    expect(session.retainedContents).toBe("- [ ] typed\n");
+  });
+
   it("uses the current renamed path for later persistence", async () => {
     vi.useFakeTimers();
     const persist = vi.fn(async () => AsyncResult.success(undefined));

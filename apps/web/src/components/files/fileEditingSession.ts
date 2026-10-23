@@ -83,6 +83,16 @@ export class FileEditingSession<LAnnotation, A = unknown, E = unknown> {
     return this.coordinator.getLatestContents();
   }
 
+  /**
+   * The text this session's document holds while part of it is not yet saved
+   * (pending, saving, failed, or paused), or null once the file holds all of it.
+   * A view that shows the file must prefer this text: the file query still holds
+   * what was read before these edits, and changing the file from it drops them.
+   */
+  get unsavedContents(): string | null {
+    return this.coordinator.hasPendingWork() ? this.coordinator.getLatestContents() : null;
+  }
+
   get editor(): Editor<LAnnotation> {
     if (this.editorInstance === null) {
       this.editorInstance = this.createEditor();
