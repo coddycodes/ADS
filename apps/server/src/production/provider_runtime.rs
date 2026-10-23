@@ -25210,20 +25210,75 @@ while IFS= read -r line; do
 done
 "#;
 
+    /// #165 with a real `/compact`: Claude never replays a local command's input, so the
+    /// delivery still awaits its replay when the task notification arrives, and only the
+    /// command's `local_command` result acknowledges it.
+    #[cfg(unix)]
+    const CLAUDE_FOLLOW_UP_DURING_COMPACT_FIXTURE: &str = r#"#!/bin/sh
+case "$1" in
+  --version) printf '%s\n' '2.1.308 (Claude Code)'; exit 0;;
+  --help) printf '%s\n' 'Usage: claude [options]'; exit 0;;
+esac
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"user"'*)
+      printf '%s\n' '{"type":"system","subtype":"task_started","task_id":"task-bg","tool_use_id":"tool-bash-bg","description":"Background command","task_type":"local_bash","is_backgrounded":true,"uuid":"task-started","session_id":"fixture-session"}'
+      printf '%s\n' '{"type":"system","subtype":"status","status":"compacting","session_id":"fixture-session","uuid":"status-compacting"}'
+      (
+        sleep 0.1
+        printf '%s\n' '{"type":"system","subtype":"task_notification","task_id":"task-bg","status":"completed","output_file":"/tmp/task-bg.output","summary":"Done.","uuid":"task-notified","session_id":"fixture-session"}'
+        printf '%s\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[],"uuid":"tasks-changed","session_id":"fixture-session"}'
+        printf '%s\n' '{"type":"user","message":{"role":"user","content":"<task-notification><task-id>task-bg</task-id><status>completed</status></task-notification>"},"origin":{"kind":"task-notification"},"parent_tool_use_id":null,"session_id":"fixture-session","uuid":"follow-up-user"}'
+        printf '%s\n' '{"type":"system","subtype":"status","status":null,"compact_result":"success","session_id":"fixture-session","uuid":"status-done"}'
+        printf '%s\n' '{"type":"user","message":{"role":"user","content":"<local-command-stdout>Compacted </local-command-stdout>"},"session_id":"fixture-session","parent_tool_use_id":null,"uuid":"local-output","isReplay":true}'
+        printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":0,"stop_reason":null,"terminal_reason":"completed","local_command":"compact","result":"","session_id":"fixture-session","uuid":"compact-result"}'
+        sleep 1
+        printf '%s\n' '{"type":"stream_event","session_id":"fixture-session","uuid":"follow-up-delta","parent_tool_use_id":null,"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The background command finished."}}}'
+        sleep 1
+        : > "$BIBCODE_TEST_FOLLOW_UP"
+        printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","origin":{"kind":"task-notification"},"session_id":"fixture-session","uuid":"follow-up-result"}'
+      ) &
+      ;;
+  esac
+done
+"#;
+
     /// #165, end to end: the idle deadline armed by the delivered turn's `result` does not stop
     /// Claude while it answers a task notification it replayed just before that `result`; the
     /// session is suspended only after the answer's own `result`, and the answer is its own turn.
     #[cfg(unix)]
     #[tokio::test]
     async fn claude_follow_up_replayed_before_a_result_outlives_the_idle_deadline() {
+        assert_claude_follow_up_outlives_the_idle_deadline(
+            "claude-follow-up-before-result",
+            CLAUDE_FOLLOW_UP_BEFORE_RESULT_FIXTURE,
+            "slow-turn",
+        )
+        .await;
+    }
+
+    /// The same, when the delivered turn is a `/compact`, which Claude never replays.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_follow_up_replayed_during_a_compact_outlives_the_idle_deadline() {
+        assert_claude_follow_up_outlives_the_idle_deadline(
+            "claude-follow-up-during-compact",
+            CLAUDE_FOLLOW_UP_DURING_COMPACT_FIXTURE,
+            "/compact",
+        )
+        .await;
+    }
+
+    #[cfg(unix)]
+    async fn assert_claude_follow_up_outlives_the_idle_deadline(
+        name: &str,
+        fixture: &str,
+        text: &str,
+    ) {
         const IDLE_TIMEOUT: Duration = Duration::from_millis(300);
         let temp = TempDir::new().unwrap();
         let follow_up = temp.path().join("follow-up");
-        let executable = executable_fixture(
-            &temp,
-            "claude-follow-up-before-result",
-            CLAUDE_FOLLOW_UP_BEFORE_RESULT_FIXTURE,
-        );
+        let executable = executable_fixture(&temp, name, fixture);
         let engine = supervisor_engine().await;
         let (deadline_tx, mut deadlines) = mpsc::unbounded_channel();
         let activity = super::ActivityProjection::new(ActivityRepository::new(
@@ -25249,19 +25304,24 @@ done
             follow_up.to_string_lossy().into_owned(),
         );
         supervisor.launch(request).await.unwrap();
+        let command = serde_json::from_value(json!({
+            "type":"thread.turn.start", "commandId":"follow-up-turn", "threadId":"t1",
+            "message":{"messageId":"user-follow-up-turn","role":"user","text":text,"attachments":[]},
+            "runtimeMode":"full-access", "interactionMode":"default",
+            "createdAt":"2026-07-16T00:00:01Z"
+        }))
+        .unwrap();
         let handle = supervisor
-            .deliver_turn(
-                IdleDeadlineFixture::turn_command("slow-turn"),
-                "slow-turn".to_owned(),
-            )
+            .deliver_turn(command, "follow-up-turn".to_owned())
             .await
             .expect("turn admitted");
-        assert!(matches!(
-            timeout(Duration::from_secs(10), handle.completion())
-                .await
-                .expect("Claude replays the turn"),
-            super::ProviderDeliveryOutcome::Accepted { .. }
-        ));
+        let outcome = timeout(Duration::from_secs(10), handle.completion())
+            .await
+            .expect("Claude acknowledges the turn");
+        assert!(
+            matches!(outcome, super::ProviderDeliveryOutcome::Accepted { .. }),
+            "{outcome:?}"
+        );
 
         // The deadline that suspends the session must have been armed after Claude's answer
         // ended (the fixture writes the marker just before that answer's `result`). The
