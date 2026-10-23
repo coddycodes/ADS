@@ -10,15 +10,38 @@ afterEach(() => {
 });
 
 describe("mockDesktopUiFolderPicker", () => {
-  it("returns the fixture path from the packaged Tauri folder-picker command", async () => {
+  const stubPage = (page: { __wdio_mocks__?: Record<string, unknown> }) => {
     const mockReturnValue = vi.fn(async () => undefined);
     const mock = vi.fn(async () => ({ mockReturnValue }));
-    vi.stubGlobal("browser", { tauri: { mock } });
+    vi.stubGlobal("window", page);
+    vi.stubGlobal("browser", {
+      tauri: { mock },
+      execute: async (script: (path: string) => unknown, path: string) => script(path),
+    });
+    return { mock, mockReturnValue };
+  };
+
+  it("returns the fixture path from the packaged Tauri folder-picker command", async () => {
+    const serviceMock = vi.fn(async () => "/tmp/bibcode-ui-project");
+    const page = { __wdio_mocks__: { desktop_bridge_pick_folder: serviceMock } };
+    const { mock, mockReturnValue } = stubPage(page);
 
     await mockDesktopUiFolderPicker("/tmp/bibcode-ui-project");
 
     expect(mock).toHaveBeenCalledExactlyOnceWith("desktop_bridge_pick_folder");
     expect(mockReturnValue).toHaveBeenCalledExactlyOnceWith("/tmp/bibcode-ui-project");
+    // The service's own mock reached the page, so it is kept.
+    expect(page.__wdio_mocks__.desktop_bridge_pick_folder).toBe(serviceMock);
+  });
+
+  it("installs the mock in the page when the service's registration did not reach it", async () => {
+    const page: { __wdio_mocks__?: Record<string, unknown> } = {};
+    stubPage(page);
+
+    await mockDesktopUiFolderPicker("/tmp/bibcode-ui-project");
+
+    const installed = page.__wdio_mocks__?.desktop_bridge_pick_folder as () => Promise<string>;
+    await expect(installed()).resolves.toBe("/tmp/bibcode-ui-project");
   });
 });
 
