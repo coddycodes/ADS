@@ -2256,14 +2256,14 @@
     {
       "key": "rust:workspace:tauri",
       "name": "tauri",
-      "current": "2.12.1",
-      "target": "2.12.1",
+      "current": "2.12.4",
+      "target": "2.12.4",
       "channel": "stable",
       "source": "https://crates.io/crates/tauri",
       "cohort": "rust-current",
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
-      "notes": "Tauri 2.12 cohort: newest release at least 14 days old on 2026-10-22; 2.12.0+ fixes GHSA-w28w-mhc8-qvjv (High) in tauri <= 2.11.5. The desktop's webview2-com/windows pins, the tao patch removal and @tauri-apps/api/cli 2.12 move with it."
+      "notes": "Tauri 2.12 cohort. 2.12.0+ fixes GHSA-w28w-mhc8-qvjv (High) in tauri <= 2.11.5. Correctness exception to the 14-day rule: 2.12.4 (2026-10-14) fixes a panic in the asynchronous IPC and asset protocol handlers on an empty request path (#16197). On Windows with 2.12.1, a document reload during a streaming turn never completed its navigation in the packaged desktop UI smoke (#177), and the app reloads from its server-update prompt, error boundary and database recovery. The desktop's webview2-com/windows pins, the tao patch removal and @tauri-apps/api/cli 2.12 move with it."
     },
     {
       "key": "rust:workspace:tauri-build",

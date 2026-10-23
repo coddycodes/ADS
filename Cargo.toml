@@ -84,7 +84,7 @@ socket2 = "0.6.5"
 sysinfo = "0.39.6"
 subtle = "2.6.1"
 bibcode-server = { path = "apps/server" }
-tauri = { version = "2.12.1", features = ["unstable", "devtools", "image-png"] }
+tauri = { version = "2.12.4", features = ["unstable", "devtools", "image-png"] }
 tauri-build = { version = "2.7.1", features = [] }
 tauri-plugin-deep-link = "2.6.1"
 tauri-plugin-dialog = "2.8.1"
