@@ -286,6 +286,11 @@ test -n "$BIBCODE_E2E_APP_PATH"
 WAYLAND_DISPLAY=bibcode-no-wayland xvfb-run --auto-servernum vp run test:ui:desktop
 ```
 
+When the run ends, the artifact directory (`BIBCODE_E2E_ARTIFACT_DIR`) also holds
+`app-*.log`: the last 4 MiB of each of the packaged app's own logs, with the native
+page-load lifecycle and webview process failures, next to the screenshots and
+WebdriverIO logs.
+
 The packaged AppImage prefers the Wayland backend, and libwayland connects to
 `$XDG_RUNTIME_DIR/wayland-0` even when `WAYLAND_DISPLAY` is unset. On a host
 with a live Wayland session the app would therefore open on the real desktop

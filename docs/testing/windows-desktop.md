@@ -494,6 +494,11 @@ $env:BIBCODE_E2E_APP_PATH = (Resolve-Path 'target/release/bibcode-desktop.exe').
 vp run test:ui:desktop
 ```
 
+When the run ends, the artifact directory (`BIBCODE_E2E_ARTIFACT_DIR`) also holds
+`app-*.log`: the last 4 MiB of each of the packaged app's own logs, with the native
+page-load lifecycle and webview process failures, next to the screenshots and
+WebdriverIO logs.
+
 Use a unique test profile supported by the E2E harness. Do not launch an
 installed BiBCode executable or overwrite `%APPDATA%`/`%LOCALAPPDATA%` user
 data. `BIBCODE_E2E_APP_PATH` deliberately selects the executable produced by

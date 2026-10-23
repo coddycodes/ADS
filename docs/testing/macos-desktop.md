@@ -250,6 +250,11 @@ test -d "$BIBCODE_E2E_APP_PATH"
 vp run test:ui:desktop
 ```
 
+When the run ends, the artifact directory (`BIBCODE_E2E_ARTIFACT_DIR`) also holds
+`app-*.log`: the last 4 MiB of each of the packaged app's own logs, with the native
+page-load lifecycle and webview process failures, next to the screenshots and
+WebdriverIO logs.
+
 `BIBCODE_E2E_APP_PATH` selects the isolated installation copied from the current
 worktree's E2E DMG. The DMG-only bundler removes its transient staging `.app`;
 mount the resulting image to inspect and copy its signed payload, then validate
