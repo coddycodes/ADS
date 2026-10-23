@@ -29,6 +29,7 @@ import {
   KEY_BACKSPACE_COMMAND,
   $getRoot,
   HISTORY_MERGE_TAG,
+  SKIP_DOM_SELECTION_TAG,
   DecoratorNode,
   type ElementNode,
   type LexicalNode,
@@ -1714,24 +1715,46 @@ function ComposerPromptEditorInner({
     }
 
     isApplyingControlledUpdateRef.current = true;
-    editor.update(() => {
-      const shouldRewriteEditorState =
-        previousSnapshot.value !== value || agentsChanged || contextsChanged || skillsChanged;
-      if (shouldRewriteEditorState) {
-        const reconstructTrailingReferences =
-          reconstructControlledValue || $composerEditorEndsWithConfirmedReferenceNode();
-        $setComposerEditorPrompt(
-          value,
-          terminalContexts,
-          agentMetadataRef.current,
-          skillMetadataRef.current,
-          { reconstructTrailingReferences },
-        );
-      }
-      if (shouldRewriteEditorState || isFocused) {
-        $setSelectionAtComposerOffset(normalizedCursor);
-      }
-    });
+    // Provider metadata (skills, agents, terminal contexts) often arrives after the thread
+    // opens. Re-rendering its chips in an unfocused composer must not place the page's
+    // selection there: browsers then focus the editor, and a keyboard user on another control
+    // is pulled into the composer. The editor's own selection still updates: a programmatic
+    // focus (`focusAt`, `editor.focus()`) restores that caret, a click places its own, and a
+    // keyboard Tab back in takes the browser's default position.
+    const metadataRefreshWhileUnfocused = !isFocused && previousSnapshot.value === value;
+    const domSelection = metadataRefreshWhileUnfocused ? window.getSelection() : null;
+    if (
+      rootElement &&
+      domSelection &&
+      domSelection.rangeCount > 0 &&
+      rootElement.contains(domSelection.anchorNode)
+    ) {
+      // A range left in the editor after it lost focus would be relocated when the refresh
+      // rebuilds the paragraph, and Lexical would read that back as the caret. Removing it
+      // cannot move focus.
+      domSelection.removeAllRanges();
+    }
+    editor.update(
+      () => {
+        const shouldRewriteEditorState =
+          previousSnapshot.value !== value || agentsChanged || contextsChanged || skillsChanged;
+        if (shouldRewriteEditorState) {
+          const reconstructTrailingReferences =
+            reconstructControlledValue || $composerEditorEndsWithConfirmedReferenceNode();
+          $setComposerEditorPrompt(
+            value,
+            terminalContexts,
+            agentMetadataRef.current,
+            skillMetadataRef.current,
+            { reconstructTrailingReferences },
+          );
+        }
+        if (shouldRewriteEditorState || isFocused) {
+          $setSelectionAtComposerOffset(normalizedCursor);
+        }
+      },
+      metadataRefreshWhileUnfocused ? { tag: SKIP_DOM_SELECTION_TAG } : undefined,
+    );
     queueMicrotask(() => {
       isApplyingControlledUpdateRef.current = false;
     });

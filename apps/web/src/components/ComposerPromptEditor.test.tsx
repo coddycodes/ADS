@@ -828,6 +828,119 @@ describe("ComposerPromptEditor inline token nodes", () => {
     }
   });
 
+  it("leaves focus where it is when skills arrive while the composer is unfocused", async () => {
+    harness.useRealEffects = true;
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    const outside = document.createElement("button");
+    outside.textContent = "Activity summary";
+    document.body.append(outside, container);
+    const root = createRoot(container);
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    const spies: Array<{ mockRestore: () => void }> = [];
+    const source = "use $refactor now";
+    const renderWithSkills = (nextSkills: ReadonlyArray<ServerProviderSkill>) => (
+      <ComposerPromptEditor
+        value={source}
+        cursor={source.length}
+        terminalContexts={[]}
+        skills={nextSkills}
+        agents={[]}
+        disabled={false}
+        placeholder="Ask anything"
+        onRemoveTerminalContext={vi.fn()}
+        onChange={vi.fn()}
+        onPaste={vi.fn()}
+        editorRef={editorRef}
+      />
+    );
+
+    try {
+      await act(async () => root.render(renderWithSkills([])));
+      outside.focus();
+      expect(document.activeElement).toBe(outside);
+      const editorRoot = container.querySelector('[contenteditable="true"]');
+      const domSelection = window.getSelection();
+      if (!editorRoot || !domSelection) throw new Error("The composer did not render.");
+      // Browsers focus an editable element when the page's selection is placed inside it, which
+      // happy-dom does not emulate, so this watches for the selection and focus calls directly.
+      const placeSelection = vi.spyOn(domSelection, "setBaseAndExtent");
+      const focus = vi.spyOn(HTMLElement.prototype, "focus");
+      spies.push(placeSelection, focus);
+
+      // Provider capabilities load after the thread opens; a keyboard user may already be on
+      // another control, and the refreshed chips must not pull focus into the composer.
+      await act(async () => root.render(renderWithSkills(skills)));
+
+      expect(container.querySelector('[data-composer-skill-chip="true"]')).not.toBeNull();
+      expect(document.activeElement).toBe(outside);
+      expect(placeSelection).not.toHaveBeenCalled();
+      expect(focus.mock.contexts.filter((element) => element === editorRoot)).toEqual([]);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+      await act(async () => root.unmount());
+      container.remove();
+      outside.remove();
+      harness.useRealEffects = false;
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+    }
+  });
+
+  it("drops a selection left in the unfocused composer instead of moving its caret", async () => {
+    harness.useRealEffects = true;
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    const outside = document.createElement("button");
+    document.body.append(outside, container);
+    const root = createRoot(container);
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    const source = "use $refactor now";
+    const cursor = "use ".length;
+    const renderWithSkills = (nextSkills: ReadonlyArray<ServerProviderSkill>) => (
+      <ComposerPromptEditor
+        value={source}
+        cursor={cursor}
+        terminalContexts={[]}
+        skills={nextSkills}
+        agents={[]}
+        disabled={false}
+        placeholder="Ask anything"
+        onRemoveTerminalContext={vi.fn()}
+        onChange={vi.fn()}
+        onPaste={vi.fn()}
+        editorRef={editorRef}
+      />
+    );
+
+    try {
+      await act(async () => root.render(renderWithSkills([])));
+      const editorRoot = container.querySelector('[contenteditable="true"]');
+      const text = editorRoot?.querySelector("span")?.firstChild;
+      const domSelection = window.getSelection();
+      if (!editorRoot || !text || !domSelection) throw new Error("The composer did not render.");
+      // The user typed in the composer and then clicked another control: the page's range
+      // stays in the editor while focus moves on.
+      domSelection.setBaseAndExtent(text, cursor, text, cursor);
+      outside.focus();
+
+      await act(async () => root.render(renderWithSkills(skills)));
+
+      // A browser relocates the range into the rebuilt paragraph and reports it back through
+      // selectionchange; happy-dom leaves it on the detached text node and fires nothing. So
+      // this checks the contract: the leftover range is removed before the rebuild, and the
+      // saved caret and focus are unchanged.
+      expect(domSelection.rangeCount).toBe(0);
+      expect(editorRef.current?.readSnapshot()).toMatchObject({ value: source, cursor });
+      expect(document.activeElement).toBe(outside);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      outside.remove();
+      harness.useRealEffects = false;
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+    }
+  });
+
   it("updates the same editor when provider agent metadata changes", async () => {
     harness.useRealEffects = true;
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

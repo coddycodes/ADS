@@ -32,6 +32,7 @@ BiBCode v0.11.0 moves the desktop to Tauri 2.11.6, which closes a High-severity 
 
 - When a turn ends on a short status line, the "Worked for…" fold keeps the agent's answer above it visible. (#154)
 - Clicking outside a dialog no longer closes it and discards what you typed, for example in **Create merge request**. Close it with Cancel, × or Escape. (#155)
+- Keyboard focus no longer jumps into the composer when a chat finishes loading its provider's skills or agents, so tabbing through a newly opened chat stays where you are.
 - An open folder, file, save or confirmation dialog no longer holds up the desktop app. Each open dialog used to tie up some of the app's background work. On a machine with few cores, two of them could stop the window from loading again after a reload. A confirmation box also froze the whole window while it was open.
 
 ### Resource usage
