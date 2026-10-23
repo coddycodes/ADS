@@ -4154,6 +4154,63 @@ fn claude_runtime_opens_a_follow_up_replayed_before_the_previous_result() {
     );
 }
 
+/// A delivered `/compact` is never replayed, so its write still awaits a replay when a task's
+/// notification arrives. The driver acknowledges the command from its `result`; the notification
+/// must still open its own turn then.
+#[test]
+fn claude_runtime_keeps_a_follow_up_replayed_while_a_local_command_awaits_its_replay() {
+    let mut runtime = ClaudeProviderRuntime::new("thread-1".to_owned(), "session-root".to_owned());
+    runtime.start_turn(TurnInput {
+        turn_id: "compact".to_owned(),
+        input: "/compact".to_owned(),
+    });
+    runtime.await_turn_input(7);
+    let replay = runtime.handle_raw_value(&claude_task_notification_turn(), 1_000);
+    assert!(
+        replay
+            .events
+            .iter()
+            .all(|event| event.event_type != "turn.started"),
+        "the open turn stays current until its result"
+    );
+
+    runtime.stop_awaiting_turn_input(7);
+    let closed = runtime.handle_raw_value(&claude_result_frame(None), 2_000);
+    let kinds = closed
+        .events
+        .iter()
+        .map(|event| (event.event_type.as_str(), event.turn_id.as_deref()))
+        .collect::<Vec<_>>();
+    assert_eq!(kinds.len(), 2, "{kinds:?}");
+    assert_eq!(kinds[0], ("turn.completed", Some("compact")));
+    assert_eq!(kinds[1].0, "turn.started", "{kinds:?}");
+}
+
+/// After a resume Claude can answer a finished task before it reads the new message. That answer's
+/// result is ignored while the message awaits its replay, so the notification it answered must not
+/// open another turn once the message's own turn ends.
+#[test]
+fn claude_runtime_opens_no_follow_up_for_one_answered_before_the_message_replay() {
+    let mut runtime = ClaudeProviderRuntime::new("thread-1".to_owned(), "session-root".to_owned());
+    runtime.start_turn(TurnInput {
+        turn_id: "message".to_owned(),
+        input: "next step".to_owned(),
+    });
+    runtime.await_turn_input(7);
+    runtime.handle_raw_value(&claude_task_notification_turn(), 1_000);
+    let stale = runtime.handle_raw_value(&claude_result_frame(Some("task-notification")), 2_000);
+    assert!(stale.events.is_empty(), "{:?}", stale.events);
+
+    runtime.stop_awaiting_turn_input(7);
+    let closed = runtime.handle_raw_value(&claude_result_frame(None), 3_000);
+    let kinds = closed
+        .events
+        .iter()
+        .map(|event| (event.event_type.as_str(), event.turn_id.as_deref()))
+        .collect::<Vec<_>>();
+    assert_eq!(kinds, vec![("turn.completed", Some("message"))]);
+}
+
 /// Two tasks finish during one turn: each answer opens as the turn before it ends. An interrupted
 /// turn opens none, since the user stopped Claude.
 #[test]

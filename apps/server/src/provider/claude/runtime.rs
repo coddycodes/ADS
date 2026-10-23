@@ -1579,6 +1579,10 @@ pub struct ClaudeProviderRuntime {
     /// open: it can replay the task notification just before that turn's `result` (#165). Each
     /// opens when the turn before it ends, so idle suspension waits for its own `result`.
     follow_ups_after_turn: usize,
+    /// Task notifications replayed while a delivered write still awaits its replay. A result
+    /// ignored in that window answered one of them; the rest follow the turn once the write is
+    /// replayed or acknowledged, as a `/compact` is from its `result` alone.
+    follow_ups_awaiting_replay: usize,
     turn_input_cancellation: CancellationToken,
     delivery_acknowledgement_cancellation: CancellationToken,
     active_assistant_item_id: Option<String>,
@@ -1632,6 +1636,7 @@ impl ClaudeProviderRuntime {
             turn_open: false,
             turn_input_awaiting_replay: None,
             follow_ups_after_turn: 0,
+            follow_ups_awaiting_replay: 0,
             turn_input_cancellation: CancellationToken::new(),
             delivery_acknowledgement_cancellation: CancellationToken::new(),
             active_assistant_item_id: None,
@@ -1704,6 +1709,7 @@ impl ClaudeProviderRuntime {
         self.stop_turn_input();
         self.reset_delivery_acknowledgements();
         self.follow_ups_after_turn = 0;
+        self.follow_ups_awaiting_replay = 0;
         self.runtime_mode = Some(runtime_mode);
         vec![
             self.event(
@@ -1779,12 +1785,17 @@ impl ClaudeProviderRuntime {
     /// just started.
     pub fn await_turn_input(&mut self, write: u64) {
         self.turn_input_awaiting_replay = Some(write);
+        self.follow_ups_awaiting_replay = 0;
     }
 
     /// `write` was replayed, or its wait ended without a replay.
     pub fn stop_awaiting_turn_input(&mut self, write: u64) {
         if self.turn_input_awaiting_replay == Some(write) {
             self.turn_input_awaiting_replay = None;
+            let pending = std::mem::take(&mut self.follow_ups_awaiting_replay);
+            if self.turn_open {
+                self.follow_ups_after_turn = self.follow_ups_after_turn.saturating_add(pending);
+            }
         }
     }
 
@@ -1860,13 +1871,19 @@ impl ClaudeProviderRuntime {
     /// Claude answers a finished background task with a turn it starts itself. BiBCode did not
     /// deliver it, so it gets a turn of its own: the thread reads running and the turn's output and
     /// `result` belong to it. Not while a delivered message awaits its replay: on resume Claude
-    /// can run that turn before it reads the message, and its `result` is ignored instead. A
-    /// replay that arrives while another turn is still open starts its turn when that one ends.
+    /// can run that turn before it reads the message, and its `result` is ignored instead; a
+    /// notification no ignored result answered follows the turn once the write is replayed or
+    /// acknowledged. A replay that arrives while another turn is still open starts its turn when
+    /// that one ends.
     fn start_provider_turn(&mut self, value: &Value) -> Vec<CanonicalEvent> {
         let follow_up = value.get("type").and_then(Value::as_str) == Some("user")
             && value.pointer("/origin/kind").and_then(Value::as_str) == Some("task-notification")
             && value.get("parent_tool_use_id").is_none_or(Value::is_null);
-        if !follow_up || self.turn_input_awaiting_replay.is_some() {
+        if !follow_up {
+            return Vec::new();
+        }
+        if self.turn_input_awaiting_replay.is_some() {
+            self.follow_ups_awaiting_replay = self.follow_ups_awaiting_replay.saturating_add(1);
             return Vec::new();
         }
         if self.turn_open {
@@ -2445,6 +2462,7 @@ impl ClaudeProviderRuntime {
         self.stop_turn_input();
         self.delivery_acknowledgement_cancellation.cancel();
         self.follow_ups_after_turn = 0;
+        self.follow_ups_awaiting_replay = 0;
         let error_message = if is_interrupted_error(error) {
             "Claude runtime interrupted.".to_owned()
         } else {
@@ -2498,6 +2516,7 @@ impl ClaudeProviderRuntime {
         self.current_turn_id = snapshot.turn_id;
         self.turn_open = self.current_turn_id.is_some();
         self.follow_ups_after_turn = 0;
+        self.follow_ups_awaiting_replay = 0;
         self.runtime_mode = Some(snapshot.runtime_mode);
         self.pending_approvals = snapshot
             .pending_approvals
@@ -2703,6 +2722,8 @@ impl ClaudeProviderRuntime {
         // replays the new message. Ending the new turn there leaves its work running while
         // the thread reads ready. An error still ends it; Claude can fail before reading.
         if self.turn_input_awaiting_replay.is_some() && !message.is_error {
+            // It answered a task notification replayed in the same window.
+            self.follow_ups_awaiting_replay = self.follow_ups_awaiting_replay.saturating_sub(1);
             tracing::info!(
                 thread_id = %self.thread_id,
                 "ignored a Claude result that arrived before the turn's input was read"
@@ -2765,6 +2786,7 @@ impl ClaudeProviderRuntime {
         // An interrupted turn is the user stopping Claude, so no answer is assumed to follow.
         if interrupted {
             self.follow_ups_after_turn = 0;
+            self.follow_ups_awaiting_replay = 0;
         } else if self.follow_ups_after_turn > 0 {
             self.follow_ups_after_turn -= 1;
             events.extend(self.start_follow_up_turn());
