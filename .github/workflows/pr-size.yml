@@ -221,6 +221,9 @@ jobs:
               stdio: "inherit",
             });
 
+            // A vendored-subtree sync lists tens of thousands of numstat lines, past Node's
+            // 1 MiB default buffer (spawnSync ENOBUFS).
+            const numstatMaxBuffer = 256 * 1024 * 1024;
             const diffArgs = [
               "diff",
               "--numstat",
@@ -233,12 +236,13 @@ jobs:
               execFileSync(
                 "git",
                 diffArgs,
-                { encoding: "utf8" },
+                { encoding: "utf8", maxBuffer: numstatMaxBuffer },
               ),
             );
             const nonTestChangedLines = sumNumstat(
               execFileSync("git", [...diffArgs, "--", ".", ...testExcludePathspecs], {
                 encoding: "utf8",
+                maxBuffer: numstatMaxBuffer,
               }),
             );
             const testChangedLines = Math.max(0, totalChangedLines - nonTestChangedLines);
