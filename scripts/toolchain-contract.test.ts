@@ -54,22 +54,19 @@ describe("repository toolchain contract", () => {
     const workspaceConfiguration = parseYaml(workspace) as Record<string, unknown>;
 
     expect(rootPackage.engines).toEqual({ node: "26.8.1" });
-    expect(rootPackage.packageManager).toBe("pnpm@11.25.0");
-    expect(workspace).toMatch(/^  "@types\/node": 26\.4\.1$/m);
+    expect(rootPackage.packageManager).toBe("pnpm@11.28.5");
+    expect(workspace).toMatch(/^  "@types\/node": 26\.6\.4$/m);
     expect(workspace).toMatch(/^  vite: npm:@voidzero-dev\/vite-plus-core@1\.1\.0$/m);
     expect(workspace).toMatch(/^  vite-plus: 1\.1\.0$/m);
-    expect(workspaceConfiguration.minimumReleaseAgeExclude).toEqual([
-      "geckodriver@6.1.1",
-      "@cloudflare/workers-types@5.20260903.1",
-      "@noble/ciphers@2.4.0",
-    ]);
+    // Every locked version has cleared pnpm 11's 24-hour release-age window.
+    expect(workspaceConfiguration).not.toHaveProperty("minimumReleaseAgeExclude");
     expect(workspace).not.toMatch(/^trustLockfile:\s+true$/m);
     expect(workspaceConfiguration).not.toHaveProperty("ignoredBuiltDependencies");
     expect(workspaceConfiguration).not.toHaveProperty("onlyBuiltDependencies");
     expect(workspaceConfiguration.allowBuilds).toEqual({
       "bufferutil@4.1.0": false,
-      "edgedriver@6.3.0": false,
-      "esbuild@0.25.12 || 0.28.1": true,
+      "edgedriver@6.3.1": false,
+      "esbuild@0.25.12 || 0.28.2": true,
       "geckodriver@6.1.1": false,
       "msw@2.15.0": false,
       "utf-8-validate@6.0.6": false,
@@ -140,7 +137,7 @@ describe("repository toolchain contract", () => {
     }
   });
 
-  it("uses an immutable devcontainer without Bun and installs through Corepack", () => {
+  it("uses an immutable devcontainer without Bun or Corepack", () => {
     const devcontainer = readJson(".devcontainer/devcontainer.json");
     const features = devcontainer.features as Record<string, unknown>;
 
@@ -157,8 +154,7 @@ describe("repository toolchain contract", () => {
       version: "26.8.1",
     });
     expect(devcontainer.postCreateCommand).toEqual({
-      install:
-        "npm install --global corepack@0.35.0 && corepack enable && corepack prepare pnpm@11.25.0 --activate && pnpm install --frozen-lockfile",
+      install: "npm install --global pnpm@11.28.5 && pnpm install --frozen-lockfile",
     });
   });
 
@@ -167,7 +163,7 @@ describe("repository toolchain contract", () => {
     const scripts = desktopPackage.scripts as Record<string, string>;
     const devDependencies = desktopPackage.devDependencies as Record<string, string>;
 
-    expect(devDependencies["@tauri-apps/cli"]).toBe("2.11.4");
+    expect(devDependencies["@tauri-apps/cli"]).toBe("2.12.1");
     expect(scripts.dev).toContain("pnpm exec tauri dev");
     expect(scripts.build).toBe("node ../../scripts/run-tauri-build.mjs");
     expect(Object.values(scripts).join("\n")).not.toContain("pnpm dlx");

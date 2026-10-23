@@ -65,9 +65,9 @@
       "ledgerClosure": {
         "rows": 247,
         "statuses": {
-          "green": 130,
-          "current": 70,
-          "blocked": 42,
+          "green": 141,
+          "current": 68,
+          "blocked": 33,
           "removed": 5
         }
       },
@@ -320,110 +320,110 @@
     {
       "key": "js:apps/desktop:@wdio/cli",
       "name": "@wdio/cli",
-      "current": "9.29.1",
-      "target": "9.31.5",
+      "current": "9.31.9",
+      "target": "9.31.9",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@wdio/cli",
       "cohort": "packaged-desktop-ui-testing",
       "platforms": ["linux", "macos", "windows"],
-      "status": "blocked",
-      "notes": "Retain the installed 1.2/9.29 cohort until an upstream @wdio/tauri-service release fixes afterSession teardown ordering and aligns @wdio/globals/expect-webdriverio with the selected direct WebdriverIO cohort; 1.3 still warns on coherent 9.30.1 and 9.31 splits expect state."
+      "status": "green",
+      "notes": "Matches the WebdriverIO 9.31.9 that @wdio/tauri-service 1.5.0 pins; forced by the Tauri 2.12 move and still to be proven by the packaged desktop UI smoke."
     },
     {
       "key": "js:apps/desktop:@wdio/globals",
       "name": "@wdio/globals",
-      "current": "9.29.1",
+      "current": "9.31.3",
       "target": "9.31.3",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@wdio/globals",
       "cohort": "packaged-desktop-ui-testing",
       "platforms": ["linux", "macos", "windows"],
-      "status": "blocked",
-      "notes": "Retain the installed 1.2/9.29 cohort until an upstream @wdio/tauri-service release fixes afterSession teardown ordering and aligns @wdio/globals/expect-webdriverio with the selected direct WebdriverIO cohort; 1.3 still warns on coherent 9.30.1 and 9.31 splits expect state."
+      "status": "green",
+      "notes": "Matches the exact @wdio/globals 9.31.3 that @wdio/tauri-service 1.5.0 and @wdio/cli 9.31.9 depend on; forced by the Tauri 2.12 move and still to be proven by the packaged desktop UI smoke."
     },
     {
       "key": "js:apps/desktop:@wdio/local-runner",
       "name": "@wdio/local-runner",
-      "current": "9.29.1",
-      "target": "9.31.5",
+      "current": "9.31.9",
+      "target": "9.31.9",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@wdio/local-runner",
       "cohort": "packaged-desktop-ui-testing",
       "platforms": ["linux", "macos", "windows"],
-      "status": "blocked",
-      "notes": "Retain the installed 1.2/9.29 cohort until an upstream @wdio/tauri-service release fixes afterSession teardown ordering and aligns @wdio/globals/expect-webdriverio with the selected direct WebdriverIO cohort; 1.3 still warns on coherent 9.30.1 and 9.31 splits expect state."
+      "status": "green",
+      "notes": "Matches the WebdriverIO 9.31.9 that @wdio/tauri-service 1.5.0 pins; forced by the Tauri 2.12 move and still to be proven by the packaged desktop UI smoke."
     },
     {
       "key": "js:apps/desktop:@wdio/mocha-framework",
       "name": "@wdio/mocha-framework",
-      "current": "9.29.1",
-      "target": "9.31.5",
+      "current": "9.31.9",
+      "target": "9.31.9",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@wdio/mocha-framework",
       "cohort": "packaged-desktop-ui-testing",
       "platforms": ["linux", "macos", "windows"],
-      "status": "blocked",
-      "notes": "Retain the installed 1.2/9.29 cohort until an upstream @wdio/tauri-service release fixes afterSession teardown ordering and aligns @wdio/globals/expect-webdriverio with the selected direct WebdriverIO cohort; 1.3 still warns on coherent 9.30.1 and 9.31 splits expect state."
+      "status": "green",
+      "notes": "Matches the WebdriverIO 9.31.9 that @wdio/tauri-service 1.5.0 pins; forced by the Tauri 2.12 move and still to be proven by the packaged desktop UI smoke."
     },
     {
       "key": "js:apps/desktop:@wdio/native-utils",
       "name": "@wdio/native-utils",
-      "current": "2.5.0",
-      "target": "2.6.0",
+      "current": "2.8.0",
+      "target": "2.8.0",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@wdio/native-utils",
       "cohort": "packaged-desktop-ui-testing",
       "platforms": ["linux", "macos", "windows"],
-      "status": "blocked",
-      "notes": "Retain the installed 1.2/9.29 cohort until an upstream @wdio/tauri-service release fixes afterSession teardown ordering and aligns @wdio/globals/expect-webdriverio with the selected direct WebdriverIO cohort; 1.3 still warns on coherent 9.30.1 and 9.31 splits expect state."
+      "status": "green",
+      "notes": "Matches the exact 2.8.0 that @wdio/tauri-service 1.5.0 depends on; the old @wdio/tauri-service>@wdio/native-utils 2.5.0 override would have downgraded it and was removed. Forced by the Tauri 2.12 move; still to be proven by the packaged desktop UI smoke."
     },
     {
       "key": "js:apps/desktop:@wdio/spec-reporter",
       "name": "@wdio/spec-reporter",
-      "current": "9.29.1",
+      "current": "9.31.2",
       "target": "9.31.2",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@wdio/spec-reporter",
       "cohort": "packaged-desktop-ui-testing",
       "platforms": ["linux", "macos", "windows"],
-      "status": "blocked",
-      "notes": "Retain the installed 1.2/9.29 cohort until an upstream @wdio/tauri-service release fixes afterSession teardown ordering and aligns @wdio/globals/expect-webdriverio with the selected direct WebdriverIO cohort; 1.3 still warns on coherent 9.30.1 and 9.31 splits expect state."
+      "status": "green",
+      "notes": "Matches the exact @wdio/spec-reporter 9.31.2 that @wdio/tauri-service 1.5.0 depends on; forced by the Tauri 2.12 move and still to be proven by the packaged desktop UI smoke."
     },
     {
       "key": "js:apps/desktop:@wdio/tauri-service",
       "name": "@wdio/tauri-service",
-      "current": "1.2.0",
-      "target": "1.3.0",
+      "current": "1.5.0",
+      "target": "1.5.0",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@wdio/tauri-service",
       "cohort": "packaged-desktop-ui-testing",
       "platforms": ["linux", "macos", "windows"],
-      "status": "blocked",
-      "notes": "Retain the installed 1.2/9.29 cohort until an upstream @wdio/tauri-service release fixes afterSession teardown ordering and aligns @wdio/globals/expect-webdriverio with the selected direct WebdriverIO cohort; 1.3 still warns on coherent 9.30.1 and 9.31 splits expect state."
+      "status": "green",
+      "notes": "Forced by the Tauri 2.12 move: the Rust tauri-plugin-wdio(-webdriver) =1.2.0 crates cannot take Tauri 2.12's WebView2 types, so the npm cohort moves with their 1.5.0 pair. 1.5.0 (2026-10-08) pins WebdriverIO 9.31.9, @wdio/globals 9.31.3, @wdio/spec-reporter 9.31.2 and @wdio/native-utils 2.8.0. The earlier afterSession teardown ordering and @wdio/globals/expect-webdriverio alignment concerns are still to be proven by the packaged desktop UI smoke."
     },
     {
       "key": "js:apps/desktop:webdriverio",
       "name": "webdriverio",
-      "current": "9.29.1",
-      "target": "9.31.5",
+      "current": "9.31.9",
+      "target": "9.31.9",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/webdriverio",
       "cohort": "packaged-desktop-ui-testing",
       "platforms": ["linux", "macos", "windows"],
-      "status": "blocked",
-      "notes": "Retain the installed 1.2/9.29 cohort until an upstream @wdio/tauri-service release fixes afterSession teardown ordering and aligns @wdio/globals/expect-webdriverio with the selected direct WebdriverIO cohort; 1.3 still warns on coherent 9.30.1 and 9.31 splits expect state."
+      "status": "green",
+      "notes": "Stay on WebdriverIO 9 (10 is blocked by the Tauri service peer). 9.31.9 is the exact version @wdio/tauri-service 1.5.0 pins; forced by the Tauri 2.12 move and still to be proven by the packaged desktop UI smoke."
     },
     {
       "key": "js:apps/web:@wdio/tauri-plugin",
       "name": "@wdio/tauri-plugin",
-      "current": "1.2.0",
-      "target": "1.3.0",
+      "current": "1.5.0",
+      "target": "1.5.0",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@wdio/tauri-plugin",
       "cohort": "packaged-desktop-ui-testing",
       "platforms": ["linux", "macos", "windows"],
-      "status": "blocked",
-      "notes": "Compile-time gated to packaged desktop UI automation builds. Retain plugin 1.2.0 and its generic-type patch until an upstream @wdio/tauri-service release fixes afterSession teardown ordering and aligns @wdio/globals/expect-webdriverio with the selected direct WebdriverIO cohort; 1.3 still warns on coherent 9.30.1 and 9.31 splits expect state."
+      "status": "green",
+      "notes": "Compile-time gated to packaged desktop UI automation builds. Forced by the Tauri 2.12 move with @wdio/tauri-service 1.5.0 (2026-10-08); it depends on @tauri-apps/api 2.12.1 exactly. The generic invoke/listen typing patch is regenerated as patches/@wdio__tauri-plugin@1.5.0.patch because 1.5.0 still types them as unknown. Still to be proven by the packaged desktop UI smoke."
     },
     {
       "key": "action:actions/checkout",
@@ -558,23 +558,25 @@
       "key": "js:apps/marketing:@vercel/config",
       "name": "@vercel/config",
       "current": "^0.7.0",
-      "target": "0.7.0",
+      "target": "0.7.2",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@vercel/config",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Compatible in-range lockfile refresh for v0.11.0 (pnpm 24-hour release-age gate; the 14-day rule applies only to newly chosen declared targets)."
     },
     {
       "key": "js:apps/marketing:astro",
       "name": "astro",
-      "current": "^7.3.0",
-      "target": "7.3.0",
+      "current": "^7.3.8",
+      "target": "7.3.8",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/astro",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "The range floor rises to ^7.3.8 and the lockfile resolves 7.3.8 (2026-10-08), the newest release satisfying the 14-day age rule. It is outside both astro advisories GHSA-98hj-9722-w3j8 (<7.3.2) and GHSA-mpr7-6m5w-76rw (<=7.3.2), and its devalue ^5.9.4 floor clears the devalue advisories. 7.4.x stays out of the lock until it ages."
     },
     {
       "key": "js:apps/web:@base-ui/react",
@@ -735,23 +737,25 @@
       "key": "js:apps/web:@tanstack/react-router",
       "name": "@tanstack/react-router",
       "current": "^1.170.32",
-      "target": "1.170.32",
+      "target": "1.170.45",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@tanstack/react-router",
       "cohort": "react-ui",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Compatible in-range lockfile refresh for v0.11.0 (pnpm 24-hour release-age gate; the 14-day rule applies only to newly chosen declared targets)."
     },
     {
       "key": "js:apps/web:@tanstack/router-plugin",
       "name": "@tanstack/router-plugin",
       "current": "^1.168.35",
-      "target": "1.168.35",
+      "target": "1.168.47",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@tanstack/router-plugin",
       "cohort": "react-ui",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Compatible in-range lockfile refresh for v0.11.0 (pnpm 24-hour release-age gate; the 14-day rule applies only to newly chosen declared targets)."
     },
     {
       "key": "js:apps/web:@types/babel__core",
@@ -779,23 +783,25 @@
       "key": "js:apps/web:@types/react-dom",
       "name": "@types/react-dom",
       "current": "~19.2.6",
-      "target": "19.2.6",
+      "target": "19.2.7",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@types/react-dom",
       "cohort": "react-ui",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Compatible in-range lockfile refresh for v0.11.0 (pnpm 24-hour release-age gate; the 14-day rule applies only to newly chosen declared targets)."
     },
     {
       "key": "js:apps/web:@vitejs/plugin-react",
       "name": "@vitejs/plugin-react",
       "current": "^6.1.1",
-      "target": "6.1.1",
+      "target": "6.1.2",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@vitejs/plugin-react",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Compatible in-range lockfile refresh for v0.11.0 (pnpm 24-hour release-age gate; the 14-day rule applies only to newly chosen declared targets)."
     },
     {
       "key": "js:apps/web:@xterm/addon-fit",
@@ -880,12 +886,13 @@
       "key": "js:apps/web:happy-dom",
       "name": "happy-dom",
       "current": "^20.13.2",
-      "target": "20.13.2",
+      "target": "20.14.6",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/happy-dom",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Compatible in-range lockfile refresh for v0.11.0 (pnpm 24-hour release-age gate; the 14-day rule applies only to newly chosen declared targets)."
     },
     {
       "key": "js:apps/web:lexical",
@@ -902,12 +909,13 @@
       "key": "js:apps/web:lucide-react",
       "name": "lucide-react",
       "current": "^1.40.0",
-      "target": "1.40.0",
+      "target": "1.61.0",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/lucide-react",
       "cohort": "react-ui",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Compatible in-range lockfile refresh for v0.11.0 (pnpm 24-hour release-age gate; the 14-day rule applies only to newly chosen declared targets)."
     },
     {
       "key": "js:apps/web:msw",
@@ -1033,46 +1041,50 @@
     {
       "key": "js:catalog:@clerk/backend",
       "name": "@clerk/backend",
-      "current": "3.17.1",
-      "target": "3.17.1",
+      "current": "3.23.1",
+      "target": "3.23.1",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@clerk/backend",
       "cohort": "clerk",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Clerk moves as one catalog set: backend 3.23.1, shared 4.39.1, clerk-js 6.38.1 and react 6.17.7 are the newest releases satisfying the 14-day age rule (all 2026-10-07) and require @clerk/shared ^4.39.1."
     },
     {
       "key": "js:catalog:@clerk/clerk-js",
       "name": "@clerk/clerk-js",
-      "current": "6.31.0",
-      "target": "6.31.0",
+      "current": "6.38.1",
+      "target": "6.38.1",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@clerk/clerk-js",
       "cohort": "clerk",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Clerk catalog set member (2026-10-07, 14-day rule compliant). 6.38.1 no longer depends on the @solana wallet adapters, so those removal overrides were deleted; the base-org, coinbase and wallet-standard removals remain."
     },
     {
       "key": "js:catalog:@clerk/react",
       "name": "@clerk/react",
-      "current": "6.15.0",
-      "target": "6.15.0",
+      "current": "6.17.7",
+      "target": "6.17.7",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@clerk/react",
       "cohort": "clerk",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Clerk catalog set member (2026-10-07, 14-day rule compliant); peers React ~19.2.3, matching the retained React 19.2.8."
     },
     {
       "key": "js:catalog:@clerk/shared",
       "name": "@clerk/shared",
-      "current": "4.31.0",
-      "target": "4.31.0",
+      "current": "4.39.1",
+      "target": "4.39.1",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@clerk/shared",
       "cohort": "clerk",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Shared by the Clerk 3.23.1/6.38.1/6.17.7 catalog set (2026-10-07, 14-day rule compliant); the catalog override keeps every Clerk consumer on it."
     },
     {
       "key": "js:catalog:@effect/atom-react",
@@ -1217,24 +1229,26 @@
     {
       "key": "js:catalog:@tauri-apps/api",
       "name": "@tauri-apps/api",
-      "current": "2.11.1",
-      "target": "2.11.1",
+      "current": "2.12.1",
+      "target": "2.12.1",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@tauri-apps/api",
       "cohort": "javascript-current",
       "platforms": ["linux", "macos", "windows"],
-      "status": "current"
+      "status": "green",
+      "notes": "Moves with the Rust tauri 2.12.x crate, because Tauri requires the npm API and the crate on the same minor. 2.12.1 (2026-09-30) is the newest 2.12 release satisfying the 14-day age rule and is the exact version @wdio/tauri-plugin 1.5.0 depends on."
     },
     {
       "key": "js:catalog:@types/node",
       "name": "@types/node",
-      "current": "26.4.1",
-      "target": "26.4.1",
+      "current": "26.6.4",
+      "target": "26.6.4",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@types/node",
       "cohort": "javascript-compatible",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "26.6.4 (2026-10-01) is the newest Node 26 typings release satisfying the 14-day age rule; the catalog override keeps one copy."
     },
     {
       "key": "js:catalog:@typescript/native-preview",
@@ -1263,13 +1277,14 @@
     {
       "key": "js:catalog:jose",
       "name": "jose",
-      "current": "6.2.10",
-      "target": "6.2.10",
+      "current": "6.2.12",
+      "target": "6.2.12",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/jose",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "6.2.12 (2026-09-05) is the newest patch satisfying the 14-day age rule; 6.2.13 is newer."
     },
     {
       "key": "js:catalog:typescript",
@@ -1298,12 +1313,13 @@
       "key": "js:infra/relay:@cloudflare/workers-types",
       "name": "@cloudflare/workers-types",
       "current": "^5.20260903.1",
-      "target": "5.20260903.1",
+      "target": "5.20261021.1",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@cloudflare/workers-types",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Compatible in-range lockfile refresh for v0.11.0 (pnpm 24-hour release-age gate; the 14-day rule applies only to newly chosen declared targets)."
     },
     {
       "key": "js:infra/relay:alchemy",
@@ -1367,13 +1383,14 @@
     {
       "key": "js:scripts:smol-toml",
       "name": "smol-toml",
-      "current": "1.8.0",
-      "target": "1.8.0",
+      "current": "1.9.0",
+      "target": "1.9.0",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/smol-toml",
       "cohort": "javascript-current",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "1.9.0 (2026-09-22) is the first release outside GHSA-r4xh-jqrq-34v2 (quadratic parse(), affected <=1.8.0) and satisfies the 14-day age rule; 1.9.1 is newer."
     },
     {
       "key": "js:workspace:@babel/plugin-transform-react-jsx",
@@ -2572,13 +2589,14 @@
     {
       "key": "toolchain:pnpm",
       "name": "pnpm",
-      "current": "11.25.0",
-      "target": "11.25.0",
+      "current": "11.28.5",
+      "target": "11.28.5",
       "channel": "stable",
       "source": "https://github.com/pnpm/pnpm/releases",
       "cohort": "toolchains",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Stay on pnpm 11; 11.28.5 (2026-10-06) is the newest 11.x release satisfying the 14-day age rule. pnpm 12 is a separate deferred migration."
     },
     {
       "key": "toolchain:rust",
@@ -2594,14 +2612,14 @@
     {
       "key": "toolchain:tauri-cli",
       "name": "@tauri-apps/cli",
-      "current": "2.11.4",
-      "target": "2.11.4",
+      "current": "2.12.1",
+      "target": "2.12.1",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@tauri-apps/cli",
       "cohort": "toolchains",
       "platforms": ["linux", "macos", "windows"],
-      "status": "current",
-      "notes": "Version is current and supplied by the locked workspace dependency; do not replace it with pnpm dlx."
+      "status": "green",
+      "notes": "Version is supplied by the locked workspace dependency; do not replace it with pnpm dlx. Moves to 2.12.1 (2026-09-30, the newest 2.12 release satisfying the 14-day age rule) with the Rust tauri 2.12 crate, avoiding tauri-cli 2.12's version-mismatch check."
     },
     {
       "key": "toolchain:vite-core",
