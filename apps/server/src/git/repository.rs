@@ -5721,7 +5721,8 @@ impl GitRepository {
     /// branch made with `git checkout -b feature-x origin/develop`. Git's default
     /// `push.default=simple` refuses a bare `git push` there, whether it is unset or set to
     /// `simple`. `None` keeps the bare push: the upstream has the branch's own name, or the
-    /// user configured another `push.default` or a push remote, which Git then honours. A local upstream (`.`) publishes to
+    /// user configured another `push.default`, a push remote or a `remote.<name>.push` refspec,
+    /// which Git then honours. A local upstream (`.`) publishes to
     /// `origin`.
     async fn renamed_upstream_remote(
         &self,
@@ -5768,6 +5769,10 @@ impl GitRepository {
             .await?
             .filter(|remote| remote != ".")
             .unwrap_or_else(|| "origin".to_owned());
+        // A `remote.<name>.push` refspec outranks `push.default`: a bare push already goes there.
+        if config(format!("remote.{remote}.push")).await?.is_some() {
+            return Ok(None);
+        }
         Ok(Some(remote))
     }
 

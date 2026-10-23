@@ -682,7 +682,8 @@ branch whose upstream has another name, such as one made with
 upstream's remote (`origin` for a local `.` upstream) (#157). Git's default
 `push.default=simple` refuses a bare push there. This exception applies only
 while `push.default` is unset or `simple` (Git's default spelled out) and no
-push remote (`remote.pushDefault`, `branch.<name>.pushRemote`) is configured. The branch then tracks
+push remote (`remote.pushDefault`, `branch.<name>.pushRemote`) or push refspec
+(`remote.<name>.push`, which outranks `push.default`) is configured. The branch then tracks
 `<remote>/<branch>`, so ahead/behind counts against what was pushed. The
 upstream it started from is never written, and nothing is forced. An
 `action_failed` event's `message` carries Git's own error, which the Source

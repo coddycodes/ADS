@@ -1557,6 +1557,59 @@ async fn stacked_push_honours_an_explicit_push_default() {
 }
 
 #[tokio::test]
+async fn stacked_push_honours_a_configured_remote_push_refspec() {
+    let parallelism_permit = acquire_git_rpc_fixture().await;
+    if relaunch_with_isolated_git_config("stacked_push_honours_a_configured_remote_push_refspec") {
+        return;
+    }
+
+    let temp = TempDir::new().expect("temporary server directory");
+    let root = TempDir::new().expect("temporary fixture root");
+    let (remote, consumer, _) = renamed_upstream_fixture(root.path());
+    // `remote.<name>.push` outranks `push.default`, so Git pushes to it and BiBCode must too.
+    run_git_in(
+        &consumer,
+        &[
+            "config",
+            "remote.origin.push",
+            "HEAD:refs/heads/review-target",
+        ],
+    );
+    let head = git_stdout_in(&consumer, &["rev-parse", "HEAD"]);
+    let develop = git_stdout_in(&remote, &["rev-parse", "refs/heads/develop"]);
+
+    let mut server = GitServerHarness::start(&temp, parallelism_permit).await;
+    let outcome = run_stacked_action(
+        server.socket(),
+        "157",
+        json!({
+            "actionId": "push-configured-refspec",
+            "cwd": consumer.to_string_lossy(),
+            "action": "push",
+        }),
+    )
+    .await;
+    assert_eq!(outcome["kind"], "action_finished", "{outcome}");
+    assert_eq!(
+        git_stdout_in(&remote, &["rev-parse", "refs/heads/review-target"]),
+        head
+    );
+    assert_eq!(
+        git_stdout_in(&remote, &["rev-parse", "refs/heads/develop"]),
+        develop
+    );
+    assert_eq!(
+        git_stdout_in(&remote, &["for-each-ref", "refs/heads/feature-x"]),
+        ""
+    );
+    assert_eq!(
+        git_stdout_in(&consumer, &["config", "branch.feature-x.merge"]).trim(),
+        "refs/heads/develop"
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn stacked_create_pr_rejects_missing_targets_and_dirty_worktree_before_mutations() {
     let parallelism_permit = acquire_git_rpc_fixture().await;
     let temp = TempDir::new().expect("temporary server directory");
