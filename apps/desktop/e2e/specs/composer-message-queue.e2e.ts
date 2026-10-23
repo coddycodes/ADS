@@ -167,6 +167,35 @@ async function assertQueuedCards(prompts: readonly string[]): Promise<string[]> 
   return ids;
 }
 
+/**
+ * LegendList measures rows before it settles their positions, so one reading can catch the
+ * working row below a queued card that is in fact under it (Linux saw 251 against 175 while
+ * the settled page had them the right way round). Waits for the settled order instead.
+ */
+async function expectWorkingRowAboveQueuedCard(messageId: string): Promise<void> {
+  let observed = "no displayed working row";
+  try {
+    await browser.waitUntil(async () => {
+      for (const row of await browser.$$(
+        `${visibleSurfaceSelector} [data-timeline-row-kind="working"]`,
+      )) {
+        if (!(await row.isDisplayed())) continue;
+        const working = await row.getLocation("y");
+        const card = await queuedCard(messageId).getLocation("y");
+        observed = `working row at ${working}, queued card at ${card}`;
+        return working < card;
+      }
+      return false;
+    });
+  } catch (error) {
+    // The spec reporter drops `cause`, so the wait's own failure goes in the message too.
+    throw new Error(
+      `The working row did not settle above queued card ${messageId}: ${observed}. ${String(error)}`,
+      { cause: error },
+    );
+  }
+}
+
 function queuedCard(messageId: string) {
   return browser.$(`${visibleSurfaceSelector} [data-queued-message-row="${messageId}"]`);
 }
@@ -208,11 +237,7 @@ describe("packaged composer message queue", () => {
       await submitWithEnter("third");
       const [secondId, thirdId] = await assertQueuedCards(["second", "third"]);
       expect(inputSequence(baseline)).toEqual([{ kind: "start", prompt }]);
-      expect(
-        await browser
-          .$(`${visibleSurfaceSelector} [data-timeline-row-kind="working"]`)
-          .getLocation("y"),
-      ).toBeLessThan(await queuedCard(secondId!).getLocation("y"));
+      await expectWorkingRowAboveQueuedCard(secondId!);
       await expect(queuedCard(secondId!).$('[data-queued-message-steer="true"]')).toBeEnabled();
       await expect(queuedCard(thirdId!).$('[data-queued-message-steer="true"]')).not.toExist();
       await browser.saveScreenshot(
