@@ -680,6 +680,41 @@ describe("generated provider shims", () => {
     }
   });
 
+  it("answers OpenCode message lookups the way the server's delivery check expects", async () => {
+    // Before sending, the server asks whether the delivery's message already exists. A missing
+    // message is 404; one the fixture received is a user message of that session.
+    const fixture = prepareProviderFixture();
+    const port = await reserveLocalPort();
+    const endpoint = `http://127.0.0.1:${port}`;
+    const child = spawnConfiguredLauncher(fixture, "opencode", [
+      "serve",
+      "--hostname=127.0.0.1",
+      `--port=${port}`,
+    ]);
+    const messageUrl = `${endpoint}/session/bibcode-ui-opencode-session/message/msg_fixture1`;
+
+    try {
+      await waitForHealthyEndpoint(endpoint);
+      expect((await fetch(messageUrl)).status).toBe(404);
+      await fetch(`${endpoint}/session/bibcode-ui-opencode-session/prompt_async`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          messageID: "msg_fixture1",
+          parts: [{ type: "text", text: "@reviewer" }],
+        }),
+      });
+      const found = await fetch(messageUrl);
+      expect(found.status).toBe(200);
+      expect(await found.json()).toEqual({
+        info: { id: "msg_fixture1", sessionID: "bibcode-ui-opencode-session", role: "user" },
+        parts: [{ type: "text", text: "@reviewer" }],
+      });
+    } finally {
+      await cleanupOpenCodeFixture(endpoint, child, fixture.hostPlatform, fixture.environment);
+    }
+  });
+
   it("speaks Grok ACP session and prompt protocols", () => {
     const fixture = prepareProviderFixture();
     const responses = exchangeJsonLines(
