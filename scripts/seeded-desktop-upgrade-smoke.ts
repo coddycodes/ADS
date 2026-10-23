@@ -30,6 +30,9 @@ export type SeededUpgradeArch = "arm64" | "x64";
 export type SeededUpgradeLane = "previous-stable" | "protected-baseline" | "remote-install";
 
 const MOCK_UPDATE_READY_TIMEOUT_MS = 60_000;
+// Disposable checkouts sit deep under the run root, and vendored `.repos/` snapshots carry
+// paths over 180 characters: without long paths, Git for Windows refuses them (exit 128).
+const LONG_PATH_GIT = ["-c", "core.longpaths=true"] as const;
 
 export interface SeededDesktopUpgradeSmokeInput {
   readonly arch: SeededUpgradeArch;
@@ -2751,7 +2754,14 @@ export async function runSeededDesktopUpgradeSmoke(
     if (!input.wsl) {
       await requireCommandSuccess({
         command: "git",
-        args: ["worktree", "add", "--detach", layout.previousStable.checkout, input.previousTag],
+        args: [
+          ...LONG_PATH_GIT,
+          "worktree",
+          "add",
+          "--detach",
+          layout.previousStable.checkout,
+          input.previousTag,
+        ],
         cwd: input.repositoryRoot,
         timeoutMs: 120_000,
       });
@@ -2759,7 +2769,7 @@ export async function runSeededDesktopUpgradeSmoke(
         await removeSeededUpgradeDependencyTree(layout.previousStable.checkout);
         await requireCommandSuccess({
           command: "git",
-          args: ["worktree", "remove", "--force", layout.previousStable.checkout],
+          args: [...LONG_PATH_GIT, "worktree", "remove", "--force", layout.previousStable.checkout],
           cwd: input.repositoryRoot,
           timeoutMs: 120_000,
         });
@@ -2778,7 +2788,14 @@ export async function runSeededDesktopUpgradeSmoke(
     }
     await requireCommandSuccess({
       command: "git",
-      args: ["worktree", "add", "--detach", layout.protectedBaseline.checkout, currentCommit],
+      args: [
+        ...LONG_PATH_GIT,
+        "worktree",
+        "add",
+        "--detach",
+        layout.protectedBaseline.checkout,
+        currentCommit,
+      ],
       cwd: input.repositoryRoot,
       timeoutMs: 120_000,
     });
@@ -2786,14 +2803,27 @@ export async function runSeededDesktopUpgradeSmoke(
       await removeSeededUpgradeDependencyTree(layout.protectedBaseline.checkout);
       await requireCommandSuccess({
         command: "git",
-        args: ["worktree", "remove", "--force", layout.protectedBaseline.checkout],
+        args: [
+          ...LONG_PATH_GIT,
+          "worktree",
+          "remove",
+          "--force",
+          layout.protectedBaseline.checkout,
+        ],
         cwd: input.repositoryRoot,
         timeoutMs: 120_000,
       });
     });
     await requireCommandSuccess({
       command: "git",
-      args: ["worktree", "add", "--detach", layout.candidateCheckout, currentCommit],
+      args: [
+        ...LONG_PATH_GIT,
+        "worktree",
+        "add",
+        "--detach",
+        layout.candidateCheckout,
+        currentCommit,
+      ],
       cwd: input.repositoryRoot,
       timeoutMs: 120_000,
     });
@@ -2801,7 +2831,7 @@ export async function runSeededDesktopUpgradeSmoke(
       await removeSeededUpgradeDependencyTree(layout.candidateCheckout);
       await requireCommandSuccess({
         command: "git",
-        args: ["worktree", "remove", "--force", layout.candidateCheckout],
+        args: [...LONG_PATH_GIT, "worktree", "remove", "--force", layout.candidateCheckout],
         cwd: input.repositoryRoot,
         timeoutMs: 120_000,
       });
