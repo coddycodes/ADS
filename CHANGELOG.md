@@ -1,5 +1,53 @@
 # Changelog
 
+## [v0.11.0] - 2026-10-22
+
+BiBCode v0.11.0 moves the desktop to Tauri 2.12, which closes a High-severity IPC advisory, moves the toolchain and every dependency line to current releases (Effect 4.0 stable, Vite+ 1.1, Vitest 5, Node 26.12.1, Rust 1.98.1), and fixes twelve bugs: Claude chats that stopped at a full context window or after `/compact`, Claude follow-up turns cut off by idle suspension, a webview that grew with every streamed tool input, Codex errors that were never classified, Push on a branch that tracks a differently named remote branch, dialogs that lost their input on an outside click, and memory figures on macOS that were about 3.5 times too high. This release includes the changes since v0.10.2.
+
+### Security
+
+- The desktop moves to Tauri 2.12. Tauri 2.11.5 and earlier let any WebView read IPC channel responses meant for another WebView (GHSA-w28w-mhc8-qvjv, High).
+- The TLS stack used for outbound HTTPS is updated (rustls 0.23.46, rustls-webpki 0.103.16, webpki-root-certs 1.0.10), which drops a distrusted root and fixes the rustls advisories RUSTSEC-2026-0285, -0346, -0348 and -0349. The server's ZIP handling moves to zip 9 for RUSTSEC-2026-0367, -0368 and -0369.
+- Development and CI run on Node.js 26.12.1, a security release, and the CI setup action moves to setup-vp 1.21.2, which fixes a command injection. `pnpm audit` now reports no critical advisories (it reported 3) and 55 in total (it reported 163); the rest are pinned by upstream packages.
+
+### Claude
+
+- When a conversation fills Claude's context window, the chat now says so, keeps Claude's own explanation, and offers **Compact conversation**. Before, the turn failed as "Claude turn failed (blocking_limit)". (#160)
+- A failed Claude turn now shows Claude's own error text, a running compaction shows as a step in the turn, and the context meter shows when Claude will compact automatically. (#161)
+- `/compact` no longer stays "Delivery uncertain" and blocks every later message. (#166)
+- When a background task finished during a turn, Claude's answer to it was cut off by idle suspension. It now gets its own turn and runs to the end. (#165)
+- A tool call whose input streams in many pieces is stored once, with its complete input, instead of once per piece; threads with many tool calls stop growing the webview. Threads saved by earlier versions keep their extra rows. (#167)
+
+### Codex
+
+- Codex turn errors are classified again: an authorization failure, a rejected request and an HTTP failure each show their own cause instead of a generic provider error. (#162)
+
+### Git
+
+- **Push** on a branch that tracks a differently named remote branch, such as one made from `origin/develop`, now publishes a branch of the same name and tracks it, instead of failing. A configured `push.default` other than `simple` is still respected. (#157)
+- A failed push now shows what Git said. (#157)
+- The opt-in Profiler records failed commits, pushes and pull requests, and raises a finding when the same step keeps failing in one worktree. (#158)
+
+### Chat and dialogs
+
+- When a turn ends on a short status line, the "Worked for…" fold keeps the agent's answer above it visible. (#154)
+- Clicking outside a dialog no longer closes it and discards what you typed, for example in **Create merge request**. Close it with Cancel, × or Escape. (#155)
+
+### Resource usage
+
+- On macOS, Resource Manager and the status bar show each process's physical footprint, the figure Activity Monitor shows, instead of its resident size, which overstated memory about 3.5 times. Linux and Windows still show resident memory. (#159)
+- A window that is hidden or not focused stops polling diagnostics, and the server stops sending local server lists that have not changed. (#168)
+
+### Platform and toolchain
+
+- Desktop: Tauri 2.12.1 with matching plugins and WebView2 bindings. The tao patch for Windows keyboard and IME deadlocks is no longer needed, because the fix ships in tao 0.37.
+- Development: Effect 4.0.2 stable, Vite+ 1.1.0 with Vitest 5, TypeScript 7.0.2, pnpm 11.28.5, Rust 1.98.1, and alchemy 2.0.0-beta.81 for the relay.
+
+### Known limitations
+
+- Automatic compaction before a context-limit stop, and Compact for Codex and OpenCode conversations, are not yet available.
+- Windows and Linux still report resident memory rather than a footprint figure.
+
 ## [v0.10.2] - 2026-10-20
 
 BiBCode v0.10.2 fixes device previews on iOS simulators and Android emulators, a status bar that went blank on Macs with a saved remote server, and a long thread that kept many extra copies of its messages each time it reconnected. It also fixes several Git and checkpoint bugs. This release includes the changes since v0.10.1.
