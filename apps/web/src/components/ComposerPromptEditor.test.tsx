@@ -1025,7 +1025,7 @@ describe("ComposerPromptEditor inline token nodes", () => {
     // which runs after the editor's own layout effect has queued the rebuild.
     function Composer({ nextSkills }: { nextSkills: ReadonlyArray<ServerProviderSkill> }) {
       useLayoutEffect(() => {
-        editorRef.current?.readSnapshot();
+        if (nextSkills.length > 0) editorRef.current?.readSnapshot();
       }, [nextSkills]);
       return (
         <ComposerPromptEditor
