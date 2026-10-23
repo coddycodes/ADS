@@ -109,7 +109,13 @@ export async function interactWithFixture(browser, actions) {
     else if (action.action === "hover") await element.moveTo();
     else if (action.action === "focus")
       await browser.execute((element) => element.focus(), element);
-    else if (action.action === "scrollIntoView") await element.scrollIntoView({ block: "center" });
+    // The DOM's own scrollIntoView: WebdriverIO 9.31 replays it as a wheel action whose
+    // unspecified inline target scrolls an enclosing table scroller to the element's start.
+    else if (action.action === "scrollIntoView")
+      await browser.execute(
+        (element) => element.scrollIntoView({ block: "center", inline: "nearest" }),
+        element,
+      );
     else throw new Error("Typography interaction refused.");
     await browser.execute(() =>
       document
