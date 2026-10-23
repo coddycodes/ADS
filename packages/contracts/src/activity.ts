@@ -326,7 +326,7 @@ export const ActivityCancelSubtreeInput = Schema.Struct({
   scopeId: ActivityScopeId,
   actorId: ActivityRecordId,
   expectedControlRevision: NonNegativeInt,
-}).annotate({ parseOptions: { onExcessProperty: "error" } });
+});
 export type ActivityCancelSubtreeInput = typeof ActivityCancelSubtreeInput.Type;
 
 export const ActivityRetrySubtreeCancellationInput = Schema.Struct({
@@ -334,7 +334,7 @@ export const ActivityRetrySubtreeCancellationInput = Schema.Struct({
   scopeId: ActivityScopeId,
   rootActorId: ActivityRecordId,
   expectedOperationRevision: NonNegativeInt,
-}).annotate({ parseOptions: { onExcessProperty: "error" } });
+});
 export type ActivityRetrySubtreeCancellationInput =
   typeof ActivityRetrySubtreeCancellationInput.Type;
 

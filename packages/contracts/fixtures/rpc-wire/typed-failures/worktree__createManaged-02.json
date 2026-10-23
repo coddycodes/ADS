@@ -8,14 +8,11 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitCommandError",
-          "operation": "F0",
-          "command": "!$z@q",
-          "cwd": "3]Sks",
-          "stdoutLength": -3.5032461608120427e-44,
-          "stderrLength": 8.114571510082244e-32,
-          "outputLength": 2.52043310132238e-14,
-          "detail": "$",
-          "cause": null
+          "operation": "4294967295",
+          "command": "__proto__",
+          "cwd": "\n",
+          "detail": "",
+          "cause": {}
         }
       }
     ]

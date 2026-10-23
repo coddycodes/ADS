@@ -111,7 +111,7 @@ const isCanonicalRuntimeErrorClass = Schema.is(CanonicalRuntimeErrorClass);
 export const RuntimeErrorClass = Schema.String.pipe(
   Schema.decodeTo(
     CanonicalRuntimeErrorClass,
-    SchemaTransformation.transformOrFail({
+    SchemaTransformation.transformEffect({
       decode: (value) =>
         Effect.succeed(isCanonicalRuntimeErrorClass(value) ? value : ("unknown" as const)),
       encode: (value) => Effect.succeed(value),

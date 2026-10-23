@@ -7,12 +7,11 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "SourceControlProviderError",
-          "provider": "unknown",
-          "operation": "zj",
-          "cwd": "D~9~#4;6}",
-          "detail": "f",
-          "cause": [true, "Dc~l", null, null]
+          "_tag": "GitManagerError",
+          "operation": "�",
+          "cwd": "4294967295",
+          "detail": "�",
+          "cause": null
         }
       }
     ]

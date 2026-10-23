@@ -1,6 +1,7 @@
 // Opt-in cross-container boundary test. The server and client are started by
 // docs/testing/cross-platform-validation.md.
 // @effect-diagnostics globalFetch:off - Every request targets the explicit Docker server URL.
+// @effect-diagnostics nodeBuiltinImport:off - The opt-in smoke drives raw TCP and real-time waits outside Effect.
 import {
   AuthAccessTokenResult,
   AuthAccessTokenType,

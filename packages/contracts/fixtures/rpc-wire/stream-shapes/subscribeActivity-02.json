@@ -5,45 +5,71 @@
     {
       "kind": "control-snapshot",
       "control": {
-        "scopeId": "o",
-        "revision": 2147483625,
+        "scopeId": "😀",
+        "revision": 0,
         "actors": [
           {
-            "actorId": "=G`N",
-            "state": "available",
-            "controlRevision": 1547579521,
-            "activeDescendantCount": 1920673118
+            "actorId": ")@8K0L",
+            "state": "requested",
+            "controlRevision": 99,
+            "activeDescendantCount": 74
           },
           {
-            "actorId": "T+",
+            "actorId": "KS_T&hq:s",
             "state": "requested",
-            "controlRevision": 9,
-            "activeDescendantCount": 1047202342
+            "controlRevision": 4,
+            "activeDescendantCount": 6
+          },
+          {
+            "actorId": "#F",
+            "state": "available",
+            "controlRevision": 27,
+            "activeDescendantCount": 95
+          },
+          {
+            "actorId": "__proto__",
+            "state": "requested",
+            "controlRevision": 3,
+            "activeDescendantCount": 3
+          },
+          {
+            "actorId": "9Z?;&{([",
+            "state": "available",
+            "controlRevision": 99,
+            "activeDescendantCount": 16
+          },
+          {
+            "actorId": "I",
+            "state": "unsupported",
+            "controlRevision": 98,
+            "activeDescendantCount": 27
+          },
+          {
+            "actorId": "0",
+            "state": "unsupported",
+            "controlRevision": 1,
+            "activeDescendantCount": 49
+          },
+          {
+            "actorId": "v^l-\\",
+            "state": "unsupported",
+            "controlRevision": 6,
+            "activeDescendantCount": 5
+          },
+          {
+            "actorId": "prototype",
+            "state": "requested",
+            "controlRevision": 0,
+            "activeDescendantCount": 95
+          },
+          {
+            "actorId": "k{jG=\\Eu'&",
+            "state": "available",
+            "controlRevision": 100,
+            "activeDescendantCount": 79
           }
         ],
-        "operations": [
-          {
-            "rootActorId": "~U\"1L$dR",
-            "state": "requested",
-            "residualCount": 1952647743,
-            "message": null,
-            "operationRevision": 10
-          },
-          {
-            "rootActorId": "^Nk%vA|.rBO",
-            "state": "requested",
-            "residualCount": 2147483622,
-            "message": "|",
-            "operationRevision": 881477832
-          },
-          {
-            "rootActorId": "H,!yzNWQc",
-            "state": "partial",
-            "residualCount": 786202572,
-            "message": null,
-            "operationRevision": 113535764
-          }
-        ]
+        "operations": []
       }
     }
   ]

@@ -29,7 +29,7 @@ function installRuntime(input: { hasDesktopBridge: boolean; userAgent: string })
 
 afterEach(() => {
   Reflect.deleteProperty(window, "desktopBridge");
-  delete document.documentElement.dataset.linuxWebkit;
+  Reflect.deleteProperty(document.documentElement.dataset, "linuxWebkit");
   vi.unstubAllGlobals();
 });
 

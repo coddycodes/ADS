@@ -1,7 +1,7 @@
 import { WsRpcGroup } from "@bibcode/contracts";
 import * as Effect from "effect/Effect";
-import { RpcClient } from "effect/unstable/rpc";
-import * as RpcMessage from "effect/unstable/rpc/RpcMessage";
+import { RpcClient } from "effect/rpc";
+import * as RpcMessage from "effect/rpc/RpcMessage";
 
 import { RpcTransportErrors } from "./transportErrors.ts";
 

@@ -8,6 +8,7 @@
  * live clock, and warning when a test appears to be waiting on time without
  * advancing it.
  *
+ * @stability stable
  * @since 2.0.0
  */
 import * as Arr from "../Array.ts"
@@ -88,6 +89,7 @@ import * as Semaphore from "../Semaphore.ts"
  * await Effect.runPromise(Effect.provide(program, TestClock.layer()))
  * ```
  *
+ * @stability stable
  * @category models
  * @since 2.0.0
  */
@@ -133,6 +135,7 @@ export interface TestClock extends Clock.Clock {
  * await Effect.runPromise(Effect.scoped(program))
  * ```
  *
+ * @stability stable
  * @since 2.0.0
  */
 export declare namespace TestClock {
@@ -238,6 +241,7 @@ const millisToNanos = (millis: number): bigint => {
  * await Effect.runPromise(Effect.scoped(program))
  * ```
  *
+ * @stability stable
  * @category constructors
  * @since 4.0.0
  */
@@ -340,8 +344,13 @@ export const make = Effect.fnUntraced(function*(
   })
 
   const runSemaphore = yield* Semaphore.make(1)
-  const run = Effect.fnUntraced(function*(step: (currentTimestamp: number) => number) {
+  const run = Effect.fnUntraced(function*(
+    step: (currentTimestamp: number) => number,
+    adjustmentNanos?: bigint
+  ) {
     yield* Fiber.await(yield* Effect.forkChild(Effect.yieldNow))
+    const initialWallNanos = currentWallNanos
+    const initialMonotonicNanos = currentMonotonicNanos
     const endTimestamp = step(currentTimestamp)
     const advanceTo = (timestamp: number) => {
       const deltaMillis = timestamp - currentTimestamp
@@ -361,11 +370,19 @@ export const make = Effect.fnUntraced(function*(
       yield* Effect.yieldNow
     }
     advanceTo(endTimestamp)
+    if (adjustmentNanos !== undefined && Number.isFinite(endTimestamp)) {
+      currentWallNanos = initialWallNanos + adjustmentNanos
+      if (adjustmentNanos > BigInt(0)) {
+        currentMonotonicNanos = initialMonotonicNanos + adjustmentNanos
+      }
+    }
   }, runSemaphore.withPermits(1))
 
-  function adjust(duration: Duration.Input) {
-    const millis = Duration.toMillis(Duration.fromInputUnsafe(duration))
-    return warningDone.pipe(Effect.andThen(run((timestamp) => timestamp + millis)))
+  function adjust(input: Duration.Input) {
+    const duration = Duration.fromInputUnsafe(input)
+    const millis = Duration.toMillis(duration)
+    const nanos = Number.isFinite(millis) ? Duration.toNanosUnsafe(duration) : undefined
+    return warningDone.pipe(Effect.andThen(run((timestamp) => timestamp + millis, nanos)))
   }
 
   function setTime(timestamp: number) {
@@ -417,6 +434,7 @@ export const make = Effect.fnUntraced(function*(
  * await Effect.runPromise(Effect.provide(program, customTestClockLayer)) // => 3_600_000
  * ```
  *
+ * @stability stable
  * @category layers
  * @since 4.0.0
  */
@@ -450,6 +468,7 @@ export const layer: (options?: TestClock.Options) => Layer.Layer<TestClock> = fl
  * await Effect.runPromise(Effect.provide(program, TestClock.layer()))
  * ```
  *
+ * @stability stable
  * @category testing
  * @since 2.0.0
  */
@@ -488,6 +507,7 @@ export const testClockWith = <A, E, R>(
  * await Effect.runPromise(Effect.provide(program, TestClock.layer()))
  * ```
  *
+ * @stability stable
  * @category testing
  * @since 2.0.0
  */
@@ -525,6 +545,7 @@ export const adjust = (duration: Duration.Input): Effect.Effect<void> =>
  * await Effect.runPromise(Effect.provide(program, TestClock.layer()))
  * ```
  *
+ * @stability stable
  * @category testing
  * @since 2.0.0
  */
@@ -561,6 +582,7 @@ export const setTime = (timestamp: number): Effect.Effect<void> =>
  * await Effect.runPromise(Effect.provide(program, TestClock.layer()))
  * ```
  *
+ * @stability stable
  * @category testing
  * @since 4.0.0
  */

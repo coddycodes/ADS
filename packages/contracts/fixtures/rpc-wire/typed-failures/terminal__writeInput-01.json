@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "TerminalSessionLookupError",
-          "threadId": "|#{",
-          "terminalId": "i"
+          "threadId": "bOJC4!",
+          "terminalId": ""
         }
       }
     ]

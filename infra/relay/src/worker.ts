@@ -5,11 +5,11 @@ import * as Config from "effect/Config";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Etag from "effect/unstable/http/Etag";
-import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as HttpApiScalar from "effect/unstable/httpapi/HttpApiScalar";
+import * as Etag from "effect/http/Etag";
+import * as HttpPlatform from "effect/http/HttpPlatform";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpApiScalar from "effect/http-api/HttpApiScalar";
 
 import { RelayApi } from "@bibcode/contracts/relay";
 
@@ -89,9 +89,9 @@ export default Api.make(
     //
     // 2. Create bindings
     //
-    const clerkSecretKey = yield* Config.redacted("CLERK_SECRET_KEY");
-    const clerkPublishableKey = yield* Config.string("CLERK_PUBLISHABLE_KEY");
-    const clerkJwtAudience = yield* Config.string("CLERK_JWT_AUDIENCE");
+    const clerkSecretKey = yield* Config.Redacted("CLERK_SECRET_KEY");
+    const clerkPublishableKey = yield* Config.String("CLERK_PUBLISHABLE_KEY");
+    const clerkJwtAudience = yield* Config.String("CLERK_JWT_AUDIENCE");
 
     const cloudMintPrivateKey = yield* cloudMintKeyPair.privateKey;
     const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;

@@ -8,10 +8,14 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitManagerOperationError",
-          "operation": ",{Y:&rU",
-          "code": "<j4pg",
-          "message": "@vq",
-          "blocked": null
+          "operation": "",
+          "code": "�",
+          "message": "😀",
+          "blocked": {
+            "operation": "toString",
+            "code": "default-branch",
+            "message": "3};UK pk\"Y"
+          }
         }
       }
     ]

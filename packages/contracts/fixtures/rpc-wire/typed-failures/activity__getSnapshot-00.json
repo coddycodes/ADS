@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "ActivityError",
-          "message": "}",
-          "reason": "staleOperation"
+          "message": "3X)$\\mOU5v",
+          "reason": "invalidCursor"
         }
       }
     ]

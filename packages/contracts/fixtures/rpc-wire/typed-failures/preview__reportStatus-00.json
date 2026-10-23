@@ -7,9 +7,11 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "PreviewSessionLookupError",
-          "threadId": "  $",
-          "tabId": "51,"
+          "_tag": "PreviewInvalidUrlError",
+          "inputLength": 0,
+          "reason": "empty",
+          "protocol": "<GO\"N^0!L?",
+          "cause": [[[], {}], " ", false, 3.5e-323, true, {}, 1.797693134862313e308, []]
         }
       }
     ]

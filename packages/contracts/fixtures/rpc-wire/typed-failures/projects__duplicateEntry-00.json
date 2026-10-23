@@ -8,13 +8,7 @@
         "_tag": "Fail",
         "error": {
           "_tag": "ProjectDuplicateEntryError",
-          "relativePath": "s|!#",
-          "failure": "binary_file",
-          "resolvedPath": "key",
-          "resolvedWorkspaceRoot": "Ds",
-          "operation": "remove",
-          "message": "ez@`/gF",
-          "cause": null
+          "message": "😀"
         }
       }
     ]

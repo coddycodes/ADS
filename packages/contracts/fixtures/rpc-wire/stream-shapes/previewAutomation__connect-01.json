@@ -4,14 +4,13 @@
   "values": [
     {
       "type": "request",
-      "connectionId": "W\"(y s\\",
+      "connectionId": "\\U/-V",
       "request": {
-        "requestId": "_",
-        "threadId": "constructor",
-        "tabIdExplicit": true,
-        "operation": "status",
-        "input": {},
-        "timeoutMs": 27
+        "requestId": "\"9XbI0[",
+        "threadId": "",
+        "operation": "recordingStop",
+        "input": -2.386579457786799e294,
+        "timeoutMs": 74
       }
     }
   ]

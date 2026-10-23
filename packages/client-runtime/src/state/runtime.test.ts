@@ -9,10 +9,10 @@ import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
-import * as Rpc from "effect/unstable/rpc/Rpc";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
-import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import * as Rpc from "effect/rpc/Rpc";
+import * as RpcClient from "effect/rpc/RpcClient";
+import * as RpcGroup from "effect/rpc/RpcGroup";
 
 import {
   environmentRpcKey,

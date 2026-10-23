@@ -5,11 +5,15 @@
     {
       "isRepo": true,
       "hasWorkingTreeChanges": true,
-      "observedAt": "JgeAZW",
+      "observedAt": "__proto__",
       "stale": true,
       "refName": null,
       "detachedHead": null,
-      "sourceControlProvider": null,
+      "sourceControlProvider": {
+        "kind": "azure-devops",
+        "name": "R",
+        "baseUrl": "prototype"
+      },
       "pr": null
     }
   ]

@@ -8,8 +8,9 @@
         "_tag": "Fail",
         "error": {
           "_tag": "WorktreeAdoptionError",
-          "reason": "stale-generation",
-          "message": "\"!N\"\""
+          "reason": "worktree-not-found",
+          "message": "�",
+          "currentGeneration": 0
         }
       }
     ]

@@ -3,19 +3,21 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "threadId": "nam",
-      "tabId": "keyb",
+      "threadId": "7sr,)KzjpN",
+      "tabId": "__proto__",
       "createdAt": "",
       "type": "opened",
       "snapshot": {
-        "threadId": "bind",
-        "tabId": "i||&",
+        "threadId": "😀",
+        "tabId": "0ekUo&V",
         "navStatus": {
-          "_tag": "Idle"
+          "_tag": "Success",
+          "url": "😀",
+          "title": ""
         },
         "canGoBack": true,
-        "canGoForward": false,
-        "updatedAt": "_QR"
+        "canGoForward": true,
+        "updatedAt": " "
       }
     }
   ]

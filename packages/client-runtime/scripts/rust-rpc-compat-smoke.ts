@@ -5,9 +5,9 @@ import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import { WS_METHODS } from "@bibcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as RpcClient from "effect/rpc/RpcClient";
+import * as RpcSerialization from "effect/rpc/RpcSerialization";
+import * as Socket from "effect/socket/Socket";
 
 import { makeWsRpcProtocolClient } from "../src/rpc/protocol.ts";
 
@@ -16,16 +16,10 @@ if (!socketUrl) {
   throw new Error("Expected the Rust fixture server WebSocket URL.");
 }
 
-const webSocketConstructor = Layer.succeed(
-  Socket.WebSocketConstructor,
-  (url: string, protocols?: string | ReadonlyArray<string>) =>
-    new NodeSocket.NodeWS.WebSocket(
-      url,
-      typeof protocols === "string" ? protocols : protocols ? [...protocols] : undefined,
-    ) as unknown as globalThis.WebSocket,
-);
 const protocolLayer = RpcClient.layerProtocolSocket().pipe(
-  Layer.provide(Socket.layerWebSocket(socketUrl).pipe(Layer.provide(webSocketConstructor))),
+  Layer.provide(
+    Socket.layerWebSocket(socketUrl).pipe(Layer.provide(NodeSocket.layerWebSocketConstructorWS)),
+  ),
   Layer.provide(RpcSerialization.layerJson),
 );
 

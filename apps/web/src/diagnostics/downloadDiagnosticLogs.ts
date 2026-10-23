@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import { HttpBody, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary/target";
 import { runPrimaryRawHttp } from "../lib/runtime";

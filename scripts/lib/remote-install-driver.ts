@@ -8,7 +8,7 @@ import * as NodeOS from "node:os";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeCrypto from "node:crypto";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import {
   AuthAccessTokenResult,
   AuthWebSocketTicketResult,

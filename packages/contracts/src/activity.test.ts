@@ -14,6 +14,9 @@ import {
   ActivityStreamItem,
 } from "./activity.ts";
 
+// The Rust server rejects unknown control-input fields; Effect 4 parse options
+// apply per operation, so the strict decoders opt in explicitly.
+const strictParseOptions = { onExcessProperty: "error" } as const;
 const decodeActivityDelta = Schema.decodeUnknownSync(ActivityDelta);
 const decodeActivityError = Schema.decodeUnknownSync(ActivityError);
 const decodeActivityDetailPage = Schema.decodeUnknownSync(ActivityDetailPage);
@@ -304,6 +307,7 @@ describe("activity contracts", () => {
         never,
         never
       >,
+      strictParseOptions,
     );
     const decodeRetryInput = Schema.decodeUnknownSync(
       Reflect.get(ActivityModule, "ActivityRetrySubtreeCancellationInput") as Schema.Codec<
@@ -312,6 +316,7 @@ describe("activity contracts", () => {
         never,
         never
       >,
+      strictParseOptions,
     );
     const decodeResult = Schema.decodeUnknownSync(
       Reflect.get(ActivityModule, "ActivitySubtreeCancellationResult") as Schema.Codec<
@@ -354,6 +359,7 @@ describe("activity contracts", () => {
         never,
         never
       >,
+      strictParseOptions,
     );
     const decodeRetryInput = Schema.decodeUnknownSync(
       Reflect.get(ActivityModule, "ActivityRetrySubtreeCancellationInput") as Schema.Codec<
@@ -362,6 +368,7 @@ describe("activity contracts", () => {
         never,
         never
       >,
+      strictParseOptions,
     );
 
     expect(Reflect.get(ActivityModule, "ActivityControlSnapshot")).toBeDefined();

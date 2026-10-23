@@ -4,11 +4,11 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
+import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as SchemaAST from "effect/SchemaAST";
-import * as FastCheck from "fast-check";
 
 import {
   OrchestrationEvent,
@@ -399,9 +399,16 @@ describe("Rust RPC fixture parity", () => {
 
       for (const [index, member] of schemaMembers(rpc.errorSchema.ast).entries()) {
         try {
-          Schema.toArbitrary(Schema.make(member))(FastCheck);
+          Arbitrary.schema(Schema.make(member));
         } catch (cause) {
-          if (cause instanceof Error && cause.message.includes("Unsupported AST Never")) continue;
+          // Mirrors the exporter: members with no finite generation path, such
+          // as ones containing Schema.Never, have no typed-failure fixture.
+          if (
+            cause instanceof Error &&
+            cause.message.includes("without a finite generation path")
+          ) {
+            continue;
+          }
           throw cause;
         }
         const fixture = `typed-failures/${safeMethodName(rpc._tag)}-${String(index).padStart(2, "0")}.json`;

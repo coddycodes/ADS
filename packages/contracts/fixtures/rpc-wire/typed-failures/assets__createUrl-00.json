@@ -7,12 +7,12 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "AssetWorkspaceContextResolutionError",
+          "_tag": "AssetSigningKeyLoadError",
           "resource": {
             "_tag": "attachment",
-            "attachmentId": ";&I}\"?2"
+            "attachmentId": "qS~OloQ_l."
           },
-          "cause": -5
+          "cause": []
         }
       }
     ]

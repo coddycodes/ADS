@@ -290,7 +290,7 @@ codebase.
 - `selectBranch`
   (`apps/web/src/components/BranchToolbarBranchSelector.tsx:379-441`): for
   `reuseExistingWorktree` it calls `setThreadBranch(name, nextWorktreePath,
-worktreeKey)` and returns **without invoking `git switch` at all**
+  worktreeKey)` and returns **without invoking `git switch` at all**
   (lines 395-403) — the thread's environment moves to the worktree that already
   holds the branch. Only free branches reach the `vcs.switchRef` RPC
   (lines 412-421).
@@ -306,7 +306,7 @@ worktreeKey)` and returns **without invoking `git switch` at all**
   the main checkout" and "held by a worktree" identically.
 - The dialog's messaging (`CreateWorktreeDialog.tsx:678-686`):
   `"<name>" is already checked out. A new branch ("<name>-2" or the next
-available name) will be created from it.` — with
+  available name) will be created from it.` — with
   `suggestNextAvailableBranchName` (logic.ts:86-92) picking the suffix.
 - The server enforces the same policy independently:
   `create_worktree` (repository.rs:1786-1958) checks `worktree_map` up front
@@ -360,11 +360,11 @@ system:
   taking parsed refs, the worktree inventory, the dirty flag, the default
   branch, and running-operation state, returning a blocked list per ref.
   Example message: `Checkout is blocked: this branch is already checked out in
-the worktree at <path>.`
+  the worktree at <path>.`
 - Contract shape (master-plan.md:198-229): `VcsGraphBlockedCode` =
   `worktree-checked-out | dirty-working-tree | operation-in-flight |
-merge-in-progress | protected-branch | current-branch | no-upstream |
-detached-head | no-remote`, carried as
+  merge-in-progress | protected-branch | current-branch | no-upstream |
+  detached-head | no-remote`, carried as
   `{ operation, code, message }` triples on every branch/remote-branch/tag,
   with `message` rendered verbatim as the tooltip. Note: the code list has
   **no case for rename-of-a-held-branch** — relevant given A.1's finding that
@@ -436,7 +436,7 @@ what exists today:
    as the primary affordance; the Git Manager's checkout guard should offer
    the same action, not just a disabled control. GitHub Desktop also tried the
    stderr-regex route (`/fatal: '.*?' is already used by worktree at
-'(.+?)'/`) and deleted it in favor of the pre-computed check — independent
+   '(.+?)'/`) and deleted it in favor of the pre-computed check — independent
    confirmation of recommendation "pre-compute, don't parse".
 6. **Protect held branches from automated cleanup** — GitHub Desktop's branch
    pruner explicitly excludes branches checked out in linked worktrees

@@ -3,70 +3,227 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "platforms": [],
-      "devices": [
+      "platforms": [
         {
-          "deviceId": "ref",
+          "platform": "ios",
+          "availability": {
+            "kind": "xcodeMissing",
+            "message": "__proto__"
+          },
+          "images": []
+        },
+        {
           "platform": "android",
-          "imageId": "R1S(c':Li!",
-          "state": "starting",
-          "failure": "}ho",
-          "width": -3.402820018375656e38,
-          "orientation": "portrait",
-          "canRotate": false
+          "availability": {
+            "kind": "xcodeMissing",
+            "message": ""
+          },
+          "images": [
+            {
+              "id": "�",
+              "displayName": "2+! E$s*1"
+            }
+          ]
         },
         {
-          "deviceId": "B(!5",
-          "platform": "ios",
-          "imageId": "#isPrototy",
-          "state": "failed",
-          "width": -3.4028230607370965e38,
-          "height": -8.407790785948902e-45,
-          "orientation": "landscape",
-          "canRotate": false
-        },
-        {
-          "deviceId": "V",
-          "platform": "ios",
-          "imageId": "  ",
-          "state": "failed",
-          "failure": "u{p|%x!}|",
-          "width": 4.1546918628978385e-14,
-          "height": 8.407790785948902e-45,
-          "orientation": "portrait",
-          "canRotate": true
-        },
-        {
-          "deviceId": "",
           "platform": "android",
-          "imageId": "",
-          "state": "ready",
-          "failure": "v",
-          "width": 5.3952952809620605e-14,
-          "height": -1.0729633776317012e-28,
-          "orientation": "reversePortrait",
-          "canRotate": false
+          "availability": {
+            "kind": "xcodeMissing",
+            "message": ""
+          },
+          "images": [
+            {
+              "id": "",
+              "displayName": "toString"
+            },
+            {
+              "id": "Lw*dQD>$gr",
+              "displayName": "",
+              "inUseElsewhere": true
+            },
+            {
+              "id": "Wb}Pk}R",
+              "displayName": "CX-gGuPJ$<"
+            }
+          ]
         },
         {
-          "deviceId": "",
-          "platform": "ios",
-          "imageId": "",
-          "state": "failed",
-          "failure": "(",
-          "height": -31808829440,
-          "orientation": "portrait",
-          "canRotate": false
+          "platform": "android",
+          "availability": {
+            "kind": "xcodeSetupIncomplete",
+            "message": ""
+          },
+          "images": [
+            {
+              "id": "�",
+              "displayName": "\n"
+            },
+            {
+              "id": "nLn?.D",
+              "displayName": ".q:^]S'3yd"
+            },
+            {
+              "id": "-1",
+              "displayName": ""
+            }
+          ]
         },
         {
-          "deviceId": "4Y\"2')8J",
           "platform": "ios",
-          "imageId": "9*gSu]8/x,",
-          "state": "starting",
-          "failure": "ZU3He'!jy",
-          "orientation": "portrait",
-          "canRotate": false
+          "availability": {
+            "kind": "xcodeSetupIncomplete",
+            "message": "-1"
+          },
+          "images": []
+        },
+        {
+          "platform": "android",
+          "availability": {
+            "kind": "noAvds",
+            "message": "l)7,\"B3#qE"
+          },
+          "images": [
+            {
+              "id": "X#x@~c",
+              "displayName": "",
+              "inUseElsewhere": true
+            },
+            {
+              "id": "",
+              "displayName": "sd\"xDkh<\"~"
+            },
+            {
+              "id": "\n",
+              "displayName": "-1"
+            },
+            {
+              "id": "",
+              "displayName": "0",
+              "inUseElsewhere": true
+            },
+            {
+              "id": "0",
+              "displayName": "JKV)",
+              "inUseElsewhere": true
+            },
+            {
+              "id": "?",
+              "displayName": "_2meEEhN.M"
+            },
+            {
+              "id": "}",
+              "displayName": "😀",
+              "inUseElsewhere": true
+            }
+          ]
+        },
+        {
+          "platform": "android",
+          "availability": {
+            "kind": "viewOnlyHeadless",
+            "message": "�"
+          },
+          "images": [
+            {
+              "id": "__proto__",
+              "displayName": "S",
+              "inUseElsewhere": true
+            },
+            {
+              "id": "�",
+              "displayName": "4294967295",
+              "inUseElsewhere": true
+            },
+            {
+              "id": "\n",
+              "displayName": "\t"
+            },
+            {
+              "id": "0",
+              "displayName": "�"
+            },
+            {
+              "id": "ohXv",
+              "displayName": "g0"
+            }
+          ]
+        },
+        {
+          "platform": "ios",
+          "availability": {
+            "kind": "xcodeUnsupported",
+            "message": ":Hb#("
+          },
+          "images": []
+        },
+        {
+          "platform": "android",
+          "availability": {
+            "kind": "xcodeUnsupported",
+            "message": "-1"
+          },
+          "images": [
+            {
+              "id": "mm:Yk62FT+",
+              "displayName": "Y<i8R%f$n0"
+            },
+            {
+              "id": "-1",
+              "displayName": "XO=xZ~vC2w"
+            }
+          ]
+        },
+        {
+          "platform": "ios",
+          "availability": {
+            "kind": "adbMissing",
+            "message": "�"
+          },
+          "images": [
+            {
+              "id": "cZ \"iFp1)",
+              "displayName": ";zq,Y'`ojm"
+            },
+            {
+              "id": "RDiM*Jr<is",
+              "displayName": ""
+            },
+            {
+              "id": "__proto__",
+              "displayName": "\\N'e]dC3?Y",
+              "inUseElsewhere": true
+            },
+            {
+              "id": "�",
+              "displayName": "\t",
+              "inUseElsewhere": true
+            },
+            {
+              "id": "\u0000",
+              "displayName": "Yg5\"$Gfo^"
+            },
+            {
+              "id": "",
+              "displayName": "&>B1x",
+              "inUseElsewhere": true
+            },
+            {
+              "id": "__proto__",
+              "displayName": "n6@ i$TQ",
+              "inUseElsewhere": true
+            },
+            {
+              "id": ")s",
+              "displayName": "}PJ"
+            },
+            {
+              "id": "�",
+              "displayName": "toString"
+            }
+          ]
         }
-      ]
+      ],
+      "devices": []
     }
   ]
 }

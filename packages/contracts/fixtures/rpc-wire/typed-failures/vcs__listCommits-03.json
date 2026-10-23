@@ -7,8 +7,9 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "UpdateMaintenanceActiveError",
-          "message": "JI{Kfsr^9C"
+          "_tag": "EnvironmentAuthorizationError",
+          "message": "yo)^Q65r1J",
+          "requiredScope": "review:write"
         }
       }
     ]

@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "EnvironmentAuthorizationError",
-          "message": "apply",
-          "requiredScope": "access:write"
+          "message": ":Jqc\"`>fJ",
+          "requiredScope": "access:read"
         }
       }
     ]

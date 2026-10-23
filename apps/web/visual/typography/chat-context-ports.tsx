@@ -3,7 +3,7 @@ import type { AtomCommand } from "@bibcode/client-runtime/state/runtime";
 import { DEFAULT_SERVER_SETTINGS } from "@bibcode/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import type * as ServerPorts from "../../src/state/server";
 import type * as AssetPorts from "../../src/state/assets";

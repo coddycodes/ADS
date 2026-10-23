@@ -210,7 +210,7 @@ remote on the server:
 3. Still unknown → the module is unavailable for that project with the
    reason "`<host>` is not a configured GitHub or GitLab host on
    `<environment>`. Run `gh auth login --hostname <host>` or `glab auth login
---hostname <host>` there, then rescan." Rescan re-runs the context read.
+   --hostname <host>` there, then rescan." Rescan re-runs the context read.
 
 Every provider command carries the host explicitly (`GH_HOST=<host>` for
 `gh`; `GITLAB_HOST=<host>` plus `--hostname <host>` on `glab api`) and the
@@ -366,10 +366,10 @@ Copy and iconography follow the host through the vocabulary capability.
   closed red), title, labels, `#N opened <relative time> by <login>`,
   review-decision text, checks summary icon (pass / fail / pending), comment
   count, "Draft" badge. Rows (GitLab): title, labels, `!N · created <time>
-by <name>`, pipeline status icon, approvals `x of y`, discussions
+  by <name>`, pipeline status icon, approvals `x of y`, discussions
   resolved/unresolved count, updated time. Never an avatar.
 - **Loading**: GitHub via GraphQL `pullRequests(first: 30, after: cursor,
-states, orderBy)` with the same field set as the list rows; GitLab via
+  states, orderBy)` with the same field set as the list rows; GitLab via
   `glab mr list -F json --per-page 30 --page N` (open is the CLI default; `--closed`, `--merged`, `--all` select the other tabs — glab 1.114 has no `--state` flag). "Load more" appends; Refresh
   reloads the first page. Text search on GitHub uses the search qualifiers
   route (`gh pr list --search`) and the UI notes it is rate-limited
@@ -452,11 +452,11 @@ pending; nothing is silently dropped):
 
 - GitHub: `POST repos/{o}/{r}/pulls/{n}/reviews` with `event`, `body`,
   `commit_id`, and `comments[] { path, line, side, start_line, start_side,
-body }` via `gh api --input -` (the `gh pr review` command cannot carry
+  body }` via `gh api --input -` (the `gh pr review` command cannot carry
   inline comments).
 - GitLab: each inline comment via `POST …/merge_requests/:iid/discussions`
   with `position` (`base_sha`, `start_sha`, `head_sha`, `position_type:
-text`, `new_path`, `old_path`, `new_line` / `old_line`, `line_range` for
+  text`, `new_path`, `old_path`, `new_line` / `old_line`, `line_range` for
   multi-line; the three SHAs come from `…/merge_requests/:iid/versions`),
   the general body via `POST …/notes`, then `glab mr approve --sha <head>` /
   GraphQL `mergeRequestRequestChanges`.
@@ -492,7 +492,7 @@ Split button "Checkout" with: **Current checkout** (the selected checkout),
 (the existing create-worktree dialog, pre-filled).
 
 - Local checkout runs `gh pr checkout <n> [--branch <name>]` / `glab mr
-checkout <n> -b <name>` in the target checkout's `cwd`; forks work without
+  checkout <n> -b <name>` in the target checkout's `cwd`; forks work without
   adding remotes because both CLIs fetch the PR head ref. Before running, the
   server evaluates the Git Manager guards (dirty tree, branch held by another
   worktree → redirect to that worktree, operation in progress) and returns the

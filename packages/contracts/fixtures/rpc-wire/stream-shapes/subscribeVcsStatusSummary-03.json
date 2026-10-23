@@ -4,11 +4,11 @@
   "values": [
     {
       "isRepo": true,
-      "hasWorkingTreeChanges": false,
-      "observedAt": "v",
-      "stale": true,
+      "hasWorkingTreeChanges": true,
+      "observedAt": "toString",
+      "stale": false,
       "refName": null,
-      "detachedHead": "2H^(",
+      "detachedHead": "prototype",
       "sourceControlProvider": null,
       "pr": null
     }

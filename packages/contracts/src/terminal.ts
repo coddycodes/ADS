@@ -51,7 +51,7 @@ export const TERMINAL_LAUNCH_LABEL_MAX_LENGTH = 128;
 export const ProviderTerminalActivityLaunch = Schema.Struct({
   driverKind: ProviderDriverKind,
   providerInstanceId: ProviderInstanceId,
-}).annotate({ parseOptions: { onExcessProperty: "error" } });
+});
 export type ProviderTerminalActivityLaunch = typeof ProviderTerminalActivityLaunch.Type;
 
 export const TerminalLaunchCommand = Schema.Struct({

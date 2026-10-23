@@ -7,10 +7,8 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "TerminalHistoryError",
-          "operation": "read",
-          "threadId": "\"i",
-          "terminalId": "mO"
+          "_tag": "TerminalCloseError",
+          "reason": "�"
         }
       }
     ]

@@ -2,7 +2,7 @@
 
 import type { EnvironmentId } from "@bibcode/contracts";
 import * as Cause from "effect/Cause";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

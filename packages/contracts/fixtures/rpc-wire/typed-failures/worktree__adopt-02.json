@@ -7,9 +7,8 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "EnvironmentAuthorizationError",
-          "message": "e\\mE4[gqX",
-          "requiredScope": "orchestration:operate"
+          "_tag": "UpdateMaintenanceActiveError",
+          "message": "SkNcB{_g+&"
         }
       }
     ]

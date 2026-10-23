@@ -4,7 +4,7 @@ import type { DesktopBridge, DesktopUpdateState } from "@bibcode/contracts";
 import { act } from "react";
 import type { ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { appAtomRegistry, resetAppAtomRegistryForTests } from "../../rpc/atomRegistry";
 

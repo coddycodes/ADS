@@ -360,10 +360,10 @@ Five honest gaps:
    so the conclusion holds, but the report's "forced recompilation" wording is not re-derivable. (Note:
    `[workspace.lints.rust] warnings = "deny"` means `cargo test` already denies rustc warnings.)
 2. **The disclosed SQLite flake is mis-attributed** — `server_starts_while_live_store_is_continuously_
-committed_and_checkpointed` (`auth_http.rs:2415`) reproduced 3 times in 13 isolated runs; pre-existing,
+   committed_and_checkpointed` (`auth_http.rs:2415`) reproduced 3 times in 13 isolated runs; pre-existing,
    but blamed on `bfbecf595`/2026-07-31 when `git blame` returns `dff24b3e`/2026-08-10.
 3. **A third load-sensitive flake is undisclosed** — `concurrent_pairing_offer_retries_across_live_servers_
-return_one_result` failed once under load, passes in isolation. (The prior round's `managed_endpoint`
+   return_one_result` failed once under load, passes in isolation. (The prior round's `managed_endpoint`
    flake did not recur.)
 4. **"Prior-server compatibility" is weaker than it reads** — the interop suite was run against the
    intra-range `7d44829a` (which already contains migration 49), not the actual pre-range server; against

@@ -5,79 +5,77 @@
     {
       "kind": "control-delta",
       "delta": {
-        "scopeId": "am",
-        "previousRevision": 25,
-        "revision": 1628247106,
+        "scopeId": "eYFb8kH`",
+        "previousRevision": 40,
+        "revision": 1,
         "changes": [
           {
-            "kind": "actor-removed",
-            "actorId": "ZcIHX\"qSLd"
-          },
-          {
-            "kind": "actor-removed",
-            "actorId": "="
-          },
-          {
-            "kind": "actor-upserted",
-            "actor": {
-              "actorId": "-F;#t=fdwI?%",
-              "state": "unsupported",
-              "controlRevision": 893097961,
-              "activeDescendantCount": 502531120
-            }
+            "kind": "operation-removed",
+            "rootActorId": "mb"
           },
           {
             "kind": "operation-removed",
-            "rootActorId": "SvY}Y2"
-          },
-          {
-            "kind": "actor-removed",
-            "actorId": "oC{cAtId?"
-          },
-          {
-            "kind": "actor-removed",
-            "actorId": "x8%{A`LD[1<"
+            "rootActorId": "Z"
           },
           {
             "kind": "operation-upserted",
             "operation": {
-              "rootActorId": ",g Z-",
+              "rootActorId": "6gt6K{tZ",
               "state": "requested",
-              "residualCount": 68889190,
+              "residualCount": 1,
+              "message": "28$%\"",
+              "operationRevision": 43
+            }
+          },
+          {
+            "kind": "operation-upserted",
+            "operation": {
+              "rootActorId": "TV6mHO00y",
+              "state": "partial",
+              "residualCount": 6,
+              "message": "",
+              "operationRevision": 32
+            }
+          },
+          {
+            "kind": "operation-upserted",
+            "operation": {
+              "rootActorId": "😀",
+              "state": "partial",
+              "residualCount": 34,
               "message": null,
-              "operationRevision": 209542279
+              "operationRevision": 1
+            }
+          },
+          {
+            "kind": "actor-upserted",
+            "actor": {
+              "actorId": "4294967295",
+              "state": "requested",
+              "controlRevision": 98,
+              "activeDescendantCount": 45
             }
           },
           {
             "kind": "operation-removed",
-            "rootActorId": ",SPD>0177c}"
+            "rootActorId": "�"
+          },
+          {
+            "kind": "operation-removed",
+            "rootActorId": "X@aO*(!:|6"
           },
           {
             "kind": "actor-upserted",
             "actor": {
-              "actorId": "Q^$ubVf0",
+              "actorId": "=i&a\"(",
               "state": "requested",
-              "controlRevision": 1953387117,
-              "activeDescendantCount": 1580885828
+              "controlRevision": 4,
+              "activeDescendantCount": 6
             }
           },
           {
-            "kind": "actor-upserted",
-            "actor": {
-              "actorId": "\"",
-              "state": "unsupported",
-              "controlRevision": 363065350,
-              "activeDescendantCount": 592300522
-            }
-          },
-          {
-            "kind": "actor-upserted",
-            "actor": {
-              "actorId": "kG`&$B7@FMT",
-              "state": "requested",
-              "controlRevision": 901964021,
-              "activeDescendantCount": 1495467413
-            }
+            "kind": "operation-removed",
+            "rootActorId": ""
           }
         ]
       }

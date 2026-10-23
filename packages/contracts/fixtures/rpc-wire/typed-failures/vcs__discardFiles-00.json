@@ -8,12 +8,10 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitCommandError",
-          "operation": ";BQ\\p",
-          "command": "$jg:B9",
-          "cwd": "W!jz^Rz&",
-          "stdoutLength": 5.605193857299268e-45,
-          "detail": "5",
-          "cause": [["yp^ _f"], true]
+          "operation": "__proto__",
+          "command": "0",
+          "cwd": "3J8Opk2t16",
+          "detail": "�"
         }
       }
     ]

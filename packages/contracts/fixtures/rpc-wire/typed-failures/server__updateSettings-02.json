@@ -7,8 +7,9 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "UpdateMaintenanceActiveError",
-          "message": "=I|M6c"
+          "_tag": "EnvironmentAuthorizationError",
+          "message": "\u0000",
+          "requiredScope": "terminal:operate"
         }
       }
     ]

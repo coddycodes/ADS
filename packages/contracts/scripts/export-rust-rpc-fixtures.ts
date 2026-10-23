@@ -4,13 +4,14 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as SchemaAST from "effect/SchemaAST";
-import type * as RpcMessage from "effect/unstable/rpc/RpcMessage";
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
-import * as FastCheck from "fast-check";
+import type * as RpcMessage from "effect/rpc/RpcMessage";
+import * as RpcSerialization from "effect/rpc/RpcSerialization";
 
 import {
   ActivityCancelSubtreeInput,
@@ -545,6 +546,15 @@ const encodeSchemaSample = (
         if (typeof item === "string" && /^-?\d{5,}-\d{2}-\d{2}T/.test(item)) {
           return "2026-01-01T00:00:00.000Z";
         }
+        // Effect's native Arbitrary samples the full UTF-16 range, including
+        // lone surrogates that strict JSON parsers such as serde_json reject.
+        // toWellFormed keeps each string's length while replacing them.
+        if (typeof item === "string") return item.toWellFormed();
+        if (typeof item === "object" && item !== null && !Array.isArray(item)) {
+          return Object.fromEntries(
+            Object.entries(item).map(([key, value]) => [key.toWellFormed(), value]),
+          );
+        }
         return item;
       }),
     ) as unknown;
@@ -553,14 +563,16 @@ const encodeSchemaSample = (
   if (manualValue !== undefined) {
     return encodeAndValidate(manualValue);
   }
-  const arbitrary = Schema.toArbitrary(codec)(FastCheck);
+  const arbitrary = Arbitrary.schema(codec);
   let lastError: unknown;
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    const [sample] = FastCheck.sample(arbitrary, {
-      numRuns: 1,
-      seed: stringSeed(`${fixtureKey}:${attempt}`),
-    });
     try {
+      const [sample] = Effect.runSync(
+        Arbitrary.sampleEffect(arbitrary, {
+          count: 1,
+          seed: stringSeed(`${fixtureKey}:${attempt}`),
+        }),
+      );
       return encodeAndValidate(sample);
     } catch (error) {
       lastError = error;
@@ -940,7 +952,9 @@ for (const rpc of [...WsRpcGroup.requests.values()].toSorted((left, right) =>
     try {
       error = encodeSchemaSample(member, fixtureKey);
     } catch (cause) {
-      if (cause instanceof Error && cause.message.includes("Unsupported AST Never")) {
+      // Effect's native Arbitrary rejects members with no finite generation
+      // path, such as ones containing Schema.Never; they have no wire sample.
+      if (cause instanceof Error && cause.message.includes("without a finite generation path")) {
         continue;
       }
       throw cause;

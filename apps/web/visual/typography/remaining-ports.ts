@@ -8,7 +8,7 @@ import {
 import type { OrchestrationShellSnapshot } from "@bibcode/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import type * as ReviewPorts from "../../src/state/review";
 import type * as SourceControlPorts from "../../src/state/sourceControl";
 import type * as ThreadPorts from "../../src/state/threads";

@@ -8,7 +8,7 @@ import type {
 } from "@bibcode/contracts";
 import { GitManagerOperationError } from "@bibcode/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";

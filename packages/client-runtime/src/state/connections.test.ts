@@ -1,7 +1,7 @@
 import { EnvironmentId } from "@bibcode/contracts";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { beforeEach, describe, expect, vi } from "vite-plus/test";
 
 const harness = vi.hoisted(() => ({

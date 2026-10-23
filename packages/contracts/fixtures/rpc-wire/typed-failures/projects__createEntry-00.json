@@ -8,10 +8,9 @@
         "_tag": "Fail",
         "error": {
           "_tag": "ProjectCreateEntryError",
-          "relativePath": "Uu*5:U(U[",
-          "failure": "workspace_path_outside_root",
-          "message": "S l@",
-          "cause": [[1899548878633225, false, -6.7042575435081e107]]
+          "resolvedPath": "toString",
+          "message": "X",
+          "cause": null
         }
       }
     ]

@@ -10,8 +10,8 @@ import {
 } from "@bibcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { Atom } from "effect/unstable/reactivity";
-import { RpcClientError } from "effect/unstable/rpc";
+import { Atom } from "effect/reactivity";
+import { RpcClientError } from "effect/rpc";
 import { describe, expect, it } from "@effect/vitest";
 
 import { EnvironmentRegistry } from "../connection/registry.ts";

@@ -8,29 +8,7 @@
         "_tag": "Fail",
         "error": {
           "_tag": "OrchestrationReplayEventsError",
-          "message": "6,!",
-          "cause": [
-            [
-              {
-                ") Q1pCXQdM": "qfUE3c#Q\\V",
-                "Q^]=h\\#b(]": true,
-                "pAQQf6e+H": [
-                  -1335679886993280,
-                  null,
-                  -2.646138180996957e-30,
-                  "W&u",
-                  null,
-                  5.881596096090273e173,
-                  null,
-                  -7585176931959004,
-                  -6588524665126843,
-                  3211869972651625
-                ],
-                "Fw<l|": "Ddg"
-              }
-            ],
-            -4.459297167689327e245
-          ]
+          "message": "2"
         }
       }
     ]

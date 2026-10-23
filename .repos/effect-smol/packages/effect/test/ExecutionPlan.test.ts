@@ -11,6 +11,7 @@ import {
   Fiber,
   Latch,
   Layer,
+  Schedule,
   Scheduler,
   Stream
 } from "effect"
@@ -69,6 +70,55 @@ describe("ExecutionPlan", () => {
         /ExecutionPlan\.make: step\[0\]\.attempts must be greater than 0/
       )
     })
+  })
+
+  describe("captureRequirements", () => {
+    class Policy extends Context.Service<Policy, { allow: boolean }>()("ExecutionPlan.test/Policy") {}
+
+    const failOnce = () => {
+      let attempts = 0
+      return Effect.suspend(() => ++attempts === 1 ? Effect.fail("busy") : Effect.succeed("ok"))
+    }
+
+    const plan = ExecutionPlan.make({
+      provide: Context.empty(),
+      attempts: 2,
+      while: (_: string) => Effect.map(Policy, ({ allow }) => allow)
+    })
+
+    it.effect("captures while predicate requirements", () =>
+      Effect.gen(function*() {
+        const captured = yield* plan.captureRequirements.pipe(Effect.provideService(Policy, { allow: true }))
+        const result = yield* Effect.withExecutionPlan(failOnce(), captured)
+        strictEqual(result, "ok")
+      }))
+
+    it.effect("prefers captured while predicate requirements over the ambient context", () =>
+      Effect.gen(function*() {
+        const captured = yield* plan.captureRequirements.pipe(Effect.provideService(Policy, { allow: true }))
+        const result = yield* Effect.withExecutionPlan(failOnce(), captured).pipe(
+          Effect.provideService(Policy, { allow: false })
+        )
+        strictEqual(result, "ok")
+      }))
+
+    it.effect("captures schedule requirements", () =>
+      Effect.gen(function*() {
+        const schedulePlan = ExecutionPlan.make({
+          provide: Layer.empty,
+          schedule: Schedule.recurs(1).pipe(
+            Schedule.map(() =>
+              Effect.flatMap(Policy, ({ allow }) => allow ? Effect.void : Effect.fail("denied" as const))
+            )
+          )
+        })
+        const captured = yield* schedulePlan.captureRequirements.pipe(Effect.provideService(Policy, { allow: true }))
+        for (const ambient of [undefined, { allow: false }]) {
+          const program = Effect.withExecutionPlan(failOnce(), captured)
+          const result = yield* ambient ? Effect.provideService(program, Policy, ambient) : program
+          strictEqual(result, "ok")
+        }
+      }))
   })
 
   describe("Stream.withExecutionPlan", () => {

@@ -185,10 +185,10 @@ external review.)_ JSON payload (schema lives in
   forms. First connect: `{"type":"e2ee_auth","pairing":"<one-time pairing token>"}` — the
   server performs the bootstrap exchange and mints the device session _inside the
   channel_, replying `{"type":"e2ee_authenticated","credential":{…bearer…},
-"environmentId":…,"storageInstanceId":…}`; the one-time token is consumed only by this
+  "environmentId":…,"storageInstanceId":…}`; the one-time token is consumed only by this
   successful in-channel exchange, so pre-auth failures (wrong host, transport loss) leave
   it retryable. Subsequent connects: `{"type":"e2ee_auth","bearer":"<stored access
-credential>"}`. No `/oauth/token` or WebSocket-ticket HTTP round-trips occur for
+  credential>"}`. No `/oauth/token` or WebSocket-ticket HTTP round-trips occur for
   hostKey targets — the only pre-auth HTTP is the unauthenticated descriptor fetch, used
   as a routing hint only and **re-verified inside the channel** (authenticated
   `server.getConfig` compared against the pairing payload's `environmentId`/

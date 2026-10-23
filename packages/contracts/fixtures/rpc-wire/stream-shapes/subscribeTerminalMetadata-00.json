@@ -6,116 +6,32 @@
       "type": "snapshot",
       "terminals": [
         {
-          "threadId": "T.WEUib.",
-          "terminalId": "4Y=Q4",
-          "cwd": "LQs=cFsiF1|0",
-          "worktreePath": null,
+          "threadId": "toString",
+          "terminalId": "n\"Y4jA|=aD",
+          "cwd": "😀",
+          "worktreePath": "\\",
           "status": "error",
           "pid": null,
           "exitCode": null,
-          "exitSignal": null,
-          "consoleTheme": "light",
+          "exitSignal": 98,
           "hasRunningSubprocess": true,
-          "label": "z",
-          "updatedAt": "s'(QI&:Qa",
-          "centerPanel": false,
-          "command": {
-            "executable": "id;UI\"_/P",
-            "args": [")", ""],
-            "env": {
-              "e": ".wD#W4+8o"
-            },
-            "activity": {
-              "driverKind": "hQ_",
-              "providerInstanceId": "R1__JY"
-            }
-          }
-        },
-        {
-          "threadId": "P&/X* `u",
-          "terminalId": "ae7,}0m9j3a",
-          "cwd": "X!,Mp{9Q",
-          "worktreePath": "7",
-          "status": "starting",
-          "pid": 530796252,
-          "exitCode": null,
-          "exitSignal": -1493827727,
-          "hasRunningSubprocess": true,
-          "label": "",
-          "updatedAt": "?OI;g:O!",
-          "centerPanel": true,
-          "command": {
-            "executable": "|*vn",
-            "args": ["b&6\"S%}f", ""],
-            "label": "\\5vQ$h",
-            "env": {
-              "K": "rWl"
-            }
-          }
-        },
-        {
-          "threadId": "<:o5Z]0J&",
-          "terminalId": "iS2ryY3~z'_(",
-          "cwd": "n\".\"Zdgf",
-          "worktreePath": "#RlQ[9lU-xU",
-          "status": "starting",
-          "pid": null,
-          "exitCode": null,
-          "exitSignal": null,
-          "hasRunningSubprocess": false,
-          "label": "or)+",
-          "updatedAt": "H^7!q`'",
-          "centerPanel": false,
-          "command": {
-            "executable": "Y",
-            "args": ["", "C<Hy", "t'IB&Lr+F", "sveA\"8U", ""],
-            "env": {
-              "c": "<h07|i"
-            }
-          }
-        },
-        {
-          "threadId": "P=",
-          "terminalId": "i1u);6z",
-          "cwd": "A",
-          "worktreePath": null,
-          "status": "exited",
-          "pid": null,
-          "exitCode": 622288241,
-          "exitSignal": 1241754173,
-          "consoleTheme": "light",
-          "hasRunningSubprocess": false,
-          "label": "Q9k0",
-          "updatedAt": "",
-          "centerPanel": false
-        },
-        {
-          "threadId": "%:1.sO@U6",
-          "terminalId": ",oK;PVj0!",
-          "cwd": "Q&#",
-          "worktreePath": null,
-          "status": "starting",
-          "pid": 980689885,
-          "exitCode": null,
-          "exitSignal": null,
-          "hasRunningSubprocess": false,
-          "label": "",
-          "updatedAt": "XL",
-          "centerPanel": false
-        },
-        {
-          "threadId": "RS(dgfB@.A",
-          "terminalId": "p22='",
-          "cwd": "/QHa7=n",
-          "worktreePath": "[",
-          "status": "error",
-          "pid": null,
-          "exitCode": null,
-          "exitSignal": null,
-          "hasRunningSubprocess": false,
-          "label": "-3w",
-          "updatedAt": "",
+          "label": "-1",
+          "updatedAt": "ulP",
           "centerPanel": true
+        },
+        {
+          "threadId": "__proto__",
+          "terminalId": "�",
+          "cwd": "!a",
+          "worktreePath": null,
+          "status": "running",
+          "pid": null,
+          "exitCode": null,
+          "exitSignal": -31,
+          "hasRunningSubprocess": true,
+          "label": "prototype",
+          "updatedAt": "�",
+          "centerPanel": false
         }
       ]
     }

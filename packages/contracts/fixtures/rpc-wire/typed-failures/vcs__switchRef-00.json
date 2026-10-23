@@ -8,14 +8,12 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitCommandError",
-          "operation": " ",
-          "command": "{f5mX1c{qw",
-          "cwd": "&{/x'E?[ti",
-          "argumentCount": 2.4511932068052847e26,
-          "exitCode": 3.402819409903368e38,
-          "stderrLength": -3.923635700109488e-44,
-          "outputLength": -4.649956522387749e-19,
-          "detail": "eU__look"
+          "operation": "t+O85\\`2",
+          "command": "",
+          "cwd": "",
+          "exitCode": 1.7976931348623121e308,
+          "stderrLength": -3.5e-323,
+          "detail": "}KJ#"
         }
       }
     ]

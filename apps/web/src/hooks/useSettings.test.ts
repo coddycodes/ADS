@@ -23,7 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { EnvironmentRegistry, EnvironmentSupervisor } from "@bibcode/client-runtime/connection";
 import { createServerEnvironmentAtoms } from "@bibcode/client-runtime/state/server";
 

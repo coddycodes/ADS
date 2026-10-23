@@ -3,10 +3,10 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "threadId": "X`s(=d0(1WR",
-      "terminalId": "arguments",
+      "threadId": "toString",
+      "terminalId": "mu",
       "type": "output",
-      "data": "8MR"
+      "data": ""
     }
   ]
 }

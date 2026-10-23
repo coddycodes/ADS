@@ -265,7 +265,7 @@ prompting in the terminal"), `GH_CONFIG_DIR`, `GH_TELEMETRY`, `DO_NOT_TRACK`.
 ### GraphQL-only or REST-only operations `gh` cannot do directly
 
 - **Line-specific review comments**: use `gh api -X POST
-repos/{owner}/{repo}/pulls/{pull_number}/reviews` with a JSON body per
+  repos/{owner}/{repo}/pulls/{pull_number}/reviews` with a JSON body per
   [REST: Create a review for a pull request](https://docs.github.com/en/rest/pulls/reviews?apiVersion=2022-11-28#create-a-review-for-a-pull-request):
   `commit_id` (optional, defaults to latest), `body` (required for
   `REQUEST_CHANGES`/`COMMENT`), `event` (`APPROVE`|`REQUEST_CHANGES`|`COMMENT`;
@@ -274,7 +274,7 @@ repos/{owner}/{repo}/pulls/{pull_number}/reviews` with a JSON body per
   `position`, `side` (`LEFT`|`RIGHT`), and `start_line`/`start_side` for
   multi-line comments.
 - **Listing/resolving review threads**: no `gh` subcommand exists; use `gh api
-graphql` with the `reviewThreads` connection on `PullRequest` (confirmed
+  graphql` with the `reviewThreads` connection on `PullRequest` (confirmed
   field: `reviewThreads (PullRequestReviewThreadConnection!)` — "The list of
   all review threads for this pull request", per
   [docs.github.com/en/graphql/reference/pulls](https://docs.github.com/en/graphql/reference/pulls)) and the mutations:
@@ -287,7 +287,7 @@ graphql` with the `reviewThreads` connection on `PullRequest` (confirmed
   wrap these under the hood.
 - **Auto-merge enable/disable**: `gh pr merge --auto` uses
   `enablePullRequestAutoMerge` internally; there is no separate `gh pr
-autosomething` command — disabling auto-merge from script form requires
+  autosomething` command — disabling auto-merge from script form requires
   `gh api graphql` with `disablePullRequestAutoMerge`, or the merge-box UI
   button per §1 (`gh pr merge` has no `--disable-auto` flag confirmed in the
   manual).
@@ -751,7 +751,7 @@ stable contract:
   with `X-RateLimit-Remaining`/`Retry-After` headers are the underlying
   mechanism `gh api` will surface as an HTTP error, and GitLab's API returns
   standard 429s with `RateLimit-*` headers — a tool calling `gh api`/`glab
-api` directly should inspect the HTTP status/headers itself rather than
+  api` directly should inspect the HTTP status/headers itself rather than
   parse CLI text for this case.
 
 ---

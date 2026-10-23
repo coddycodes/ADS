@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import { fromJsonStringPretty } from "@bibcode/shared/schemaJson";
 
 import {
@@ -205,13 +205,13 @@ export const buildTauriUpdateManifest = Effect.fn("buildTauriUpdateManifest")(fu
 export const buildTauriUpdateManifestCommand = Command.make(
   "build-tauri-update-manifest",
   {
-    assetsDir: Flag.string("assets-dir"),
-    version: Flag.string("version"),
-    tag: Flag.string("tag"),
-    repository: Flag.string("repository"),
-    pubDate: Flag.string("pub-date"),
-    notes: Flag.string("notes"),
-    output: Flag.string("output"),
+    assetsDir: Flag.String("assets-dir"),
+    version: Flag.String("version"),
+    tag: Flag.String("tag"),
+    repository: Flag.String("repository"),
+    pubDate: Flag.String("pub-date"),
+    notes: Flag.String("notes"),
+    output: Flag.String("output"),
   },
   ({ output, ...input }) =>
     buildTauriUpdateManifest(input as BuildTauriUpdateManifestInput).pipe(

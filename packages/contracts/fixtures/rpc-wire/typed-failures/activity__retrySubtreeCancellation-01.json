@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "EnvironmentAuthorizationError",
-          "message": "O0gIQ.0B",
-          "requiredScope": "terminal:operate"
+          "message": "kERxx~LdNL",
+          "requiredScope": "relay:write"
         }
       }
     ]

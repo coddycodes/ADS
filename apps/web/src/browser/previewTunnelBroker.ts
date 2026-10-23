@@ -10,7 +10,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { type AtomRegistry } from "effect/unstable/reactivity";
+import { type AtomRegistry } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { readPreparedConnection } from "../state/session";

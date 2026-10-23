@@ -45,7 +45,7 @@ Reliability and performance fixes worth porting:
 Bigger features absent in BibCode:
 
 - Completion notifications: `off | notifications | sound |
-notifications-and-sound`, two bundled sounds, OS notification, dock badge
+  notifications-and-sound`, two bundled sounds, OS notification, dock badge
   through the desktop bridge and a favicon badge in the browser;
   `threadNotifications.ts`, `components/ThreadNotificationCoordinator.tsx`.
 - "Edit from here": rewind to a user message that restores the prompt and

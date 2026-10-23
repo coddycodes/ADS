@@ -1,8 +1,8 @@
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpClient } from "effect/unstable/http";
-import * as Socket from "effect/unstable/socket/Socket";
+import { HttpClient } from "effect/http";
+import * as Socket from "effect/socket/Socket";
 
 import { remoteHttpClientLayer } from "@bibcode/client-runtime/rpc";
 import * as PrimaryEnvironmentHttpClient from "../environments/primary/httpClient";

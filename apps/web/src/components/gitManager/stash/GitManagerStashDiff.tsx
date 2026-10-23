@@ -8,7 +8,7 @@ import { GitManagerOperationError } from "@bibcode/contracts";
 import { LegendList } from "@legendapp/list/react";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { FileIcon } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef } from "react";
 

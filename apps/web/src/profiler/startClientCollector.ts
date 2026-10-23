@@ -1,7 +1,7 @@
 import type { EnvironmentPresentation } from "@bibcode/client-runtime/connection";
 import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
 import { EnvironmentId } from "@bibcode/contracts";
-import type { AtomRegistry } from "effect/unstable/reactivity";
+import type { AtomRegistry } from "effect/reactivity";
 
 import { environmentPresentations } from "../state/presentation";
 import { serverEnvironment } from "../state/server";

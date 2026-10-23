@@ -12,7 +12,7 @@ import type {
 } from "@bibcode/contracts";
 import { applyGitStatusStreamEvent } from "@bibcode/shared/git";
 import { makeTestExecutionEnvironmentCapabilities } from "@bibcode/shared/testSupport";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

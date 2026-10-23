@@ -3,11 +3,22 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "actionId": "%}yE",
-      "cwd": "D^[WL}$l",
-      "action": "commit_push",
+      "actionId": "",
+      "cwd": "<0Ot.qCG",
+      "action": "push",
       "kind": "action_started",
-      "phases": ["branch", "pr", "pr", "branch", "pr", "pr", "commit", "pr"]
+      "phases": [
+        "branch",
+        "branch",
+        "branch",
+        "push",
+        "branch",
+        "branch",
+        "branch",
+        "commit",
+        "push",
+        "branch"
+      ]
     }
   ]
 }

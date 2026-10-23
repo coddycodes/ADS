@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "EnvironmentAuthorizationError",
-          "message": "is",
-          "requiredScope": "orchestration:operate"
+          "message": "Rl&p",
+          "requiredScope": "access:read"
         }
       }
     ]

@@ -25,7 +25,7 @@ import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
 import { createModelSelection } from "@bibcode/shared/model";
 import { scopeThreadRef, scopedThreadKey } from "@bibcode/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@bibcode/client-runtime/state/models";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 

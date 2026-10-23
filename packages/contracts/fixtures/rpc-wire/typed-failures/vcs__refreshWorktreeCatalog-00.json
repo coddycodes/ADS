@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "WorktreeCatalogError",
-          "reason": "internal",
-          "message": "G$!"
+          "reason": "environment-unsupported",
+          "message": ""
         }
       }
     ]

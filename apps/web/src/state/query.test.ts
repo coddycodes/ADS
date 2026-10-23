@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import * as Cause from "effect/Cause";
-import { RpcClientError } from "effect/unstable/rpc";
-import * as Socket from "effect/unstable/socket/Socket";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { RpcClientError } from "effect/rpc";
+import * as Socket from "effect/socket/Socket";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import {
   formatEnvironmentQueryError,

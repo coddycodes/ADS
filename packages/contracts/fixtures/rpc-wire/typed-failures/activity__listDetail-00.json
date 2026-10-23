@@ -8,7 +8,7 @@
         "_tag": "Fail",
         "error": {
           "_tag": "ActivityError",
-          "message": " h",
+          "message": "",
           "reason": "staleScope"
         }
       }

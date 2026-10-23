@@ -3,11 +3,11 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "actionId": "1%w?fH@vLqS{",
-      "cwd": "<a#{%:",
-      "action": "commit_push",
+      "actionId": "\u0000",
+      "cwd": "",
+      "action": "commit",
       "kind": "hook_started",
-      "hookName": "VT2Q^.7y\"M"
+      "hookName": "%dp.8go?RT"
     }
   ]
 }

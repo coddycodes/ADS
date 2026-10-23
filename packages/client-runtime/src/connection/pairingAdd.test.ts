@@ -24,8 +24,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { RpcClientError } from "effect/unstable/rpc";
-import * as Socket from "effect/unstable/socket/Socket";
+import { RpcClientError } from "effect/rpc";
+import * as Socket from "effect/socket/Socket";
 
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import * as RpcSession from "../rpc/session.ts";

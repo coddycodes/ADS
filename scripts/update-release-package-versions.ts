@@ -2,6 +2,7 @@
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Hashes build inputs outside an Effect Crypto service.
 import * as NodeCrypto from "node:crypto";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
@@ -11,7 +12,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/cli";
 import { fromJsonStringPretty } from "@bibcode/shared/schemaJson";
 
 export class ReleasePackageManifestError extends Schema.TaggedError<ReleasePackageManifestError>()(
@@ -501,7 +502,7 @@ export const updateReleasePackageVersions = Effect.fn("updateReleasePackageVersi
 
 const writeGithubOutput = Effect.fn("writeGithubOutput")(function* (changed: boolean) {
   const fs = yield* FileSystem.FileSystem;
-  const githubOutputPath = yield* Config.nonEmptyString("GITHUB_OUTPUT").pipe(
+  const githubOutputPath = yield* Config.NonEmptyString("GITHUB_OUTPUT").pipe(
     Effect.mapError(
       (cause) =>
         new ReleaseGitHubOutputConfigurationError({
@@ -523,14 +524,14 @@ const writeGithubOutput = Effect.fn("writeGithubOutput")(function* (changed: boo
 export const updateReleasePackageVersionsCommand = Command.make(
   "update-release-package-versions",
   {
-    version: Argument.string("version").pipe(
+    version: Argument.String("version").pipe(
       Argument.withDescription("Release version to write into each releasable package manifest."),
     ),
-    root: Flag.string("root").pipe(
+    root: Flag.String("root").pipe(
       Flag.withDescription("Workspace root used to resolve the release package manifests."),
       Flag.optional,
     ),
-    githubOutput: Flag.boolean("github-output").pipe(
+    githubOutput: Flag.Boolean("github-output").pipe(
       Flag.withDescription("Append changed=<boolean> to GITHUB_OUTPUT."),
       Flag.withDefault(false),
     ),

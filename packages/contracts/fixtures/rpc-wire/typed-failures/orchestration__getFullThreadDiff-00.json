@@ -8,8 +8,7 @@
         "_tag": "Fail",
         "error": {
           "_tag": "OrchestrationGetFullThreadDiffError",
-          "message": "$O\"f",
-          "cause": null
+          "message": "e"
         }
       }
     ]

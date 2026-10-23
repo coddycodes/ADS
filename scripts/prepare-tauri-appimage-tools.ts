@@ -3,7 +3,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - This standalone build adapter prepares Tauri tools.
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import { Effect } from "effect";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";

@@ -72,7 +72,7 @@ import {
   mergeInterruptedComposerContent,
   reusableStagedAttachmentAttempt,
 } from "./ChatView.logic";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 import type { AttachmentStagingResult } from "@bibcode/client-runtime/operations";
 

@@ -7,7 +7,7 @@ import {
   createRemoteUpdateEnvironmentAtoms,
 } from "@bibcode/client-runtime/state/remoteUpdates";
 import { runAtomCommand } from "@bibcode/client-runtime/state/runtime";
-import { Atom, type AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 import { useCallback, useContext } from "react";
 
 import {

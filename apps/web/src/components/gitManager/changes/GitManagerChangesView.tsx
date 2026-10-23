@@ -12,7 +12,7 @@ import {
 } from "@bibcode/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { SearchIcon, XIcon } from "lucide-react";
 import {
   memo,

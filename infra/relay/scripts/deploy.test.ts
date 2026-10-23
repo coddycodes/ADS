@@ -4,7 +4,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AlchemyContext } from "alchemy/AlchemyContext";
 import { ArtifactStore, createArtifactStore } from "alchemy/Artifacts";
 import { AuthProviders } from "alchemy/Auth/AuthProvider";
-import { Cli } from "alchemy/Cli/Cli";
+import * as Interaction from "alchemy/Interaction";
+import { Cli } from "alchemy/Report";
 import * as InMemoryState from "alchemy/State/InMemoryState";
 import * as State from "alchemy/State/State";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
@@ -18,9 +19,9 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestConsole from "effect/testing/TestConsole";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 class TestDeployFailure extends Data.TaggedError("TestDeployFailure")<{
   readonly message: string;
@@ -256,6 +257,7 @@ const testDeployOperations = (): RelayDeployOperations["Service"] =>
           deployHarness.displayedPlanCount += 1;
         }),
       startApplySession: () => Effect.die("not used by relay deploy tests"),
+      startPlanningSession: () => Effect.die("not used by relay deploy tests"),
     }),
     confirm: ((options: { readonly message: string }) =>
       options) as unknown as RelayDeployOperations["Service"]["confirm"],
@@ -321,7 +323,9 @@ const runDeploy = (
           approvePlan: () => Effect.succeed(true),
           displayPlan: () => Effect.void,
           startApplySession: () => Effect.die("not used"),
+          startPlanningSession: () => Effect.die("not used"),
         }),
+        Interaction.layerNonInteractive(),
         Layer.succeed(AlchemyContext, {
           adopt: false,
           dev: false,

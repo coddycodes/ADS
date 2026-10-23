@@ -1,5 +1,5 @@
 import type { GitManagerSignalEvent } from "@bibcode/contracts";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 /** Explicitly retains the platform wakeup subscription for this repository's fallback. */
 export function createSignalWithDegradedFocusRefresh<E, EW>(

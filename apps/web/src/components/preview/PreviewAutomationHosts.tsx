@@ -20,7 +20,7 @@ import {
 import { normalizePreviewUrl } from "@bibcode/shared/preview";
 import { resolvePreviewViewport } from "@bibcode/shared/previewViewport";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import {
   applyPreviewServerSnapshot,

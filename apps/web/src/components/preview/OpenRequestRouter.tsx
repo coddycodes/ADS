@@ -3,7 +3,7 @@
 import { RegistryContext } from "@effect/atom-react";
 import { scopedThreadKey, scopeThreadRef } from "@bibcode/client-runtime/environment";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@bibcode/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useContext, useEffect } from "react";
 
 import { openLink } from "~/browser/openLink";

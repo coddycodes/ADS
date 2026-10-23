@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
+import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
 import { describe, expect } from "vite-plus/test";
 
 import {

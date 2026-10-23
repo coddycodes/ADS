@@ -3,14 +3,14 @@
 import { RegistryContext } from "@effect/atom-react";
 import { EnvironmentId } from "@bibcode/contracts";
 import type { RemoteUpdateRunState } from "@bibcode/client-runtime/state/remoteUpdateCoordinator";
-import { AsyncResult, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, AtomRegistry } from "effect/reactivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 // The command boundary is mocked below; no connection services should start in this UI test.
 vi.mock("../connection/runtime", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   const Layer = await import("effect/Layer");
   return { connectionAtomRuntime: Atom.runtime(Layer.empty) };
 });

@@ -14,9 +14,10 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Hashes build inputs outside an Effect Crypto service.
 import * as NodeCrypto from "node:crypto";
 import * as NodeUtil from "node:util";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { binaryIdentity, type BinaryIdentity } from "./lib/binary-identity.ts";
 import { getDefaultBuildArch, type BuildArch } from "./lib/build-target-arch.ts";

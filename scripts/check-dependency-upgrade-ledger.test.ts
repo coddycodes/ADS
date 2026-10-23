@@ -503,15 +503,15 @@ describe("dependency upgrade ledger validation", () => {
     ) as { patchedDependencies: Record<string, string> };
 
     expect(entry("toolchain:node").target).toBe("26.12.1");
-    expect(entry("toolchain:pnpm").target).toBe("11.25.0");
+    expect(entry("toolchain:pnpm").target).toBe("11.28.5");
     expect(entry("toolchain:rust").target).toBe("1.98.1");
-    expect(entry("toolchain:vite-core").target).toBe("npm:@voidzero-dev/vite-plus-core@0.3.0");
-    expect(entry("toolchain:vite-plus").target).toBe("0.3.0");
-    expect(entry("js:catalog:effect").target).toBe("4.0.0-beta.107");
-    expect(entry("js:catalog:@effect/platform-node-shared").target).toBe("4.0.0-beta.107");
-    expect(entry("js:catalog:@effect/sql-d1").target).toBe("4.0.0-beta.107");
-    expect(entry("js:catalog:@effect/sql-sqlite-do").target).toBe("4.0.0-beta.107");
-    expect(entry("js:infra/relay:alchemy").target).toBe("2.0.0-beta.72");
+    expect(entry("toolchain:vite-core").target).toBe("npm:@voidzero-dev/vite-plus-core@1.1.0");
+    expect(entry("toolchain:vite-plus").target).toBe("1.1.0");
+    expect(entry("js:catalog:effect").target).toBe("4.0.2");
+    expect(entry("js:catalog:@effect/platform-node-shared").target).toBe("4.0.2");
+    expect(entry("js:catalog:@effect/sql-d1").target).toBe("4.0.2");
+    expect(entry("js:catalog:@effect/sql-sqlite-do").target).toBe("4.0.2");
+    expect(entry("js:infra/relay:alchemy").target).toBe("2.0.0-beta.81");
     expect(entry("js:infra/relay:drizzle-kit").target).toBe("1.0.0-rc.5-ab785fc");
     expect(entry("js:infra/relay:drizzle-orm").target).toBe("1.0.0-rc.5-ab785fc");
     expect(entry("js:apps/web:react").target).toBe("19.2.8");
@@ -521,8 +521,8 @@ describe("dependency upgrade ledger validation", () => {
     const exactMigratedTargets = [
       ["js:apps/web:@fontsource-variable/dm-sans", "^5.3.0", "5.3.0", "react-ui"],
       ["js:apps/web:@fontsource/jetbrains-mono", "^5.3.0", "5.3.0", "react-ui"],
-      ["js:apps/web:@types/react-dom", "~19.2.6", "19.2.6", "react-ui"],
-      ["js:apps/web:happy-dom", "^20.13.2", "20.13.2", "stable-javascript-tooling"],
+      ["js:apps/web:@types/react-dom", "~19.2.6", "19.2.7", "react-ui"],
+      ["js:apps/web:happy-dom", "^20.13.2", "20.14.6", "stable-javascript-tooling"],
       ["js:apps/web:zustand", "^5.0.15", "5.0.15", "react-ui"],
     ] as const;
     for (const [key, current, target, cohort] of exactMigratedTargets) {
@@ -533,16 +533,27 @@ describe("dependency upgrade ledger validation", () => {
       expect(dependency.status, key).toBe("green");
     }
 
+    const forcedWdioEntries = [
+      ["js:apps/desktop:@wdio/cli", "9.31.9"],
+      ["js:apps/desktop:@wdio/globals", "9.31.3"],
+      ["js:apps/desktop:@wdio/local-runner", "9.31.9"],
+      ["js:apps/desktop:@wdio/mocha-framework", "9.31.9"],
+      ["js:apps/desktop:@wdio/native-utils", "2.8.0"],
+      ["js:apps/desktop:@wdio/spec-reporter", "9.31.2"],
+      ["js:apps/desktop:@wdio/tauri-service", "1.5.0"],
+      ["js:apps/desktop:webdriverio", "9.31.9"],
+      ["js:apps/web:@wdio/tauri-plugin", "1.5.0"],
+    ] as const;
+    for (const [key, version] of forcedWdioEntries) {
+      const dependency = entry(key);
+      expect(dependency.current, key).toBe(version);
+      expect(dependency.target, key).toBe(version);
+      expect(dependency.status, key).toBe("green");
+      expect(dependency.notes, key).toContain("Tauri 2.12");
+      expect(dependency.notes, key).toContain("packaged desktop UI smoke");
+    }
+
     const blockedWdioEntries = [
-      ["js:apps/desktop:@wdio/cli", "9.29.1", "9.31.5"],
-      ["js:apps/desktop:@wdio/globals", "9.29.1", "9.31.3"],
-      ["js:apps/desktop:@wdio/local-runner", "9.29.1", "9.31.5"],
-      ["js:apps/desktop:@wdio/mocha-framework", "9.29.1", "9.31.5"],
-      ["js:apps/desktop:@wdio/native-utils", "2.5.0", "2.6.0"],
-      ["js:apps/desktop:@wdio/spec-reporter", "9.29.1", "9.31.2"],
-      ["js:apps/desktop:@wdio/tauri-service", "1.2.0", "1.3.0"],
-      ["js:apps/desktop:webdriverio", "9.29.1", "9.31.5"],
-      ["js:apps/web:@wdio/tauri-plugin", "1.2.0", "1.3.0"],
       ["rust:workspace:tauri-plugin-wdio", "=1.2.0", "1.3.0"],
       ["rust:workspace:tauri-plugin-wdio-webdriver", "=1.2.0", "1.3.0"],
     ] as const;
@@ -627,9 +638,9 @@ describe("dependency upgrade ledger validation", () => {
     }
 
     expect(Object.keys(workspace.patchedDependencies).sort()).toEqual([
-      "@effect/vitest@4.0.0-beta.107",
+      "@effect/vitest@4.0.2",
       "@pierre/trees@1.0.0-beta.6",
-      "@wdio/tauri-plugin@1.2.0",
+      "@wdio/tauri-plugin@1.5.0",
     ]);
   });
 
@@ -855,8 +866,8 @@ describe("dependency upgrade ledger validation", () => {
 
     expect(validateDependencyLedger(inventory, ledger)).toEqual([]);
     expect(ledger.inventorySummary).toEqual({
-      javascriptDirect: 81,
-      javascriptLedger: 83,
+      javascriptDirect: 80,
+      javascriptLedger: 82,
       rustRegistry: 138,
       rustPath: 3,
       rustGit: 1,
@@ -935,9 +946,9 @@ describe("dependency upgrade ledger validation", () => {
       (dependency) => dependency.key === "toolchain:tauri-cli",
     );
     expect(tauriCli).toMatchObject({
-      current: "2.11.4",
-      target: "2.11.4",
-      status: "current",
+      current: "2.12.1",
+      target: "2.12.1",
+      status: "green",
     });
     expect(tauriCli?.notes).toContain("locked workspace dependency");
     const representativeStates = [

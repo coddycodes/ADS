@@ -42,6 +42,12 @@ import {
   makeInvalidClassInstance,
 } from "./test/schemaAssertions.ts";
 
+// The Rust server rejects unknown fields; Effect 4 parse options are per operation.
+const decodeStrictProviderTerminalActivityLaunch = Schema.decodeUnknownSync(
+  ProviderTerminalActivityLaunch,
+  { onExcessProperty: "error" },
+);
+
 function decodeSync<S extends Schema.Top>(schema: S, input: unknown): Schema.Schema.Type<S> {
   return Schema.decodeUnknownSync(schema as never)(input) as Schema.Schema.Type<S>;
 }
@@ -369,7 +375,7 @@ describe("TerminalLaunchCommand", () => {
       { nativeSessionId: "native-1" },
     ]) {
       expect(() =>
-        decodeSync(ProviderTerminalActivityLaunch, {
+        decodeStrictProviderTerminalActivityLaunch({
           driverKind: "codex",
           providerInstanceId: "codex",
           ...extra,

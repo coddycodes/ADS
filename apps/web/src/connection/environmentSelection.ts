@@ -1,6 +1,6 @@
 import { EnvironmentSelection } from "@bibcode/client-runtime/connection";
 import * as Effect from "effect/Effect";
-import { AtomRegistry } from "effect/unstable/reactivity";
+import { AtomRegistry } from "effect/reactivity";
 
 import { activeEnvironmentIdAtom } from "../state/activeEnvironment";
 

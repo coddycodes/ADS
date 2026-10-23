@@ -28,7 +28,7 @@ import { safeErrorLogAttributes } from "@bibcode/client-runtime/errors";
 import { ensureLocalApi } from "~/localApi";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";

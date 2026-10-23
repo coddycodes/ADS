@@ -7,11 +7,12 @@ import * as Apply from "alchemy/Apply";
 import { ArtifactStore, createArtifactStore, provideFreshArtifactStore } from "alchemy/Artifacts";
 import { AuthProviders } from "alchemy/Auth/AuthProvider";
 import { CredentialsStoreLive } from "alchemy/Auth/Credentials";
-import { ProfileLive } from "alchemy/Auth/Profile";
+import { ProfileStoreLive } from "alchemy/Auth/Profile";
 import * as Cloudflare from "alchemy/Cloudflare";
-import { Cli } from "alchemy/Cli/Cli";
+import * as Interaction from "alchemy/Interaction";
 import { LoggingCli } from "alchemy/Cli/LoggingCli";
 import * as Plan from "alchemy/Plan";
+import { Cli } from "alchemy/Report";
 import * as Stage from "alchemy/Stage";
 import * as State from "alchemy/State/State";
 import { PlatformServices } from "alchemy/Util/PlatformServices";
@@ -28,8 +29,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
-import { Command, Flag, Prompt } from "effect/unstable/cli";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import { Command, Flag, Prompt } from "effect/cli";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import RelayStack from "../alchemy.run.ts";
 
@@ -142,15 +143,26 @@ export interface RelayProvisioningRequirements {
   readonly yes: boolean;
 }
 
+/**
+ * The relay stack as an Effect. Alchemy's `Stack` value also carries stack
+ * metadata (`stackName`, props) that deploy never reads, so the injectable
+ * operation only promises the Effect that compiles the stack.
+ */
+type RelayStackEffect = Effect.Effect<
+  Effect.Success<typeof RelayStack>,
+  Effect.Error<typeof RelayStack>,
+  Effect.Services<typeof RelayStack>
+>;
+
 export class RelayDeployOperations extends Context.Service<
   RelayDeployOperations,
   {
     readonly apply: typeof Apply.apply;
     readonly cli: Effect.Effect<Cli["Service"], never, Cli>;
-    readonly confirm: typeof Prompt.confirm;
+    readonly confirm: typeof Prompt.Confirm;
     readonly makePlan: typeof Plan.make;
     readonly runPrompt: typeof Prompt.run;
-    readonly stack: (requirements: RelayProvisioningRequirements) => typeof RelayStack;
+    readonly stack: (requirements: RelayProvisioningRequirements) => RelayStackEffect;
     readonly state: typeof Cloudflare.state;
   }
 >()("bibcode-relay/scripts/deploy/RelayDeployOperations") {}
@@ -226,7 +238,7 @@ const loadDeployConfigProvider = Effect.fn("relay.deploy.loadConfigProvider")(fu
   );
 });
 
-const relayDeployStage = Config.nonEmptyString("stage").pipe(
+const relayDeployStage = Config.NonEmptyString("stage").pipe(
   Config.option,
   Config.map(
     Option.getOrElse(() => `dev_${process.env.USER ?? process.env.USERNAME ?? "unknown"}`),
@@ -266,7 +278,7 @@ const prepareRootEnv = Effect.fn("relay.deploy.prepareRootEnv")(function* (
 const prepareGithubOutput = Effect.fn("relay.deploy.prepareGithubOutput")(function* (
   outcome: RelayDeployOutcome,
 ) {
-  const githubOutputPath = yield* Config.nonEmptyString("GITHUB_OUTPUT");
+  const githubOutputPath = yield* Config.NonEmptyString("GITHUB_OUTPUT");
   const original = yield* readOptionalFile(githubOutputPath);
   const existing = Option.getOrElse(original, () => "");
   const separator = existing.length > 0 && !/\r?\n$/u.test(existing) ? "\n" : "";
@@ -353,10 +365,14 @@ const commitFileTransaction = Effect.fn("relay.deploy.commitFileTransaction")(fu
 const deployBaseServices = Layer.mergeAll(
   Layer.succeed(AuthProviders, {}),
   Layer.provideMerge(AlchemyContextLive, PlatformServices),
-  Layer.provide(ProfileLive, PlatformServices),
+  Layer.provide(ProfileStoreLive, PlatformServices),
   Layer.provide(CredentialsStoreLive, PlatformServices),
   FetchHttpClient.layer,
-  LoggingCli,
+  // The relay deploy prints a plain plan and owns its only prompt, so Alchemy
+  // engine interactions (provider login flows) stay non-interactive: they fail
+  // with a typed NonInteractiveTerminal instead of opening a terminal UI.
+  Interaction.layerNonInteractive(),
+  Layer.provide(LoggingCli, PlatformServices),
 );
 function relayPublicConfigValues(
   output: unknown,
@@ -495,7 +511,7 @@ const relayDeployOperationsLive = Layer.succeed(
   RelayDeployOperations.of({
     apply: Apply.apply,
     cli: Cli,
-    confirm: Prompt.confirm,
+    confirm: Prompt.Confirm,
     makePlan: Plan.make,
     runPrompt: Prompt.run,
     stack: constant(RelayStack),
@@ -545,37 +561,37 @@ export const deploy = Effect.fn("relay.deploy")(function* (options: RelayDeployO
 export const relayDeployCommand = Command.make(
   "relay-deploy",
   {
-    dryRun: Flag.boolean("dry-run").pipe(
+    dryRun: Flag.Boolean("dry-run").pipe(
       Flag.withDescription("Dry run the deployment without applying changes."),
       Flag.withDefault(false),
     ),
-    force: Flag.boolean("force").pipe(
+    force: Flag.Boolean("force").pipe(
       Flag.withDescription("Force updates for resources that would otherwise no-op."),
       Flag.withDefault(false),
     ),
-    envFile: Flag.string("env-file").pipe(
+    envFile: Flag.String("env-file").pipe(
       Flag.withDescription(
         "Environment file to load. Defaults to infra/relay/.env with process env fallback.",
       ),
       Flag.optional,
     ),
-    stage: Flag.string("stage").pipe(
+    stage: Flag.String("stage").pipe(
       Flag.withDescription("Stage to deploy. Defaults to dev_${USER}."),
       Flag.optional,
     ),
-    yes: Flag.boolean("yes").pipe(
+    yes: Flag.Boolean("yes").pipe(
       Flag.withDescription("Skip the deployment confirmation prompt."),
       Flag.withDefault(false),
     ),
-    adopt: Flag.boolean("adopt").pipe(
+    adopt: Flag.Boolean("adopt").pipe(
       Flag.withDescription("Adopt pre-existing cloud resources that conflict with this stack."),
       Flag.withDefault(false),
     ),
-    githubOutput: Flag.boolean("github-output").pipe(
+    githubOutput: Flag.Boolean("github-output").pipe(
       Flag.withDescription("Append relay deployment metadata to GITHUB_OUTPUT."),
       Flag.withDefault(false),
     ),
-    readState: Flag.boolean("read-state").pipe(
+    readState: Flag.Boolean("read-state").pipe(
       Flag.withDescription("Read the deployed stack output without planning or applying changes."),
       Flag.withDefault(false),
     ),

@@ -13,7 +13,7 @@ import {
 import { scopeThreadRef } from "@bibcode/client-runtime/environment";
 import type { ConnectionTarget } from "@bibcode/client-runtime/connection";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

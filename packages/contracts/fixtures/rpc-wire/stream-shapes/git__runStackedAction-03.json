@@ -3,13 +3,13 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "actionId": "xyL|!&",
-      "cwd": "*$l",
-      "action": "push",
+      "actionId": "zK:]Tr",
+      "cwd": "i[L\"!",
+      "action": "commit_push_pr",
       "kind": "hook_output",
       "hookName": null,
-      "stream": "stderr",
-      "text": "+9i?fN:$$cG"
+      "stream": "stdout",
+      "text": "gdJv|[ .</"
     }
   ]
 }

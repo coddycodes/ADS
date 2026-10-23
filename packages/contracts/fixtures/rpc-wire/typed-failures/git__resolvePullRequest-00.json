@@ -7,18 +7,10 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "GitPullRequestMaterializationError",
-          "cwd": "}J",
-          "pullRequestNumber": 2003373184,
-          "headRepository": null,
-          "headBranch": "ref",
-          "localBranch": "va",
-          "cause": {
-            "{": {
-              "E<[i": " >p#q",
-              "@,:": 3e-323
-            }
-          }
+          "_tag": "TextGenerationError",
+          "operation": "😀",
+          "detail": "",
+          "cause": false
         }
       }
     ]

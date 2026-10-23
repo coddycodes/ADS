@@ -1,4 +1,4 @@
-import { AsyncResult, type Atom } from "effect/unstable/reactivity";
+import { AsyncResult, type Atom } from "effect/reactivity";
 import { useEffect, useEffectEvent, useState } from "react";
 import { useEnvironmentQuery, type EnvironmentQueryView } from "../../../state/query";
 

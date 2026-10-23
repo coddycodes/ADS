@@ -1,5 +1,5 @@
 import type { DiscoveredLocalServer, ScopedThreadRef } from "@bibcode/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import {
   mapAtomCommandResult,
   type AtomCommandResult,

@@ -5,22 +5,19 @@
     {
       "kind": "event",
       "event": {
-        "sequence": 382259439,
-        "eventId": "Lb/ZGPR'",
-        "aggregateKind": "project",
-        "aggregateId": "jargume",
-        "occurredAt": "",
-        "commandId": "Y9z22",
+        "sequence": 2,
+        "eventId": "\u0000",
+        "aggregateKind": "thread",
+        "aggregateId": "__proto__",
+        "occurredAt": ")1p|aL-VE'",
+        "commandId": "~y",
         "causationEventId": null,
         "correlationId": null,
-        "metadata": {
-          "providerTurnId": "to"
-        },
-        "type": "thread.checkpoint-revert-requested",
+        "metadata": {},
+        "type": "thread.reverted",
         "payload": {
-          "threadId": "Um9$Tt2_E",
-          "turnCount": 17,
-          "createdAt": "snam"
+          "threadId": "",
+          "turnCount": 76
         }
       }
     }

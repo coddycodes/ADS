@@ -11,8 +11,8 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { Command } from "effect/unstable/cli";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Command } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { referenceRepos } from "./lib/reference-repos.ts";
 import type { ReferenceRepo } from "./lib/reference-repos.ts";

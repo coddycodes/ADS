@@ -8,7 +8,7 @@
         "_tag": "Fail",
         "error": {
           "_tag": "UpdateMaintenanceActiveError",
-          "message": "sP__define"
+          "message": "\u0000"
         }
       }
     ]

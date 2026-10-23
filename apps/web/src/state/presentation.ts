@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentPresentation } from "@bibcode/client-runtime/connection";
 import { createEnvironmentPresentationAtoms } from "@bibcode/client-runtime/state/presentation";
 import type { EnvironmentId } from "@bibcode/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { serverEnvironment } from "./server";

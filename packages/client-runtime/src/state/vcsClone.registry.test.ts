@@ -9,8 +9,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
-import { RpcClientError } from "effect/unstable/rpc";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { RpcClientError } from "effect/rpc";
 
 import { PrimaryConnectionRegistration } from "../connection/catalog.ts";
 import * as Connectivity from "../connection/connectivity.ts";

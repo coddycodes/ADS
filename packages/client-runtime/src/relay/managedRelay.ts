@@ -31,9 +31,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import type * as HttpMethod from "effect/unstable/http/HttpMethod";
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import type * as HttpMethod from "effect/http/HttpMethod";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 export interface ManagedRelayDpopProofInput {
   readonly method: HttpMethod.HttpMethod;

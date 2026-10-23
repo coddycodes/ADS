@@ -6,7 +6,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as Effect from "effect/Effect";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import type { ReleaseArch } from "./lib/release-targets.ts";
 

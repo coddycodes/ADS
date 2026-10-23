@@ -110,8 +110,8 @@ native toolchain. Node.js and Vite+ are development/build dependencies; release
 artifacts contain the Tauri/Rust application and built web assets, not a Node
 runtime or TypeScript server.
 
-All workflows use the repository's declared Node.js 26.12.1, pnpm 11.25.0,
-Vite+ 0.3.0, and Rust 1.98.1 toolchains. External setup actions are immutable
+All workflows use the repository's declared Node.js 26.12.1, pnpm 11.28.5,
+Vite+ 1.1.0, and Rust 1.98.1 toolchains. External setup actions are immutable
 SHA-pinned with audited tag comments: Checkout 7.0.1
 (`3d3c42e5aac5ba805825da76410c181273ba90b1`), Rust Cache 2.9.2
 (`6323deb102c322ba6fcbdcafc7e3dddab59af2b6`), setup-vp 1.21.2

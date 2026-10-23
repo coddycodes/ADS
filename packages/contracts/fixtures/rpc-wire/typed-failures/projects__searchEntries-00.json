@@ -8,20 +8,7 @@
         "_tag": "Fail",
         "error": {
           "_tag": "ProjectSearchEntriesError",
-          "cwd": "x",
-          "limit": 29,
-          "failure": "workspace_root_create_failed",
-          "message": "-Q`I7\"n_5g",
-          "cause": {
-            "W t+`\\": -6558869470325189,
-            "K]`N4": "rp\"7I=g",
-            "c##\"J.vj8|": false,
-            "os(]^NS6I1": "GC%TMp9P",
-            "jX": -2732997368582173,
-            ",&\"ES5f-T": false,
-            "T4z": true,
-            " f:&c&": -3207694367776814
-          }
+          "message": "prototype"
         }
       }
     ]

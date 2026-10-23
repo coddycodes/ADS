@@ -3,27 +3,29 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "threadId": "tU",
-      "tabId": "rgumenvalu",
-      "createdAt": "MVp",
+      "threadId": "$s*qj",
+      "tabId": "😀",
+      "createdAt": "TnqYRk",
       "type": "navigated",
       "snapshot": {
-        "threadId": "~",
-        "tabId": "&#O}",
+        "threadId": "__proto__",
+        "tabId": "__proto__",
         "navStatus": {
-          "_tag": "Loading",
-          "url": "~Q#",
-          "title": "|!F$#e"
+          "_tag": "LoadFailed",
+          "url": "*",
+          "title": "3|A@4:",
+          "code": 13,
+          "description": "prototype"
         },
         "canGoBack": false,
-        "canGoForward": true,
+        "canGoForward": false,
         "viewport": {
           "_tag": "preset",
-          "width": 1325,
-          "height": 3839,
-          "presetId": "samsung-galaxy-s8-plus"
+          "width": 248,
+          "height": 891,
+          "presetId": "surface-duo"
         },
-        "updatedAt": "i"
+        "updatedAt": "\t"
       }
     }
   ]

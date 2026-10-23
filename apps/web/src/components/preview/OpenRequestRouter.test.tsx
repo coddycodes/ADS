@@ -2,7 +2,7 @@
 import { RegistryContext } from "@effect/atom-react";
 import { scopedThreadKey } from "@bibcode/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@bibcode/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

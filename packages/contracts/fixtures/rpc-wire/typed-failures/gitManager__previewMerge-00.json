@@ -8,10 +8,14 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitManagerOperationError",
-          "operation": "eM_eAf)h8f",
-          "code": "GpJ;",
-          "message": "bZk",
-          "blocked": null
+          "operation": "😀",
+          "code": "^*[(Il^4(@",
+          "message": "0",
+          "blocked": {
+            "operation": "�",
+            "code": "operation-in-flight",
+            "message": ")"
+          }
         }
       }
     ]

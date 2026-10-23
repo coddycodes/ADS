@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "ActivityError",
-          "message": "!}",
-          "reason": "targetUnavailable"
+          "message": "",
+          "reason": "cancellationUnsupported"
         }
       }
     ]

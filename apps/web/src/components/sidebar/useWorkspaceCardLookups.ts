@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { DiscoveredLocalServer, EnvironmentId, ServerConfig } from "@bibcode/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useMemo, useRef } from "react";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";

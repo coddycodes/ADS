@@ -18,7 +18,7 @@ import {
   type AtomCommandResult,
 } from "@bibcode/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import React, {
   Children,
   Suspense,

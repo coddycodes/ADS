@@ -728,7 +728,7 @@ git commit -m "feat(cli): add bibcode pairing issue subcommand"
 **Interfaces:**
 
 - Consumes: the CLI surface from Task 2 (`bibcode pairing issue --base-dir <path>
---json`) and its stdout contract (Pinned fact 1).
+  --json`) and its stdout contract (Pinned fact 1).
 - Produces: `pub const REMOTE_PAIRING_ISSUE_COMMAND: &str` on the public `ssh` module
   (`bibcode_desktop_lib::ssh`), asserted by the public contract test. No behavior change
   to `SshEnvironmentManager`'s public API.
@@ -1002,7 +1002,7 @@ residual risks below.
   Step 5, Task 3 test); `ssh.rs` updated to invoke it ✓ (Task 3); limitation entry
   removed from `docs/architecture/remote.md` in the same change ✓ (Task 4).
 - Type consistency: `issue_administrative_pairing_link(&Repositories, Option<String>)
--> Result<PairingCredentialResult, AuthError>` is defined in Task 1 and consumed with
+  -> Result<PairingCredentialResult, AuthError>` is defined in Task 1 and consumed with
   that exact signature in Task 2; `PairingCommand::Issue { root, label, json }` is
   defined and consumed identically in Task 2's config and lib code and tests;
   `REMOTE_PAIRING_ISSUE_COMMAND` is defined in Task 3 Step 3 and asserted verbatim in

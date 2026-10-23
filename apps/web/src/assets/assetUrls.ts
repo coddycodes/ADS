@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { resolveAssetUrl } from "@bibcode/client-runtime/state/assets";
 import type { AssetResource, EnvironmentId } from "@bibcode/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useMemo } from "react";
 
 import { assetEnvironment } from "~/state/assets";
