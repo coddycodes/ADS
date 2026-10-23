@@ -144,9 +144,9 @@ the user's running instance for this check.
 
 ## Application and DMG build inspection
 
-The CI-only seeded-upgrade matrix gives Intel x64 packaging children 90 minutes
-and its complete job 360 minutes. ARM64 keeps 45-minute packaging children and
-a 240-minute job. There are three sequential cold packages with separate Cargo
+The CI-only seeded-upgrade matrix gives both macOS architectures 90-minute
+packaging children and 360-minute complete jobs; the Apple silicon runners have
+taken 43 minutes for one package. There are three sequential cold packages with separate Cargo
 outputs (candidate, previous stable, protected baseline), each with a separate
 10-minute frozen install; the cached repository `target` does not warm these
 outputs. Intel's remaining 60 minutes cover setup, all upgrade lanes, evidence,

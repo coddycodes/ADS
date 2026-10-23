@@ -145,11 +145,12 @@ budgets above include a cold compile. Native desktop keeps its 120-minute and
   the product coordinator, verifies boot/version/storage/protection evidence,
   and scopes Linux process cleanup to its exact data root. The harness rejects
   local invocation; unit/syntax checks do not constitute real upgrade evidence.
-  The seeded macOS Intel row has a 360-minute complete-job allowance for three
+  The two seeded macOS rows have a 360-minute complete-job allowance for three
   cold, isolated 90-minute packaging children, three 10-minute frozen installs,
-  and 60 minutes for setup, runtime verification, evidence, and cleanup.
-  The other five rows and the separate WSL job keep 240 minutes; their packaging
-  children keep 45 minutes. If owned-child cleanup does not observe `close`
+  and 60 minutes for setup, runtime verification, evidence, and cleanup: Intel
+  needs it, and the capacity-constrained Apple silicon runners have taken 43
+  minutes for one package. The other four rows and the separate WSL job keep
+  240 minutes; their packaging children keep 45 minutes. If owned-child cleanup does not observe `close`
   within five seconds, the harness releases that child and exits nonzero so the
   job cannot stay open for the rest of the 240-minute budget.
   `remote-install` reuses the protected package.

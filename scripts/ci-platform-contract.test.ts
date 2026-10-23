@@ -796,7 +796,7 @@ describe("seeded packaged desktop upgrade contract", () => {
         platform: "mac",
         arch: "arm64",
         bundle: "dmg",
-        jobTimeoutMinutes: 240,
+        jobTimeoutMinutes: 360,
       },
       {
         label: "macOS x64",

@@ -66,7 +66,7 @@ jobs:
               platform: mac,
               arch: arm64,
               bundle: dmg,
-              jobTimeoutMinutes: 240,
+              jobTimeoutMinutes: 360,
             }
           # Three cold 90-minute builds + three 10-minute installs + setup and all upgrade lanes.
           - {

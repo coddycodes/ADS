@@ -924,7 +924,7 @@ describe("seeded packaging build budgets", () => {
 
   it.each([
     ["mac", "x64", 90],
-    ["mac", "arm64", 45],
+    ["mac", "arm64", 90],
     ["linux", "x64", 45],
     ["linux", "arm64", 45],
     ["win", "x64", 45],
