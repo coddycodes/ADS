@@ -925,7 +925,7 @@ export default function FilePreviewPanel({
                 key={`${relativePath}:${resolvedTheme}`}
                 session={session}
                 composerDraftTarget={composerDraftTarget}
-                contents={file.data.contents}
+                contents={session.retainedContents ?? file.data.contents}
                 resolvedTheme={resolvedTheme}
                 revealRequestId={revealRequestId}
                 wordWrap={wordWrap}

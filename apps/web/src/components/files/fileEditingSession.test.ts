@@ -90,6 +90,33 @@ describe("FileEditingSession", () => {
     expect(editor.undo).toHaveBeenCalledOnce();
   });
 
+  it("retains its editor's edited document, and an outside change only until it is saved", async () => {
+    const session = new FileEditingSession({
+      cwd: "/repo",
+      relativePath: "README.md",
+      debounceMs: 500,
+      persist: vi.fn(async () => AsyncResult.success(undefined)),
+      onPendingChange: vi.fn(),
+      onConfirmed: vi.fn(),
+    });
+    expect(session.retainedContents).toBeNull();
+
+    const editor = session.editor as unknown as InstanceType<typeof pierre.Editor>;
+    (editor.options["onChange"] as (file: { contents: string }) => void)({
+      contents: "- [ ] typed\n",
+    });
+    expect(session.retainedContents).toBe("- [ ] typed\n");
+    await expect(session.flush()).resolves.toBe("saved");
+    expect(session.retainedContents).toBe("- [ ] typed\n");
+
+    // A rendered-view toggle replaces the editor document; once saved, a newer
+    // read of the file seeds the next one.
+    session.changeOutsideEditor("- [x] typed\n");
+    expect(session.retainedContents).toBe("- [x] typed\n");
+    await expect(session.flush()).resolves.toBe("saved");
+    expect(session.retainedContents).toBeNull();
+  });
+
   it("uses the current renamed path for later persistence", async () => {
     vi.useFakeTimers();
     const persist = vi.fn(async () => AsyncResult.success(undefined));

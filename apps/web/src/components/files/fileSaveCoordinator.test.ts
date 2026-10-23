@@ -45,6 +45,27 @@ describe("FileSaveCoordinator", () => {
     expect(onPendingChange.mock.calls).toEqual([[true], [true], [false]]);
   });
 
+  it("keeps the latest contents after they are saved", async () => {
+    const coordinator = new FileSaveCoordinator({
+      debounceMs: 500,
+      persist: vi.fn().mockResolvedValue(AsyncResult.success(undefined)),
+      onPendingChange: vi.fn(),
+      onConfirmed: vi.fn(),
+    });
+    expect(coordinator.getLatestContents()).toBeNull();
+
+    coordinator.change("first");
+    coordinator.change("latest");
+    expect(coordinator.getLatestContents()).toBe("latest");
+
+    await expect(coordinator.flush()).resolves.toBe("saved");
+    expect(coordinator.getLatestContents()).toBe("latest");
+
+    coordinator.change("discarded");
+    coordinator.discardPendingSave();
+    expect(coordinator.getLatestContents()).toBe("discarded");
+  });
+
   it("keeps autosave-disabled edits pending and explicitly saveable", async () => {
     vi.useFakeTimers();
     const persist = vi

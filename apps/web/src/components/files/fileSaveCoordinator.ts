@@ -33,6 +33,7 @@ interface QueuedImmediateFlush {
 export class FileSaveCoordinator<A = unknown, E = unknown> {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private latestContents = "";
+  private changed = false;
   private latestRevision = 0;
   private persistedRevision = 0;
   private lastChangeAt = 0;
@@ -58,6 +59,7 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
   change(contents: string): void {
     if (this.disposed) return;
     this.latestContents = contents;
+    this.changed = true;
     this.latestRevision += 1;
     this.lastChangeAt = Date.now();
     this.options.onPendingChange(true);
@@ -78,6 +80,11 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
     if (!this.savingPaused && this.latestRevision > this.persistedRevision) {
       void this.persistLatest();
     }
+  }
+
+  /** The contents of the latest change, saved, unsaved, or discarded; null before the first. */
+  getLatestContents(): string | null {
+    return this.changed ? this.latestContents : null;
   }
 
   /** True while a debounced write is scheduled or an immediate write is in flight. */

@@ -502,9 +502,12 @@ vi.mock("./fileSaveCoordinator", () => ({
       onConfirmed: (contents: string) => void;
     };
     readonly listeners = new Set<() => void>();
-    readonly change = vi.fn(() => {
+    latestContents: string | null = null;
+    readonly change = vi.fn((contents: string) => {
+      this.latestContents = contents;
       for (const listener of this.listeners) listener();
     });
+    readonly getLatestContents = () => this.latestContents;
     readonly dispose = vi.fn();
     readonly flush = vi.fn(() => Promise.resolve(testState.flushResult));
     readonly hasPendingWork = vi.fn(() => testState.pendingWork);
@@ -794,6 +797,23 @@ describe("panel layout states", () => {
     expect(options.themeType).toBe("dark");
     expect(file.edit).toBe(true);
     expect(ui.find("FileEditorToolbar").markdownView).toBeUndefined();
+  });
+
+  it("keeps the edited document when the panel remounts before the file query has the save", () => {
+    setFileData("const value = 1;\n");
+    renderPanel(baseProps());
+    const session = testState.session!;
+    testState.editors.at(-1)!.options.onChange({ contents: "const value = 2;\n" });
+
+    // Switching right-panel tabs unmounts the panel. It remounts on the same
+    // session while the file query still holds the contents read before the save.
+    renderPanel(baseProps());
+
+    expect(testState.session).toBe(session);
+    expect(ui.find("File").file).toMatchObject({
+      contents: "const value = 2;\n",
+      cacheKey: session.cacheKey,
+    });
   });
 
   it("respects the word wrap setting", () => {
