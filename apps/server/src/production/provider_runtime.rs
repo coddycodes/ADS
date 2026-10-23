@@ -25212,7 +25212,9 @@ done
 
     /// #165 with a real `/compact`: Claude never replays a local command's input, so the
     /// delivery still awaits its replay when the task notification arrives, and only the
-    /// command's `local_command` result acknowledges it.
+    /// command's `local_command` result acknowledges it. The fixture ignores the context query
+    /// that follows a result, so the command's completion waits out that query's 2 s bound; the
+    /// answer runs 4 s, well past the 300 ms idle deadline a missing follow-up turn would arm.
     #[cfg(unix)]
     const CLAUDE_FOLLOW_UP_DURING_COMPACT_FIXTURE: &str = r#"#!/bin/sh
 case "$1" in
@@ -25234,7 +25236,7 @@ while IFS= read -r line; do
         printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":0,"stop_reason":null,"terminal_reason":"completed","local_command":"compact","result":"","session_id":"fixture-session","uuid":"compact-result"}'
         sleep 1
         printf '%s\n' '{"type":"stream_event","session_id":"fixture-session","uuid":"follow-up-delta","parent_tool_use_id":null,"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The background command finished."}}}'
-        sleep 1
+        sleep 3
         : > "$BIBCODE_TEST_FOLLOW_UP"
         printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","origin":{"kind":"task-notification"},"session_id":"fixture-session","uuid":"follow-up-result"}'
       ) &
