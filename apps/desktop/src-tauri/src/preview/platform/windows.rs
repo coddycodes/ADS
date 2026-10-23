@@ -90,7 +90,7 @@ fn read_png_stream(stream: &IStream) -> Result<Vec<u8>, PreviewPlatformError> {
     // SAFETY: `hglobal` is valid and owned by the live stream.
     let data = unsafe { GlobalLock(hglobal) };
     if data.is_null() {
-        let error = windows::core::Error::from_win32();
+        let error = windows::core::Error::from_thread();
         return Err(PreviewPlatformError::Unavailable(format!(
             "failed to lock screenshot memory: {error}"
         )));
