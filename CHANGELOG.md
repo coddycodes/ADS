@@ -1,6 +1,6 @@
 # Changelog
 
-## [v0.11.0] - 2026-10-22
+## [v0.11.0] - 2026-10-23
 
 BiBCode v0.11.0 moves the desktop to Tauri 2.11.6, which closes a High-severity IPC advisory, moves the toolchain and every dependency line to current releases (Effect 4.0 stable, Vite+ 1.1, Vitest 5, Node 26.12.1, Rust 1.98.1), and fixes twelve bugs: Claude chats that stopped at a full context window or after `/compact`, Claude follow-up turns cut off by idle suspension, a webview that grew with every streamed tool input, Codex errors that were never classified, Push on a branch that tracks a differently named remote branch, dialogs that lost their input on an outside click, and memory figures on macOS that were about 3.5 times too high. This release includes the changes since v0.10.2.
 
