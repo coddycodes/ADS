@@ -27,6 +27,7 @@ const preparedProviderInputLogPath: string = providerInputLogPath;
 const visibleSurfaceSelector = '[data-center-surface-host][data-visible="true"]';
 const visibleComposerFormSelector = `${visibleSurfaceSelector} [data-chat-composer-form="true"]`;
 const queuedRowSelector = `${visibleSurfaceSelector} [data-queued-message-row]`;
+const queuedWrapperSelector = `${visibleSurfaceSelector} [data-timeline-row-kind="queued-message"]`;
 
 function composerForm() {
   return browser.$(visibleComposerFormSelector);
@@ -130,18 +131,43 @@ async function assertQueuedCards(prompts: readonly string[]): Promise<string[]> 
   let visibleIds: string[] = [];
   await browser.waitUntil(
     async () => {
-      const cards = await browser.$$(queuedRowSelector);
-      const observations = await Promise.all(
-        Array.from(cards, async (card) => ({
-          id: (await card.getAttribute("data-queued-message-row")) ?? "",
-          text: await card.getText(),
-          y: await card.getLocation("y"),
-          displayed: await card.isDisplayed(),
-        })),
+      // One DOM snapshot per reading: the virtualized timeline can replace or remove a card
+      // between separate WebDriver calls, and a stale card would fail every reading.
+      const snapshot = await browser.execute(
+        (cardSelector: string, wrapperSelector: string) => {
+          const displayed = (element: HTMLElement) => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            // checkVisibility is missing from older WebKitGTK; the computed style covers it.
+            const visible =
+              typeof element.checkVisibility === "function"
+                ? element.checkVisibility({ opacityProperty: true, visibilityProperty: true })
+                : style.display !== "none" &&
+                  style.visibility !== "hidden" &&
+                  Number(style.opacity) > 0;
+            return rect.width > 0 && rect.height > 0 && visible;
+          };
+          return {
+            cards: Array.from(document.querySelectorAll<HTMLElement>(cardSelector), (card) => ({
+              id: card.getAttribute("data-queued-message-row") ?? "",
+              text: card.innerText,
+              y: card.getBoundingClientRect().top + window.scrollY,
+              displayed: displayed(card),
+            })),
+            // The timeline rows are matched by their own selector, so a card selector that
+            // stopped matching cannot pass for an empty queue.
+            displayedWrappers: Array.from(
+              document.querySelectorAll<HTMLElement>(wrapperSelector),
+            ).filter(displayed).length,
+          };
+        },
+        queuedRowSelector,
+        queuedWrapperSelector,
       );
+      if (snapshot.displayedWrappers !== prompts.length) return false;
       // LegendList positions pooled slots independently of DOM order and
       // reorders its DOM later. Observe visual FIFO before retaining row IDs.
-      const ids = queuedCardIdsInVisualOrder(observations, prompts);
+      const ids = queuedCardIdsInVisualOrder(snapshot.cards, prompts);
       if (ids === null) return false;
       visibleIds = ids;
       return true;
@@ -150,10 +176,6 @@ async function assertQueuedCards(prompts: readonly string[]): Promise<string[]> 
       timeoutMsg: `Expected ${prompts.length} queued cards: ${prompts.join(", ")}.`,
     },
   );
-  const wrappers = await browser.$$(
-    `${visibleSurfaceSelector} [data-timeline-row-kind="queued-message"]`,
-  );
-  expect(await wrappers.length).toBe(prompts.length);
   const ids: string[] = [];
   for (let index = 0; index < visibleIds.length; index += 1) {
     const card = queuedCard(visibleIds[index]!);

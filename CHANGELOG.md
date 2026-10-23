@@ -32,6 +32,7 @@ BiBCode v0.11.0 moves the desktop to Tauri 2.11.6, which closes a High-severity 
 
 - When a turn ends on a short status line, the "Worked for…" fold keeps the agent's answer above it visible. (#154)
 - Clicking outside a dialog no longer closes it and discards what you typed, for example in **Create merge request**. Close it with Cancel, × or Escape. (#155)
+- An open folder, file, save or confirmation dialog no longer holds up the desktop app. Each open dialog used to tie up some of the app's background work. On a machine with few cores, two of them could stop the window from loading again after a reload. A confirmation box also froze the whole window while it was open.
 
 ### Resource usage
 
@@ -40,7 +41,7 @@ BiBCode v0.11.0 moves the desktop to Tauri 2.11.6, which closes a High-severity 
 
 ### Platform and toolchain
 
-- Desktop: Tauri 2.11.6. Tauri 2.12 waits for its own release: with it, the Windows desktop stopped responding when the window reloaded during a streaming turn.
+- Desktop: Tauri 2.11.6. Tauri 2.12 follows in its own release.
 - Development: Effect 4.0.2 stable, Vite+ 1.1.0 with Vitest 5, TypeScript 7.0.2, pnpm 11.28.5, Rust 1.98.1, and alchemy 2.0.0-beta.81 for the relay.
 
 ### Known limitations
