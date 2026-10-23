@@ -6,43 +6,72 @@
       "_tag": "snapshot",
       "local": {
         "isRepo": false,
-        "repositoryUnavailableReason": "unreadable",
-        "hasPrimaryRemote": true,
+        "repositoryUnavailableReason": "untrusted",
+        "hasPrimaryRemote": false,
         "isDefaultRef": false,
-        "refName": "ref",
+        "refName": "MgUX2KX1@2",
+        "defaultRefName": "",
         "hasWorkingTreeChanges": true,
         "workingTree": {
           "files": [
             {
-              "path": "f&[\"Vy>$~\"P",
-              "insertions": 2147483626,
-              "deletions": 13,
+              "path": "KCCg15",
+              "insertions": 2,
+              "deletions": 2
+            },
+            {
+              "path": "|%FP<O",
+              "insertions": 72,
+              "deletions": 63,
+              "status": "modified"
+            },
+            {
+              "path": "F3Zu",
+              "insertions": 2,
+              "deletions": 47
+            },
+            {
+              "path": "",
+              "insertions": 90,
+              "deletions": 39,
+              "status": "deleted"
+            },
+            {
+              "path": "`\"3)~opE",
+              "insertions": 95,
+              "deletions": 94,
+              "area": "staged"
+            },
+            {
+              "path": "XZH[P5QL~O",
+              "insertions": 72,
+              "deletions": 2,
+              "status": "renamed"
+            },
+            {
+              "path": "8h$\\QdAiJ",
+              "insertions": 78,
+              "deletions": 1,
               "status": "added"
-            },
-            {
-              "path": "caller",
-              "insertions": 18,
-              "deletions": 2063773623,
-              "status": "copied"
-            },
-            {
-              "path": "co",
-              "insertions": 1599290682,
-              "deletions": 398470203,
-              "status": "copied"
-            },
-            {
-              "path": "rj?",
-              "insertions": 9,
-              "deletions": 1796052935,
-              "area": "untracked"
             }
           ],
-          "insertions": 20,
-          "deletions": 1021885809
+          "insertions": 40,
+          "deletions": 14
         }
       },
-      "remote": null
+      "remote": {
+        "hasUpstream": false,
+        "aheadCount": 94,
+        "behindCount": 40,
+        "pr": {
+          "number": 95,
+          "title": ">",
+          "url": "X",
+          "baseRef": "aC",
+          "headRef": "8e]tt",
+          "state": "merged"
+        }
+      }
     }
   ]
 }

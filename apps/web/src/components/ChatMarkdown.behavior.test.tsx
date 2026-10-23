@@ -2,7 +2,7 @@ import { scopeThreadRef } from "@bibcode/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@bibcode/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Window } from "happy-dom";

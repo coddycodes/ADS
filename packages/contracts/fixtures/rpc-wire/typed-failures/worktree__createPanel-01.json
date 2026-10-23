@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "WorktreeOperationError",
-          "reason": "operation-shutting-down",
-          "message": ";_f\"eyyE}H"
+          "reason": "operation-capacity",
+          "message": "�"
         }
       }
     ]

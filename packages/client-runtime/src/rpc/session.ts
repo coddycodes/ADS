@@ -12,11 +12,11 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
-import { RpcClientDefect, RpcClientError } from "effect/unstable/rpc/RpcClientError";
-import { constPing } from "effect/unstable/rpc/RpcMessage";
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as RpcClient from "effect/rpc/RpcClient";
+import { RpcClientDefect, RpcClientError } from "effect/rpc/RpcClientError";
+import { constPing } from "effect/rpc/RpcMessage";
+import * as RpcSerialization from "effect/rpc/RpcSerialization";
+import * as Socket from "effect/socket/Socket";
 
 import { makeWsRpcProtocolClient, type WsRpcProtocolClient } from "./protocol.ts";
 import { e2eeFailureOf, makeE2eeSocket } from "../e2ee/index.ts";
@@ -185,11 +185,16 @@ export const make = Effect.gen(function* () {
         ),
         Effect.asVoid,
       );
-    let rawSocket: globalThis.WebSocket | null = null;
-    const connectionWebSocketConstructor: typeof webSocketConstructor = (url, protocols) => {
-      const socket = webSocketConstructor(url, protocols);
+    let rawSocket: (Socket.WebSocketLike & { readonly protocol?: string }) | null = null;
+    const connectionWebSocketConstructor: typeof webSocketConstructor = (url, options) => {
+      const socket: Socket.WebSocketLike & { readonly protocol?: string } = webSocketConstructor(
+        url,
+        options,
+      );
       // Binary frames must stay in delivery order: E2EE ciphertext and plain records.
-      socket.binaryType = "arraybuffer";
+      // Effect's WebSocket socket also sets this; setting it here keeps the
+      // invariant independent of that implementation detail.
+      if ("binaryType" in socket) (socket as { binaryType: string }).binaryType = "arraybuffer";
       // Every raw frame is proof of life, including E2EE records before reassembly.
       socket.addEventListener("message", activity.record);
       rawSocket = socket;
@@ -219,14 +224,20 @@ export const make = Effect.gen(function* () {
               Deferred.doneUnsafe(e2eeAuthenticated, Effect.succeed(message));
             },
           });
+          const recordE2eeFailure = (error: Socket.SocketError) => {
+            const mapped = mapE2eeFailure(error);
+            return mapped === null ? Effect.void : Ref.set(e2eeAttemptFailure, mapped);
+          };
+          // The handshake fails the reader's acquisition; a later E2EE failure
+          // fails a pull. Both record the attempt's classified failure.
           return Socket.make({
-            runRaw: (handler, options) =>
-              encryptedSocket.runRaw(handler, options).pipe(
-                Effect.tapError((error) => {
-                  const mapped = mapE2eeFailure(error);
-                  return mapped === null ? Effect.void : Ref.set(e2eeAttemptFailure, mapped);
-                }),
-              ),
+            reader: encryptedSocket.reader.pipe(
+              Effect.tapError(recordE2eeFailure),
+              Effect.map((reader) => ({
+                ...reader,
+                pull: reader.pull.pipe(Effect.tapError(recordE2eeFailure)),
+              })),
+            ),
             writer: encryptedSocket.writer,
           });
         }),

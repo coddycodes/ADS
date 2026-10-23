@@ -29,8 +29,10 @@ import {
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
 const decodeRemoveWorktreeInput = Schema.decodeUnknownSync(VcsRemoveWorktreeInput);
+// The Rust server rejects unknown fields; Effect 4 parse options are per operation.
 const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
   GitPreparePullRequestThreadInput,
+  { onExcessProperty: "error" },
 );
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);

@@ -4,13 +4,13 @@
   "values": [
     {
       "_tag": "failed",
-      "operation": "}h|NaLO`](?",
-      "code": "S[zx*Jl=",
-      "message": "#* $\"[  ,",
+      "operation": "toString",
+      "code": "",
+      "message": "�",
       "blocked": {
-        "operation": "ref",
-        "code": "no-upstream",
-        "message": "[ih=]I?8<[{="
+        "operation": ",^K.8+",
+        "code": "current-branch",
+        "message": "MFh<?JhW.W"
       }
     }
   ]

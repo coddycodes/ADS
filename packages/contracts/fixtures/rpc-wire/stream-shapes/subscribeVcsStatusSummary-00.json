@@ -4,13 +4,12 @@
   "values": [
     {
       "isRepo": false,
-      "repositoryUnavailableReason": "absent",
       "refName": null,
       "detachedHead": null,
       "hasWorkingTreeChanges": false,
       "sourceControlProvider": null,
       "pr": null,
-      "observedAt": "{tr0Gller\"",
+      "observedAt": "�",
       "stale": false
     }
   ]

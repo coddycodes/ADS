@@ -1,6 +1,6 @@
 import { AssetResource, EnvironmentId, WS_METHODS } from "@bibcode/contracts";
 import * as Schema from "effect/Schema";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";

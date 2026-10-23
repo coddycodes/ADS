@@ -3,11 +3,11 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "threadId": "constructor",
-      "terminalId": "@\\b1)1A-m",
-      "sequence": 996151442,
+      "threadId": "jXj1x]yl`]",
+      "terminalId": "�",
+      "sequence": 19,
       "type": "error",
-      "message": "!"
+      "message": "__proto__"
     }
   ]
 }

@@ -23,7 +23,6 @@
         "name": "@effect/language-service",
         "namespaceImportPackages": ["@effect/platform-node", "effect"],
         "diagnosticSeverity": {
-          "importFromBarrel": "error",
           "anyUnknownInErrorContext": "error",
           "unsafeEffectTypeAssertion": "error",
           "instanceOfSchema": "error",
@@ -36,6 +35,7 @@
           "unknownInEffectCatch": "error",
           "strictBooleanExpressions": "off",
           "lazyEffect": "off",
+          "unstableApiUsage": "off",
           "preferSchemaOverJson": "error",
           "schemaSyncInEffect": "error",
           "cryptoRandomUUID": "error",

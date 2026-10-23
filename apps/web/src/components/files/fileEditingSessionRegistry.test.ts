@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import { FileEditingSession } from "./fileEditingSession";
 import { FileEditingSessionRegistry } from "./fileEditingSessionRegistry";

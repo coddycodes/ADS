@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "EnvironmentAuthorizationError",
-          "message": "%{ ~",
-          "requiredScope": "relay:read"
+          "message": "toString",
+          "requiredScope": "orchestration:operate"
         }
       }
     ]

@@ -12,8 +12,8 @@ import {
 } from "@bibcode/contracts";
 import { RegistryContext } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
-import { type AtomRegistry } from "effect/unstable/reactivity";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import { type AtomRegistry } from "effect/reactivity";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { useCallback, useContext } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";

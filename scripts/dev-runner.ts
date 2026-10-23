@@ -15,8 +15,8 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import { ChildProcess } from "effect/unstable/process";
+import { Argument, Command, Flag } from "effect/cli";
+import { ChildProcess } from "effect/process";
 
 import { loadRepoEnv } from "./lib/public-config.ts";
 
@@ -138,13 +138,13 @@ const optionToUndefined = <A>(value: Option.Option<A>): A | undefined =>
   Option.getOrUndefined(value);
 
 const optionalStringConfig = (name: string): Config.Config<string | undefined> =>
-  Config.string(name).pipe(Config.option, Config.map(optionToUndefined));
+  Config.String(name).pipe(Config.option, Config.map(optionToUndefined));
 const optionalBooleanConfig = (name: string): Config.Config<boolean | undefined> =>
-  Config.boolean(name).pipe(Config.option, Config.map(optionToUndefined));
+  Config.Boolean(name).pipe(Config.option, Config.map(optionToUndefined));
 const optionalPortConfig = (name: string): Config.Config<number | undefined> =>
-  Config.port(name).pipe(Config.option, Config.map(optionToUndefined));
+  Config.Port(name).pipe(Config.option, Config.map(optionToUndefined));
 const optionalIntegerConfig = (name: string): Config.Config<number | undefined> =>
-  Config.int(name).pipe(Config.option, Config.map(optionToUndefined));
+  Config.Int(name).pipe(Config.option, Config.map(optionToUndefined));
 const OffsetConfig = Config.all({
   portOffset: optionalIntegerConfig("BIBCODE_PORT_OFFSET"),
   devInstance: optionalStringConfig("BIBCODE_DEV_INSTANCE"),
@@ -257,29 +257,29 @@ export function createDevRunnerEnv({
     if (noBrowser !== undefined) {
       output.BIBCODE_NO_BROWSER = String(noBrowser);
     } else {
-      delete output.BIBCODE_NO_BROWSER;
+      Reflect.deleteProperty(output, "BIBCODE_NO_BROWSER");
     }
 
     if (autoBootstrapProjectFromCwd !== undefined) {
       output.BIBCODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD = autoBootstrapProjectFromCwd ? "1" : "0";
     } else {
-      delete output.BIBCODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD;
+      Reflect.deleteProperty(output, "BIBCODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD");
     }
 
     if (logWebSocketEvents !== undefined) {
       output.BIBCODE_LOG_WS_EVENTS = logWebSocketEvents ? "1" : "0";
     } else {
-      delete output.BIBCODE_LOG_WS_EVENTS;
+      Reflect.deleteProperty(output, "BIBCODE_LOG_WS_EVENTS");
     }
 
     if (mode === "dev") {
       output.BIBCODE_MODE = "web";
-      delete output.BIBCODE_DESKTOP_WS_URL;
+      Reflect.deleteProperty(output, "BIBCODE_DESKTOP_WS_URL");
     }
 
     if (mode === "dev:server" || mode === "dev:web") {
       output.BIBCODE_MODE = "web";
-      delete output.BIBCODE_DESKTOP_WS_URL;
+      Reflect.deleteProperty(output, "BIBCODE_DESKTOP_WS_URL");
     }
 
     return output;
@@ -557,38 +557,38 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
 }
 
 const devRunnerCli = Command.make("dev-runner", {
-  mode: Argument.choice("mode", DEV_RUNNER_MODES).pipe(
+  mode: Argument.Literals("mode", DEV_RUNNER_MODES).pipe(
     Argument.withDescription("Development mode to run."),
   ),
-  homeDir: Flag.string("home-dir").pipe(
+  homeDir: Flag.String("home-dir").pipe(
     Flag.withDescription("Base directory for all BiBCode data (equivalent to BIBCODE_HOME)."),
     Flag.withFallbackConfig(optionalStringConfig("BIBCODE_HOME")),
   ),
-  noBrowser: Flag.boolean("no-browser").pipe(
+  noBrowser: Flag.Boolean("no-browser").pipe(
     Flag.withDescription("Browser auto-open toggle (equivalent to BIBCODE_NO_BROWSER)."),
     Flag.withFallbackConfig(optionalBooleanConfig("BIBCODE_NO_BROWSER")),
   ),
-  autoBootstrapProjectFromCwd: Flag.boolean("auto-bootstrap-project-from-cwd").pipe(
+  autoBootstrapProjectFromCwd: Flag.Boolean("auto-bootstrap-project-from-cwd").pipe(
     Flag.withDescription(
       "Auto-bootstrap toggle (equivalent to BIBCODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD).",
     ),
     Flag.withFallbackConfig(optionalBooleanConfig("BIBCODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD")),
   ),
-  logWebSocketEvents: Flag.boolean("log-websocket-events").pipe(
+  logWebSocketEvents: Flag.Boolean("log-websocket-events").pipe(
     Flag.withDescription("WebSocket event logging toggle (equivalent to BIBCODE_LOG_WS_EVENTS)."),
     Flag.withAlias("log-ws-events"),
     Flag.withFallbackConfig(optionalBooleanConfig("BIBCODE_LOG_WS_EVENTS")),
   ),
-  host: Flag.string("host").pipe(
+  host: Flag.String("host").pipe(
     Flag.withDescription("Server host/interface override (forwards to BIBCODE_HOST)."),
     Flag.withFallbackConfig(optionalStringConfig("BIBCODE_HOST")),
   ),
-  port: Flag.integer("port").pipe(
+  port: Flag.Int("port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
     Flag.withDescription("Server port override (forwards to BIBCODE_PORT)."),
     Flag.withFallbackConfig(optionalPortConfig("BIBCODE_PORT")),
   ),
-  devUrl: Flag.string("dev-url").pipe(
+  devUrl: Flag.String("dev-url").pipe(
     Flag.withSchema(Schema.URLFromString),
     Flag.withDescription(
       "Explicit web dev URL override (forwards to VITE_DEV_SERVER_URL). Ambient VITE_DEV_SERVER_URL values are ignored so a parent dev app cannot redirect the child runner.",
@@ -596,11 +596,11 @@ const devRunnerCli = Command.make("dev-runner", {
     Flag.optional,
     Flag.map(Option.getOrUndefined),
   ),
-  dryRun: Flag.boolean("dry-run").pipe(
+  dryRun: Flag.Boolean("dry-run").pipe(
     Flag.withDescription("Resolve mode/ports/env and print, but do not spawn Vite+."),
     Flag.withDefault(false),
   ),
-  runArgs: Argument.string("run-arg").pipe(
+  runArgs: Argument.String("run-arg").pipe(
     Argument.withDescription("Additional Vite+ run args (pass after `--`)."),
     Argument.variadic(),
   ),

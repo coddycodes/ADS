@@ -505,13 +505,13 @@ describe("dependency upgrade ledger validation", () => {
     expect(entry("toolchain:node").target).toBe("26.8.1");
     expect(entry("toolchain:pnpm").target).toBe("11.25.0");
     expect(entry("toolchain:rust").target).toBe("1.98.0");
-    expect(entry("toolchain:vite-core").target).toBe("npm:@voidzero-dev/vite-plus-core@0.3.0");
-    expect(entry("toolchain:vite-plus").target).toBe("0.3.0");
-    expect(entry("js:catalog:effect").target).toBe("4.0.0-beta.107");
-    expect(entry("js:catalog:@effect/platform-node-shared").target).toBe("4.0.0-beta.107");
-    expect(entry("js:catalog:@effect/sql-d1").target).toBe("4.0.0-beta.107");
-    expect(entry("js:catalog:@effect/sql-sqlite-do").target).toBe("4.0.0-beta.107");
-    expect(entry("js:infra/relay:alchemy").target).toBe("2.0.0-beta.72");
+    expect(entry("toolchain:vite-core").target).toBe("npm:@voidzero-dev/vite-plus-core@1.1.0");
+    expect(entry("toolchain:vite-plus").target).toBe("1.1.0");
+    expect(entry("js:catalog:effect").target).toBe("4.0.2");
+    expect(entry("js:catalog:@effect/platform-node-shared").target).toBe("4.0.2");
+    expect(entry("js:catalog:@effect/sql-d1").target).toBe("4.0.2");
+    expect(entry("js:catalog:@effect/sql-sqlite-do").target).toBe("4.0.2");
+    expect(entry("js:infra/relay:alchemy").target).toBe("2.0.0-beta.81");
     expect(entry("js:infra/relay:drizzle-kit").target).toBe("1.0.0-rc.5-ab785fc");
     expect(entry("js:infra/relay:drizzle-orm").target).toBe("1.0.0-rc.5-ab785fc");
     expect(entry("js:apps/web:react").target).toBe("19.2.8");
@@ -627,7 +627,7 @@ describe("dependency upgrade ledger validation", () => {
     }
 
     expect(Object.keys(workspace.patchedDependencies).sort()).toEqual([
-      "@effect/vitest@4.0.0-beta.107",
+      "@effect/vitest@4.0.2",
       "@pierre/trees@1.0.0-beta.6",
       "@wdio/tauri-plugin@1.2.0",
     ]);
@@ -855,8 +855,8 @@ describe("dependency upgrade ledger validation", () => {
 
     expect(validateDependencyLedger(inventory, ledger)).toEqual([]);
     expect(ledger.inventorySummary).toEqual({
-      javascriptDirect: 81,
-      javascriptLedger: 83,
+      javascriptDirect: 80,
+      javascriptLedger: 82,
       rustRegistry: 138,
       rustPath: 3,
       rustGit: 1,

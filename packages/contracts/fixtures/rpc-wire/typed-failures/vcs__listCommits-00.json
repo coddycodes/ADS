@@ -8,13 +8,13 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitCommandError",
-          "operation": "nameu",
-          "command": "#M/:!Eps",
-          "cwd": "",
-          "exitCode": 3.402821032496136e38,
-          "stdoutLength": -3.4028181929587916e38,
-          "detail": "sl",
-          "cause": null
+          "operation": "Q!\\8Uxot;o",
+          "command": "0",
+          "cwd": "�",
+          "stdoutLength": -6.4e-323,
+          "stderrLength": 1.797693134862313e308,
+          "outputLength": 2.1230438760595132e43,
+          "detail": ""
         }
       }
     ]

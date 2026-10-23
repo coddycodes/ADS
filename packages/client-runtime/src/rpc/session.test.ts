@@ -21,7 +21,7 @@ import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as Socket from "effect/socket/Socket";
 
 import { splitIntoRecords } from "../e2ee/frame.ts";
 import { createNkResponder, derivePublicKey } from "../e2ee/noise.ts";
@@ -189,10 +189,13 @@ const pingsSent = (socket: TestWebSocket) =>
 
 const makeFactory = Effect.fn("TestRpcSessionFactory.make")(function* () {
   const sockets: TestWebSocket[] = [];
-  const constructorLayer = Layer.succeed(Socket.WebSocketConstructor, (url, protocols) => {
-    const socket = new TestWebSocket(url, protocols);
+  const constructorLayer = Layer.succeed(Socket.WebSocketConstructor, (url, options) => {
+    if (options !== undefined && typeof options !== "string" && !Array.isArray(options)) {
+      throw new TypeError("The test WebSocket accepts only subprotocols.");
+    }
+    const socket = new TestWebSocket(url, options);
     sockets.push(socket);
-    return socket as unknown as globalThis.WebSocket;
+    return socket;
   });
   const layer = RpcSession.layer.pipe(Layer.provide(constructorLayer));
   const factory = yield* RpcSession.RpcSessionFactory.pipe(Effect.provide(layer));

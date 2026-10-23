@@ -9,8 +9,8 @@
         "error": {
           "_tag": "WorkspaceIdentityError",
           "reason": "workspace-identity-unavailable",
-          "message": "!k}i",
-          "path": "T"
+          "message": "",
+          "path": ""
         }
       }
     ]

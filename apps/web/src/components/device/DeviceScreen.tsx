@@ -5,7 +5,7 @@ import type {
   EnvironmentId,
 } from "@bibcode/contracts";
 import { useAtomRefresh, useAtomSubscribe } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import {
   type ClipboardEvent as ReactClipboardEvent,
   type KeyboardEvent as ReactKeyboardEvent,

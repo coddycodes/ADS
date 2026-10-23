@@ -3,29 +3,23 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "threadId": "2",
-      "terminalId": "constructor",
+      "threadId": "😀",
+      "terminalId": "__proto__",
       "type": "restarted",
       "snapshot": {
-        "threadId": "Bizr$N>33%",
-        "terminalId": "V1wZS!}Ys",
-        "cwd": ":@bRq1cB",
+        "threadId": "JeM(1U@}nC",
+        "terminalId": "prototype",
+        "cwd": "u*9WET. 5n",
         "worktreePath": null,
-        "status": "exited",
-        "pid": 10,
-        "history": "sHRq@=",
+        "status": "starting",
+        "pid": null,
+        "history": "Cg]m+",
         "exitCode": null,
-        "exitSignal": null,
-        "consoleTheme": "light",
-        "label": "::kL.6",
-        "updatedAt": "@Kv2JM/W!",
-        "size": {
-          "cols": 83,
-          "rows": 9,
-          "sizeClaim": "&7o"
-        },
+        "exitSignal": 97,
+        "label": "4294967295",
+        "updatedAt": "",
         "oscColorResponderActive": true,
-        "firstAttachmentGrant": true
+        "firstAttachmentGrant": false
       }
     }
   ]

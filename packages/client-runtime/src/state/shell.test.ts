@@ -2,7 +2,7 @@ import type { ServerConfig } from "@bibcode/contracts";
 import { EnvironmentId } from "@bibcode/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   AVAILABLE_CONNECTION_STATE,

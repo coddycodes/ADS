@@ -8,18 +8,10 @@
         "_tag": "Fail",
         "error": {
           "_tag": "SourceControlRepositoryError",
-          "provider": "azure-devops",
-          "operation": "prop",
-          "detail": "Mh3`g",
-          "cause": [
-            [true, null, "bZdB(*|x'i", false, null, [], true, "/'XTo"],
-            [
-              null,
-              -9e-323,
-              [">e\\3 k&", true, 9007199254740961, 3.5504538468060766e-23, "&", false],
-              ""
-            ]
-          ]
+          "provider": "gitlab",
+          "operation": "",
+          "detail": "",
+          "cause": null
         }
       }
     ]

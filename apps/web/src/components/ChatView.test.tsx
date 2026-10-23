@@ -53,9 +53,9 @@ import {
 } from "@bibcode/contracts";
 import { DEFAULT_SERVER_SETTINGS } from "@bibcode/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
-import { RpcClientError } from "effect/unstable/rpc";
+import { RpcClientError } from "effect/rpc";
 import * as Option from "effect/Option";
 import {
   scopedThreadKey,
@@ -238,7 +238,7 @@ vi.mock("../connection/catalog", () => ({
 }));
 
 vi.mock("../state/query", async () => {
-  const AsyncResultModule = await import("effect/unstable/reactivity");
+  const AsyncResultModule = await import("effect/reactivity");
   const CauseModule = await import("effect/Cause");
   const ReactModule = await import("react");
   return {

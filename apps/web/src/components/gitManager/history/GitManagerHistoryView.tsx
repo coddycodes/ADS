@@ -9,7 +9,7 @@ import type {
 import { GitManagerOperationError } from "@bibcode/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { RefreshCwIcon } from "lucide-react";
 import {
   memo,

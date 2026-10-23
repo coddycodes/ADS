@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Deferred from "effect/Deferred";
-import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
+import { RpcClientError } from "effect/rpc/RpcClientError";
 import * as Stream from "effect/Stream";
 
 import { applyServerConfigEvent, makeSharedServerConfig } from "./sharedServerConfig.ts";

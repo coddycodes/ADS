@@ -150,7 +150,7 @@ export const ResolvedKeybindingRule = Schema.Struct({
   command: KeybindingCommand,
   shortcut: KeybindingShortcut,
   whenAst: Schema.optional(KeybindingWhenNode),
-}).annotate({ parseOptions: { onExcessProperty: "ignore" } });
+});
 export type ResolvedKeybindingRule = typeof ResolvedKeybindingRule.Type;
 
 export const ResolvedKeybindingsConfig = Schema.Array(ResolvedKeybindingRule).check(

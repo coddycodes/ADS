@@ -19,7 +19,7 @@ import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
 import type * as ServerPorts from "../../src/state/server";

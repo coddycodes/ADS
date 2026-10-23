@@ -3,23 +3,21 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "threadId": "U x-",
-      "tabId": "nstr",
-      "createdAt": "&",
+      "threadId": "4294967295",
+      "tabId": "toString",
+      "createdAt": "/}[N",
       "type": "resized",
       "snapshot": {
-        "threadId": "$rz$|!ux",
-        "tabId": "|y({",
+        "threadId": ";IOcF];_$[",
+        "tabId": "@0bAZ(]nm9",
         "navStatus": {
-          "_tag": "LoadFailed",
-          "url": "]P_jHfn$0D.",
-          "title": "DUgO$",
-          "code": -12,
-          "description": "b:e"
+          "_tag": "Loading",
+          "url": "`",
+          "title": "LifZ(,sDbb"
         },
-        "canGoBack": true,
-        "canGoForward": false,
-        "updatedAt": "!S}e#$}$}&"
+        "canGoBack": false,
+        "canGoForward": true,
+        "updatedAt": "Q:"
       }
     }
   ]

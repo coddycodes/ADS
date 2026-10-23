@@ -18,7 +18,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { RpcClientError } from "effect/unstable/rpc";
+import { RpcClientError } from "effect/rpc";
 
 import { e2eeSocketUrl } from "../authorization/remote.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";

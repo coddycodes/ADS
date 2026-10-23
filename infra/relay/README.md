@@ -102,7 +102,10 @@ vp run --filter bibcode-relay deploy -- --stage prod
 vp run --filter bibcode-relay deploy -- --env-file .env.local
 ```
 
-Alchemy defaults personal deployments to the `dev_$USER` stage. Relay custom domains apply the same
+The deploy wrapper defaults personal deployments to the `dev_$USER` stage (or a `stage` value from
+the env file). The `destroy` script runs Alchemy's own CLI, which instead defaults to `live_$USER`
+and reads `$ALCHEMY_STAGE`, so always pass the stage explicitly, for example
+`vp run --filter bibcode-relay destroy -- --stage dev_$USER`. Relay custom domains apply the same
 DNS-safe sanitization as Alchemy physical resource names, so `prod` uses
 `relay.<RELAY_API_ZONE_NAME>` and `dev_julius` uses
 `relay-dev-julius.<RELAY_API_ZONE_NAME>`. Managed environment endpoints are provisioned below

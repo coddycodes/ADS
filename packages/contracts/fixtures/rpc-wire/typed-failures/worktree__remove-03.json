@@ -7,8 +7,9 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "UpdateMaintenanceActiveError",
-          "message": "y"
+          "_tag": "EnvironmentAuthorizationError",
+          "message": "an{%+q9S9G",
+          "requiredScope": "relay:read"
         }
       }
     ]

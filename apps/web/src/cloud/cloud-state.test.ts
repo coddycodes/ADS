@@ -47,7 +47,7 @@ vi.mock("@effect/atom-react", () => ({
   },
 }));
 
-vi.mock("effect/unstable/reactivity", () => ({
+vi.mock("effect/reactivity", () => ({
   AsyncResult: {
     success: (value: unknown) => ({ _tag: "Success", value, waiting: false }),
     value: (result: { _tag: string; value?: unknown }) =>
@@ -79,7 +79,7 @@ vi.mock("effect/unstable/reactivity", () => ({
 vi.mock("effect/Context", () => ({ get: () => ({}) }));
 vi.mock("effect/Effect", () => ({ map: () => (value: unknown) => value }));
 vi.mock("effect/Layer", () => ({ effect: () => ({}) }));
-vi.mock("effect/unstable/http", () => ({ HttpClient: { HttpClient: {} } }));
+vi.mock("effect/http", () => ({ HttpClient: { HttpClient: {} } }));
 
 vi.mock("@bibcode/client-runtime/relay", () => ({
   ManagedRelay: { ManagedRelayClient: {} },

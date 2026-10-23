@@ -2,7 +2,7 @@ import { DEFAULT_SERVER_SETTINGS, EnvironmentId } from "@bibcode/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@bibcode/shared/keybindings";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 interface TestAtom {
@@ -44,8 +44,8 @@ vi.mock("react", async (importOriginal) => {
   };
 });
 
-vi.mock("effect/unstable/reactivity", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("effect/unstable/reactivity")>();
+vi.mock("effect/reactivity", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("effect/reactivity")>();
   const make = (value: unknown): TestAtom => {
     const atom: TestAtom = {
       read: typeof value === "function" ? (value as NonNullable<TestAtom["read"]>) : () => value,

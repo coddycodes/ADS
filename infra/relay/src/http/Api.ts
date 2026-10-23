@@ -8,12 +8,12 @@ import * as Layer from "effect/Layer";
 import * as Record from "effect/Record";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as HttpEffect from "effect/unstable/http/HttpEffect";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
+import * as HttpEffect from "effect/http/HttpEffect";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpApiError from "effect/http-api/HttpApiError";
 import { encodeOAuthScope } from "@bibcode/shared/oauthScope";
 
 import {

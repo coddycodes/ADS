@@ -51,7 +51,7 @@ import {
   type StartThreadTurnInput,
   type AttachmentAdmissionAuthority,
 } from "@bibcode/client-runtime/operations";
-import { RpcClientError } from "effect/unstable/rpc";
+import { RpcClientError } from "effect/rpc";
 import { EnvironmentRpcUnavailableError } from "@bibcode/client-runtime/rpc";
 import {
   prepareTurnAttachments,
@@ -107,7 +107,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import {
   EMPTY_ENVIRONMENT_ACTIVITY_STATE,
   type EnvironmentActivityState,

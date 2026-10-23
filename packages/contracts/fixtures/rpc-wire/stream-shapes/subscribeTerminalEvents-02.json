@@ -3,11 +3,12 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "threadId": "xEFe",
-      "terminalId": "length",
+      "threadId": "rYgTo1C%Uf",
+      "terminalId": "BhO\\;e7et^",
+      "sequence": 3,
       "type": "exited",
-      "exitCode": -11,
-      "exitSignal": 2147483632
+      "exitCode": null,
+      "exitSignal": null
     }
   ]
 }

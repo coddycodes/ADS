@@ -65,10 +65,10 @@
       "ledgerClosure": {
         "rows": 247,
         "statuses": {
-          "green": 131,
+          "green": 130,
           "current": 70,
           "blocked": 42,
-          "removed": 4
+          "removed": 5
         }
       },
       "commands": [
@@ -308,8 +308,8 @@
     }
   },
   "inventorySummary": {
-    "javascriptDirect": 81,
-    "javascriptLedger": 83,
+    "javascriptDirect": 80,
+    "javascriptLedger": 82,
     "rustRegistry": 138,
     "rustPath": 3,
     "rustGit": 1,
@@ -1077,93 +1077,98 @@
     {
       "key": "js:catalog:@effect/atom-react",
       "name": "@effect/atom-react",
-      "current": "4.0.0-beta.107",
-      "target": "4.0.0-beta.107",
-      "channel": "preview",
+      "current": "4.0.2",
+      "target": "4.0.2",
+      "channel": "stable",
       "source": "https://www.npmjs.com/package/@effect/atom-react",
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Shares the single Effect 4.0.2 release version (14-day rule compliant, published 2026-10-07)."
     },
     {
       "key": "js:catalog:@effect/platform-node",
       "name": "@effect/platform-node",
-      "current": "4.0.0-beta.107",
-      "target": "4.0.0-beta.107",
-      "channel": "preview",
+      "current": "4.0.2",
+      "target": "4.0.2",
+      "channel": "stable",
       "source": "https://www.npmjs.com/package/@effect/platform-node",
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Shares the single Effect 4.0.2 release version (2026-10-07). Its non-optional node-redis peer (replacing ioredis) is removed by an override and marked optional by a packageExtension because BiBCode does not use NodeRedis; import Node services through subpaths, since the package barrel loads NodeRedis."
     },
     {
       "key": "js:catalog:@effect/platform-node-shared",
       "name": "@effect/platform-node-shared",
-      "current": "4.0.0-beta.107",
-      "target": "4.0.0-beta.107",
-      "channel": "preview",
+      "current": "4.0.2",
+      "target": "4.0.2",
+      "channel": "stable",
       "source": "https://www.npmjs.com/package/@effect/platform-node-shared",
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
-      "notes": "Exact catalog and override ownership prevents @effect/platform-node from resolving an RC.112 companion beside the beta.107 cohort."
+      "notes": "Exact catalog and override ownership keeps @effect/platform-node on the same Effect 4.0.2 cohort."
     },
     {
       "key": "js:catalog:@effect/sql-d1",
       "name": "@effect/sql-d1",
-      "current": "4.0.0-beta.107",
-      "target": "4.0.0-beta.107",
-      "channel": "preview",
+      "current": "4.0.2",
+      "target": "4.0.2",
+      "channel": "stable",
       "source": "https://www.npmjs.com/package/@effect/sql-d1",
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
-      "notes": "Exact catalog and override ownership keeps Drizzle optional peer resolution on the approved Effect beta.107 cohort."
+      "notes": "Exact catalog and override ownership keeps Alchemy's hard @effect/sql-d1 ^4.0.0 dependency on the Effect 4.0.2 cohort."
     },
     {
       "key": "js:catalog:@effect/sql-pg",
       "name": "@effect/sql-pg",
-      "current": "4.0.0-beta.107",
-      "target": "4.0.0-beta.107",
-      "channel": "preview",
+      "current": "4.0.2",
+      "target": "4.0.2",
+      "channel": "stable",
       "source": "https://www.npmjs.com/package/@effect/sql-pg",
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Shares the single Effect 4.0.2 release version (2026-10-07); 4.0.x uses a built-in PostgreSQL client instead of pg."
     },
     {
       "key": "js:catalog:@effect/sql-sqlite-do",
       "name": "@effect/sql-sqlite-do",
-      "current": "4.0.0-beta.107",
-      "target": "4.0.0-beta.107",
-      "channel": "preview",
+      "current": "4.0.2",
+      "target": "4.0.2",
+      "channel": "stable",
       "source": "https://www.npmjs.com/package/@effect/sql-sqlite-do",
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
-      "notes": "Exact catalog and override ownership keeps Drizzle optional peer resolution on the approved Effect beta.107 cohort."
+      "notes": "Exact catalog and override ownership keeps Alchemy's hard @effect/sql-sqlite-do ^4.0.0 dependency on the Effect 4.0.2 cohort."
     },
     {
       "key": "js:catalog:@effect/tsgo",
       "name": "@effect/tsgo",
-      "current": "0.40.0",
-      "target": "0.40.0",
+      "current": "0.51.1",
+      "target": "0.51.1",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@effect/tsgo",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "0.51.1 (2026-10-07) is the newest release satisfying the 14-day age rule and ships a vite-plus@1.1.0 (oxlint 1.87.0) compatibility profile. tsconfig drops the removed importFromBarrel rule and turns off the new unstableApiUsage diagnostic because BiBCode deliberately uses Effect's unstable http/rpc/cli modules."
     },
     {
       "key": "js:catalog:@effect/vitest",
       "name": "@effect/vitest",
-      "current": "4.0.0-beta.107",
-      "target": "4.0.0-beta.107",
-      "channel": "preview",
+      "current": "4.0.2",
+      "target": "4.0.2",
+      "channel": "stable",
       "source": "https://www.npmjs.com/package/@effect/vitest",
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Shares the Effect 4.0.2 version and peers Vitest 5, which vite-plus 1.1.0 bundles. patches/@effect__vitest@4.0.2.patch routes its vitest imports through vite-plus/test, and the @effect/vitest>vitest removal override keeps a single Vitest runtime."
     },
     {
       "key": "js:catalog:@noble/ciphers",
@@ -1246,13 +1251,14 @@
     {
       "key": "js:catalog:effect",
       "name": "effect",
-      "current": "4.0.0-beta.107",
-      "target": "4.0.0-beta.107",
-      "channel": "preview",
+      "current": "4.0.2",
+      "target": "4.0.2",
+      "channel": "stable",
       "source": "https://www.npmjs.com/package/effect",
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Effect 4 stable (4.0.0 replaced the beta/RC series). 4.0.2 (2026-10-07) is the newest release satisfying the 14-day age rule for the v0.11.0 upgrade; all Effect packages share this exact version. Migration: effect/unstable/* paths dropped the unstable segment, Schema.toArbitrary became the native effect/Arbitrary runner, and parseOptions annotations no longer affect parsing."
     },
     {
       "key": "js:catalog:jose",
@@ -1302,14 +1308,14 @@
     {
       "key": "js:infra/relay:alchemy",
       "name": "alchemy",
-      "current": "2.0.0-beta.72",
-      "target": "2.0.0-beta.72",
+      "current": "2.0.0-beta.81",
+      "target": "2.0.0-beta.81",
       "channel": "preview",
       "source": "https://www.npmjs.com/package/alchemy",
       "cohort": "relay-preview",
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
-      "notes": "Use beta.72, the newest published Alchemy preview whose peer range supports the approved Effect beta.107 boundary. Newer beta.76 requires the separately excluded Effect RC.112 cohort."
+      "notes": "beta.81 (2026-10-05) is the newest Alchemy preview satisfying the 14-day age rule and the first-eligible line that peers effect ^4.0.0 for the Effect 4.0.2 cohort; it no longer depends on ink, undici, or fast-glob. The deploy wrapper keeps its own dev_$USER stage default; Alchemy's own destroy CLI now defaults to live_$USER and reads ALCHEMY_STAGE."
     },
     {
       "key": "js:infra/relay:drizzle-kit",
@@ -1350,13 +1356,13 @@
       "key": "js:packages/contracts:fast-check",
       "name": "fast-check",
       "current": "^4.9.0",
-      "target": "4.9.0",
-      "channel": "stable",
+      "target": "removed",
+      "channel": "removal",
       "source": "https://www.npmjs.com/package/fast-check",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green",
-      "notes": "Pinned by a workspace override within Effect beta.107's ^4.9.0 range so private Arbitrary state never crosses duplicate fast-check instances."
+      "status": "removed",
+      "notes": "Removed with its workspace override: Effect 4 has no runtime dependencies and its native effect/Arbitrary runner replaced Schema.toArbitrary(...)(FastCheck)."
     },
     {
       "key": "js:scripts:smol-toml",
@@ -1384,13 +1390,14 @@
     {
       "key": "js:workspace:@vitest/coverage-v8",
       "name": "@vitest/coverage-v8",
-      "current": "4.1.11",
-      "target": "4.1.11",
+      "current": "5.0.3",
+      "target": "5.0.3",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@vitest/coverage-v8",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Pinned to the exact Vitest 5.0.3 that vite-plus 1.1.0 bundles; its vitest peer is exact."
     },
     {
       "key": "rust:apps/server/tests/fixtures/task8-harness:xpty",
@@ -2599,25 +2606,26 @@
     {
       "key": "toolchain:vite-core",
       "name": "@voidzero-dev/vite-plus-core",
-      "current": "npm:@voidzero-dev/vite-plus-core@0.3.0",
-      "target": "npm:@voidzero-dev/vite-plus-core@0.3.0",
+      "current": "npm:@voidzero-dev/vite-plus-core@1.1.0",
+      "target": "npm:@voidzero-dev/vite-plus-core@1.1.0",
       "channel": "preview",
       "source": "https://www.npmjs.com/package/@voidzero-dev/vite-plus-core",
       "cohort": "toolchains",
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
-      "notes": "Keep the intentional npm alias paired atomically with vite-plus."
+      "notes": "Keep the intentional npm alias paired atomically with vite-plus. 1.1.0 (2026-10-07) is the first release outside every vite-plus advisory range and satisfies the 14-day age rule; vite-plus 1.2.0+ warns @effect/tsgo users to stay on 1.1.0 until tsgo supports oxlint 1.88."
     },
     {
       "key": "toolchain:vite-plus",
       "name": "vite-plus",
-      "current": "0.3.0",
-      "target": "0.3.0",
+      "current": "1.1.0",
+      "target": "1.1.0",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/vite-plus",
       "cohort": "toolchains",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Vite+ 1.1.0 (2026-10-07) bundles Vitest 5.0.3, oxlint 1.87.0, oxfmt 0.72.0 and pins @oxlint/plugins =1.79.0. vp migrate added the Vitest 4 compatibility settings (clearMocks: false, sharedViteServer: false). Clears the six vite-plus GHSAs patched in >=1.1.0."
     },
     {
       "key": "rust:apps/server/tests/fixtures/task8-harness:base64",

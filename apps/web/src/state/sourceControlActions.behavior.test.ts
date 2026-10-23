@@ -11,7 +11,7 @@
  * `AsyncResult`, `Cause`, and `Option` are kept real.
  */
 import { EnvironmentId } from "@bibcode/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 import { describe, expect, it, vi, beforeEach } from "vite-plus/test";
 

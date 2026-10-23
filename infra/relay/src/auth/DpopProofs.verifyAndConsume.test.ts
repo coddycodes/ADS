@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Test fixtures generate key pairs synchronously.
 import * as NodeCrypto from "node:crypto";
 import * as NodeSqlite from "node:sqlite";
 
@@ -17,7 +18,7 @@ import * as Logger from "effect/Logger";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
-import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
+import * as HttpApiError from "effect/http-api/HttpApiError";
 
 import * as RelayDb from "../db.ts";
 import { relayDpopProofs } from "../persistence/schema.ts";

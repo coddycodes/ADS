@@ -7,8 +7,9 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "UpdateMaintenanceActiveError",
-          "message": "i"
+          "_tag": "EnvironmentAuthorizationError",
+          "message": "�",
+          "requiredScope": "access:write"
         }
       }
     ]

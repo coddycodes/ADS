@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "EnvironmentAuthorizationError",
-          "message": "@>3nsT%J",
-          "requiredScope": "access:read"
+          "message": "+pyVLbTk?L",
+          "requiredScope": "terminal:operate"
         }
       }
     ]

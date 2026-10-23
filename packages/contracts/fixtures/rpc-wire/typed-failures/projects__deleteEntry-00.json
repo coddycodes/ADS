@@ -8,13 +8,10 @@
         "_tag": "Fail",
         "error": {
           "_tag": "ProjectDeleteEntryError",
-          "cwd": "constructor",
-          "relativePath": "i8a",
-          "resolvedPath": "ref",
-          "resolvedWorkspaceRoot": "C!",
-          "operation": "write-file",
-          "message": "name",
-          "cause": null
+          "cwd": "bT-q?aU%H",
+          "relativePath": "^",
+          "operationPath": "toString",
+          "message": "prototype"
         }
       }
     ]

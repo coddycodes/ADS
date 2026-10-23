@@ -8,9 +8,20 @@
         "_tag": "Fail",
         "error": {
           "_tag": "PreviewInvalidUrlError",
-          "inputLength": -3.4028234663852886e38,
-          "reason": "unsupported-protocol",
-          "cause": []
+          "inputLength": 8.4e-323,
+          "reason": "empty",
+          "cause": {
+            "-1": -3.898709519061125e181,
+            " ": {},
+            "": {},
+            "Azq#2sDeu]": {},
+            "prototype": "MG&T~|,^t:",
+            "toString": 1.797693134862314e308,
+            "{|,,0:G": {},
+            "�": [],
+            "&eo(v g\\X,": [],
+            "KDy": {}
+          }
         }
       }
     ]

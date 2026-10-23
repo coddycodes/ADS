@@ -8,10 +8,10 @@
         "_tag": "Fail",
         "error": {
           "_tag": "SourceControlRepositoryError",
-          "provider": "azure-devops",
-          "operation": "ref",
-          "detail": ">uyYj",
-          "cause": null
+          "provider": "gitlab",
+          "operation": "!RF6/prEu",
+          "detail": "toString",
+          "cause": [[null, "Dt]I"], null]
         }
       }
     ]

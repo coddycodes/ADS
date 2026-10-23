@@ -9,7 +9,7 @@
         "error": {
           "_tag": "EnvironmentAuthorizationError",
           "message": "",
-          "requiredScope": "access:read"
+          "requiredScope": "terminal:operate"
         }
       }
     ]

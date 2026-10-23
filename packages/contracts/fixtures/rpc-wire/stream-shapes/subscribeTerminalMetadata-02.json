@@ -4,9 +4,8 @@
   "values": [
     {
       "type": "remove",
-      "threadId": "eU-1",
-      "terminalId": "|#Wco",
-      "reason": "restarted"
+      "threadId": "toString",
+      "terminalId": "�"
     }
   ]
 }

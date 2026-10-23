@@ -7,20 +7,9 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "TerminalCwdStatError",
-          "cwd": "4#dBD8&[~X",
-          "cause": [
-            1.5022570968893092e-94,
-            -2.467117281781545e-73,
-            false,
-            {
-              "": 5599661890767517,
-              "K": "I+Q>!b+",
-              "eeLU{EqL": true,
-              ".": ""
-            },
-            6.546753053287479e102
-          ]
+          "_tag": "TerminalNotRunningError",
+          "threadId": "fy,Sf@-#2T",
+          "terminalId": "😀"
         }
       }
     ]

@@ -8,16 +8,7 @@
         "_tag": "Fail",
         "error": {
           "_tag": "OrchestrationGetSnapshotError",
-          "message": "b!",
-          "cause": {
-            "{": false,
-            "\"l": 7e-323,
-            "L": "r0%",
-            "q]s": 1.443453326199938e-38,
-            "y": "u",
-            "A": false,
-            "o.Eugf+8": "w[ \\5d_"
-          }
+          "message": "G"
         }
       }
     ]

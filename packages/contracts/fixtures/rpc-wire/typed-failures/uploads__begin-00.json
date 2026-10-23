@@ -8,9 +8,9 @@
         "_tag": "Fail",
         "error": {
           "_tag": "UploadError",
-          "reason": "quota",
-          "message": "z5CQp$oFrbP",
-          "receivedBytes": 3
+          "reason": "offset",
+          "message": "�",
+          "receivedBytes": 74
         }
       }
     ]

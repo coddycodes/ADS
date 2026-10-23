@@ -15,7 +15,7 @@ const h = vi.hoisted(() => ({
 // Each read of the archived snapshot is a request that stays in flight until released.
 vi.mock("../state/orchestration", async () => {
   const Effect = await import("effect/Effect");
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   const request = Effect.suspend(() => {
     h.started += 1;
     h.inFlight += 1;

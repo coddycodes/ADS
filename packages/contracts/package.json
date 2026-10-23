@@ -32,7 +32,6 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "fast-check": "^4.9.0",
     "vite-plus": "catalog:"
   }
 }

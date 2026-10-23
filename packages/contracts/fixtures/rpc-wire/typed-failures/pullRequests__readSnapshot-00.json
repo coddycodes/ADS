@@ -8,11 +8,11 @@
         "_tag": "Fail",
         "error": {
           "_tag": "PullRequestsOperationError",
-          "operation": "5,!hxUBjfh{",
-          "code": "&[{",
-          "message": "?",
+          "operation": "M`eCA.5.{",
+          "code": "4294967295",
+          "message": "�",
           "hostDetail": null,
-          "retryable": false
+          "retryable": true
         }
       }
     ]

@@ -8,12 +8,11 @@
         "_tag": "Fail",
         "error": {
           "_tag": "VcsProcessExitError",
-          "operation": "cC",
-          "command": "x&",
-          "cwd": "oo",
-          "exitCode": -2.382207389352189e-44,
-          "detail": "",
-          "stderrLength": 2147483626
+          "operation": "|S?d",
+          "command": "0",
+          "cwd": "t",
+          "exitCode": 1.2819216049134927e241,
+          "detail": ""
         }
       }
     ]

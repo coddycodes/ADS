@@ -9,10 +9,10 @@
         "error": {
           "_tag": "WorkspaceUnavailableError",
           "reason": "workspace-unavailable",
-          "message": "*K9RD=f",
-          "threadId": "?E3r4gh{m",
-          "path": "9u",
-          "availability": "removing"
+          "message": "0",
+          "threadId": "-1",
+          "path": "bau4",
+          "availability": "verification-unavailable"
         }
       }
     ]

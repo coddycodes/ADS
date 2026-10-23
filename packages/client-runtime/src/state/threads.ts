@@ -11,7 +11,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";

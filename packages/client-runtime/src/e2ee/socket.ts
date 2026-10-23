@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as Socket from "effect/socket/Socket";
 
 import { canInflateRawDeflate, makeOrderedDelivery } from "./deflate.ts";
 import { MAX_E2EE_PREAUTH_MESSAGE_BYTES, plaintextRecords, RecordAssembler } from "./frame.ts";
@@ -17,6 +17,7 @@ import {
   NoiseAuthenticationError,
   type NkTransport,
 } from "./noise.ts";
+import { makeRawSocket, runRaw } from "./rawSocket.ts";
 
 const decodeAuthenticated = Schema.decodeUnknownSync(E2eeAuthenticatedMessage);
 
@@ -96,7 +97,7 @@ export const makeE2eeSocket = (inner: Socket.Socket, options: E2eeSocketOptions)
       }
     });
 
-  const runRaw = <A, E, R>(
+  const runE2ee = <A, E, R>(
     handler: (data: string | Uint8Array) => Effect.Effect<A, E, R> | void,
     runOptions?: { readonly onOpen?: Effect.Effect<void> | undefined },
   ): Effect.Effect<void, Socket.SocketError | E, R> =>
@@ -144,7 +145,7 @@ export const makeE2eeSocket = (inner: Socket.Socket, options: E2eeSocketOptions)
 
       return Effect.scopedWith((scope) =>
         Effect.gen(function* () {
-          const innerWrite = yield* Scope.provide(inner.writer, scope);
+          const innerWriter = yield* Scope.provide(inner.writer, scope);
 
           const innerHandler = (
             delivered: string | Uint8Array,
@@ -207,7 +208,7 @@ export const makeE2eeSocket = (inner: Socket.Socket, options: E2eeSocketOptions)
                       };
                 return encryptAndSend(
                   currentTransport(),
-                  innerWrite,
+                  innerWriter.write,
                   encoder.encode(encodeJson(authMessage)),
                 );
               }
@@ -269,7 +270,7 @@ export const makeE2eeSocket = (inner: Socket.Socket, options: E2eeSocketOptions)
           };
 
           const sendMessageA = Effect.suspend(() =>
-            innerWrite(initiator.writeMessageA(EMPTY)),
+            innerWriter.write(initiator.writeMessageA(EMPTY)),
           ).pipe(
             Effect.catch((error) =>
               Effect.sync(() => {
@@ -278,7 +279,7 @@ export const makeE2eeSocket = (inner: Socket.Socket, options: E2eeSocketOptions)
               }),
             ),
           );
-          const runInner = inner.runRaw(innerHandler, { onOpen: sendMessageA }).pipe(
+          const runInner = runRaw(inner, innerHandler, { onOpen: sendMessageA }).pipe(
             Effect.mapError((error) => {
               if (
                 phase === "open" ||
@@ -324,24 +325,30 @@ export const makeE2eeSocket = (inner: Socket.Socket, options: E2eeSocketOptions)
       );
     });
 
-  return Socket.make({
-    runRaw,
+  return makeRawSocket({
+    runRaw: runE2ee,
     writer: Effect.gen(function* () {
-      const innerWrite = yield* inner.writer;
-      return (chunk: Uint8Array | string | Socket.CloseEvent) =>
+      const innerWriter = yield* inner.writer;
+      const write = (
+        chunk: Uint8Array | string | Socket.CloseEvent,
+      ): Effect.Effect<void, Socket.SocketError> =>
         Socket.isCloseEvent(chunk)
-          ? innerWrite(chunk)
+          ? innerWriter.write(chunk)
           : outboundMessages.withPermits(1)(
               Deferred.await(transportDeferred).pipe(
                 Effect.flatMap((readyTransport) =>
                   encryptAndSend(
                     readyTransport,
-                    innerWrite,
+                    innerWriter.write,
                     typeof chunk === "string" ? encoder.encode(chunk) : chunk,
                   ),
                 ),
               ),
             );
+      return {
+        write,
+        writeAll: (chunks) => Effect.forEach(chunks, write, { discard: true }),
+      } satisfies Socket.Writer;
     }),
   });
 };

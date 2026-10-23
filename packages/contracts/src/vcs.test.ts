@@ -1,6 +1,6 @@
-import { DateTime, Exit, Option, SchemaIssue } from "effect";
+import { Arbitrary, DateTime, Effect, Exit, Option, SchemaIssue } from "effect";
+import { it as effectIt } from "@effect/vitest";
 import * as Schema from "effect/Schema";
-import * as FastCheck from "fast-check";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -26,6 +26,12 @@ import {
   VcsUnsupportedOperationError,
 } from "./vcs.ts";
 
+const containsUntrimmedString = (value: unknown): boolean =>
+  typeof value === "string"
+    ? value !== value.trim()
+    : typeof value === "object" && value !== null
+      ? Object.values(value).some(containsUntrimmedString)
+      : false;
 const decodeDriverKind = Schema.decodeUnknownSync(VcsDriverKind);
 const decodeFreshnessSource = Schema.decodeUnknownSync(VcsFreshnessSource);
 const decodeFreshness = Schema.decodeUnknownSync(VcsFreshness);
@@ -351,36 +357,42 @@ describe("VCS repository schemas", () => {
     expect(() => decodeStatusSummary({ ...summary, observedAt, stale: false })).toThrow();
   });
 
-  it("generates only decodable passive summary fixtures", () => {
-    const samples = FastCheck.sample(Schema.toArbitrary(VcsStatusSummary)(FastCheck), {
-      numRuns: 100,
-      seed: 20260820,
-    });
-    let encodedCount = 0;
-    for (const sample of samples) {
-      let encoded: ReturnType<typeof encodeStatusSummary>;
-      try {
-        encoded = encodeStatusSummary(sample);
-      } catch {
-        // Existing nested checked strings can reject arbitrary candidates; the exporter retries.
-        continue;
+  effectIt.effect("generates only decodable passive summary fixtures", () =>
+    Effect.gen(function* () {
+      const samples = yield* Arbitrary.sampleEffect(Arbitrary.schema(VcsStatusSummary), {
+        count: 100,
+        seed: 20260820,
+      });
+      let encodedCount = 0;
+      for (const sample of samples) {
+        // TrimmedString's decoded side admits untrimmed text, which encodes to a
+        // different (possibly empty) value. Effect's native Arbitrary generates
+        // such candidates; they are not canonical summaries, so skip them.
+        if (containsUntrimmedString(sample)) continue;
+        let encoded: ReturnType<typeof encodeStatusSummary>;
+        try {
+          encoded = encodeStatusSummary(sample);
+        } catch {
+          // Existing nested checked strings can reject arbitrary candidates; the exporter retries.
+          continue;
+        }
+        encodedCount += 1;
+        expect(() => decodeStatusSummary(encoded)).not.toThrow();
+        expect(
+          encoded.isRepo
+            ? [encoded.refName, encoded.detachedHead].filter((identity) => identity !== null)
+                .length <= 1 &&
+                (encoded.pr === null || encoded.sourceControlProvider?.kind === encoded.pr.provider)
+            : encoded.refName === null &&
+                encoded.detachedHead === null &&
+                encoded.hasWorkingTreeChanges === false &&
+                encoded.sourceControlProvider === null &&
+                encoded.pr === null,
+        ).toBe(true);
       }
-      encodedCount += 1;
-      expect(() => decodeStatusSummary(encoded)).not.toThrow();
-      expect(
-        encoded.isRepo
-          ? [encoded.refName, encoded.detachedHead].filter((identity) => identity !== null)
-              .length <= 1 &&
-              (encoded.pr === null || encoded.sourceControlProvider?.kind === encoded.pr.provider)
-          : encoded.refName === null &&
-              encoded.detachedHead === null &&
-              encoded.hasWorkingTreeChanges === false &&
-              encoded.sourceControlProvider === null &&
-              encoded.pr === null,
-      ).toBe(true);
-    }
-    expect(encodedCount).toBeGreaterThan(0);
-  });
+      expect(encodedCount).toBeGreaterThan(0);
+    }),
+  );
 
   it("constructs the passive status summary wire shape", () => {
     expect(

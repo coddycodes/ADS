@@ -8,16 +8,9 @@
         "_tag": "Fail",
         "error": {
           "_tag": "ServerSettingsError",
-          "settingsPath": "&",
-          "operation": "read-file",
-          "cause": {
-            "^1j": "Xc=a",
-            "": -1.9285949347187608e197,
-            "x ]f;,t": false,
-            ";": 7711057441480909,
-            ":_": 8.037360606261537e155,
-            "e80nN": "nBmH"
-          }
+          "settingsPath": "rfDRn^CKaH",
+          "operation": "write-secret",
+          "cause": null
         }
       }
     ]

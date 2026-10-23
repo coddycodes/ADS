@@ -8,9 +8,9 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitManagerOperationError",
-          "operation": "%&#0\\",
-          "code": "l",
-          "message": ".%\\x_kgk#",
+          "operation": "__proto__",
+          "code": "-1",
+          "message": "p",
           "blocked": null
         }
       }

@@ -36,7 +36,7 @@ import {
 } from "@bibcode/client-runtime/connection";
 import type { AttachmentSource, AttachmentStagingResult } from "@bibcode/client-runtime/operations";
 import { settlePromise, type AtomCommandResult } from "@bibcode/client-runtime/state/runtime";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import type { StagedUploadChatAttachment, UploadChatAttachment } from "@bibcode/contracts";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "bibcode:last-invoked-script-by-project";

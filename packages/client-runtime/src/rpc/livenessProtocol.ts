@@ -1,7 +1,7 @@
 /**
  * A local copy of Effect's `RpcClient.makeProtocolSocket`
- * (effect 4.0.0-beta.107, `src/unstable/rpc/RpcClient.ts:1027-1177`) with
- * three changes:
+ * (effect 4.0.2, `src/rpc/RpcClient.ts:1062-1223`; originally copied from
+ * 4.0.0-beta.107) with three changes:
  *
  * - liveness counts every inbound WebSocket message instead of only `Pong`
  *   (see `liveness.ts`);
@@ -9,6 +9,10 @@
  *   cause;
  * - the protocol never reconnects, because the connection supervisor owns
  *   retries.
+ *
+ * It reads the socket through the handler-driven `runRaw` bridge, so each
+ * response's delivery starts in arrival order without waiting for the previous
+ * one, as it did before Effect 4.0 made sockets pull-based.
  *
  * It uses only public Effect exports. Re-check it against upstream on every
  * Effect upgrade, and delete it once upstream exposes a configurable pinger
@@ -21,11 +25,13 @@ import * as Exit from "effect/Exit";
 import { constVoid } from "effect/Function";
 import * as Result from "effect/Result";
 import type * as Scope from "effect/Scope";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
-import { RpcClientDefect, RpcClientError } from "effect/unstable/rpc/RpcClientError";
-import { constPing, type FromServerEncoded } from "effect/unstable/rpc/RpcMessage";
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as RpcClient from "effect/rpc/RpcClient";
+import { RpcClientDefect, RpcClientError } from "effect/rpc/RpcClientError";
+import { constPing, type FromServerEncoded } from "effect/rpc/RpcMessage";
+import * as RpcSerialization from "effect/rpc/RpcSerialization";
+import * as Socket from "effect/socket/Socket";
+
+import { runRaw } from "../e2ee/rawSocket.ts";
 
 import {
   type InboundActivity,
@@ -90,7 +96,7 @@ export const makeLivenessProtocol = (
       const socket = yield* Socket.Socket;
       const serialization = yield* RpcSerialization.RpcSerialization;
       const requestClientMap = new Map<string | number, number>();
-      const write = yield* socket.writer;
+      const writer = yield* socket.writer;
       const opened = yield* Deferred.make<void>();
       let parser = serialization.makeUnsafe();
       let currentError: RpcClientError | undefined;
@@ -150,7 +156,7 @@ export const makeLivenessProtocol = (
 
       const sendPing = Effect.suspend(() => {
         const encoded = parser.encode(constPing);
-        return encoded === undefined ? Effect.void : write(encoded);
+        return encoded === undefined ? Effect.void : writer.write(encoded);
       });
 
       const livenessTimeout = Deferred.await(opened).pipe(
@@ -163,9 +169,9 @@ export const makeLivenessProtocol = (
             Effect.annotateLogs({ "rpc.liveness.idle_ms": idleMs }),
             // The close code must leave before the scope's release closes with 1000.
             Effect.andThen(
-              write(new Socket.CloseEvent(LIVENESS_CLOSE_CODE, LIVENESS_CLOSE_REASON)).pipe(
-                Effect.ignore,
-              ),
+              writer
+                .write(new Socket.CloseEvent(LIVENESS_CLOSE_CODE, LIVENESS_CLOSE_REASON))
+                .pipe(Effect.ignore),
             ),
             Effect.andThen(
               Effect.fail(
@@ -183,7 +189,7 @@ export const makeLivenessProtocol = (
 
       yield* Effect.suspend(() => {
         parser = serialization.makeUnsafe();
-        return socket.runRaw(handleMessage, { onOpen }).pipe(Effect.raceFirst(livenessTimeout));
+        return runRaw(socket, handleMessage, { onOpen }).pipe(Effect.raceFirst(livenessTimeout));
       }).pipe(
         Effect.flatMap(() =>
           Effect.fail(
@@ -220,10 +226,11 @@ export const makeLivenessProtocol = (
           if (request._tag === "Request") requestClientMap.set(request.id, clientId);
           const encoded = parser.encode(request);
           if (encoded === undefined) return Effect.void;
-          return Effect.orDie(write(encoded));
+          return Effect.orDie(writer.write(encoded));
         },
         supportsAck: true,
         supportsTransferables: false,
+        codecFor: serialization.codecFor,
       };
     }),
   );

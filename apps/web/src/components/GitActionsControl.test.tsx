@@ -12,7 +12,7 @@ import {
 } from "@bibcode/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import type { Dispatch, ReactElement, ReactNode, SetStateAction } from "react";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";

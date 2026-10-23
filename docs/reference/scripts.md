@@ -4,7 +4,7 @@ Run JavaScript/TypeScript workspace commands through Vite+ (`vp`). Run commands
 from the repository root unless noted otherwise.
 
 The declared development toolchain is Node.js 26.8.1, pnpm 11.25.0, Rust
-1.98.0, and Vite+ 0.3.0. The root workspace and application packages use
+1.98.0, and Vite+ 1.1.0. The root workspace and application packages use
 TypeScript 7.0.2. `apps/marketing` remains a TypeScript 6.0.3 compatibility
 island until Astro's checker supports TypeScript 7 through its public API.
 
@@ -117,7 +117,7 @@ install instruction when workspace dependencies are missing, and otherwise
 forwards the child exit code unchanged. Every package `test` script,
 `check:contracts`, and `test:coverage:ts` invoke Vitest through this launcher
 for the same reason, so `vp run test` stays correct wherever it runs. Vite+
-0.3.0 supplies the workspace's single Vitest 4.1.11 runtime; packages must not
+1.1.0 supplies the workspace's single Vitest 5.0.3 runtime; packages must not
 add or invoke a second local Vitest installation.
 
 ## Desktop Artifacts

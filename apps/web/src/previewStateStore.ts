@@ -12,7 +12,7 @@ import {
   type PreviewSessionSnapshot,
   type ScopedThreadRef,
 } from "@bibcode/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { canFrameGatewayPreviews } from "./components/preview/previewBridge";
 import { PREVIEW_RECENT_URL_LIMIT } from "./components/preview/previewConstants";

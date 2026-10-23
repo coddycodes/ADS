@@ -7,10 +7,13 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "TerminalHistoryError",
-          "operation": "truncate",
-          "threadId": "@m]",
-          "terminalId": ""
+          "_tag": "TerminalResizeError",
+          "threadId": "😀",
+          "terminalId": "toString",
+          "terminalPid": -2.082369595966288e-94,
+          "cols": 7,
+          "rows": 27,
+          "cause": "�"
         }
       }
     ]

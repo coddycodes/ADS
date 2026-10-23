@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "EnvironmentAuthorizationError",
-          "message": "hpa>jd93>m",
-          "requiredScope": "access:write"
+          "message": "__proto__",
+          "requiredScope": "orchestration:read"
         }
       }
     ]

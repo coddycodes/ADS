@@ -8,8 +8,9 @@
         "_tag": "Fail",
         "error": {
           "_tag": "WorktreeAdoptionError",
-          "reason": "command-conflict",
-          "message": "name"
+          "reason": "internal",
+          "message": "0&dEG",
+          "currentGeneration": 6
         }
       }
     ]

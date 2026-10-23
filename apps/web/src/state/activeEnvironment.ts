@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@bibcode/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 

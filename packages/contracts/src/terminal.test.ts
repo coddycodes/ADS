@@ -369,7 +369,8 @@ describe("TerminalLaunchCommand", () => {
       { nativeSessionId: "native-1" },
     ]) {
       expect(() =>
-        decodeSync(ProviderTerminalActivityLaunch, {
+        // The Rust server rejects unknown fields; Effect 4 parse options are per operation.
+        Schema.decodeUnknownSync(ProviderTerminalActivityLaunch, { onExcessProperty: "error" })({
           driverKind: "codex",
           providerInstanceId: "codex",
           ...extra,

@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "WorktreeOperationError",
-          "reason": "operation-capacity",
-          "message": "^hu[S4b"
+          "reason": "operation-shutting-down",
+          "message": "8r"
         }
       }
     ]

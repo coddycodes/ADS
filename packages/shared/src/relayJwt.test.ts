@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import { CompactSign, decodeProtectedHeader, type JWTPayload } from "jose";
 
 import {
@@ -170,14 +170,14 @@ describe("relayJwt", () => {
       const token = yield* signClaims(claims());
       const [, payload] = token.split(".");
       if (!payload) throw new Error("Expected compact relay JWT fixture.");
-      const wrongAlgorithmHeader = Encoding.encodeBase64Url(
+      const wrongAlgorithmHeader = Base64Url.encode(
         textEncoder.encode(stableStringify({ alg: "ES256", typ: TYP })),
       );
       const secondary = yield* getSecondaryKeyPair;
 
       for (const input of [
         { token: `${wrongAlgorithmHeader}.${payload}.signature` },
-        { token: token.replace(/[^.]+$/u, Encoding.encodeBase64Url(new Uint8Array(64))) },
+        { token: token.replace(/[^.]+$/u, Base64Url.encode(new Uint8Array(64))) },
         { token, publicKey: secondary.publicPem },
         { token, publicKey: "not-a-public-key" },
       ]) {
@@ -266,7 +266,7 @@ describe("relayJwt", () => {
       const token = yield* signClaims(claims());
       const [header, , signature] = token.split(".");
       if (!header || !signature) throw new Error("Expected compact relay JWT fixture.");
-      const malformedJson = Encoding.encodeBase64Url(textEncoder.encode("{"));
+      const malformedJson = Base64Url.encode(textEncoder.encode("{"));
 
       for (const malformedToken of [
         "one.two",

@@ -56,8 +56,8 @@ describe("repository toolchain contract", () => {
     expect(rootPackage.engines).toEqual({ node: "26.8.1" });
     expect(rootPackage.packageManager).toBe("pnpm@11.25.0");
     expect(workspace).toMatch(/^  "@types\/node": 26\.4\.1$/m);
-    expect(workspace).toMatch(/^  vite: npm:@voidzero-dev\/vite-plus-core@0\.3\.0$/m);
-    expect(workspace).toMatch(/^  vite-plus: 0\.3\.0$/m);
+    expect(workspace).toMatch(/^  vite: npm:@voidzero-dev\/vite-plus-core@1\.1\.0$/m);
+    expect(workspace).toMatch(/^  vite-plus: 1\.1\.0$/m);
     expect(workspaceConfiguration.minimumReleaseAgeExclude).toEqual([
       "geckodriver@6.1.1",
       "@cloudflare/workers-types@5.20260903.1",
@@ -71,11 +71,9 @@ describe("repository toolchain contract", () => {
       "edgedriver@6.3.0": false,
       "esbuild@0.25.12 || 0.28.1": true,
       "geckodriver@6.1.1": false,
-      "msgpackr-extract@3.0.4": true,
       "msw@2.15.0": false,
-      "sharp@0.34.5": true,
       "utf-8-validate@6.0.6": false,
-      "workerd@1.20260704.1": false,
+      "workerd@1.20260918.1": false,
     });
   });
 
@@ -89,7 +87,7 @@ describe("repository toolchain contract", () => {
     const catalog = workspace.catalog as Record<string, string>;
     const peerDependencyRules = workspace.peerDependencyRules as Record<string, unknown>;
 
-    expect(catalog["@effect/tsgo"]).toBe("0.40.0");
+    expect(catalog["@effect/tsgo"]).toBe("0.51.1");
     expect(catalog.typescript).toBe("7.0.2");
     expect(catalog).not.toHaveProperty("@typescript/native-preview");
     expect(rootDevDependencies).not.toHaveProperty("@typescript/native-preview");

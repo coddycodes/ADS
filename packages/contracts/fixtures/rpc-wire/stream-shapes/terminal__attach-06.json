@@ -3,26 +3,21 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "threadId": "__lookupG",
-      "terminalId": "Q};I4}[r{82X",
+      "threadId": "H%[ssygEf(",
+      "terminalId": "J@(ujL",
       "type": "restarted",
       "snapshot": {
-        "threadId": "callerZLocal",
-        "terminalId": "}M3h>M\"'h",
-        "cwd": "|BM3e\"&Li",
-        "worktreePath": "70v",
-        "status": "starting",
-        "pid": 18,
-        "history": "Y#h{*9r",
-        "exitCode": null,
-        "exitSignal": 14,
-        "label": "1~`YDE",
-        "updatedAt": "~~",
-        "size": {
-          "cols": 21,
-          "rows": 348,
-          "sizeClaim": null
-        },
+        "threadId": "G",
+        "terminalId": "\n",
+        "cwd": "4294967295",
+        "worktreePath": null,
+        "status": "exited",
+        "pid": null,
+        "history": "4294967295",
+        "exitCode": 88,
+        "exitSignal": null,
+        "label": "",
+        "updatedAt": "x#y^",
         "oscColorResponderActive": false,
         "firstAttachmentGrant": false
       }

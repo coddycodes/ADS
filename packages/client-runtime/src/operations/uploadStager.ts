@@ -15,7 +15,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64 from "effect/encoding/Base64";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
@@ -290,7 +290,7 @@ export const stageUpload = Effect.fn("Uploads.stage")(function* (
         const append = {
           uploadId: uploadId!,
           offset: start,
-          data: Encoding.encodeBase64(bytes),
+          data: Base64.encode(bytes),
           ...(end === totalBytes ? { sha256: bytesToHex(hash.clone().digest()) } : {}),
         };
         const carryingSession = session;

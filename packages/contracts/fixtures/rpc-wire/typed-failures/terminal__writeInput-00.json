@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "TerminalInputError",
-          "code": "closed",
-          "message": "\"RJ"
+          "code": "sequence",
+          "message": "zyZV]iSqK7"
         }
       }
     ]

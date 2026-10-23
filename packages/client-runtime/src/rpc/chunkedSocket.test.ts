@@ -3,7 +3,7 @@ import * as NodeZlib from "node:zlib";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as Socket from "effect/socket/Socket";
 
 import {
   CHUNKED_RPC_SUBPROTOCOL,
@@ -11,6 +11,7 @@ import {
   makeChunkedSocket,
   plainSocketProtocols,
 } from "./chunkedSocket.ts";
+import { makeRawSocket, runRaw } from "../e2ee/rawSocket.ts";
 
 const encoder = new TextEncoder();
 const record = (flag: number, text: string) => {
@@ -32,25 +33,26 @@ const compressedRecord = (text: string, declared?: number) => {
   return out;
 };
 
-/** A socket that delivers the given frames once run, then stays open. */
+/** A socket that opens, delivers the given frames, then stays open. */
 const scriptedSocket = (frames: ReadonlyArray<string | Uint8Array>): Socket.Socket =>
-  Socket.make({
-    runRaw: (handler) =>
+  makeRawSocket({
+    runRaw: (handler, options) =>
       Effect.gen(function* () {
+        if (options?.onOpen !== undefined) yield* options.onOpen;
         for (const frame of frames) {
           const result = handler(frame);
           if (Effect.isEffect(result)) yield* result;
         }
         return yield* Effect.never;
       }),
-    writer: Effect.succeed(() => Effect.void),
+    writer: Effect.succeed({ write: () => Effect.void, writeAll: () => Effect.void }),
   });
 
 const collect = (socket: Socket.Socket, count: number) =>
   Effect.gen(function* () {
     const received: Array<string | Uint8Array> = [];
     const fiber = yield* Effect.forkChild(
-      socket.runRaw((data) => {
+      runRaw(socket, (data) => {
         received.push(data);
       }),
     );
@@ -96,7 +98,7 @@ describe("makeChunkedSocket", () => {
         scriptedSocket([Uint8Array.of(0x07, 0x20)]),
         () => CHUNKED_RPC_SUBPROTOCOL,
       );
-      const error = yield* Effect.flip(socket.runRaw(() => undefined));
+      const error = yield* Effect.flip(runRaw(socket, () => undefined));
       expect(Socket.isSocketError(error)).toBe(true);
     }),
   );
@@ -118,7 +120,7 @@ describe("makeChunkedSocket", () => {
         scriptedSocket([compressedRecord("{}")]),
         () => CHUNKED_RPC_SUBPROTOCOL,
       );
-      const error = yield* Effect.flip(socket.runRaw(() => undefined));
+      const error = yield* Effect.flip(runRaw(socket, () => undefined));
       expect(Socket.isSocketError(error)).toBe(true);
     }),
   );
@@ -129,7 +131,7 @@ describe("makeChunkedSocket", () => {
         scriptedSocket([compressedRecord("{}", 65 * 1024 * 1024)]),
         () => DEFLATE_RPC_SUBPROTOCOL,
       );
-      const error = yield* Effect.flip(socket.runRaw(() => undefined));
+      const error = yield* Effect.flip(runRaw(socket, () => undefined));
       expect(Socket.isSocketError(error)).toBe(true);
     }),
   );

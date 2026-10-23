@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "PreviewGatewayError",
-          "reason": "relay-not-provisioned",
-          "message": "ica"
+          "reason": "https-unsupported",
+          "message": "\t"
         }
       }
     ]

@@ -8,7 +8,7 @@ import {
 } from "@bibcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -65,7 +65,7 @@ export function accumulateTerminalMetadataEvents<E, R>(
   events: Stream.Stream<TerminalMetadataStreamEvent, E, R>,
 ) {
   return events.pipe(
-    Stream.scan([] as ReadonlyArray<TerminalSummary>, applyTerminalMetadataStreamEvent),
+    Stream.scan((): ReadonlyArray<TerminalSummary> => [], applyTerminalMetadataStreamEvent),
     Stream.drop(1),
   );
 }

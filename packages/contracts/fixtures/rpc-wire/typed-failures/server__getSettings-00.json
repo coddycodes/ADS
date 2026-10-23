@@ -8,10 +8,9 @@
         "_tag": "Fail",
         "error": {
           "_tag": "ServerSettingsError",
-          "settingsPath": "",
-          "operation": "write-secret",
-          "environmentVariable": "",
-          "cause": 2.5e-323
+          "settingsPath": "\n",
+          "operation": "remove-stale-secret",
+          "cause": -4.4e-323
         }
       }
     ]

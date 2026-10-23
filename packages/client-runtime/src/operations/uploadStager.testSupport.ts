@@ -1,6 +1,6 @@
 import type { UploadAppendInput } from "@bibcode/contracts";
 import * as Effect from "effect/Effect";
-import { RpcClientError } from "effect/unstable/rpc";
+import { RpcClientError } from "effect/rpc";
 import { vi } from "vite-plus/test";
 
 import type { UploadPort, UploadSession } from "./uploadStager.ts";

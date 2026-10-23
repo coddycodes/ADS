@@ -13,7 +13,7 @@ import {
   type VcsWorktreeDescriptor,
 } from "@bibcode/contracts";
 import { createModelSelection } from "@bibcode/shared/model";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { act, cloneElement, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

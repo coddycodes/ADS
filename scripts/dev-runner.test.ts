@@ -13,7 +13,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   checkPortAvailabilityOnHosts,
@@ -801,8 +801,8 @@ it("does not stringify unset repository configuration", () => {
 
 it("runs a dry dev CLI without a configured server port", () => {
   const env = { ...process.env };
-  delete env.BIBCODE_PORT;
-  delete env.PORT;
+  Reflect.deleteProperty(env, "BIBCODE_PORT");
+  Reflect.deleteProperty(env, "PORT");
 
   const result = NodeChildProcess.spawnSync(
     process.execPath,

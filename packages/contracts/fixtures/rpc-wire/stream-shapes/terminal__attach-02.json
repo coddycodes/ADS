@@ -3,8 +3,8 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "threadId": "GakT",
-      "terminalId": "~|( %7a@",
+      "threadId": "\u0000",
+      "terminalId": "\u0000",
       "type": "exited",
       "exitCode": null,
       "exitSignal": null

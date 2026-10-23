@@ -7,9 +7,11 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "PreviewSessionLookupError",
-          "threadId": "Xd|Q",
-          "tabId": ""
+          "_tag": "PreviewInvalidUrlError",
+          "inputLength": 1.7976931348623137e308,
+          "reason": "empty",
+          "protocol": "%TT\"i",
+          "cause": "i\\a4-(5"
         }
       }
     ]

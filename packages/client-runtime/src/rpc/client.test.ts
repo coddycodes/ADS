@@ -19,8 +19,8 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
-import * as Headers from "effect/unstable/http/Headers";
-import { RpcClient, RpcClientError } from "effect/unstable/rpc";
+import * as Headers from "effect/http/Headers";
+import { RpcClient, RpcClientError } from "effect/rpc";
 
 import {
   AVAILABLE_CONNECTION_STATE,

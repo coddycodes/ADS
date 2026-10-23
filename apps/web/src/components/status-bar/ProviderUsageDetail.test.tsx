@@ -7,7 +7,7 @@ import type {
 import type { AtomCommandResult } from "@bibcode/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

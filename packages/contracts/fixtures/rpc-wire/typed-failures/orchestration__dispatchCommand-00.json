@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "OrchestrationDispatchCommandError",
-          "message": "i_tl-[{vBN<",
-          "cause": false
+          "message": "__proto__",
+          "cause": null
         }
       }
     ]

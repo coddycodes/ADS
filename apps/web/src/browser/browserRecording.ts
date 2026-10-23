@@ -4,7 +4,7 @@ import type {
 } from "@bibcode/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { previewBridge } from "~/components/preview/previewBridge";
 import { appAtomRegistry } from "~/rpc/atomRegistry";

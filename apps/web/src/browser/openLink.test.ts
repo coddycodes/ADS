@@ -1,5 +1,5 @@
 import { EnvironmentId, ThreadId } from "@bibcode/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const resolvePreviewTarget = vi.fn();

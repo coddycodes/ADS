@@ -1,7 +1,7 @@
 import { scopeThreadRef } from "@bibcode/client-runtime/environment";
 import { EnvironmentId, ThreadId, type VcsStatusResult } from "@bibcode/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import type { Dispatch, ReactElement, SetStateAction } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";

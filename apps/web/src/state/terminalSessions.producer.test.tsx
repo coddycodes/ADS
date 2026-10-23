@@ -13,7 +13,7 @@
 import { EMPTY_TERMINAL_ATTACH_SNAPSHOT } from "@bibcode/client-runtime/state/terminal";
 import { EnvironmentId, ThreadId, type TerminalAttachInput } from "@bibcode/contracts";
 import { RegistryContext } from "@effect/atom-react";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -32,7 +32,7 @@ vi.mock("./terminal", async () => {
   const Deferred = await import("effect/Deferred");
   const Effect = await import("effect/Effect");
   const Stream = await import("effect/Stream");
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   const producerFor = (terminalId: string) => {
     const existing = harness.producers.get(terminalId);
     if (existing !== undefined) return existing;

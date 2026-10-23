@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { TestClock } from "effect/testing";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import {
   DEFAULT_HTTP_READY_PROBE_TIMEOUT_MS,

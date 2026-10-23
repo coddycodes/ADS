@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "EnvironmentAuthorizationError",
-          "message": "va",
-          "requiredScope": "access:write"
+          "message": "\n",
+          "requiredScope": "terminal:operate"
         }
       }
     ]

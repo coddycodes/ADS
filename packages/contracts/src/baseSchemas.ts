@@ -5,7 +5,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 export const TrimmedString = Schema.String.pipe(
   Schema.decodeTo(
     Schema.String,
-    SchemaTransformation.transformOrFail({
+    SchemaTransformation.transformEffect({
       decode: (value) => Effect.succeed(value.trim()),
       encode: (value) => Effect.succeed(value.trim()),
     }),
@@ -24,7 +24,9 @@ export type IsoDateTime = typeof IsoDateTime.Type;
  * Construct a branded identifier. Enforces non-empty trimmed strings
  */
 const makeEntityId = <Brand extends string>(brand: Brand) => {
-  return TrimmedNonEmptyString.pipe(Schema.brand(brand));
+  // Schema.brand verifies a single literal brand key, which a generic parameter
+  // cannot prove; every caller passes one string literal.
+  return TrimmedNonEmptyString.pipe(Schema.brand<Brand>(brand as never));
 };
 
 export const ThreadId = makeEntityId("ThreadId");

@@ -9,7 +9,7 @@ const h = vi.hoisted(() => ({
   reads: 0,
 }));
 vi.mock("../../state/vcs", async () => {
-  const { AsyncResult: Result, Atom: Atoms } = await import("effect/unstable/reactivity");
+  const { AsyncResult: Result, Atom: Atoms } = await import("effect/reactivity");
   const family = Atoms.family((cwd: string) => {
     const summary = h.summaries[cwd];
     return Atoms.make(summary === undefined ? Result.initial(true) : Result.success(summary));

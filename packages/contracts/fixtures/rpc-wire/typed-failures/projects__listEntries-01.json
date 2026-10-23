@@ -9,10 +9,10 @@
         "error": {
           "_tag": "WorkspaceUnavailableError",
           "reason": "workspace-unavailable",
-          "message": "ind__defi",
-          "threadId": "Jha",
-          "path": "u",
-          "availability": "missing-registered"
+          "message": "",
+          "threadId": "",
+          "path": "__proto__",
+          "availability": "removing"
         }
       }
     ]

@@ -7,8 +7,9 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "UpdateMaintenanceActiveError",
-          "message": "KgQ{''t0"
+          "_tag": "EnvironmentAuthorizationError",
+          "message": "",
+          "requiredScope": "review:write"
         }
       }
     ]

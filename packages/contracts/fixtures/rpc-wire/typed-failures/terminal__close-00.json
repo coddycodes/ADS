@@ -7,8 +7,9 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "TerminalCwdNotDirectoryError",
-          "cwd": "[S#?N@"
+          "_tag": "TerminalSessionLookupError",
+          "threadId": "toString",
+          "terminalId": "7BrZYZ"
         }
       }
     ]

@@ -1,8 +1,8 @@
 import { EnvironmentId } from "@bibcode/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
-import { RpcClientError } from "effect/unstable/rpc";
-import * as Socket from "effect/unstable/socket/Socket";
+import { AsyncResult } from "effect/reactivity";
+import { RpcClientError } from "effect/rpc";
+import * as Socket from "effect/socket/Socket";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const harness = vi.hoisted(() => ({
@@ -26,7 +26,7 @@ vi.mock("react", async (importOriginal) => {
 
 vi.mock("@effect/atom-react", async () => {
   // Real atoms (the hook's own placeholder) read through a real registry.
-  const { AtomRegistry } = await import("effect/unstable/reactivity");
+  const { AtomRegistry } = await import("effect/reactivity");
   const registry = AtomRegistry.make();
   return {
     useAtomValue: (atom: never) => {

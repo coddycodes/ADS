@@ -5,23 +5,20 @@
     {
       "type": "snapshot",
       "snapshot": {
-        "threadId": "}gx! &}!^",
-        "terminalId": "%",
-        "cwd": "apply$toL",
-        "worktreePath": "&;@-4",
-        "status": "running",
-        "pid": 638409909,
-        "history": "call",
-        "exitCode": 966774323,
+        "threadId": "__proto__",
+        "terminalId": "prototype",
+        "cwd": "q",
+        "worktreePath": "",
+        "status": "starting",
+        "pid": 97,
+        "history": "4294967295",
+        "exitCode": -1,
         "exitSignal": null,
-        "consoleTheme": "light",
-        "label": "\"f",
-        "updatedAt": "G",
-        "sequence": 2147483622,
-        "oscColorResponderActive": false,
-        "firstAttachmentGrant": false
-      },
-      "resync": false
+        "label": "0",
+        "updatedAt": "�",
+        "oscColorResponderActive": true,
+        "firstAttachmentGrant": true
+      }
     }
   ]
 }

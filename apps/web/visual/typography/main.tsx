@@ -3,7 +3,7 @@ import "@fontsource/jetbrains-mono/400.css";
 import "@fontsource/jetbrains-mono/500.css";
 import "./gallery.css";
 import { RegistryContext } from "@effect/atom-react";
-import { AtomRegistry } from "effect/unstable/reactivity";
+import { AtomRegistry } from "effect/reactivity";
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { applyStoredTheme, writeThemePreference } from "../../src/hooks/useTheme";

@@ -8,41 +8,11 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitCommandError",
-          "operation": "nameapp",
-          "command": "!$\"",
-          "cwd": "0qyR%}",
-          "stderrLength": 32526466809856,
-          "outputLength": -0.000002480495595591492,
-          "detail": "!",
-          "cause": {
-            "sac": [],
-            "JIztu": {
-              "FUm*6dx9+#": false,
-              "p]'fB}Hqa": null,
-              "2oU+nF": 2.762351247618085e-151,
-              "": {
-                "-E`S$": -3.344812152350577e-138,
-                ";M$F[1": 1.6785800453234004e-43,
-                "0M|>3;8": 3043396291885925,
-                "i%mh? ": null,
-                "*%QY1*U^B%": "YM%qIxAx",
-                ",7b": "-:7R",
-                "j(R;E-z=o*": 5896612968321521,
-                "<,NA.s": "idG1",
-                "M4V2c\"*.&": "_+@",
-                "u3QT": 5.2908477573592104e85
-              },
-              "FwQh}5-t": -8.103401604455352e292
-            },
-            "yca": {
-              "$bW^SB]!": "p%AxY^",
-              "7Q+n.d": 90795528607817,
-              "(XkqsO%* ": "Cxj)N",
-              "iZ>&": "(+",
-              "+Q,kBr": "bYy@",
-              ".''zNj": -5.326146092428909e214
-            }
-          }
+          "operation": "h=.vO*%2/?",
+          "command": "Mn^4.]K7}",
+          "cwd": "f.b:{6;7@\"",
+          "stdoutLength": -2.562057141982498e34,
+          "detail": ""
         }
       }
     ]

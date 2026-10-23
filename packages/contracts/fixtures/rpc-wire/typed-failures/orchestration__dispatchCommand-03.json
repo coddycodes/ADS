@@ -9,8 +9,8 @@
         "error": {
           "_tag": "WorkspaceIdentityError",
           "reason": "workspace-identity-unavailable",
-          "message": "Z<z!!2Ux\"&$$",
-          "path": "^E90ape"
+          "message": "\u0000",
+          "path": ""
         }
       }
     ]

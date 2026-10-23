@@ -3,9 +3,8 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "threadId": "'",
-      "terminalId": "? ",
-      "sequence": 2,
+      "threadId": "B",
+      "terminalId": "QV",
       "type": "output",
       "data": ""
     }

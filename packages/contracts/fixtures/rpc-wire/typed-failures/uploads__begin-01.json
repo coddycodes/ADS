@@ -8,7 +8,7 @@
         "_tag": "Fail",
         "error": {
           "_tag": "UpdateMaintenanceActiveError",
-          "message": "6"
+          "message": " "
         }
       }
     ]

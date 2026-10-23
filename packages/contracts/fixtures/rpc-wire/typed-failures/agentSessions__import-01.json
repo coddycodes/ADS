@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "EnvironmentAuthorizationError",
-          "message": "`C~M(N~ZU",
-          "requiredScope": "relay:read"
+          "message": "3<\"NS=Wb%6",
+          "requiredScope": "orchestration:read"
         }
       }
     ]

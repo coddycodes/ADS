@@ -8,7 +8,7 @@ import type {
 import { useNavigate } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { RefreshCwIcon } from "lucide-react";
 import {
   useCallback,

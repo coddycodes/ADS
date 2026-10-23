@@ -8,13 +8,13 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitManagerOperationError",
-          "operation": "{0n}",
-          "code": "bind",
-          "message": "I^Ux tr+u",
+          "operation": "uW",
+          "code": "",
+          "message": "M",
           "blocked": {
-            "operation": "ha",
-            "code": "dirty-working-tree",
-            "message": "<#'"
+            "operation": "",
+            "code": "no-upstream",
+            "message": "UrQFNz#"
           }
         }
       }

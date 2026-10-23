@@ -12,10 +12,11 @@ import * as FiberSet from "effect/FiberSet";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as Socket from "effect/socket/Socket";
 import { vi } from "vite-plus/test";
 
 import { RecordAssembler, splitIntoRecords } from "./frame.ts";
+import { makeRawSocket, runRaw, runString } from "./rawSocket.ts";
 import { createNkResponder, derivePublicKey, type NkTransport } from "./noise.ts";
 import { e2eeFailureOf, E2eeProtocolError, makeE2eeSocket } from "./socket.ts";
 
@@ -119,22 +120,26 @@ const makeScriptedInnerSocket = (
       }),
     );
 
-  return Socket.make({
+  const write = (chunk: Uint8Array | string | Socket.CloseEvent) =>
+    Effect.suspend(() => {
+      if (typeof chunk === "string" || chunk instanceof Uint8Array) {
+        const bytes = typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk;
+        return Effect.andThen(
+          beforeWrite?.(bytes) ?? Effect.void,
+          Effect.sync(() => onFrame(bytes, emit, close)),
+        );
+      } else {
+        close();
+        return Effect.void;
+      }
+    });
+
+  return makeRawSocket({
     runRaw,
-    writer: Effect.succeed((chunk: Uint8Array | string | Socket.CloseEvent) =>
-      Effect.suspend(() => {
-        if (typeof chunk === "string" || chunk instanceof Uint8Array) {
-          const bytes = typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk;
-          return Effect.andThen(
-            beforeWrite?.(bytes) ?? Effect.void,
-            Effect.sync(() => onFrame(bytes, emit, close)),
-          );
-        } else {
-          close();
-          return Effect.void;
-        }
-      }),
-    ),
+    writer: Effect.succeed({
+      write,
+      writeAll: (chunks) => Effect.forEach(chunks, write, { discard: true }),
+    }),
   });
 };
 
@@ -249,7 +254,7 @@ describe("makeE2eeSocket", () => {
       });
       const opened = yield* Deferred.make<void>();
       const fiber = yield* Effect.forkChild(
-        socket.runRaw(() => undefined, {
+        runRaw(socket, () => undefined, {
           onOpen: Deferred.succeed(opened, undefined).pipe(Effect.asVoid),
         }),
       );
@@ -273,7 +278,8 @@ describe("makeE2eeSocket", () => {
       const received: Array<string> = [];
       const opened = yield* Deferred.make<void>();
       const fiber = yield* Effect.forkChild(
-        socket.runRaw(
+        runRaw(
+          socket,
           (data) => {
             received.push(typeof data === "string" ? data : new TextDecoder().decode(data));
           },
@@ -281,7 +287,7 @@ describe("makeE2eeSocket", () => {
         ),
       );
       yield* Deferred.await(opened);
-      const write = yield* Scope.provide(socket.writer, yield* Scope.make());
+      const { write } = yield* Scope.provide(socket.writer, yield* Scope.make());
       yield* write('{"hello":true}');
       for (let attempt = 0; attempt < 100 && received.length < 2; attempt += 1) {
         yield* Effect.yieldNow;
@@ -302,7 +308,8 @@ describe("makeE2eeSocket", () => {
       const both = yield* Deferred.make<void>();
       const opened = yield* Deferred.make<void>();
       const fiber = yield* Effect.forkChild(
-        socket.runRaw(
+        runRaw(
+          socket,
           (data) => {
             received.push(typeof data === "string" ? data : new TextDecoder().decode(data));
             if (received.length === 2) Deferred.doneUnsafe(both, Effect.void);
@@ -311,7 +318,7 @@ describe("makeE2eeSocket", () => {
         ),
       );
       yield* Deferred.await(opened);
-      const write = yield* Scope.provide(socket.writer, yield* Scope.make());
+      const { write } = yield* Scope.provide(socket.writer, yield* Scope.make());
       yield* write('{"hello":true}');
       yield* Deferred.await(both);
       expect(received.map((text) => decodeJson(text))).toEqual([
@@ -335,7 +342,8 @@ describe("makeE2eeSocket", () => {
       const both = yield* Deferred.make<void>();
       const opened = yield* Deferred.make<void>();
       const fiber = yield* Effect.forkChild(
-        socket.runRaw(
+        runRaw(
+          socket,
           (data) => {
             const text = typeof data === "string" ? data : new TextDecoder().decode(data);
             const name =
@@ -349,7 +357,7 @@ describe("makeE2eeSocket", () => {
         ),
       );
       yield* Deferred.await(opened);
-      const write = yield* Scope.provide(socket.writer, yield* Scope.make());
+      const { write } = yield* Scope.provide(socket.writer, yield* Scope.make());
       yield* write('{"hello":true}');
       yield* Deferred.await(both);
       expect(started).toEqual(["compressed", "plain"]);
@@ -370,7 +378,8 @@ describe("makeE2eeSocket", () => {
       const plainHandled = yield* Deferred.make<void>();
       const opened = yield* Deferred.make<void>();
       const fiber = yield* Effect.forkChild(
-        socket.runRaw(
+        runRaw(
+          socket,
           (data) => {
             const text = typeof data === "string" ? data : new TextDecoder().decode(data);
             return (decodeJson(text) as { after?: boolean }).after === true
@@ -381,7 +390,7 @@ describe("makeE2eeSocket", () => {
         ),
       );
       yield* Deferred.await(opened);
-      const write = yield* Scope.provide(socket.writer, yield* Scope.make());
+      const { write } = yield* Scope.provide(socket.writer, yield* Scope.make());
       yield* write('{"hello":true}');
       yield* Deferred.await(plainHandled);
       yield* Fiber.interrupt(fiber);
@@ -399,7 +408,8 @@ describe("makeE2eeSocket", () => {
       const opened = yield* Deferred.make<void>();
       const fiber = yield* Effect.forkChild(
         Effect.exit(
-          socket.runRaw(
+          runRaw(
+            socket,
             (data) => {
               received.push(
                 decodeJson(typeof data === "string" ? data : new TextDecoder().decode(data)),
@@ -410,7 +420,7 @@ describe("makeE2eeSocket", () => {
         ),
       );
       yield* Deferred.await(opened);
-      const write = yield* Scope.provide(socket.writer, yield* Scope.make());
+      const { write } = yield* Scope.provide(socket.writer, yield* Scope.make());
       yield* write('{"hello":true}');
       yield* Fiber.join(fiber);
       // Whatever arrived before the close arrived in order.
@@ -433,7 +443,8 @@ describe("makeE2eeSocket", () => {
       const opened = yield* Deferred.make<void>();
       const fiber = yield* Effect.forkChild(
         Effect.exit(
-          socket.runRaw(
+          runRaw(
+            socket,
             (data) => {
               received.push(typeof data === "string" ? data : new TextDecoder().decode(data));
             },
@@ -442,7 +453,7 @@ describe("makeE2eeSocket", () => {
         ),
       );
       yield* Deferred.await(opened);
-      const write = yield* Scope.provide(socket.writer, yield* Scope.make());
+      const { write } = yield* Scope.provide(socket.writer, yield* Scope.make());
       yield* write('{"hello":true}');
       const exit = yield* Fiber.join(fiber);
       expect(findE2eeCause(exit)?.reason).toBe("protocol");
@@ -460,13 +471,13 @@ describe("makeE2eeSocket", () => {
       const opened = yield* Deferred.make<void>();
       const fiber = yield* Effect.forkChild(
         Effect.exit(
-          socket.runRaw(() => undefined, {
+          runRaw(socket, () => undefined, {
             onOpen: Deferred.succeed(opened, undefined).pipe(Effect.asVoid),
           }),
         ),
       );
       yield* Deferred.await(opened);
-      const write = yield* Scope.provide(socket.writer, yield* Scope.make());
+      const { write } = yield* Scope.provide(socket.writer, yield* Scope.make());
       yield* write('{"hello":true}');
       const exit = yield* Fiber.join(fiber);
       expect(findE2eeCause(exit)?.reason).toBe("protocol");
@@ -479,20 +490,26 @@ describe("makeE2eeSocket", () => {
       // "blob": asynchronous conversion would reorder ciphertext against the
       // counter-based Noise nonce, so the channel must fail with a named
       // invariant instead of an intermittent decrypt error.
-      const inner = Socket.make({
-        runRaw: (handler) =>
-          Effect.suspend(() => {
+      const inner = makeRawSocket({
+        runRaw: (handler, options) =>
+          Effect.gen(function* () {
+            if (options?.onOpen !== undefined) yield* options.onOpen;
             const result = handler(new Blob(["x"]) as unknown as Uint8Array);
-            return result === undefined ? Effect.never : Effect.andThen(result, Effect.never);
+            if (result !== undefined) yield* result;
+            return yield* Effect.never;
           }),
-        writer: Effect.succeed(() => Effect.void),
+        writer: Effect.succeed({ write: () => Effect.void, writeAll: () => Effect.void }),
       });
+      // The socket opens first, as a real one does, so message A needs a valid
+      // host key before the Blob frame arrives.
       const socket = makeE2eeSocket(inner, {
-        hostKey: Buffer.from(new Uint8Array(32)).toString("base64url"),
+        hostKey: Buffer.from(derivePublicKey(crypto.getRandomValues(new Uint8Array(32)))).toString(
+          "base64url",
+        ),
         auth: { kind: "bearer", credential: "credential" },
       });
 
-      const exit = yield* socket.runRaw(() => undefined).pipe(Effect.exit);
+      const exit = yield* runRaw(socket, () => undefined).pipe(Effect.exit);
       const cause = findE2eeCause(exit);
       expect(cause?.reason).toBe("protocol");
       expect(cause?.message).toContain('binaryType "arraybuffer"');
@@ -515,12 +532,13 @@ describe("makeE2eeSocket", () => {
       const fiber = yield* Effect.forkChild(
         Effect.scoped(
           Effect.gen(function* () {
-            const write = yield* socket.writer;
+            const { write } = yield* socket.writer;
             const queuedWrite = yield* Effect.forkChild(write(encodeJson({ hello: true })), {
               startImmediately: true,
             });
             yield* Effect.forkChild(
-              socket.runString(
+              runString(
+                socket,
                 (text) => {
                   delivered.push(text);
                 },
@@ -559,7 +577,7 @@ describe("makeE2eeSocket", () => {
       });
       const opened = yield* Deferred.make<void>();
       const fiber = yield* Effect.forkChild(
-        socket.runString(() => {}, {
+        runString(socket, () => {}, {
           onOpen: Deferred.succeed(opened, undefined).pipe(Effect.asVoid),
         }),
       );
@@ -594,9 +612,10 @@ describe("makeE2eeSocket", () => {
       const fiber = yield* Effect.forkChild(
         Effect.scoped(
           Effect.gen(function* () {
-            const write = yield* socket.writer;
+            const { write } = yield* socket.writer;
             yield* Effect.forkChild(
-              socket.runString(
+              runString(
+                socket,
                 (text) => {
                   delivered.push(text);
                 },
@@ -636,7 +655,7 @@ describe("makeE2eeSocket", () => {
         ),
         auth: { kind: "pairing", token: "t" },
       });
-      const exit = yield* socket.runString(() => {}).pipe(Effect.exit);
+      const exit = yield* runString(socket, () => {}).pipe(Effect.exit);
       expect(findE2eeCause(exit)?.reason).toBe("host-identity-mismatch");
     }),
   );
@@ -655,11 +674,11 @@ describe("makeE2eeSocket", () => {
           ).toString("base64url"),
           auth: { kind: "pairing", token: "t" },
         });
-        const write = yield* socket.writer;
+        const { write } = yield* socket.writer;
         const writeFiber = yield* Effect.forkChild(write("queued").pipe(Effect.exit), {
           startImmediately: true,
         });
-        const runExit = yield* socket.runString(() => {}).pipe(Effect.exit);
+        const runExit = yield* runString(socket, () => {}).pipe(Effect.exit);
         const writeExit = yield* Fiber.join(writeFiber);
         expect(findE2eeCause(runExit)?.reason).toBe("host-identity-mismatch");
         expect(findE2eeCause(writeExit)?.reason).toBe("host-identity-mismatch");
@@ -678,7 +697,7 @@ describe("makeE2eeSocket", () => {
         hostKey: Buffer.from(pinnedKey).toString("base64url"),
         auth: { kind: "pairing", token: "t" },
       });
-      const exit = yield* socket.runString(() => {}).pipe(Effect.exit);
+      const exit = yield* runString(socket, () => {}).pipe(Effect.exit);
       expect(findE2eeCause(exit)?.reason).toBe("host-identity-mismatch");
     }),
   );
@@ -690,7 +709,7 @@ describe("makeE2eeSocket", () => {
         hostKey: Buffer.from(hostKey).toString("base64url"),
         auth: { kind: "pairing", token: "t" },
       });
-      const exit = yield* socket.runString(() => {}).pipe(Effect.exit);
+      const exit = yield* runString(socket, () => {}).pipe(Effect.exit);
       expect(findE2eeCause(exit)?.reason).toBe("protocol");
     }),
   );
@@ -715,7 +734,7 @@ describe("makeE2eeSocket", () => {
         hostKey: Buffer.from(hostKey).toString("base64url"),
         auth: { kind: "bearer", credential: "stored-1" },
       });
-      const exit = yield* socket.runString(() => {}).pipe(Effect.exit);
+      const exit = yield* runString(socket, () => {}).pipe(Effect.exit);
       expect(exit._tag).toBe("Failure");
     }),
   );
@@ -727,7 +746,7 @@ describe("makeE2eeSocket", () => {
         hostKey: Buffer.from(hostKey).toString("base64url"),
         auth: { kind: "pairing", token: "expired" },
       });
-      const exit = yield* socket.runString(() => {}).pipe(Effect.exit);
+      const exit = yield* runString(socket, () => {}).pipe(Effect.exit);
       expect(findE2eeCause(exit)?.reason).toBe("unauthorized");
     }),
   );
@@ -744,7 +763,7 @@ describe("makeE2eeSocket", () => {
           handshakeTimeoutMs: 100,
         },
       );
-      const exit = yield* socket.runString(() => {}).pipe(Effect.exit);
+      const exit = yield* runString(socket, () => {}).pipe(Effect.exit);
       expect(findE2eeCause(exit)?.reason).toBe("timeout");
     }),
   );
@@ -762,9 +781,10 @@ describe("makeE2eeSocket", () => {
       const fiber = yield* Effect.forkChild(
         Effect.scoped(
           Effect.gen(function* () {
-            const write = yield* socket.writer;
+            const { write } = yield* socket.writer;
             yield* Effect.forkChild(
-              socket.runString(
+              runString(
+                socket,
                 (text) => {
                   delivered.push(text);
                 },
@@ -804,13 +824,13 @@ describe("makeE2eeSocket", () => {
         });
         const opened = yield* Deferred.make<void>();
         const runFiber = yield* Effect.forkChild(
-          socket.runString(() => {}, {
+          runString(socket, () => {}, {
             onOpen: Deferred.succeed(opened, undefined).pipe(Effect.asVoid),
           }),
         );
         yield* Deferred.await(opened);
 
-        const write = yield* socket.writer;
+        const { write } = yield* socket.writer;
         encryptProbe.calls = 0;
         blockNextWrite = true;
         const firstMessage = encodeJson({ blob: "x".repeat(200_000) });

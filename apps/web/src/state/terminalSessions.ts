@@ -11,7 +11,7 @@ import {
 } from "@bibcode/client-runtime/state/terminal";
 import { ThreadId, type EnvironmentId, type TerminalAttachInput } from "@bibcode/contracts";
 import { useAtomRefresh, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useMemo, useState } from "react";
 
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "./query";

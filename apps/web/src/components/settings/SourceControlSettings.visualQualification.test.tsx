@@ -11,7 +11,7 @@ import {
 import { EnvironmentId, type SourceControlDiscoveryResult } from "@bibcode/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { compile } from "tailwindcss";
@@ -37,7 +37,7 @@ vi.mock("../../state/environments", () => ({
   usePrimaryEnvironment: () => ({ environmentId: "owned-source-control" }),
 }));
 vi.mock("../../state/server", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   const { DEFAULT_SERVER_SETTINGS } = await import("@bibcode/contracts");
   return {
     primaryServerSettingsAtom: Atom.make(DEFAULT_SERVER_SETTINGS),

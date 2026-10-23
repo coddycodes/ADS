@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import {
   type AdvertisedEndpoint,
   type AuthClientSession,

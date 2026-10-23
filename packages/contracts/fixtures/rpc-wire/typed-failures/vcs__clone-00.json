@@ -8,13 +8,10 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitCommandError",
-          "operation": "bind",
-          "command": "1",
-          "cwd": "a[`M",
-          "stdoutLength": -889788825600,
-          "stderrLength": -15828463,
-          "detail": "G G",
-          "cause": null
+          "operation": "goK|h,rL4T",
+          "command": "h",
+          "cwd": "\n",
+          "detail": ""
         }
       }
     ]
