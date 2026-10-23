@@ -35,6 +35,11 @@ BiBCode v0.11.0 moves the desktop to Tauri 2.11.6, which closes a High-severity 
 - Keyboard focus no longer jumps into the composer when a chat finishes loading its provider's skills or agents, so tabbing through a newly opened chat stays where you are. Tabbing back into the composer puts the caret where you left it.
 - An open folder, file, save or confirmation dialog no longer holds up the desktop app. Each open dialog used to tie up some of the app's background work. On a machine with few cores, two of them could stop the window from loading again after a reload. A confirmation box also froze the whole window while it was open.
 
+### Files
+
+- An edited file no longer shows its original text after you switch the right panel to another tab and back. The edit was saved, but the editor could show the old text.
+- Ticking a task in the rendered Markdown view no longer discards source edits that were not saved yet. The rendered view now shows those edits too.
+
 ### Resource usage
 
 - On macOS, Resource Manager and the status bar show each process's physical footprint, the figure Activity Monitor shows, instead of its resident size, which overstated memory about 3.5 times. Linux and Windows still show resident memory. (#159)
