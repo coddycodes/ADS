@@ -553,17 +553,16 @@ describe("dependency upgrade ledger validation", () => {
       expect(dependency.notes, key).toContain("packaged desktop UI smoke");
     }
 
-    const blockedWdioEntries = [
-      ["rust:workspace:tauri-plugin-wdio", "=1.2.0", "1.3.0"],
-      ["rust:workspace:tauri-plugin-wdio-webdriver", "=1.2.0", "1.3.0"],
-    ] as const;
-    for (const [key, current, target] of blockedWdioEntries) {
+    for (const key of [
+      "rust:workspace:tauri-plugin-wdio",
+      "rust:workspace:tauri-plugin-wdio-webdriver",
+    ] as const) {
       const dependency = entry(key);
-      expect(dependency.current, key).toBe(current);
-      expect(dependency.target, key).toBe(target);
-      expect(dependency.status, key).toBe("blocked");
-      expect(dependency.notes, key).toContain("afterSession teardown ordering");
-      expect(dependency.notes, key).toContain("aligns @wdio/globals/expect-webdriverio");
+      expect(dependency.current, key).toBe("=1.5.0");
+      expect(dependency.target, key).toBe("1.5.0");
+      expect(dependency.status, key).toBe("green");
+      expect(dependency.notes, key).toContain("Tauri 2.12");
+      expect(dependency.notes, key).toContain("packaged desktop UI smoke");
     }
 
     const retainedEntries = [
@@ -598,16 +597,6 @@ describe("dependency upgrade ledger validation", () => {
         releaseCondition: "WebKit and Linux system-library support as one platform project",
       },
       {
-        key: "rust:workspace:webview2-com",
-        target: "0.38",
-        releaseCondition: "pre-1.0 Windows FFI migration",
-      },
-      {
-        key: "rust:workspace:windows",
-        target: "0.61",
-        releaseCondition: "Tauri/WebView compatibility and native Windows validation",
-      },
-      {
         key: "rust:workspace:windows-sys",
         target: "0.61.2",
         releaseCondition: "Tauri/WebView compatibility and native Windows validation",
@@ -622,12 +611,6 @@ describe("dependency upgrade ledger validation", () => {
         key: "rust:workspace:minisign-verify",
         target: "0.2.5",
         releaseCondition: "trust boundary is already current and exact",
-      },
-      {
-        key: "rust:patch:tao",
-        target: "c704261c519c58cfdd0bc2d58ba24e06a0b71c92",
-        releaseCondition:
-          "Tauri consumes an upstream equivalent to the Windows reentrant keyboard/IME fix",
       },
     ];
     for (const retained of retainedEntries) {
@@ -870,7 +853,7 @@ describe("dependency upgrade ledger validation", () => {
       javascriptLedger: 82,
       rustRegistry: 138,
       rustPath: 3,
-      rustGit: 1,
+      rustGit: 0,
       actions: 9,
       toolchains: 9,
     });
@@ -1001,11 +984,14 @@ describe("dependency upgrade ledger validation", () => {
       "rust:workspace:base64",
       "rust:workspace:portable-pty",
       "rust:patch:portable-pty",
-      "rust:patch:tao",
     ]) {
       const boundary = ledger.dependencies.find((dependency) => dependency.key === key);
       expect(boundary?.status, key).toBe("blocked");
       expect(boundary?.notes?.trim().length, key).toBeGreaterThan(0);
     }
+    // Tauri 2.12 requires tao ^0.37, which already carries the Windows IME fix.
+    expect(
+      ledger.dependencies.find((dependency) => dependency.key === "rust:patch:tao")?.status,
+    ).toBe("removed");
   });
 });
