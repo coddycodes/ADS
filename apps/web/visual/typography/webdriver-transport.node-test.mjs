@@ -63,9 +63,8 @@ NodeTest.test(
         logLevel: "silent",
         capabilities: { browserName: "MiniBrowser", "wdio:enforceWebDriverClassic": true },
       };
-      // WebdriverIO 9.29 failed this request with UND_ERR_INVALID_ARG unless the
-      // explicit content-length header was dropped; 9.31.9 no longer does. Keep
-      // the normalizer on the owned transport path that capture.mjs uses.
+      await NodeAssert.rejects(remote(base), /UND_ERR_INVALID_ARG/);
+      NodeAssert.equal(calls.length, 0);
       const browser = await remote({ ...base, transformRequest: normalizeWebDriverRequest });
       NodeAssert.equal(browser.sessionId, "owned-typography-session");
       await browser.deleteSession();

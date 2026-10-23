@@ -60,7 +60,7 @@
     "@types/react-dom": "~19.2.6",
     "@vercel/config": "^0.7.0",
     "@vitejs/plugin-react": "^6.1.1",
-    "@wdio/tauri-plugin": "1.5.0",
+    "@wdio/tauri-plugin": "1.2.0",
     "babel-plugin-react-compiler": "1.0.0",
     "fake-indexeddb": "6.2.5",
     "fontkitten": "1.0.3",

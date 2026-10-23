@@ -163,7 +163,7 @@ describe("repository toolchain contract", () => {
     const scripts = desktopPackage.scripts as Record<string, string>;
     const devDependencies = desktopPackage.devDependencies as Record<string, string>;
 
-    expect(devDependencies["@tauri-apps/cli"]).toBe("2.12.1");
+    expect(devDependencies["@tauri-apps/cli"]).toBe("2.11.4");
     expect(scripts.dev).toContain("pnpm exec tauri dev");
     expect(scripts.build).toBe("node ../../scripts/run-tauri-build.mjs");
     expect(Object.values(scripts).join("\n")).not.toContain("pnpm dlx");

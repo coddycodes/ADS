@@ -2,11 +2,11 @@
 
 ## [v0.11.0] - 2026-10-22
 
-BiBCode v0.11.0 moves the desktop to Tauri 2.12, which closes a High-severity IPC advisory, moves the toolchain and every dependency line to current releases (Effect 4.0 stable, Vite+ 1.1, Vitest 5, Node 26.12.1, Rust 1.98.1), and fixes twelve bugs: Claude chats that stopped at a full context window or after `/compact`, Claude follow-up turns cut off by idle suspension, a webview that grew with every streamed tool input, Codex errors that were never classified, Push on a branch that tracks a differently named remote branch, dialogs that lost their input on an outside click, and memory figures on macOS that were about 3.5 times too high. This release includes the changes since v0.10.2.
+BiBCode v0.11.0 moves the desktop to Tauri 2.11.6, which closes a High-severity IPC advisory, moves the toolchain and every dependency line to current releases (Effect 4.0 stable, Vite+ 1.1, Vitest 5, Node 26.12.1, Rust 1.98.1), and fixes twelve bugs: Claude chats that stopped at a full context window or after `/compact`, Claude follow-up turns cut off by idle suspension, a webview that grew with every streamed tool input, Codex errors that were never classified, Push on a branch that tracks a differently named remote branch, dialogs that lost their input on an outside click, and memory figures on macOS that were about 3.5 times too high. This release includes the changes since v0.10.2.
 
 ### Security
 
-- The desktop moves to Tauri 2.12. Tauri 2.11.5 and earlier let any WebView read IPC channel responses meant for another WebView (GHSA-w28w-mhc8-qvjv, High).
+- The desktop moves to Tauri 2.11.6. Tauri 2.11.5 and earlier let any WebView read IPC channel responses meant for another WebView (GHSA-w28w-mhc8-qvjv, High).
 - The TLS stack used for outbound HTTPS is updated (rustls 0.23.46, rustls-webpki 0.103.16, webpki-root-certs 1.0.10), which drops a distrusted root and fixes the rustls advisories RUSTSEC-2026-0285, -0346, -0348 and -0349. The server's ZIP handling moves to zip 9 for RUSTSEC-2026-0367, -0368 and -0369.
 - Development and CI run on Node.js 26.12.1, a security release, and the CI setup action moves to setup-vp 1.21.2, which fixes a command injection. `pnpm audit` now reports no critical advisories (it reported 3) and 55 in total (it reported 163); the rest are pinned by upstream packages.
 
@@ -40,7 +40,7 @@ BiBCode v0.11.0 moves the desktop to Tauri 2.12, which closes a High-severity IP
 
 ### Platform and toolchain
 
-- Desktop: Tauri 2.12.1 with matching plugins and WebView2 bindings. The tao patch for Windows keyboard and IME deadlocks is no longer needed, because the fix ships in tao 0.37.
+- Desktop: Tauri 2.11.6. Tauri 2.12 waits for its own release: with it, the Windows desktop stopped responding when the window reloaded during a streaming turn.
 - Development: Effect 4.0.2 stable, Vite+ 1.1.0 with Vitest 5, TypeScript 7.0.2, pnpm 11.28.5, Rust 1.98.1, and alchemy 2.0.0-beta.81 for the relay.
 
 ### Known limitations
