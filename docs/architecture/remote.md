@@ -1204,7 +1204,7 @@ in `apps/server/src/preview/gateway/`.
   the call returns `unavailable`.
 
 - **Per-target listeners.** Each `(thread, upstream address and port, bound
-address)` gets its own listener on an ephemeral port, so two clients that
+  address)` gets its own listener on an ephemeral port, so two clients that
   reached the server on different addresses each get a listener they can
   reach. The separate port gives each target its own origin. Ports stay unique
   across addresses, because capabilities and gateway sessions name a listener
@@ -1276,7 +1276,7 @@ address)` gets its own listener on an ephemeral port, so two clients that
   whose body starts before any `<head>`, or whose pre-head script uses HTML's
   escaped script state, streams untouched)
   (dropping `content-length`), and asks the upstream for `accept-encoding:
-identity` on page loads (document or iframe Fetch Metadata, or, on plain-HTTP
+  identity` on page loads (document or iframe Fetch Metadata, or, on plain-HTTP
   origins that send none, an `Accept` naming `text/html`).
 - **Forwarding.** `Host` becomes `localhost:<port>`. The gateway strips
   BiBCode's session cookie, every `bibcode-gw-*` cookie, `authorization`,

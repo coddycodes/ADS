@@ -407,11 +407,11 @@ git commit -m "feat(contracts): embed remote update support in the environment d
 - Consumes: nothing new.
 - Produces (exact names later tasks use):
   - `bibcode_server::remote_update::{RemoteUpdateInstallMode, RemoteUpdateSupportReason,
-RemoteUpdateSupport, RemoteUpdateState, RemoteUpdateSnapshot, HostUpdaterStatus,
-HostUpdaterFuture, RemoteUpdateDelegate, RemoteUpdateService,
-remote_update_manual_required_error}`
+    RemoteUpdateSupport, RemoteUpdateState, RemoteUpdateSnapshot, HostUpdaterStatus,
+    HostUpdaterFuture, RemoteUpdateDelegate, RemoteUpdateService,
+    remote_update_manual_required_error}`
   - `RemoteUpdateService::new(server_version: String, support: RemoteUpdateSupport,
-delegate: Option<Arc<dyn RemoteUpdateDelegate>>) -> RemoteUpdateService` with
+    delegate: Option<Arc<dyn RemoteUpdateDelegate>>) -> RemoteUpdateService` with
     `pub async fn status(&self) -> RemoteUpdateSnapshot`,
     `pub async fn check(&self) -> RemoteUpdateSnapshot`,
     `pub async fn install(&self) -> Result<RemoteUpdateSnapshot, serde_json::Value>`.
@@ -1387,7 +1387,7 @@ git commit -m "feat(rpc): ship updater.status/check/install with scopes and pari
   `BackendSupervisor` from `apps/desktop/src-tauri/src/backend.rs`.
 - Produces:
   - `ServerRuntime::start_with_desktop_integration(config, ui_process_observer,
-update_delegate: Arc<dyn RemoteUpdateDelegate>) -> Result<ServerHandle, ServerError>`
+    update_delegate: Arc<dyn RemoteUpdateDelegate>) -> Result<ServerHandle, ServerError>`
   - `DesktopRemoteUpdateDelegate::<R>::new(app: AppHandle<R>) -> Arc<DesktopRemoteUpdateDelegate<R>>`
   - `derive_remote_update_support(updater_enabled: bool) -> RemoteUpdateSupport`
   - `map_desktop_update_state(state: &serde_json::Value) -> HostUpdaterStatus`
@@ -1893,14 +1893,14 @@ git commit -m "feat(desktop): route remote updater.install through the host upda
 - Produces (imported as `@bibcode/client-runtime/state/remoteUpdates`):
   - `MAX_CONCURRENT_REMOTE_UPDATE_CHECKS = 2`
   - `fanOutRemoteUpdateChecks<A, E>(environmentIds, check, maxConcurrent?) =>
-Promise<ReadonlyArray<RemoteUpdateFanOutResult<A, E>>>` where `check` returns
+    Promise<ReadonlyArray<RemoteUpdateFanOutResult<A, E>>>` where `check` returns
     `Promise<AtomCommandResult<A, E>>` (the **settled** result a `useAtomCommand`
     dispatcher resolves with — typed failures are VALUES with `_tag: "Failure"`, they
     do not reject; see `apps/web/src/state/use-atom-command.ts` and
     `runAtomCommand` in `packages/client-runtime/src/state/runtime.ts`) and
     `RemoteUpdateFanOutResult<A, E> = { environmentId, outcome:
-{ kind: "success"; result: AtomCommandResult<A, E> } |
-{ kind: "failure"; result: AtomCommandResult<A, E> | null; error: unknown } }` —
+    { kind: "success"; result: AtomCommandResult<A, E> } |
+    { kind: "failure"; result: AtomCommandResult<A, E> | null; error: unknown } }` —
     classification inspects `result._tag`, mirroring the Phase 4 plan's
     `result._tag === "Failure"` handling.
   - `isRemoteUpdateAvailable(snapshot: RemoteUpdateSnapshot | null): boolean` —
@@ -2319,7 +2319,12 @@ Create `apps/web/src/components/settings/ServerUpdateBadge.tsx`:
 import type { RemoteUpdateSnapshot } from "@bibcode/contracts";
 
 export type ServerUpdateBadgeVariant =
-  "up-to-date" | "update-available" | "busy" | "manual" | "error" | "unknown";
+  | "up-to-date"
+  | "update-available"
+  | "busy"
+  | "manual"
+  | "error"
+  | "unknown";
 
 export function serverUpdateBadgeVariant(
   snapshot: RemoteUpdateSnapshot | null,

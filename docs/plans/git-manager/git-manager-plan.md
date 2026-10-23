@@ -19,8 +19,8 @@ re-derives git policy. All traffic uses the existing typed WebSocket RPC; no
 
 - **Rust / Axum / Tokio** — `apps/server`: git execution, RPC handlers,
   broadcaster, guards. Build `cargo build -p bibcode-server`; test `cargo test
--p bibcode-server`; lint `cargo clippy -p bibcode-server --all-targets -- -D
-warnings`; format `cargo fmt --all --check`.
+  -p bibcode-server`; lint `cargo clippy -p bibcode-server --all-targets -- -D
+  warnings`; format `cargo fmt --all --check`.
 - **TypeScript / Effect Schema** — `packages/contracts`: schema-only wire
   contracts, no runtime logic.
 - **React 19 / Vite+ / TanStack Router / zustand / Effect Atom** — `apps/web`.
@@ -271,7 +271,7 @@ relative to each other and must not be trusted without re-reading the files.
   project. Idempotent: it navigates to the project's Git Manager, focusing the
   existing view rather than creating a second one.
 - **View state.** A zustand store, persisted, keyed by `(environmentId,
-projectId)` — never bare `projectId`, since ids collide across environments.
+  projectId)` — never bare `projectId`, since ids collide across environments.
   It holds an LRU of the two most recently used projects' view state and the
   commit-message draft, and evicts the third. It holds _state only_; no panel
   is kept mounted and no subscription is held for a project not being viewed.

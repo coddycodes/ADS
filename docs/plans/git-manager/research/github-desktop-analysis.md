@@ -120,7 +120,7 @@ popup stack (`app/src/ui/app.tsx:4027-4059, 3329-3342`). Repository view
 (`app/src/ui/repository.tsx:645-653`) is a flex row:
 
 - **Sidebar** (resizable, default 250px, min 220 — `app-store.ts:455-475,
-2713-2726`): a `TabBar` with `Changes` (badge = changed-file count) and
+  2713-2726`): a `TabBar` with `Changes` (badge = changed-file count) and
   `History` tabs, then either `ChangesSidebar` or `CompareSidebar`.
   Ctrl+Tab toggles tabs (`repository.tsx:687-715`); Cmd/Ctrl+1/2 select them
   via the menu (`app/src/main-process/menu/build-default-menu.ts:185-191`).
@@ -300,7 +300,7 @@ staging model, applied at commit time:
 4. Partial discard = reverse patch applied to the worktree:
    `git apply --unidiff-zero --whitespace=nowarn -`
    (`apply.ts discardChangesFromSelection`); full discard = trash + `git
-checkout HEAD -- <paths>` (`app/src/lib/git/checkout.ts:210-219`).
+   checkout HEAD -- <paths>` (`app/src/lib/git/checkout.ts:210-219`).
 
 Merge-conflict commit: `git commit --no-edit --cleanup=strip` after staging +
 manual resolutions (`commit.ts createMergeCommit`).
@@ -335,8 +335,8 @@ after "Show diff anyway"); `MaxCharactersPerLine = 5000` (any longer line →
 ### 3.5 History and branches
 
 - Commits: `git log [range] --date=raw [--max-count=N] [--skip=N] -z
---format=<delimited: %H %h %s %b "%an <%ae> %ad" "%cn <%ce> %cd" %P
-%(trailers:unfold,only) %D> --no-show-signature --no-color --`
+  --format=<delimited: %H %h %s %b "%an <%ae> %ad" "%cn <%ce> %cd" %P
+  %(trailers:unfold,only) %D> --no-show-signature --no-color --`
   (`log.ts:120-205`), NUL-delimited custom parser
   (`app/src/lib/git/git-delimiter-parser.ts`); tags from `%D`; summary/body
   capped at 100KB; exit 128 tolerated (unborn HEAD ⇒ empty history).
@@ -368,12 +368,12 @@ after "Show diff anyway"); `MaxCharactersPerLine = 5000` (any longer line →
   (`fetch.ts:39-89`); progress parsers for fetch/pull/push/checkout live in
   `app/src/lib/progress/` and read `--progress` stderr.
 - Pull: `-c rebase.backend=merge git pull [--ff if pull.ff unset]
---recurse-submodules [--progress] [--no-verify] <remote>` (`pull.ts:29-130`).
+  --recurse-submodules [--progress] [--no-verify] <remote>` (`pull.ts:29-130`).
 - Push: `git push <remote> <local>[:<remoteBranch>] [tag refspecs…]
-[--set-upstream when no upstream] [--force-with-lease] [--no-verify]
-[--progress]` (`push.ts:48-119`). Never bare `--force`.
+  [--set-upstream when no upstream] [--force-with-lease] [--no-verify]
+  [--progress]` (`push.ts:48-119`). Never bare `--force`.
 - Unpushed-tag detection: `git push <remote> <branch> --follow-tags --dry-run
---no-verify --porcelain` parsed (`app/src/lib/git/tag.ts:86-131`).
+  --no-verify --porcelain` parsed (`app/src/lib/git/tag.ts:86-131`).
 - Default remote = `origin` else first remote
   (`app/src/lib/stores/helpers/find-default-remote.ts`); current remote =
   the tip branch's upstream remote else default. Default branch resolved from
@@ -386,7 +386,7 @@ after "Show diff anyway"); `MaxCharactersPerLine = 5000` (any longer line →
   AlreadyUpToDate (stdout == `Already up to date.\n`) / Failed; squash then
   `git commit --no-edit` (`merge.ts:30-93`).
 - Mergeability preview: `git merge-tree --write-tree --name-only --no-messages
--z <oursTip> <theirsTip>` (exit 0/1); conflicted count = NUL count − 1;
+  -z <oursTip> <theirsTip>` (exit 0/1); conflicted count = NUL count − 1;
   unrelated histories ⇒ Invalid (`app/src/lib/git/merge-tree.ts`).
 - Rebase: `-c rebase.backend=merge git rebase <base> <target>`; progress from
   stderr lines `Rebasing (n/m)` (`rebase.ts:279-316`); continue = stage files +
@@ -397,7 +397,7 @@ after "Show diff anyway"); `MaxCharactersPerLine = 5000` (any longer line →
   OutstandingFilesNotStaged (`rebase.ts:410-428`).
 - Interactive rebase (squash/reorder/amend-older): write a todo file, run
   `git -c sequence.editor=cat "<todo>" > rebase [--no-verify] -i
-<lastRetainedCommitRef | --root>` with `GIT_EDITOR=:`
+  <lastRetainedCommitRef | --root>` with `GIT_EDITOR=:`
   (`rebase.ts:570-627`). Squash todo built by replaying log order with
   pick/squash lines and the message injected via `GIT_EDITOR=cat "<msg>" >`
   (`app/src/lib/git/squash.ts`); reorder todo likewise
@@ -439,7 +439,7 @@ branch: `git commit-tree` + `git stash store` + drop old (:95-118).
 - Gitignore: read/write the root `.gitignore` directly (line endings per
   `core.autocrlf`), append escaped patterns (`gitignore.ts`).
 - Co-author trailers: `git interpret-trailers --parse` / `--trailer
-Co-Authored-By=…` (`app/src/lib/git/interpret-trailers.ts`).
+  Co-Authored-By=…` (`app/src/lib/git/interpret-trailers.ts`).
 
 ---
 

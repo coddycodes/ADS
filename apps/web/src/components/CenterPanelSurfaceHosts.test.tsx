@@ -321,13 +321,13 @@ describe("CenterPanelSurfaceHosts", () => {
 
   it("publishes initial targets before a deferred animation frame", async () => {
     const registryRef = { current: null } as RefObject<CenterPanelBodyTargetRegistry | null>;
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-      function (this: HTMLElement) {
-        return this.dataset.target === "root"
-          ? rect({ left: 100, top: 200, width: 800, height: 600 })
-          : rect({ left: 140, top: 260, width: 320, height: 360 });
-      },
-    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.dataset.target === "root"
+        ? rect({ left: 100, top: 200, width: 800, height: 600 })
+        : rect({ left: 140, top: 260, width: 320, height: 360 });
+    });
     await act(async () => root.render(<BodyTargetHarness ref={registryRef} />));
     expect(registryRef.current?.rects.get("group-left")).toEqual({
       left: 40,
@@ -340,13 +340,13 @@ describe("CenterPanelSurfaceHosts", () => {
   it("refreshes geometry on panel activation without waiting for paint", async () => {
     const registryRef = { current: null } as RefObject<CenterPanelBodyTargetRegistry | null>;
     let left = 140;
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-      function (this: HTMLElement) {
-        return this.dataset.target === "root"
-          ? rect({ left: 100, top: 200, width: 800, height: 600 })
-          : rect({ left, top: 260, width: 320, height: 360 });
-      },
-    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.dataset.target === "root"
+        ? rect({ left: 100, top: 200, width: 800, height: 600 })
+        : rect({ left, top: 260, width: 320, height: 360 });
+    });
     await act(async () => root.render(<BodyTargetHarness ref={registryRef} />));
     await act(async () => frameCallbacks.shift()?.(0));
     left = 180;
@@ -359,13 +359,13 @@ describe("CenterPanelSurfaceHosts", () => {
   it("refreshes a replaced body target with unchanged activation state", async () => {
     const registryRef = { current: null } as RefObject<CenterPanelBodyTargetRegistry | null>;
     let left = 140;
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-      function (this: HTMLElement) {
-        return this.dataset.target === "root"
-          ? rect({ left: 100, top: 200, width: 800, height: 600 })
-          : rect({ left, top: 260, width: 320, height: 360 });
-      },
-    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.dataset.target === "root"
+        ? rect({ left: 100, top: 200, width: 800, height: 600 })
+        : rect({ left, top: 260, width: 320, height: 360 });
+    });
     await act(async () => root.render(<BodyTargetHarness ref={registryRef} />));
     left = 200;
     await act(async () =>
@@ -392,13 +392,13 @@ describe("CenterPanelSurfaceHosts", () => {
 
   it("publishes root-relative body rectangles and reads the current rectangle synchronously", async () => {
     const registryRef = { current: null } as RefObject<CenterPanelBodyTargetRegistry | null>;
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-      function (this: HTMLElement) {
-        return this.dataset.target === "root"
-          ? rect({ left: 100, top: 200, width: 800, height: 600 })
-          : rect({ left: 140, top: 260, width: 320, height: 360 });
-      },
-    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.dataset.target === "root"
+        ? rect({ left: 100, top: 200, width: 800, height: 600 })
+        : rect({ left: 140, top: 260, width: 320, height: 360 });
+    });
 
     await act(async () => root.render(<BodyTargetHarness ref={registryRef} />));
     await act(async () => frameCallbacks.shift()?.(0));
@@ -419,13 +419,13 @@ describe("CenterPanelSurfaceHosts", () => {
 
   it("uses one observer and batches repeated resize notifications into one frame", async () => {
     const registryRef = { current: null } as RefObject<CenterPanelBodyTargetRegistry | null>;
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-      function (this: HTMLElement) {
-        return this.dataset.target === "root"
-          ? rect({ left: 100, top: 200, width: 800, height: 600 })
-          : rect({ left: 140, top: 260, width: 320, height: 360 });
-      },
-    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.dataset.target === "root"
+        ? rect({ left: 100, top: 200, width: 800, height: 600 })
+        : rect({ left: 140, top: 260, width: 320, height: 360 });
+    });
 
     await act(async () => root.render(<BodyTargetHarness ref={registryRef} />));
     expect(resizeObservers).toHaveLength(1);

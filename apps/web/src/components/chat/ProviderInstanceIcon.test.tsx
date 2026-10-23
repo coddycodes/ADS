@@ -24,11 +24,11 @@ describe("providerInstanceInitials", () => {
   });
 
   it("defensively handles an empty word in the initials mapper", () => {
-    const filter = vi
-      .spyOn(Array.prototype, "filter")
-      .mockImplementation(function passthrough(this: unknown[]) {
-        return this;
-      });
+    const filter = vi.spyOn(Array.prototype, "filter").mockImplementation(function passthrough(
+      this: unknown[],
+    ) {
+      return this;
+    });
     const initials = providerInstanceInitials(" one");
     filter.mockRestore();
     expect(initials).toBe("O");

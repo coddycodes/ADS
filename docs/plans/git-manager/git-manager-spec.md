@@ -244,7 +244,7 @@ Two classes:
   failure toast is a worse experience than a disabled button; a race that
   slips through produces a structured error carrying the same message. These
   refusals are never bypassed with `--ignore-other-worktrees`, `worktree add
--f`, or `update-ref`.
+  -f`, or `update-ref`.
 - **app-policy** — git permits the operation and only a pre-computed guard can
   block it.
 

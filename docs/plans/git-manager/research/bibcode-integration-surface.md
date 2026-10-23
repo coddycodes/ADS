@@ -503,7 +503,7 @@ Constraints on the git manager panel:
    `environmentId` and never call a local git or resolve paths client-side.
 2. Git RPCs are `cwd`-addressed (`VcsStatusInput{cwd}`,
    `packages/contracts/src/git.ts:109-112`): resolve `projectId →
-EnvironmentProject.workspaceRoot` via `useProject(ref)`
+   EnvironmentProject.workspaceRoot` via `useProject(ref)`
    (`apps/web/src/state/entities.ts:122-125`); the path is a remote-host
    absolute path — treat it as opaque.
 3. Any new panel store must key by `(environmentId, projectId)` (use
@@ -597,7 +597,7 @@ EnvironmentProject.workspaceRoot` via `useProject(ref)`
    per-thread (one `cwd`); a project-scoped manager must pick a default `cwd`
    (primary `workspaceRoot`?) and decide whether/how to switch among worktrees.
 2. **What does "one per project" key on** — physical `(environmentId,
-projectId)` or the sidebar's logical project (which can span environments)?
+   projectId)` or the sidebar's logical project (which can span environments)?
    The sidebar button will need member disambiguation either way
    (`runProjectMemberAction`).
 3. **Where does the panel live in the thread-keyed center layout?** Option (a):

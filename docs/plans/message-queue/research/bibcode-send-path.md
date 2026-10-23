@@ -19,8 +19,8 @@ Worktree `main-3` at `4d57551f`. Line numbers drift; re-verify before editing.
    the `onSend` prop. Shift+Tab toggles interaction mode (`:1856-1860`).
    IME guard in `ComposerPromptEditor.tsx:1095`.
 2. `ChatView.tsx:4742-4752` `onSend` guard: `!activeThread || isSendBusy ||
-isConnecting || activeEnvironmentUnavailable || workspaceUnavailable !==
-null || providerBinding.conflict !== null || sendInFlightRef.current`.
+   isConnecting || activeEnvironmentUnavailable || workspaceUnavailable !==
+   null || providerBinding.conflict !== null || sendInFlightRef.current`.
    **`phase === "running"` is not in the guard.**
 3. Payload built from `composerRef.current.getSendContext()`
    (`ChatComposer.tsx:483-496`, `:2162-2175`) → `deriveComposerSendState`

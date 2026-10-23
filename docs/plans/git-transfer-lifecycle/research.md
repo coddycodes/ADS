@@ -130,7 +130,7 @@ Sources and method:
    `RpcSessionContext::connection_closed()` (`session.rs:305-315`), which teardown cancels
    _before_ the request tokens (`session.rs:791`).
 3. **`run_unary` drops the handler.** `select! { biased; cancelled => { send Interrupt exit;
-return } result = handler(...) }` (`session.rs:1100-1110`). The handler future is dropped
+   return } result = handler(...) }` (`session.rs:1100-1110`). The handler future is dropped
    without being polled again.
 4. **Clone is inline in the handler.** `vcs.clone` and `sourceControl.cloneRepository` are
    routed through the inline `_ =>` branch into `handle_admitted_unary`
@@ -213,10 +213,10 @@ about one ping interval. The user's reported environment — a remote Fedora ser
      the message is `RpcClientError.message`, i.e. `"<reason tag>: <reason message>"`
      (`RpcClientError.ts:54-56`). Examples: `SocketCloseError: 1006`, or
      `SocketOpenError: timeout waiting for "open"` after a ping timeout (`Socket.ts:270-275,
-302-307`). Neither tells the user what happened or what to do (`UI.md` actionable-error
+     302-307`). Neither tells the user what happened or what to do (`UI.md` actionable-error
      rule).
    - "The clone stopped before it finished. Try again." (`useAddProjectWorkflow.ts:159-164,
-575-578`), when the interrupt wins. The comment at `useAddProjectWorkflow.ts:160-161`
+     575-578`), when the interrupt wins. The comment at `useAddProjectWorkflow.ts:160-161`
      anticipates only this path.
 6. **Other dialog behavior.** The host list comes from the environment catalog, not the
    connection state (`useAddProjectWorkflow.ts:718-760`), so a reconnect does not trigger the
@@ -305,7 +305,7 @@ boundary" (`rpc-and-orchestration.md:1951-1952`).
 
 - **Remote-runtime clone survives disconnect by omission.** The WebSocket dispatch registers
   a per-socket abort signal (`src/main/runtime/runtime-rpc/runtime-rpc-websocket-dispatch.ts:101,
-151`; `runtime-rpc-binary-routing.ts:33-41`) and passes it into every unary handler context
+  151`; `runtime-rpc-binary-routing.ts:33-41`) and passes it into every unary handler context
   (`src/main/runtime/rpc/rpc-streaming-dispatcher.ts:105-109`). But the `repo.clone` handler
   never uses `context.signal` (`src/main/runtime/rpc/methods/repo.ts:128-136`). The clone
   controller takes no signal and spawns `git clone --progress` without an abort path or

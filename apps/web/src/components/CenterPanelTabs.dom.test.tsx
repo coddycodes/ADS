@@ -86,18 +86,18 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", FakeResizeObserver);
   vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => undefined);
   vi.spyOn(HTMLElement.prototype, "scrollBy").mockImplementation(() => undefined);
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
-    function (this: HTMLElement) {
-      return this.hasAttribute("data-center-panel-overflow-boundary") ? 320 : 300;
-    },
-  );
-  vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
-    function (this: HTMLElement) {
-      return this.getAttribute("data-slot") === "scroll-area-viewport"
-        ? tabContentWidth
-        : this.clientWidth;
-    },
-  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.hasAttribute("data-center-panel-overflow-boundary") ? 320 : 300;
+  });
+  vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.getAttribute("data-slot") === "scroll-area-viewport"
+      ? tabContentWidth
+      : this.clientWidth;
+  });
 });
 
 afterEach(() => {

@@ -1704,7 +1704,7 @@ it.
   it saw its parent end without a dump. For `crash.unclean-exit` and
   `shutdown.incomplete`, the next start adds that note, the monitor's `goneAt`,
   and systemd's own lines about the unit ending (`journalctl --user -u <unit>
--t systemd`, within 5 s); a recorded cause also splits the fingerprint.
+  -t systemd`, within 5 s); a recorded cause also splits the fingerprint.
 
 - **OS crash records** are read read-only within 5 s. Linux runs
   `coredumpctl --json=short list` and `journalctl -a -o json` for the coredump

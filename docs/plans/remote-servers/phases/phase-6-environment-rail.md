@@ -88,7 +88,7 @@ and 4; Phase 7 depends on this phase).
     `readActiveEnvironmentId` — `apps/web/src/state/entities.ts` (~line 59).
   - `useEnvironments`/`useEnvironment`/`usePrimaryEnvironmentId` —
     `apps/web/src/state/environments.ts`; presentation shape `{ entry, connection, serverConfig,
-environmentId, label, displayUrl, relayManaged }` with
+    environmentId, label, displayUrl, relayManaged }` with
     `connection.phase: "available" | "offline" | "connecting" | "reconnecting" | "connected" | "error"`
     (`packages/client-runtime/src/connection/presentation.ts`).
   - `DESKTOP_LOCAL_CONNECTION_ID_PREFIX` (`"local:"`) and `isDesktopLocalConnectionTarget`

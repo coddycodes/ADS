@@ -125,7 +125,7 @@ Interfaces this phase **produces** (consumed by Phase 3's add-flow and Phase 6/7
    dynamically picked (`portpicker` fallback in `backend.rs`), so a port-scoped rule
    would silently go stale. The rule allows inbound TCP to the desktop executable
    (`netsh advfirewall firewall add rule name="BiBCode Remote Access" dir=in
-action=allow program=<exe> protocol=TCP profile=domain,private enable=yes`), added on
+   action=allow program=<exe> protocol=TCP profile=domain,private enable=yes`), added on
    widen, deleted on revert. Command construction is unit-tested on all platforms;
    execution is `#[cfg(windows)]` and validated per `docs/testing/windows-desktop.md`.
 6. **Narrow-only reconciler at app level.** A headless desktop-mode hook mounted in
@@ -395,7 +395,7 @@ fn is_valid_pairing_reach(value: &str) -> bool {
 ```
 
 - `issue_pairing_for_subject` gains two trailing parameters `reach: Option<String>,
-off_host: Option<bool>`; the four existing internal callers (`issue_pairing`,
+  off_host: Option<bool>`; the four existing internal callers (`issue_pairing`,
   `issue_pairing_with_proof`, `issue_cloud_pairing`, `issue_startup_pairing`) pass
   `None, None`. Add:
 
@@ -1886,7 +1886,8 @@ export interface GenerateShareOfferDeps {
   readonly hasDesktopBridge: boolean;
   readonly exposureState: DesktopServerExposureState | null;
   readonly applyServerExposure:
-    ((desired: "local-only" | "network-accessible") => Promise<DesktopServerExposureState>) | null;
+    | ((desired: "local-only" | "network-accessible") => Promise<DesktopServerExposureState>)
+    | null;
   readonly mintOffer: (input: {
     name: string;
     endpoint: string;
@@ -2381,7 +2382,7 @@ UI contract (all copy pinned here; spec §3/§4.8):
     you trust"** with the sub-copy "This link and the page it loads travel over plain
     HTTP. Prefer the pairing code for BiBCode clients." (spec §3 case 3), and a
     `QRCodeSvg value={offer.deepLink} size={128} level="M" marginSize={2}
-title="Pairing code — scan with a BiBCode client"`. For `this-computer` and
+    title="Pairing code — scan with a BiBCode client"`. For `this-computer` and
     loopback-classified custom offers, add "Loopback offer: reachable only through a
     tunnel into this machine."
 - **Exposure** section:
@@ -2693,7 +2694,7 @@ git commit -m "feat(web): revert server exposure when the last off-host grant is
       packaged-UI flow section: generate an "Another device" offer from Settings → Remote
       Servers → Share this host; verify (a) the server restarts and the offer renders
       URL + deep link + QR, (b) `netsh advfirewall firewall show rule name="BiBCode Remote
-Access"` lists the program-scoped rule, (c) revoking the offer/paired client reverts
+  Access"` lists the program-scoped rule, (c) revoking the offer/paired client reverts
       exposure and (d) the rule is removed. Keep execution-specific evidence out of the
       runbook (it belongs in reports from the template).
 - [x] **Step 4: Review the remaining runbooks.** Linux/macOS packaged flows gain the
