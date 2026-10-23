@@ -2482,6 +2482,17 @@ See [RPC and orchestration](./rpc-and-orchestration.md) and
 
 - React does not import Rust or native-host implementation details.
 - Privileged desktop behavior crosses `DesktopBridge` commands and events.
+- A desktop command never parks a thread of Tauri's async runtime, or the main
+  thread, while it waits for the user. It awaits a native dialog through the
+  dialog plugin's callback (`await_dialog` in `apps/desktop/src-tauri/src/bridge.rs`),
+  never its `blocking_*` calls: inside an async command those hold a runtime
+  worker until the dialog closes, and in a sync command they freeze the whole
+  UI. Tauri answers its own protocol requests from the same runtime, the
+  scripts of a reloaded page included, so on Windows two folder dialogs left
+  open on a four-core runner kept the next page from ever loading: WebView2
+  raised `ContentLoading` but never `NavigationCompleted` (#177). A desktop
+  test scans the crate's source and fails on a `blocking_pick_*`,
+  `blocking_save_file` or `blocking_show` call outside a comment.
 - Whole-catalog renderer updates use fresh reads and exact compare-and-set.
   Compare-only transitions validate the same fresh raw revision without a
   document write. In browser and unprotected desktop modes each transition owns

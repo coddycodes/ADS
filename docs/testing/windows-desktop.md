@@ -751,6 +751,17 @@ minimum-size, and relevant Windows DPI states. Verify:
 Record unavailable authenticated provider scenarios instead of substituting a
 different executable or exposing credentials.
 
+If a packaged run stops at "Tauri did not report the replacement desktop
+document finishing its load", and screenshots then time out, look for a native
+dialog left open before suspecting WebView2. Search `app-server.log` and the
+WDIO logs for `desktop_bridge_pick_folder`, `pick_files`, `save_diagnostic_logs`
+or `confirm` calls that never answered: on #177 an unmocked folder picker opened
+a real dialog twice, and while dialogs blocked Tauri's async runtime the next
+page's own scripts were never served. Dialog commands now await the dialog
+without holding a runtime thread (see [Boundaries and invariants](../architecture/overview.md#boundaries-and-invariants)),
+so an open dialog only fails the step that waited for it. A real dialog on a
+runner still means a mock was missed; fix the mock rather than the timeout.
+
 ## Profiler crash smoke
 
 Run the shared [Profiler crash smoke](./cross-platform-validation.md#profiler-crash-smoke)
