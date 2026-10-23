@@ -24,9 +24,11 @@ workflow as idle.
   It also runs `node --test scripts/check-agent-delivery.node-test.mjs` to verify
   rejection of stale or partial proof, duplicate runs, unchanged failed recipes,
   and repeated rounds without a revised diagnosis.
-  Its 40-minute job budget is the projected cold-cache desktop build (33
-  minutes, from the 26-minute cold Check on `b96fe993` and the longer compile
-  on pull request 65) plus 7 minutes of margin.
+  Its 60-minute job budget covers a warm run (34 minutes on `c48c647f`) plus
+  26 minutes for the hosted apt mirror, which stretched the Tauri dependency
+  install from 30 seconds to 20-25 minutes on pull request 177. The earlier
+  40-minute budget (a 33-minute cold-cache desktop build plus 7 minutes) had no
+  room for that.
 - **Test** runs every workspace package `test` script one task at a time with
   `vp run -r --concurrency-limit 1 test`, then runs `cargo test --workspace -j 2`
   explicitly on Ubuntu 24.04. Serial tasks keep `rustc` from competing with a

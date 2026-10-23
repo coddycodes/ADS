@@ -146,8 +146,8 @@ describe("cross-platform CI contract", () => {
   it("budgets Check and Test for a cold Rust cache plus a stalled apt install", () => {
     const { workflow } = readWorkflow(CI_WORKFLOW_PATH);
 
-    // Cold Check projected at 33 minutes, plus 7 minutes of margin.
-    expect(requireJob(workflow, "check")["timeout-minutes"]).toBe(40);
+    // A warm Check takes 34 minutes; the hosted apt mirror has added up to 26.
+    expect(requireJob(workflow, "check")["timeout-minutes"]).toBe(60);
     // Cold Test finished in 44 minutes. A 21-minute apt stall and 10 minutes
     // for the unfinished workspace suite plus SSH is 75.
     expect(requireJob(workflow, "test")["timeout-minutes"]).toBe(75);

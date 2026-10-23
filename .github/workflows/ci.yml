@@ -18,8 +18,11 @@ jobs:
     runs-on: ubuntu-24.04
     # Cold Check on b96fe993 finished in 26 minutes with an empty Rust
     # cache. PR 65's cold release compile projected 33 minutes once the rpm
-    # bundle finished. 33 minutes plus 7 minutes of margin is 40.
-    timeout-minutes: 40
+    # bundle finished, and a warm main run on c48c647f took 34. On PR 177 the
+    # hosted apt mirror stretched the Tauri dependency install from 30 s to
+    # 20-25 minutes on two runs, cancelling Check mid-build at 40. 34 minutes
+    # plus 26 minutes for a slow mirror is 60.
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
