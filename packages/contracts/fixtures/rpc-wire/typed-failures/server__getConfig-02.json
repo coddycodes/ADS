@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "EnvironmentAuthorizationError",
-          "message": "? WjA",
-          "requiredScope": "orchestration:read"
+          "message": "\u0000",
+          "requiredScope": "terminal:operate"
         }
       }
     ]

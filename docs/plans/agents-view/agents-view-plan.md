@@ -174,10 +174,10 @@ git commit -m "feat(contracts): add conversationPreview to the thread shell"
 **Interfaces:**
 
 - Consumes: `Snapshot { messages: Vec<ProjectionThreadMessage>, activities:
-Vec<ProjectionThreadActivity>, turns: Vec<ProjectionTurn>, .. }`
+  Vec<ProjectionThreadActivity>, turns: Vec<ProjectionTurn>, .. }`
   (`apps/server/src/orchestration/engine.rs:6302`), `ProjectionThreadMessage { thread_id,
-role, text, created_at, .. }`, `ProjectionThreadActivity { thread_id, turn_id, tone,
-summary, created_at, .. }` (`apps/server/src/persistence/repositories.rs:1849-1874`).
+  role, text, created_at, .. }`, `ProjectionThreadActivity { thread_id, turn_id, tone,
+  summary, created_at, .. }` (`apps/server/src/persistence/repositories.rs:1849-1874`).
 - Produces: JSON key `conversationPreview` on every thread object in the
   `orchestration.subscribeShell` snapshot — shape exactly per Task 1's schema. The
   thread-detail path passes no preview and emits no key (wire change is shell-only,
@@ -679,7 +679,7 @@ Component contract (all policy comes from Task 3 — the component only renders)
 - Header row: chevron + uppercase `Agents` label + total-row-count pill; clicking
   toggles `agentsSectionExpanded`. `data-testid="agents-section-header"`.
 - When expanded: filter `<input placeholder="Filter agents…"
-data-testid="agents-filter-input">` (local `useState`, passed through
+  data-testid="agents-filter-input">` (local `useState`, passed through
   `useDeferredValue` before `groupAgentRows`), then groups.
 - Group header: label + count pill, toggles `agentsGroupExpandedById[group.id]`,
   `data-testid={"agents-group-" + group.id}`.

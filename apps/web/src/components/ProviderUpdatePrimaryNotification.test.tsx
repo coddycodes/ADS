@@ -17,7 +17,7 @@ import {
   EnvironmentId,
   type ServerProvider,
 } from "@bibcode/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 
 const harness = vi.hoisted(() => {

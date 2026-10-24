@@ -1992,7 +1992,10 @@ export function buildBrowserPairUrl(endpoint: string, code: string): string; // 
 
 // advertisedEndpoint.ts
 export type PairingEndpointClassification =
-  "loopback" | "private-network" | "public" | "unconnectable";
+  | "loopback"
+  | "private-network"
+  | "public"
+  | "unconnectable";
 export function classifyPairingEndpoint(endpoint: string): PairingEndpointClassification;
 ```
 
@@ -2209,7 +2212,10 @@ export function buildBrowserPairUrl(endpoint: string, code: string): string {
 
 ```ts
 export type PairingEndpointClassification =
-  "loopback" | "private-network" | "public" | "unconnectable";
+  | "loopback"
+  | "private-network"
+  | "public"
+  | "unconnectable";
 
 function isPrivateIpv4(host: string): boolean {
   const octets = host.split(".").map(Number);

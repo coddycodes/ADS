@@ -7,10 +7,12 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use super::activity::{ClaudeActivityInputSource, ClaudeActivityTracker, canonical_actor_id};
 use super::canonical::CanonicalEvent;
+use super::failure::{ClaudeAssistantError, describe_failed_turn};
 use super::protocol::{
     AssistantContent, AssistantMessage, ClaudeMessage, ClaudeTaskNotificationMessage,
     ClaudeTaskStartedMessage, ContentBlock, ContentBlockDelta, ResultMessage, StreamEvent,
@@ -251,9 +253,16 @@ pub struct ReconnectSnapshot {
 #[derive(Debug, Clone)]
 struct InFlightTool {
     index: u64,
+    /// The subagent tool call whose stream carries this block; `None` for the root stream. Block
+    /// indexes restart in every message, so a block is found by its stream and index.
+    parent_tool_use_id: Option<String>,
     tool_use_id: String,
     tool_name: String,
     input: Value,
+    /// The `input_json_delta` fragments received so far. Claude streams a tool's input as
+    /// fragments of a JSON document, so it is parsed and reported once, when its block stops
+    /// (#167).
+    streamed_input: String,
     result: Option<Value>,
     stopped: bool,
     completed: bool,
@@ -1450,7 +1459,8 @@ struct ClaudeBackgroundTasks {
     /// Background tasks that finished while no turn ran and whose answer Claude has not yet given:
     /// each completion produces its own `result` with `origin.kind` `task-notification`. Bridges
     /// the moment between a task leaving the live set and the turn that answers it. A task that
-    /// finishes during a turn needs no bridge: that turn's completion arms a fresh idle deadline.
+    /// finishes during a turn needs no bridge: that turn's completion arms a fresh idle deadline,
+    /// and a notification Claude replayed before that completion opens the answer's turn with it.
     follow_ups_owed: usize,
 }
 
@@ -1565,6 +1575,14 @@ pub struct ClaudeProviderRuntime {
     /// The write whose replay begins the current turn, until Claude replays it or its
     /// wait ends.
     turn_input_awaiting_replay: Option<u64>,
+    /// Follow-up turns Claude began for a finished background task while another turn was still
+    /// open: it can replay the task notification just before that turn's `result` (#165). Each
+    /// opens when the turn before it ends, so idle suspension waits for its own `result`.
+    follow_ups_after_turn: usize,
+    /// Task notifications replayed while a delivered write still awaits its replay. A result
+    /// ignored in that window answered one of them; the rest follow the turn once the write is
+    /// replayed or acknowledged, as a `/compact` is from its `result` alone.
+    follow_ups_awaiting_replay: usize,
     turn_input_cancellation: CancellationToken,
     delivery_acknowledgement_cancellation: CancellationToken,
     active_assistant_item_id: Option<String>,
@@ -1587,6 +1605,15 @@ pub struct ClaudeProviderRuntime {
     /// without this the only evidence of an upstream fault is discarded and the
     /// turn reads as an unexplained failure.
     last_api_error: Option<String>,
+    /// The failure a synthetic assistant message reported during the active turn
+    /// (`SDKAssistantMessage.error`), whose text is Claude's own description of it.
+    last_assistant_error: Option<ClaudeAssistantError>,
+    /// The item showing a compaction Claude reported with `status: "compacting"`, until a
+    /// later status (or the turn's result) ends it.
+    compaction_item_id: Option<String>,
+    /// Whether Claude is compacting the conversation. Claude replays a message only after a
+    /// compaction it runs first, so acknowledgement deadlines do not run meanwhile.
+    compacting: watch::Sender<bool>,
 }
 
 impl ClaudeProviderRuntime {
@@ -1608,6 +1635,8 @@ impl ClaudeProviderRuntime {
             current_turn_id: None,
             turn_open: false,
             turn_input_awaiting_replay: None,
+            follow_ups_after_turn: 0,
+            follow_ups_awaiting_replay: 0,
             turn_input_cancellation: CancellationToken::new(),
             delivery_acknowledgement_cancellation: CancellationToken::new(),
             active_assistant_item_id: None,
@@ -1625,6 +1654,9 @@ impl ClaudeProviderRuntime {
             token_usage: ClaudeTokenUsageState::default(),
             last_mcp_status: None,
             last_api_error: None,
+            last_assistant_error: None,
+            compaction_item_id: None,
+            compacting: watch::channel(false).0,
         }
     }
 
@@ -1676,6 +1708,8 @@ impl ClaudeProviderRuntime {
     ) -> Vec<CanonicalEvent> {
         self.stop_turn_input();
         self.reset_delivery_acknowledgements();
+        self.follow_ups_after_turn = 0;
+        self.follow_ups_awaiting_replay = 0;
         self.runtime_mode = Some(runtime_mode);
         vec![
             self.event(
@@ -1716,6 +1750,7 @@ impl ClaudeProviderRuntime {
         // Scoped to the turn: a retry observed two turns ago must not be
         // reported as the cause of this one's failure.
         self.last_api_error = None;
+        self.last_assistant_error = None;
         self.current_turn_id = Some(input.turn_id.clone());
         self.turn_open = true;
         self.turn_input_awaiting_replay = None;
@@ -1750,12 +1785,17 @@ impl ClaudeProviderRuntime {
     /// just started.
     pub fn await_turn_input(&mut self, write: u64) {
         self.turn_input_awaiting_replay = Some(write);
+        self.follow_ups_awaiting_replay = 0;
     }
 
     /// `write` was replayed, or its wait ended without a replay.
     pub fn stop_awaiting_turn_input(&mut self, write: u64) {
         if self.turn_input_awaiting_replay == Some(write) {
             self.turn_input_awaiting_replay = None;
+            let pending = std::mem::take(&mut self.follow_ups_awaiting_replay);
+            if self.turn_open {
+                self.follow_ups_after_turn = self.follow_ups_after_turn.saturating_add(pending);
+            }
         }
     }
 
@@ -1765,6 +1805,11 @@ impl ClaudeProviderRuntime {
         self.delivery_acknowledgement_cancellation.clone()
     }
 
+    /// `true` while Claude reports that it is compacting the conversation.
+    pub(crate) fn compaction_watch(&self) -> watch::Receiver<bool> {
+        self.compacting.subscribe()
+    }
+
     fn reset_delivery_acknowledgements(&mut self) {
         self.delivery_acknowledgement_cancellation.cancel();
         self.delivery_acknowledgement_cancellation = CancellationToken::new();
@@ -1772,7 +1817,9 @@ impl ClaudeProviderRuntime {
 
     pub fn handle_message(&mut self, message: ClaudeMessage) -> Vec<CanonicalEvent> {
         match message {
-            ClaudeMessage::StreamEvent(message) => self.handle_stream_event(message.event),
+            ClaudeMessage::StreamEvent(message) => {
+                self.handle_stream_event(message.parent_tool_use_id, message.event)
+            }
             ClaudeMessage::User(message) => self.handle_user_message(message.message.content),
             ClaudeMessage::Assistant(message) => self.handle_assistant_message(message),
             ClaudeMessage::Result(message) => self.handle_result_message(message),
@@ -1824,14 +1871,29 @@ impl ClaudeProviderRuntime {
     /// Claude answers a finished background task with a turn it starts itself. BiBCode did not
     /// deliver it, so it gets a turn of its own: the thread reads running and the turn's output and
     /// `result` belong to it. Not while a delivered message awaits its replay: on resume Claude
-    /// can run that turn before it reads the message, and its `result` is ignored instead.
+    /// can run that turn before it reads the message, and its `result` is ignored instead; a
+    /// notification no ignored result answered follows the turn once the write is replayed or
+    /// acknowledged. A replay that arrives while another turn is still open starts its turn when
+    /// that one ends.
     fn start_provider_turn(&mut self, value: &Value) -> Vec<CanonicalEvent> {
         let follow_up = value.get("type").and_then(Value::as_str) == Some("user")
             && value.pointer("/origin/kind").and_then(Value::as_str) == Some("task-notification")
             && value.get("parent_tool_use_id").is_none_or(Value::is_null);
-        if !follow_up || self.turn_open || self.turn_input_awaiting_replay.is_some() {
+        if !follow_up {
             return Vec::new();
         }
+        if self.turn_input_awaiting_replay.is_some() {
+            self.follow_ups_awaiting_replay = self.follow_ups_awaiting_replay.saturating_add(1);
+            return Vec::new();
+        }
+        if self.turn_open {
+            self.follow_ups_after_turn = self.follow_ups_after_turn.saturating_add(1);
+            return Vec::new();
+        }
+        self.start_follow_up_turn()
+    }
+
+    fn start_follow_up_turn(&mut self) -> Vec<CanonicalEvent> {
         self.start_turn(TurnInput {
             turn_id: uuid::Uuid::new_v4().to_string(),
             input: String::new(),
@@ -1952,6 +2014,7 @@ impl ClaudeProviderRuntime {
                     .into_iter()
                     .collect(),
                 Some("api_retry") => self.api_retry_event(value).into_iter().collect(),
+                Some("status") => self.compaction_status_event(value).into_iter().collect(),
                 _ => Vec::new(),
             };
             return ClaudeRuntimeOutput {
@@ -2255,6 +2318,13 @@ impl ClaudeProviderRuntime {
     }
 
     pub fn handle_assistant_message(&mut self, message: AssistantMessage) -> Vec<CanonicalEvent> {
+        // A subagent's failed request is reported to its parent as a tool result, not as this
+        // turn's failure.
+        if message.parent_tool_use_id.is_none()
+            && let Some(error) = ClaudeAssistantError::from_message(&message)
+        {
+            self.last_assistant_error = Some(error);
+        }
         let mut events = Vec::new();
         for content in message.message.content {
             if let AssistantContent::ToolUse { id, name, input } = content
@@ -2391,6 +2461,8 @@ impl ClaudeProviderRuntime {
     pub fn handle_stream_failure(&mut self, error: &str) -> Vec<CanonicalEvent> {
         self.stop_turn_input();
         self.delivery_acknowledgement_cancellation.cancel();
+        self.follow_ups_after_turn = 0;
+        self.follow_ups_awaiting_replay = 0;
         let error_message = if is_interrupted_error(error) {
             "Claude runtime interrupted.".to_owned()
         } else {
@@ -2443,6 +2515,8 @@ impl ClaudeProviderRuntime {
         self.thread_id = snapshot.thread_id;
         self.current_turn_id = snapshot.turn_id;
         self.turn_open = self.current_turn_id.is_some();
+        self.follow_ups_after_turn = 0;
+        self.follow_ups_awaiting_replay = 0;
         self.runtime_mode = Some(snapshot.runtime_mode);
         self.pending_approvals = snapshot
             .pending_approvals
@@ -2479,7 +2553,11 @@ impl ClaudeProviderRuntime {
             .collect();
     }
 
-    fn handle_stream_event(&mut self, event: StreamEvent) -> Vec<CanonicalEvent> {
+    fn handle_stream_event(
+        &mut self,
+        parent_tool_use_id: Option<String>,
+        event: StreamEvent,
+    ) -> Vec<CanonicalEvent> {
         match event {
             StreamEvent::MessageStart { message } => {
                 self.active_assistant_item_id = Some(message.id.clone());
@@ -2499,9 +2577,11 @@ impl ClaudeProviderRuntime {
                     id.clone(),
                     InFlightTool {
                         index,
+                        parent_tool_use_id,
                         tool_use_id: id.clone(),
                         tool_name: name.clone(),
                         input: input.clone(),
+                        streamed_input: String::new(),
                         result: None,
                         stopped: false,
                         completed: false,
@@ -2549,14 +2629,36 @@ impl ClaudeProviderRuntime {
                 }),
                 self.active_assistant_item_id.clone(),
             )],
+            // A fragment of the tool's input is not a step of its own: recording each one as an
+            // update made them most of a thread's activity (#167). The input is reported once,
+            // complete, when its block stops.
             StreamEvent::ContentBlockDelta {
                 index,
                 delta: ContentBlockDelta::InputJsonDelta { partial_json },
             } => {
-                let Some((tool_use_id, tool_name, parsed_input, plan)) =
-                    self.update_tool_input(index, &partial_json)
+                if let Some(tool) =
+                    self.find_streaming_tool_mut(parent_tool_use_id.as_deref(), index)
+                {
+                    tool.streamed_input.push_str(&partial_json);
+                }
+                Vec::new()
+            }
+            StreamEvent::ContentBlockStop { index } => {
+                let Some(tool) = self.find_streaming_tool_mut(parent_tool_use_id.as_deref(), index)
                 else {
                     return Vec::new();
+                };
+                tool.stopped = true;
+                if !take_streamed_input(tool) {
+                    return Vec::new();
+                }
+                let tool_use_id = tool.tool_use_id.clone();
+                let tool_name = tool.tool_name.clone();
+                let input = tool.input.clone();
+                let plan = if is_todo_tool(&tool_name) {
+                    extract_plan_steps(&input)
+                } else {
+                    None
                 };
                 let mut events = vec![self.event(
                     "item.updated",
@@ -2566,7 +2668,7 @@ impl ClaudeProviderRuntime {
                     json!({
                         "data": {
                             "toolName": tool_name,
-                            "input": parsed_input,
+                            "input": input,
                         },
                     }),
                 )];
@@ -2580,12 +2682,6 @@ impl ClaudeProviderRuntime {
                     ));
                 }
                 events
-            }
-            StreamEvent::ContentBlockStop { index } => {
-                if let Some(tool) = self.find_tool_by_index_mut(index) {
-                    tool.stopped = true;
-                }
-                Vec::new()
             }
         }
     }
@@ -2626,6 +2722,8 @@ impl ClaudeProviderRuntime {
         // replays the new message. Ending the new turn there leaves its work running while
         // the thread reads ready. An error still ends it; Claude can fail before reading.
         if self.turn_input_awaiting_replay.is_some() && !message.is_error {
+            // It answered a task notification replayed in the same window.
+            self.follow_ups_awaiting_replay = self.follow_ups_awaiting_replay.saturating_sub(1);
             tracing::info!(
                 thread_id = %self.thread_id,
                 "ignored a Claude result that arrived before the turn's input was read"
@@ -2635,9 +2733,10 @@ impl ClaudeProviderRuntime {
         self.stop_turn_input();
         self.turn_open = false;
         let mut events = self.flush_incomplete_tools();
+        events.extend(self.end_compaction(None));
         let interrupted = is_interrupted_result(&message);
         let failed = message.is_error && !interrupted;
-        let stop_reason = message.stop_reason.unwrap_or_else(|| {
+        let stop_reason = message.stop_reason.clone().unwrap_or_else(|| {
             if interrupted {
                 "interrupted".to_owned()
             } else if failed {
@@ -2650,40 +2749,30 @@ impl ClaudeProviderRuntime {
             "state": if interrupted { "interrupted" } else if failed { "failed" } else { "completed" },
             "stopReason": stop_reason,
         });
-        if interrupted || failed {
+        if failed {
+            // Everything here came off Claude's wire, so Claude reported it.
+            let failure = describe_failed_turn(
+                &message,
+                self.last_assistant_error.as_ref(),
+                self.last_api_error.as_deref(),
+            );
+            crate::diagnostics::profiler::provider_turns::record_turn_failure(
+                "claude",
+                message.terminal_reason.as_deref(),
+                failure.error_class,
+            );
+            payload["errorMessage"] = json!(failure.message);
+            payload["errorClass"] = json!(failure.error_class);
+        } else if interrupted {
+            // An interrupted turn carries a description but is not a failure, so it is
+            // deliberately left unclassified rather than labelled `unknown`.
             let error_message = message.errors.first().cloned().unwrap_or_else(|| {
-                // With no `errors`, the only descriptions Claude gives are its
-                // `subtype`, its `terminal_reason`, and any upstream API failure
-                // it reported while retrying. Prefer the upstream error: it is
-                // the one that tells the user this was not BiBCode.
-                if let Some(api_error) = self.last_api_error.as_deref() {
-                    return format!("{api_error}.");
-                }
-                let reason = if interrupted {
-                    "Claude runtime interrupted"
-                } else {
-                    "Claude turn failed"
-                };
-                let detail = message
-                    .terminal_reason
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|reason| !reason.is_empty())
-                    .unwrap_or(message.subtype.trim());
-                if detail.is_empty() {
-                    format!("{reason}.")
-                } else {
-                    format!("{reason} ({detail}).")
+                match self.last_api_error.as_deref() {
+                    Some(api_error) => format!("{api_error}."),
+                    None => super::failure::named_failure("Claude runtime interrupted", &message),
                 }
             });
             payload["errorMessage"] = json!(error_message);
-            if failed {
-                // Everything here came off Claude's wire, so Claude reported
-                // it. An interrupted turn carries a description but is not a
-                // failure, so it is deliberately left unclassified rather than
-                // labelled `unknown`.
-                payload["errorClass"] = json!("provider_error");
-            }
         }
         events.push(self.event(
             "turn.completed",
@@ -2692,6 +2781,16 @@ impl ClaudeProviderRuntime {
             None,
             payload,
         ));
+        // Claude dequeued a task notification during the turn that just ended and answers it
+        // now: the answer gets its turn before the idle deadline this result arms can expire.
+        // An interrupted turn is the user stopping Claude, so no answer is assumed to follow.
+        if interrupted {
+            self.follow_ups_after_turn = 0;
+            self.follow_ups_awaiting_replay = 0;
+        } else if self.follow_ups_after_turn > 0 {
+            self.follow_ups_after_turn -= 1;
+            events.extend(self.start_follow_up_turn());
+        }
         events
     }
 
@@ -2712,6 +2811,8 @@ impl ClaudeProviderRuntime {
         let (provider_item_id, data) = {
             let tool = self.in_flight_tools.get_mut(tool_id)?;
             tool.completed = true;
+            // A block that never stopped completes with the input that streamed.
+            take_streamed_input(tool);
             let mut data = json!({
                 "toolName": tool.tool_name,
                 "input": tool.input,
@@ -2727,31 +2828,6 @@ impl ClaudeProviderRuntime {
             None,
             Some(json!({ "providerItemId": provider_item_id })),
             json!({ "data": data }),
-        ))
-    }
-
-    fn update_tool_input(
-        &mut self,
-        index: u64,
-        partial_json: &str,
-    ) -> Option<(String, String, Value, Option<Vec<Value>>)> {
-        let parsed_input = serde_json::from_str::<Value>(partial_json).unwrap_or_else(|_| {
-            json!({
-                "raw": partial_json,
-            })
-        });
-        let tool = self.find_tool_by_index_mut(index)?;
-        tool.input = parsed_input.clone();
-        let plan = if is_todo_tool(&tool.tool_name) {
-            extract_plan_steps(&tool.input)
-        } else {
-            None
-        };
-        Some((
-            tool.tool_use_id.clone(),
-            tool.tool_name.clone(),
-            parsed_input,
-            plan,
         ))
     }
 
@@ -2773,10 +2849,18 @@ impl ClaudeProviderRuntime {
         ))
     }
 
-    fn find_tool_by_index_mut(&mut self, index: u64) -> Option<&mut InFlightTool> {
-        self.in_flight_tools
-            .values_mut()
-            .find(|tool| tool.index == index)
+    /// The tool block still streaming at `index` on the stream of `parent_tool_use_id`.
+    fn find_streaming_tool_mut(
+        &mut self,
+        parent_tool_use_id: Option<&str>,
+        index: u64,
+    ) -> Option<&mut InFlightTool> {
+        self.in_flight_tools.values_mut().find(|tool| {
+            tool.index == index
+                && !tool.stopped
+                && !tool.completed
+                && tool.parent_tool_use_id.as_deref() == parent_tool_use_id
+        })
     }
 
     fn event(
@@ -2860,6 +2944,67 @@ impl ClaudeProviderRuntime {
             self.current_turn_id.clone(),
             None,
             None,
+            payload,
+        ))
+    }
+
+    /// Claude reports a compaction with `system`/`status` frames: `status: "compacting"` while
+    /// it runs (repeated for an automatic one's progress), then a different status, carrying
+    /// `compact_result` and `compact_error`, once it ends. BiBCode shows it as an item, so a
+    /// long compaction does not look like a stalled turn.
+    fn compaction_status_event(&mut self, value: &Value) -> Option<CanonicalEvent> {
+        if value.get("status").and_then(Value::as_str) != Some("compacting") {
+            return self.end_compaction(Some(value));
+        }
+        if self.compaction_item_id.is_some() {
+            return None;
+        }
+        let item_id = format!(
+            "compaction:{}",
+            value
+                .get("uuid")
+                .and_then(Value::as_str)
+                .filter(|uuid| !uuid.is_empty())
+                .map_or_else(|| uuid::Uuid::new_v4().to_string(), str::to_owned)
+        );
+        self.compaction_item_id = Some(item_id.clone());
+        self.compacting.send_replace(true);
+        Some(self.event(
+            "item.started",
+            self.current_turn_id.clone(),
+            None,
+            Some(json!({ "providerItemId": item_id })),
+            json!({
+                "itemType": "context_compaction",
+                "status": "inProgress",
+                "title": "Conversation compaction",
+            }),
+        ))
+    }
+
+    /// Ends the open compaction item, from the status frame that ended it when there is one.
+    fn end_compaction(&mut self, status: Option<&Value>) -> Option<CanonicalEvent> {
+        let item_id = self.compaction_item_id.take()?;
+        self.compacting.send_replace(false);
+        let failed =
+            status.and_then(|value| value.get("compact_result")?.as_str()) == Some("failed");
+        let mut payload = json!({
+            "itemType": "context_compaction",
+            "status": if failed { "failed" } else { "completed" },
+            "title": "Conversation compaction",
+        });
+        if let Some(detail) = status
+            .and_then(|value| value.get("compact_error")?.as_str())
+            .map(str::trim)
+            .filter(|detail| failed && !detail.is_empty())
+        {
+            payload["detail"] = json!(detail);
+        }
+        Some(self.event(
+            "item.completed",
+            self.current_turn_id.clone(),
+            None,
+            Some(json!({ "providerItemId": item_id })),
             payload,
         ))
     }
@@ -3452,6 +3597,18 @@ fn normalize_questions(input: &Value) -> Vec<Value> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Parses the input fragments a tool block streamed into its input; whether there were any. Input
+/// that is not a JSON document is kept as `raw` text.
+fn take_streamed_input(tool: &mut InFlightTool) -> bool {
+    if tool.streamed_input.is_empty() {
+        return false;
+    }
+    let streamed = std::mem::take(&mut tool.streamed_input);
+    tool.input =
+        serde_json::from_str::<Value>(&streamed).unwrap_or_else(|_| json!({ "raw": streamed }));
+    true
 }
 
 fn is_interrupted_result(message: &ResultMessage) -> bool {

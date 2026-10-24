@@ -8,7 +8,7 @@
         "_tag": "Fail",
         "error": {
           "_tag": "EnvironmentAuthorizationError",
-          "message": "EWx7J3:!cq",
+          "message": "f",
           "requiredScope": "orchestration:read"
         }
       }

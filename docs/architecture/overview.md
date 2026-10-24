@@ -823,6 +823,11 @@ web client carries each connection over the environment's own RPC connection
 (`preview.tunnelOpen`, `preview.tunnelWrite`, `preview.tunnelClose`). See
 [Preview tunnels](remote.md#preview-tunnels).
 
+The preview panel's local-server suggestions come from
+`subscribeDiscoveredLocalServers`. Each subscriber's task scans the host's
+listening ports every second, but it sends the list only on subscribe and when
+the servers change; `scannedAt` is the time of the scan that was sent (#168).
+
 When WSL-only mode is selected, that intent is authoritative even if an older
 persisted document has a stale disabled-backend flag. WSL planning and primary
 startup fail closed as a tagged `wsl-primary-unavailable` desktop state. The
@@ -1549,9 +1554,12 @@ it.
 - `evidence.eventIds` lists the `eventId` of the event behind a finding, for
   these pairs only: `rpc.slow` cites `rpc.timing` (the slowest call) or, from a
   client, `client.request`; `subprocess.crash` cites `subprocess.exit`;
-  `worktree.removal-failed` cites `worktree.removal`; `client.stall` and
-  `client.interaction` cite `client.batch`; and `crash.panic` cites `panic`. An
-  event dropped by a full channel is never cited.
+  `worktree.removal-failed` cites `worktree.removal`;
+  `git.stacked-action-failed` cites `git.stacked-action`; `client.stall` and
+  `client.interaction` cite `client.batch`; `crash.panic` cites `panic`; and
+  `provider.turn-failed` (a failed Claude turn, by provider, terminal reason and
+  error class, never its text) cites its own event. An event dropped by a full
+  channel is never cited.
 - `server.getProfilerStatus` returns the 20 newest findings without evidence;
   the CLI and MCP readers return the evidence too.
 - **Versions (#98).** Every event line names the build that wrote it
@@ -1704,7 +1712,7 @@ it.
   it saw its parent end without a dump. For `crash.unclean-exit` and
   `shutdown.incomplete`, the next start adds that note, the monitor's `goneAt`,
   and systemd's own lines about the unit ending (`journalctl --user -u <unit>
--t systemd`, within 5 s); a recorded cause also splits the fingerprint.
+  -t systemd`, within 5 s); a recorded cause also splits the fingerprint.
 
 - **OS crash records** are read read-only within 5 s. Linux runs
   `coredumpctl --json=short list` and `journalctl -a -o json` for the coredump
@@ -1728,7 +1736,9 @@ it.
   processes registered in `ProcessAttributionRegistry` (providers, terminals,
   the desktop webview, helpers), and up to 128 descendants rediscovered every
   60 s. Leak rules read private memory (Linux `RssAnon + VmSwap`, Windows
-  `PrivateUsage`, macOS `phys_footprint`) and fall back to RSS. Samples become
+  `PrivateUsage`, macOS `phys_footprint`) and fall back to RSS. On macOS
+  Resource Manager reports the same footprint, through the same reader
+  (`diagnostics::physical_footprint`). Samples become
   1-minute medians that feed the rules in memory. Each process has a kind:
   `server`, or `desktop-host` for a server inside the desktop app;
   `provider:<driver>` for a registered provider; `terminal`; `webview`;
@@ -1802,6 +1812,20 @@ it.
   Nothing is reported once BiBCode is terminating.
 
 - **Worktree audit.** See [Worktree catalog: Audit](./worktree-catalog.md#audit).
+- **Git stacked actions (#158).** `git.runStackedAction` reports a failed
+  commit, push, or request step as an `action_failed` item inside a stream that
+  then ends successfully, so stream timing alone records only `first-item`.
+  Each action that started therefore writes a `git.stacked-action` event with
+  its action, outcome, failing step, error class (`git-failed`,
+  `provider-failed`, `rejected`, `workspace-unavailable`, `cancelled`, or
+  `internal`), the failing operation's tag, and its duration. The wire detail,
+  which can quote a commit message or hook output, is never recorded, and the
+  event holds no path. The third failure of the same step in one worktree within 30
+  minutes raises `git.stacked-action-failed` (warn), and every later one in
+  that window repeats it. The fingerprint is the action, step, class, and
+  operation tag, never the path. The per-worktree repeat window lives only in
+  memory, and the evidence carries the worktree with the home directory as
+  `~`. A refused request, a lost workspace, and a cancellation raise nothing.
 
 ### Profiler off
 
@@ -2458,6 +2482,17 @@ See [RPC and orchestration](./rpc-and-orchestration.md) and
 
 - React does not import Rust or native-host implementation details.
 - Privileged desktop behavior crosses `DesktopBridge` commands and events.
+- A desktop command never parks a thread of Tauri's async runtime, or the main
+  thread, while it waits for the user. It awaits a native dialog through the
+  dialog plugin's callback (`await_dialog` in `apps/desktop/src-tauri/src/bridge.rs`),
+  never its `blocking_*` calls: inside an async command those hold a runtime
+  worker until the dialog closes, and in a sync command they freeze the whole
+  UI. Tauri answers its own protocol requests from the same runtime, the
+  scripts of a reloaded page included, so on Windows two folder dialogs left
+  open on a four-core runner kept the next page from ever loading: WebView2
+  raised `ContentLoading` but never `NavigationCompleted` (#177). A desktop
+  test scans the crate's source and fails on a `blocking_pick_*`,
+  `blocking_save_file` or `blocking_show` call outside a comment.
 - Whole-catalog renderer updates use fresh reads and exact compare-and-set.
   Compare-only transitions validate the same fresh raw revision without a
   document write. In browser and unprotected desktop modes each transition owns
@@ -2647,7 +2682,12 @@ or non-empty process-ownership cleanup refreshes the host process table on the
 blocking pool. Full discovery remains necessary to identify previously unknown
 descendants for attribution and cleanup; direct PID identity checks use the native
 targeted lookup independently of that table. CPU observations establish their
-baseline on the first sample and retain it for subsequent samples.
+baseline on the first sample and retain it for subsequent samples. Each row's
+memory (`rssBytes`) is the physical footprint on macOS, falling back to the
+resident size for a process the server may not inspect, and the resident size
+on Linux and Windows (see
+[Observability](../operations/observability.md#process-diagnostics)); Resource Manager
+says so under its totals.
 
 `DiagnosticsMonitor` takes diagnostics samples in one background task, every
 2 seconds in production, and `server.getProcessDiagnostics` and
@@ -2657,7 +2697,10 @@ exception: before the first sample completes, a read waits for it for at most
 1 second, then returns the error `Measuring resource usage.` instead of empty
 totals that would read as an idle host. The first diagnostics read starts the
 task, and the task stops after three intervals without a read, so a server with
-no diagnostics reader enumerates nothing; the next read answers from the
+no diagnostics reader enumerates nothing. The status bar, the usual reader,
+stops polling while its window is hidden or unfocused, so an idle window's
+server stops sampling too (see
+[Connection runtime](./connection-runtime.md)); the next read answers from the
 retained sample, with its original timestamp, and restarts the task. Runtime
 shutdown stops the task early in the quiesce sequence, before process ownership
 is frozen and long before the Profiler's teardown. Each sample logs its stage

@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessArchitecture, HostProcessPlatform } from "@bibcode/shared/hostProcess";
 import { assert, it } from "@effect/vitest";
+import * as ByteSize from "effect/ByteSize";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -11,7 +12,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { vi } from "vite-plus/test";
 
 import { syntheticElf, syntheticMachO } from "./lib/binary-fixtures.ts";
@@ -881,7 +882,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
               .pipe(
                 Effect.map((info) =>
                   target.includes(".bibcode-validation-failure.stage") && info.type === "File"
-                    ? { ...info, size: FileSystem.Size(Number(info.size) + 1) }
+                    ? { ...info, size: ByteSize.bytes(Number(info.size) + 1) }
                     : info,
                 ),
               ),

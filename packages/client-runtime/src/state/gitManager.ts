@@ -1,7 +1,7 @@
 import { WS_METHODS, type EnvironmentId } from "@bibcode/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { ConnectionWakeups } from "../connection/wakeups.ts";

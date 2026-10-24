@@ -8,13 +8,10 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitCommandError",
-          "operation": "{]Sl}*-g7E",
-          "command": "|#KlpEUC4[",
-          "cwd": "call",
-          "argumentCount": 1.681692581209412e25,
-          "stdoutLength": -7.661531071789796e-7,
-          "detail": "u",
-          "cause": null
+          "operation": "\n",
+          "command": "",
+          "cwd": " ",
+          "detail": "\"cM(%8c7"
         }
       }
     ]

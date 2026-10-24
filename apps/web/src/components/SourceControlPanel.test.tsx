@@ -1,7 +1,12 @@
 import { scopeThreadRef } from "@bibcode/client-runtime/environment";
-import { EnvironmentId, ThreadId, type VcsStatusResult } from "@bibcode/contracts";
+import {
+  EnvironmentId,
+  type GitActionProgressEvent,
+  ThreadId,
+  type VcsStatusResult,
+} from "@bibcode/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import type { Dispatch, ReactElement, SetStateAction } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -1314,6 +1319,34 @@ describe("SourceControlPanel", () => {
     buttonsByText("Commit (1)")[0]?.onClick?.();
     await flushPromises();
     expect(testState.toast.close).toHaveBeenCalledWith("toast-1");
+  });
+
+  it("shows what Git said when the server reports the failure (#157)", async () => {
+    const gitError = "fatal: pre-commit hook rejected the commit";
+    testState.runAction.mockImplementationOnce(
+      async (input: { actionId: string; onProgress?: (event: GitActionProgressEvent) => void }) => {
+        input.onProgress?.({
+          actionId: input.actionId,
+          cwd: "/repo",
+          action: "commit",
+          kind: "action_failed",
+          phase: null,
+          message: gitError,
+        } as GitActionProgressEvent);
+        // The settled error names only the action and phase, never the remote text.
+        return AsyncResult.failure(
+          Cause.fail(new Error("Source control action 'commit' failed during execution.")),
+        );
+      },
+    );
+    render(buildProps());
+
+    buttonsByText("Commit (1)")[0]?.onClick?.();
+    await flushPromises();
+    expect(testState.toast.update).toHaveBeenLastCalledWith(
+      "toast-1",
+      expect.objectContaining({ title: "Action failed", description: gitError }),
+    );
   });
 
   it("renders the legacy flat section and commits by explicit file paths", async () => {

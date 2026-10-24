@@ -53,29 +53,24 @@ describe("repository toolchain contract", () => {
     const workspace = readText("pnpm-workspace.yaml");
     const workspaceConfiguration = parseYaml(workspace) as Record<string, unknown>;
 
-    expect(rootPackage.engines).toEqual({ node: "26.8.1" });
-    expect(rootPackage.packageManager).toBe("pnpm@11.25.0");
-    expect(workspace).toMatch(/^  "@types\/node": 26\.4\.1$/m);
-    expect(workspace).toMatch(/^  vite: npm:@voidzero-dev\/vite-plus-core@0\.3\.0$/m);
-    expect(workspace).toMatch(/^  vite-plus: 0\.3\.0$/m);
-    expect(workspaceConfiguration.minimumReleaseAgeExclude).toEqual([
-      "geckodriver@6.1.1",
-      "@cloudflare/workers-types@5.20260903.1",
-      "@noble/ciphers@2.4.0",
-    ]);
+    expect(rootPackage.engines).toEqual({ node: "26.12.1" });
+    expect(rootPackage.packageManager).toBe("pnpm@11.28.5");
+    expect(workspace).toMatch(/^  "@types\/node": 26\.6\.4$/m);
+    expect(workspace).toMatch(/^  vite: npm:@voidzero-dev\/vite-plus-core@1\.1\.0$/m);
+    expect(workspace).toMatch(/^  vite-plus: 1\.1\.0$/m);
+    // Every locked version has cleared pnpm 11's 24-hour release-age window.
+    expect(workspaceConfiguration).not.toHaveProperty("minimumReleaseAgeExclude");
     expect(workspace).not.toMatch(/^trustLockfile:\s+true$/m);
     expect(workspaceConfiguration).not.toHaveProperty("ignoredBuiltDependencies");
     expect(workspaceConfiguration).not.toHaveProperty("onlyBuiltDependencies");
     expect(workspaceConfiguration.allowBuilds).toEqual({
       "bufferutil@4.1.0": false,
-      "edgedriver@6.3.0": false,
-      "esbuild@0.25.12 || 0.28.1": true,
+      "edgedriver@6.3.1": false,
+      "esbuild@0.25.12 || 0.28.2": true,
       "geckodriver@6.1.1": false,
-      "msgpackr-extract@3.0.4": true,
       "msw@2.15.0": false,
-      "sharp@0.34.5": true,
       "utf-8-validate@6.0.6": false,
-      "workerd@1.20260704.1": false,
+      "workerd@1.20260918.1": false,
     });
   });
 
@@ -89,7 +84,7 @@ describe("repository toolchain contract", () => {
     const catalog = workspace.catalog as Record<string, string>;
     const peerDependencyRules = workspace.peerDependencyRules as Record<string, unknown>;
 
-    expect(catalog["@effect/tsgo"]).toBe("0.40.0");
+    expect(catalog["@effect/tsgo"]).toBe("0.51.1");
     expect(catalog.typescript).toBe("7.0.2");
     expect(catalog).not.toHaveProperty("@typescript/native-preview");
     expect(rootDevDependencies).not.toHaveProperty("@typescript/native-preview");
@@ -126,10 +121,10 @@ describe("repository toolchain contract", () => {
     const workspace = cargo.workspace as Record<string, unknown>;
     const workspacePackage = workspace.package as Record<string, unknown>;
 
-    expect(toolchain.channel).toBe("1.98.0");
+    expect(toolchain.channel).toBe("1.98.1");
     expect(toolchain.profile).toBe("minimal");
     expect(toolchain.components).toEqual(["rustfmt", "clippy"]);
-    expect(workspacePackage["rust-version"]).toBe("1.98.0");
+    expect(workspacePackage["rust-version"]).toBe("1.98.1");
 
     for (const workflowPath of [
       ".github/workflows/ci.yml",
@@ -138,11 +133,11 @@ describe("repository toolchain contract", () => {
     ]) {
       const workflow = readText(workflowPath);
       expect(workflow).not.toMatch(/dtolnay\/rust-toolchain@(stable|1\.88(?:\.0)?)/);
-      expect(workflow).toMatch(/dtolnay\/rust-toolchain@[0-9a-f]{40} # 1\.98\.0/);
+      expect(workflow).toMatch(/dtolnay\/rust-toolchain@[0-9a-f]{40} # 1\.98\.1/);
     }
   });
 
-  it("uses an immutable devcontainer without Bun and installs through Corepack", () => {
+  it("uses an immutable devcontainer without Bun or Corepack", () => {
     const devcontainer = readJson(".devcontainer/devcontainer.json");
     const features = devcontainer.features as Record<string, unknown>;
 
@@ -156,11 +151,10 @@ describe("repository toolchain contract", () => {
     ]);
     expect(Object.keys(features).some((feature) => /(?:^|\/)bun:/.test(feature))).toBe(false);
     expect(features["ghcr.io/devcontainers/features/node:2.1.0"]).toEqual({
-      version: "26.8.1",
+      version: "26.12.1",
     });
     expect(devcontainer.postCreateCommand).toEqual({
-      install:
-        "npm install --global corepack@0.35.0 && corepack enable && corepack prepare pnpm@11.25.0 --activate && pnpm install --frozen-lockfile",
+      install: "npm install --global pnpm@11.28.5 && pnpm install --frozen-lockfile",
     });
   });
 

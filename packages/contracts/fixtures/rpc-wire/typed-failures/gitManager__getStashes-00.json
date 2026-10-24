@@ -8,14 +8,10 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitManagerOperationError",
-          "operation": "kT)p\\",
-          "code": "0^UtUX",
-          "message": "&ypeO",
-          "blocked": {
-            "operation": "b",
-            "code": "default-branch",
-            "message": "NtoS"
-          }
+          "operation": "�",
+          "code": "QB",
+          "message": "",
+          "blocked": null
         }
       }
     ]

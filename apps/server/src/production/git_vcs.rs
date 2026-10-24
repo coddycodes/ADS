@@ -1534,6 +1534,7 @@ impl GitVcsRpcServices {
                 return;
             }
             let mut safe_failure = None;
+            let mut failed_phase = None;
             let result = match validate_stacked_action_input(&input) {
                 Err(error) => Err(error),
                 Ok(()) => {
@@ -1564,6 +1565,7 @@ impl GitVcsRpcServices {
                             }
                             result.map_err(|failure| {
                                 safe_failure = Some(failure.diagnostic);
+                                failed_phase = failure.phase;
                                 failure.wire
                             })
                         },
@@ -1588,6 +1590,16 @@ impl GitVcsRpcServices {
                 ) {
                     tracing::warn!(error_kind = ?error.kind(), "failed to persist Git action diagnostics");
                 }
+            }
+            if crate::diagnostics::profiler::is_enabled() {
+                record_stacked_action_profile(
+                    &input,
+                    &result,
+                    failed_phase,
+                    safe_failure.as_deref(),
+                    operation_cancellation.is_cancelled(),
+                    started.elapsed(),
+                );
             }
             if let Err(error) = &result
                 && is_workspace_unavailable(error)
@@ -2399,6 +2411,8 @@ fn validate_stacked_action_input(input: &StackedActionInput) -> Result<(), Value
 struct StackedActionFailure {
     wire: Value,
     diagnostic: Box<str>,
+    /// The step that failed (`branch`, `commit`, `push` or `pr`), or `None` before the first.
+    phase: Option<&'static str>,
 }
 
 impl std::fmt::Debug for StackedActionFailure {
@@ -2406,6 +2420,7 @@ impl std::fmt::Debug for StackedActionFailure {
         formatter
             .debug_struct("StackedActionFailure")
             .field("diagnostic", &self.diagnostic)
+            .field("phase", &self.phase)
             .finish_non_exhaustive()
     }
 }
@@ -2415,6 +2430,7 @@ impl From<Value> for StackedActionFailure {
         Self {
             wire,
             diagnostic: "Git action could not complete.".into(),
+            phase: None,
         }
     }
 }
@@ -2428,6 +2444,7 @@ impl From<GitCommandError> for StackedActionFailure {
         Self {
             wire: serialize_error(error),
             diagnostic,
+            phase: None,
         }
     }
 }
@@ -2441,15 +2458,69 @@ impl From<crate::source_control::SourceControlProviderError> for StackedActionFa
         Self {
             wire: serialize_error(error),
             diagnostic,
+            phase: None,
         }
     }
 }
 
+/// Reports the action's terminal outcome to the profiler (#158). Only the failing step, the
+/// error's class and its operation tag leave here: never the wire detail, which can quote a
+/// commit message or hook output.
+fn record_stacked_action_profile(
+    input: &StackedActionInput,
+    result: &Result<StackedActionResult, Value>,
+    phase: Option<&'static str>,
+    safe_failure: Option<&str>,
+    cancelled: bool,
+    duration: Duration,
+) {
+    use crate::diagnostics::profiler::git_actions::{
+        FailureReason, StackedActionFailure as ProfiledFailure, record_stacked_action_outcome,
+    };
+    let outcome = match result {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            let reason = FailureReason::from_tag(error.get("_tag").and_then(Value::as_str));
+            Err(ProfiledFailure {
+                phase,
+                reason: if cancelled && reason != FailureReason::WorkspaceUnavailable {
+                    FailureReason::Cancelled
+                } else {
+                    reason
+                },
+                operation: error.get("operation").and_then(Value::as_str),
+                message: safe_failure.unwrap_or("Git action could not complete."),
+            })
+        }
+    };
+    record_stacked_action_outcome(
+        &input.action,
+        input.feature_branch.unwrap_or(false),
+        &input.cwd.to_string_lossy(),
+        outcome,
+        duration,
+    );
+}
+
+/// Runs the action and names the step a failure happened in.
 async fn run_stacked_action(
     repository: &GitRepository,
     pull_requests: &PullRequestService,
     input: &StackedActionInput,
     cancellation: &CancellationToken,
+) -> Result<StackedActionResult, StackedActionFailure> {
+    let mut phase = None;
+    run_stacked_action_steps(repository, pull_requests, input, cancellation, &mut phase)
+        .await
+        .map_err(|failure| StackedActionFailure { phase, ..failure })
+}
+
+async fn run_stacked_action_steps(
+    repository: &GitRepository,
+    pull_requests: &PullRequestService,
+    input: &StackedActionInput,
+    cancellation: &CancellationToken,
+    phase: &mut Option<&'static str>,
 ) -> Result<StackedActionResult, StackedActionFailure> {
     validate_stacked_action_input(input)?;
     let wants_commit = matches!(
@@ -2629,6 +2700,7 @@ async fn run_stacked_action(
         None
     };
     let branch = if feature_branch {
+        *phase = Some("branch");
         let subject = resolved_message
             .as_deref()
             .and_then(|message| message.lines().next())
@@ -2652,6 +2724,7 @@ async fn run_stacked_action(
         json!({ "status": "skipped_not_requested" })
     };
     let commit = if wants_commit {
+        *phase = Some("commit");
         let message = resolved_message.as_deref().unwrap_or("Update working tree");
         let sha = repository
             .commit(
@@ -2671,6 +2744,7 @@ async fn run_stacked_action(
         json!({ "status": "skipped_not_requested" })
     };
     let push = if wants_push {
+        *phase = Some("push");
         let branch = if let Some(head) = selected_head {
             let mut args = vec![
                 "push".to_owned(),
@@ -2727,6 +2801,7 @@ async fn run_stacked_action(
         json!({ "status": "skipped_not_requested" })
     };
     let pull_request = if let Some(provider) = pull_request_provider {
+        *phase = Some("pr");
         let current_local = repository
             .local_status(&input.cwd, cancellation)
             .await

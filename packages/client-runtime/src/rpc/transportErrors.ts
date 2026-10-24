@@ -1,5 +1,5 @@
 import { RpcResponseTooLargeError } from "@bibcode/contracts";
-import * as RpcMiddleware from "effect/unstable/rpc/RpcMiddleware";
+import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 
 /**
  * Declares the transport failures any RPC may end with, so every method's

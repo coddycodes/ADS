@@ -470,6 +470,137 @@ describe("startStatusBarUsageAutoRefresh", () => {
     }
   });
 
+  describe("while the window is hidden or unfocused (#168)", () => {
+    function fakeWindowActivity(initial: { visible: boolean; focused: boolean }) {
+      const state = { ...initial };
+      const windowTarget = new EventTarget();
+      const documentTarget = new EventTarget();
+      const doc = Object.assign(documentTarget, {
+        get visibilityState(): DocumentVisibilityState {
+          return state.visible ? "visible" : "hidden";
+        },
+        hasFocus: () => state.focused,
+      });
+      return {
+        activity: { window: windowTarget, document: doc },
+        blur() {
+          state.focused = false;
+          windowTarget.dispatchEvent(new Event("blur"));
+        },
+        focus() {
+          state.focused = true;
+          windowTarget.dispatchEvent(new Event("focus"));
+        },
+        hide() {
+          state.visible = false;
+          documentTarget.dispatchEvent(new Event("visibilitychange"));
+        },
+        show() {
+          state.visible = true;
+          documentTarget.dispatchEvent(new Event("visibilitychange"));
+        },
+      };
+    }
+
+    it("pauses while unfocused and refreshes once when focus returns", () => {
+      vi.useFakeTimers();
+      try {
+        const page = fakeWindowActivity({ visible: true, focused: true });
+        const refresh = vi.fn();
+        const cleanup = startStatusBarUsageAutoRefresh({
+          refresh,
+          intervalMs: STATUS_BAR_RESOURCE_REFRESH_INTERVAL_MS,
+          activity: page.activity,
+        });
+        expect(refresh).toHaveBeenCalledTimes(1);
+
+        page.blur();
+        vi.advanceTimersByTime(STATUS_BAR_RESOURCE_REFRESH_INTERVAL_MS * 10);
+        expect(refresh).toHaveBeenCalledTimes(1);
+
+        page.focus();
+        expect(refresh).toHaveBeenCalledTimes(2);
+        vi.advanceTimersByTime(STATUS_BAR_RESOURCE_REFRESH_INTERVAL_MS);
+        expect(refresh).toHaveBeenCalledTimes(3);
+
+        cleanup();
+        page.blur();
+        page.focus();
+        vi.advanceTimersByTime(STATUS_BAR_RESOURCE_REFRESH_INTERVAL_MS * 10);
+        expect(refresh).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("pauses while hidden and does not refresh twice for one return", () => {
+      vi.useFakeTimers();
+      try {
+        const page = fakeWindowActivity({ visible: true, focused: true });
+        const refresh = vi.fn();
+        const cleanup = startStatusBarUsageAutoRefresh({ refresh, activity: page.activity });
+        expect(refresh).toHaveBeenCalledTimes(1);
+
+        page.blur();
+        page.hide();
+        vi.advanceTimersByTime(STATUS_BAR_USAGE_REFRESH_INTERVAL_MS * 10);
+        expect(refresh).toHaveBeenCalledTimes(1);
+
+        // Shown but still unfocused: nobody is using the window yet.
+        page.show();
+        vi.advanceTimersByTime(STATUS_BAR_USAGE_REFRESH_INTERVAL_MS * 2);
+        expect(refresh).toHaveBeenCalledTimes(1);
+
+        page.focus();
+        page.focus();
+        expect(refresh).toHaveBeenCalledTimes(2);
+        vi.advanceTimersByTime(STATUS_BAR_USAGE_REFRESH_INTERVAL_MS);
+        expect(refresh).toHaveBeenCalledTimes(3);
+        cleanup();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("reads once but does not poll when it starts in an unfocused window", () => {
+      vi.useFakeTimers();
+      try {
+        const page = fakeWindowActivity({ visible: true, focused: false });
+        const refresh = vi.fn();
+        const cleanup = startStatusBarUsageAutoRefresh({ refresh, activity: page.activity });
+        expect(refresh).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(STATUS_BAR_USAGE_REFRESH_INTERVAL_MS * 4);
+        expect(refresh).toHaveBeenCalledTimes(1);
+
+        page.focus();
+        expect(refresh).toHaveBeenCalledTimes(2);
+        cleanup();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("uses the page's window and document by default", () => {
+      vi.useFakeTimers();
+      const page = fakeWindowActivity({ visible: true, focused: true });
+      vi.stubGlobal("window", page.activity.window);
+      vi.stubGlobal("document", page.activity.document);
+      try {
+        const refresh = vi.fn();
+        const cleanup = startStatusBarUsageAutoRefresh({ refresh });
+        page.blur();
+        vi.advanceTimersByTime(STATUS_BAR_USAGE_REFRESH_INTERVAL_MS * 4);
+        expect(refresh).toHaveBeenCalledTimes(1);
+        page.focus();
+        expect(refresh).toHaveBeenCalledTimes(2);
+        cleanup();
+      } finally {
+        vi.unstubAllGlobals();
+        vi.useRealTimers();
+      }
+    });
+  });
+
   it("supports the two-second resource refresh cadence", () => {
     vi.useFakeTimers();
     try {

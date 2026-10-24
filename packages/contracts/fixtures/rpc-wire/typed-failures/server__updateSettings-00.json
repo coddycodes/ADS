@@ -8,18 +8,11 @@
         "_tag": "Fail",
         "error": {
           "_tag": "ServerSettingsError",
-          "settingsPath": "",
-          "operation": "write-file",
-          "environmentVariable": "&",
-          "cause": {
-            "uxsY": [
-              6.700018116992759e-32,
-              -3.735134333463232e-215,
-              null,
-              true,
-              [-3.4882927661401217e-227, "#p}", 6.62757820923331e-193, false]
-            ]
-          }
+          "settingsPath": "\n",
+          "operation": "read-file",
+          "providerInstanceId": "",
+          "environmentVariable": "",
+          "cause": []
         }
       }
     ]

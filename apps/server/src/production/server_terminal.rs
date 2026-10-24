@@ -509,28 +509,67 @@ fn discovered_local_servers_stream(
     terminal: TerminalManager,
     cancellation: CancellationToken,
 ) -> JsonStream {
-    spawn_stream(cancellation, move |sender, cancellation| async move {
-        let mut discovery = local_servers::Discovery::default();
-        loop {
-            let terminals = terminal.live_session_pids().await;
-            let servers = discovery.scan(&cancellation, terminals).await;
-            if cancellation.is_cancelled()
-                || sender
-                    .send(Ok(vec![json!({
-                        "servers": servers,
-                        "scannedAt": format_time(OffsetDateTime::now_utc()),
-                    })]))
-                    .await
-                    .is_err()
-            {
+    spawn_stream(cancellation, move |sender, cancellation| {
+        let scanner = TerminalLocalServerScan {
+            terminal,
+            discovery: local_servers::Discovery::default(),
+        };
+        send_discovered_local_servers(sender, cancellation, local_servers::SCAN_INTERVAL, scanner)
+    })
+}
+
+/// One scan of the host's listening servers.
+trait LocalServerScan: Send {
+    fn scan(&mut self, cancellation: &CancellationToken)
+    -> impl Future<Output = Vec<Value>> + Send;
+}
+
+/// A subscriber's scanner, which attributes listeners to the live terminals.
+struct TerminalLocalServerScan {
+    terminal: TerminalManager,
+    discovery: local_servers::Discovery,
+}
+
+impl LocalServerScan for TerminalLocalServerScan {
+    async fn scan(&mut self, cancellation: &CancellationToken) -> Vec<Value> {
+        let terminals = self.terminal.live_session_pids().await;
+        self.discovery.scan(cancellation, terminals).await
+    }
+}
+
+/// Scans every `interval` until the subscriber leaves. The first scan is always sent; after
+/// that a scan is sent only when its servers differ from the last one sent, so an idle
+/// subscriber gets nothing (#168). `scannedAt` is the time of the scan that was sent.
+async fn send_discovered_local_servers(
+    sender: mpsc::Sender<RpcStreamChunk>,
+    cancellation: CancellationToken,
+    interval: std::time::Duration,
+    mut scanner: impl LocalServerScan,
+) {
+    let mut sent: Option<Vec<Value>> = None;
+    loop {
+        let servers = scanner.scan(&cancellation).await;
+        // An idle stream sends nothing, so a failed send can no longer be what notices a
+        // subscriber that left without cancelling; the closed channel is.
+        if cancellation.is_cancelled() || sender.is_closed() {
+            return;
+        }
+        if sent.as_ref() != Some(&servers) {
+            let message = json!({
+                "servers": &servers,
+                "scannedAt": format_time(OffsetDateTime::now_utc()),
+            });
+            if sender.send(Ok(vec![message])).await.is_err() {
                 return;
             }
-            tokio::select! {
-                () = cancellation.cancelled() => return,
-                () = tokio::time::sleep(local_servers::SCAN_INTERVAL) => {}
-            }
+            sent = Some(servers);
         }
-    })
+        tokio::select! {
+            () = cancellation.cancelled() => return,
+            () = sender.closed() => return,
+            () = tokio::time::sleep(interval) => {}
+        }
+    }
 }
 
 fn register_diagnostics_rpcs(registry: &mut RpcRegistry, services: &ServerTerminalServices) {
@@ -2107,6 +2146,99 @@ mod tests {
     };
 
     use super::*;
+
+    /// #168: an idle subscriber gets the list once and then only when it changes, not a
+    /// push with a fresh `scannedAt` every scan.
+    #[tokio::test(start_paused = true)]
+    async fn discovered_local_servers_are_sent_only_when_the_list_changes() {
+        /// Returns the queued scans, then ends the subscription.
+        struct QueuedScans {
+            scans: std::collections::VecDeque<Vec<Value>>,
+            scanned: usize,
+        }
+        impl LocalServerScan for QueuedScans {
+            async fn scan(&mut self, cancellation: &CancellationToken) -> Vec<Value> {
+                self.scanned += 1;
+                self.scans.pop_front().unwrap_or_else(|| {
+                    cancellation.cancel();
+                    Vec::new()
+                })
+            }
+        }
+        impl LocalServerScan for &mut QueuedScans {
+            async fn scan(&mut self, cancellation: &CancellationToken) -> Vec<Value> {
+                (**self).scan(cancellation).await
+            }
+        }
+
+        let first = vec![json!({ "host": "127.0.0.1", "port": 5173 })];
+        let second = vec![json!({ "host": "127.0.0.1", "port": 5174 })];
+        let (sender, mut receiver) = mpsc::channel(64);
+        let mut scanner = QueuedScans {
+            scans: [&first, &first, &first, &second, &second, &first]
+                .into_iter()
+                .cloned()
+                .collect(),
+            scanned: 0,
+        };
+        send_discovered_local_servers(
+            sender,
+            CancellationToken::new(),
+            Duration::from_secs(1),
+            &mut scanner,
+        )
+        .await;
+
+        let mut sent = Vec::new();
+        while let Ok(chunk) = receiver.try_recv() {
+            let mut values = chunk.expect("discovery sends no errors");
+            assert_eq!(values.len(), 1);
+            let value = values.remove(0);
+            assert!(value["scannedAt"].is_string());
+            sent.push(value["servers"].clone());
+        }
+        assert_eq!(scanner.scanned, 7);
+        assert_eq!(
+            sent,
+            vec![json!(first), json!(second), json!(first)],
+            "a scan that finds the same servers sends nothing",
+        );
+    }
+
+    /// An unchanged list sends nothing, so a subscriber that drops its receiver without
+    /// cancelling must still end the scan task.
+    #[tokio::test(start_paused = true)]
+    async fn discovered_local_servers_stop_when_the_subscriber_leaves() {
+        struct SameServers(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+        impl LocalServerScan for SameServers {
+            async fn scan(&mut self, _cancellation: &CancellationToken) -> Vec<Value> {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                vec![json!({ "host": "127.0.0.1", "port": 5173 })]
+            }
+        }
+
+        let scans = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (sender, mut receiver) = mpsc::channel(64);
+        let task = tokio::spawn(send_discovered_local_servers(
+            sender,
+            CancellationToken::new(),
+            Duration::from_secs(1),
+            SameServers(scans.clone()),
+        ));
+        assert!(receiver.recv().await.is_some(), "the first scan is sent");
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        drop(receiver);
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("the scan task ends once the subscriber leaves")
+            .expect("the scan task does not panic");
+        let after_leaving = scans.load(std::sync::atomic::Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        assert_eq!(
+            scans.load(std::sync::atomic::Ordering::SeqCst),
+            after_leaving
+        );
+    }
 
     #[tokio::test]
     async fn embedded_host_cleanup_preserves_unmanaged_host_descendants() {

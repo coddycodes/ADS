@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "EnvironmentAuthorizationError",
-          "message": "+UWR9|]r&8",
-          "requiredScope": "access:write"
+          "message": "__proto__",
+          "requiredScope": "relay:read"
         }
       }
     ]

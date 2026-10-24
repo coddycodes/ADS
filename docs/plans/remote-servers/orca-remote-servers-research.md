@@ -16,7 +16,7 @@ Date: 2026-08-27. Line numbers refer to the working tree at research time.
   explicitly mobile-only (`src/shared/mobile-relay-pairing-offer.ts:82-91` rejects `relay` on
   `scope: 'runtime'` offers). Reachability is direct TCP: LAN, Tailscale, a reverse proxy, or a
   user-managed SSH local port-forward (loopback links are tagged `connectionDependency:
-'ssh-tunnel'`).
+  'ssh-tunnel'`).
 - **Security.** Every connection runs an application-layer E2EE handshake regardless of TLS:
   the client generates an ephemeral Curve25519 keypair, derives a shared key against the host's
   **static public key pinned in the pairing offer**, then sends an encrypted auth frame carrying
@@ -154,7 +154,7 @@ Main-process verification (`src/main/ipc/runtime-environment-pairing-verificatio
 3. **Live probe**: `status.get` over a real E2EE connection with a 15s timeout, then
    `verifyRemotePairingRuntimeStatus`. Failures are classified into
    `access-link-invalid | host-unreachable | host-identity-mismatch | connection-interrupted |
-environment-save-failed` (`runtime-environment-pairing-verification.ts:38-127`) — note
+   environment-save-failed` (`runtime-environment-pairing-verification.ts:38-127`) — note
    `host-identity-mismatch` fires when the reached host's key does not match the pinned
    `publicKeyB64` (`pairingStage === 'host-identity'`).
 4. Persist via `addEnvironmentFromPairingCode`.
@@ -213,7 +213,7 @@ Two socket kinds per environment, both E2EE and keyed by the environment's pairi
   `src/shared/remote-runtime-shared-control-connection.ts`) — long-lived multiplexed channel
   for subscriptions/events (terminal streams, session-tab sync, file watches). It owns
   **reconnect**: edge-triggered on close with backoff `[250, 500, 1000, 2000, 4000, 8000,
-15000, 30000] ms`, reset after 30s of stable readiness
+  15000, 30000] ms`, reset after 30s of stable readiness
   (`src/shared/remote-runtime-shared-control-reconnect.ts:40-47`,
   `-stability.ts`); capability gated behind
   `remote-runtime.shared-control.v1` (`src/shared/protocol-version.ts:43`).
@@ -315,7 +315,7 @@ actually installs:
 - **interactive** — a desktop host installs like a normal app update.
 - **supervised-headless-serve** — a headless `orca serve` under a supervisor: `updater.install`
   writes a handoff file (`{phase: 'install-requested', fromVersion, targetVersion,
-servingPid}`) that an external supervisor watches to restart into the new build; currently
+  servingPid}`) that an external supervisor watches to restart into the new build; currently
   macOS-gated (`src/main/serve-update-handoff.ts:22-38`; behavioral spec in
   `src/main/updater.headless-serve-install.test.ts`).
 - **unsupported-headless-serve** — e.g. a Linux system package or orcad: `updater.check/install`
@@ -406,7 +406,7 @@ UI: workflow `'cloud-vm'` renders `EphemeralVmRuntimesSection` + `CloudVmSetupGu
 - `buildExecutionHostRegistry` (`src/shared/execution-host-registry.ts:180-291`) merges: the
   fixed local entry, every saved runtime environment (label = user name), every referenced
   SSH target — each with `health: 'local' | 'available' | 'connecting' | 'blocked' |
-'disconnected' | 'error'` derived from live status + compat verdict + shared-control state.
+  'disconnected' | 'error'` derived from live status + compat verdict + shared-control state.
   This one registry feeds sidebar host pickers, new-workspace host selection, port scanner,
   task preflight, etc.
 
@@ -422,7 +422,7 @@ params)` branches (`runtime-rpc-client.ts:82-93`):
 
 - local → `window.api.runtime.call(...)` (IPC into the in-process runtime dispatcher);
 - environment → `window.api.runtimeEnvironments.call({selector, method, params, timeoutMs,
-expectedEnvironmentPairingRevision})` → main-process transport routing
+  expectedEnvironmentPairingRevision})` → main-process transport routing
   (`src/main/ipc/runtime-environment-transport-routing.ts`,
   `runtime-environment-connectivity-handlers.ts:189-228`) → E2EE WebSocket.
 
@@ -636,7 +636,7 @@ operations scoped to the selected environment.
 ### Suggested minimal concept set for BiBCode
 
 1. `RemoteEnvironment {id, name, endpoint, deviceToken, hostPublicKey, pairingRevision,
-source}` persisted server-side (secure file or existing DB), redacted toward the UI.
+   source}` persisted server-side (secure file or existing DB), redacted toward the UI.
 2. Host: device registry (mint/pending/rotate/revoke), pairing-link generation, `status.get`
    with `{serverVersion, protocolVersion, minCompatibleClient, capabilities[]}`.
 3. Client: verify-then-add flow with classified failures; per-environment connection manager

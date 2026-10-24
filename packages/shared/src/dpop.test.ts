@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import { p256 } from "@noble/curves/nist.js";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 
 import {
   computeDpopAccessTokenHash,
@@ -27,7 +27,7 @@ function bytesToHex(bytes: Uint8Array): string {
 }
 
 function encodeJson(value: unknown): string {
-  return Encoding.encodeBase64Url(textEncoder.encode(JSON.stringify(value)));
+  return Base64Url.encode(textEncoder.encode(JSON.stringify(value)));
 }
 
 async function generateDpopKeyPair(): Promise<{
@@ -83,7 +83,7 @@ async function signDpopProof(input: {
     input.privateKey,
     textEncoder.encode(`${header}.${payload}`),
   );
-  return `${header}.${payload}.${Encoding.encodeBase64Url(new Uint8Array(signature))}`;
+  return `${header}.${payload}.${Base64Url.encode(new Uint8Array(signature))}`;
 }
 
 async function validFixture(input?: {
@@ -159,7 +159,7 @@ describe("verifyDpopProof", () => {
 
     expectRejected(
       verifyDpopProof({
-        proof: `${Encoding.encodeBase64Url(textEncoder.encode("{"))}.${payload}.${signature}`,
+        proof: `${Base64Url.encode(textEncoder.encode("{"))}.${payload}.${signature}`,
         method: "POST",
         url: "https://example.com/oauth/token",
         nowEpochSeconds: 100,
@@ -195,7 +195,7 @@ describe("verifyDpopProof", () => {
 
     expectRejected(
       verifyDpopProof({
-        proof: `${header}.${Encoding.encodeBase64Url(textEncoder.encode("{"))}.${signature}`,
+        proof: `${header}.${Base64Url.encode(textEncoder.encode("{"))}.${signature}`,
         method: "POST",
         url: "https://example.com/oauth/token",
         nowEpochSeconds: 100,
@@ -354,7 +354,7 @@ describe("verifyDpopProof", () => {
     if (!header || !payload) assert.fail("Expected compact DPoP fixture.");
     for (const [signature, reason] of [
       ["%", "Invalid DPoP proof."],
-      [Encoding.encodeBase64Url(new Uint8Array(63)), "Invalid DPoP signature."],
+      [Base64Url.encode(new Uint8Array(63)), "Invalid DPoP signature."],
     ] as const) {
       expectRejected(
         verifyDpopProof({
@@ -368,8 +368,8 @@ describe("verifyDpopProof", () => {
     }
 
     for (const publicJwk of [
-      { ...primary.publicJwk, x: Encoding.encodeBase64Url(new Uint8Array(31)) },
-      { ...primary.publicJwk, y: Encoding.encodeBase64Url(new Uint8Array(31)) },
+      { ...primary.publicJwk, x: Base64Url.encode(new Uint8Array(31)) },
+      { ...primary.publicJwk, y: Base64Url.encode(new Uint8Array(31)) },
       { ...primary.publicJwk, x: "%" },
     ]) {
       const malformedKeyProof = await signDpopProof({ ...primary, publicJwk });

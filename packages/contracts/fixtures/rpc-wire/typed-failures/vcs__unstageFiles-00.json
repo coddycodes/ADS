@@ -8,14 +8,13 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitCommandError",
-          "operation": ">x7n{nw#$<",
-          "command": "t2",
-          "cwd": "~t>Um7h!",
-          "argumentCount": -3.6433760072445244e-44,
-          "stdoutLength": 1.0397693746170962e23,
-          "stderrLength": 2.9883960935192013e-30,
-          "detail": "CHp2d~m{",
-          "cause": -1.7976931348623145e308
+          "operation": "prototype",
+          "command": " ",
+          "cwd": " ",
+          "argumentCount": -1.7976931348623141e308,
+          "exitCode": -8.4e-323,
+          "stdoutLength": -9.656684231999332e32,
+          "detail": "\"qsz^I>7)k"
         }
       }
     ]

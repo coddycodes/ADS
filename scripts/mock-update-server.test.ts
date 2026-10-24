@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { NodeHttpServer, NodeServices } from "@effect/platform-node";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { assert, it } from "@effect/vitest";
@@ -8,7 +9,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 
 import {
   formatMockUpdateRequestLogEntry,

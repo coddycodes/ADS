@@ -452,13 +452,23 @@ describe("generated provider shims", () => {
       ["codex", "codex-cli 99.0.0"],
       ["claudeAgent", "2.1.200 (Claude Code)"],
       ["cursor", "cursor-agent 99.0.0-fixture"],
-      ["opencode", "opencode 99.0.0-fixture"],
+      ["opencode", "opencode 1.99.0-fixture"],
       ["grok", "grok-cli 99.0.0-fixture"],
     ] as const) {
       const result = spawnConfiguredLauncherSync(fixture, provider, ["--version"]);
       expect(result.status, `${provider}: ${result.stderr}`).toBe(0);
       expect(result.stdout.trim()).toBe(expectedVersion);
     }
+  });
+
+  it("reports an OpenCode 1.x version, matching the V1 HTTP API the fixture serves", () => {
+    // The server drives OpenCode by major version and reports 3.x and later as unsupported,
+    // which leaves OpenCode unavailable and its New panel entry disabled in packaged UI tests.
+    const fixture = prepareProviderFixture();
+    const result = spawnConfiguredLauncherSync(fixture, "opencode", ["--version"]);
+    expect(result.status, result.stderr).toBe(0);
+    const major = /\bv?(\d+)\./.exec(result.stdout)?.[1];
+    expect(major).toBe("1");
   });
 
   it("answers Codex capability probes without starting the Node fixture runtime", () => {
@@ -666,6 +676,41 @@ describe("generated provider shims", () => {
       await reader.cancel();
     } finally {
       abort.abort();
+      await cleanupOpenCodeFixture(endpoint, child, fixture.hostPlatform, fixture.environment);
+    }
+  });
+
+  it("answers OpenCode message lookups the way the server's delivery check expects", async () => {
+    // Before sending, the server asks whether the delivery's message already exists. A missing
+    // message is 404; one the fixture received is a user message of that session.
+    const fixture = prepareProviderFixture();
+    const port = await reserveLocalPort();
+    const endpoint = `http://127.0.0.1:${port}`;
+    const child = spawnConfiguredLauncher(fixture, "opencode", [
+      "serve",
+      "--hostname=127.0.0.1",
+      `--port=${port}`,
+    ]);
+    const messageUrl = `${endpoint}/session/bibcode-ui-opencode-session/message/msg_fixture1`;
+
+    try {
+      await waitForHealthyEndpoint(endpoint);
+      expect((await fetch(messageUrl)).status).toBe(404);
+      await fetch(`${endpoint}/session/bibcode-ui-opencode-session/prompt_async`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          messageID: "msg_fixture1",
+          parts: [{ type: "text", text: "@reviewer" }],
+        }),
+      });
+      const found = await fetch(messageUrl);
+      expect(found.status).toBe(200);
+      expect(await found.json()).toEqual({
+        info: { id: "msg_fixture1", sessionID: "bibcode-ui-opencode-session", role: "user" },
+        parts: [{ type: "text", text: "@reviewer" }],
+      });
+    } finally {
       await cleanupOpenCodeFixture(endpoint, child, fixture.hostPlatform, fixture.environment);
     }
   });

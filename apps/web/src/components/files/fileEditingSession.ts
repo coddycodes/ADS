@@ -45,6 +45,7 @@ export class FileEditingSession<LAnnotation, A = unknown, E = unknown> {
   private readonly listeners = new Set<() => void>();
   private editorChangeHandler: FileEditorChangeHandler<LAnnotation> | null = null;
   private editorInstance: Editor<LAnnotation> | null = null;
+  private editorChangedDocument = false;
   private disposed = false;
   private snapshot!: FileEditingSessionSnapshot;
 
@@ -70,6 +71,28 @@ export class FileEditingSession<LAnnotation, A = unknown, E = unknown> {
     return this.currentCacheKey;
   }
 
+  /**
+   * Contents a surface must show instead of the file query: the text the editor
+   * document holds once the editor has changed it, or a change not saved yet.
+   * Null when the file query should seed the document. Pierre shares rendered
+   * lines between files with the same `cacheKey`, so pairing `cacheKey` with
+   * contents read before the save landed can paint them over the edited document.
+   */
+  get retainedContents(): string | null {
+    if (!this.editorChangedDocument && !this.coordinator.hasPendingWork()) return null;
+    return this.coordinator.getLatestContents();
+  }
+
+  /**
+   * The text this session's document holds while part of it is not yet saved
+   * (pending, saving, failed, or paused), or null once the file holds all of it.
+   * A view that shows the file must prefer this text: the file query still holds
+   * what was read before these edits, and changing the file from it drops them.
+   */
+  get unsavedContents(): string | null {
+    return this.coordinator.hasPendingWork() ? this.coordinator.getLatestContents() : null;
+  }
+
   get editor(): Editor<LAnnotation> {
     if (this.editorInstance === null) {
       this.editorInstance = this.createEditor();
@@ -86,6 +109,7 @@ export class FileEditingSession<LAnnotation, A = unknown, E = unknown> {
       },
       onChange: (file, lineAnnotations) => {
         if (this.disposed) return;
+        this.editorChangedDocument = true;
         this.coordinator.change(file.contents);
         this.editorChangeHandler?.(file, lineAnnotations);
         this.publish();
@@ -179,6 +203,7 @@ export class FileEditingSession<LAnnotation, A = unknown, E = unknown> {
     if (this.disposed) return;
     this.editorInstance?.cleanUp();
     this.editorInstance = null;
+    this.editorChangedDocument = false;
     this.currentCacheKey = createSessionCacheKey(this.cwd);
     this.coordinator.change(contents);
     this.publish();

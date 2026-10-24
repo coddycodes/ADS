@@ -22,7 +22,7 @@ import {
   type LexicalEditor,
   type LexicalNode,
 } from "lexical";
-import { act, createRef } from "react";
+import { act, createRef, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -823,6 +823,250 @@ describe("ComposerPromptEditor inline token nodes", () => {
     } finally {
       await act(async () => root.unmount());
       container.remove();
+      harness.useRealEffects = false;
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+    }
+  });
+
+  it("leaves focus where it is when skills arrive while the composer is unfocused", async () => {
+    harness.useRealEffects = true;
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    const outside = document.createElement("button");
+    outside.textContent = "Activity summary";
+    document.body.append(outside, container);
+    const root = createRoot(container);
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    const spies: Array<{ mockRestore: () => void }> = [];
+    const source = "use $refactor now";
+    const renderWithSkills = (nextSkills: ReadonlyArray<ServerProviderSkill>) => (
+      <ComposerPromptEditor
+        value={source}
+        cursor={source.length}
+        terminalContexts={[]}
+        skills={nextSkills}
+        agents={[]}
+        disabled={false}
+        placeholder="Ask anything"
+        onRemoveTerminalContext={vi.fn()}
+        onChange={vi.fn()}
+        onPaste={vi.fn()}
+        editorRef={editorRef}
+      />
+    );
+
+    try {
+      await act(async () => root.render(renderWithSkills([])));
+      outside.focus();
+      expect(document.activeElement).toBe(outside);
+      const editorRoot = container.querySelector('[contenteditable="true"]');
+      const domSelection = window.getSelection();
+      if (!editorRoot || !domSelection) throw new Error("The composer did not render.");
+      // Browsers focus an editable element when the page's selection is placed inside it, which
+      // happy-dom does not emulate, so this watches for the selection and focus calls directly.
+      const placeSelection = vi.spyOn(domSelection, "setBaseAndExtent");
+      const focus = vi.spyOn(HTMLElement.prototype, "focus");
+      spies.push(placeSelection, focus);
+
+      // Provider capabilities load after the thread opens; a keyboard user may already be on
+      // another control, and the refreshed chips must not pull focus into the composer.
+      await act(async () => root.render(renderWithSkills(skills)));
+
+      expect(container.querySelector('[data-composer-skill-chip="true"]')).not.toBeNull();
+      expect(document.activeElement).toBe(outside);
+      expect(placeSelection).not.toHaveBeenCalled();
+      expect(focus.mock.contexts.filter((element) => element === editorRoot)).toEqual([]);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+      await act(async () => root.unmount());
+      container.remove();
+      outside.remove();
+      harness.useRealEffects = false;
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+    }
+  });
+
+  it("drops a selection left in the unfocused composer instead of moving its caret", async () => {
+    harness.useRealEffects = true;
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    const outside = document.createElement("button");
+    document.body.append(outside, container);
+    const root = createRoot(container);
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    const spies: Array<{ mockRestore: () => void }> = [];
+    const source = "use $refactor now";
+    const cursor = "use ".length;
+    const renderWithSkills = (nextSkills: ReadonlyArray<ServerProviderSkill>) => (
+      <ComposerPromptEditor
+        value={source}
+        cursor={cursor}
+        terminalContexts={[]}
+        skills={nextSkills}
+        agents={[]}
+        disabled={false}
+        placeholder="Ask anything"
+        onRemoveTerminalContext={vi.fn()}
+        onChange={vi.fn()}
+        onPaste={vi.fn()}
+        editorRef={editorRef}
+      />
+    );
+
+    try {
+      await act(async () => root.render(renderWithSkills([])));
+      const editorRoot = container.querySelector('[contenteditable="true"]');
+      const text = editorRoot?.querySelector("span")?.firstChild;
+      const domSelection = window.getSelection();
+      if (!editorRoot || !text || !domSelection) throw new Error("The composer did not render.");
+      // The user typed in the composer and then clicked another control: the page's range
+      // stays in the editor while focus moves on.
+      domSelection.setBaseAndExtent(text, cursor, text, cursor);
+      outside.focus();
+
+      await act(async () => root.render(renderWithSkills(skills)));
+
+      // A browser relocates the range into the rebuilt paragraph and reports it back through
+      // selectionchange; happy-dom leaves it on the detached text node and fires nothing. So
+      // this checks the contract: the leftover range is removed before the rebuild, and the
+      // saved caret and focus are unchanged.
+      expect(domSelection.rangeCount).toBe(0);
+      expect(editorRef.current?.readSnapshot()).toMatchObject({ value: source, cursor });
+      expect(document.activeElement).toBe(outside);
+
+      // Focusing the composer again, as a Tab back in does, puts the saved caret back: the
+      // browser would otherwise place it at the start.
+      const caret = () => ({
+        inEditor: domSelection.rangeCount > 0 && editorRoot.contains(domSelection.anchorNode),
+        text: domSelection.anchorNode?.textContent,
+        offset: domSelection.anchorOffset,
+      });
+      (editorRoot as HTMLElement).focus();
+      expect(caret()).toEqual({ inEditor: true, text: "use ", offset: cursor });
+
+      // Only once: a later focus is the browser's and the user's to place.
+      outside.focus();
+      const placeSelection = vi.spyOn(domSelection, "setBaseAndExtent");
+      spies.push(placeSelection);
+      (editorRoot as HTMLElement).focus();
+      expect(placeSelection).not.toHaveBeenCalled();
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+      await act(async () => root.unmount());
+      container.remove();
+      outside.remove();
+      harness.useRealEffects = false;
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+    }
+  });
+
+  it("places focusAt's caret, not the saved one, while a restore is pending", async () => {
+    harness.useRealEffects = true;
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    const outside = document.createElement("button");
+    document.body.append(outside, container);
+    const root = createRoot(container);
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    const source = "use $refactor now";
+    const renderWithSkills = (nextSkills: ReadonlyArray<ServerProviderSkill>) => (
+      <ComposerPromptEditor
+        value={source}
+        cursor={"use ".length}
+        terminalContexts={[]}
+        skills={nextSkills}
+        agents={[]}
+        disabled={false}
+        placeholder="Ask anything"
+        onRemoveTerminalContext={vi.fn()}
+        onChange={vi.fn()}
+        onPaste={vi.fn()}
+        editorRef={editorRef}
+      />
+    );
+
+    try {
+      await act(async () => root.render(renderWithSkills([])));
+      const editorRoot = container.querySelector('[contenteditable="true"]');
+      const text = editorRoot?.querySelector("span")?.firstChild;
+      const domSelection = window.getSelection();
+      if (!editorRoot || !text || !domSelection) throw new Error("The composer did not render.");
+      domSelection.setBaseAndExtent(text, 2, text, 2);
+      outside.focus();
+      // The refresh removes the leftover range and arms the restore.
+      await act(async () => root.render(renderWithSkills(skills)));
+      expect(domSelection.rangeCount).toBe(0);
+
+      await act(async () => editorRef.current?.focusAt(1));
+
+      expect(editorRef.current?.readSnapshot().cursor).toBe(1);
+      expect(domSelection.anchorOffset).toBe(1);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      outside.remove();
+      harness.useRealEffects = false;
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+    }
+  });
+
+  it("restores the reconciled caret when the parent reads the snapshot during a refresh", async () => {
+    harness.useRealEffects = true;
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement("div");
+    const outside = document.createElement("button");
+    document.body.append(outside, container);
+    const root = createRoot(container);
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    const source = "use $refactor now";
+    // Before the skill is known its token is plain text, so the caret before "now" is 14.
+    const expandedCursor = "use $refactor ".length;
+    // ChatComposer re-detects its trigger in a layout effect when the capabilities change,
+    // which runs after the editor's own layout effect has queued the rebuild.
+    function Composer({ nextSkills }: { nextSkills: ReadonlyArray<ServerProviderSkill> }) {
+      useLayoutEffect(() => {
+        if (nextSkills.length > 0) editorRef.current?.readSnapshot();
+      }, [nextSkills]);
+      return (
+        <ComposerPromptEditor
+          value={source}
+          cursor={expandedCursor}
+          terminalContexts={[]}
+          skills={nextSkills}
+          agents={[]}
+          disabled={false}
+          placeholder="Ask anything"
+          onRemoveTerminalContext={vi.fn()}
+          onChange={vi.fn()}
+          onPaste={vi.fn()}
+          editorRef={editorRef}
+        />
+      );
+    }
+
+    try {
+      await act(async () => root.render(<Composer nextSkills={[]} />));
+      const editorRoot = container.querySelector('[contenteditable="true"]');
+      const text = editorRoot?.querySelector("span")?.firstChild;
+      const domSelection = window.getSelection();
+      if (!editorRoot || !text || !domSelection) throw new Error("The composer did not render.");
+      domSelection.setBaseAndExtent(text, expandedCursor, text, expandedCursor);
+      outside.focus();
+
+      await act(async () => root.render(<Composer nextSkills={skills} />));
+      (editorRoot as HTMLElement).focus();
+
+      // The token now counts as one position: "use " + token + " " puts the caret at 6,
+      // still before "now".
+      expect(editorRef.current?.readSnapshot()).toMatchObject({
+        value: source,
+        cursor: "use ".length + 2,
+        expandedCursor,
+      });
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      outside.remove();
       harness.useRealEffects = false;
       (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
     }

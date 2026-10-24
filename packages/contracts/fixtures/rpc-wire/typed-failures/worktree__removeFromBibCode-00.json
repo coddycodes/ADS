@@ -8,8 +8,9 @@
         "_tag": "Fail",
         "error": {
           "_tag": "WorktreeRemovalError",
-          "reason": "dirty-confirmation-required",
-          "message": "j,TT@@7(R"
+          "reason": "replacement-conflict",
+          "message": "[",
+          "currentGeneration": 2
         }
       }
     ]

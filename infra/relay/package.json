@@ -14,7 +14,7 @@
     "@bibcode/shared": "workspace:*",
     "@clerk/backend": "catalog:",
     "@effect/sql-pg": "catalog:",
-    "alchemy": "2.0.0-beta.72",
+    "alchemy": "2.0.0-beta.81",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "catalog:"
   },
@@ -24,6 +24,7 @@
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
+    "typescript": "catalog:",
     "vite": "catalog:",
     "vite-plus": "catalog:"
   }

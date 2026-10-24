@@ -8,33 +8,21 @@
         "_tag": "Fail",
         "error": {
           "_tag": "ProjectRenameEntryError",
-          "cwd": "toString",
-          "resolvedPath": "[Y/M2X",
-          "operation": "write-file",
-          "message": "on",
-          "cause": [
-            [true],
-            {
-              "toString": null,
-              "dtJB8": "'lK\"iltg",
-              "+KG+/": 0,
-              "": -3.5e-323,
-              "bi": "X",
-              "?A: t0Z": ";pro__loo",
-              "?I95+*_ZFt": "\\kOWU9b*fZ"
-            },
-            [
-              "l;u*9Mta&I",
-              null,
-              {},
-              "S",
-              {
-                " D@#Y Io/": false,
-                "Strivalu": false,
-                "y':mnQYht": null
-              }
-            ]
-          ]
+          "relativePath": "😀",
+          "operation": "realpath-target",
+          "message": "E*7}RDHf6B",
+          "cause": {
+            "0": "{H_ttMN",
+            "dg|^": false,
+            "34CR:|*rF@": true,
+            "toString": null,
+            "prototype": null,
+            "": null,
+            "l,\\=@PZkM": null,
+            "😀": [],
+            "5xiXrxA]7P": {},
+            "�": -1.7976931348623151e308
+          }
         }
       }
     ]

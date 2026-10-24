@@ -8,13 +8,13 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitManagerOperationError",
-          "operation": "r",
-          "code": "Y}",
-          "message": "a",
+          "operation": "DoH1=Q^>$A",
+          "code": "4294967295",
+          "message": "",
           "blocked": {
-            "operation": "t",
-            "code": "operation-in-flight",
-            "message": "b:u(q(5pM"
+            "operation": "",
+            "code": "no-upstream",
+            "message": "#"
           }
         }
       }

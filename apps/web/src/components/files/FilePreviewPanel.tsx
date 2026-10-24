@@ -610,15 +610,18 @@ function RenderedMarkdownSurface({
   const surfaceRef = useRef<HTMLDivElement>(null);
   useFileSaveShortcut(surfaceRef, session);
 
+  // Unsaved source edits win over the file; once saved, the file wins, so a
+  // change made on disk after the save shows here and a task toggle keeps it.
   return (
     <ScrollArea ref={surfaceRef} className="min-h-0 flex-1">
       <ChatMarkdown
-        text={contents}
+        text={session.unsavedContents ?? contents}
         cwd={cwd}
         threadRef={threadRef}
         className="mx-auto max-w-4xl px-6 py-5"
         onTaskListChange={({ markerOffset, checked }) => {
           const currentContents =
+            session.unsavedContents ??
             getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
             contents;
           const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
@@ -925,7 +928,7 @@ export default function FilePreviewPanel({
                 key={`${relativePath}:${resolvedTheme}`}
                 session={session}
                 composerDraftTarget={composerDraftTarget}
-                contents={file.data.contents}
+                contents={session.retainedContents ?? file.data.contents}
                 resolvedTheme={resolvedTheme}
                 revealRequestId={revealRequestId}
                 wordWrap={wordWrap}

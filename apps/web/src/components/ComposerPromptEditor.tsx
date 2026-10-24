@@ -29,6 +29,7 @@ import {
   KEY_BACKSPACE_COMMAND,
   $getRoot,
   HISTORY_MERGE_TAG,
+  SKIP_DOM_SELECTION_TAG,
   DecoratorNode,
   type ElementNode,
   type LexicalNode,
@@ -1649,6 +1650,9 @@ function ComposerPromptEditorInner({
     terminalContextIds: terminalContexts.map((context) => context.id),
   });
   const isApplyingControlledUpdateRef = useRef(false);
+  // Set when an unfocused metadata refresh removed the range the user left in the editor, so
+  // the next focus restores the saved caret instead of the browser's default position.
+  const restoreCaretOnFocusRef = useRef(false);
   const terminalContextActions = useMemo(
     () => ({ onRemoveTerminalContext }),
     [onRemoveTerminalContext],
@@ -1714,24 +1718,46 @@ function ComposerPromptEditorInner({
     }
 
     isApplyingControlledUpdateRef.current = true;
-    editor.update(() => {
-      const shouldRewriteEditorState =
-        previousSnapshot.value !== value || agentsChanged || contextsChanged || skillsChanged;
-      if (shouldRewriteEditorState) {
-        const reconstructTrailingReferences =
-          reconstructControlledValue || $composerEditorEndsWithConfirmedReferenceNode();
-        $setComposerEditorPrompt(
-          value,
-          terminalContexts,
-          agentMetadataRef.current,
-          skillMetadataRef.current,
-          { reconstructTrailingReferences },
-        );
-      }
-      if (shouldRewriteEditorState || isFocused) {
-        $setSelectionAtComposerOffset(normalizedCursor);
-      }
-    });
+    // Provider metadata (skills, agents, terminal contexts) often arrives after the thread
+    // opens. Re-rendering its chips in an unfocused composer must not place the page's
+    // selection there: Chromium and WebKit both focus an editable element when a script puts
+    // the selection inside it, and a keyboard user on another control would be pulled into the
+    // composer. The editor's own selection still updates for its next focus.
+    const metadataRefreshWhileUnfocused = !isFocused && previousSnapshot.value === value;
+    const domSelection = metadataRefreshWhileUnfocused ? window.getSelection() : null;
+    if (
+      rootElement &&
+      domSelection &&
+      domSelection.rangeCount > 0 &&
+      rootElement.contains(domSelection.anchorNode)
+    ) {
+      // A range left in the editor after it lost focus would be relocated when the refresh
+      // rebuilds the paragraph, and Lexical would read that back as the caret. Removing it
+      // cannot move focus; the next focus puts the saved caret back.
+      domSelection.removeAllRanges();
+      restoreCaretOnFocusRef.current = true;
+    }
+    editor.update(
+      () => {
+        const shouldRewriteEditorState =
+          previousSnapshot.value !== value || agentsChanged || contextsChanged || skillsChanged;
+        if (shouldRewriteEditorState) {
+          const reconstructTrailingReferences =
+            reconstructControlledValue || $composerEditorEndsWithConfirmedReferenceNode();
+          $setComposerEditorPrompt(
+            value,
+            terminalContexts,
+            agentMetadataRef.current,
+            skillMetadataRef.current,
+            { reconstructTrailingReferences },
+          );
+        }
+        if (shouldRewriteEditorState || isFocused) {
+          $setSelectionAtComposerOffset(normalizedCursor);
+        }
+      },
+      metadataRefreshWhileUnfocused ? { tag: SKIP_DOM_SELECTION_TAG } : undefined,
+    );
     queueMicrotask(() => {
       isApplyingControlledUpdateRef.current = false;
     });
@@ -1746,10 +1772,42 @@ function ComposerPromptEditorInner({
     value,
   ]);
 
+  // Puts the saved caret back when the composer is focused after a refresh removed the range
+  // the user left in it. The write commits inside the focus event (`discrete`): Chromium has
+  // already placed its own caret at the start by then and WebKit places it right after, so a
+  // later commit would lose to Tab; a click or a drag still sets its own selection afterwards
+  // and wins, as it should. Measured in Chromium 155 and WebKit (Playwright) for Tab, click,
+  // drag and a second focus.
+  useEffect(() => {
+    const restoreSavedCaret = () => {
+      if (!restoreCaretOnFocusRef.current) return;
+      restoreCaretOnFocusRef.current = false;
+      const cursor = snapshotRef.current.cursor;
+      isApplyingControlledUpdateRef.current = true;
+      try {
+        editor.update(() => $setSelectionAtComposerOffset(cursor), { discrete: true });
+      } finally {
+        isApplyingControlledUpdateRef.current = false;
+      }
+    };
+    let activeRootElement: HTMLElement | null = null;
+    const unregisterRootListener = editor.registerRootListener((rootElement, prevRootElement) => {
+      prevRootElement?.removeEventListener("focus", restoreSavedCaret);
+      rootElement?.addEventListener("focus", restoreSavedCaret);
+      activeRootElement = rootElement;
+    });
+    return () => {
+      activeRootElement?.removeEventListener("focus", restoreSavedCaret);
+      unregisterRootListener();
+    };
+  }, [editor]);
+
   const focusAt = useCallback(
     (nextCursor: number) => {
       const rootElement = editor.getRootElement();
       if (!rootElement) return;
+      // This focus places its own caret below.
+      restoreCaretOnFocusRef.current = false;
       const boundedCursor = clampCollapsedComposerCursor(
         snapshotRef.current.value,
         nextCursor,
@@ -1786,6 +1844,10 @@ function ComposerPromptEditorInner({
     expandedCursor: number;
     terminalContextIds: string[];
   } => {
+    // A controlled update queued in this commit has not reached the editor state yet. The
+    // snapshot already holds what it writes; reading the old state here (ChatComposer does
+    // in a layout effect) would put the pre-update caret back and undo it.
+    if (isApplyingControlledUpdateRef.current) return snapshotRef.current;
     let snapshot = snapshotRef.current;
     editor.getEditorState().read(() => {
       const nextValue = $getRoot().getTextContent();

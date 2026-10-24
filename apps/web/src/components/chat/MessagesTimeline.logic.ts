@@ -237,6 +237,29 @@ interface TurnFold {
   label: string;
 }
 
+interface TurnFolds {
+  foldsByAnchorEntryId: ReadonlyMap<string, TurnFold>;
+  /** Assistant messages a settled turn keeps visible as its answer. */
+  answerMessageIds: ReadonlySet<string>;
+}
+
+/**
+ * An assistant message is long or structured enough to read as an answer
+ * rather than a progress line ("Waiting for the build."). Only used to keep
+ * such a message out of a fold when the turn's last message is a short one.
+ */
+const SUBSTANTIVE_ANSWER_MIN_LENGTH = 240;
+const MARKDOWN_BLOCK_PATTERN = /^[ \t]{0,3}(?:#{1,6}\s|[-*+]\s|\d{1,3}[.)]\s|```|~~~|>|\|.*\|)/m;
+const PARAGRAPH_BREAK_PATTERN = /\S[ \t]*\n[ \t]*\n\s*\S/;
+
+function isSubstantiveAssistantText(text: string): boolean {
+  return (
+    text.length >= SUBSTANTIVE_ANSWER_MIN_LENGTH ||
+    PARAGRAPH_BREAK_PATTERN.test(text) ||
+    MARKDOWN_BLOCK_PATTERN.test(text)
+  );
+}
+
 /**
  * The session's running turn is authoritative when latestTurn briefly lags or
  * regresses behind it. Otherwise, the latest turn counts as unsettled while it
@@ -261,18 +284,22 @@ function deriveUnsettledTurnId(
 
 /**
  * Settled turns fold their commentary and tool activity behind a
- * "Worked for ..." row anchored at the turn's first foldable entry; the
- * terminal assistant message stays visible below the fold.
+ * "Worked for ..." row anchored at the turn's first foldable entry. The
+ * turn's answer stays visible below the fold: its last assistant message,
+ * plus the last substantive assistant message before it when the turn ends
+ * on a short progress line. Assistant output that arrives after the latest
+ * turn recorded its completion stays visible too and never displaces that
+ * answer.
  */
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
-  terminalAssistantMessageIds: ReadonlySet<string>;
   latestTurn: TimelineLatestTurn | null;
   unsettledTurnId: TurnId | null;
-}): ReadonlyMap<string, TurnFold> {
+}): TurnFolds {
   interface TurnGroup {
     entries: Array<TimelineEntry>;
-    terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
+    /** Assistant messages in timeline order. */
+    assistantEntries: Array<Extract<TimelineEntry, { kind: "message" }>>;
     hasStreamingMessage: boolean;
     /**
      * The user message that kicked the turn off. Entry timestamps alone
@@ -310,7 +337,7 @@ function deriveTurnFolds(input: {
     if (!group) {
       group = {
         entries: [],
-        terminalEntry: null,
+        assistantEntries: [],
         hasStreamingMessage: false,
         // Each user boundary starts at most one turn; a second turn after the
         // same user message (e.g. a steer-superseded continuation) falls back
@@ -322,16 +349,17 @@ function deriveTurnFolds(input: {
     }
     group.entries.push(entry);
     if (entry.kind === "message") {
-      if (input.terminalAssistantMessageIds.has(entry.message.id)) {
-        group.terminalEntry = entry;
-      }
+      group.assistantEntries.push(entry);
       if (entry.message.streaming) {
         group.hasStreamingMessage = true;
       }
     }
   }
 
+  const latestCompletedAtMs =
+    input.latestTurn?.completedAt != null ? Date.parse(input.latestTurn.completedAt) : Number.NaN;
   const foldsByAnchorEntryId = new Map<string, TurnFold>();
+  const answerMessageIds = new Set<string>();
   for (const [turnId, group] of groupsByTurnId) {
     if (turnId === input.unsettledTurnId) {
       continue;
@@ -339,9 +367,38 @@ function deriveTurnFolds(input: {
     if (group.hasStreamingMessage) {
       continue;
     }
+
+    // Output tagged with the latest turn after it recorded its completion
+    // (e.g. a background task reporting back) is new output, not part of
+    // the work the fold summarizes.
+    const completedAtMs = input.latestTurn?.turnId === turnId ? latestCompletedAtMs : Number.NaN;
+    const lateEntries = Number.isFinite(completedAtMs)
+      ? group.assistantEntries.filter((entry) => Date.parse(entry.createdAt) > completedAtMs)
+      : [];
+    const onTimeEntries =
+      lateEntries.length === 0
+        ? group.assistantEntries
+        : group.assistantEntries.filter((entry) => !lateEntries.includes(entry));
+
+    const visibleEntryIds = new Set<string>(lateEntries.map((entry) => entry.id));
+    const terminalEntry = onTimeEntries.at(-1);
+    if (terminalEntry) {
+      visibleEntryIds.add(terminalEntry.id);
+      answerMessageIds.add(terminalEntry.message.id);
+      if (!isSubstantiveAssistantText(terminalEntry.message.text)) {
+        const substantiveEntry = onTimeEntries.findLast((entry) =>
+          isSubstantiveAssistantText(entry.message.text),
+        );
+        if (substantiveEntry) {
+          visibleEntryIds.add(substantiveEntry.id);
+          answerMessageIds.add(substantiveEntry.message.id);
+        }
+      }
+    }
+
     const hiddenEntryIds = new Set<string>();
     for (const entry of group.entries) {
-      if (entry.id !== group.terminalEntry?.id) {
+      if (!visibleEntryIds.has(entry.id)) {
         hiddenEntryIds.add(entry.id);
       }
     }
@@ -361,15 +418,22 @@ function deriveTurnFolds(input: {
     // terminal message — take whichever ended last.
     const lastEntryEnd =
       lastEntry.kind === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
+    const lateOutputEnd = lateEntries.reduce<string | null>(
+      (end, entry) => maxIsoTimestamp(end, entry.message.updatedAt),
+      null,
+    );
     const elapsedMs =
       input.latestTurn?.turnId === turnId &&
       input.latestTurn.startedAt &&
       input.latestTurn.completedAt
-        ? computeElapsedMs(input.latestTurn.startedAt, input.latestTurn.completedAt)
+        ? computeElapsedMs(
+            input.latestTurn.startedAt,
+            maxIsoTimestamp(input.latestTurn.completedAt, lateOutputEnd) ??
+              input.latestTurn.completedAt,
+          )
         : computeElapsedMs(
             group.startBoundary ?? firstEntry.createdAt,
-            maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
-              lastEntryEnd,
+            maxIsoTimestamp(terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ?? lastEntryEnd,
           );
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
     const label = isLatestInterruptedTurn
@@ -388,7 +452,7 @@ function deriveTurnFolds(input: {
       label,
     });
   }
-  return foldsByAnchorEntryId;
+  return { foldsByAnchorEntryId, answerMessageIds };
 }
 
 export function deriveMessagesTimelineRows(input: {
@@ -416,9 +480,8 @@ export function deriveMessagesTimelineRows(input: {
     input.latestTurn ?? null,
     input.runningTurnId ?? null,
   );
-  const foldsByAnchorEntryId = deriveTurnFolds({
+  const { foldsByAnchorEntryId, answerMessageIds } = deriveTurnFolds({
     timelineEntries,
-    terminalAssistantMessageIds,
     latestTurn: input.latestTurn ?? null,
     unsettledTurnId,
   });
@@ -534,7 +597,8 @@ export function deriveMessagesTimelineRows(input: {
     // settles so commentary doesn't flash timestamps mid-work.
     const showAssistantMeta =
       timelineEntry.message.role === "assistant" &&
-      terminalAssistantMessageIds.has(timelineEntry.message.id) &&
+      (terminalAssistantMessageIds.has(timelineEntry.message.id) ||
+        answerMessageIds.has(timelineEntry.message.id)) &&
       !assistantTurnStillInProgress;
 
     nextRows.push({

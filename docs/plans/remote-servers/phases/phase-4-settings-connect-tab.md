@@ -134,8 +134,8 @@ Phase 4-owned wrappers**; never add a second definition.
 
 - **Phase 2:** `CompatVerdict` from `packages/client-runtime/src/connection/compat.ts`
   (spec §4.4 shape: `{ kind: "compatible" } | { kind: "legacy" } | { kind: "server-too-old";
-serverVersion: number; minSupported: number } | { kind: "client-too-old";
-serverMinCompatible: number; clientVersion: number }`). Phase 2's landed per-environment
+  serverVersion: number; minSupported: number } | { kind: "client-too-old";
+  serverMinCompatible: number; clientVersion: number }`). Phase 2's landed per-environment
   accessor is `environmentSession.compatVerdictAtom(environmentId)` (an `Atom` of
   `CompatVerdict | null`, exported via `createEnvironmentSessionAtoms`; `apps/web/src/state/session.ts`
   already re-exports `environmentSession`). Phase 4's row code reads that atom — there is no
@@ -152,7 +152,7 @@ serverMinCompatible: number; clientVersion: number }`). Phase 2's landed per-env
   `packages/client-runtime/src/connection/catalog.ts` is **required-nullable**
   (`string | null`, decode-default `null` for legacy profiles — never `undefined`);
   `classifyPairingEndpoint(endpoint: string): "loopback" | "private-network" | "public" |
-"unconnectable"` from `packages/shared/src/advertisedEndpoint.ts` (spec §4.2); and the
+  "unconnectable"` from `packages/shared/src/advertisedEndpoint.ts` (spec §4.2); and the
   verify-then-add flow — `verifyAndAddPairingCode(input: VerifyPairingCodeInput)` on the
   `ConnectionOnboarding` service, where
   `VerifyPairingCodeInput = { readonly code: string; readonly allowLoopbackTunnel?: boolean }`
@@ -160,8 +160,8 @@ serverMinCompatible: number; clientVersion: number }`). Phase 2's landed per-env
   loopback-endpoint code fails fast with the tagged
   `PairingLoopbackAcknowledgementRequiredError { endpoint }`). Classified failures arrive as
   `PairingAddError { reason, detail }` with `reason: PairingAddFailureReason =
-"unreachable" | "host-identity-mismatch" | "pairing-rejected" | "incompatible" |
-"duplicate-storage-identity"` (the five reasons are spec-pinned verbatim; the **field is
+  "unreachable" | "host-identity-mismatch" | "pairing-rejected" | "incompatible" |
+  "duplicate-storage-identity"` (the five reasons are spec-pinned verbatim; the **field is
   `reason`, not `kind`**). Malformed/future codes surface as `PairingCodeParseError` /
   `PairingCodeUnsupportedVersionError` (both carry user-facing `message`s). All four error
   classes and `PairingAddFailureReason` are defined in
@@ -245,7 +245,7 @@ Test invocation used throughout (run from the repository root):
     `CompatBadge = { readonly tone: "warning" | "destructive"; readonly label: string } | null`
   - `resolveTransportBadge(environment: TransportBadgeInput): TransportBadge | null` where
     `TransportBadge = { readonly kind: "e2ee" | "ssh" | "relay"; readonly label: string } |
-{ readonly kind: "unencrypted"; readonly label: string; readonly guidance: string }`
+    { readonly kind: "unencrypted"; readonly label: string; readonly guidance: string }`
   - `ADD_SERVER_FAILURE_REASONS: ReadonlyArray<PairingAddFailureReason>` (the five
     spec-pinned reasons, typed against Phase 3's union so drift fails typecheck)
   - `describeAddServerFailure(reason: PairingAddFailureReason): { readonly title: string; readonly detail: string }`
@@ -1790,7 +1790,7 @@ endpoint+token entry moves under an **Advanced** expander inside the pairing-cod
   `VerifyPairingCodeInput = { readonly code: string; readonly allowLoopbackTunnel?: boolean }`
   (the flow — live probe, E2EE handshake, authenticated `server.getConfig`, failure
   classification — is Phase 3's, spec §4.2); its tagged failures `PairingAddError { reason,
-detail }` (the five spec-pinned reasons live on **`reason`**),
+  detail }` (the five spec-pinned reasons live on **`reason`**),
   `PairingLoopbackAcknowledgementRequiredError { endpoint }`, `PairingCodeParseError`,
   `PairingCodeUnsupportedVersionError`; `parsePairingCode` from
   `@bibcode/shared/pairingCode` for the local pre-decode (accepts bare code + both URL
@@ -2190,7 +2190,7 @@ distinct outcomes pinned by amended spec §4.2:
   code itself carries the one-time credential (`token`, the existing `auth_pairing_links`
   token), so `PairingRouteSurface` — which already auto-submits a URL-carried token via
   `submitServerAuthCredential` (`apps/web/src/components/auth/PairingRouteSurface.tsx:50,
-88–97`) — consumes the embedded token to establish the browser session with the serving
+  88–97`) — consumes the embedded token to establish the browser session with the serving
   host, then lands at the root. It does **not** continue into Add Server: the primary
   session it just established _is_ that server, and saving it again as a bearer entry would
   collide on the storage identity.
@@ -2502,8 +2502,8 @@ pattern, and navigate to `/pair?code=…` (Task 8 takes it from there).
   event `deep-link://new-url` (payload: array of URL strings) and command
   `plugin:deep-link|get_current`.
 - Produces: `DesktopBridge` optional members `getPendingDeepLinks?: () =>
-Promise<ReadonlyArray<string>>` and `onDeepLink?: (listener: (urls: ReadonlyArray<string>)
-=> void) => () => void`; `DESKTOP_DEEP_LINK_EVENT` constant in contracts;
+  Promise<ReadonlyArray<string>>` and `onDeepLink?: (listener: (urls: ReadonlyArray<string>)
+  => void) => () => void`; `DESKTOP_DEEP_LINK_EVENT` constant in contracts;
   `resolvePairingDeepLink(rawUrl: string): { readonly code: string } | null` in
   `apps/web/src/desktopDeepLink.ts`.
 

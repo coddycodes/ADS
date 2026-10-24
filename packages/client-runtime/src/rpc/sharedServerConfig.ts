@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { RpcClientDefect, RpcClientError } from "effect/unstable/rpc/RpcClientError";
+import { RpcClientDefect, RpcClientError } from "effect/rpc/RpcClientError";
 
 /** The config after one stream event. Updates before the first snapshot change nothing. */
 export function applyServerConfigEvent(

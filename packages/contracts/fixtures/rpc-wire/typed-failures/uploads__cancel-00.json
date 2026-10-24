@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "UploadError",
-          "reason": "invalid",
-          "message": "YN"
+          "reason": "quota",
+          "message": "-1"
         }
       }
     ]

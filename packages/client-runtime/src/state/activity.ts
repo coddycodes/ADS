@@ -14,7 +14,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionProjectionPhase, type SupervisorConnectionState } from "../connection/model.ts";
 import { EnvironmentRegistry } from "../connection/registry.ts";

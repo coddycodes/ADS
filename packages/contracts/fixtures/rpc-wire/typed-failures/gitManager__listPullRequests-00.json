@@ -8,14 +8,10 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitManagerOperationError",
-          "operation": "prop",
-          "code": "oD.^1IG,{",
-          "message": "key",
-          "blocked": {
-            "operation": "C",
-            "code": "dirty-working-tree",
-            "message": "Sef"
-          }
+          "operation": "e",
+          "code": "&f>9@1oaYo",
+          "message": "",
+          "blocked": null
         }
       }
     ]

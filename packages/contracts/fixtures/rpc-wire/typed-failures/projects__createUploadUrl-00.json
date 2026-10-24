@@ -8,11 +8,10 @@
         "_tag": "Fail",
         "error": {
           "_tag": "ProjectTransferError",
-          "cwd": "~&z\"{&",
-          "relativePath": "Y<o",
-          "failure": "operation_failed",
-          "message": "/[a",
-          "cause": -2.928416508285648e-71
+          "cwd": "",
+          "relativePath": "{BB*~KbW",
+          "failure": "not_found",
+          "message": ""
         }
       }
     ]

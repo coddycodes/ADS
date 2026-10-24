@@ -25,6 +25,8 @@ pub use model::{
 };
 pub use monitor::{CurrentProcessDiagnostics, DiagnosticsMonitor, ProcessSampler, SamplingError};
 pub(crate) use native::RuntimeProcessOwnership;
+#[cfg(target_os = "macos")]
+pub(crate) use native::physical_footprint;
 pub use native::{NativeProcessRecord, NativeProcessSampler, ProcessSignal, SignalError};
 pub(crate) use registry::ProcessRegistrationError;
 pub use registry::{

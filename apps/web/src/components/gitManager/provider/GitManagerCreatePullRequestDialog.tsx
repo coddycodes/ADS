@@ -9,7 +9,7 @@ import type {
 } from "@bibcode/contracts";
 import { squashAtomCommandFailure } from "@bibcode/client-runtime/state/runtime";
 import { useDebouncedValue } from "@tanstack/react-pacer";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { GitPullRequestIcon, TriangleAlertIcon } from "lucide-react";
 import {
   memo,

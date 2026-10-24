@@ -66,11 +66,13 @@ import {
   threadHasStarted,
   waitForStartedServerThread,
   threadErrorAttribution,
+  threadErrorCompactAction,
+  COMPACT_CONVERSATION_COMMAND,
   prepareTurnAttachments,
   mergeInterruptedComposerContent,
   reusableStagedAttachmentAttempt,
 } from "./ChatView.logic";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 import type { AttachmentStagingResult } from "@bibcode/client-runtime/operations";
 
@@ -1461,6 +1463,42 @@ describe("threadErrorAttribution", () => {
         providerName: "opencode",
       }),
     ).toBe("OpenCode rejected the credentials");
+  });
+
+  it("says when the conversation no longer fits the provider's context window", () => {
+    expect(
+      threadErrorAttribution({
+        isBiBCodeAction: false,
+        errorClass: "context_limit",
+        providerName: "claudeAgent",
+      }),
+    ).toBe("Claude ran out of context");
+  });
+
+  it("offers to compact only a provider's context-limit failure", () => {
+    expect(
+      threadErrorCompactAction({
+        isBiBCodeAction: false,
+        errorClass: "context_limit",
+        busy: false,
+      }),
+    ).toEqual({ disabledReason: null });
+    for (const errorClass of ["provider_error", "unknown", null, undefined]) {
+      expect(
+        threadErrorCompactAction({ isBiBCodeAction: false, errorClass, busy: false }),
+      ).toBeNull();
+    }
+    // A failed BiBCode command shown over a context-limit session is not the provider's failure.
+    expect(
+      threadErrorCompactAction({ isBiBCodeAction: true, errorClass: "context_limit", busy: false }),
+    ).toBeNull();
+  });
+
+  it("is disabled with its reason while the thread is working, such as compacting", () => {
+    expect(
+      threadErrorCompactAction({ isBiBCodeAction: false, errorClass: "context_limit", busy: true }),
+    ).toEqual({ disabledReason: "Wait for the current work to finish, then compact." });
+    expect(COMPACT_CONVERSATION_COMMAND).toBe("/compact");
   });
 
   it("says nothing rather than guessing when the class is absent or unknown", () => {

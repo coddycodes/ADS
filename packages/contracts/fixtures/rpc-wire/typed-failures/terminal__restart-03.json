@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "EnvironmentAuthorizationError",
-          "message": "o",
-          "requiredScope": "relay:read"
+          "message": "2Q[NclFL=)",
+          "requiredScope": "terminal:operate"
         }
       }
     ]

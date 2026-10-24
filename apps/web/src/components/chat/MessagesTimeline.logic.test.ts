@@ -1255,6 +1255,171 @@ describe("deriveMessagesTimelineRows", () => {
   });
 });
 
+describe("settled turn answer visibility", () => {
+  const turnId = "turn-1" as never;
+  const at = (seconds: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, seconds)).toISOString();
+  const user = {
+    id: "user-entry",
+    kind: "message" as const,
+    createdAt: at(0),
+    message: {
+      id: "user-1" as never,
+      role: "user" as const,
+      text: "Resolve the conflicts",
+      turnId: null,
+      createdAt: at(0),
+      updatedAt: at(0),
+      streaming: false,
+    },
+  };
+  const assistant = (id: string, text: string, seconds: number) => ({
+    id: `${id}-entry`,
+    kind: "message" as const,
+    createdAt: at(seconds),
+    message: {
+      id: id as never,
+      role: "assistant" as const,
+      text,
+      turnId,
+      createdAt: at(seconds),
+      updatedAt: at(seconds + 1),
+      streaming: false,
+    },
+  });
+  const work = (id: string, seconds: number) => ({
+    id: `${id}-entry`,
+    kind: "work" as const,
+    createdAt: at(seconds),
+    entry: {
+      id,
+      createdAt: at(seconds),
+      turnId,
+      label: "Ran command",
+      tone: "tool" as const,
+    },
+  });
+  const answerText = [
+    "## Conflicts resolved",
+    "",
+    "- `src/app.ts`: kept the new router and the old guard.",
+    "- `src/build.ts`: took the release branch version.",
+  ].join("\n");
+  const base = {
+    isWorking: false,
+    activeTurnStartedAt: null,
+    turnDiffSummaryByAssistantMessageId: new Map(),
+    revertTurnCountByUserMessageId: new Map(),
+  };
+  const messageRow = (rows: MessagesTimelineRow[], id: string) =>
+    rows.find(
+      (row): row is Extract<MessagesTimelineRow, { kind: "message" }> =>
+        row.kind === "message" && row.id === id,
+    );
+
+  it("keeps a substantive answer visible when the turn ends on a status line", () => {
+    const rows = deriveMessagesTimelineRows({
+      ...base,
+      timelineEntries: [
+        user,
+        assistant("thought", "Looking at the conflicts first.", 5),
+        work("work-1", 8),
+        assistant("answer", answerText, 20),
+        work("work-2", 25),
+        assistant("status", "Waiting for the build.", 30),
+      ],
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "answer-entry",
+      "status-entry",
+    ]);
+    // The answer is a finished answer: it can be copied like the last message.
+    expect(messageRow(rows, "answer-entry")?.showAssistantCopyButton).toBe(true);
+    expect(messageRow(rows, "status-entry")?.showAssistantMeta).toBe(true);
+  });
+
+  it("keeps a long unformatted answer visible above a closing status line", () => {
+    const longAnswer =
+      "Good, this is very close to the reference now. Three fixes came out of that comparison: " +
+      "the header spacing was off by one step, the sidebar used the wrong muted token, and the " +
+      "empty state text wrapped too early on narrow windows. All three are fixed in this commit.";
+    const rows = deriveMessagesTimelineRows({
+      ...base,
+      timelineEntries: [
+        user,
+        work("work-1", 8),
+        assistant("answer", longAnswer, 20),
+        assistant("status", "Now repo housekeeping, then I'll publish a preview link.", 30),
+      ],
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "answer-entry",
+      "status-entry",
+    ]);
+  });
+
+  it("still folds short commentary when the last message is the answer", () => {
+    const rows = deriveMessagesTimelineRows({
+      ...base,
+      timelineEntries: [
+        user,
+        assistant("structured-progress", "Plan:\n- read the logs\n- fix the parser", 5),
+        work("work-1", 8),
+        assistant("answer", answerText, 20),
+      ],
+    });
+
+    expect(rows.map((row) => row.id)).toEqual(["user-entry", "turn-fold:turn-1", "answer-entry"]);
+  });
+
+  it("does not move a completed turn's answer when later output arrives under its id", () => {
+    const latestTurn = {
+      turnId,
+      state: "completed" as const,
+      startedAt: at(0),
+      completedAt: at(60),
+    };
+    const settledEntries = [
+      user,
+      assistant("thought", "Checking the branch.", 5),
+      work("work-1", 8),
+      assistant("answer", "Done. The branch is merged.", 50),
+    ];
+
+    const settled = deriveMessagesTimelineRows({
+      ...base,
+      timelineEntries: settledEntries,
+      latestTurn,
+    });
+    expect(settled.map((row) => row.id)).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "answer-entry",
+    ]);
+
+    const withLateOutput = deriveMessagesTimelineRows({
+      ...base,
+      timelineEntries: [...settledEntries, assistant("late", "Background check finished.", 200)],
+      latestTurn,
+    });
+    expect(withLateOutput.map((row) => row.id)).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "answer-entry",
+      "late-entry",
+    ]);
+    expect(messageRow(withLateOutput, "answer-entry")?.showAssistantMeta).toBe(true);
+    // The fold spans the output that ran past the recorded completion.
+    const fold = withLateOutput.find((row) => row.kind === "turn-fold");
+    expect(fold?.kind === "turn-fold" && fold.label).toBe("Worked for 3m 21s");
+  });
+});
+
 describe("working row answer delivery", () => {
   const workingRowFor = (streaming: boolean) => {
     const rows = deriveMessagesTimelineRows({

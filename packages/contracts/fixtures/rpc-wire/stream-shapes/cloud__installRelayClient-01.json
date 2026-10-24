@@ -6,9 +6,9 @@
       "type": "complete",
       "status": {
         "status": "unsupported",
-        "platform": "__looku",
-        "arch": "8",
-        "version": ""
+        "platform": "__proto__",
+        "arch": "",
+        "version": "�"
       }
     }
   ]

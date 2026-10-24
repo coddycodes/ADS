@@ -6,9 +6,9 @@ import * as NodePath from "node:path";
 
 import * as Schema from "effect/Schema";
 import type * as SchemaAST from "effect/SchemaAST";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import type * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
-import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
+import * as HttpApi from "effect/http-api/HttpApi";
+import type * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 
 import {
   AuthAccessTokenResult,

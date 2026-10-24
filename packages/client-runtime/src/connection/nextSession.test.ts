@@ -1,7 +1,7 @@
 import { GitCloneOperationError } from "@bibcode/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
-import { RpcClientError } from "effect/unstable/rpc";
+import { RpcClientError } from "effect/rpc";
 
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import { isSessionTransportLoss } from "./nextSession.ts";

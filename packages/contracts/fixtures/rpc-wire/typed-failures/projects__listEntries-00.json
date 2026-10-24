@@ -8,10 +8,11 @@
         "_tag": "Fail",
         "error": {
           "_tag": "ProjectListEntriesError",
-          "failure": "workspace_root_create_failed",
-          "normalizedCwd": "!",
-          "message": "z%",
-          "cause": {}
+          "cwd": "E<F5iw;@mZ",
+          "failure": "search_index_create_failed",
+          "timeout": "Z",
+          "detail": "",
+          "message": "toString"
         }
       }
     ]

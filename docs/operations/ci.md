@@ -24,9 +24,11 @@ workflow as idle.
   It also runs `node --test scripts/check-agent-delivery.node-test.mjs` to verify
   rejection of stale or partial proof, duplicate runs, unchanged failed recipes,
   and repeated rounds without a revised diagnosis.
-  Its 40-minute job budget is the projected cold-cache desktop build (33
-  minutes, from the 26-minute cold Check on `b96fe993` and the longer compile
-  on pull request 65) plus 7 minutes of margin.
+  Its 60-minute job budget covers a warm run (34 minutes on `c48c647f`) plus
+  26 minutes for the hosted apt mirror, which stretched the Tauri dependency
+  install from 30 seconds to 20-25 minutes on pull request 177. The earlier
+  40-minute budget (a 33-minute cold-cache desktop build plus 7 minutes) had no
+  room for that.
 - **Test** runs every workspace package `test` script one task at a time with
   `vp run -r --concurrency-limit 1 test`, then runs `cargo test --workspace -j 2`
   explicitly on Ubuntu 24.04. Serial tasks keep `rustc` from competing with a
@@ -83,8 +85,8 @@ workflow as idle.
   spaces, dollar signs, backticks, and typographic quotes. Every Git/home
   configuration input is fixture-owned. Other platforms skip that native case;
   their string assertions remain compatibility evidence.
-- **Crash smoke** runs on `ubuntu-latest`, `windows-latest`, and
-  `macos-latest`. It builds with the release symbol profile from
+- **Crash smoke** runs on `ubuntu-24.04`, `windows-2025`, and
+  `macos-26`. It builds with the release symbol profile from
   [Symbol assets](./release.md#symbol-assets) and runs
   `cargo test -p bibcode-server --test crash_smoke --release` with
   `CRASH_SMOKE_OUT` set to `${{ runner.temp }}/crash-smoke`, so the minidump that
@@ -110,14 +112,14 @@ native toolchain. Node.js and Vite+ are development/build dependencies; release
 artifacts contain the Tauri/Rust application and built web assets, not a Node
 runtime or TypeScript server.
 
-All workflows use the repository's declared Node.js 26.8.1, pnpm 11.25.0,
-Vite+ 0.3.0, and Rust 1.98.0 toolchains. External setup actions are immutable
+All workflows use the repository's declared Node.js 26.12.1, pnpm 11.28.5,
+Vite+ 1.1.0, and Rust 1.98.1 toolchains. External setup actions are immutable
 SHA-pinned with audited tag comments: Checkout 7.0.1
 (`3d3c42e5aac5ba805825da76410c181273ba90b1`), Rust Cache 2.9.2
-(`6323deb102c322ba6fcbdcafc7e3dddab59af2b6`), setup-vp 1.18.0
-(`1b32467adbe183473499fd9d5d372c3ed9641754`), action-gh-release 3.0.3
-(`efb35369e0ad2afab669f228072c1b0d510eae64`), and Rust toolchain 1.98.0
-(`62ae3a85dbdd2bedbb5819da8ce45635129289a1`). Reverify a tag before changing
+(`6323deb102c322ba6fcbdcafc7e3dddab59af2b6`), setup-vp 1.21.2
+(`68f39c78aaf39be468cabd2afb09c162574c84af`), action-gh-release 3.0.3
+(`efb35369e0ad2afab669f228072c1b0d510eae64`), and Rust toolchain 1.98.1
+(`18f0487477426dce244608110aa2660c2893deb7`). Reverify a tag before changing
 its immutable SHA.
 
 Check, Test, Native desktop, and Crash smoke restore the Swatinem Rust cache on every run
@@ -143,11 +145,12 @@ budgets above include a cold compile. Native desktop keeps its 120-minute and
   the product coordinator, verifies boot/version/storage/protection evidence,
   and scopes Linux process cleanup to its exact data root. The harness rejects
   local invocation; unit/syntax checks do not constitute real upgrade evidence.
-  The seeded macOS Intel row has a 360-minute complete-job allowance for three
+  The two seeded macOS rows have a 360-minute complete-job allowance for three
   cold, isolated 90-minute packaging children, three 10-minute frozen installs,
-  and 60 minutes for setup, runtime verification, evidence, and cleanup.
-  The other five rows and the separate WSL job keep 240 minutes; their packaging
-  children keep 45 minutes. If owned-child cleanup does not observe `close`
+  and 60 minutes for setup, runtime verification, evidence, and cleanup: Intel
+  needs it, and the capacity-constrained Apple silicon runners have taken 43
+  minutes for one package. The other four rows and the separate WSL job keep
+  240 minutes; their packaging children keep 45 minutes. If owned-child cleanup does not observe `close`
   within five seconds, the harness releases that child and exits nonzero so the
   job cannot stay open for the rest of the 240-minute budget.
   `remote-install` reuses the protected package.

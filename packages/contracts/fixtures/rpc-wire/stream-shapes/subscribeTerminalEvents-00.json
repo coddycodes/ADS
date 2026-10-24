@@ -3,29 +3,23 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "threadId": "GMzY'.vb",
-      "terminalId": "e",
+      "threadId": "4294967295",
+      "terminalId": "|-FY*)SW_`",
       "type": "started",
       "snapshot": {
-        "threadId": "name",
-        "terminalId": "apply",
-        "cwd": "*./@\"4G",
+        "threadId": "\n",
+        "terminalId": "qid[<9|H",
+        "cwd": "U",
         "worktreePath": null,
-        "status": "running",
-        "pid": null,
-        "history": "<.R/4CUj\"",
+        "status": "starting",
+        "pid": 95,
+        "history": "T\"S~Uf\\#Wv",
         "exitCode": null,
-        "exitSignal": null,
-        "label": "<?\"$r\"px%",
-        "updatedAt": "Vexk",
-        "sequence": 2147483624,
-        "size": {
-          "cols": 5,
-          "rows": 207,
-          "sizeClaim": "@N/"
-        },
+        "exitSignal": -4,
+        "label": "�",
+        "updatedAt": "�",
         "oscColorResponderActive": false,
-        "firstAttachmentGrant": true
+        "firstAttachmentGrant": false
       }
     }
   ]

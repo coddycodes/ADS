@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { AtomCommandResult } from "@bibcode/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import { FileSaveCoordinator, type FileSaveSnapshot } from "./fileSaveCoordinator";
 
@@ -43,6 +43,27 @@ describe("FileSaveCoordinator", () => {
     expect(persist).toHaveBeenCalledWith("latest");
     expect(onConfirmed).toHaveBeenCalledWith("latest");
     expect(onPendingChange.mock.calls).toEqual([[true], [true], [false]]);
+  });
+
+  it("keeps the latest contents after they are saved", async () => {
+    const coordinator = new FileSaveCoordinator({
+      debounceMs: 500,
+      persist: vi.fn().mockResolvedValue(AsyncResult.success(undefined)),
+      onPendingChange: vi.fn(),
+      onConfirmed: vi.fn(),
+    });
+    expect(coordinator.getLatestContents()).toBeNull();
+
+    coordinator.change("first");
+    coordinator.change("latest");
+    expect(coordinator.getLatestContents()).toBe("latest");
+
+    await expect(coordinator.flush()).resolves.toBe("saved");
+    expect(coordinator.getLatestContents()).toBe("latest");
+
+    coordinator.change("discarded");
+    coordinator.discardPendingSave();
+    expect(coordinator.getLatestContents()).toBe("discarded");
   });
 
   it("keeps autosave-disabled edits pending and explicitly saveable", async () => {

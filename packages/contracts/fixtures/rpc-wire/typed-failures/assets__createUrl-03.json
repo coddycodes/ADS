@@ -7,8 +7,9 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "UpdateMaintenanceActiveError",
-          "message": "&%\"Sb|"
+          "_tag": "EnvironmentAuthorizationError",
+          "message": "o.{8.pE{(Z",
+          "requiredScope": "terminal:operate"
         }
       }
     ]

@@ -49,5 +49,13 @@ export default defineConfig({
     dedupe: ["react", "react-dom"],
   },
   build: { outDir: "../../dist/typography", emptyOutDir: true },
-  test: { include: ["*.test.{ts,tsx}"], environment: "node" },
+  test: {
+    // Vitest v4 compatibility: preserve mock call history.
+    // Remove after tests no longer rely on calls from setup or earlier tests.
+    // https://viteplus.dev/guide/vitest-v5#remove-unneeded-compatibility-settings
+    // https://vitest.dev/guide/migration/#clearmocks-is-enabled-by-default
+    clearMocks: false,
+    include: ["*.test.{ts,tsx}"],
+    environment: "node",
+  },
 });

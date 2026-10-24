@@ -9,7 +9,7 @@
         "error": {
           "_tag": "UploadError",
           "reason": "not_found",
-          "message": "key"
+          "message": "__proto__"
         }
       }
     ]

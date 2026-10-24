@@ -8,9 +8,7 @@
         "_tag": "Fail",
         "error": {
           "_tag": "FilesystemBrowseError",
-          "platform": "__defi",
-          "message": "x\"",
-          "cause": null
+          "message": "__proto__"
         }
       }
     ]

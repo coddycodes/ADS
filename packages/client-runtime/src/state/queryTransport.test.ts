@@ -10,9 +10,9 @@ import * as Option from "effect/Option";
 import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { RpcClientError } from "effect/unstable/rpc";
-import * as Socket from "effect/unstable/socket/Socket";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { RpcClientError } from "effect/rpc";
+import * as Socket from "effect/socket/Socket";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";

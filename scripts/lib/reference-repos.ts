@@ -30,7 +30,8 @@ export const referenceRepos: ReadonlyArray<ReferenceRepo> = [
     versionTagPrefix: "v",
     packageSourceRefPrefix: "https://pkg.ing/alchemy/",
     // Nested gitlinks are not materialized by snapshot sync and are not usable
-    // reference content, so prune the complete vendor directory.
-    prunePaths: [".gitmodules", ".vendor", "cloudflare-tools", "distilled"],
+    // reference content, so prune the complete vendor directory. Alchemy
+    // beta.81 moved its gitlinks (distilled, floci, tcut) under submodules/.
+    prunePaths: [".gitmodules", ".vendor", "cloudflare-tools", "distilled", "submodules"],
   },
 ];

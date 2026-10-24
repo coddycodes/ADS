@@ -3,12 +3,12 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "actionId": "key",
-      "cwd": "J'Vl0XS!",
-      "action": "push",
+      "actionId": "k?^9KeF",
+      "cwd": "__proto__",
+      "action": "commit",
       "kind": "action_failed",
-      "phase": "commit",
-      "message": "`~vw,L2d/b"
+      "phase": null,
+      "message": "Q"
     }
   ]
 }

@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "TerminalInputError",
-          "code": "closed",
-          "message": "b"
+          "code": "write",
+          "message": "-1"
         }
       }
     ]

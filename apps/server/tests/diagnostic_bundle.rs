@@ -28,7 +28,10 @@ fn validated_zip_entries(bytes: &[u8]) -> Result<(Vec<String>, BTreeMap<String, 
         let mut entry = archive
             .by_index(index)
             .map_err(|error| format!("zip entry {index}: {error}"))?;
-        let name = entry.name().to_owned();
+        let name = entry
+            .name()
+            .map_err(|error| format!("zip entry {index} name: {error}"))?
+            .into_owned();
         let enclosed = entry
             .enclosed_name()
             .ok_or_else(|| format!("unsafe diagnostic archive entry: {name}"))?;
@@ -228,7 +231,7 @@ fn profiler_zip_entries(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
     let mut entries = BTreeMap::new();
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).expect("zip entry");
-        let name = entry.name().to_owned();
+        let name = entry.name().expect("zip entry name").into_owned();
         let enclosed = entry
             .enclosed_name()
             .unwrap_or_else(|| panic!("unsafe diagnostic archive entry: {name}"));

@@ -65,10 +65,10 @@
       "ledgerClosure": {
         "rows": 247,
         "statuses": {
-          "green": 131,
-          "current": 70,
+          "green": 132,
+          "current": 68,
           "blocked": 42,
-          "removed": 4
+          "removed": 5
         }
       },
       "commands": [
@@ -308,8 +308,8 @@
     }
   },
   "inventorySummary": {
-    "javascriptDirect": 81,
-    "javascriptLedger": 83,
+    "javascriptDirect": 80,
+    "javascriptLedger": 82,
     "rustRegistry": 138,
     "rustPath": 3,
     "rustGit": 1,
@@ -441,10 +441,10 @@
     {
       "key": "action:actions/download-artifact",
       "name": "actions/download-artifact",
-      "current": "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
-      "target": "8.0.1",
-      "tag": "v8.0.1",
-      "sha": "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      "current": "9000827ccba6bdab643e8b6fd33ac0654aef8333",
+      "target": "8.0.2",
+      "tag": "v8.0.2",
+      "sha": "9000827ccba6bdab643e8b6fd33ac0654aef8333",
       "channel": "stable",
       "source": "https://github.com/actions/download-artifact",
       "cohort": "github-actions",
@@ -467,10 +467,10 @@
     {
       "key": "action:actions/upload-artifact",
       "name": "actions/upload-artifact",
-      "current": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
-      "target": "7.0.1",
-      "tag": "v7.0.1",
-      "sha": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+      "current": "cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "target": "7.0.2",
+      "tag": "v7.0.2",
+      "sha": "cf430e030ddbb5b0abf93d22962f4752f3646cd9",
       "channel": "stable",
       "source": "https://github.com/actions/upload-artifact",
       "cohort": "github-actions",
@@ -480,10 +480,10 @@
     {
       "key": "action:dtolnay/rust-toolchain",
       "name": "dtolnay/rust-toolchain",
-      "current": "62ae3a85dbdd2bedbb5819da8ce45635129289a1",
-      "target": "1.98.0",
-      "tag": "1.98.0",
-      "sha": "62ae3a85dbdd2bedbb5819da8ce45635129289a1",
+      "current": "18f0487477426dce244608110aa2660c2893deb7",
+      "target": "1.98.1",
+      "tag": "1.98.1",
+      "sha": "18f0487477426dce244608110aa2660c2893deb7",
       "channel": "stable",
       "source": "https://github.com/dtolnay/rust-toolchain",
       "cohort": "github-actions",
@@ -532,15 +532,16 @@
     {
       "key": "action:voidzero-dev/setup-vp",
       "name": "voidzero-dev/setup-vp",
-      "current": "1b32467adbe183473499fd9d5d372c3ed9641754",
-      "target": "1.18.0",
-      "tag": "v1.18.0",
-      "sha": "1b32467adbe183473499fd9d5d372c3ed9641754",
+      "current": "68f39c78aaf39be468cabd2afb09c162574c84af",
+      "target": "1.21.2",
+      "tag": "v1.21.2",
+      "sha": "68f39c78aaf39be468cabd2afb09c162574c84af",
       "channel": "stable",
       "source": "https://github.com/voidzero-dev/setup-vp",
       "cohort": "github-actions",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "v1.21.2 (2026-10-10) fixes command injection in GitLab inputs and Azure setupRef and executable planting in sfw lookup; security exception to the 14-day rule."
     },
     {
       "key": "js:apps/marketing:@astrojs/check",
@@ -558,23 +559,25 @@
       "key": "js:apps/marketing:@vercel/config",
       "name": "@vercel/config",
       "current": "^0.7.0",
-      "target": "0.7.0",
+      "target": "0.7.2",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@vercel/config",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Compatible in-range lockfile refresh for v0.11.0 (pnpm 24-hour release-age gate; the 14-day rule applies only to newly chosen declared targets)."
     },
     {
       "key": "js:apps/marketing:astro",
       "name": "astro",
-      "current": "^7.3.0",
-      "target": "7.3.0",
+      "current": "^7.3.8",
+      "target": "7.3.8",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/astro",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "The range floor rises to ^7.3.8 and the lockfile resolves 7.3.8 (2026-10-08), the newest release satisfying the 14-day age rule. It is outside both astro advisories GHSA-98hj-9722-w3j8 (<7.3.2) and GHSA-mpr7-6m5w-76rw (<=7.3.2), and its devalue ^5.9.4 floor clears the devalue advisories. 7.4.x stays out of the lock until it ages."
     },
     {
       "key": "js:apps/web:@base-ui/react",
@@ -735,23 +738,25 @@
       "key": "js:apps/web:@tanstack/react-router",
       "name": "@tanstack/react-router",
       "current": "^1.170.32",
-      "target": "1.170.32",
+      "target": "1.170.45",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@tanstack/react-router",
       "cohort": "react-ui",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Compatible in-range lockfile refresh for v0.11.0 (pnpm 24-hour release-age gate; the 14-day rule applies only to newly chosen declared targets)."
     },
     {
       "key": "js:apps/web:@tanstack/router-plugin",
       "name": "@tanstack/router-plugin",
       "current": "^1.168.35",
-      "target": "1.168.35",
+      "target": "1.168.47",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@tanstack/router-plugin",
       "cohort": "react-ui",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Compatible in-range lockfile refresh for v0.11.0 (pnpm 24-hour release-age gate; the 14-day rule applies only to newly chosen declared targets)."
     },
     {
       "key": "js:apps/web:@types/babel__core",
@@ -779,23 +784,25 @@
       "key": "js:apps/web:@types/react-dom",
       "name": "@types/react-dom",
       "current": "~19.2.6",
-      "target": "19.2.6",
+      "target": "19.2.7",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@types/react-dom",
       "cohort": "react-ui",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Compatible in-range lockfile refresh for v0.11.0 (pnpm 24-hour release-age gate; the 14-day rule applies only to newly chosen declared targets)."
     },
     {
       "key": "js:apps/web:@vitejs/plugin-react",
       "name": "@vitejs/plugin-react",
       "current": "^6.1.1",
-      "target": "6.1.1",
+      "target": "6.1.2",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@vitejs/plugin-react",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Compatible in-range lockfile refresh for v0.11.0 (pnpm 24-hour release-age gate; the 14-day rule applies only to newly chosen declared targets)."
     },
     {
       "key": "js:apps/web:@xterm/addon-fit",
@@ -880,12 +887,13 @@
       "key": "js:apps/web:happy-dom",
       "name": "happy-dom",
       "current": "^20.13.2",
-      "target": "20.13.2",
+      "target": "20.14.6",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/happy-dom",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Compatible in-range lockfile refresh for v0.11.0 (pnpm 24-hour release-age gate; the 14-day rule applies only to newly chosen declared targets)."
     },
     {
       "key": "js:apps/web:lexical",
@@ -902,12 +910,13 @@
       "key": "js:apps/web:lucide-react",
       "name": "lucide-react",
       "current": "^1.40.0",
-      "target": "1.40.0",
+      "target": "1.61.0",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/lucide-react",
       "cohort": "react-ui",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Compatible in-range lockfile refresh for v0.11.0 (pnpm 24-hour release-age gate; the 14-day rule applies only to newly chosen declared targets)."
     },
     {
       "key": "js:apps/web:msw",
@@ -1033,137 +1042,146 @@
     {
       "key": "js:catalog:@clerk/backend",
       "name": "@clerk/backend",
-      "current": "3.17.1",
-      "target": "3.17.1",
+      "current": "3.23.1",
+      "target": "3.23.1",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@clerk/backend",
       "cohort": "clerk",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Clerk moves as one catalog set: backend 3.23.1, shared 4.39.1, clerk-js 6.38.1 and react 6.17.7 are the newest releases satisfying the 14-day age rule (all 2026-10-07) and require @clerk/shared ^4.39.1."
     },
     {
       "key": "js:catalog:@clerk/clerk-js",
       "name": "@clerk/clerk-js",
-      "current": "6.31.0",
-      "target": "6.31.0",
+      "current": "6.38.1",
+      "target": "6.38.1",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@clerk/clerk-js",
       "cohort": "clerk",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Clerk catalog set member (2026-10-07, 14-day rule compliant). 6.38.1 no longer depends on the @solana wallet adapters, so those removal overrides were deleted; the base-org, coinbase and wallet-standard removals remain."
     },
     {
       "key": "js:catalog:@clerk/react",
       "name": "@clerk/react",
-      "current": "6.15.0",
-      "target": "6.15.0",
+      "current": "6.17.7",
+      "target": "6.17.7",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@clerk/react",
       "cohort": "clerk",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Clerk catalog set member (2026-10-07, 14-day rule compliant); peers React ~19.2.3, matching the retained React 19.2.8."
     },
     {
       "key": "js:catalog:@clerk/shared",
       "name": "@clerk/shared",
-      "current": "4.31.0",
-      "target": "4.31.0",
+      "current": "4.39.1",
+      "target": "4.39.1",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@clerk/shared",
       "cohort": "clerk",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Shared by the Clerk 3.23.1/6.38.1/6.17.7 catalog set (2026-10-07, 14-day rule compliant); the catalog override keeps every Clerk consumer on it."
     },
     {
       "key": "js:catalog:@effect/atom-react",
       "name": "@effect/atom-react",
-      "current": "4.0.0-beta.107",
-      "target": "4.0.0-beta.107",
-      "channel": "preview",
+      "current": "4.0.2",
+      "target": "4.0.2",
+      "channel": "stable",
       "source": "https://www.npmjs.com/package/@effect/atom-react",
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Shares the single Effect 4.0.2 release version (14-day rule compliant, published 2026-10-07)."
     },
     {
       "key": "js:catalog:@effect/platform-node",
       "name": "@effect/platform-node",
-      "current": "4.0.0-beta.107",
-      "target": "4.0.0-beta.107",
-      "channel": "preview",
+      "current": "4.0.2",
+      "target": "4.0.2",
+      "channel": "stable",
       "source": "https://www.npmjs.com/package/@effect/platform-node",
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Shares the single Effect 4.0.2 release version (2026-10-07). Its non-optional node-redis peer (replacing ioredis) is removed by an override and marked optional by a packageExtension because BiBCode does not use NodeRedis; import Node services through subpaths, since the package barrel loads NodeRedis."
     },
     {
       "key": "js:catalog:@effect/platform-node-shared",
       "name": "@effect/platform-node-shared",
-      "current": "4.0.0-beta.107",
-      "target": "4.0.0-beta.107",
-      "channel": "preview",
+      "current": "4.0.2",
+      "target": "4.0.2",
+      "channel": "stable",
       "source": "https://www.npmjs.com/package/@effect/platform-node-shared",
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
-      "notes": "Exact catalog and override ownership prevents @effect/platform-node from resolving an RC.112 companion beside the beta.107 cohort."
+      "notes": "Exact catalog and override ownership keeps @effect/platform-node on the same Effect 4.0.2 cohort."
     },
     {
       "key": "js:catalog:@effect/sql-d1",
       "name": "@effect/sql-d1",
-      "current": "4.0.0-beta.107",
-      "target": "4.0.0-beta.107",
-      "channel": "preview",
+      "current": "4.0.2",
+      "target": "4.0.2",
+      "channel": "stable",
       "source": "https://www.npmjs.com/package/@effect/sql-d1",
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
-      "notes": "Exact catalog and override ownership keeps Drizzle optional peer resolution on the approved Effect beta.107 cohort."
+      "notes": "Exact catalog and override ownership keeps Alchemy's hard @effect/sql-d1 ^4.0.0 dependency on the Effect 4.0.2 cohort."
     },
     {
       "key": "js:catalog:@effect/sql-pg",
       "name": "@effect/sql-pg",
-      "current": "4.0.0-beta.107",
-      "target": "4.0.0-beta.107",
-      "channel": "preview",
+      "current": "4.0.2",
+      "target": "4.0.2",
+      "channel": "stable",
       "source": "https://www.npmjs.com/package/@effect/sql-pg",
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Shares the single Effect 4.0.2 release version (2026-10-07); 4.0.x uses a built-in PostgreSQL client instead of pg."
     },
     {
       "key": "js:catalog:@effect/sql-sqlite-do",
       "name": "@effect/sql-sqlite-do",
-      "current": "4.0.0-beta.107",
-      "target": "4.0.0-beta.107",
-      "channel": "preview",
+      "current": "4.0.2",
+      "target": "4.0.2",
+      "channel": "stable",
       "source": "https://www.npmjs.com/package/@effect/sql-sqlite-do",
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
-      "notes": "Exact catalog and override ownership keeps Drizzle optional peer resolution on the approved Effect beta.107 cohort."
+      "notes": "Exact catalog and override ownership keeps Alchemy's hard @effect/sql-sqlite-do ^4.0.0 dependency on the Effect 4.0.2 cohort."
     },
     {
       "key": "js:catalog:@effect/tsgo",
       "name": "@effect/tsgo",
-      "current": "0.40.0",
-      "target": "0.40.0",
+      "current": "0.51.1",
+      "target": "0.51.1",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@effect/tsgo",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "0.51.1 (2026-10-07) is the newest release satisfying the 14-day age rule and ships a vite-plus@1.1.0 (oxlint 1.87.0) compatibility profile. tsconfig drops the removed importFromBarrel rule and turns off the new unstableApiUsage diagnostic because BiBCode deliberately uses Effect's unstable http/rpc/cli modules."
     },
     {
       "key": "js:catalog:@effect/vitest",
       "name": "@effect/vitest",
-      "current": "4.0.0-beta.107",
-      "target": "4.0.0-beta.107",
-      "channel": "preview",
+      "current": "4.0.2",
+      "target": "4.0.2",
+      "channel": "stable",
       "source": "https://www.npmjs.com/package/@effect/vitest",
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Shares the Effect 4.0.2 version and peers Vitest 5, which vite-plus 1.1.0 bundles. patches/@effect__vitest@4.0.2.patch routes its vitest imports through vite-plus/test, and the @effect/vitest>vitest removal override keeps a single Vitest runtime."
     },
     {
       "key": "js:catalog:@noble/ciphers",
@@ -1223,13 +1241,14 @@
     {
       "key": "js:catalog:@types/node",
       "name": "@types/node",
-      "current": "26.4.1",
-      "target": "26.4.1",
+      "current": "26.6.4",
+      "target": "26.6.4",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@types/node",
       "cohort": "javascript-compatible",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "26.6.4 (2026-10-01) is the newest Node 26 typings release satisfying the 14-day age rule; the catalog override keeps one copy."
     },
     {
       "key": "js:catalog:@typescript/native-preview",
@@ -1246,24 +1265,26 @@
     {
       "key": "js:catalog:effect",
       "name": "effect",
-      "current": "4.0.0-beta.107",
-      "target": "4.0.0-beta.107",
-      "channel": "preview",
+      "current": "4.0.2",
+      "target": "4.0.2",
+      "channel": "stable",
       "source": "https://www.npmjs.com/package/effect",
       "cohort": "effect",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Effect 4 stable (4.0.0 replaced the beta/RC series). 4.0.2 (2026-10-07) is the newest release satisfying the 14-day age rule for the v0.11.0 upgrade; all Effect packages share this exact version. Migration: effect/unstable/* paths dropped the unstable segment, Schema.toArbitrary became the native effect/Arbitrary runner, and parseOptions annotations no longer affect parsing. patches/effect@4.0.2.patch makes the Interrupt that RpcClient sends after a chunk fails to decode interruptible: 4.0.2 sends it uninterruptibly, and when the socket had already closed it waited for a reopen the client protocol never makes, so the session never reported its disconnect and never reconnected. Drop the patch once upstream makes that send interruptible."
     },
     {
       "key": "js:catalog:jose",
       "name": "jose",
-      "current": "6.2.10",
-      "target": "6.2.10",
+      "current": "6.2.12",
+      "target": "6.2.12",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/jose",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "6.2.12 (2026-09-05) is the newest patch satisfying the 14-day age rule; 6.2.13 is newer."
     },
     {
       "key": "js:catalog:typescript",
@@ -1292,24 +1313,25 @@
       "key": "js:infra/relay:@cloudflare/workers-types",
       "name": "@cloudflare/workers-types",
       "current": "^5.20260903.1",
-      "target": "5.20260903.1",
+      "target": "5.20261021.1",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@cloudflare/workers-types",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Compatible in-range lockfile refresh for v0.11.0 (pnpm 24-hour release-age gate; the 14-day rule applies only to newly chosen declared targets)."
     },
     {
       "key": "js:infra/relay:alchemy",
       "name": "alchemy",
-      "current": "2.0.0-beta.72",
-      "target": "2.0.0-beta.72",
+      "current": "2.0.0-beta.81",
+      "target": "2.0.0-beta.81",
       "channel": "preview",
       "source": "https://www.npmjs.com/package/alchemy",
       "cohort": "relay-preview",
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
-      "notes": "Use beta.72, the newest published Alchemy preview whose peer range supports the approved Effect beta.107 boundary. Newer beta.76 requires the separately excluded Effect RC.112 cohort."
+      "notes": "beta.81 (2026-10-05) is the newest Alchemy preview satisfying the 14-day age rule and the first-eligible line that peers effect ^4.0.0 for the Effect 4.0.2 cohort; it no longer depends on ink, undici, or fast-glob. The deploy wrapper keeps its own dev_$USER stage default; Alchemy's own destroy CLI now defaults to live_$USER and reads ALCHEMY_STAGE."
     },
     {
       "key": "js:infra/relay:drizzle-kit",
@@ -1350,24 +1372,25 @@
       "key": "js:packages/contracts:fast-check",
       "name": "fast-check",
       "current": "^4.9.0",
-      "target": "4.9.0",
-      "channel": "stable",
+      "target": "removed",
+      "channel": "removal",
       "source": "https://www.npmjs.com/package/fast-check",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green",
-      "notes": "Pinned by a workspace override within Effect beta.107's ^4.9.0 range so private Arbitrary state never crosses duplicate fast-check instances."
+      "status": "removed",
+      "notes": "Removed with its workspace override: Effect 4 has no runtime dependencies and its native effect/Arbitrary runner replaced Schema.toArbitrary(...)(FastCheck)."
     },
     {
       "key": "js:scripts:smol-toml",
       "name": "smol-toml",
-      "current": "1.8.0",
-      "target": "1.8.0",
+      "current": "1.9.0",
+      "target": "1.9.0",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/smol-toml",
       "cohort": "javascript-current",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "1.9.0 (2026-09-22) is the first release outside GHSA-r4xh-jqrq-34v2 (quadratic parse(), affected <=1.8.0) and satisfies the 14-day age rule; 1.9.1 is newer."
     },
     {
       "key": "js:workspace:@babel/plugin-transform-react-jsx",
@@ -1384,13 +1407,14 @@
     {
       "key": "js:workspace:@vitest/coverage-v8",
       "name": "@vitest/coverage-v8",
-      "current": "4.1.11",
-      "target": "4.1.11",
+      "current": "5.0.3",
+      "target": "5.0.3",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/@vitest/coverage-v8",
       "cohort": "stable-javascript-tooling",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Pinned to the exact Vitest 5.0.3 that vite-plus 1.1.0 bundles; its vitest peer is exact."
     },
     {
       "key": "rust:apps/server/tests/fixtures/task8-harness:xpty",
@@ -1717,14 +1741,14 @@
     {
       "key": "rust:workspace:objc2",
       "name": "objc2",
-      "current": "=0.6.4",
-      "target": "0.6.4",
+      "current": "=0.6.5",
+      "target": "0.6.5",
       "channel": "stable",
       "source": "https://crates.io/crates/objc2",
       "cohort": "embedded-browser-preview",
       "platforms": ["macos"],
       "status": "green",
-      "notes": "Objective-C runtime access for the in-process CoreSimulator loader; the exception feature catches every Objective-C exception before it reaches Rust. 0.6.5 (2026-10-05) is younger than the 14-day rule allows. Exact pin, released 2026-02-26 (at least 14 days before 2026-10-15); declared in [workspace.dependencies], consumed by the macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
+      "notes": "Objective-C runtime access for the in-process CoreSimulator loader; the exception feature catches every Objective-C exception before it reaches Rust. Exact pin 0.6.5, released 2026-10-05 (at least 14 days before 2026-10-22); declared in [workspace.dependencies], consumed by the macOS-only target table in apps/server; covered by the device::ios tests and the opt-in tests/ios_simulator.rs."
     },
     {
       "key": "rust:workspace:objc2-app-kit",
@@ -2230,13 +2254,14 @@
     {
       "key": "rust:workspace:tauri",
       "name": "tauri",
-      "current": "2.11.5",
-      "target": "2.11.5",
+      "current": "~2.11.6",
+      "target": "2.11.6",
       "channel": "stable",
       "source": "https://crates.io/crates/tauri",
       "cohort": "rust-current",
       "platforms": ["linux", "macos", "windows"],
-      "status": "current"
+      "status": "green",
+      "notes": "2.11.6 (and 2.12.0+) fix GHSA-w28w-mhc8-qvjv (High) in tauri <= 2.11.5. The release stays on the 2.11 line: with Tauri 2.12 (2.12.1 and 2.12.4) the #177 packaged desktop UI smoke hung on both Windows lanes when the document reloaded during a streaming turn, WebView2 never completing the navigation, and no upstream cause or fix was found. The Tauri 2.12 cohort (wry 0.57, tao 0.37, webview2-com 0.39, windows 0.62, dirs 7, the wdio 1.5 pair and @tauri-apps/api/cli 2.12) moves in its own pull request."
     },
     {
       "key": "rust:workspace:tauri-build",
@@ -2497,14 +2522,14 @@
     {
       "key": "rust:workspace:zip",
       "name": "zip",
-      "current": "8.6.0",
-      "target": "8.6.0",
+      "current": "9.0.0",
+      "target": "9.0.0",
       "channel": "stable",
       "source": "https://crates.io/crates/zip",
       "cohort": "rust-archive",
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
-      "notes": "Exact entry ordering, Zip 4 reader compatibility, redaction and placeholders, traversal rejection, and native archive-tool listing are covered."
+      "notes": "9.x is the only line patched for RUSTSEC-2026-0367/0368/0369 (extract path handling; the server never calls extract()). Security exception: 9.0.0 (2026-10-09) is one day short of the 14-day rule. Exact entry ordering, Zip 4 reader compatibility, redaction and placeholders, traversal rejection, and native archive-tool listing are covered."
     },
     {
       "key": "toolchain:devcontainer:bun",
@@ -2532,57 +2557,62 @@
     {
       "key": "toolchain:devcontainer:node",
       "name": "devcontainer node",
-      "current": "26.8.1",
-      "target": "26.8.1",
+      "current": "26.12.1",
+      "target": "26.12.1",
       "channel": "stable",
       "source": "https://containers.dev/features",
       "cohort": "toolchains",
       "platforms": ["linux"],
-      "status": "green"
+      "status": "green",
+      "notes": "Tracks toolchain:node; security exception to the 14-day rule (Node 26.12.1 security release)."
     },
     {
       "key": "toolchain:devcontainer:python",
       "name": "devcontainer python",
-      "current": "3.10",
-      "target": "3.10",
+      "current": "3.12",
+      "target": "3.12",
       "channel": "stable",
       "source": "https://containers.dev/features",
       "cohort": "toolchains",
       "platforms": ["linux"],
-      "status": "current"
+      "status": "green",
+      "notes": "Python 3.10 reached end of life on 2026-10-01; 3.12 is a supported line available from the python 1.8.0 feature."
     },
     {
       "key": "toolchain:node",
       "name": "Node.js",
-      "current": "26.8.1",
-      "target": "26.8.1",
+      "current": "26.12.1",
+      "target": "26.12.1",
       "channel": "stable",
       "source": "https://nodejs.org/en/about/previous-releases",
       "cohort": "toolchains",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "26.12.1 (2026-10-21) is a security release (CVE-2026-106069, -106072, -105482, -105483, -111497, High) on the Node 26 line that becomes LTS on 2026-10-28; security exception to the 14-day rule."
     },
     {
       "key": "toolchain:pnpm",
       "name": "pnpm",
-      "current": "11.25.0",
-      "target": "11.25.0",
+      "current": "11.28.5",
+      "target": "11.28.5",
       "channel": "stable",
       "source": "https://github.com/pnpm/pnpm/releases",
       "cohort": "toolchains",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Stay on pnpm 11; 11.28.5 (2026-10-06) is the newest 11.x release satisfying the 14-day age rule. pnpm 12 is a separate deferred migration."
     },
     {
       "key": "toolchain:rust",
       "name": "Rust",
-      "current": "1.98.0",
-      "target": "1.98.0",
+      "current": "1.98.1",
+      "target": "1.98.1",
       "channel": "stable",
       "source": "https://releases.rs/",
       "cohort": "toolchains",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "1.98.1 (2026-09-03) fixes a vtable miscompilation (rust-lang/rust#161441). 1.99.x stays deferred to its own change."
     },
     {
       "key": "toolchain:tauri-cli",
@@ -2599,25 +2629,26 @@
     {
       "key": "toolchain:vite-core",
       "name": "@voidzero-dev/vite-plus-core",
-      "current": "npm:@voidzero-dev/vite-plus-core@0.3.0",
-      "target": "npm:@voidzero-dev/vite-plus-core@0.3.0",
+      "current": "npm:@voidzero-dev/vite-plus-core@1.1.0",
+      "target": "npm:@voidzero-dev/vite-plus-core@1.1.0",
       "channel": "preview",
       "source": "https://www.npmjs.com/package/@voidzero-dev/vite-plus-core",
       "cohort": "toolchains",
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
-      "notes": "Keep the intentional npm alias paired atomically with vite-plus."
+      "notes": "Keep the intentional npm alias paired atomically with vite-plus. 1.1.0 (2026-10-07) is the first release outside every vite-plus advisory range and satisfies the 14-day age rule; vite-plus 1.2.0+ warns @effect/tsgo users to stay on 1.1.0 until tsgo supports oxlint 1.88."
     },
     {
       "key": "toolchain:vite-plus",
       "name": "vite-plus",
-      "current": "0.3.0",
-      "target": "0.3.0",
+      "current": "1.1.0",
+      "target": "1.1.0",
       "channel": "stable",
       "source": "https://www.npmjs.com/package/vite-plus",
       "cohort": "toolchains",
       "platforms": ["linux", "macos", "windows"],
-      "status": "green"
+      "status": "green",
+      "notes": "Vite+ 1.1.0 (2026-10-07) bundles Vitest 5.0.3, oxlint 1.87.0, oxfmt 0.72.0 and pins @oxlint/plugins =1.79.0. vp migrate added the Vitest 4 compatibility settings (clearMocks: false, sharedViteServer: false). Clears the six vite-plus GHSAs patched in >=1.1.0."
     },
     {
       "key": "rust:apps/server/tests/fixtures/task8-harness:base64",
@@ -3114,14 +3145,14 @@
     {
       "key": "rust:workspace:protox",
       "name": "protox",
-      "current": "0.9.1",
-      "target": "0.9.1",
+      "current": "0.10.0",
+      "target": "0.10.0",
       "channel": "stable",
       "source": "https://crates.io/crates/protox",
       "cohort": "rust-device-previews",
       "platforms": ["linux", "macos", "windows"],
       "status": "green",
-      "notes": "Build dependency: compiles the vendored emulator_controller.proto in pure Rust so the build needs no protoc."
+      "notes": "Build dependency: compiles the vendored emulator_controller.proto in pure Rust so the build needs no protoc. 0.10.0 fixes a stack overflow on deeply nested protos and drops the duplicate logos 0.15."
     },
     {
       "key": "rust:workspace:tokio-stream",

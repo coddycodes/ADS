@@ -1,8 +1,27 @@
 import { correctDesktopUiOuterSize } from "./window-size.ts";
 
+/**
+ * Mocks the native folder picker in the current document. The service registers its mock
+ * through the plugin's IPC script path, and after a session restart that registration can
+ * report success while `window.__wdio_mocks__` never reaches the page (#177; the cause in the
+ * service is unknown). The click then opens the real dialog, which nobody closes on a runner.
+ * The app reads `window.__wdio_mocks__` before invoking the host, so a missing entry is written
+ * there directly through WebDriver, which reaches the page.
+ */
 export async function mockDesktopUiFolderPicker(projectPath: string): Promise<void> {
   const picker = await browser.tauri.mock("desktop_bridge_pick_folder");
   await picker.mockReturnValue(projectPath);
+  const installed = await browser.execute((path: string) => {
+    const host = window as Window & { __wdio_mocks__?: Record<string, unknown> };
+    const mocks = (host.__wdio_mocks__ ??= {});
+    if (typeof mocks.desktop_bridge_pick_folder !== "function") {
+      mocks.desktop_bridge_pick_folder = async () => path;
+    }
+    return typeof mocks.desktop_bridge_pick_folder === "function";
+  }, projectPath);
+  if (!installed) {
+    throw new Error("The folder-picker mock could not be installed in the page.");
+  }
 }
 
 export async function setDesktopUiWindowSize(width: number, height: number): Promise<void> {

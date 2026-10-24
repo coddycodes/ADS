@@ -1,6 +1,6 @@
 import type { AtomCommand } from "@bibcode/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback } from "react";
 import type * as GitPorts from "~/state/gitManager";
 import type * as PullRequestPorts from "~/state/pullRequests";

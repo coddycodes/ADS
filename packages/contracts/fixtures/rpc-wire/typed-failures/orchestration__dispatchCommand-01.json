@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "UploadError",
-          "reason": "quota",
-          "message": "1*gtqLms"
+          "reason": "offset",
+          "message": "<"
         }
       }
     ]

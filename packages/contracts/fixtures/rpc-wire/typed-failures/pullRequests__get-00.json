@@ -8,10 +8,10 @@
         "_tag": "Fail",
         "error": {
           "_tag": "PullRequestsOperationError",
-          "operation": "$%",
-          "code": "(bGu`(Qz",
-          "message": "ref",
-          "hostDetail": null,
+          "operation": "#^",
+          "code": "\"pQFR\\$b2q",
+          "message": "=",
+          "hostDetail": "zu.}",
           "retryable": false
         }
       }

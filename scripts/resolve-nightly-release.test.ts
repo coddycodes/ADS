@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
-import { Command, CliError } from "effect/unstable/cli";
+import { Command, CliError } from "effect/cli";
 import * as TestConsole from "effect/testing/TestConsole";
 
 import {

@@ -144,9 +144,9 @@ the user's running instance for this check.
 
 ## Application and DMG build inspection
 
-The CI-only seeded-upgrade matrix gives Intel x64 packaging children 90 minutes
-and its complete job 360 minutes. ARM64 keeps 45-minute packaging children and
-a 240-minute job. There are three sequential cold packages with separate Cargo
+The CI-only seeded-upgrade matrix gives both macOS architectures 90-minute
+packaging children and 360-minute complete jobs; the Apple silicon runners have
+taken 43 minutes for one package. There are three sequential cold packages with separate Cargo
 outputs (candidate, previous stable, protected baseline), each with a separate
 10-minute frozen install; the cached repository `target` does not warm these
 outputs. Intel's remaining 60 minutes cover setup, all upgrade lanes, evidence,
@@ -249,6 +249,11 @@ export BIBCODE_E2E_APP_PATH="$install_dir/BiBCode.app"
 test -d "$BIBCODE_E2E_APP_PATH"
 vp run test:ui:desktop
 ```
+
+When the run ends, the artifact directory (`BIBCODE_E2E_ARTIFACT_DIR`) also holds
+`app-*.log`: the last 4 MiB of each of the packaged app's own logs, with the native
+page-load lifecycle and webview process failures, next to the screenshots and
+WebdriverIO logs.
 
 `BIBCODE_E2E_APP_PATH` selects the isolated installation copied from the current
 worktree's E2E DMG. The DMG-only bundler removes its transient staging `.app`;
@@ -392,16 +397,16 @@ as not verified, with the lock evidence (`ioreg -n Root -d1` shows
   management remains explicitly operator-owned. The local-machine flow still
   has no Host selector; remote targeting is driven by the environment rail;
 - Headless pairing: on a second machine or VM run `bibcode serve --host
-<routable address>`, confirm the startup line contains `pairingCode`, and add it
+  <routable address>`, confirm the startup line contains `pairingCode`, and add it
   through **Add Server → Pairing code**. Confirm the saved server appears
   alongside — not in place of — the app's own **Local** environment, since both
   hosts declare the environment id `local`. Mint a second offer with `bibcode
-pairing offer --endpoint http://<address>:3773` and confirm the dialog refuses
+  pairing offer --endpoint http://<address>:3773` and confirm the dialog refuses
   it by name ("<label> is already saved."): two offers describe one environment.
   Then restart the headless server and confirm the saved server reconnects
   without re-pairing.
 - Headless service: on the second machine run `bibcode service install --host
-<routable address>`, confirm `bibcode service status` reports `active`,
+  <routable address>`, confirm `bibcode service status` reports `active`,
   reboot that machine, and confirm the desktop's saved server reconnects
   without re-pairing. On Linux confirm `loginctl show-user $USER` reports
   `Linger=yes`; on macOS confirm automatic login is enabled; on Windows confirm

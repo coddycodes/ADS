@@ -7,8 +7,13 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "TerminalCwdNotFoundError",
-          "cwd": "<HFM.cD"
+          "_tag": "TerminalResizeError",
+          "threadId": "toString",
+          "terminalId": "toString",
+          "terminalPid": -1.797693134862312e308,
+          "cols": 571,
+          "rows": 4,
+          "cause": "�"
         }
       }
     ]

@@ -8,9 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "KeybindingsConfigParseError",
-          "configPath": "DH^U?c\\8",
-          "detail": "pr",
-          "cause": null
+          "configPath": "0",
+          "detail": "knD*"
         }
       }
     ]

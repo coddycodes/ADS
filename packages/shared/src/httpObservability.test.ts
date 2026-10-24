@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Headers from "effect/unstable/http/Headers";
+import * as Headers from "effect/http/Headers";
 import { httpHeaderRedactionLayer } from "./httpObservability.ts";
 
 describe("httpHeaderRedactionLayer", () => {
@@ -11,7 +11,17 @@ describe("httpHeaderRedactionLayer", () => {
         Effect.provide(httpHeaderRedactionLayer),
       );
 
-      assert.deepStrictEqual(names, ["authorization", "cookie", "set-cookie", "x-api-key", "dpop"]);
+      assert.deepStrictEqual(names, [
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "x-api-key",
+        "AWSAccessKeyId",
+        "Signature",
+        "sig",
+        "X-Goog-Signature",
+        "dpop",
+      ]);
     }),
   );
 

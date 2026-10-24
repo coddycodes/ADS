@@ -8,10 +8,9 @@
         "_tag": "Fail",
         "error": {
           "_tag": "SourceControlRepositoryError",
-          "provider": "azure-devops",
-          "operation": " \\G ",
-          "detail": "",
-          "cause": null
+          "provider": "bitbucket",
+          "operation": "\"_G%? ",
+          "detail": "AfC`oG&A\"z"
         }
       }
     ]

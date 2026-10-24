@@ -160,3 +160,12 @@ describe("ResourceUsageSegment native preview occlusion", () => {
     stopSync();
   });
 });
+
+describe("ResourceUsageSegment memory metric", () => {
+  it("says what the memory figure measures on each server OS (#159)", async () => {
+    const entry = await mountResourceUsage();
+    const text = entry.container.textContent ?? "";
+    expect(text).toContain("physical footprint on macOS, as in Activity Monitor");
+    expect(text).toContain("resident memory on Linux and Windows");
+  });
+});

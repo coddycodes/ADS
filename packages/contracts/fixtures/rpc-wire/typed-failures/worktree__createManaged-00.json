@@ -9,8 +9,7 @@
         "error": {
           "_tag": "WorktreeAdoptionError",
           "reason": "orchestration-failed",
-          "message": "}aw",
-          "currentGeneration": 1
+          "message": "0"
         }
       }
     ]

@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "WorktreeAdoptionError",
-          "reason": "internal",
-          "message": "/WB-#6$;"
+          "reason": "command-conflict",
+          "message": ""
         }
       }
     ]

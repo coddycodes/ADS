@@ -1123,7 +1123,11 @@ mod tests {
 
         std::fs::remove_file(&blocker).unwrap();
         store.sender().send(event(2));
-        wait_until(|| !store.stats().failing);
+        // The first good append clears `failing`; `written` only counts at the next flush.
+        wait_until(|| {
+            let stats = store.stats();
+            !stats.failing && stats.written == 1
+        });
         let stats = store.stats();
         assert_eq!((stats.written, stats.dropped), (1, 1));
         store.shutdown();

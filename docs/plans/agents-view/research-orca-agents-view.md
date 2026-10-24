@@ -169,7 +169,7 @@ export type AgentStatusEntry = {
 Key vocabulary points:
 
 - **Wire states are exactly four**: `AGENT_STATUS_STATES = ['working',
-'blocked', 'waiting', 'done']` (agent-status-types.ts:23). **`'idle'` is
+  'blocked', 'waiting', 'done']` (agent-status-types.ts:23). **`'idle'` is
   renderer-derived**, not a wire state — a fresh-but-quiet or stale entry decays
   to `'idle'` in the row builder (see §4).
 - `agentType` is open-ended: a `WellKnownAgentType` union (claude, codex,
@@ -344,7 +344,7 @@ never reshuffle the list (worktree-agent-rows.ts:326-328).
   (blocked/waiting), 2 = done recently, 3 = working, 4 = idle.
 - **In the Activity page**: threads grouped by status / project / worktree via
   `buildActivityThreadGroups` (`activity/ActivityPrototypePage.tsx:1018,
-1058`), default `groupBy = 'status'` (line 1426).
+  1058`), default `groupBy = 'status'` (line 1426).
 
 ### Row anatomy
 
@@ -393,7 +393,7 @@ permission, done→done; `lib/agent-status.ts:167-177`).
   ("every user-initiated worktree switch must route through
   activateAndRevealWorktree — cross-repo activation + nav history") and
   `activateTabAndFocusPane(tabId, leafId, { ackPaneKeyOnSuccess: paneKey,
-flashFocusedPane: true, scrollToBottomIfOutputSinceLastView: true })`. So a
+  flashFocusedPane: true, scrollToBottomIfOutputSinceLastView: true })`. So a
   click opens that worktree, that tab, focuses that pane, flashes it, and
   marks the row acknowledged. Malformed/mismatched rows are dismissed instead
   of guessed at.
@@ -482,7 +482,7 @@ is the guts. Notable mechanics a re-implementation should copy:
   from a disconnected transport (lines 119-125); connection-ownership check
   drops events from the wrong transport authority (lines 126-138).
 - **Commit**: `store.setAgentStatus(paneKey, payload, terminalTitle, timing,
-routing, metadata)` plus post-commit completion-notification observation and
+  routing, metadata)` plus post-commit completion-notification observation and
   optional tab-title sync.
 
 ### Refresh cadence in the UI
@@ -855,7 +855,7 @@ Ack state lives in the **UI store slice**:
 to" timestamp (`store/slices/ui.ts:1227-1286`).
 
 - `acknowledgeAgents(paneKeys)` stamps `max(Date.now(),
-latestAgentTurnTimestamp(entry))` — the clock-skew guard: "a remote/SSH
+  latestAgentTurnTimestamp(entry))` — the clock-skew guard: "a remote/SSH
   execution host can stamp a turn ahead of this clock, and every unread rule
   is `ackAt < turnTimestamp`" (ui.ts:1241-1244). It only writes when the ack
   actually advances (`prev < stamp`, not `!==`, ui.ts:1236) and also
@@ -920,7 +920,7 @@ detail slot:
 
 - A module-level external store (`activity-terminal-portal.ts`) holds portal
   descriptors `{slotId, requestToken, target, worktreeId, tabId, paneKey,
-forceUnavailable, active}`; the page publishes them with
+  forceUnavailable, active}`; the page publishes them with
   `setActivityTerminalPortals` in a `useLayoutEffect` "before paint so
   Terminal's portal subscriber rerenders in the same commit" (1659-1664).
   Descriptors carry their own worktree/tab routing because deriving from

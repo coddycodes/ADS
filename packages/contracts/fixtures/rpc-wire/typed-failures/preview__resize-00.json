@@ -7,9 +7,10 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "PreviewSessionLookupError",
-          "threadId": "",
-          "tabId": "F#{}Dq|Hy"
+          "_tag": "PreviewInvalidUrlError",
+          "inputLength": 5.954327864952849e-49,
+          "reason": "unexpected",
+          "cause": "\u0000"
         }
       }
     ]

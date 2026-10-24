@@ -3,6 +3,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import { copyAppLogEvidence } from "./support/app-log-evidence.ts";
 import { installDesktopUiMotionGuard } from "./support/motion-guard.ts";
 import { refreshDesktopUiDocument } from "./support/document-navigation.ts";
 
@@ -192,6 +193,9 @@ export const config = {
     await requestDesktopUiApplicationExit();
   },
   onComplete: () => {
+    // Keep the app's own logs (native page loads, webview process failures, server errors)
+    // with the screenshots before the fixture state root is removed.
+    copyAppLogEvidence(testContext.stateRoot, testContext.artifactDirectory);
     // WDIO invokes configuration hooks before launcher service hooks. Defer shared fixture cleanup
     // until process exit so the Tauri service has released Windows filesystem handles first.
     deferDesktopUiTestContextCleanupUntilExit(testContext, process);

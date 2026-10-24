@@ -7,13 +7,12 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "VcsProcessOutputLimitError",
-          "operation": "X8J",
-          "command": "IdBm",
-          "cwd": "&$",
-          "stream": "stderr",
-          "maxBytes": 1611724942,
-          "observedBytes": 7
+          "_tag": "VcsProcessExitError",
+          "operation": "\u0000",
+          "command": "SG2",
+          "cwd": "7U$/_>fc1t",
+          "exitCode": -1.5888794557436035e-167,
+          "detail": "<CW;wtB|*v"
         }
       }
     ]

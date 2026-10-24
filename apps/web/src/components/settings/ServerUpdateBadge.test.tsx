@@ -13,8 +13,8 @@ import {
 } from "@bibcode/client-runtime/state/remoteUpdates";
 import { EnvironmentRpcUnavailableError } from "@bibcode/client-runtime/rpc";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
-import { RpcClientError } from "effect/unstable/rpc";
+import { AsyncResult } from "effect/reactivity";
+import { RpcClientError } from "effect/rpc";
 
 // Render tooltip content inline so the reason is observable without hover and portals.
 vi.mock("../ui/tooltip", () => ({

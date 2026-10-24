@@ -4,7 +4,7 @@ import { RegistryContext } from "@effect/atom-react";
 import type { ServerProviderUsageResult } from "@bibcode/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@bibcode/contracts/settings";
 import * as DateTime from "effect/DateTime";
-import { AtomRegistry } from "effect/unstable/reactivity";
+import { AtomRegistry } from "effect/reactivity";
 import { act, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

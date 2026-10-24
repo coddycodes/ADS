@@ -1446,10 +1446,10 @@ For seeded CI qualification, distinguish a packaging-child timeout from a
 runtime-upgrade failure. The candidate, previous stable, and protected baseline
 are three sequential builds with separate cold Cargo outputs outside the
 workflow's cached repository `target`; `remote-install` reuses the protected
-package. Only macOS x64 gives each packaging child 90 minutes and the complete
-job 360 minutes. Other targets keep 45-minute packaging children and 240-minute
-jobs; the separate WSL job also keeps 240 minutes. Frozen installs remain
-10 minutes per checkout. Intel's job reserves 60 additional minutes after the
+package. Only macOS (x64 and arm64) gives each packaging child 90 minutes and
+the complete job 360 minutes. Other targets keep 45-minute packaging children
+and 240-minute jobs; the separate WSL job also keeps 240 minutes. Frozen installs remain
+10 minutes per checkout. Each macOS job reserves 60 additional minutes after the
 three packaging and install bounds for setup, all lanes, evidence, and cleanup.
 Product, WebDriver, and restart deadlines remain unchanged. Record a command
 timeout and the last completed phase as unavailable native evidence; passing
@@ -2196,7 +2196,9 @@ starts.
     option is selected; typing alone must not enable it. Choose a non-default
     target (for example `release/next`) and confirm a status refresh preserves
     the choice, clearing it disables creation again, and reopening starts
-    unselected. Repeat from the chat Git action; combined commit/push/request
+    unselected. With a target chosen and a description typed, click the dimmed
+    backdrop: the dialog stays open with every field intact; Cancel, **×**, and
+    Escape still close it. Repeat from the chat Git action; combined commit/push/request
     actions must also require target review before any mutation. No push,
     provider mutation, or pull request may run just by opening the dialog from
     these entry points; on servers with `pullRequestCreateOptions`, opening it
@@ -2214,7 +2216,10 @@ starts.
     Git Manager only closes the dialog. A branch
     created with `git checkout -b feature origin/main` (upstream `origin/main`)
     must open the dialog without a push and publish `origin/feature` only when
-    the request is created.
+    the request is created. Plain **Push** on such a branch must publish
+    `origin/feature`, make it the branch's upstream, and leave `origin/main`
+    unchanged. A Push that Git rejects must show Git's own error in the
+    toast (#157).
     With a disposable configured forge, create once and verify the exact selected
     non-default target; plain **Push** must never create a request. Only the
     dialog's explicit primary action may publish or create.

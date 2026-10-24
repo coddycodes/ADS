@@ -93,7 +93,7 @@ Field triage, cheapest first:
 - Reload the page. Mechanism 2 clears and shows the server's answer; mechanism
   1 does not.
 - Query the outbox: `SELECT thread_id,message_id,state,attempts,updated_at FROM
-provider_turn_outbox WHERE state NOT IN ('delivered','dismissed');`
+  provider_turn_outbox WHERE state NOT IN ('delivered','dismissed');`
 
 ## Evidence per mechanism
 
@@ -131,13 +131,13 @@ bb449f21 pending   36171    19:16:09.276 2026-10-05T22:50:54Z     (message sent 
   19:14 were never attempted.
 - The trace shows two `orchestration.dispatchCommand` failures at
   19:15:59.248 and 19:15:59.438: `thread.turn-delivery.resolve: Message
-'63208eae…' does not have a cancellable, uncertain, or failed delivery`.
+  '63208eae…' does not have a cancellable, uncertain, or failed delivery`.
   The first dismissal had already committed at 19:15:59.031, so these were
   repeated Stop/dismiss clicks against a row that was by then `dismissed`.
 - The message sent after Stop (`bb449f21`) has been retried 36,171 times over
   two days (about one attempt every 5 s) and is still `pending`. Its current
   `last_error` is `invariant failed (thread.session.set): Thread '02e48ee2…' is
-deleted`. The thread was deleted later, and `server.log:522` (2026-10-05
+  deleted`. The thread was deleted later, and `server.log:522` (2026-10-05
   12:21:19Z) shows startup reconciliation failing on the same deleted thread.
 
 **Code path.**

@@ -8,28 +8,11 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitCommandError",
-          "operation": "",
-          "command": "1_0T_(mM)X",
-          "cwd": "f5 ;nx",
-          "argumentCount": 94162.15625,
-          "exitCode": -1.401298464324817e-45,
-          "stdoutLength": 24.258193969726562,
-          "stderrLength": -3.4028232635611926e38,
-          "detail": "toString",
-          "cause": {
-            "9))w2\"": [
-              {
-                ",^,'": -4.73129310984063e203,
-                "qzNJV74(": 0.9617290459494487,
-                " 2[LZVi": false,
-                "x": "4]J3p",
-                "": 174115210272517
-              },
-              "xf<+i8"
-            ],
-            "5r9|fq": "ZG",
-            "": 7.4e-323
-          }
+          "operation": "�",
+          "command": "\n",
+          "cwd": "Z]X\\-Hko0q",
+          "stderrLength": 2.5e-323,
+          "detail": "T~EK<#%rNE"
         }
       }
     ]

@@ -10,7 +10,7 @@
     "typecheck": "node --require ../../scripts/disable-telemetry.cjs ./node_modules/astro/bin/astro.mjs check"
   },
   "dependencies": {
-    "astro": "^7.3.0"
+    "astro": "^7.3.8"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",

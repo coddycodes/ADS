@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "KeybindingsConfigParseError",
-          "configPath": "~length ",
-          "detail": "toString",
+          "configPath": "3HMJt7$UD2",
+          "detail": "4294967295",
           "cause": null
         }
       }

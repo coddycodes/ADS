@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "PreviewTunnelError",
-          "reason": "not-admitted",
-          "message": "i"
+          "reason": "closed",
+          "message": ""
         }
       }
     ]

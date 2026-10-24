@@ -6,7 +6,7 @@ import type {
   GitRunStackedActionResult,
   VcsStatusResult,
 } from "@bibcode/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -1347,6 +1347,42 @@ describe("GitManagerCreatePullRequestDialog", () => {
     expect(input("git-manager-create-pr-title").disabled).toBe(true);
     await act(async () => cancel.click());
     expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps entered fields after an outside press and still closes on Escape or Close", async () => {
+    const { onOpenChange } = await renderDialog();
+    await chooseTarget("main");
+    await setValue("git-manager-create-pr-title", "My request");
+    await setValue("git-manager-create-pr-body", "My description");
+
+    const backdrop = document.querySelector('[data-slot="dialog-backdrop"]');
+    if (!backdrop) throw new Error("Missing dialog backdrop");
+    await act(async () => {
+      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+        const init = { bubbles: true, cancelable: true, button: 0, pointerType: "mouse" };
+        backdrop.dispatchEvent(
+          type.startsWith("pointer") ? new PointerEvent(type, init) : new MouseEvent(type, init),
+        );
+      }
+    });
+
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(input("git-manager-create-pr-base").value).toBe("main");
+    expect(input("git-manager-create-pr-title").value).toBe("My request");
+    expect(input("git-manager-create-pr-body").value).toBe("My description");
+
+    await act(async () => {
+      input("git-manager-create-pr-body").dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+
+    onOpenChange.mockClear();
+    const close = document.querySelector<HTMLButtonElement>('button[aria-label="Close"]');
+    await act(async () => close?.click());
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    expect(h.runs).toEqual([]);
   });
 
   it("shows an existing pull request and offers no creation", async () => {

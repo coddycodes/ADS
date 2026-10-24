@@ -331,7 +331,16 @@ two seconds of a cold start) becomes ambiguous, releasing the thread's delivery
 slot and showing the message as uncertain instead of keeping the chat working.
 A steer's 60 seconds start only once the steered turn stops taking input (its
 result or an interrupt), because Claude replays a steer when it consumes it,
-which can follow a long tool call. An expired write keeps its place in the
+which can follow a long tool call. The wait does not run while Claude reports
+`status: "compacting"` and starts again in full when the compaction ends,
+because Claude replays a message only after a compaction it runs first, which
+can take over a minute near a full 1M-token window. A local slash command such
+as `/compact` is never replayed: Claude shows its output
+(`<local-command-stdout>`) and then a `result` whose `local_command` names it.
+That result acknowledges the oldest live write of `/<name>`, with or without
+arguments, before the result is applied, so it also ends the turn the command
+started. A replay that matches no pending write is logged at debug level,
+without its text. An expired write keeps its place in the
 acknowledgement order until its replay arrives or the session is retired, so a
 late replay is consumed by it and cannot confirm a later identical retry; that
 retry is acknowledged only by its own replay. A late replay also marks its own
@@ -348,9 +357,11 @@ rejection cannot auto-start the interrupted input.
 A failed turn carries both a message and a class. `turn.completed` uses the
 contract-canonical `errorMessage`, and `errorClass` — a `RuntimeErrorClass` of
 `provider_error`, `transport_error`, `session_stopped`, `permission_error`,
-`validation_error` or `unknown` — records **who reported** the failure or that
-BiBCode deliberately stopped the session. Both are projected onto the
-thread session as `lastError` and `lastErrorClass`.
+`validation_error`, `context_limit` or `unknown` — records **who reported** the
+failure or that BiBCode deliberately stopped the session. Both are projected
+onto the thread session as `lastError` and `lastErrorClass`. `context_limit` is
+provider-reported too: the conversation no longer fits the provider's context
+window, and the thread offers to compact it.
 
 Decoders accept a newer, unrecognized provider class as `unknown` so a newer
 server cannot make an older client reject the entire live event or persisted

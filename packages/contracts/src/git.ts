@@ -229,7 +229,7 @@ export const GitPreparePullRequestThreadInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   reference: GitPullRequestReference,
   mode: GitPreparePullRequestThreadMode,
-}).annotate({ parseOptions: { onExcessProperty: "error" } });
+});
 export type GitPreparePullRequestThreadInput = typeof GitPreparePullRequestThreadInput.Type;
 
 export const VcsRemoveWorktreeInput = Schema.Struct({

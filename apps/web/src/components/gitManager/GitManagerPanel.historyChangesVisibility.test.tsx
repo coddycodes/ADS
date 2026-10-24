@@ -261,11 +261,11 @@ it("returns from real History PNG selection to exactly one visible working-tree 
     return this.closest("[hidden],[inert]") ? new DOMRect() : new DOMRect(0, 0, 900, 450);
   };
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(rectangle);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(
-    function (this: HTMLElement) {
-      return this.closest("[hidden],[inert]") ? 0 : 450;
-    },
-  );
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.closest("[hidden],[inert]") ? 0 : 450;
+  });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(900);
   const container = document.createElement("div");
   document.body.append(container);

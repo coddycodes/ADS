@@ -8,7 +8,18 @@ import { ScrollArea } from "~/components/ui/scroll-area";
 
 const DialogCreateHandle = DialogPrimitive.createHandle;
 
-const Dialog = DialogPrimitive.Root;
+/**
+ * A dialog ignores presses outside it by default, so a stray click on the
+ * backdrop never discards what the user entered. Close, Cancel, and Escape
+ * still close it. A dialog with nothing to lose (read-only information) may
+ * opt back in to light dismissal with `disablePointerDismissal={false}`.
+ */
+function Dialog<Payload>({
+  disablePointerDismissal = true,
+  ...props
+}: DialogPrimitive.Root.Props<Payload>) {
+  return <DialogPrimitive.Root disablePointerDismissal={disablePointerDismissal} {...props} />;
+}
 
 const DialogPortal = DialogPrimitive.Portal;
 

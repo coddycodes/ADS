@@ -102,7 +102,7 @@ Per platform:
 - Linux: writes `~/.config/systemd/user/bibcode.service`, runs
   `loginctl enable-linger` (no argument: the calling user), then
   `systemctl --user daemon-reload` and `systemctl --user enable --now
-bibcode.service`. Over a plain SSH session there may be no user bus yet;
+  bibcode.service`. Over a plain SSH session there may be no user bus yet;
   the command then prints the three exact commands to run once lingering
   takes effect instead of failing opaquely.
 - macOS: writes `~/Library/LaunchAgents/com.bibcode.server.plist` and runs

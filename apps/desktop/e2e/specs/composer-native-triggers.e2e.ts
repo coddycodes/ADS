@@ -648,9 +648,27 @@ async function sendCurrentComposerPrompt(
   prompt: string,
   initialLogLength: number,
 ): Promise<void> {
-  const send = composerForm().$('button[aria-label="Send message"]');
-  await expect(send).toBeEnabled();
-  await send.click();
+  // The primary action swaps between Send, Sending and Stop while the previous turn starts,
+  // and the embedded WebDriver's click reports success on a button React has just replaced
+  // or disabled, so a send right after Claude's /compact could be lost (#177). Checking and
+  // clicking in one page task leaves no gap for that swap; until Send is live, this waits.
+  // Only an explicit "not live yet" is retried: a script error may come after the click, so
+  // it fails the step instead of clicking a second time.
+  for (let attempt = 1; ; attempt += 1) {
+    const clicked = await browser.execute(() => {
+      const send = document.querySelector<HTMLButtonElement>(
+        '[data-center-surface-host][data-visible="true"] [data-chat-composer-form="true"] button[aria-label="Send message"]',
+      );
+      if (!send || send.disabled) return false;
+      send.click();
+      return true;
+    });
+    if (clicked) break;
+    if (attempt >= 200) {
+      throw new Error("The composer's Send button never became available in 20 seconds.");
+    }
+    await browser.pause(100);
+  }
   await waitForProviderInputLogEntry(
     preparedProviderInputLogPath,
     initialLogLength,

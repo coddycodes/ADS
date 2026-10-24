@@ -51,6 +51,12 @@ describe("packaged queue visual FIFO observation", () => {
     }
   });
 
+  it("ignores a leftover node the virtualizer keeps off screen", () => {
+    const leftover = { ...third, displayed: false };
+    expect(queuedCardIdsInVisualOrder([leftover], [])).toEqual([]);
+    expect(queuedCardIdsInVisualOrder([second, leftover], ["second"])).toEqual(["second-id"]);
+  });
+
   it("does not accept partial queues or stale card text", () => {
     expect(queuedCardIdsInVisualOrder([second], ["second", "third"])).toBeNull();
     expect(

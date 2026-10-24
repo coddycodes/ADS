@@ -772,8 +772,10 @@ const opencodeFixtureSource = String.raw`
 import * as NodeHTTP from "node:http";
 import { appendProviderInput, promptTextFromParts } from "./provider-input-log-fixture.mjs";
 
+// The fixture serves OpenCode 1's HTTP API, so it reports a 1.x version: the server drives
+// OpenCode by major version and treats 3.x and later as unsupported.
 if (process.argv.includes("--version")) {
-  process.stdout.write("opencode 99.0.0-fixture\n");
+  process.stdout.write("opencode 1.99.0-fixture\n");
   process.exit(0);
 }
 
@@ -784,6 +786,8 @@ if (!Number.isInteger(port) || port <= 0) {
 }
 
 const eventClients = new Set();
+// User messages delivered with an id, for the server's "already delivered?" lookup.
+const deliveredMessages = new Map();
 const sendJson = (response, value, status = 200) => {
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(value));
@@ -864,6 +868,9 @@ const server = NodeHTTP.createServer(async (request, response) => {
   ) {
     const body = await readJson(request);
     appendProviderInput("opencode", promptTextFromParts(body.parts));
+    if (typeof body.messageID === "string") {
+      deliveredMessages.set(body.messageID, body.parts ?? []);
+    }
     sendJson(response, {});
     setTimeout(() => {
       broadcast({
@@ -881,11 +888,12 @@ const server = NodeHTTP.createServer(async (request, response) => {
     pathname === "/session/bibcode-ui-opencode-session/command"
   ) {
     const body = await readJson(request);
-    appendProviderInput(
-      "opencode",
-      "/" + String(body.command ?? "") +
-        (body.arguments ? " " + String(body.arguments) : "")
-    );
+    const commandText = "/" + String(body.command ?? "") +
+      (body.arguments ? " " + String(body.arguments) : "");
+    appendProviderInput("opencode", commandText);
+    if (typeof body.messageID === "string") {
+      deliveredMessages.set(body.messageID, [{ type: "text", text: commandText }]);
+    }
     sendJson(response, {});
     setTimeout(() => {
       broadcast({
@@ -900,6 +908,19 @@ const server = NodeHTTP.createServer(async (request, response) => {
   }
   if (request.method === "POST" && pathname.endsWith("/abort")) {
     sendJson(response, {});
+    return;
+  }
+  const messageLookup = /^\/session\/bibcode-ui-opencode-session\/message\/([^/]+)$/.exec(pathname);
+  if (request.method === "GET" && messageLookup) {
+    const parts = deliveredMessages.get(messageLookup[1]);
+    if (parts === undefined) {
+      sendJson(response, { name: "NotFoundError" }, 404);
+    } else {
+      sendJson(response, {
+        info: { id: messageLookup[1], sessionID: "bibcode-ui-opencode-session", role: "user" },
+        parts
+      });
+    }
     return;
   }
   if (request.method === "GET" && pathname.endsWith("/message")) {

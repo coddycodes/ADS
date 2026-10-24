@@ -9,7 +9,7 @@ import {
   type TerminalSessionSnapshot,
 } from "@bibcode/contracts";
 import { Deferred, Effect, Fiber, Layer, Option, Stream, SubscriptionRef } from "effect";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";

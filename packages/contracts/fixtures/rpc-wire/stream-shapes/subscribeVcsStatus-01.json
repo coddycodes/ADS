@@ -5,32 +5,84 @@
     {
       "_tag": "localUpdated",
       "local": {
-        "isRepo": true,
-        "repositoryUnavailableReason": "unreadable",
-        "hasPrimaryRemote": false,
+        "isRepo": false,
+        "repositoryUnavailableReason": "untrusted",
+        "sourceControlProvider": {
+          "kind": "bitbucket",
+          "name": "l?;C_",
+          "baseUrl": "-1"
+        },
+        "hasPrimaryRemote": true,
         "isDefaultRef": true,
-        "refName": null,
-        "hasWorkingTreeChanges": false,
+        "refName": "3:c.iuC",
+        "hasWorkingTreeChanges": true,
         "workingTree": {
           "files": [
             {
-              "path": "iz %ulen",
-              "insertions": 10,
-              "deletions": 43343597,
+              "path": "y",
+              "insertions": 94,
+              "deletions": 99,
+              "status": "added",
+              "area": "unstaged"
+            },
+            {
+              "path": "�",
+              "insertions": 61,
+              "deletions": 87,
+              "status": "modified",
+              "area": "untracked"
+            },
+            {
+              "path": "O",
+              "insertions": 100,
+              "deletions": 6,
+              "area": "staged"
+            },
+            {
+              "path": "",
+              "insertions": 0,
+              "deletions": 99,
+              "status": "renamed"
+            },
+            {
+              "path": "`GYLrG",
+              "insertions": 4,
+              "deletions": 96,
+              "status": "untracked",
+              "area": "unstaged"
+            },
+            {
+              "path": "4294967295",
+              "insertions": 4,
+              "deletions": 79
+            },
+            {
+              "path": "😀",
+              "insertions": 42,
+              "deletions": 62,
+              "status": "copied",
+              "area": "unstaged"
+            },
+            {
+              "path": "\u0000",
+              "insertions": 8,
+              "deletions": 34
+            },
+            {
+              "path": "ATVm7{o/An",
+              "insertions": 2,
+              "deletions": 88,
               "status": "deleted"
             },
             {
-              "path": "?3k!\"s",
-              "insertions": 8,
-              "deletions": 1400965283,
-              "status": "conflicted",
-              "area": "untracked"
+              "path": "",
+              "insertions": 2,
+              "deletions": 33
             }
           ],
-          "insertions": 21,
-          "deletions": 14
-        },
-        "operationInProgress": "cherry-pick"
+          "insertions": 3,
+          "deletions": 2
+        }
       }
     }
   ]

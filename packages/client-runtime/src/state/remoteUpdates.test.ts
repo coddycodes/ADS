@@ -13,8 +13,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
-import { RpcClientError } from "effect/unstable/rpc";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { RpcClientError } from "effect/rpc";
 
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import {

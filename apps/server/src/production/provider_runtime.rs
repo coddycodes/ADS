@@ -103,7 +103,7 @@ use thiserror::Error;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
-    sync::{Mutex, RwLock, mpsc, oneshot},
+    sync::{Mutex, RwLock, mpsc, oneshot, watch},
     task::JoinHandle,
     time::Instant,
 };
@@ -9290,6 +9290,16 @@ fn context_window_activity_payload(payload: &Value) -> Option<Value> {
     {
         sanitized_object.insert("maxTokens".to_owned(), Value::from(max_tokens));
     }
+    if let Some(auto_compact_tokens) = usage
+        .get("autoCompactTokens")
+        .and_then(Value::as_u64)
+        .filter(|tokens| *tokens > 0)
+    {
+        sanitized_object.insert(
+            "autoCompactTokens".to_owned(),
+            Value::from(auto_compact_tokens),
+        );
+    }
     if let Some(compacts_automatically) =
         usage.get("compactsAutomatically").and_then(Value::as_bool)
     {
@@ -9381,7 +9391,7 @@ fn provider_completion_error_class(payload: &Value) -> String {
         .unwrap_or("provider_error")
     {
         class @ ("provider_error" | "transport_error" | "permission_error" | "validation_error"
-        | "unknown") => class.to_owned(),
+        | "context_limit" | "unknown") => class.to_owned(),
         _ => "unknown".to_owned(),
     }
 }
@@ -12189,6 +12199,45 @@ impl ClaudeAcknowledgements {
         }
         matched
     }
+
+    /// Claude runs a local slash command such as `/compact` without replaying its input: its
+    /// stream shows the command's output (`<local-command-stdout>`) and then a `result` naming
+    /// the command in `local_command`. That result acknowledges the oldest live write of the
+    /// command, with or without arguments, since the result does not repeat them.
+    fn acknowledge_local_command(
+        &self,
+        name: &str,
+        turn_id: Option<String>,
+    ) -> Option<ClaudeReplay> {
+        let bare = format!("/{name}");
+        let with_arguments = format!("/{name} ");
+        let mut state = self.state.lock().expect("Claude acknowledgement lock");
+        let (key, skipped) = state
+            .pending
+            .iter()
+            .filter(|(key, _)| key.as_ref() == bare || key.starts_with(&with_arguments))
+            .filter_map(|(key, entries)| {
+                let (skipped, entry) = entries
+                    .iter()
+                    .enumerate()
+                    .find(|(_, entry)| !entry.session_cancellation.is_cancelled())?;
+                Some((key.clone(), skipped, entry.id))
+            })
+            .min_by_key(|(_, _, id)| *id)
+            .map(|(key, skipped, _)| (key, skipped))?;
+        let pending = state.pending.get_mut(&key)?;
+        // The entries ahead of it belong to retired sessions.
+        pending.drain(..skipped);
+        let entry = pending.pop_front()?;
+        if pending.is_empty() {
+            state.pending.remove(&key);
+        }
+        let late = entry.sender.send(turn_id).is_err();
+        Some(ClaudeReplay {
+            write: entry.id,
+            late_delivery_key: late.then_some(entry.delivery_key).flatten(),
+        })
+    }
 }
 
 struct ClaudeAcknowledgementRegistration {
@@ -12254,6 +12303,18 @@ fn claude_acknowledgement_key(text: &str) -> Cow<'_, str> {
         return command(name, args);
     }
     Cow::Borrowed(text)
+}
+
+/// The local slash command a `result` reports Claude ran, such as `compact`.
+fn claude_local_command_result(value: &Value) -> Option<&str> {
+    if value.get("type").and_then(Value::as_str) != Some("result") {
+        return None;
+    }
+    value
+        .get("local_command")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && !name.contains(char::is_whitespace))
 }
 
 fn claude_replayed_user_text(value: &Value) -> Option<&str> {
@@ -13274,6 +13335,10 @@ mod claude_context_query_tests {
         assert_eq!(
             provider_completion_error_class(&json!({ "errorClass": "transport_error" })),
             "transport_error"
+        );
+        assert_eq!(
+            provider_completion_error_class(&json!({ "errorClass": "context_limit" })),
+            "context_limit"
         );
     }
 
@@ -14521,7 +14586,7 @@ impl ClaudeDriver {
         expected_turn_id: Option<String>,
         delivery_key: String,
     ) -> ProviderDeliveryOutcome {
-        let (steer_cancellation, acknowledgement_cancellation) = {
+        let (steer_cancellation, acknowledgement_cancellation, compacting) = {
             let runtime = self.runtime.lock().await;
             let steer_cancellation = if let Some(expected) = expected_turn_id.as_deref() {
                 let Some(token) = runtime.turn_steer_cancellation(expected) else {
@@ -14536,6 +14601,7 @@ impl ClaudeDriver {
             (
                 steer_cancellation,
                 runtime.delivery_acknowledgement_cancellation(),
+                runtime.compaction_watch(),
             )
         };
         let (text, attachments) = match self.prepare_turn_input(text, attachments).await {
@@ -14572,7 +14638,7 @@ impl ClaudeDriver {
                 if let Some(input) = steered_turn_input {
                     input.cancelled().await;
                 }
-                tokio::time::sleep(timeout).await;
+                claude_acknowledgement_deadline(timeout, compacting).await;
             }
         };
         let write_cancellation = steer_cancellation.unwrap_or_default();
@@ -14667,6 +14733,29 @@ impl ClaudeDriver {
     async fn stop_awaiting_turn_input(&self, write: Option<u64>) {
         if let Some(write) = write {
             self.runtime.lock().await.stop_awaiting_turn_input(write);
+        }
+    }
+}
+
+/// Ends once `timeout` has passed without Claude compacting. Claude replays a message only
+/// after a compaction it runs first (over a minute near a full 1M-token window), so the wait
+/// stops while it compacts and starts again in full when the compaction ends.
+async fn claude_acknowledgement_deadline(timeout: Duration, mut compacting: watch::Receiver<bool>) {
+    loop {
+        while *compacting.borrow_and_update() {
+            if compacting.changed().await.is_err() {
+                // The runtime is gone; nothing reports compaction any more.
+                break;
+            }
+        }
+        tokio::select! {
+            () = tokio::time::sleep(timeout) => return,
+            changed = compacting.changed() => {
+                if changed.is_err() {
+                    tokio::time::sleep(timeout).await;
+                    return;
+                }
+            }
         }
     }
 }
@@ -15560,11 +15649,27 @@ async fn emit_claude_value(
     let mut late_delivery_key = None;
     let mut output = {
         let mut runtime = runtime.lock().await;
-        if !authenticated_hook
-            && let Some(text) = claude_replayed_user_text(&value)
-            && let Some(replay) = pending_acknowledgement
-                .acknowledge(text, runtime.current_turn_id().map(str::to_owned))
-        {
+        let replay = if authenticated_hook {
+            None
+        } else if let Some(text) = claude_replayed_user_text(&value) {
+            let replay = pending_acknowledgement
+                .acknowledge(text, runtime.current_turn_id().map(str::to_owned));
+            if replay.is_none() && value.get("isReplay").and_then(Value::as_bool) == Some(true) {
+                // Expected for a local command's output, which is replayed in place of the
+                // command; anything else is a replay BiBCode could not recognise. Never the text.
+                tracing::debug!(
+                    thread_id = %thread_id,
+                    "a Claude replay matched no pending delivery"
+                );
+            }
+            replay
+        } else if let Some(name) = claude_local_command_result(&value) {
+            pending_acknowledgement
+                .acknowledge_local_command(name, runtime.current_turn_id().map(str::to_owned))
+        } else {
+            None
+        };
+        if let Some(replay) = replay {
             runtime.stop_awaiting_turn_input(replay.write);
             late_delivery_key = replay.late_delivery_key;
         }
@@ -17787,6 +17892,35 @@ while IFS= read -r line; do
 done
 "#;
 
+    // Claude Code 2.1.306's frames for a compaction that outlasts the test's acknowledgement
+    // wait (captured from the real CLI with `--replay-user-messages`). `/compact` is never
+    // replayed: Claude shows its output and a result naming the local command. Any other
+    // message is compacted for first (an automatic compaction) and replayed afterwards.
+    #[cfg(unix)]
+    const CLAUDE_COMPACTION_FIXTURE: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$BIBCODE_TEST_REQUEST_CAPTURE"
+  case "$line" in
+    *'"type":"user"'*)
+      printf '%s\n' '{"type":"system","subtype":"status","status":"compacting","session_id":"s","uuid":"status-compacting"}'
+      sleep 1
+      printf '%s\n' '{"type":"system","subtype":"status","status":null,"compact_result":"success","session_id":"s","uuid":"status-done"}'
+      printf '%s\n' '{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual","pre_tokens":38030,"post_tokens":6798},"session_id":"s","uuid":"boundary"}'
+      case "$line" in
+        *'"/compact"'*)
+          printf '%s\n' '{"type":"user","message":{"role":"user","content":"<local-command-stdout>Compacted </local-command-stdout>"},"session_id":"s","parent_tool_use_id":null,"uuid":"local-output","isReplay":true}'
+          printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":0,"stop_reason":null,"terminal_reason":"completed","local_command":"compact","result":"","session_id":"s","uuid":"compact-result"}'
+          ;;
+        *)
+          printf '%s\n' "$line"
+          printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s","uuid":"turn-result"}'
+          ;;
+      esac
+      ;;
+  esac
+done
+"#;
+
     #[cfg(unix)]
     const CLAUDE_DISCONNECT_FIXTURE: &str = r#"#!/bin/sh
 IFS= read -r line
@@ -17916,15 +18050,16 @@ done
             "Claude stop-task readiness FIFO is created"
         );
         use std::os::unix::fs::OpenOptionsExt;
-        let ready = tokio::io::unix::AsyncFd::new(
-            std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .custom_flags(libc::O_NONBLOCK)
-                .open(&ready_fifo)
-                .expect("open Claude stop-task readiness FIFO without blocking"),
-        )
-        .expect("register Claude stop-task readiness FIFO");
+        let ready_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&ready_fifo)
+            .expect("open Claude stop-task readiness FIFO without blocking");
+        // SAFETY: the AsyncFd owns this File, so its descriptor stays open and unchanged
+        // until the AsyncFd is dropped.
+        let ready = unsafe { tokio::io::unix::AsyncFd::register(ready_file) }
+            .expect("register Claude stop-task readiness FIFO");
         let factory = probe_context.driver_factory(temp.path().join("attachments"));
         let mut request = native_launch(temp, "claudeAgent");
         request.binary_path = executable.to_string_lossy().into_owned();
@@ -18660,6 +18795,74 @@ done
         driver.shutdown().await.unwrap();
     }
 
+    /// A Claude delivery fixture whose compaction (1 s) outlasts its acknowledgement wait.
+    #[cfg(unix)]
+    async fn claude_compaction_driver(temp: &TempDir, name: &str) -> Arc<super::ClaudeDriver> {
+        let capture = temp.path().join(format!("{name}.jsonl"));
+        let mut driver =
+            claude_delivery_fixture(temp, name, CLAUDE_COMPACTION_FIXTURE, &capture, None, None)
+                .await;
+        Arc::get_mut(&mut driver)
+            .expect("fixture driver is not shared yet")
+            .acknowledgement_timeout = Duration::from_millis(300);
+        driver.start().await.unwrap();
+        driver
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_compact_command_is_delivered_when_claude_reports_it_ran() {
+        // Issue #166: `/compact` stayed "Delivery uncertain" for good, holding every later
+        // message, because Claude never replays a local command's input.
+        let temp = TempDir::new().unwrap();
+        let driver = claude_compaction_driver(&temp, "claude-compact-command").await;
+        let outcome = timeout(
+            Duration::from_secs(5),
+            driver.deliver(
+                "/compact".into(),
+                vec![],
+                "default".into(),
+                "compact".into(),
+            ),
+        )
+        .await
+        .expect("the compaction's result settles the delivery");
+        let super::ProviderDeliveryOutcome::Accepted {
+            turn_id: Some(turn_id),
+        } = outcome
+        else {
+            panic!("/compact must be delivered, not uncertain: {outcome:?}");
+        };
+        // The command's result ends the turn the delivery started.
+        let completed = claude_fixture_output(&driver, "turn.completed").await;
+        assert_eq!(completed.turn_id.as_deref(), Some(turn_id.as_str()));
+        assert_eq!(completed.payload["state"], "completed");
+        driver.shutdown().await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_message_read_after_a_compaction_is_never_uncertain() {
+        // Issue #166: Claude compacted for 80 s before reading a message, and the message went
+        // uncertain after 60 s.
+        let temp = TempDir::new().unwrap();
+        let driver = claude_compaction_driver(&temp, "claude-compact-first").await;
+        let outcome = timeout(
+            Duration::from_secs(5),
+            driver.deliver("hello".into(), vec![], "default".into(), "hello".into()),
+        )
+        .await
+        .expect("the replay after the compaction settles the delivery");
+        assert!(
+            matches!(
+                outcome,
+                super::ProviderDeliveryOutcome::Accepted { turn_id: Some(_) }
+            ),
+            "the acknowledgement wait must not run while Claude compacts: {outcome:?}"
+        );
+        driver.shutdown().await.unwrap();
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn claude_result_before_the_replay_does_not_end_the_new_turn() {
@@ -19122,7 +19325,9 @@ done
                     .expect("open Claude delivery FIFO without blocking")
             };
             (
-                tokio::io::unix::AsyncFd::new(open_fifo(&request_ready_path))
+                // SAFETY: the AsyncFd owns this File, so its descriptor stays open and
+                // unchanged until the AsyncFd is dropped.
+                unsafe { tokio::io::unix::AsyncFd::register(open_fifo(&request_ready_path)) }
                     .expect("register Claude delivery readiness FIFO"),
                 open_fifo(&acknowledgement_gate),
             )
@@ -19550,6 +19755,52 @@ done
             "  /caveman Reply with exactly PONG.",
             &expanded("caveman", Some("Reply with exactly PONG."))
         ));
+    }
+
+    #[test]
+    fn claude_local_command_result_acknowledges_its_oldest_live_write() {
+        let slot = super::ClaudeAcknowledgements::default();
+        let retired = tokio_util::sync::CancellationToken::new();
+        let live = tokio_util::sync::CancellationToken::new();
+        let (retired_sender, _retired_receiver) = tokio::sync::oneshot::channel();
+        let _retired = slot.register("/compact", retired_sender, retired.clone());
+        retired.cancel();
+        let (other_sender, mut other_receiver) = tokio::sync::oneshot::channel();
+        let _other = slot.register("/compaction", other_sender, live.clone());
+        let (with_args_sender, mut with_args_receiver) = tokio::sync::oneshot::channel();
+        let _with_args = slot.register("/compact keep the tests", with_args_sender, live.clone());
+        let (bare_sender, mut bare_receiver) = tokio::sync::oneshot::channel();
+        let _bare = slot.register("/compact", bare_sender, live.clone());
+
+        // The result names the command without its arguments: the oldest live write wins.
+        assert!(
+            slot.acknowledge_local_command("compact", Some("first".into()))
+                .is_some()
+        );
+        assert_eq!(
+            with_args_receiver.try_recv().unwrap().as_deref(),
+            Some("first")
+        );
+        assert!(bare_receiver.try_recv().is_err());
+        assert!(
+            slot.acknowledge_local_command("compact", Some("second".into()))
+                .is_some()
+        );
+        assert_eq!(bare_receiver.try_recv().unwrap().as_deref(), Some("second"));
+        // Another command, and a command with no pending write, acknowledge nothing.
+        assert!(
+            slot.acknowledge_local_command("compact", None).is_none(),
+            "the retired session's write is skipped, not acknowledged"
+        );
+        assert!(other_receiver.try_recv().is_err());
+        assert_eq!(
+            super::claude_local_command_result(&json!({"type":"result","local_command":"compact"})),
+            Some("compact")
+        );
+        assert_eq!(
+            super::claude_local_command_result(&json!({"type":"user","local_command":"compact"})),
+            None
+        );
     }
 
     #[test]
@@ -24928,6 +25179,318 @@ done
         .await;
     }
 
+    /// #165: a Claude whose background task finishes during a slow delivered turn (`/compact`).
+    /// Claude replays the task notification just before that turn's `result`, then answers it in
+    /// a turn of its own. Each pause in the answer outlasts the test's idle timeout.
+    #[cfg(unix)]
+    const CLAUDE_FOLLOW_UP_BEFORE_RESULT_FIXTURE: &str = r#"#!/bin/sh
+case "$1" in
+  --version) printf '%s\n' '2.1.308 (Claude Code)'; exit 0;;
+  --help) printf '%s\n' 'Usage: claude [options]'; exit 0;;
+esac
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"user"'*)
+      printf '%s\n' "$line"
+      printf '%s\n' '{"type":"system","subtype":"task_started","task_id":"task-bg","tool_use_id":"tool-bash-bg","description":"Background command","task_type":"local_bash","is_backgrounded":true,"uuid":"task-started","session_id":"fixture-session"}'
+      (
+        sleep 0.1
+        printf '%s\n' '{"type":"system","subtype":"task_notification","task_id":"task-bg","status":"completed","output_file":"/tmp/task-bg.output","summary":"Done.","uuid":"task-notified","session_id":"fixture-session"}'
+        printf '%s\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[],"uuid":"tasks-changed","session_id":"fixture-session"}'
+        printf '%s\n' '{"type":"user","message":{"role":"user","content":"<task-notification><task-id>task-bg</task-id><status>completed</status></task-notification>"},"origin":{"kind":"task-notification"},"parent_tool_use_id":null,"session_id":"fixture-session","uuid":"follow-up-user"}'
+        printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"fixture-session","uuid":"compact-result"}'
+        sleep 1
+        printf '%s\n' '{"type":"stream_event","session_id":"fixture-session","uuid":"follow-up-delta","parent_tool_use_id":null,"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The background command finished."}}}'
+        sleep 1
+        : > "$BIBCODE_TEST_FOLLOW_UP"
+        printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","origin":{"kind":"task-notification"},"session_id":"fixture-session","uuid":"follow-up-result"}'
+      ) &
+      ;;
+  esac
+done
+"#;
+
+    /// #165 with a real `/compact`: Claude never replays a local command's input, so the
+    /// delivery still awaits its replay when the task notification arrives, and only the
+    /// command's `local_command` result acknowledges it. The fixture ignores the context query
+    /// that follows a result, so the command's completion waits out that query's 2 s bound; the
+    /// answer runs 4 s, well past the 300 ms idle deadline a missing follow-up turn would arm.
+    #[cfg(unix)]
+    const CLAUDE_FOLLOW_UP_DURING_COMPACT_FIXTURE: &str = r#"#!/bin/sh
+case "$1" in
+  --version) printf '%s\n' '2.1.308 (Claude Code)'; exit 0;;
+  --help) printf '%s\n' 'Usage: claude [options]'; exit 0;;
+esac
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"user"'*)
+      printf '%s\n' '{"type":"system","subtype":"task_started","task_id":"task-bg","tool_use_id":"tool-bash-bg","description":"Background command","task_type":"local_bash","is_backgrounded":true,"uuid":"task-started","session_id":"fixture-session"}'
+      printf '%s\n' '{"type":"system","subtype":"status","status":"compacting","session_id":"fixture-session","uuid":"status-compacting"}'
+      (
+        sleep 0.1
+        printf '%s\n' '{"type":"system","subtype":"task_notification","task_id":"task-bg","status":"completed","output_file":"/tmp/task-bg.output","summary":"Done.","uuid":"task-notified","session_id":"fixture-session"}'
+        printf '%s\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[],"uuid":"tasks-changed","session_id":"fixture-session"}'
+        printf '%s\n' '{"type":"user","message":{"role":"user","content":"<task-notification><task-id>task-bg</task-id><status>completed</status></task-notification>"},"origin":{"kind":"task-notification"},"parent_tool_use_id":null,"session_id":"fixture-session","uuid":"follow-up-user"}'
+        printf '%s\n' '{"type":"system","subtype":"status","status":null,"compact_result":"success","session_id":"fixture-session","uuid":"status-done"}'
+        printf '%s\n' '{"type":"user","message":{"role":"user","content":"<local-command-stdout>Compacted </local-command-stdout>"},"session_id":"fixture-session","parent_tool_use_id":null,"uuid":"local-output","isReplay":true}'
+        printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":0,"stop_reason":null,"terminal_reason":"completed","local_command":"compact","result":"","session_id":"fixture-session","uuid":"compact-result"}'
+        sleep 1
+        printf '%s\n' '{"type":"stream_event","session_id":"fixture-session","uuid":"follow-up-delta","parent_tool_use_id":null,"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The background command finished."}}}'
+        sleep 3
+        : > "$BIBCODE_TEST_FOLLOW_UP"
+        printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","origin":{"kind":"task-notification"},"session_id":"fixture-session","uuid":"follow-up-result"}'
+      ) &
+      ;;
+  esac
+done
+"#;
+
+    /// #165, end to end: the idle deadline armed by the delivered turn's `result` does not stop
+    /// Claude while it answers a task notification it replayed just before that `result`; the
+    /// session is suspended only after the answer's own `result`, and the answer is its own turn.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_follow_up_replayed_before_a_result_outlives_the_idle_deadline() {
+        assert_claude_follow_up_outlives_the_idle_deadline(
+            "claude-follow-up-before-result",
+            CLAUDE_FOLLOW_UP_BEFORE_RESULT_FIXTURE,
+            "slow-turn",
+        )
+        .await;
+    }
+
+    /// The same, when the delivered turn is a `/compact`, which Claude never replays.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_follow_up_replayed_during_a_compact_outlives_the_idle_deadline() {
+        assert_claude_follow_up_outlives_the_idle_deadline(
+            "claude-follow-up-during-compact",
+            CLAUDE_FOLLOW_UP_DURING_COMPACT_FIXTURE,
+            "/compact",
+        )
+        .await;
+    }
+
+    #[cfg(unix)]
+    async fn assert_claude_follow_up_outlives_the_idle_deadline(
+        name: &str,
+        fixture: &str,
+        text: &str,
+    ) {
+        const IDLE_TIMEOUT: Duration = Duration::from_millis(300);
+        let temp = TempDir::new().unwrap();
+        let follow_up = temp.path().join("follow-up");
+        let executable = executable_fixture(&temp, name, fixture);
+        let engine = supervisor_engine().await;
+        let (deadline_tx, mut deadlines) = mpsc::unbounded_channel();
+        let activity = super::ActivityProjection::new(ActivityRepository::new(
+            engine.repositories().database().clone(),
+        ));
+        let supervisor = super::ProviderRuntimeSupervisor::start(
+            engine.clone(),
+            Arc::new(super::NativeProviderDriverFactory::new(
+                temp.path().join("attachments"),
+            )),
+            activity,
+            super::SupervisorOptions {
+                session_idle_timeout: IDLE_TIMEOUT,
+                idle_deadline_test_observer: Some(deadline_tx),
+                ..super::SupervisorOptions::default()
+            },
+        );
+        let mut request = native_launch(&temp, "claudeAgent");
+        request.thread_id = "t1".to_owned();
+        request.binary_path = executable.to_string_lossy().into_owned();
+        request.environment.insert(
+            "BIBCODE_TEST_FOLLOW_UP".to_owned(),
+            follow_up.to_string_lossy().into_owned(),
+        );
+        supervisor.launch(request).await.unwrap();
+        let command = serde_json::from_value(json!({
+            "type":"thread.turn.start", "commandId":"follow-up-turn", "threadId":"t1",
+            "message":{"messageId":"user-follow-up-turn","role":"user","text":text,"attachments":[]},
+            "runtimeMode":"full-access", "interactionMode":"default",
+            "createdAt":"2026-07-16T00:00:01Z"
+        }))
+        .unwrap();
+        let handle = supervisor
+            .deliver_turn(command, "follow-up-turn".to_owned())
+            .await
+            .expect("turn admitted");
+        let outcome = timeout(Duration::from_secs(10), handle.completion())
+            .await
+            .expect("Claude acknowledges the turn");
+        assert!(
+            matches!(outcome, super::ProviderDeliveryOutcome::Accepted { .. }),
+            "{outcome:?}"
+        );
+
+        // The deadline that suspends the session must have been armed after Claude's answer
+        // ended (the fixture writes the marker just before that answer's `result`). The
+        // suspension itself is observed later, once the provider process has been stopped.
+        let mut armed_after_answer = std::collections::HashMap::new();
+        timeout(Duration::from_secs(10), async {
+            loop {
+                match deadlines.recv().await.expect("deadline observer") {
+                    super::IdleDeadlineTestEvent::Armed { generation } => {
+                        armed_after_answer.insert(generation, follow_up.exists());
+                    }
+                    super::IdleDeadlineTestEvent::Evaluated {
+                        generation,
+                        outcome: super::IdleDeadlineEvaluation::Suspended,
+                    } => {
+                        assert_eq!(
+                            armed_after_answer.get(&generation),
+                            Some(&true),
+                            "the idle deadline stopped Claude while it answered its finished task"
+                        );
+                        return;
+                    }
+                    super::IdleDeadlineTestEvent::Evaluated {
+                        outcome: super::IdleDeadlineEvaluation::Failed,
+                        ..
+                    } => panic!("idle suspension failed"),
+                    super::IdleDeadlineTestEvent::Evaluated { .. } => {}
+                }
+            }
+        })
+        .await
+        .expect("the session is suspended once Claude answered its finished task");
+        let snapshot = load_snapshot(&engine.repositories()).await.unwrap();
+        let answer = snapshot
+            .messages
+            .iter()
+            .find(|message| message.text == "The background command finished.")
+            .expect("Claude's answer to its finished task is in the thread");
+        assert!(!answer.is_streaming);
+        assert!(answer.turn_id.is_some());
+        let delivered_turn = snapshot
+            .messages
+            .iter()
+            .find(|message| message.role == "user")
+            .and_then(|message| message.turn_id.clone());
+        assert_ne!(
+            answer.turn_id, delivered_turn,
+            "the answer is a turn of its own"
+        );
+        supervisor.shutdown().await.unwrap();
+        engine.shutdown().await;
+    }
+
+    /// #167: a Claude whose turn runs one Bash call whose input streams in eight fragments, as
+    /// Claude Code streams `input_json_delta` with partial messages.
+    #[cfg(unix)]
+    const CLAUDE_FRAGMENTED_TOOL_INPUT_FIXTURE: &str = r#"#!/bin/sh
+case "$1" in
+  --version) printf '%s\n' '2.1.308 (Claude Code)'; exit 0;;
+  --help) printf '%s\n' 'Usage: claude [options]'; exit 0;;
+esac
+delta() {
+  printf '{"type":"stream_event","session_id":"fixture-session","uuid":"delta-%s","parent_tool_use_id":null,"event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"%s"}}}\n' "$1" "$2"
+}
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"user"'*)
+      printf '%s\n' "$line"
+      printf '%s\n' '{"type":"stream_event","session_id":"fixture-session","uuid":"message-start","parent_tool_use_id":null,"event":{"type":"message_start","message":{"id":"msg-1"}}}'
+      printf '%s\n' '{"type":"stream_event","session_id":"fixture-session","uuid":"block-start","parent_tool_use_id":null,"event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool-bash-1","name":"Bash","input":{}}}}'
+      delta 1 '{\"co'
+      delta 2 'mmand\":'
+      delta 3 '\"cargo'
+      delta 4 ' test'
+      delta 5 ' --all\",'
+      delta 6 '\"descr'
+      delta 7 'iption\":\"Run'
+      delta 8 ' the tests\"}'
+      printf '%s\n' '{"type":"stream_event","session_id":"fixture-session","uuid":"block-stop","parent_tool_use_id":null,"event":{"type":"content_block_stop","index":1}}'
+      printf '%s\n' '{"type":"user","session_id":"fixture-session","uuid":"tool-result","parent_tool_use_id":null,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-bash-1","content":"test result: ok"}]}}'
+      printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"fixture-session","uuid":"result-1"}'
+      ;;
+  esac
+done
+"#;
+
+    /// #167, end to end: the thread records one update for a Claude tool call whose input
+    /// streamed in fragments, carrying the complete input, instead of one activity per fragment.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_fragmented_tool_input_is_one_thread_activity() {
+        let temp = TempDir::new().unwrap();
+        let executable = executable_fixture(
+            &temp,
+            "claude-fragmented-tool-input",
+            CLAUDE_FRAGMENTED_TOOL_INPUT_FIXTURE,
+        );
+        let engine = supervisor_engine().await;
+        let activity = super::ActivityProjection::new(ActivityRepository::new(
+            engine.repositories().database().clone(),
+        ));
+        let supervisor = super::ProviderRuntimeSupervisor::start(
+            engine.clone(),
+            Arc::new(super::NativeProviderDriverFactory::new(
+                temp.path().join("attachments"),
+            )),
+            activity,
+            super::SupervisorOptions::default(),
+        );
+        let mut request = native_launch(&temp, "claudeAgent");
+        request.thread_id = "t1".to_owned();
+        request.binary_path = executable.to_string_lossy().into_owned();
+        supervisor.launch(request).await.unwrap();
+        let handle = supervisor
+            .deliver_turn(
+                IdleDeadlineFixture::turn_command("run-tests"),
+                "run-tests".to_owned(),
+            )
+            .await
+            .expect("turn admitted");
+        assert!(matches!(
+            timeout(Duration::from_secs(10), handle.completion())
+                .await
+                .expect("Claude replays the turn"),
+            super::ProviderDeliveryOutcome::Accepted { .. }
+        ));
+        let snapshot = timeout(Duration::from_secs(10), async {
+            loop {
+                let snapshot = load_snapshot(&engine.repositories()).await.unwrap();
+                if snapshot
+                    .activities
+                    .iter()
+                    .any(|activity| activity.summary == "Turn completed")
+                {
+                    return snapshot;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the turn completes");
+        let summaries = snapshot
+            .activities
+            .iter()
+            .map(|activity| activity.summary.as_str())
+            .collect::<Vec<_>>();
+        let input_updates = snapshot
+            .activities
+            .iter()
+            .filter(|activity| activity.summary == "Bash updated")
+            .collect::<Vec<_>>();
+        assert_eq!(input_updates.len(), 1, "{summaries:?}");
+        let complete_input = json!({
+            "command": "cargo test --all",
+            "description": "Run the tests",
+        });
+        assert_eq!(input_updates[0].payload["data"]["input"], complete_input);
+        let completed = snapshot
+            .activities
+            .iter()
+            .find(|activity| activity.summary == "Bash completed")
+            .expect("the tool call completes");
+        assert_eq!(completed.payload["data"]["input"], complete_input);
+        supervisor.shutdown().await.unwrap();
+        engine.shutdown().await;
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn idle_deadline_natural_race_probe() {
         let mut fixture = IdleDeadlineFixture::new(Duration::from_secs(1)).await;
@@ -27250,7 +27813,8 @@ done
                         "toolUses": 4,
                         "durationMs": 900,
                         "nativeUsageDetail": "must be dropped",
-                        "compactsAutomatically": true
+                        "compactsAutomatically": true,
+                        "autoCompactTokens": 245_000
                     }
                 }),
                 activity: Vec::new(),
@@ -27286,7 +27850,8 @@ done
                 "lastReasoningOutputTokens": 25,
                 "toolUses": 4,
                 "durationMs": 900,
-                "compactsAutomatically": true
+                "compactsAutomatically": true,
+                "autoCompactTokens": 245_000
             })
         );
 

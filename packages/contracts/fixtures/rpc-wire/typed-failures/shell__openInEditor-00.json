@@ -7,8 +7,9 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "ExternalLauncherUnsupportedEditorError",
-          "editor": "pycharm"
+          "_tag": "ExternalLauncherCommandNotFoundError",
+          "editor": "vscode",
+          "command": ""
         }
       }
     ]

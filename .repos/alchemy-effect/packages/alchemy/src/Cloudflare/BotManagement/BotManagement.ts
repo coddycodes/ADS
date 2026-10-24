@@ -1,7 +1,6 @@
 import * as botManagement from "@distilled.cloud/cloudflare/bot-management";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
-
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
@@ -154,13 +153,7 @@ export interface Attributes extends Settings {
   initialSettings: Settings;
 }
 
-export type BotManagement = Resource<
-  TypeId,
-  Props,
-  Attributes,
-  never,
-  Providers
->;
+export type BotManagement = Resource<TypeId, Props, Attributes, never, Providers>;
 
 /**
  * The bot-management configuration of a Cloudflare zone — a zone-scoped
@@ -178,11 +171,8 @@ export type BotManagement = Resource<
  * Fields that were never set by this resource are not touched. Settings
  * changed out-of-band after the snapshot was taken, or fields the zone's
  * plan no longer accepts, cannot be restored.
- * @resource
- * @product Bot Management
- * @category Application Security
- * @section Super Bot Fight Mode
- * @example Challenge definitely automated traffic (Pro and above)
+ * ### Super Bot Fight Mode
+ * **Example:** Challenge definitely automated traffic (Pro and above)
  * ```typescript
  * yield* Cloudflare.BotManagement.BotManagement("Bots", {
  *   zoneId: zone.zoneId,
@@ -191,7 +181,7 @@ export type BotManagement = Resource<
  * });
  * ```
  *
- * @example Static resource protection and WordPress optimization
+ * **Example:** Static resource protection and WordPress optimization
  * ```typescript
  * yield* Cloudflare.BotManagement.BotManagement("Bots", {
  *   zoneId: zone.zoneId,
@@ -201,8 +191,8 @@ export type BotManagement = Resource<
  * });
  * ```
  *
- * @section AI bot protection
- * @example Block AI scrapers and crawlers
+ * ### AI bot protection
+ * **Example:** Block AI scrapers and crawlers
  * ```typescript
  * yield* Cloudflare.BotManagement.BotManagement("Bots", {
  *   zoneId: zone.zoneId,
@@ -211,8 +201,8 @@ export type BotManagement = Resource<
  * });
  * ```
  *
- * @section Bot Fight Mode (Free plans)
- * @example Enable Bot Fight Mode
+ * ### Bot Fight Mode (Free plans)
+ * **Example:** Enable Bot Fight Mode
  * ```typescript
  * yield* Cloudflare.BotManagement.BotManagement("Bots", {
  *   zoneId: zone.zoneId,
@@ -221,6 +211,10 @@ export type BotManagement = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/bots/
+ *
+ * @resource
+ * @product Bot Management
+ * @category Application Security
  */
 export const BotManagement = Resource<BotManagement>(TypeId, {
   aliases: ["Cloudflare.BotManagement"],
@@ -290,11 +284,7 @@ export const BotManagementProvider = () =>
       const n = news as Props;
       // zoneId is Input<string>; compare only when both sides are concrete.
       const oldZone = output?.zoneId ?? o.zoneId;
-      if (
-        typeof oldZone === "string" &&
-        typeof n.zoneId === "string" &&
-        oldZone !== n.zoneId
-      ) {
+      if (typeof oldZone === "string" && typeof n.zoneId === "string" && oldZone !== n.zoneId) {
         return { action: "replace" } as const;
       }
     }),
@@ -305,11 +295,7 @@ export const BotManagementProvider = () =>
       if (!zoneId) return undefined;
       const observed = yield* observe(zoneId);
       if (!observed) return undefined;
-      return toAttributes(
-        zoneId,
-        observed,
-        output?.initialSettings ?? pickSettings(observed),
-      );
+      return toAttributes(zoneId, observed, output?.initialSettings ?? pickSettings(observed));
     }),
 
     reconcile: Effect.fn(function* ({ news, output }) {
@@ -351,11 +337,7 @@ export const BotManagementProvider = () =>
       const restore: Settings = {};
       for (const key of SETTINGS_KEYS) {
         const snapshot = output.initialSettings?.[key];
-        if (
-          managed[key] !== undefined &&
-          snapshot !== undefined &&
-          current[key] !== snapshot
-        ) {
+        if (managed[key] !== undefined && snapshot !== undefined && current[key] !== snapshot) {
           (restore as Record<SettingsKey, unknown>)[key] = snapshot;
         }
       }
@@ -401,8 +383,7 @@ const observe = (zoneId: string) =>
     .getBotManagement({ zoneId })
     .pipe(Effect.catchTag("InvalidRoute", () => Effect.succeed(undefined)));
 
-const undef = <T>(v: T | null | undefined): T | undefined =>
-  v == null ? undefined : v;
+const undef = <T>(v: T | null | undefined): T | undefined => (v == null ? undefined : v);
 
 /**
  * Project any source (observed union member, props, attrs) onto the
@@ -423,9 +404,7 @@ const pickSettings = (source: ObservedBotManagement | Settings): Settings => {
  * desired fields are ignored — they are dashboard/plan-managed.
  */
 const settingsEqual = (desired: Settings, observed: Settings): boolean =>
-  SETTINGS_KEYS.every(
-    (key) => desired[key] === undefined || desired[key] === observed[key],
-  );
+  SETTINGS_KEYS.every((key) => desired[key] === undefined || desired[key] === observed[key]);
 
 const toAttributes = (
   zoneId: string,

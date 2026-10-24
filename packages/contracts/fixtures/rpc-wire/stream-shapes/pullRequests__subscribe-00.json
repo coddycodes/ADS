@@ -3,10 +3,10 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "list": true,
-      "detail": true,
+      "list": false,
+      "detail": false,
       "timeline": false,
-      "commits": true,
+      "commits": false,
       "checks": true,
       "files": true
     }

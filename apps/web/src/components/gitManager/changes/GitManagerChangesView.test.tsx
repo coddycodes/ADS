@@ -3,7 +3,7 @@
 import { EnvironmentRpcUnavailableError } from "@bibcode/client-runtime/rpc";
 import { GitManagerOperationError, type VcsRepositoryUnavailableReason } from "@bibcode/contracts";
 import * as Cause from "effect/Cause";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

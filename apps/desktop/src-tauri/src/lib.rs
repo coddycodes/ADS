@@ -559,6 +559,43 @@ mod tests {
     }
 
     #[test]
+    fn desktop_code_never_waits_on_a_dialog_by_blocking_a_thread() {
+        // A blocking dialog call holds a Tauri runtime worker, or the main thread, until the
+        // user answers, and Tauri serves its protocol responses from those workers (#177).
+        // Dialogs are awaited through `bridge::await_dialog` instead.
+        fn visit(directory: &std::path::Path, offenders: &mut Vec<String>) {
+            for entry in std::fs::read_dir(directory).expect("readable source directory") {
+                let path = entry.expect("source entry").path();
+                if path.is_dir() {
+                    visit(&path, offenders);
+                } else if path.extension().is_some_and(|extension| extension == "rs") {
+                    let source = std::fs::read_to_string(&path).expect("readable source");
+                    for (index, line) in source.lines().enumerate() {
+                        // Method and path calls alike (`dialog.blocking_…()`,
+                        // `FileDialogBuilder::blocking_…(dialog)`); comments may name them.
+                        let code = line.split("//").next().unwrap_or_default();
+                        if ["pick_", "save_file", "show"]
+                            .iter()
+                            .any(|call| code.contains(&format!("blocking_{call}")))
+                        {
+                            offenders.push(format!("{}:{}", path.display(), index + 1));
+                        }
+                    }
+                }
+            }
+        }
+        let mut offenders = Vec::new();
+        visit(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut offenders,
+        );
+        assert!(
+            offenders.is_empty(),
+            "blocking dialog calls; await them with bridge::await_dialog: {offenders:?}"
+        );
+    }
+
+    #[test]
     fn generated_handler_registers_the_audited_command_lists() {
         let source = include_str!("lib.rs");
         let handler = source

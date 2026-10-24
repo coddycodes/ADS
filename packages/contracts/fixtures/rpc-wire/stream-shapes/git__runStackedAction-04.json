@@ -3,13 +3,13 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "actionId": "0$&n",
-      "cwd": "]ifc1?)]wbO",
-      "action": "commit_push",
+      "actionId": "",
+      "cwd": "prototype",
+      "action": "push",
       "kind": "hook_finished",
-      "hookName": "bTbutk",
-      "exitCode": -1015816486,
-      "durationMs": 2147483641
+      "hookName": "-1",
+      "exitCode": -6,
+      "durationMs": null
     }
   ]
 }

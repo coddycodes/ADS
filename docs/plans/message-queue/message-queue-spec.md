@@ -182,7 +182,7 @@ shape is exported to the wire fixtures and the pinned counts in
 
 - **Migration 50** recreates `provider_turn_outbox` with `queued` in the
   state check and a `mode TEXT NOT NULL DEFAULT 'start' CHECK(mode IN
-('start','steer'))` column, and widens
+  ('start','steer'))` column, and widens
   `projection_thread_messages.delivery_state` the same way. Existing rows
   keep their values.
 - **Admission.** `dispatch_reserved_turn_command` writes the outbox row as
@@ -203,9 +203,9 @@ shape is exported to the wire fixtures and the pinned counts in
   transaction and emits a `thread.turn-delivery-updated { held: true }` per
   row. `thread.turn.promote` clears `held` on the promoted row.
 - **Driver steer.** `ProviderDriver::steer(text, attachments, expected_turn_id)
--> ProviderDeliveryOutcome`, default `Rejected { detail: "provider does not
-support steering" }`. Codex: `turn/steer { threadId, input, expectedTurnId,
-clientUserMessageId }`; a precondition failure maps to `Rejected`. Claude:
+  -> ProviderDeliveryOutcome`, default `Rejected { detail: "provider does not
+  support steering" }`. Codex: `turn/steer { threadId, input, expectedTurnId,
+  clientUserMessageId }`; a precondition failure maps to `Rejected`. Claude:
   encode the user line, register the acknowledgement waiter, write, **do not
   call `runtime.start_turn`**; `Accepted { turn_id: current }`. On
   `Accepted` the message's `turn_id` is set to the active turn and the row is
@@ -238,8 +238,8 @@ clientUserMessageId }`; a precondition failure maps to `Rejected`. Claude:
   with the message body (same renderer as user messages), attachment count
   line when any, then a footer with clock icon, `Queued`, a status line, a
   primary action (arrow up) and Cancel (x, `aria-label="Cancel and return to
-the composer"`). The primary action is Steer (`aria-label="Steer into the
-running turn"`) while a turn runs and steer is available, and Send now
+  the composer"`). The primary action is Steer (`aria-label="Steer into the
+  running turn"`) while a turn runs and steer is available, and Send now
   (`aria-label="Send now"`) when the head is held or the session is idle.
   Status copy: head while running and steer available: "Sends when the turn
   ends. Steer to send it now."; head while running and steer unavailable:

@@ -15,7 +15,7 @@ import type {
   ServerConfig,
 } from "@bibcode/contracts";
 import type { EnvironmentId, ThreadId } from "@bibcode/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readActiveEnvironmentId, setActiveEnvironmentId } from "./activeEnvironment";

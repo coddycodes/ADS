@@ -160,7 +160,7 @@ sends.
 3. **Capability detection.** There is no CLI probe for chat. Method support is
    learned at run time:
    - A `-32601` response or a decode error latches `background_list_support =
-Unsupported` for that runtime (`codex/runtime.rs:2255-2263`, initial value
+     Unsupported` for that runtime (`codex/runtime.rs:2255-2263`, initial value
      at `:784`).
    - The latch is reported once as a `runtime.warning` provider event and as a
      section-health error (`:2264-2276`, `:2296-2302`). It is not logged with
@@ -223,7 +223,7 @@ Unsupported` for that runtime (`codex/runtime.rs:2255-2263`, initial value
    60 s.
 3. **Capability detection.** There is no probe. The `acp` subcommand still
    exists but is hidden from the top-level `--help` (local `cursor-agent acp
---help`).
+   --help`).
 4. **Secrets and bind.** The MCP header travels in ACP `mcpServers` over stdin
    (`provider_runtime.rs:15047`). Cursor's ACP page says ACP loads MCP
    servers from `.cursor/mcp.json` ([ACP](https://cursor.com/docs/cli/acp)), so
@@ -365,7 +365,7 @@ change.
   [app-server README](https://raw.githubusercontent.com/openai/codex/main/codex-rs/app-server/README.md)).
   It is also absent from the local `ClientRequest` schema. BiBCode still calls
   it (`codex/runtime.rs:1420-1438`). The replacement is `thread/revert
-{threadId, beforeTurnId}`, which "only changes persisted conversation
+  {threadId, beforeTurnId}`, which "only changes persisted conversation
   history. It does not revert local file changes" (local
   `v2/ThreadRevertParams.json`).
 - **Personality.** "`friendly` and `pragmatic` no longer select a style" (README).

@@ -8,6 +8,7 @@ import {
 import { isDesktopHost } from "~/env";
 import { isMacPlatform } from "~/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { PROCESS_MEMORY_METRIC_NOTE } from "./statusBarFormat";
 import {
   buildResourceSummaryViewModel,
   type ResourceDiagnosticsQueryState,
@@ -135,7 +136,8 @@ export function ResourceUsageSegment({
             <span>Resource Manager</span>
           </div>
           <p className="text-muted-foreground">
-            Combined monitored resources for the selected host, separated by ownership.
+            Combined monitored resources for the selected host, separated by ownership.{" "}
+            {PROCESS_MEMORY_METRIC_NOTE}
           </p>
 
           {presentation.warning === null ? null : (

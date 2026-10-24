@@ -27,6 +27,7 @@ const preparedProviderInputLogPath: string = providerInputLogPath;
 const visibleSurfaceSelector = '[data-center-surface-host][data-visible="true"]';
 const visibleComposerFormSelector = `${visibleSurfaceSelector} [data-chat-composer-form="true"]`;
 const queuedRowSelector = `${visibleSurfaceSelector} [data-queued-message-row]`;
+const queuedWrapperSelector = `${visibleSurfaceSelector} [data-timeline-row-kind="queued-message"]`;
 
 function composerForm() {
   return browser.$(visibleComposerFormSelector);
@@ -130,18 +131,43 @@ async function assertQueuedCards(prompts: readonly string[]): Promise<string[]> 
   let visibleIds: string[] = [];
   await browser.waitUntil(
     async () => {
-      const cards = await browser.$$(queuedRowSelector);
-      const observations = await Promise.all(
-        Array.from(cards, async (card) => ({
-          id: (await card.getAttribute("data-queued-message-row")) ?? "",
-          text: await card.getText(),
-          y: await card.getLocation("y"),
-          displayed: await card.isDisplayed(),
-        })),
+      // One DOM snapshot per reading: the virtualized timeline can replace or remove a card
+      // between separate WebDriver calls, and a stale card would fail every reading.
+      const snapshot = await browser.execute(
+        (cardSelector: string, wrapperSelector: string) => {
+          const displayed = (element: HTMLElement) => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            // checkVisibility is missing from older WebKitGTK; the computed style covers it.
+            const visible =
+              typeof element.checkVisibility === "function"
+                ? element.checkVisibility({ opacityProperty: true, visibilityProperty: true })
+                : style.display !== "none" &&
+                  style.visibility !== "hidden" &&
+                  Number(style.opacity) > 0;
+            return rect.width > 0 && rect.height > 0 && visible;
+          };
+          return {
+            cards: Array.from(document.querySelectorAll<HTMLElement>(cardSelector), (card) => ({
+              id: card.getAttribute("data-queued-message-row") ?? "",
+              text: card.innerText,
+              y: card.getBoundingClientRect().top + window.scrollY,
+              displayed: displayed(card),
+            })),
+            // The timeline rows are matched by their own selector, so a card selector that
+            // stopped matching cannot pass for an empty queue.
+            displayedWrappers: Array.from(
+              document.querySelectorAll<HTMLElement>(wrapperSelector),
+            ).filter(displayed).length,
+          };
+        },
+        queuedRowSelector,
+        queuedWrapperSelector,
       );
+      if (snapshot.displayedWrappers !== prompts.length) return false;
       // LegendList positions pooled slots independently of DOM order and
       // reorders its DOM later. Observe visual FIFO before retaining row IDs.
-      const ids = queuedCardIdsInVisualOrder(observations, prompts);
+      const ids = queuedCardIdsInVisualOrder(snapshot.cards, prompts);
       if (ids === null) return false;
       visibleIds = ids;
       return true;
@@ -150,10 +176,6 @@ async function assertQueuedCards(prompts: readonly string[]): Promise<string[]> 
       timeoutMsg: `Expected ${prompts.length} queued cards: ${prompts.join(", ")}.`,
     },
   );
-  const wrappers = await browser.$$(
-    `${visibleSurfaceSelector} [data-timeline-row-kind="queued-message"]`,
-  );
-  expect(await wrappers.length).toBe(prompts.length);
   const ids: string[] = [];
   for (let index = 0; index < visibleIds.length; index += 1) {
     const card = queuedCard(visibleIds[index]!);
@@ -165,6 +187,35 @@ async function assertQueuedCards(prompts: readonly string[]): Promise<string[]> 
     ids.push(id);
   }
   return ids;
+}
+
+/**
+ * LegendList measures rows before it settles their positions, so one reading can catch the
+ * working row below a queued card that is in fact under it (Linux saw 251 against 175 while
+ * the settled page had them the right way round). Waits for the settled order instead.
+ */
+async function expectWorkingRowAboveQueuedCard(messageId: string): Promise<void> {
+  let observed = "no displayed working row";
+  try {
+    await browser.waitUntil(async () => {
+      for (const row of await browser.$$(
+        `${visibleSurfaceSelector} [data-timeline-row-kind="working"]`,
+      )) {
+        if (!(await row.isDisplayed())) continue;
+        const working = await row.getLocation("y");
+        const card = await queuedCard(messageId).getLocation("y");
+        observed = `working row at ${working}, queued card at ${card}`;
+        return working < card;
+      }
+      return false;
+    });
+  } catch (error) {
+    // The spec reporter drops `cause`, so the wait's own failure goes in the message too.
+    throw new Error(
+      `The working row did not settle above queued card ${messageId}: ${observed}. ${String(error)}`,
+      { cause: error },
+    );
+  }
 }
 
 function queuedCard(messageId: string) {
@@ -208,11 +259,7 @@ describe("packaged composer message queue", () => {
       await submitWithEnter("third");
       const [secondId, thirdId] = await assertQueuedCards(["second", "third"]);
       expect(inputSequence(baseline)).toEqual([{ kind: "start", prompt }]);
-      expect(
-        await browser
-          .$(`${visibleSurfaceSelector} [data-timeline-row-kind="working"]`)
-          .getLocation("y"),
-      ).toBeLessThan(await queuedCard(secondId!).getLocation("y"));
+      await expectWorkingRowAboveQueuedCard(secondId!);
       await expect(queuedCard(secondId!).$('[data-queued-message-steer="true"]')).toBeEnabled();
       await expect(queuedCard(thirdId!).$('[data-queued-message-steer="true"]')).not.toExist();
       await browser.saveScreenshot(

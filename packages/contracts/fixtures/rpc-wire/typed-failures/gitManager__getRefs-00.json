@@ -8,10 +8,14 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitManagerOperationError",
-          "operation": "key",
-          "code": "3$!s",
-          "message": "9ObJXY}\"#>i",
-          "blocked": null
+          "operation": ",YTG,M#\"_s",
+          "code": "4294967295",
+          "message": "BIqZ>rB",
+          "blocked": {
+            "operation": "zNC{*Q,/dS",
+            "code": "current-branch",
+            "message": ""
+          }
         }
       }
     ]

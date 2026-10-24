@@ -288,6 +288,17 @@ that takes 500 ms or more writes `slow process diagnostics sample` to
 attribution durations; set `BIBCODE_LOG=info,bibcode_server::diagnostics=debug`
 to log them for every sample.
 
+A process's memory figure (`rssBytes` on the wire, and every Resource Manager
+and status bar memory total) is its physical footprint on macOS
+(`ri_phys_footprint`, the figure Activity Monitor and the Profiler's
+`privateBytes` show), and its resident size on Linux (RSS) and Windows (the
+working set). On macOS a process the server may not inspect, such as another
+user's, keeps its resident size. The resident size counts clean file-backed and
+reclaimable allocator pages, so on macOS it can read several times a WebKit
+process's footprint (#159). On Linux and Windows the resident figure still
+differs from the Profiler's private memory: it counts shared pages once per
+process, and it leaves out swapped or trimmed private memory.
+
 Resource Manager never offers Interrupt or Kill for a Core row. For an eligible
 External row, client state is only a request: immediately before signaling, the
 server resamples and revalidates the PID/start identity, current ancestry, and

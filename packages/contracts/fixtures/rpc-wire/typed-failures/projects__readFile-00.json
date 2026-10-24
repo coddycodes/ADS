@@ -8,10 +8,12 @@
         "_tag": "Fail",
         "error": {
           "_tag": "ProjectReadFileError",
-          "resolvedPath": "|nlAW",
-          "operation": "realpath-target",
-          "operationPath": "zS",
-          "message": "o"
+          "relativePath": "-1",
+          "resolvedPath": "0",
+          "resolvedWorkspaceRoot": "prototype",
+          "operationPath": "s",
+          "message": "Uc]W5Dl%",
+          "cause": [null, null, null, {}, {}, "!YL-v", {}, "", true, "ED"]
         }
       }
     ]

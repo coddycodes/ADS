@@ -5,19 +5,18 @@
     {
       "type": "upsert",
       "terminal": {
-        "threadId": "\"eCz\\xP(d",
-        "terminalId": "Gf9^GNTbY",
-        "cwd": "!\"",
-        "worktreePath": "Sz",
-        "status": "exited",
-        "pid": 1796050164,
+        "threadId": "-1",
+        "terminalId": "😀",
+        "cwd": "�",
+        "worktreePath": "-1",
+        "status": "starting",
+        "pid": null,
         "exitCode": null,
-        "exitSignal": 2147483634,
-        "consoleTheme": "dark",
+        "exitSignal": 95,
         "hasRunningSubprocess": false,
-        "label": "# >",
-        "updatedAt": "_)\"",
-        "centerPanel": false
+        "label": "-1",
+        "updatedAt": "n",
+        "centerPanel": true
       }
     }
   ]

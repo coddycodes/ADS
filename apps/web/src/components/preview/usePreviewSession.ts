@@ -5,7 +5,7 @@ import { parseScopedThreadKey, scopedThreadKey } from "@bibcode/client-runtime/e
 import { runAtomCommand } from "@bibcode/client-runtime/state/runtime";
 import type { ScopedThreadRef } from "@bibcode/contracts";
 import * as Schema from "effect/Schema";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { releasePreviewTab } from "~/browser/previewGateway";
 import {

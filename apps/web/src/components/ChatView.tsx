@@ -51,7 +51,7 @@ import {
   type StartThreadTurnInput,
   type AttachmentAdmissionAuthority,
 } from "@bibcode/client-runtime/operations";
-import { RpcClientError } from "effect/unstable/rpc";
+import { RpcClientError } from "effect/rpc";
 import { EnvironmentRpcUnavailableError } from "@bibcode/client-runtime/rpc";
 import {
   prepareTurnAttachments,
@@ -107,7 +107,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import {
   EMPTY_ENVIRONMENT_ACTIVITY_STATE,
   type EnvironmentActivityState,
@@ -308,7 +308,7 @@ import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ChatPanelOpeningState, NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode } from "./BranchToolbar.logic";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
-import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
+import { ThreadErrorBanner, type ThreadErrorAction } from "./chat/ThreadErrorBanner";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import {
   buildExpiredTerminalContextToastCopy,
@@ -337,6 +337,8 @@ import {
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   threadErrorAttribution,
+  threadErrorCompactAction,
+  COMPACT_CONVERSATION_COMMAND,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -6346,6 +6348,108 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  // The context-limit error's recovery: sends the provider's compaction command to the same
+  // session as an ordinary message, so it is delivered, queued and confirmed like any other.
+  // It never resends the failed message; the user does that once the compaction finishes.
+  const onCompactConversation = useCallback(async () => {
+    if (!activeThread || !isServerThread || isSendBusy || isConnecting || sendInFlightRef.current) {
+      return;
+    }
+    const sendCtx = composerRef.current?.getSendContext();
+    if (!sendCtx) {
+      return;
+    }
+    const threadIdForSend = activeThread.id;
+    const messageIdForSend = newMessageId();
+    const messageCreatedAt = new Date().toISOString();
+    sendInFlightRef.current = true;
+    beginLocalDispatch({
+      preparingWorktree: false,
+      threadId: threadIdForSend,
+      messageId: messageIdForSend,
+    });
+    setThreadError(threadIdForSend, null);
+    setOptimisticUserMessages((existing) => [
+      ...existing,
+      {
+        id: messageIdForSend,
+        role: "user",
+        text: COMPACT_CONVERSATION_COMMAND,
+        turnId: null,
+        createdAt: messageCreatedAt,
+        updatedAt: messageCreatedAt,
+        streaming: false,
+      },
+    ]);
+    const startResult = await startThreadTurn({
+      environmentId,
+      input: {
+        threadId: threadIdForSend,
+        message: {
+          messageId: messageIdForSend,
+          role: "user",
+          text: COMPACT_CONVERSATION_COMMAND,
+          attachments: [],
+        },
+        modelSelection: sendCtx.selectedModelSelection,
+        titleSeed: activeThread.title,
+        runtimeMode,
+        interactionMode,
+        createdAt: messageCreatedAt,
+      },
+    });
+    sendInFlightRef.current = false;
+    if (startResult._tag !== "Failure") {
+      return;
+    }
+    setOptimisticUserMessages((existing) =>
+      existing.filter((message) => message.id !== messageIdForSend),
+    );
+    if (!isAtomCommandInterrupted(startResult)) {
+      const error = squashAtomCommandFailure(startResult);
+      setThreadError(
+        threadIdForSend,
+        error instanceof Error ? error.message : "BiBCode could not send /compact.",
+      );
+    }
+    resetLocalDispatch();
+  }, [
+    activeThread,
+    beginLocalDispatch,
+    composerRef,
+    environmentId,
+    interactionMode,
+    isConnecting,
+    isSendBusy,
+    isServerThread,
+    resetLocalDispatch,
+    runtimeMode,
+    setThreadError,
+    startThreadTurn,
+  ]);
+  const threadErrorCompact =
+    threadError === null || !isServerThread
+      ? null
+      : threadErrorCompactAction({
+          isBiBCodeAction: localServerError !== null,
+          errorClass: serverThread?.session?.lastErrorClass ?? null,
+          busy: phase === "running" || isSendBusy || isConnecting,
+        });
+  // `threadErrorCompact` is a fresh object each render; its presence and reason are the inputs.
+  const offersCompact = threadErrorCompact !== null;
+  const compactDisabledReason = threadErrorCompact?.disabledReason ?? null;
+  const threadErrorActionValue = useMemo<ThreadErrorAction | null>(
+    () =>
+      offersCompact
+        ? {
+            label: "Compact conversation",
+            onClick: () => void onCompactConversation(),
+            disabledReason: compactDisabledReason,
+          }
+        : null,
+    [offersCompact, compactDisabledReason, onCompactConversation],
+  );
+
   const onImplementPlanInNewThread = useCallback(async () => {
     if (
       !activeThread ||
@@ -6819,6 +6923,7 @@ function ChatViewContent(props: ChatViewProps) {
               <ThreadErrorBanner
                 error={threadError}
                 attribution={threadErrorAttributionText}
+                action={threadErrorActionValue}
                 onDismiss={() => setThreadError(activeThread.id, null)}
               />
               <div className="flex min-h-0 min-w-0 flex-1">

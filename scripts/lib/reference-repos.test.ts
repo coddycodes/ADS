@@ -23,7 +23,7 @@ describe("referenceRepos", () => {
         packageVersionPath: ["dependencies", "alchemy"],
         versionTagPrefix: "v",
         packageSourceRefPrefix: "https://pkg.ing/alchemy/",
-        prunePaths: [".gitmodules", ".vendor", "cloudflare-tools", "distilled"],
+        prunePaths: [".gitmodules", ".vendor", "cloudflare-tools", "distilled", "submodules"],
       },
     ]);
   });

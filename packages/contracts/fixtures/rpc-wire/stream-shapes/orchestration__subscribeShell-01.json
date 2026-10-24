@@ -4,8 +4,8 @@
   "values": [
     {
       "kind": "thread-removed",
-      "sequence": 95361316,
-      "threadId": "#O"
+      "sequence": 0,
+      "threadId": ""
     }
   ]
 }

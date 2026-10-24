@@ -1,0 +1,26 @@
+diff --git a/dist/rpc/RpcClient.js b/dist/rpc/RpcClient.js
+index f5b14efe8beff4c0fe0127ce6dc0d13d7d289338..d0edf4c9796ec9610023b96770cc884db2d89d48 100644
+--- a/dist/rpc/RpcClient.js
++++ b/dist/rpc/RpcClient.js
+@@ -379,7 +379,7 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (group, options) {
+             clientId: 0,
+             requestId,
+             exit: Exit.failCause(cause)
+-          }).pipe(Effect.andThen(Cause.hasInterrupts(cause) ? Effect.void : Effect.ignore(interruptRequest(requestId))))),
++          }).pipe(Effect.andThen(Cause.hasInterrupts(cause) ? Effect.void : Effect.interruptible(Effect.ignore(interruptRequest(requestId)))))),
+           // a decode failure only ends its own request; interruption still propagates
+           Effect.catchCauseIf(cause => !Cause.hasInterrupts(cause), () => Effect.void)));
+         }
+diff --git a/src/rpc/RpcClient.ts b/src/rpc/RpcClient.ts
+index 8ec45e8b23acfe32eb62671b925acf3e712f0aee..80cc1e4d180348c68e8bfc3a10b04ece9927e2a2 100644
+--- a/src/rpc/RpcClient.ts
++++ b/src/rpc/RpcClient.ts
+@@ -747,7 +747,7 @@ export const make: <Rpcs extends Rpc.Any, const Flatten extends boolean = false>
+           ).pipe(
+             Effect.onError((cause) =>
+               write({ _tag: "Exit", clientId: 0, requestId, exit: Exit.failCause(cause) }).pipe(
+-                Effect.andThen(Cause.hasInterrupts(cause) ? Effect.void : Effect.ignore(interruptRequest(requestId)))
++                Effect.andThen(Cause.hasInterrupts(cause) ? Effect.void : Effect.interruptible(Effect.ignore(interruptRequest(requestId))))
+               )
+             ),
+             // a decode failure only ends its own request; interruption still propagates

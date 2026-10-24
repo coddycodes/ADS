@@ -15,8 +15,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { Command, Flag } from "effect/unstable/cli";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Command, Flag } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { fromYaml } from "@bibcode/shared/schemaYaml";
 
 import { referenceRepos, type ReferenceRepo } from "./lib/reference-repos.ts";
@@ -864,21 +864,21 @@ export const syncReferenceRepos = Effect.fn("syncReferenceRepos")(function* (
 export const syncReferenceReposCommand = Command.make(
   "sync-reference-repos",
   {
-    repo: Flag.string("repo").pipe(
+    repo: Flag.String("repo").pipe(
       Flag.withDescription("Sync only the named reference repo. Defaults to all configured repos."),
       Flag.optional,
     ),
-    latest: Flag.boolean("latest").pipe(
+    latest: Flag.Boolean("latest").pipe(
       Flag.withDescription(
         "Sync each repo from its latest branch instead of the installed version.",
       ),
       Flag.withDefault(false),
     ),
-    root: Flag.string("root").pipe(
+    root: Flag.String("root").pipe(
       Flag.withDescription("Workspace root used to resolve versions and subtree prefixes."),
       Flag.optional,
     ),
-    dryRun: Flag.boolean("dry-run").pipe(
+    dryRun: Flag.Boolean("dry-run").pipe(
       Flag.withDescription("Print planned subtree operations without running git."),
       Flag.withDefault(false),
     ),

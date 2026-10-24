@@ -21,7 +21,7 @@ import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as Socket from "effect/socket/Socket";
 
 import { splitIntoRecords } from "../e2ee/frame.ts";
 import { createNkResponder, derivePublicKey } from "../e2ee/noise.ts";
@@ -189,10 +189,13 @@ const pingsSent = (socket: TestWebSocket) =>
 
 const makeFactory = Effect.fn("TestRpcSessionFactory.make")(function* () {
   const sockets: TestWebSocket[] = [];
-  const constructorLayer = Layer.succeed(Socket.WebSocketConstructor, (url, protocols) => {
-    const socket = new TestWebSocket(url, protocols);
+  const constructorLayer = Layer.succeed(Socket.WebSocketConstructor, (url, options) => {
+    if (options !== undefined && typeof options !== "string" && !Array.isArray(options)) {
+      throw new TypeError("The test WebSocket accepts only subprotocols.");
+    }
+    const socket = new TestWebSocket(url, options);
     sockets.push(socket);
-    return socket as unknown as globalThis.WebSocket;
+    return socket;
   });
   const layer = RpcSession.layer.pipe(Layer.provide(constructorLayer));
   const factory = yield* RpcSession.RpcSessionFactory.pipe(Effect.provide(layer));
@@ -972,6 +975,37 @@ describe("RpcSessionFactory", () => {
       }),
     ).pipe(withFixedRandom),
   );
+  // Effect 4.0.2 answers a chunk it cannot decode by sending Interrupt for that request
+  // uninterruptibly. When the socket closes before that chunk is handled, the send waited for
+  // a reopen this protocol never makes, and the session never reported its disconnect, so the
+  // supervisor never retried (patches/effect@4.0.2.patch). Without the patch this test hangs,
+  // hence the real-time limit.
+  it.effect(
+    "reports the disconnect when the socket closes while an undecodable chunk is handled",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { factory, sockets } = yield* makeFactory();
+          const session = yield* factory.connect(PREPARED);
+          const ready = yield* Effect.forkChild(session.ready);
+          const socket = yield* awaitSocket(sockets);
+          socket.open();
+          const configRequest = yield* completeInitialConfig(socket);
+          yield* Fiber.join(ready);
+
+          // One synchronous turn: the reply is queued, then the socket goes away.
+          socket.serverMessage(
+            encodeJson({ _tag: "Chunk", requestId: configRequest.id, values: [null] }),
+          );
+          socket.close(1012, "service restart");
+
+          const error = yield* Effect.flip(session.closed);
+          expect(error).toBeInstanceOf(ConnectionTransientError);
+        }),
+      ).pipe(withFixedRandom),
+    5_000,
+  );
+
   it.effect("offers the chunked subprotocols, compression first, on plain sockets only", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();

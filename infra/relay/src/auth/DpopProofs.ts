@@ -3,7 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
+import * as HttpApiError from "effect/http-api/HttpApiError";
 import { lt } from "drizzle-orm";
 
 import { verifyDpopProof } from "@bibcode/shared/dpop";

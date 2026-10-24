@@ -494,6 +494,11 @@ $env:BIBCODE_E2E_APP_PATH = (Resolve-Path 'target/release/bibcode-desktop.exe').
 vp run test:ui:desktop
 ```
 
+When the run ends, the artifact directory (`BIBCODE_E2E_ARTIFACT_DIR`) also holds
+`app-*.log`: the last 4 MiB of each of the packaged app's own logs, with the native
+page-load lifecycle and webview process failures, next to the screenshots and
+WebdriverIO logs.
+
 Use a unique test profile supported by the E2E harness. Do not launch an
 installed BiBCode executable or overwrite `%APPDATA%`/`%LOCALAPPDATA%` user
 data. `BIBCODE_E2E_APP_PATH` deliberately selects the executable produced by
@@ -593,16 +598,16 @@ minimum-size, and relevant Windows DPI states. Verify:
   remote targeting is driven by the environment rail rather than mixing saved
   servers into the Local WSL picker;
 - Headless pairing: on a second machine or VM run `bibcode serve --host
-<routable address>`, confirm the startup line contains `pairingCode`, and add it
+  <routable address>`, confirm the startup line contains `pairingCode`, and add it
   through **Add Server → Pairing code**. Confirm the saved server appears
   alongside — not in place of — the app's own **Local** environment, since both
   hosts declare the environment id `local`. Mint a second offer with `bibcode
-pairing offer --endpoint http://<address>:3773` and confirm the dialog refuses
+  pairing offer --endpoint http://<address>:3773` and confirm the dialog refuses
   it by name ("<label> is already saved."): two offers describe one environment.
   Then restart the headless server and confirm the saved server reconnects
   without re-pairing.
 - Headless service: on the second machine run `bibcode service install --host
-<routable address>`, confirm `bibcode service status` reports `active`,
+  <routable address>`, confirm `bibcode service status` reports `active`,
   reboot that machine, and confirm the desktop's saved server reconnects
   without re-pairing. On Linux confirm `loginctl show-user $USER` reports
   `Linger=yes`; on macOS confirm automatic login is enabled; on Windows confirm
@@ -745,6 +750,17 @@ pairing offer --endpoint http://<address>:3773` and confirm the dialog refuses
 
 Record unavailable authenticated provider scenarios instead of substituting a
 different executable or exposing credentials.
+
+If a packaged run stops at "Tauri did not report the replacement desktop
+document finishing its load", and screenshots then time out, look for a native
+dialog left open before suspecting WebView2. Search `app-server.log` and the
+WDIO logs for `desktop_bridge_pick_folder`, `pick_files`, `save_diagnostic_logs`
+or `confirm` calls that never answered: on #177 an unmocked folder picker opened
+a real dialog twice, and while dialogs blocked Tauri's async runtime the next
+page's own scripts were never served. Dialog commands now await the dialog
+without holding a runtime thread (see [Boundaries and invariants](../architecture/overview.md#boundaries-and-invariants)),
+so an open dialog only fails the step that waited for it. A real dialog on a
+runner still means a mock was missed; fix the mock rather than the timeout.
 
 ## Profiler crash smoke
 

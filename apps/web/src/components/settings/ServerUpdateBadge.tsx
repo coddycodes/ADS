@@ -10,7 +10,7 @@ import {
   isRemoteUpdateUnchecked,
 } from "@bibcode/client-runtime/state/remoteUpdates";
 import * as Cause from "effect/Cause";
-import type { AsyncResult } from "effect/unstable/reactivity";
+import type { AsyncResult } from "effect/reactivity";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";

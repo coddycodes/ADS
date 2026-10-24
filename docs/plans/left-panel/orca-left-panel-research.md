@@ -358,7 +358,7 @@ styling. It is not the plain hover style.
 ### 2.5 Project header row
 
 - **Row:** `h-7`, left padding 10 px, a 16 px icon, the name at `text-[13px]
-font-semibold leading-none`, plus fork, path-status and scan indicators
+  font-semibold leading-none`, plus fork, path-status and scan indicators
   (`worktree-list/rows/SectionHeader.tsx:235-340`).
 - **Icon (`RepoIconGlyph`):** an image (uploaded, repo file, website favicon or GitHub
   owner avatar), an emoji, or a lucide icon; the default is Folder
@@ -521,8 +521,8 @@ given.
 ### 3.3 Primary row (`Sidebar.tsx:1306-1381`)
 
 - **Row:** `SidebarMenuSubButton size="sm"` with `resolveThreadRowClassName`: `h-6
-sm:h-7`, `text-[13px]`, `text-foreground/80`. Active rows get `bg-accent/85
-font-medium`; selected rows get `bg-primary/15–22` (`Sidebar.logic.ts:414-443`).
+  sm:h-7`, `text-[13px]`, `text-foreground/80`. Active rows get `bg-accent/85
+  font-medium`; selected rows get `bg-primary/15–22` (`Sidebar.logic.ts:414-443`).
 - **Content:** a 1.5-size status dot, the unread dot, the pin, the title (the checkout's
   live branch from the VCS summary), and a "primary" chip (`text-xs`, bordered,
   `bg-muted`) (`Sidebar.tsx:1356-1377`).

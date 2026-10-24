@@ -8,7 +8,7 @@
         "_tag": "Fail",
         "error": {
           "_tag": "ProfilerClientBatchTooLarge",
-          "message": "hl;V"
+          "message": "6"
         }
       }
     ]

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Cause from "effect/Cause";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as Socket from "effect/socket/Socket";
 
 import { classifyDisconnect } from "./livenessProtocol.ts";
 

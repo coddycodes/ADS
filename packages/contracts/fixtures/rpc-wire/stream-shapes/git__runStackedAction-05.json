@@ -3,37 +3,34 @@
   "requestId": "900719925474099312345",
   "values": [
     {
-      "actionId": "N{2?ImT<R_s",
-      "cwd": "MU3<=v9",
-      "action": "commit",
+      "actionId": "prototype",
+      "cwd": "😀",
+      "action": "create_pr",
       "kind": "action_finished",
       "result": {
-        "action": "commit_push",
+        "action": "commit",
         "branch": {
-          "status": "skipped_not_requested"
+          "status": "created"
         },
         "commit": {
           "status": "created",
-          "commitSha": "m~",
-          "subject": "=1&]+"
+          "commitSha": "0",
+          "subject": "prototype"
         },
         "push": {
-          "status": "pushed",
-          "upstreamBranch": "{{d}",
-          "setUpstream": true
+          "status": "pushed"
         },
         "pr": {
-          "status": "created",
-          "baseBranch": "AI",
-          "title": "constructor",
-          "warning": "~,"
+          "status": "opened_existing",
+          "url": "4294967295",
+          "warning": ""
         },
         "toast": {
-          "title": "G#o",
+          "title": "",
           "cta": {
             "kind": "open_pr",
-            "label": "[",
-            "url": "5i#"
+            "label": "QDZ8LzD0o",
+            "url": "__proto__"
           }
         }
       }

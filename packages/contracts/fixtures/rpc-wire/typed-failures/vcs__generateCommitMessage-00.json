@@ -7,21 +7,13 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "TextGenerationError",
-          "operation": "QH#}l",
-          "detail": "",
-          "cause": [
-            2747917535988037,
-            null,
-            -7068240396856315,
-            true,
-            5325907925230343,
-            "xUP0",
-            false,
-            "qjx",
-            true,
-            null
-          ]
+          "_tag": "GitPullRequestMaterializationError",
+          "cwd": "😀",
+          "pullRequestNumber": 2,
+          "headRepository": null,
+          "headBranch": "4294967295",
+          "localBranch": "",
+          "cause": [{}, "", false, [null]]
         }
       }
     ]

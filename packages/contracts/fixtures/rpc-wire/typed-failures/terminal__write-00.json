@@ -7,8 +7,11 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "TerminalCloseError",
-          "reason": "b"
+          "_tag": "TerminalWriteError",
+          "threadId": "__proto__",
+          "terminalId": "\u0000",
+          "terminalPid": -1.7976931348623137e308,
+          "cause": false
         }
       }
     ]

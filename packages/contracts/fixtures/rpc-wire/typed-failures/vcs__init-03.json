@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "EnvironmentAuthorizationError",
-          "message": "ref",
-          "requiredScope": "orchestration:operate"
+          "message": "prototype",
+          "requiredScope": "review:write"
         }
       }
     ]

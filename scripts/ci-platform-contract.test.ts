@@ -146,8 +146,8 @@ describe("cross-platform CI contract", () => {
   it("budgets Check and Test for a cold Rust cache plus a stalled apt install", () => {
     const { workflow } = readWorkflow(CI_WORKFLOW_PATH);
 
-    // Cold Check projected at 33 minutes, plus 7 minutes of margin.
-    expect(requireJob(workflow, "check")["timeout-minutes"]).toBe(40);
+    // A warm Check takes 34 minutes; the hosted apt mirror has added up to 26.
+    expect(requireJob(workflow, "check")["timeout-minutes"]).toBe(60);
     // Cold Test finished in 44 minutes. A 21-minute apt stall and 10 minutes
     // for the unfinished workspace suite plus SSH is 75.
     expect(requireJob(workflow, "test")["timeout-minutes"]).toBe(75);
@@ -341,7 +341,7 @@ describe("cross-platform release contract", () => {
     expect(setupRustIndex).toBeGreaterThan(-1);
     expect(typecheckIndex).toBeGreaterThan(setupRustIndex);
     expect(steps[setupRustIndex]?.uses).toBe(
-      "dtolnay/rust-toolchain@62ae3a85dbdd2bedbb5819da8ce45635129289a1",
+      "dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7",
     );
   });
 
@@ -796,7 +796,7 @@ describe("seeded packaged desktop upgrade contract", () => {
         platform: "mac",
         arch: "arm64",
         bundle: "dmg",
-        jobTimeoutMinutes: 240,
+        jobTimeoutMinutes: 360,
       },
       {
         label: "macOS x64",
@@ -925,9 +925,9 @@ describe("release symbols and crash smoke contract", () => {
 
     expect(job.strategy?.["fail-fast"]).toBe(false);
     expect((job.strategy?.matrix as { os?: unknown } | undefined)?.os).toEqual([
-      "ubuntu-latest",
-      "windows-latest",
-      "macos-latest",
+      "ubuntu-24.04",
+      "windows-2025",
+      "macos-26",
     ]);
     expect(stepIndex(job, "Install pinned symbol tools")).toBeLessThan(
       stepIndex(job, "Crash the smoke binary"),

@@ -197,7 +197,7 @@ scope.rs, http.rs, rpc.rs, secret_store.rs):
 - Policy matrix in `AuthService::build`
   (`apps/server/src/auth/service.rs:151–162`), keyed by
   `(unsafe_no_auth, ServerMode, remote_reachable)` where `remote_reachable =
-!is_loopback_host(config.host)`: `"unsafe-no-auth"`,
+  !is_loopback_host(config.host)`: `"unsafe-no-auth"`,
   `"desktop-managed-local"`, `"loopback-browser"`, `"remote-reachable"`.
   Binding to a non-loopback host automatically selects the remote policy —
   auth is not merely "localhost-only trust".
@@ -438,9 +438,9 @@ global bits are deliberate singletons:
   the host-provided primary;
 - a few primary-environment conveniences leak across environments, e.g.
   `Sidebar.tsx` ~line 1536: `// TODO(orca-port): this reads the PRIMARY
-server's available editors; rows belonging to a different (remote)
-environment may see an editor list that doesn't match their actual
-backend.`
+  server's available editors; rows belonging to a different (remote)
+  environment may see an editor list that doesn't match their actual
+  backend.`
 
 ---
 
@@ -461,7 +461,7 @@ backend.`
    `docs/architecture/remote.md`). A "Remote Servers" UI must be honest about
    which endpoints a browser client can actually use.
 3. **Auth policy is bind-address-derived.** `remote_reachable =
-!is_loopback_host(host)` (`apps/server/src/auth/service.rs:151`). Exposing
+   !is_loopback_host(host)` (`apps/server/src/auth/service.rs:151`). Exposing
    a server means rebinding it (CLI `--host`), which changes its auth policy
    and, in desktop update-protection paths, is explicitly denied for
    ordinary native wildcard binds (`docs/architecture/overview.md`, "Desktop

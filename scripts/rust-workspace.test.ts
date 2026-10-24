@@ -94,9 +94,9 @@ it.layer(NodeServices.layer)("canonical Rust workspace", (it) => {
         path.join(repoRoot, ".github", "workflows", "ci.yml"),
       );
       assert.equal(
-        ciWorkflow.match(/uses: dtolnay\/rust-toolchain@[0-9a-f]{40} # 1\.98\.0/g)?.length ?? 0,
+        ciWorkflow.match(/uses: dtolnay\/rust-toolchain@[0-9a-f]{40} # 1\.98\.1/g)?.length ?? 0,
         4,
-        "Every Rust CI job must exercise the declared Rust 1.98.0 toolchain",
+        "Every Rust CI job must exercise the declared Rust 1.98.1 toolchain",
       );
 
       const rootPackageJson = yield* decodePackageJson(
@@ -115,7 +115,7 @@ it.layer(NodeServices.layer)("canonical Rust workspace", (it) => {
 
       const workspacePackage = table(workspace.package);
       assert.equal(workspacePackage.edition, "2024");
-      assert.equal(workspacePackage["rust-version"], "1.98.0");
+      assert.equal(workspacePackage["rust-version"], "1.98.1");
       assert.equal(table(table(workspace.lints).rust).warnings, "deny");
 
       const releaseProfile = table(table(workspaceManifest.profile).release);

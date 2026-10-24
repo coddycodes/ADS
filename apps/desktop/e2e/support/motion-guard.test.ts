@@ -7,7 +7,7 @@ afterEach(() => {
   document
     .querySelectorAll("style[data-bibcode-desktop-ui-automation]")
     .forEach((style) => style.remove());
-  delete document.documentElement.dataset.bibcodeDesktopUiMotion;
+  Reflect.deleteProperty(document.documentElement.dataset, "bibcodeDesktopUiMotion");
   vi.unstubAllGlobals();
 });
 

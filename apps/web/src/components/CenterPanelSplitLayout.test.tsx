@@ -155,16 +155,16 @@ beforeEach(() => {
   resizeObservers = [];
   harness.useDroppable.mockClear();
   vi.stubGlobal("ResizeObserver", FakeResizeObserver);
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
-    function (this: HTMLElement) {
-      return this.hasAttribute("data-center-panel-split") ? axisWidth : 0;
-    },
-  );
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(
-    function (this: HTMLElement) {
-      return this.hasAttribute("data-center-panel-split") ? axisHeight : 0;
-    },
-  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.hasAttribute("data-center-panel-split") ? axisWidth : 0;
+  });
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.hasAttribute("data-center-panel-split") ? axisHeight : 0;
+  });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);

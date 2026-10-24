@@ -67,7 +67,7 @@ DefinitelyNotSent | Ambiguous | Rejected`.
   `interrupt_turn` (`:1278`) uses `active_turn_id`. Upstream
   `turn/steer` (added 2026-02-05, `openai/codex#10821`;
   `codex-rs/app-server-protocol/src/protocol/v2/turn.rs`): `TurnSteerParams {
-threadId, clientUserMessageId?, input: UserInput[], expectedTurnId }`
+  threadId, clientUserMessageId?, input: UserInput[], expectedTurnId }`
   ("Required active turn id precondition. The request fails when it does not
   match the currently active turn."), `TurnSteerResponse { turnId }`.
   `turn/start` while a turn is active also steers ("Ignored when this request

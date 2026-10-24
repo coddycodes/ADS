@@ -99,6 +99,7 @@ const CanonicalRuntimeErrorClass = Schema.Literals([
   "session_stopped",
   "permission_error",
   "validation_error",
+  "context_limit",
   "unknown",
 ]);
 const isCanonicalRuntimeErrorClass = Schema.is(CanonicalRuntimeErrorClass);
@@ -110,7 +111,7 @@ const isCanonicalRuntimeErrorClass = Schema.is(CanonicalRuntimeErrorClass);
 export const RuntimeErrorClass = Schema.String.pipe(
   Schema.decodeTo(
     CanonicalRuntimeErrorClass,
-    SchemaTransformation.transformOrFail({
+    SchemaTransformation.transformEffect({
       decode: (value) =>
         Effect.succeed(isCanonicalRuntimeErrorClass(value) ? value : ("unknown" as const)),
       encode: (value) => Effect.succeed(value),
@@ -338,6 +339,8 @@ export const ThreadTokenUsageSnapshot = Schema.Struct({
   toolUses: Schema.optional(NonNegativeInt),
   durationMs: Schema.optional(NonNegativeInt),
   compactsAutomatically: Schema.optional(Schema.Boolean),
+  /** The context size at which the provider compacts automatically, when it reports one. */
+  autoCompactTokens: Schema.optional(PositiveInt),
 });
 export type ThreadTokenUsageSnapshot = typeof ThreadTokenUsageSnapshot.Type;
 

@@ -8,8 +8,8 @@
         "_tag": "Fail",
         "error": {
           "_tag": "PreviewTunnelError",
-          "reason": "closed",
-          "message": "T:"
+          "reason": "unavailable",
+          "message": "srPfLUEXo"
         }
       }
     ]

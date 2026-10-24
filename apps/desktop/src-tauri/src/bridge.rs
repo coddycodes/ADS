@@ -1546,6 +1546,24 @@ fn dialog_file_path_to_string(path: tauri_plugin_dialog::FilePath) -> Result<Str
         .map_err(|error| bridge_error("Could not normalize the selected path", error))
 }
 
+/// Waits for a native dialog's answer without holding a thread of the async runtime. The
+/// dialog plugin's `blocking_*` calls park their caller until the dialog closes: inside an
+/// async command that is one of Tauri's runtime workers, and on the main thread it is the
+/// whole UI. Tauri serves its protocol responses, a reloaded page's scripts included, from
+/// those workers, so two dialogs left open on a four-core runner kept the next page from ever
+/// loading (#177's Windows reload hang).
+async fn await_dialog<T: Send + 'static>(
+    open: impl FnOnce(Box<dyn FnOnce(T) + Send>),
+) -> Result<T, String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    open(Box::new(move |answer| {
+        let _ = sender.send(answer);
+    }));
+    receiver
+        .await
+        .map_err(|_| "The dialog closed without an answer.".to_owned())
+}
+
 #[tauri::command]
 pub async fn desktop_bridge_pick_folder(
     app: AppHandle<DesktopRuntime>,
@@ -1566,8 +1584,8 @@ pub async fn desktop_bridge_pick_folder(
         dialog = dialog.set_directory(default_path);
     }
 
-    let selected = dialog
-        .blocking_pick_folder()
+    let selected = await_dialog(|answer| dialog.pick_folder(answer))
+        .await?
         .map(dialog_file_path_to_string)
         .transpose()?;
 
@@ -1624,7 +1642,7 @@ pub async fn desktop_bridge_save_diagnostic_logs(
         dialog = dialog.set_directory(download_dir);
     }
 
-    let Some(selected) = dialog.blocking_save_file() else {
+    let Some(selected) = await_dialog(|answer| dialog.save_file(answer)).await? else {
         return Ok(None);
     };
     let path = selected
@@ -1796,11 +1814,9 @@ pub async fn desktop_bridge_pick_files(
         .and_then(|value| value.get("title"))
         .and_then(Value::as_str)
         .unwrap_or("Select files to upload");
-    let selected = app
-        .dialog()
-        .file()
-        .set_title(title)
-        .blocking_pick_files()
+    let dialog = app.dialog().file().set_title(title);
+    let selected = await_dialog(|answer| dialog.pick_files(answer))
+        .await?
         .unwrap_or_default();
     selected
         .into_iter()
@@ -1953,12 +1969,16 @@ pub async fn desktop_bridge_upload_file(
 }
 
 #[tauri::command]
-pub fn desktop_bridge_confirm(app: AppHandle<DesktopRuntime>, message: String) -> bool {
-    app.dialog()
+pub async fn desktop_bridge_confirm(
+    app: AppHandle<DesktopRuntime>,
+    message: String,
+) -> Result<bool, String> {
+    let dialog = app
+        .dialog()
         .message(message)
         .title("BiBCode")
-        .buttons(MessageDialogButtons::OkCancel)
-        .blocking_show()
+        .buttons(MessageDialogButtons::OkCancel);
+    await_dialog(|answer| dialog.show(answer)).await
 }
 
 #[tauri::command]
@@ -4729,5 +4749,40 @@ mod tests {
                 "{command} should reject missing command arguments",
             );
         }
+    }
+
+    #[test]
+    fn a_dialog_left_open_leaves_the_async_runtime_free() {
+        let (finished, result) = mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime");
+            runtime.block_on(async {
+                // A dialog nobody answers, as one left open on a test runner.
+                let _open = tokio::spawn(await_dialog::<bool>(std::mem::forget));
+                tokio::task::yield_now().await;
+                let other = tokio::spawn(async { "served" });
+                let _ = finished.send(other.await.expect("other task"));
+            });
+        });
+        assert_eq!(
+            result.recv_timeout(Duration::from_secs(5)),
+            Ok("served"),
+            "an open dialog held the runtime's only thread"
+        );
+    }
+
+    #[test]
+    fn a_dialog_that_drops_its_answer_reports_an_error() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        assert_eq!(
+            runtime.block_on(await_dialog::<bool>(drop)),
+            Err("The dialog closed without an answer.".to_owned())
+        );
     }
 }

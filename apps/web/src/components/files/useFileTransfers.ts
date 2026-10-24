@@ -298,6 +298,7 @@ export function useFileTransfers({
         }
       })();
     },
+    // oxlint-disable-next-line react/memo-dependencies -- refreshEntries is a prop called in the batch finally block; oxlint 1.87 misses that use.
     [refreshEntries, showMutationError, uploadOne],
   );
 
@@ -324,6 +325,7 @@ export function useFileTransfers({
         }
       })();
     },
+    // oxlint-disable-next-line react/memo-dependencies -- refreshEntries is a prop called in the batch finally block; oxlint 1.87 misses that use.
     [refreshEntries, showMutationError, uploadOne],
   );
 

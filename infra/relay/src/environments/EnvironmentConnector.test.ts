@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Test fixtures generate key pairs synchronously.
 import * as NodeCrypto from "node:crypto";
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 
@@ -29,8 +30,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import * as HttpClientError from "effect/http/HttpClientError";
 
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as RelayConfiguration from "../Config.ts";

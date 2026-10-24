@@ -8,10 +8,14 @@
         "_tag": "Fail",
         "error": {
           "_tag": "GitManagerOperationError",
-          "operation": "al",
-          "code": "Yst#_",
-          "message": "t%7|X h|Q!",
-          "blocked": null
+          "operation": "LrcW#ff~D>",
+          "code": "\u0000",
+          "message": "iHRv`v]]\"_",
+          "blocked": {
+            "operation": "toString",
+            "code": "worktree-checked-out",
+            "message": "4294967295"
+          }
         }
       }
     ]

@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Test fixtures generate key pairs synchronously.
 import * as NodeCrypto from "node:crypto";
 import type {
   RelayEnvironmentLinkProofPayload,

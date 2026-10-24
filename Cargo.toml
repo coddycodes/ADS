@@ -4,7 +4,7 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.98.0"
+rust-version = "1.98.1"
 
 [workspace.dependencies]
 axum = { version = "0.8.9", features = ["form", "http1", "json", "tokio", "ws"] }
@@ -45,7 +45,7 @@ object = { version = "0.37.3", default-features = false, features = [
   "read_core",
   "std",
 ] }
-objc2 = "=0.6.4"
+objc2 = "=0.6.5"
 objc2-app-kit = { version = "0.3", features = ["NSImage", "NSBitmapImageRep", "NSGraphics"] }
 objc2-foundation = "=0.3.2"
 objc2-web-kit = { version = "0.3", features = [
@@ -67,7 +67,7 @@ portpicker = "0.1.1"
 portable-pty = "0.9.0"
 process-wrap = { version = "9.1.0", features = ["tokio1"] }
 prost = "0.14.4"
-protox = "0.9.1"
+protox = "0.10.0"
 reqwest = { version = "0.13.4", default-features = false, features = [
   "form",
   "json",
@@ -84,7 +84,7 @@ socket2 = "0.6.5"
 sysinfo = "0.39.6"
 subtle = "2.6.1"
 bibcode-server = { path = "apps/server" }
-tauri = { version = "2.11.5", features = ["unstable", "devtools", "image-png"] }
+tauri = { version = "~2.11.6", features = ["unstable", "devtools", "image-png"] }
 tauri-build = { version = "2.6.3", features = [] }
 tauri-plugin-deep-link = "2.4.10"
 tauri-plugin-dialog = "2.7.3"
@@ -129,7 +129,7 @@ webkit2gtk = { version = "2.0", features = ["v2_40"] }
 webview2-com = "0.38"
 windows-sys = "0.61.2"
 windows = "0.61"
-zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9.0.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
 
 [workspace.dependencies.tempfile]

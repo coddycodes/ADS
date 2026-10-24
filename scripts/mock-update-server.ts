@@ -3,13 +3,16 @@ import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 
-import { NodeHttpServer, NodeRuntime, NodeServices, NodeStream } from "@effect/platform-node";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeStream from "@effect/platform-node/NodeStream";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 export interface MockUpdateServerConfig {
   readonly port: number;
@@ -25,11 +28,11 @@ export const makeResolveMockUpdateServerConfig = (scriptDirectory: string) =>
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const config = yield* Config.all({
-      port: Config.port("BIBCODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.withDefault(3000)),
-      requestLogPath: Config.string("BIBCODE_DESKTOP_MOCK_UPDATE_SERVER_REQUEST_LOG").pipe(
+      port: Config.Port("BIBCODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.withDefault(3000)),
+      requestLogPath: Config.String("BIBCODE_DESKTOP_MOCK_UPDATE_SERVER_REQUEST_LOG").pipe(
         Config.option,
       ),
-      root: Config.string("BIBCODE_DESKTOP_MOCK_UPDATE_SERVER_ROOT").pipe(
+      root: Config.String("BIBCODE_DESKTOP_MOCK_UPDATE_SERVER_ROOT").pipe(
         Config.withDefault("../release-mock"),
       ),
     });

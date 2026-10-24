@@ -7,26 +7,16 @@
       {
         "_tag": "Fail",
         "error": {
-          "_tag": "PreviewAutomationResultTooLargeError",
-          "operation": "resize",
-          "environmentId": "V_pmI7^w",
-          "threadId": "e",
-          "providerSessionId": "8+4Jj\\w",
-          "providerInstanceId": "Ex",
-          "clientId": "r",
-          "connectionId": "\"%q",
-          "requestId": "/|bk?*4q>O",
-          "tabId": "0*'5No6&~",
-          "timeoutMs": 540942380,
-          "remoteTag": "SG~m",
-          "remoteMessageLength": 285047061,
-          "cause": {
-            ".-v!*LIk$": ">fI[",
-            "D+": -7.889350197116424e-140,
-            "5NMHV*J/RI": 5.490053728706662e164,
-            "%K~w5te": 1.4510193185776789e-91
-          },
-          "maximumBytes": 24
+          "_tag": "PreviewAutomationMalformedResponseError",
+          "operation": "status",
+          "environmentId": "4294967295",
+          "threadId": "prototype",
+          "providerSessionId": ".URAbU|",
+          "providerInstanceId": "AM",
+          "clientId": "toString",
+          "connectionId": "D'jwdt14Z]",
+          "requestId": "toString",
+          "timeoutMs": 4
         }
       }
     ]

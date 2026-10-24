@@ -24,9 +24,9 @@ export function withLogicalId<Resource extends object>(
 
 export const RelayDeploymentConfig = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
-  const relayApiZoneName = yield* Config.nonEmptyString("RELAY_API_ZONE_NAME");
-  const managedEndpointZoneName = yield* Config.nonEmptyString("RELAY_TUNNEL_ZONE_NAME");
-  const relayPublicDomainOverride = yield* Config.string("RELAY_DOMAIN").pipe(
+  const relayApiZoneName = yield* Config.NonEmptyString("RELAY_API_ZONE_NAME");
+  const managedEndpointZoneName = yield* Config.NonEmptyString("RELAY_TUNNEL_ZONE_NAME");
+  const relayPublicDomainOverride = yield* Config.String("RELAY_DOMAIN").pipe(
     Config.option,
     Config.map(
       Option.flatMap((value) => {

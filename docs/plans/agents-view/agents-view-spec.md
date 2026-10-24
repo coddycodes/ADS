@@ -162,7 +162,7 @@ exported, colocated tests) is the single home of Agents-view policy:
   collapsible; expansion persists in `uiStateStore`
   (`agentsGroupExpandedById: Record<string, boolean>`), defaults: `done` →
   `false`, others → `true`. Per-group preview cap `AGENTS_GROUP_PREVIEW_COUNT
-= 5` with a "Show more"/"Show less" row (ephemeral state, Projects-overflow
+  = 5` with a "Show more"/"Show less" row (ephemeral state, Projects-overflow
   pattern).
 - **Row anatomy** (top line → bottom): status dot + pill (reuse
   `ThreadStatusPill` colors/pulse), thread title (bold while unread),

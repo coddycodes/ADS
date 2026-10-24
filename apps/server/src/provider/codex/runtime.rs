@@ -3651,15 +3651,6 @@ pub(crate) struct CodexFailure {
     pub(crate) message: String,
 }
 
-/// Classify a codex `turn.error` using its documented `codexErrorInfo`
-/// discriminator.
-///
-/// Variants come from the Codex App Server documentation:
-/// `ContextWindowExceeded`, `UsageLimitExceeded`, `HttpConnectionFailed`,
-/// `ResponseStreamConnectionFailed`, `ResponseStreamDisconnected`,
-/// `ResponseTooManyFailedAttempts`, `BadRequest`, `Unauthorized`,
-/// `SandboxError`, `InternalServerError`, `Other`. An `httpStatusCode` rides
-/// alongside the discriminator when an upstream status is available.
 /// Whether a `turn/completed` error field actually describes a failure.
 ///
 /// `Value::get` yields `Some(Null)` for a present-but-null key and codex emits
@@ -3682,44 +3673,105 @@ fn codex_error_is_informative(error: &Value) -> bool {
     }
 }
 
-pub(crate) fn classify_codex_error(error: &Value) -> CodexFailure {
-    let info = error.get("codexErrorInfo").and_then(|info| {
-        info.as_str()
-            .or_else(|| info.get("type").and_then(Value::as_str))
-    });
-    let (class, fallback) = match info {
-        Some("Unauthorized") => (
+/// The text for a failure whose `codexErrorInfo` is absent or newer than the
+/// variants BiBCode knows.
+const CODEX_UNCLASSIFIED_FAILURE: &str = "Codex reported a failed turn.";
+
+/// The error class and fallback text for one `codexErrorInfo` variant, or
+/// `None` for a variant newer than the supported codex schema.
+///
+/// Names are the app-server v2 wire names: serde `rename_all = "camelCase"`
+/// on `CodexErrorInfo` in `codex-rs/app-server-protocol`. The PascalCase
+/// names in the prose App Server docs are the Rust identifiers and never
+/// reach the wire; the snake_case form belongs to core rollout records, which
+/// the app server translates before sending.
+fn describe_codex_error_variant(variant: &str) -> Option<(&'static str, &'static str)> {
+    let described = match variant {
+        "unauthorized" => (
             "permission_error",
             "Codex is not authorized to reach the upstream API.",
         ),
-        Some("BadRequest") => ("validation_error", "The upstream API rejected the request."),
-        Some("UsageLimitExceeded") => (
-            "provider_error",
-            "The upstream API usage limit was exceeded.",
+        "badRequest" => ("validation_error", "The upstream API rejected the request."),
+        "activeTurnNotSteerable" => (
+            "validation_error",
+            "The active turn cannot accept new input until it finishes.",
         ),
-        Some("ContextWindowExceeded") => (
+        "contextWindowExceeded" => (
             "provider_error",
             "The conversation exceeded the model's context window.",
         ),
-        Some("HttpConnectionFailed") => (
+        "sessionBudgetExceeded" => ("provider_error", "The session's budget was exhausted."),
+        "usageLimitExceeded" => (
+            "provider_error",
+            "The upstream API usage limit was exceeded.",
+        ),
+        "rateLimitExceeded" => (
+            "provider_error",
+            "The upstream API rate limit was exceeded.",
+        ),
+        "flexUnavailable" => (
+            "provider_error",
+            "Flex processing is not available right now.",
+        ),
+        "serverOverloaded" => ("provider_error", "The upstream API is overloaded."),
+        "cyberPolicy" => (
+            "provider_error",
+            "The request was blocked by the cybersecurity policy.",
+        ),
+        "misalignmentPolicyViolation" => (
+            "provider_error",
+            "The request was blocked by the misalignment policy.",
+        ),
+        "tooManyDenials" => (
+            "provider_error",
+            "Codex stopped after too many denied requests.",
+        ),
+        "httpConnectionFailed" => (
             "provider_error",
             "Codex could not connect to the upstream API.",
         ),
-        Some("ResponseStreamConnectionFailed" | "ResponseStreamDisconnected") => (
+        "responseStreamConnectionFailed" | "responseStreamDisconnected" => (
             "provider_error",
             "The upstream API response stream was interrupted.",
         ),
-        Some("ResponseTooManyFailedAttempts") => (
+        "responseTooManyFailedAttempts" => (
             "provider_error",
             "The upstream API failed repeatedly and Codex stopped retrying.",
         ),
-        Some("SandboxError") => ("provider_error", "Codex's sandbox reported an error."),
-        Some("InternalServerError") => (
+        "internalServerError" => (
             "provider_error",
             "The upstream API reported an internal error.",
         ),
-        _ => ("provider_error", "Codex reported a failed turn."),
+        "threadRollbackFailed" => ("provider_error", "Codex could not roll back the thread."),
+        "sandboxError" => ("provider_error", "Codex's sandbox reported an error."),
+        "other" => ("provider_error", "Codex reported an unclassified error."),
+        _ => return None,
     };
+    Some(described)
+}
+
+/// Classify a codex `TurnError` by its `codexErrorInfo` discriminator.
+///
+/// On the app-server v2 wire a unit variant is a camelCase string
+/// (`"unauthorized"`), and a variant with data is an externally tagged
+/// single-key object (`{"httpConnectionFailed": {"httpStatusCode": 502}}`)
+/// whose upstream HTTP status, when known, sits inside the variant object.
+/// A variant newer than the supported schema keeps the generic text but still
+/// names itself in the message.
+pub(crate) fn classify_codex_error(error: &Value) -> CodexFailure {
+    let (info, detail) = match error.get("codexErrorInfo") {
+        Some(Value::String(variant)) => (Some(variant.as_str()), None),
+        Some(Value::Object(tagged)) if tagged.len() == 1 => tagged
+            .iter()
+            .next()
+            .map_or((None, None), |(variant, detail)| {
+                (Some(variant.as_str()), Some(detail))
+            }),
+        _ => (None, None),
+    };
+    let (class, fallback) = info
+        .and_then(describe_codex_error_variant)
+        .unwrap_or(("provider_error", CODEX_UNCLASSIFIED_FAILURE));
     let mut message = error
         .get("message")
         .and_then(Value::as_str)
@@ -3733,9 +3785,8 @@ pub(crate) fn classify_codex_error(error: &Value) -> CodexFailure {
     {
         message.push_str(&format!(" ({info})"));
     }
-    if let Some(status) = error
-        .get("httpStatusCode")
-        .or_else(|| error.pointer("/codexErrorInfo/httpStatusCode"))
+    if let Some(status) = detail
+        .and_then(|detail| detail.get("httpStatusCode"))
         .and_then(Value::as_i64)
     {
         message.push_str(&format!(" (HTTP {status})"));
@@ -4463,13 +4514,44 @@ mod tests {
         }
     }
 
+    /// `turn/completed` frames shaped like codex app-server 0.163.0's
+    /// `TurnError`: `codexErrorInfo` is a camelCase string for unit variants and
+    /// an externally tagged single-key object for variants with data, whose
+    /// `httpStatusCode` lives inside the variant object.
     #[tokio::test]
-    async fn codex_failure_carries_its_documented_error_classification() {
-        for (info, status, expected_class) in [
-            ("Unauthorized", None, "permission_error"),
-            ("BadRequest", None, "validation_error"),
-            ("UsageLimitExceeded", Some(429), "provider_error"),
-            ("ResponseStreamDisconnected", Some(529), "provider_error"),
+    async fn codex_failure_carries_its_wire_error_classification() {
+        for (info, expected_name, expected_status, expected_class) in [
+            (
+                json!("unauthorized"),
+                "unauthorized",
+                None,
+                "permission_error",
+            ),
+            (json!("badRequest"), "badRequest", None, "validation_error"),
+            (
+                json!("usageLimitExceeded"),
+                "usageLimitExceeded",
+                None,
+                "provider_error",
+            ),
+            (
+                json!({ "httpConnectionFailed": { "httpStatusCode": 502 } }),
+                "httpConnectionFailed",
+                Some(502),
+                "provider_error",
+            ),
+            (
+                json!({ "responseStreamDisconnected": { "httpStatusCode": null } }),
+                "responseStreamDisconnected",
+                None,
+                "provider_error",
+            ),
+            (
+                json!({ "activeTurnNotSteerable": { "turnKind": "review" } }),
+                "activeTurnNotSteerable",
+                None,
+                "validation_error",
+            ),
         ] {
             let (connection, incoming, _stdout, _stdin, _stderr) = runtime_test_connection();
             let runtime = CodexSessionRuntime::new(
@@ -4477,12 +4559,6 @@ mod tests {
                 connection.clone(),
                 incoming,
             );
-            let mut error = serde_json::Map::new();
-            error.insert("message".to_owned(), json!("upstream said no"));
-            error.insert("codexErrorInfo".to_owned(), json!(info));
-            if let Some(status) = status {
-                error.insert("httpStatusCode".to_owned(), json!(status));
-            }
 
             runtime
                 .handle_notification(
@@ -4490,8 +4566,13 @@ mod tests {
                     json!({
                         "turn": {
                             "id": "turn-1",
+                            "items": [],
                             "status": "failed",
-                            "error": Value::Object(error)
+                            "error": {
+                                "message": "upstream said no",
+                                "codexErrorInfo": info,
+                                "additionalDetails": null
+                            }
                         }
                     }),
                     1_000,
@@ -4504,19 +4585,107 @@ mod tests {
                 .find(|event| event.event_type == "turn.completed")
                 .expect("completion event");
             assert_eq!(completion.payload["state"], "failed");
-            assert_eq!(completion.payload["errorClass"], expected_class, "{info}");
+            assert_eq!(
+                completion.payload["errorClass"], expected_class,
+                "{expected_name}"
+            );
             let message = completion.payload["errorMessage"]
                 .as_str()
                 .expect("error message");
-            assert!(message.contains(info), "{info} missing from {message:?}");
-            if let Some(status) = status {
-                assert!(
-                    message.contains(&status.to_string()),
+            assert!(
+                message.starts_with("upstream said no"),
+                "codex's own message must lead: {message:?}"
+            );
+            assert!(
+                message.contains(&format!("({expected_name})")),
+                "{expected_name} missing from {message:?}"
+            );
+            match expected_status {
+                Some(status) => assert!(
+                    message.contains(&format!("(HTTP {status})")),
                     "HTTP {status} missing from {message:?}"
-                );
+                ),
+                None => assert!(!message.contains("HTTP"), "{message:?}"),
             }
             // The provider's wire object must not leak into the payload.
             assert!(completion.payload.get("error").is_none());
+        }
+    }
+
+    /// Every `CodexErrorInfo` variant in the schema generated from the supported
+    /// codex binary has its own classification arm. Regenerating the fixture
+    /// for a newer codex that adds a variant fails here until it gets one.
+    #[test]
+    fn every_codex_error_info_schema_variant_has_a_classification() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/codex/codex-error-info-schema.json"
+        ))
+        .expect("codex error info schema fixture");
+        let members = fixture
+            .pointer("/CodexErrorInfo/anyOf")
+            .and_then(Value::as_array)
+            .expect("CodexErrorInfo anyOf");
+        let mut wire_values = Vec::new();
+        for member in members {
+            if let Some(names) = member.get("enum").and_then(Value::as_array) {
+                wire_values.extend(names.iter().map(|name| {
+                    let name = name.as_str().expect("string variant").to_owned();
+                    (name.clone(), json!(name))
+                }));
+            } else if let Some(required) = member.get("required").and_then(Value::as_array) {
+                let [key] = required.as_slice() else {
+                    panic!("an object variant is externally tagged by one key: {member}");
+                };
+                let key = key.as_str().expect("variant key").to_owned();
+                wire_values.push((key.clone(), json!({ key: {} })));
+            }
+        }
+        assert!(
+            wire_values.len() >= 20,
+            "the fixture parsed fewer variants than 0.163.0 defines (15 + 5)"
+        );
+
+        for (name, wire) in wire_values {
+            let failure = classify_codex_error(&json!({
+                "message": "",
+                "codexErrorInfo": wire,
+            }));
+            assert!(
+                !failure.message.starts_with(CODEX_UNCLASSIFIED_FAILURE),
+                "{name} has no classification arm: {:?}",
+                failure.message
+            );
+            assert!(
+                failure.message.ends_with(&format!("({name})")),
+                "{name} missing from {:?}",
+                failure.message
+            );
+        }
+    }
+
+    /// A variant newer than the supported schema still reaches the user by name
+    /// instead of disappearing into the generic text.
+    #[test]
+    fn unknown_codex_error_info_variant_keeps_its_name() {
+        for wire in [
+            json!("futureError"),
+            json!({ "futureError": { "httpStatusCode": 503 } }),
+        ] {
+            let failure = classify_codex_error(&json!({
+                "message": "",
+                "codexErrorInfo": wire,
+            }));
+            assert_eq!(failure.class, "provider_error");
+            assert!(
+                failure.message.starts_with(CODEX_UNCLASSIFIED_FAILURE),
+                "{:?}",
+                failure.message
+            );
+            assert!(
+                failure.message.contains("(futureError)"),
+                "{:?}",
+                failure.message
+            );
         }
     }
 

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { AtomCommandResult } from "@bibcode/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 const pierre = vi.hoisted(() => {
   const instances: Editor[] = [];
@@ -88,6 +88,68 @@ describe("FileEditingSession", () => {
 
     session.undo();
     expect(editor.undo).toHaveBeenCalledOnce();
+  });
+
+  it("retains its editor's edited document, and an outside change only until it is saved", async () => {
+    const session = new FileEditingSession({
+      cwd: "/repo",
+      relativePath: "README.md",
+      debounceMs: 500,
+      persist: vi.fn(async () => AsyncResult.success(undefined)),
+      onPendingChange: vi.fn(),
+      onConfirmed: vi.fn(),
+    });
+    expect(session.retainedContents).toBeNull();
+
+    const editor = session.editor as unknown as InstanceType<typeof pierre.Editor>;
+    (editor.options["onChange"] as (file: { contents: string }) => void)({
+      contents: "- [ ] typed\n",
+    });
+    expect(session.retainedContents).toBe("- [ ] typed\n");
+    await expect(session.flush()).resolves.toBe("saved");
+    expect(session.retainedContents).toBe("- [ ] typed\n");
+
+    // A rendered-view toggle replaces the editor document; once saved, a newer
+    // read of the file seeds the next one.
+    session.changeOutsideEditor("- [x] typed\n");
+    expect(session.retainedContents).toBe("- [x] typed\n");
+    await expect(session.flush()).resolves.toBe("saved");
+    expect(session.retainedContents).toBeNull();
+  });
+
+  it("exposes its contents as unsaved until a save of them is confirmed", async () => {
+    const save = deferredResult<AtomCommandResult<void, string>>();
+    const persist = vi
+      .fn<(relativePath: string, contents: string) => Promise<AtomCommandResult<void, string>>>()
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail("disk full")))
+      .mockReturnValueOnce(save.promise);
+    const session = new FileEditingSession({
+      cwd: "/repo",
+      relativePath: "README.md",
+      debounceMs: 500,
+      persist,
+      onPendingChange: vi.fn(),
+      onConfirmed: vi.fn(),
+    });
+    session.setAutosaveEnabled(false);
+    expect(session.unsavedContents).toBeNull();
+
+    const editor = session.editor as unknown as InstanceType<typeof pierre.Editor>;
+    (editor.options["onChange"] as (file: { contents: string }) => void)({
+      contents: "- [ ] typed\n",
+    });
+    expect(session.unsavedContents).toBe("- [ ] typed\n");
+
+    await expect(session.flush()).resolves.toBe("failed");
+    expect(session.unsavedContents).toBe("- [ ] typed\n");
+
+    const flushed = session.flush();
+    await vi.waitFor(() => expect(persist).toHaveBeenCalledTimes(2));
+    expect(session.unsavedContents).toBe("- [ ] typed\n");
+    save.resolve(AsyncResult.success(undefined));
+    await expect(flushed).resolves.toBe("saved");
+    expect(session.unsavedContents).toBeNull();
+    expect(session.retainedContents).toBe("- [ ] typed\n");
   });
 
   it("uses the current renamed path for later persistence", async () => {

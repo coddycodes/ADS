@@ -5,9 +5,9 @@
     {
       "isRepo": true,
       "hasWorkingTreeChanges": false,
-      "observedAt": "B4d",
-      "stale": true,
-      "refName": "call",
+      "observedAt": "q7",
+      "stale": false,
+      "refName": "\u0000",
       "detachedHead": null,
       "sourceControlProvider": null,
       "pr": null

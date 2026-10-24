@@ -194,7 +194,14 @@ mod tests {
         let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         let mut names: Vec<String> = (0..archive.len())
-            .map(|index| archive.by_index(index).unwrap().name().to_owned())
+            .map(|index| {
+                archive
+                    .by_index(index)
+                    .unwrap()
+                    .name()
+                    .unwrap()
+                    .into_owned()
+            })
             .collect();
         names.sort();
         assert_eq!(names, vec!["a.txt", "nested/", "nested/b.bin"]);
